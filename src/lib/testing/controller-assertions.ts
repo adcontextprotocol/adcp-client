@@ -94,13 +94,11 @@ export function expectControllerSuccess(result: ComplyTestControllerResponse, ki
 /**
  * Narrow to the `SeedSuccess` arm (3.0.1+ message-only seed acknowledgement).
  *
- * Use this when consuming responses from sellers that emit the new
- * `SeedSuccess` shape (`{ success: true, message? }`). The SDK's own
- * `dispatchSeed` continues to return `StateTransitionSuccess`
- * (`previous_state` / `current_state`) — that path narrows under
- * `kind: 'transition'`. A future minor will migrate the SDK to emit
- * `SeedSuccess` directly; this overload is in place now for inter-op
- * with sellers already on the new arm.
+ * Every `seed_*` scenario returns `SeedSuccess` (`{ success: true, message? }`)
+ * — both responses produced by the SDK's own `dispatchSeed` and responses
+ * from third-party sellers. Force_* scenarios continue to return
+ * `StateTransitionSuccess` (`previous_state` / `current_state`) under
+ * `kind: 'transition'`.
  */
 export function expectControllerSuccess(result: ComplyTestControllerResponse, kind: 'seed'): SeedSuccess;
 export function expectControllerSuccess(result: ComplyTestControllerResponse): AnyControllerSuccess;

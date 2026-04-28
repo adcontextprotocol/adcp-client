@@ -10,7 +10,8 @@
  *   - Param validation + typed error envelopes (`UNKNOWN_SCENARIO`,
  *     `INVALID_PARAMS`, `NOT_FOUND`, `INVALID_TRANSITION`, `FORBIDDEN`)
  *   - Seed re-seed idempotency (same id + equivalent fixture =
- *     `previous_state: "existing"`; divergent fixture = `INVALID_PARAMS`)
+ *     `SeedSuccess` with `message: "Fixture re-seeded (equivalent)"`;
+ *     divergent fixture = `INVALID_PARAMS`)
  *   - Optional sandbox gating at both `tools/list` and per-request level
  *
  * The helper does NOT own the state machine. Transition enforcement lives

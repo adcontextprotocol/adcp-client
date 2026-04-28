@@ -127,9 +127,7 @@ function successResponse() {
   return {
     success: true,
     data: {
-      content: [
-        { type: 'text', text: JSON.stringify({ success: true, previous_state: 'none', current_state: 'seeded' }) },
-      ],
+      content: [{ type: 'text', text: JSON.stringify({ success: true, message: 'Fixture seeded' }) }],
     },
   };
 }

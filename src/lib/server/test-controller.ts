@@ -440,8 +440,8 @@ function controllerError(
 /**
  * Per-controller cache for seed-fixture equivalence checks. The handler uses
  * it to enforce the spec-level rule that re-seeding with the same ID and an
- * equivalent fixture yields `previous_state: "existing"`, while a divergent
- * fixture returns `INVALID_PARAMS`.
+ * equivalent fixture yields `SeedSuccess` with `message: "Fixture re-seeded
+ * (equivalent)"`, while a divergent fixture returns `INVALID_PARAMS`.
  *
  * Passed explicitly to {@link handleTestControllerRequest} so custom wrappers
  * can scope the cache to a session, tenant, or test run. Keys are
@@ -634,12 +634,16 @@ async function dispatchSeed(
       );
     }
     await dispatch.invoke();
-    return { success: true, previous_state: 'existing', current_state: 'existing' };
+    // SeedSuccess (3.0.1+): message-only arm. The schema's `oneOf` excludes
+    // `previous_state`/`current_state` from this branch — seeds are
+    // pre-population, not entity transitions. Idempotent-replay token is
+    // the trailing "(equivalent)" qualifier on the message string.
+    return { success: true, message: 'Fixture re-seeded (equivalent)' };
   }
 
   await dispatch.invoke();
   cache?.set(dispatch.key, fixture);
-  return { success: true, previous_state: 'none', current_state: 'seeded' };
+  return { success: true, message: 'Fixture seeded' };
 }
 
 /**
@@ -876,13 +880,14 @@ function summarize(data: ComplyTestControllerResponse): string {
   if (data.success === false) return `Controller error: ${data.error}`;
   if ('scenarios' in data) return `Supported scenarios: ${data.scenarios.join(', ')}`;
   if ('previous_state' in data) {
-    if (data.previous_state === 'none' && data.current_state === 'seeded') return 'Fixture seeded';
-    if (data.previous_state === 'existing' && data.current_state === 'existing')
-      return 'Fixture re-seeded (equivalent)';
     return `Transitioned from ${data.previous_state} to ${data.current_state}`;
   }
   if ('simulated' in data) return `Simulation complete: ${JSON.stringify(data.simulated)}`;
   if ('forced' in data) return `Directive registered: arm=${data.forced.arm}`;
+  // SeedSuccess (3.0.1+): message-only arm. dispatchSeed sets the message
+  // to 'Fixture seeded' / 'Fixture re-seeded (equivalent)'; third-party
+  // sellers may emit other strings (or none — the spec only requires
+  // success).
   return data.message ?? 'Scenario succeeded';
 }
 
