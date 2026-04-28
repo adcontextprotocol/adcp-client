@@ -74,6 +74,22 @@ import { buildRequestContext } from './to-context';
 import { z } from 'zod';
 import { createInMemoryTaskRegistry, type TaskRegistry, type TaskRecord, type TaskStatus } from './task-registry';
 import { protocolForTool, SPEC_WEBHOOK_TASK_TYPES } from './protocol-for-tool';
+
+/**
+ * Default logger when adopters don't supply `opts.logger`. `debug` /
+ * `info` are no-op; `warn` / `error` route to console so framework
+ * warnings (merge-seam collisions, SSRF rejections, observability hook
+ * misuse) surface during development. Adopters wiring `pino`/`bunyan`
+ * supply all four levels via `opts.logger`.
+ */
+const DEFAULT_FRAMEWORK_LOGGER: AdcpLogger = {
+  debug: () => {},
+  info: () => {},
+  // eslint-disable-next-line no-console
+  warn: console.warn.bind(console),
+  // eslint-disable-next-line no-console
+  error: console.error.bind(console),
+};
 import {
   createInMemoryStatusChangeBus,
   type StatusChangeBus,
@@ -376,14 +392,7 @@ export function createAdcpServerFromPlatform<P extends DecisioningPlatform<any, 
   const statusChangeBus: StatusChangeBus = observability?.onStatusChangePublish
     ? wrapBusWithObservability(baseBus, observability)
     : baseBus;
-  const fwLogger = opts.logger ?? {
-    debug: () => {},
-    info: () => {},
-    // eslint-disable-next-line no-console
-    warn: console.warn.bind(console),
-    // eslint-disable-next-line no-console
-    error: console.error.bind(console),
-  };
+  const fwLogger = opts.logger ?? DEFAULT_FRAMEWORK_LOGGER;
   const mergeOpts = { mode: opts.mergeSeam ?? 'warn', logger: fwLogger };
 
   const config: AdcpServerConfig<Account> = {
@@ -472,7 +481,7 @@ export function createAdcpServerFromPlatform<P extends DecisioningPlatform<any, 
       'creative',
       mergeOpts
     ),
-    eventTracking: mergeHandlers(opts.eventTracking, buildEventTrackingHandlers(platform, taskRegistry), 'eventTracking', mergeOpts),
+    eventTracking: mergeHandlers(opts.eventTracking, buildEventTrackingHandlers(platform), 'eventTracking', mergeOpts),
     signals: mergeHandlers(opts.signals, buildSignalsHandlers(platform), 'signals', mergeOpts),
     governance: mergeHandlers(opts.governance, buildGovernanceHandlers(platform), 'governance', mergeOpts),
     accounts: mergeHandlers(opts.accounts, buildAccountHandlers(platform), 'accounts', mergeOpts),
@@ -931,6 +940,23 @@ async function dispatchHitl<TResult>(
   );
   const taskStart = Date.now();
 
+  // Single helper for the four `onTaskTransition` fire sites.
+  const fireTransition = (status: 'completed' | 'failed', errorCode?: string): void => {
+    safeFire(
+      opts.observability?.onTaskTransition,
+      {
+        taskId,
+        tool: opts.tool,
+        accountId: opts.accountId,
+        status,
+        durationMs: Date.now() - taskStart,
+        ...(errorCode !== undefined && { errorCode }),
+      },
+      'onTaskTransition',
+      opts.logger
+    );
+  };
+
   // Three failure surfaces:
   //   1. taskFn throws → record failure → emit failed webhook
   //   2. taskFn succeeds but registry write fails (DB outage) → log only;
@@ -961,37 +987,10 @@ async function dispatchHitl<TResult>(
             `manual reconciliation required. Webhook not emitted; buyer state will diverge until resolved. ` +
             `Error: ${registryErr instanceof Error ? registryErr.message : String(registryErr)}`
         );
-        // Fire onTaskTransition with synthetic REGISTRY_WRITE_FAILED so SREs
-        // wiring DD/Prom on `onTaskTransition` see the failed-write path
-        // they would otherwise miss. Without this an adopter only sees the
-        // log line, never a metric.
-        safeFire(
-          opts.observability?.onTaskTransition,
-          {
-            taskId,
-            tool: opts.tool,
-            accountId: opts.accountId,
-            status: 'failed',
-            durationMs: Date.now() - taskStart,
-            errorCode: 'REGISTRY_WRITE_FAILED',
-          },
-          'onTaskTransition',
-          opts.logger
-        );
+        fireTransition('failed', 'REGISTRY_WRITE_FAILED');
         return;
       }
-      safeFire(
-        opts.observability?.onTaskTransition,
-        {
-          taskId,
-          tool: opts.tool,
-          accountId: opts.accountId,
-          status: 'completed',
-          durationMs: Date.now() - taskStart,
-        },
-        'onTaskTransition',
-        opts.logger
-      );
+      fireTransition('completed');
       await emitTaskWebhook(opts, {
         task: { task_id: taskId, status: 'completed', result },
       });
@@ -1015,34 +1014,10 @@ async function dispatchHitl<TResult>(
           `manual reconciliation required. Webhook not emitted. ` +
           `taskFn error: ${structured.message}; registry error: ${registryErr instanceof Error ? registryErr.message : String(registryErr)}`
       );
-      safeFire(
-        opts.observability?.onTaskTransition,
-        {
-          taskId,
-          tool: opts.tool,
-          accountId: opts.accountId,
-          status: 'failed',
-          durationMs: Date.now() - taskStart,
-          errorCode: 'REGISTRY_WRITE_FAILED',
-        },
-        'onTaskTransition',
-        opts.logger
-      );
+      fireTransition('failed', 'REGISTRY_WRITE_FAILED');
       return;
     }
-    safeFire(
-      opts.observability?.onTaskTransition,
-      {
-        taskId,
-        tool: opts.tool,
-        accountId: opts.accountId,
-        status: 'failed',
-        durationMs: Date.now() - taskStart,
-        errorCode: structured.code,
-      },
-      'onTaskTransition',
-      opts.logger
-    );
+    fireTransition('failed', structured.code);
     await emitTaskWebhook(opts, {
       task: { task_id: taskId, status: 'failed', error: structured },
     });
@@ -1681,8 +1656,7 @@ function buildCreativeHandlers<P extends DecisioningPlatform<any, any>>(
 }
 
 function buildEventTrackingHandlers<P extends DecisioningPlatform<any, any>>(
-  platform: P,
-  _taskRegistry: TaskRegistry
+  platform: P
 ): EventTrackingHandlers<Account> | undefined {
   const audiences = platform.audiences;
   const sales = platform.sales;
