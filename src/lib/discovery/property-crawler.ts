@@ -332,10 +332,10 @@ export class PropertyCrawler {
       for (const prop of data.properties) {
         if (!Array.isArray(prop.identifiers) || prop.identifiers.length === 0) {
           skipped++;
-          this.logger.warn(
-            `Skipping property in ${originalDomain} adagents.json: missing or empty identifiers`,
-            { domain: originalDomain, name: prop.name }
-          );
+          this.logger.warn(`Skipping property in ${originalDomain} adagents.json: missing or empty identifiers`, {
+            domain: originalDomain,
+            name: prop.name,
+          });
           continue;
         }
         normalized.push({
