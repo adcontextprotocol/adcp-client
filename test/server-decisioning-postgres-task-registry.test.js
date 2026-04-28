@@ -162,4 +162,61 @@ describe('createPostgresTaskRegistry', { skip: !DATABASE_URL && 'DATABASE_URL no
 
     await pool.query(`DROP TABLE ${customTable} CASCADE`);
   });
+
+  test('hasWebhook round-trips through create + getTask', async () => {
+    // hasWebhook is set when buyer wires push_notification_config.url at
+    // dispatch time; surfaced via tasks_get's spec-defined `has_webhook`
+    // field. Two records: one with, one without.
+    const registry = createPostgresTaskRegistry({ pool });
+    const { taskId: tWithHook } = await registry.create({
+      tool: 'create_media_buy',
+      accountId: 'acc_1',
+      hasWebhook: true,
+    });
+    const { taskId: tNoHook } = await registry.create({
+      tool: 'create_media_buy',
+      accountId: 'acc_1',
+    });
+
+    const r1 = await registry.getTask(tWithHook);
+    const r2 = await registry.getTask(tNoHook);
+    assert.strictEqual(r1.hasWebhook, true);
+    assert.strictEqual(r2.hasWebhook, undefined, 'hasWebhook omitted on read when stored false');
+  });
+
+  test('complete() rejects oversized result with descriptive error', async () => {
+    // 4MB cap on JSONB column. 5MB string trips assertResultSize before
+    // the DB write — protects the Node process from OOM on a malicious
+    // adopter return.
+    const registry = createPostgresTaskRegistry({ pool });
+    const { taskId } = await registry.create({ tool: 'create_media_buy', accountId: 'acc_1' });
+
+    const oversized = { huge: 'x'.repeat(5 * 1024 * 1024) };
+    await assert.rejects(
+      registry.complete(taskId, oversized),
+      /exceeds.*bytes/
+    );
+
+    // Task stays submitted — failed write didn't transition.
+    const record = await registry.getTask(taskId);
+    assert.strictEqual(record.status, 'submitted');
+  });
+
+  test('complete() rejects circular-reference result with clear error', async () => {
+    // safeStringify wraps JSON.stringify so adopter circular-ref returns
+    // surface as a clear "not JSON-serializable" error pointing at the
+    // task id, instead of bubbling as a generic registry-write fail.
+    const registry = createPostgresTaskRegistry({ pool });
+    const { taskId } = await registry.create({ tool: 'create_media_buy', accountId: 'acc_1' });
+
+    const circular = { name: 'mb_42' };
+    circular.self = circular;
+    await assert.rejects(
+      registry.complete(taskId, circular),
+      /not JSON-serializable/
+    );
+
+    const record = await registry.getTask(taskId);
+    assert.strictEqual(record.status, 'submitted');
+  });
 });

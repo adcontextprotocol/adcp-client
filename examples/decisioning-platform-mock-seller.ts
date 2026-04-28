@@ -31,6 +31,7 @@
 
 import {
   AdcpError,
+  createAdcpServerFromPlatform,
   type DecisioningPlatform,
   type SalesPlatform,
   type AccountStore,
@@ -78,6 +79,10 @@ const DEFAULT_CONFIG: MockSellerConfig = {
 
 function makeAccounts(): AccountStore<MockSellerMeta> {
   return {
+    // Multi-tenant: MockSeller accepts buyer-supplied account_id refs.
+    // Single-tenant adopters declare resolution: 'derived' instead and
+    // ignore `ref`. See SKILL § "Account resolution".
+    resolution: 'explicit',
     resolve: async (ref: AccountReference) => {
       const id = 'account_id' in ref ? ref.account_id : 'mock_acc_1';
       return {
@@ -135,11 +140,23 @@ const SHARED_GET_PRODUCTS = async (_req: GetProductsRequest): Promise<GetProduct
       product_id: 'prod_premium_video',
       name: 'Premium Video',
       description: 'Pre-roll video on premium inventory',
-      format_ids: [{ id: 'video_15s', agent_url: 'https://example.com/creative-agent/mcp' }],
       delivery_type: 'non_guaranteed',
-      publisher_properties: { reportable: true },
-      reporting_capabilities: { available_dimensions: ['geo', 'creative'] },
-      pricing_options: [{ pricing_model: 'cpm', rate: 12.5, currency: 'USD' }],
+      format_ids: [{ id: 'video_15s', agent_url: 'https://example.com/creative-agent/mcp' }],
+      publisher_properties: [{ publisher_domain: 'publisher.example.com', selection_type: 'all' }],
+      pricing_options: [{
+        pricing_option_id: 'cpm_12_50',
+        pricing_model: 'cpm',
+        rate: 12.5,
+        currency: 'USD',
+      }],
+      reporting_capabilities: {
+        available_reporting_frequencies: ['hourly', 'daily'],
+        expected_delay_minutes: 30,
+        timezone: 'UTC',
+        supports_webhooks: false,
+        available_metrics: [],
+        date_range_support: 'date_range',
+      },
     },
   ],
 });
@@ -301,9 +318,6 @@ export class MockHitlSeller implements DecisioningPlatform<MockSellerConfig, Moc
 // loud, not silent. Set `mergeSeam: 'strict'` in CI for migration safety.
 
 export function buildHybridServerExample(platform: MockSyncSeller) {
-  // eslint-disable-next-line @typescript-eslint/no-require-imports
-  const { createAdcpServerFromPlatform } =
-    require('../src/lib/server/decisioning') as typeof import('../src/lib/server/decisioning');
   return createAdcpServerFromPlatform(platform, {
     name: 'mock-hybrid', version: '0.0.1',
     validation: { requests: 'off', responses: 'off' },

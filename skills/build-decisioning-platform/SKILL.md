@@ -114,7 +114,7 @@ const server = createAdcpServerFromPlatform(platform, {
 What the framework wires automatically when you call `createAdcpServerFromPlatform`:
 
 - All the AdCP wire tools your declared specialisms support (e.g., `get_products`, `create_media_buy`).
-- A `tasks_get` polling tool — buyers call `tasks_get { task_id, account }` to poll HITL task lifecycle (snake-case substitute for the spec's `tasks/get`; MCP forbids `/` in tool names). You don't write this; it's there as soon as you wire any `*Task` HITL method.
+- A `tasks_get` polling tool — buyers call it with `{ task_id, account }` to poll HITL task lifecycle. You don't write this; it's there as soon as you wire any `*Task` HITL method. See "The buyer gets terminal state two ways" below for the full lifecycle shape.
 - Idempotency-key replay protection on every mutating tool.
 - RFC 9421 webhook signing on terminal-task push notifications (when `serve({ webhooks })` is wired).
 
@@ -294,7 +294,7 @@ Generic thrown errors (`Error`, `TypeError`) become `SERVICE_UNAVAILABLE` at the
 | `'implicit'` | Buyer pre-syncs accounts via `sync_accounts`; subsequent calls resolved by `ctx.authInfo` lookup against pre-synced linkage (LinkedIn, some retail-media operators). | `ref` may be undefined; use `ctx.authInfo.clientId` to look up. |
 | `'derived'` | Single-tenant; one logical advertiser per agent process. Auth principal alone identifies the tenant. | `ref` typically undefined; return the singleton regardless. |
 
-**If you have one tenant, declare `resolution: 'derived'`.** The default is `'explicit'`. A single-tenant agent that omits `resolution` falls into `'explicit'` mode where tools without an `account` field on the wire (`provide_performance_feedback`, `list_creative_formats`, `tasks_get` without explicit account, `report_usage`) silently fail with `ACCOUNT_NOT_FOUND` because the framework expects the buyer to pass an account on those tools too.
+**If you have one tenant, declare `resolution: 'derived'`.** The default is `'explicit'`. A single-tenant agent that omits `resolution` falls into `'explicit'` mode where tools whose buyer omits the `account` field (`provide_performance_feedback`, `list_creative_formats`, `report_usage`) silently fail with `ACCOUNT_NOT_FOUND` because the framework expects the buyer to pass an account on those tools too.
 
 ```ts
 // Multi-tenant

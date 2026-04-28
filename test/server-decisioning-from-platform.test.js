@@ -1327,6 +1327,61 @@ describe('Observability hooks (DecisioningObservabilityHooks)', () => {
     assert.ok(typeof transition.durationMs === 'number' && transition.durationMs >= 0);
   });
 
+  it('onTaskTransition fires REGISTRY_WRITE_FAILED when registry.complete throws', async () => {
+    // Adopter *Task succeeds but the registry write blows up (DB outage,
+    // disk-full, etc.). Framework logs at error level, fires
+    // onTaskTransition with synthetic errorCode='REGISTRY_WRITE_FAILED'
+    // (so SREs wiring DD/Prom on transitions see the metric, not just
+    // the log line), and skips webhook delivery (buyer state would be
+    // inconsistent if we pushed without a registry record).
+    const transitions = [];
+    const emits = [];
+    const errors = [];
+    const platform = buildHitlPlatform(async () => ({ media_buy_id: 'mb_42' }));
+    const flakyRegistry = (() => {
+      const inner = require('../dist/lib/server/decisioning/runtime/task-registry')
+        .createInMemoryTaskRegistry();
+      return {
+        ...inner,
+        create: opts => inner.create(opts),
+        getTask: id => inner.getTask(id),
+        complete: async () => { throw new Error('connection refused'); },
+        fail: (id, err) => inner.fail(id, err),
+        _registerBackground: (id, p) => inner._registerBackground(id, p),
+        awaitTask: id => inner.awaitTask(id),
+      };
+    })();
+    const server = createAdcpServerFromPlatform(platform, {
+      name: 'obs', version: '0.0.1',
+      validation: { requests: 'off', responses: 'off' },
+      taskRegistry: flakyRegistry,
+      taskWebhookEmitter: {
+        emit: async params => { emits.push(params); return { operation_id: params.operation_id, idempotency_key: 'k', attempts: 1, delivered: true, errors: [] }; },
+        unsigned: true,
+      },
+      logger: { debug: () => {}, info: () => {}, warn: () => {}, error: m => errors.push(m) },
+      observability: { onTaskTransition: info => transitions.push(info) },
+    });
+    const result = await server.dispatchTestRequest({
+      method: 'tools/call',
+      params: {
+        name: 'create_media_buy',
+        arguments: {
+          buyer_ref: 'b1', idempotency_key: '11111111-1111-1111-1111-111111111111',
+          packages: [], start_time: '2026-05-01T00:00:00Z', end_time: '2026-06-01T00:00:00Z',
+          account: { account_id: 'acc_1' },
+          push_notification_config: { url: 'https://buyer.example.com/webhook' },
+        },
+      },
+    });
+    await server.awaitTask(result.structuredContent.task_id);
+    assert.strictEqual(transitions.length, 1);
+    assert.strictEqual(transitions[0].status, 'failed');
+    assert.strictEqual(transitions[0].errorCode, 'REGISTRY_WRITE_FAILED');
+    assert.strictEqual(emits.length, 0, 'no webhook delivered when registry write failed');
+    assert.ok(errors.find(e => e.includes('registry write failed')), 'error logged');
+  });
+
   it('onTaskTransition status="failed" carries errorCode on AdcpError', async () => {
     const { AdcpError } = require('../dist/lib/server/decisioning/async-outcome');
     const transitions = [];
