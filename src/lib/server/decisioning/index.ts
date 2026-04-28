@@ -62,7 +62,7 @@ export type {
   ResolvedAuthInfo,
 } from './account';
 
-export { AccountNotFoundError } from './account';
+export { AccountNotFoundError, refAccountId } from './account';
 
 // Native status mapping
 export type { StatusMappers, AdcpMediaBuyStatus, AdcpCreativeStatus, AdcpPlanStatus } from './status-mappers';
@@ -113,7 +113,12 @@ export {
   type DecisioningObservabilityHooks,
 } from './runtime/from-platform';
 export { PlatformConfigError, validatePlatform } from './runtime/validate-platform';
-export { createInMemoryTaskRegistry, type TaskRegistry, type TaskRecord, type TaskStatus } from './runtime/task-registry';
+export {
+  createInMemoryTaskRegistry,
+  type TaskRegistry,
+  type TaskRecord,
+  type TaskStatus,
+} from './runtime/task-registry';
 export {
   createPostgresTaskRegistry,
   getDecisioningTaskRegistryMigration,

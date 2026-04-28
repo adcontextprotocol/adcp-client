@@ -1541,7 +1541,7 @@ function buildMediaBuyHandlers<P extends DecisioningPlatform<any, any>>(
               logger,
             },
             result,
-            r => r  // identity projection for createMediaBuy
+            r => r // identity projection for createMediaBuy
           );
         },
         r => r
@@ -2054,19 +2054,29 @@ function buildAccountHandlers<P extends DecisioningPlatform<any, any>>(platform:
   };
 
   if (accounts.reportUsage) {
-    handlers.reportUsage = async (params, _ctx) =>
-      projectSync(
-        () => accounts.reportUsage!(params),
+    handlers.reportUsage = async (params, ctx) => {
+      const resolveCtx = {
+        ...(ctx.authInfo !== undefined && { authInfo: ctx.authInfo }),
+        toolName: 'report_usage' as const,
+      };
+      return projectSync(
+        () => accounts.reportUsage!(params, resolveCtx),
         r => r
       );
+    };
   }
 
   if (accounts.getAccountFinancials) {
-    handlers.getAccountFinancials = async (params, _ctx) =>
-      projectSync(
-        () => accounts.getAccountFinancials!(params),
+    handlers.getAccountFinancials = async (params, ctx) => {
+      const resolveCtx = {
+        ...(ctx.authInfo !== undefined && { authInfo: ctx.authInfo }),
+        toolName: 'get_account_financials' as const,
+      };
+      return projectSync(
+        () => accounts.getAccountFinancials!(params, resolveCtx),
         r => r
       );
+    };
   }
 
   return handlers;

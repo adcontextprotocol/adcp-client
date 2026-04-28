@@ -220,8 +220,13 @@ export interface AccountStore<TMeta = Record<string, unknown>> {
    *
    * Idempotent on `(account, period_start, period_end, line_item_id)` —
    * platform must dedupe replays under the framework's idempotency key.
+   *
+   * `ctx.authInfo` carries the caller's OAuth principal (when
+   * `serve({ authenticate })` is wired). Platforms fronting an upstream
+   * billing API (Snap, Meta, retail-media) use it to authorize the usage
+   * post against the principal's tenant — same pattern as `accounts.resolve`.
    */
-  reportUsage?(req: ReportUsageRequest): Promise<ReportUsageResponse>;
+  reportUsage?(req: ReportUsageRequest, ctx?: ResolveContext): Promise<ReportUsageResponse>;
 
   /**
    * get_account_financials API surface. Operator-billed platforms expose
@@ -232,8 +237,13 @@ export interface AccountStore<TMeta = Record<string, unknown>> {
    * Read tool — no idempotency requirement. Throw `AdcpError` for buyer-
    * fixable rejection (`'PERMISSION_DENIED'` if the principal can't see
    * financials for the requested account).
+   *
+   * `ctx.authInfo` carries the caller's OAuth principal (when
+   * `serve({ authenticate })` is wired). Platforms that guard financials
+   * per-principal use it to authorize the read — same pattern as
+   * `accounts.resolve`.
    */
-  getAccountFinancials?(req: GetAccountFinancialsRequest): Promise<GetAccountFinancialsSuccess>;
+  getAccountFinancials?(req: GetAccountFinancialsRequest, ctx?: ResolveContext): Promise<GetAccountFinancialsSuccess>;
 }
 
 /**
@@ -324,4 +334,29 @@ export function toWireAccount<TMeta>(account: Account<TMeta>): WireAccount {
     wire.billing = typeof t === 'string' ? t : 'advertiser';
   }
   return wire;
+}
+
+// ---------------------------------------------------------------------------
+// AccountReference helpers
+// ---------------------------------------------------------------------------
+
+/**
+ * Extract `account_id` from an `AccountReference` discriminated union without
+ * casting. Returns `undefined` when `ref` is absent or the union arm doesn't
+ * carry an `account_id` (e.g., `{ brand, operator }` or sandbox variants).
+ *
+ * Typical use in `accounts.resolve` implementations:
+ *
+ * ```ts
+ * resolve: async (ref, ctx) => {
+ *   const id = refAccountId(ref);
+ *   if (id) return this.db.findById(id);
+ *   return this.db.findByOAuthClient(ctx?.authInfo?.clientId ?? '');
+ * }
+ * ```
+ *
+ * @public
+ */
+export function refAccountId(ref?: AccountReference): string | undefined {
+  return ref && 'account_id' in ref ? (ref as { account_id?: string }).account_id : undefined;
 }
