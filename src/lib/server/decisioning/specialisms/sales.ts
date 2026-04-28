@@ -34,6 +34,39 @@
  * Each method either returns the value or throws `AdcpError` for structured
  * rejection. Generic thrown errors map to `SERVICE_UNAVAILABLE`.
  *
+ * **Method groups** — implement the group(s) matching your specialism:
+ *
+ * | Group | Methods | Claim when |
+ * |---|---|---|
+ * | Core sales (required) | `getProducts`, `updateMediaBuy`, `getMediaBuyDelivery` | Any `sales-*` specialism |
+ * | Core sales (one-of pair) | `createMediaBuy` **or** `createMediaBuyTask` | Any `sales-*` specialism |
+ * | Core sales (one-of pair) | `syncCreatives` **or** `syncCreativesTask` | Any `sales-*` specialism |
+ * | Read / feedback | `getMediaBuys`, `providePerformanceFeedback`, `listCreativeFormats`, `listCreatives` | Most sellers; optional |
+ * | Retail-media extensions | `syncCatalogs`, `logEvent`, `syncEventSources` | `sales-catalog-driven`, `sales-retail-media` |
+ *
+ * New adopters implementing a non-retail seller (GAM, FreeWheel, a social
+ * platform) only need the three core-required methods plus one pair each
+ * for `createMediaBuy` and `syncCreatives`. The retail-media extension
+ * methods (`syncCatalogs`, `logEvent`, `syncEventSources`) are unnecessary
+ * unless you claim `sales-catalog-driven` or `sales-retail-media`.
+ *
+ * **No-account tools (`providePerformanceFeedback`, `listCreativeFormats`):**
+ * the wire requests for these two tools don't carry an `account` field, so
+ * `ctx.account` may be `undefined` when `accounts.resolution === 'explicit'`.
+ * Three safe patterns:
+ *
+ * 1. **`'derived'` resolution** — `accounts.resolve(undefined)` returns a
+ *    singleton; `ctx.account` is always set. Best for single-tenant
+ *    deployers.
+ * 2. **Don't implement the method** — the framework returns
+ *    `UNSUPPORTED_FEATURE`; buyers using the merge-seam custom handler or
+ *    external creative agents still receive a response.
+ * 3. **Explicit-mode with defensive read** — cast `ctx.account as Account |
+ *    undefined` and derive the account from the request body (e.g., via a
+ *    `media_buy_id` lookup), or throw `AdcpError('ACCOUNT_NOT_FOUND')`.
+ *    Full `resolveAccount(undefined, { authInfo, toolName })` support for
+ *    explicit-mode lands in rc.1.
+ *
  * Status: Preview / 6.0.
  *
  * @public
@@ -170,6 +203,10 @@ export interface SalesPlatform<TMeta = Record<string, unknown>> {
   // Optional because not every sales agent runs an optimizer, but every
   // buyer expects to be able to call it. Framework returns UNSUPPORTED_FEATURE
   // when omitted.
+  //
+  // ⚠️  NO-ACCOUNT TOOL. The wire request does not carry an `account` field.
+  // `ctx.account` is undefined for `'explicit'`-resolution adopters.
+  // See the `SalesPlatform` JSDoc ("No-account tools") for safe patterns.
   /** Accept buyer-side performance signals on a media buy / creative. */
   providePerformanceFeedback?(
     req: ProvidePerformanceFeedbackRequest,
@@ -182,6 +219,8 @@ export interface SalesPlatform<TMeta = Record<string, unknown>> {
   // `creative_agents` (declared in `capabilities.creative_agents[]`) don't
   // own format definitions; framework can resolve from the declared agents.
   // Self-hosted sellers (own creative library) implement this directly.
+  //
+  // ⚠️  NO-ACCOUNT TOOL. See `providePerformanceFeedback` note above.
   listCreativeFormats?(req: ListCreativeFormatsRequest, ctx: Ctx<TMeta>): Promise<ListCreativeFormatsResponse>;
 
   // ── list_creatives: sync only ───────────────────────────────────────

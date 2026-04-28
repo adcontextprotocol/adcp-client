@@ -25,18 +25,20 @@
  * Generic thrown errors (`Error`, `TypeError`) fall through to the
  * framework's `SERVICE_UNAVAILABLE` mapping.
  *
- * **Wired surface** (current commit): `SalesPlatform` (all 5 tools, dual-
- * method on get_products / create_media_buy / update_media_buy /
- * sync_creatives), `CreativeTemplatePlatform` / `CreativeGenerativePlatform`
- * (build_creative / sync_creatives dual-method, preview_creative sync-only),
- * `AudiencePlatform.syncAudiences` sync-only with status changes via the
- * upcoming `publishStatusChange` event bus, `accounts.resolve` / `upsert` /
- * `list`.
+ * **Wired surface (6.0):** `SalesPlatform` (14 tools — 3 required core +
+ * 11 optional; dual-method on `create_media_buy` / `sync_creatives`),
+ * `CreativeTemplatePlatform` / `CreativeGenerativePlatform` (build_creative /
+ * sync_creatives dual-method, preview_creative sync-only),
+ * `AudiencePlatform.syncAudiences`, `SignalsPlatform` (activate_signal,
+ * list_signals), `AccountStore` (reportUsage, getAccountFinancials),
+ * `ContentStandardsPlatform`, `CampaignGovernancePlatform`,
+ * `TenantRegistry` (multi-tenant health), `createPostgresTaskRegistry`,
+ * `tasks/get` wire handler, per-server + module-level `publishStatusChange`.
  *
- * Reserved for upcoming commits: `tasks/get` wire handler so buyers poll
- * the registry over MCP / A2A; `publishStatusChange` event bus + MCP
- * Resources subscription extension; per-tenant `getCapabilitiesFor`;
- * TenantRegistry with per-tenant health states.
+ * **Still deferred (rc.1+):** MCP Resources subscription projection for
+ * `publishStatusChange`; `resolveAccount(undefined, { authInfo, toolName })`
+ * refactor for `provide_performance_feedback` / `list_creative_formats`
+ * no-account path in `'explicit'`-mode adopters (see `SalesPlatform` JSDoc).
  *
  * Status: Preview / 6.0. Not yet exported from the public `./server`
  * subpath; reach in via `@adcp/client/server/decisioning/runtime` for
