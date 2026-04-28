@@ -483,11 +483,21 @@ export function createAdcpServerFromPlatform<P extends DecisioningPlatform<any, 
     },
     // Auth-derived path: framework calls this for tools whose wire request
     // doesn't carry an `account` field (`provide_performance_feedback`,
-    // `list_creative_formats`, `tasks/get`). The platform's resolver runs
-    // with `undefined` ref + `authInfo` available; per its `resolution`
-    // mode it returns the singleton (`'derived'`), looks up by auth
-    // (`'implicit'`), or `null` for `'explicit'` adopters who don't model
-    // these tools.
+    // `list_creative_formats`, `tasks_get`). The platform's resolver runs
+    // with `undefined` ref + `authInfo` available — adopters of any
+    // `resolution` mode can return a non-null Account here:
+    //
+    //   - `'derived'` — return the singleton.
+    //   - `'implicit'` — look up by `ctx.authInfo.clientId`.
+    //   - `'explicit'` — also handle the `undefined` ref branch by
+    //     looking up via `ctx.authInfo.clientId` (or whichever principal
+    //     field your auth wires). The framework calls this resolver
+    //     regardless of declared `resolution` mode; only adopters who
+    //     intentionally don't model these tools return null.
+    //
+    // A `null` return is legal — handler runs with `ctx.account`
+    // undefined. Appropriate for tools that don't need tenant scoping
+    // (publisher-wide format catalogs).
     resolveAccountFromAuth: async ctx => {
       const start = Date.now();
       let resolved = false;

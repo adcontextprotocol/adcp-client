@@ -294,7 +294,7 @@ Generic thrown errors (`Error`, `TypeError`) become `SERVICE_UNAVAILABLE` at the
 | `'implicit'` | Buyer pre-syncs accounts via `sync_accounts`; subsequent calls resolved by `ctx.authInfo` lookup against pre-synced linkage (LinkedIn, some retail-media operators). | `ref` may be undefined; use `ctx.authInfo.clientId` to look up. |
 | `'derived'` | Single-tenant; one logical advertiser per agent process. Auth principal alone identifies the tenant. | `ref` typically undefined; return the singleton regardless. |
 
-**If you have one tenant, declare `resolution: 'derived'`.** The default is `'explicit'`. A single-tenant agent that omits `resolution` falls into `'explicit'` mode where tools whose buyer omits the `account` field (`provide_performance_feedback`, `list_creative_formats`, `report_usage`) silently fail with `ACCOUNT_NOT_FOUND` because the framework expects the buyer to pass an account on those tools too.
+**If you have one tenant, declare `resolution: 'derived'`.** The default is `'explicit'`. A single-tenant agent that omits `resolution` falls into `'explicit'` mode where tools whose buyer omits the `account` field (`provide_performance_feedback`, `list_creative_formats`, `report_usage`, `tasks_get` without explicit account) silently fail with `ACCOUNT_NOT_FOUND` because the framework expects the buyer to pass an account on those tools too.
 
 ```ts
 // Multi-tenant
@@ -311,6 +311,18 @@ accounts: {
 ```
 
 **Use `ctx.authInfo` to authorize, not just lookup.** Don't naively `findById(ref.account_id)` — that lets an attacker passing `{ account: { account_id: 'tenant_B' } }` get tenant B's account back from a flat lookup. Cross-check that the resolved tenant is reachable from the principal in `ctx.authInfo` (e.g., the OAuth client has been granted access to that tenant). The framework wires `ctx.authInfo` automatically from `serve({ authenticate })`.
+
+### Explicit-mode adopters MUST handle `ref === undefined`
+
+The framework calls `accounts.resolve(undefined, { authInfo, toolName })` for every request whose wire schema lacks an `account` field — this is universal across `'explicit'`, `'implicit'`, and `'derived'` modes. The wire tools that hit this path:
+
+- `list_creative_formats` (universal — every buyer expects it)
+- `provide_performance_feedback`
+- `report_usage`
+- `tasks_get` when called without `account` (single-tenant case)
+- `get_account_financials` (account is implicit from auth)
+
+If your `'explicit'`-mode resolver only handles `ref?.account_id` and falls through on `undefined`, those tools get `ctx.account === undefined` and the framework returns `ACCOUNT_NOT_FOUND`. The fix is the `if (ctx?.authInfo?.clientId)` branch in the example above. Your tenants are reachable from the OAuth client / API-key principal — that's how multi-tenant SaaS auth works — so this is a code-path you already have at the auth layer; just thread it into `resolve()`.
 
 Throwing `AccountNotFoundError` only from `resolve()` — never from specialism methods — gets the spec's fixed `ACCOUNT_NOT_FOUND` envelope. Generic throws from inside `resolve()` map to `SERVICE_UNAVAILABLE`.
 

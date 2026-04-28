@@ -188,14 +188,17 @@ export function createDefaultJwksValidator(opts?: { fetchImpl?: typeof fetch }):
 function isMatchingKey(jwk: unknown, expected: JsonWebKey, expectedKid: string): boolean {
   if (!jwk || typeof jwk !== 'object') return false;
   const k = jwk as Record<string, unknown>;
-  // Match by kid first if both sides have one — kid is the canonical
-  // identifier in RFC 7517. Fall back to fingerprint-equivalent fields.
-  if (typeof k.kid === 'string' && k.kid === expectedKid) return true;
+  // Both `kid` AND public-key material must match. `kid` alone is NOT
+  // sufficient — RFC 7517 § 4.5 explicitly notes that `kid` is just a
+  // hint and clashes are possible. An attacker who can publish a JWKS
+  // with a colliding `kid` would otherwise bypass verification.
+  if (typeof k.kid === 'string' && k.kid !== expectedKid) return false;
   if (k.kty !== expected.kty) return false;
-  // Quick structural equality on the public-half fields (n/e for RSA,
-  // x/y for EC, x for OKP). A full JWK thumbprint comparison would be
+  // Structural equality on the public-half fields (n/e for RSA, x/y for
+  // EC, x for OKP). A full JWK thumbprint comparison (RFC 7638) would be
   // more robust but this catches the typical "wrong key" case without
-  // pulling crypto deps in.
+  // pulling crypto deps in. Asymmetric pubkeys are public — comparing
+  // the components here doesn't need constant-time semantics.
   if (expected.kty === 'RSA') {
     return k.n === expected.n && k.e === expected.e;
   }

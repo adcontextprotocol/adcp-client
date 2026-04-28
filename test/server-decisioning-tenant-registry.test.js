@@ -315,7 +315,11 @@ describe('TenantRegistry — register, resolve, health', () => {
 describe('TenantRegistry — default JWKS validator (fetch-based)', () => {
   const { createDefaultJwksValidator } = require('../dist/lib/server/decisioning/tenant-registry');
 
-  it('matches a signing key by kid against published JWKS', async () => {
+  it('matches by kid AND key material — kid alone is not sufficient', async () => {
+    // Security regression: previous version returned ok on kid match
+    // alone, allowing an attacker who controls a tenant's published
+    // JWKS to bypass verification by publishing a colliding kid with
+    // their own key material. Now: both kid and modulus must match.
     const fakeFetch = async () => ({
       ok: true,
       status: 200,
@@ -325,11 +329,20 @@ describe('TenantRegistry — default JWKS validator (fetch-based)', () => {
       },
     });
     const validator = createDefaultJwksValidator({ fetchImpl: fakeFetch });
-    const result = await validator.validate({
+
+    // Same kid, MISMATCHED modulus → reject.
+    const mismatched = await validator.validate({
       agentUrl: 'https://example.com',
       signingKey: { keyId: 'tenant-key-1', publicJwk: { kty: 'RSA', n: 'bbb', e: 'AQAB' }, privateJwk: {} },
     });
-    assert.strictEqual(result.ok, true);
+    assert.strictEqual(mismatched.ok, false, 'kid match with wrong modulus must reject');
+
+    // Same kid AND matching modulus → accept.
+    const matching = await validator.validate({
+      agentUrl: 'https://example.com',
+      signingKey: { keyId: 'tenant-key-1', publicJwk: { kty: 'RSA', n: 'aaa', e: 'AQAB' }, privateJwk: {} },
+    });
+    assert.strictEqual(matching.ok, true, 'kid + modulus match accepts');
   });
 
   it('matches by structural equality when kid is not present', async () => {
