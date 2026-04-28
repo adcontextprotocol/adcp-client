@@ -28,14 +28,14 @@ import {
   publishStatusChange,
   type DecisioningPlatform,
   type AccountStore,
-} from '../src/lib/server/decisioning';
+} from '@adcp/client/server/decisioning';
 import type {
   AudiencePlatform,
   Audience,
   AudienceStatus,
   SyncAudiencesRow,
-} from '../src/lib/server/decisioning/specialisms/audiences';
-import type { AccountReference } from '../src/lib/types/tools.generated';
+} from '@adcp/client/server/decisioning';
+import type { AccountReference } from '@adcp/client/types';
 
 // ---------------------------------------------------------------------------
 // Config + state

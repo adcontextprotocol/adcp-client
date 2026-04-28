@@ -34,7 +34,7 @@ import {
   type SalesPlatform,
   type AccountStore,
   type SyncCreativesRow,
-} from '../src/lib/server/decisioning';
+} from '@adcp/client/server/decisioning';
 import type {
   GetProductsRequest,
   GetProductsResponse,
@@ -46,7 +46,7 @@ import type {
   GetMediaBuyDeliveryResponse,
   CreativeAsset,
   AccountReference,
-} from '../src/lib/types/tools.generated';
+} from '@adcp/client/types';
 
 // ---------------------------------------------------------------------------
 // BroadcastTvSeller config + state

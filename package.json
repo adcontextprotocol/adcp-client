@@ -99,6 +99,9 @@
       "server": [
         "dist/lib/server/index.d.ts"
       ],
+      "server/decisioning": [
+        "dist/lib/server/decisioning/index.d.ts"
+      ],
       "signing": [
         "dist/lib/signing/index.d.ts"
       ],

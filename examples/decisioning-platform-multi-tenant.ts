@@ -13,7 +13,7 @@
  * @see `docs/proposals/decisioning-platform-v2-hitl-split.md`
  */
 
-import { createTenantRegistry, type TenantRegistry, type TenantSigningKey } from '../src/lib/server/decisioning';
+import { createTenantRegistry, type TenantRegistry, type TenantSigningKey } from '@adcp/client/server/decisioning';
 import { BroadcastTvSeller } from './decisioning-platform-broadcast-tv';
 import { ProgrammaticSeller } from './decisioning-platform-programmatic';
 

@@ -40,10 +40,26 @@ export type {
   GetProductsRequest,
   GetProductsResponse,
   CreateMediaBuyRequest,
+  CreateMediaBuySuccess,
   UpdateMediaBuyRequest,
+  UpdateMediaBuySuccess,
   GetMediaBuysResponse,
   GetMediaBuyDeliveryRequest,
   GetMediaBuyDeliveryResponse,
+  // Pricing models (discriminated union across pricing types)
+  PricingOption,
+  CPMPricingOption,
+  CPCPricingOption,
+  CPVPricingOption,
+  // Media-channel + status enums adopters need when implementing a platform
+  MediaChannel,
+  AudienceStatus,
+  MediaBuyStatus,
+  CreativeStatus,
+  // Publisher property selection (for product publisher_properties[])
+  PublisherPropertySelector,
+  // Reporting capability shape (per-product)
+  ReportingCapabilities,
   // Audiences
   SyncAudiencesRequest,
   SyncAudiencesResponse,

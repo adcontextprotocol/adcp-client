@@ -962,6 +962,20 @@ async function projectSync<TResult, TWire>(
         ...(err.details !== undefined && { details: err.details }),
       });
     }
+    // AccountNotFoundError is documented as throwable only from
+    // AccountStore.resolve(); but adopters new to the framework
+    // sometimes throw it from a specialism method body. Project to
+    // ACCOUNT_NOT_FOUND so the wire envelope is right either way —
+    // closes the silent-SERVICE_UNAVAILABLE foot-gun the security
+    // review flagged. Adopters are still encouraged to handle account
+    // not-found inside resolve() (canonical) — this is a guardrail.
+    if (err instanceof AccountNotFoundError) {
+      return adcpError('ACCOUNT_NOT_FOUND', {
+        message: 'Account not found',
+        field: 'account',
+        recovery: 'terminal',
+      });
+    }
     throw err;
   }
 }

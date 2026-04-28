@@ -68,6 +68,26 @@ export interface StatusChange<TPayload = unknown> {
    * `media_buy_status_changes` message body.
    */
   payload: TPayload;
+  /**
+   * Correlation id linking this change back to the buyer request that
+   * caused it. Useful for "show me everything that happened from this
+   * `create_media_buy` call" observability across HITL flows. Adopters
+   * pass through `ctx.task.id` (for `*Task`-driven changes) or any
+   * stable request identifier they generate at dispatch time.
+   *
+   * Optional — many status changes originate from cron / webhook /
+   * upstream-platform events that have no buyer-request correlation.
+   */
+  caused_by_request_id?: string;
+  /**
+   * Status the resource was transitioning FROM. Lets subscribers assert
+   * legal transitions (`from: 'matching' → to: 'active'` is fine;
+   * `from: 'failed' → to: 'matching'` is a state-machine bug). The
+   * framework doesn't validate transitions in v6.0 (no per-resource
+   * state machine yet); the field is captured and projected to the
+   * wire so downstream consumers can.
+   */
+  previous_status?: string;
 }
 
 export interface PublishStatusChangeOpts<TPayload = unknown> {
@@ -77,6 +97,15 @@ export interface PublishStatusChangeOpts<TPayload = unknown> {
   payload: TPayload;
   /** Override the timestamp (defaults to now). Useful for replay/backfill. */
   at?: string;
+  /**
+   * Correlation id linking this change to the buyer request that caused
+   * it. Inside `*Task` method bodies, pass `ctx.task.id` to thread the
+   * task lifecycle. Outside HITL flows, pass any stable request id you
+   * derive at dispatch time. Optional.
+   */
+  caused_by_request_id?: string;
+  /** Status the resource was transitioning FROM. Optional. */
+  previous_status?: string;
 }
 
 export type StatusChangeListener = (event: StatusChange) => void | Promise<void>;
@@ -109,6 +138,8 @@ export function createInMemoryStatusChangeBus(opts?: { recentLimit?: number }): 
         resource_uri: `adcp://${eventOpts.account_id}/${eventOpts.resource_type}/${eventOpts.resource_id}`,
         at: eventOpts.at ?? new Date().toISOString(),
         payload: eventOpts.payload,
+        ...(eventOpts.caused_by_request_id !== undefined && { caused_by_request_id: eventOpts.caused_by_request_id }),
+        ...(eventOpts.previous_status !== undefined && { previous_status: eventOpts.previous_status }),
       };
       recent.push(event as StatusChange);
       if (recent.length > recentLimit) recent.shift();
