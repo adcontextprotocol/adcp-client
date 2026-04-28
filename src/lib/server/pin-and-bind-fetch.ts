@@ -193,49 +193,43 @@ export function createPinAndBindFetch(options: PinAndBindFetchOptions = {}): typ
   const guardedLookup = (
     hostname: string,
     opts: { family?: number; hints?: number; all?: boolean; verbatim?: boolean } | undefined,
-    callback: (
-      err: NodeJS.ErrnoException | null,
-      addressOrAll?: string | LookupAddress[],
-      family?: number
-    ) => void
+    callback: (err: NodeJS.ErrnoException | null, addressOrAll?: string | LookupAddress[], family?: number) => void
   ): void => {
     const wantsAll = opts?.all === true;
-    lookupImpl(
-      hostname,
-      { ...(opts ?? {}), all: true },
-      (err, addresses) => {
-        if (err) {
-          callback(err);
-          return;
-        }
-        if (!Array.isArray(addresses) || addresses.length === 0) {
-          callback(makeSsrfError(`DNS resolution returned no addresses for ${hostname}`, 'dns_revalidation:no_addresses'));
-          return;
-        }
-
-        // The URL passed in here only matters for scheme + hostname checks,
-        // both of which were already validated synchronously by undici when
-        // the request started. We re-build a placeholder URL to feed the
-        // resolved-address rule, which is the load-bearing check for
-        // rebinding defense.
-        const url = new URL(`https://${bracketIfV6(hostname)}`);
-        const ips = addresses.map(a => a.address);
-        const result = enforceSsrfPolicyResolved(url, ips, policy);
-        if (!result.allowed) {
-          callback(makeSsrfError(result.message ?? 'SSRF policy denied resolved address', result.rule ?? 'ssrf'));
-          return;
-        }
-
-        if (wantsAll) {
-          callback(null, addresses);
-          return;
-        }
-        // Pin to the first resolved address. enforceSsrfPolicyResolved is
-        // all-or-none: if it allowed the resolution, every entry passed.
-        const first = addresses[0]!;
-        callback(null, first.address, first.family);
+    lookupImpl(hostname, { ...(opts ?? {}), all: true }, (err, addresses) => {
+      if (err) {
+        callback(err);
+        return;
       }
-    );
+      if (!Array.isArray(addresses) || addresses.length === 0) {
+        callback(
+          makeSsrfError(`DNS resolution returned no addresses for ${hostname}`, 'dns_revalidation:no_addresses')
+        );
+        return;
+      }
+
+      // The URL passed in here only matters for scheme + hostname checks,
+      // both of which were already validated synchronously by undici when
+      // the request started. We re-build a placeholder URL to feed the
+      // resolved-address rule, which is the load-bearing check for
+      // rebinding defense.
+      const url = new URL(`https://${bracketIfV6(hostname)}`);
+      const ips = addresses.map(a => a.address);
+      const result = enforceSsrfPolicyResolved(url, ips, policy);
+      if (!result.allowed) {
+        callback(makeSsrfError(result.message ?? 'SSRF policy denied resolved address', result.rule ?? 'ssrf'));
+        return;
+      }
+
+      if (wantsAll) {
+        callback(null, addresses);
+        return;
+      }
+      // Pin to the first resolved address. enforceSsrfPolicyResolved is
+      // all-or-none: if it allowed the resolution, every entry passed.
+      const first = addresses[0]!;
+      callback(null, first.address, first.family);
+    });
   };
 
   const dispatcher = new Agent({
@@ -251,10 +245,7 @@ export function createPinAndBindFetch(options: PinAndBindFetchOptions = {}): typ
     },
   });
 
-  const wrapped = async (
-    input: Parameters<typeof fetch>[0],
-    init?: Parameters<typeof fetch>[1]
-  ): Promise<Response> => {
+  const wrapped = async (input: Parameters<typeof fetch>[0], init?: Parameters<typeof fetch>[1]): Promise<Response> => {
     // Synchronous pre-check for the URL's literal scheme + (if it's an IP)
     // its CIDR membership. undici skips `connect.lookup` for IP-literal
     // hostnames, so the resolved-IP path below would never see them.
@@ -280,7 +271,12 @@ function resolveRequestUrl(input: Parameters<typeof fetch>[0]): URL | null {
   try {
     if (typeof input === 'string') return new URL(input);
     if (input instanceof URL) return input;
-    if (typeof input === 'object' && input !== null && 'url' in input && typeof (input as { url: unknown }).url === 'string') {
+    if (
+      typeof input === 'object' &&
+      input !== null &&
+      'url' in input &&
+      typeof (input as { url: unknown }).url === 'string'
+    ) {
       return new URL((input as { url: string }).url);
     }
   } catch {

@@ -202,10 +202,7 @@ describe('createPinAndBindFetch: policy override', () => {
     try {
       await fetch('http://localhost:9/path');
     } catch (err) {
-      assert.ok(
-        !ssrfErrorThrown(err),
-        `loopback-OK preset must not raise SSRF; got ${err?.code}: ${err?.message}`
-      );
+      assert.ok(!ssrfErrorThrown(err), `loopback-OK preset must not raise SSRF; got ${err?.code}: ${err?.message}`);
     }
   });
 
@@ -292,9 +289,6 @@ describe('createWebhookEmitter: pin-and-bind opt-in via fetch override', () => {
       operation_id: 'op.compat',
     });
     assert.strictEqual(result.delivered, false);
-    assert.ok(
-      !result.errors.some(e => /EADCP_SSRF_BLOCKED/.test(e)),
-      'default fetch must not raise SSRF block today'
-    );
+    assert.ok(!result.errors.some(e => /EADCP_SSRF_BLOCKED/.test(e)), 'default fetch must not raise SSRF block today');
   });
 });
