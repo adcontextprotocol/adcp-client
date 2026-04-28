@@ -1284,12 +1284,12 @@ export class TaskExecutor {
   async listTasks(agent: AgentConfig): Promise<TaskInfo[]> {
     try {
       return await this.listTasksForAgent(agent);
-    } catch (error) {
-      // Log only the error class name — `error.message` can carry agent
-      // identifiers / OAuth endpoint data that flowed through transport
-      // helpers, so CodeQL flags clear-text logging when it appears here.
-      // The class name is enough for triage; full detail goes to debug logs.
-      console.warn('Failed to list tasks:', error instanceof Error ? error.name : 'unknown error');
+    } catch {
+      // Static message only — CodeQL's taint analysis treats `error` and
+      // every property of it as sensitive once it originates from an
+      // operation that touched `agent.oauth_client_credentials`. Surfaces
+      // the failure occurred; full detail is available via DEBUG=adcp:*.
+      console.warn('Failed to list tasks (see DEBUG=adcp:* logs for detail)');
       return [];
     }
   }
@@ -1614,10 +1614,9 @@ export class TaskExecutor {
     if (agent) {
       try {
         return await this.listTasksForAgent(agent);
-      } catch (error) {
-        // See comment on listTasks — log class name, not message, to keep
-        // agent/OAuth identifiers out of console output.
-        console.warn('Failed to get remote task list:', error instanceof Error ? error.name : 'unknown error');
+      } catch {
+        // Static message — see comment on listTasks above.
+        console.warn('Failed to get remote task list (see DEBUG=adcp:* logs for detail)');
       }
     }
 
