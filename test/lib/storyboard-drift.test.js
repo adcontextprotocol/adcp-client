@@ -17,6 +17,14 @@ const { listAllComplianceStoryboards } = require('../../dist/lib/testing/storybo
 const { parsePath } = require('../../dist/lib/testing/storyboard/path.js');
 const { TOOL_RESPONSE_SCHEMAS } = require('../../dist/lib/utils/response-schemas.js');
 const { CONTEXT_EXTRACTORS } = require('../../dist/lib/testing/storyboard/context.js');
+// `envelope_field_present` (and `envelope_field_value{,_or_absent}`)
+// validations walk the v3 protocol envelope — `status`, `task_id`,
+// `message`, `replayed`, `governance_context`, `timestamp`, `context_id`,
+// `push_notification_config` — instead of per-tool response schemas.
+// `errors` and `adcp_version` are NOT envelope fields (errors lives inside
+// `payload` per the per-tool response schema; adcp_major_version is on the
+// request, not on either response surface). Added per adcp#3429.
+const { ProtocolEnvelopeSchema } = require('../../dist/lib/types/schemas.generated.js');
 
 // Runner-internal tasks with no agent-facing schema.
 const HARNESS_TASKS = new Set([
@@ -205,7 +213,14 @@ function collectFieldValidations(storyboards) {
         if (isErrorStep) continue;
         for (const v of step.validations) {
           if (
-            (v.check === 'field_present' || v.check === 'field_value' || v.check === 'field_value_or_absent') &&
+            (v.check === 'field_present' ||
+              v.check === 'field_absent' ||
+              v.check === 'envelope_field_present' ||
+              v.check === 'envelope_field_absent' ||
+              v.check === 'field_value' ||
+              v.check === 'envelope_field_value' ||
+              v.check === 'field_value_or_absent' ||
+              v.check === 'envelope_field_value_or_absent') &&
             v.path
           ) {
             if (ENVELOPE_PATHS.has(v.path)) continue; // protocol-level, not per-schema
@@ -309,6 +324,57 @@ describe('storyboard schema drift', () => {
             `Segments: ${JSON.stringify(segments)}`
         );
       });
+    }
+  });
+
+  describe('field_absent / envelope_field_absent are collected but skip reachability', () => {
+    // Absence checks have no schema target by design — a `field_absent` assertion
+    // validates that a path does NOT exist, so there is no schema field to walk.
+    // We still collect them in collectFieldValidations (above) so a future sweep
+    // can cross-reference storyboard intent, but we do not assert reachability.
+    const absentValidations = fieldValidations.filter(
+      v => v.check === 'field_absent' || v.check === 'envelope_field_absent'
+    );
+    it('absence-check validations are collected without reachability assertions', () => {
+      // Structural smoke-test: if any are present, they must have a path.
+      for (const entry of absentValidations) {
+        assert.ok(entry.path, `${entry.storyboard}/${entry.step}: field_absent entry missing path`);
+      }
+    });
+  });
+
+  describe('envelope-scoped validations resolve in the v3 envelope schema', () => {
+    // adcp#3429: storyboards assert envelope-level fields (`status`,
+    // `task_id`, `message`, `replayed`, `governance_context`, `timestamp`,
+    // `context_id`, `push_notification_config`) using the envelope-scoped
+    // checks so the drift detector knows to walk `protocol-envelope.json`
+    // rather than the per-tool response schema. `errors` and `adcp_version`
+    // are NOT envelope fields — keep them on the un-prefixed checks.
+    // `envelope_field_absent` is excluded here — absence checks have no schema
+    // target (see the `field_absent / envelope_field_absent` block above).
+    const envelopeValidations = fieldValidations.filter(
+      v =>
+        v.check === 'envelope_field_present' ||
+        v.check === 'envelope_field_value' ||
+        v.check === 'envelope_field_value_or_absent'
+    );
+
+    for (const entry of envelopeValidations) {
+      const key = `${entry.storyboard}/${entry.step}:${entry.path}`;
+      const skip = skipReason(key);
+      it(
+        `${entry.storyboard}/${entry.step}: ${entry.check} ${entry.path} exists in v3 protocol envelope`,
+        { skip },
+        () => {
+          const segments = parsePath(entry.path);
+          const reachable = isPathReachable(ProtocolEnvelopeSchema, segments);
+          assert.ok(
+            reachable,
+            `Path "${entry.path}" is not reachable in protocol-envelope.json. ` +
+              `Segments: ${JSON.stringify(segments)}`
+          );
+        }
+      );
     }
   });
 

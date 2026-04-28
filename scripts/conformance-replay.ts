@@ -214,7 +214,17 @@ interface StepResult {
 // Check types this v0 implements. Anything outside this set is logged as
 // 'unimplemented' and counted as a skip — silent fall-through would hide
 // gaps from storyboard authors who add a new check expecting it to gate.
-const IMPLEMENTED_CHECKS = new Set(['response_schema', 'field_present', 'field_value']);
+const IMPLEMENTED_CHECKS = new Set([
+  'response_schema',
+  'field_present',
+  'field_value',
+  // Envelope-scoped variants (adcp#3429). Runtime semantics are identical to
+  // the un-prefixed checks because the SDK's response unwrappers expose
+  // envelope fields at the structuredContent surface (`status`, `task_id`,
+  // `replayed`, etc.); the distinction is for static drift detection.
+  'envelope_field_present',
+  'envelope_field_value',
+]);
 
 // Check types that fundamentally need transport-layer state (HTTP status,
 // auth headers, error envelopes) that in-process dispatch doesn't surface.
@@ -308,16 +318,16 @@ async function runStep(
           .join('; ');
         result.failures.push(`response_schema: ${issues}`);
       }
-    } else if (check === 'field_present') {
+    } else if (check === 'field_present' || check === 'envelope_field_present') {
       if (getByPath(structured, v.path as string) === undefined) {
         allPassed = false;
-        result.failures.push(`field_present ${v.path}: missing`);
+        result.failures.push(`${check} ${v.path}: missing`);
       }
-    } else if (check === 'field_value') {
+    } else if (check === 'field_value' || check === 'envelope_field_value') {
       const actual = getByPath(structured, v.path as string);
       if (actual !== v.value) {
         allPassed = false;
-        result.failures.push(`field_value ${v.path}: got ${JSON.stringify(actual)}, want ${JSON.stringify(v.value)}`);
+        result.failures.push(`${check} ${v.path}: got ${JSON.stringify(actual)}, want ${JSON.stringify(v.value)}`);
       }
     } else if (TRANSPORT_ONLY_CHECKS.has(check)) {
       // Transport-only checks require an HTTP-mode harness; permanently

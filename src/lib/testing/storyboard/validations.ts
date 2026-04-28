@@ -112,6 +112,21 @@ function runValidation(validation: StoryboardValidation, ctx: ValidationContext)
       // field_present runs against either MCP task result data OR an HTTP probe body —
       // the storyboard's probe_protected_resource validates fields in the RFC 9728 JSON.
       return validateFieldPresent(validation, resolveTarget(ctx));
+    case 'field_absent':
+      return validateFieldAbsent(validation, resolveTarget(ctx));
+    case 'envelope_field_present':
+    case 'envelope_field_absent':
+    case 'envelope_field_value':
+    case 'envelope_field_value_or_absent':
+      // Envelope-scoped variants — runtime semantics identical to the
+      // un-prefixed checks (TaskResult exposes envelope fields like
+      // `status`, `task_id` at the surface level). The distinct check types
+      // exist primarily so static drift detection can walk the envelope
+      // schema instead of the per-tool response. See adcp#3429.
+      if (validation.check === 'envelope_field_present') return validateFieldPresent(validation, resolveTarget(ctx));
+      if (validation.check === 'envelope_field_absent') return validateFieldAbsent(validation, resolveTarget(ctx));
+      if (validation.check === 'envelope_field_value') return validateFieldValue(validation, resolveTarget(ctx));
+      return validateFieldValueOrAbsent(validation, resolveTarget(ctx));
     case 'field_value':
       return validateFieldValue(validation, resolveTarget(ctx));
     case 'field_value_or_absent':
@@ -496,13 +511,17 @@ export { LIST_WRAPPER_TOOLS } from './shape-drift-hints';
 // ────────────────────────────────────────────────────────────
 
 function validateFieldPresent(validation: StoryboardValidation, taskResult: TaskResult): ValidationResult {
+  // `check` is either `field_present` or `envelope_field_present` (adcp#3429);
+  // both share runtime semantics, but the result echoes the storyboard's
+  // choice verbatim so reporters can distinguish.
+  const checkName = validation.check;
   if (!validation.path) {
     return {
-      check: 'field_present',
+      check: checkName,
       passed: false,
       description: validation.description,
       path: validation.path,
-      error: 'No path specified for field_present validation',
+      error: `No path specified for ${checkName} validation`,
       json_pointer: null,
       expected: 'path must be set in storyboard validation entry',
       actual: null,
@@ -515,7 +534,7 @@ function validateFieldPresent(validation: StoryboardValidation, taskResult: Task
 
   if (present) {
     return {
-      check: 'field_present',
+      check: checkName,
       passed: true,
       description: validation.description,
       path: validation.path,
@@ -524,7 +543,7 @@ function validateFieldPresent(validation: StoryboardValidation, taskResult: Task
   }
 
   return {
-    check: 'field_present',
+    check: checkName,
     passed: false,
     description: validation.description,
     path: validation.path,
@@ -532,6 +551,57 @@ function validateFieldPresent(validation: StoryboardValidation, taskResult: Task
     json_pointer: pointer,
     expected: validation.path,
     actual: value ?? null,
+  };
+}
+
+// ────────────────────────────────────────────────────────────
+// field_absent / envelope_field_absent: check a path does NOT exist
+//
+// Pass when the field is absent (undefined or null). Fail when the field
+// is present with any value. The `envelope_field_absent` variant carries
+// the same runtime semantics but signals to the drift detector that the
+// path lives on the v3 envelope schema rather than the per-tool response.
+// Added per adcp#3429 alongside the `envelope_field_present` family.
+// ────────────────────────────────────────────────────────────
+
+function validateFieldAbsent(validation: StoryboardValidation, taskResult: TaskResult): ValidationResult {
+  const checkName = validation.check;
+  if (!validation.path) {
+    return {
+      check: checkName,
+      passed: false,
+      description: validation.description,
+      path: validation.path,
+      error: `No path specified for ${checkName} validation`,
+      json_pointer: null,
+      expected: 'path must be set in storyboard validation entry',
+      actual: null,
+    };
+  }
+
+  const value = resolvePath(taskResult.data, validation.path);
+  const absent = value === undefined || value === null;
+  const pointer = toJsonPointer(validation.path);
+
+  if (absent) {
+    return {
+      check: checkName,
+      passed: true,
+      description: validation.description,
+      path: validation.path,
+      json_pointer: pointer,
+    };
+  }
+
+  return {
+    check: checkName,
+    passed: false,
+    description: validation.description,
+    path: validation.path,
+    error: `Field found at path: ${validation.path} (expected absent)`,
+    json_pointer: pointer,
+    expected: null,
+    actual: value,
   };
 }
 
@@ -547,13 +617,16 @@ function valuesMatch(actual: unknown, expected: unknown): boolean {
 }
 
 function validateFieldValue(validation: StoryboardValidation, taskResult: TaskResult): ValidationResult {
+  // `check` is either `field_value` or `envelope_field_value` (adcp#3429);
+  // result echoes the storyboard's choice so reporters can distinguish.
+  const checkName = validation.check;
   if (!validation.path) {
     return {
-      check: 'field_value',
+      check: checkName,
       passed: false,
       description: validation.description,
       path: validation.path,
-      error: 'No path specified for field_value validation',
+      error: `No path specified for ${checkName} validation`,
       json_pointer: null,
       expected: 'path must be set in storyboard validation entry',
       actual: null,
@@ -568,7 +641,7 @@ function validateFieldValue(validation: StoryboardValidation, taskResult: TaskRe
     const passed = validation.allowed_values.some(v => valuesMatch(actual, v));
     if (passed) {
       return {
-        check: 'field_value',
+        check: checkName,
         passed: true,
         description: validation.description,
         path: validation.path,
@@ -576,7 +649,7 @@ function validateFieldValue(validation: StoryboardValidation, taskResult: TaskRe
       };
     }
     return {
-      check: 'field_value',
+      check: checkName,
       passed: false,
       description: validation.description,
       path: validation.path,
@@ -592,7 +665,7 @@ function validateFieldValue(validation: StoryboardValidation, taskResult: TaskRe
 
   if (passed) {
     return {
-      check: 'field_value',
+      check: checkName,
       passed: true,
       description: validation.description,
       path: validation.path,
@@ -600,7 +673,7 @@ function validateFieldValue(validation: StoryboardValidation, taskResult: TaskRe
     };
   }
   return {
-    check: 'field_value',
+    check: checkName,
     passed: false,
     description: validation.description,
     path: validation.path,
@@ -621,13 +694,16 @@ function validateFieldValue(validation: StoryboardValidation, taskResult: TaskRe
 // ────────────────────────────────────────────────────────────
 
 function validateFieldValueOrAbsent(validation: StoryboardValidation, taskResult: TaskResult): ValidationResult {
+  // `check` is either `field_value_or_absent` or `envelope_field_value_or_absent`
+  // (adcp#3429); result echoes the storyboard's choice verbatim.
+  const checkName = validation.check;
   if (!validation.path) {
     return {
-      check: 'field_value_or_absent',
+      check: checkName,
       passed: false,
       description: validation.description,
       path: validation.path,
-      error: 'No path specified for field_value_or_absent validation',
+      error: `No path specified for ${checkName} validation`,
       json_pointer: null,
       expected: 'path must be set in storyboard validation entry',
       actual: null,
@@ -640,7 +716,7 @@ function validateFieldValueOrAbsent(validation: StoryboardValidation, taskResult
   // Absent → pass. The check only fires when the field is present.
   if (actual === undefined) {
     return {
-      check: 'field_value_or_absent',
+      check: checkName,
       passed: true,
       description: validation.description,
       path: validation.path,
@@ -653,7 +729,7 @@ function validateFieldValueOrAbsent(validation: StoryboardValidation, taskResult
     const passed = validation.allowed_values.some(v => valuesMatch(actual, v));
     if (passed) {
       return {
-        check: 'field_value_or_absent',
+        check: checkName,
         passed: true,
         description: validation.description,
         path: validation.path,
@@ -661,7 +737,7 @@ function validateFieldValueOrAbsent(validation: StoryboardValidation, taskResult
       };
     }
     return {
-      check: 'field_value_or_absent',
+      check: checkName,
       passed: false,
       description: validation.description,
       path: validation.path,
@@ -675,7 +751,7 @@ function validateFieldValueOrAbsent(validation: StoryboardValidation, taskResult
   const passed = valuesMatch(actual, validation.value);
   if (passed) {
     return {
-      check: 'field_value_or_absent',
+      check: checkName,
       passed: true,
       description: validation.description,
       path: validation.path,
@@ -683,7 +759,7 @@ function validateFieldValueOrAbsent(validation: StoryboardValidation, taskResult
     };
   }
   return {
-    check: 'field_value_or_absent',
+    check: checkName,
     passed: false,
     description: validation.description,
     path: validation.path,
