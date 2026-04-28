@@ -1111,14 +1111,10 @@ RUN OPTIONS (full assessment):
   --file PATH         Run an ad-hoc storyboard YAML (spec evolution)
   --timeout SECONDS   Timeout in seconds (default: 120)
   --brief TEXT        Custom brief for product discovery
-  --no-sandbox        Force account.sandbox=false on every request, signaling
-                      "route to the production code path." The default leaves
-                      sandbox unset (spec-equivalent to false), but agents that
-                      branch on field PRESENCE behave differently from agents
-                      that branch on VALUE. Use this to grade against the real
-                      handler when an agent has both a sandbox stub and a
-                      production path. The comply_test_controller scenario
-                      always forces sandbox=true regardless — spec contract.
+  --no-sandbox        Force account.sandbox=false on every request. The
+                      default leaves sandbox unset (spec-equivalent to false),
+                      but agents that branch on field PRESENCE behave
+                      differently from agents that branch on VALUE.
 
 WEBHOOK OPTIONS:
   --webhook-receiver [MODE]       Host an ephemeral receiver so expect_webhook*
@@ -1537,7 +1533,7 @@ async function handleStoryboardRun(args) {
     console.error(`Agent: ${agentUrl} (${protocol})`);
     console.error(`Steps: ${stepCount}`);
     if (opts.noSandbox) {
-      console.error(`Run mode: production accounts (--no-sandbox: account.sandbox=false)`);
+      console.error(`Run mode: production (account.sandbox=false on every request)`);
     }
     console.error('');
   }
@@ -2479,7 +2475,7 @@ async function handleMultiInstanceStoryboardRun(args, opts, urls) {
       `  Total steps: ${effectiveSteps}${strategy === 'multi-pass' ? ` (${totalSteps} × ${urls.length} passes)` : ''}`
     );
     if (opts.noSandbox) {
-      console.error(`  Run mode: production accounts (--no-sandbox: account.sandbox=false)`);
+      console.error(`  Run mode: production (account.sandbox=false on every request)`);
     }
     console.error('');
     // N=2 is the deployment shape most operators have. Offset-shift preserves

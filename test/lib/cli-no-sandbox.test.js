@@ -30,10 +30,12 @@ test('--no-sandbox surfaces "Run mode: production" in multi-instance dry-run hea
     'capability_discovery',
   ]);
   assert.strictEqual(result.status, 0, `expected exit 0, got ${result.status}. stderr: ${result.stderr}`);
-  assert.match(result.stderr, /Run mode: production accounts \(--no-sandbox: account\.sandbox=false\)/);
+  assert.match(result.stderr, /Run mode: production \(account\.sandbox=false on every request\)/);
 });
 
 test('without --no-sandbox the production-mode banner is absent (default sandbox-undefined behavior)', () => {
+  // Sanity: the banner is gated on the flag, not on something else
+  // accidentally enabled by other CLI defaults.
   const result = runCli([
     'storyboard',
     'run',
@@ -71,5 +73,23 @@ test('storyboard run --help mentions --no-sandbox', () => {
   assert.strictEqual(result.status, 0, `expected exit 0, got ${result.status}. stderr: ${result.stderr}`);
   const help = `${result.stdout}\n${result.stderr}`;
   assert.match(help, /--no-sandbox/, 'help text should advertise --no-sandbox');
-  assert.match(help, /production code path|account\.sandbox=false/, 'help should explain what the flag does');
+  assert.match(help, /account\.sandbox=false/, 'help should name the wire field affected');
+});
+
+test('resolveAccount honors options.sandbox=false (final wire-shape contract)', async () => {
+  // The CLI flag plumbing in bin/adcp.js threads `--no-sandbox` to
+  // `options.sandbox = false` for all four runner paths
+  // (handleStoryboardRun, handleLocalAgentStoryboardRun,
+  // handleMultiInstanceStoryboardRun, runFullAssessment). The load-bearing
+  // hop after that is `resolveAccount` in src/lib/testing/client.ts —
+  // every storyboard request enricher passes `options` through it. This
+  // test pins the contract so a future refactor that drops the field
+  // (e.g. coercing `false` to `undefined` to "minimize the wire") fails
+  // here loudly.
+  const { resolveAccount } = require('../../dist/lib/testing/client.js');
+  const account = resolveAccount({ sandbox: false });
+  assert.strictEqual(account.sandbox, false, 'sandbox must be explicitly false on the wire');
+
+  const defaultAccount = resolveAccount({});
+  assert.strictEqual(defaultAccount.sandbox, undefined, 'default behavior leaves sandbox unset');
 });
