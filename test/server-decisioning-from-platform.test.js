@@ -346,7 +346,7 @@ describe('CreativeTemplatePlatform + AudiencePlatform wiring', () => {
             match_rate: 0,
           }));
         },
-        getAudienceStatus: async () => 'matching',
+        pollAudienceStatuses: async () => new Map(),
       },
     };
     const server = createAdcpServerFromPlatform(platform, {

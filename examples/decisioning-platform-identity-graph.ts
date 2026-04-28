@@ -65,7 +65,7 @@ interface IdentityGraphMeta {
  * (`'processing' | 'ready' | 'too_small'`). The internal stages flow
  * through `publishStatusChange.payload` (freeform JSON) so buyers
  * subscribed to the bus see `matched_count`, `match_rate`, and the
- * stage transitions. The wire-shaped `getAudienceStatus` collapses
+ * stage transitions. The wire-shaped `pollAudienceStatuses` collapses
  * back to the spec enum.
  */
 type IdentityGraphStage = 'matching' | 'matched' | 'activating' | 'active' | 'failed';
@@ -131,7 +131,7 @@ export class IdentityGraphProvider implements DecisioningPlatform<IdentityGraphC
      * publishStatusChange events as each audience progresses through the
      * richer internal stages (`matching` → `matched` → `activating` →
      * `active`). Buyers subscribed to the status-change bus see the full
-     * lifecycle; buyers polling `getAudienceStatus` see the wire-flat
+     * lifecycle; buyers polling `pollAudienceStatuses` see the wire-flat
      * `processing | ready | too_small`.
      */
     syncAudiences: async (audiences: Audience[]): Promise<SyncAudiencesRow[]> => {
@@ -212,16 +212,13 @@ export class IdentityGraphProvider implements DecisioningPlatform<IdentityGraphC
       return results;
     },
 
-    getAudienceStatus: async (audienceId: string): Promise<AudienceStatus> => {
-      const state = this.audienceState.get(audienceId);
-      if (!state) {
-        throw new AdcpError('REFERENCE_NOT_FOUND', {
-          recovery: 'terminal',
-          message: `Audience ${audienceId} not found`,
-          field: 'audience_id',
-        });
+    pollAudienceStatuses: async (audienceIds): Promise<Map<string, AudienceStatus>> => {
+      const out = new Map<string, AudienceStatus>();
+      for (const audienceId of audienceIds) {
+        const state = this.audienceState.get(audienceId);
+        if (state) out.set(audienceId, toWireStatus(state.stage));
       }
-      return toWireStatus(state.stage);
+      return out;
     },
   };
 }

@@ -120,16 +120,13 @@ function makeIdentityGraph({
         return results;
       },
 
-      getAudienceStatus: async audienceId => {
-        const s = audienceState.get(audienceId);
-        if (!s) {
-          throw new AdcpError('REFERENCE_NOT_FOUND', {
-            recovery: 'terminal',
-            message: `Audience ${audienceId} not found`,
-            field: 'audience_id',
-          });
+      pollAudienceStatuses: async audienceIds => {
+        const out = new Map();
+        for (const audienceId of audienceIds) {
+          const s = audienceState.get(audienceId);
+          if (s) out.set(audienceId, s.status);
         }
-        return s.status;
+        return out;
       },
     },
   };

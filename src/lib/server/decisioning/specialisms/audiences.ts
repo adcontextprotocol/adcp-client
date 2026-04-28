@@ -57,9 +57,24 @@ export interface AudiencePlatform<TMeta = Record<string, unknown>> {
   syncAudiences(audiences: Audience[], ctx: Ctx<TMeta>): Promise<SyncAudiencesRow[]>;
 
   /**
-   * Read current audience status. Sync — this is a state-read, not a
-   * mutating operation. Useful for buyer-side polling outside the framework's
-   * task envelope (e.g., querying long-lived audiences).
+   * Batch-poll current status for one or more audiences. Sync — this is a
+   * state-read, not a mutating operation. Useful for buyer-side polling
+   * outside the framework's task envelope (e.g., querying long-lived
+   * audiences) and for adapter code that needs to check N audiences at
+   * once.
+   *
+   * Returns a `Map<audience_id, AudienceStatus>`. Audiences not found are
+   * omitted from the map (callers handle missing keys); throw
+   * `AdcpError('REFERENCE_NOT_FOUND')` only when the entire batch is
+   * unresolvable for the tenant.
+   *
+   * Single-audience polling is `pollAudienceStatuses([id], ctx).then(m =>
+   * m.get(id))`. The batch shape composes with upstream identity-graph
+   * APIs that natively return per-audience-id arrays — adopters do NOT
+   * need to wrap a single-id lookup over an N-call loop.
    */
-  getAudienceStatus(audienceId: string, ctx: Ctx<TMeta>): Promise<AudienceStatus>;
+  pollAudienceStatuses(
+    audienceIds: readonly string[],
+    ctx: Ctx<TMeta>
+  ): Promise<Map<string, AudienceStatus>>;
 }

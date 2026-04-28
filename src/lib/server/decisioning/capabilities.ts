@@ -49,6 +49,26 @@ export interface DecisioningCapabilities<TConfig = unknown> {
   reporting?: ReportingCapabilities;
 
   /**
+   * Compliance-testing capabilities. The presence of this block declares
+   * the agent supports deterministic state-machine testing via the
+   * `comply_test_controller` wire tool. Omit entirely if the agent
+   * doesn't support compliance testing.
+   *
+   * When this block is present, `createAdcpServerFromPlatform` REQUIRES
+   * `opts.complyTest` (the `ComplyControllerConfig` adapter set) to be
+   * supplied — claiming the capability without implementing the
+   * controller is a `PlatformConfigError` at construction.
+   *
+   * Inversely, supplying `opts.complyTest` without declaring this
+   * capability is also caught — the framework derives `scenarios` from
+   * the declared force/simulate/seed adapters and emits the discovery
+   * field on `get_adcp_capabilities` automatically. Adopters who want
+   * to explicitly declare a narrower or wider scenarios list can supply
+   * this block; otherwise the auto-derivation wins.
+   */
+  compliance_testing?: ComplianceTestingCapabilities;
+
+  /**
    * Billing parties this platform supports. `'operator'` = retail-media model
    * (Criteo, Amazon — operator pays the publisher and bills the brand).
    * `'agent'` = pass-through model (buyer's agent settles directly with the
@@ -170,5 +190,39 @@ export interface ReportingCapabilities {
   supports_webhooks: boolean;
   availableDimensions?: ReadonlyArray<
     'geo' | 'device_type' | 'device_platform' | 'audience' | 'placement' | 'creative' | 'keyword' | 'catalog_item'
+  >;
+}
+
+/**
+ * Compliance-testing capabilities — projected onto the wire-side
+ * `compliance_testing` block of `get_adcp_capabilities` so buyers and
+ * conformance harnesses can discover which `comply_test_controller`
+ * scenarios the agent supports.
+ *
+ * Wire spec: `core/get-adcp-capabilities-response.json#compliance_testing`.
+ *
+ * The `scenarios` array MUST be non-empty when this block is declared
+ * (per the spec). `'list_scenarios'` is implicit — adopters don't need
+ * to enumerate it.
+ */
+export interface ComplianceTestingCapabilities {
+  /**
+   * Scenarios this agent advertises support for. Wire enum is the
+   * `comply_test_controller` request `scenario` field minus
+   * `'list_scenarios'`. Framework defaults this from the adopter-
+   * supplied `complyTest` adapter set when omitted.
+   */
+  scenarios?: ReadonlyArray<
+    | 'force_creative_status'
+    | 'force_account_status'
+    | 'force_media_buy_status'
+    | 'force_session_status'
+    | 'simulate_delivery'
+    | 'simulate_budget_spend'
+    | 'seed_product'
+    | 'seed_pricing_option'
+    | 'seed_creative'
+    | 'seed_plan'
+    | 'seed_media_buy'
   >;
 }

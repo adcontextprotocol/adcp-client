@@ -497,6 +497,78 @@ app.use((req, res, next) => {
 
 **Shared infrastructure across tenants.** Idempotency stores, task registries, and status-change buses can be shared (one Postgres for all tenants). The framework's account scoping prevents cross-tenant reads. When sharing a task registry, prefix account ids per-tenant (`tenantA:acme`) to prevent collisions if two tenants both use the literal account id `acme`.
 
+## Compliance testing (`comply_test_controller`)
+
+Conformance harnesses (the AdCP storyboard suite, in particular) drive seller-side state-machine tests via the wire-spec `comply_test_controller` tool. The framework registers it for you when you supply `complyTest` adapters on `createAdcpServerFromPlatform`.
+
+```ts
+import { createAdcpServerFromPlatform } from '@adcp/client/server/decisioning';
+
+const server = createAdcpServerFromPlatform(myPlatform, {
+  name: 'my-seller', version: '1.0.0',
+  complyTest: {
+    // Per-request gate. Return true to allow; anything else (including
+    // throws) denies with FORBIDDEN. Production agents typically gate
+    // registration itself on `process.env.ADCP_SANDBOX === '1'` rather
+    // than relying on this — the helper logs a loud warning if registered
+    // ungated AND without an env flag.
+    sandboxGate: input => input.auth?.sandbox === true,
+
+    // Seed adapters — pre-populate fixtures the storyboard references by
+    // stable ID. Re-seeding the same id+fixture is idempotent; divergent
+    // fixture for the same id rejects with INVALID_PARAMS.
+    seed: {
+      product: async (params) => productRepo.upsert(params.product_id, params.fixture),
+      creative: async (params) => creativeRepo.upsert(params.creative_id, params.fixture),
+      // pricing_option, plan, media_buy similarly
+    },
+
+    // Force adapters — state transitions. Throw
+    // TestControllerError('INVALID_TRANSITION', ...) when the state
+    // machine disallows the transition (production state machine should
+    // be the source of truth; the controller doesn't enforce its own).
+    force: {
+      creative_status: async (params) =>
+        creativeRepo.transition(params.creative_id, params.status, params.rejection_reason),
+      media_buy_status: async (params) =>
+        buyRepo.transition(params.media_buy_id, params.status, params.rejection_reason),
+      // account_status, session_status similarly
+    },
+
+    // Simulate adapters — synthetic delivery / budget data, no real
+    // upstream side effects. Storyboard validates the shape downstream
+    // tools return when fed the simulated state.
+    simulate: {
+      delivery: async (params) => deliverySim.run(params),
+      budget_spend: async (params) => budgetSim.spendTo(params.spend_percentage, params),
+    },
+  },
+});
+```
+
+**Capability declaration is required.** Set `capabilities.compliance_testing = {}` on your platform — the framework projects the discovery block to `get_adcp_capabilities` so harnesses know which scenarios you support. The framework auto-derives `scenarios` from which adapters you supplied; explicit `compliance_testing.scenarios = [...]` is optional (use it to advertise a narrower or wider list than auto-derivation).
+
+```ts
+class MyPlatform implements DecisioningPlatform {
+  capabilities = {
+    specialisms: ['sales-non-guaranteed'] as const,
+    // ...
+    compliance_testing: {},  // empty block declares support; framework derives scenarios
+  };
+}
+```
+
+The framework throws `PlatformConfigError` at construction if:
+- `capabilities.compliance_testing` is declared but `complyTest` is omitted (capability without implementation), OR
+- `complyTest` is supplied but `capabilities.compliance_testing` is undeclared (implementation without discovery field).
+
+**Sandbox-only.** The spec says `comply_test_controller` MUST NOT be exposed in production. Three guard layers:
+1. **Gate registration**: only call `createAdcpServerFromPlatform({ ..., complyTest })` when `process.env.ADCP_SANDBOX === '1'` or your equivalent sandbox flag is set. Production builds never register the tool at all.
+2. **Per-request gate**: `complyTest.sandboxGate(input)` runs on every request; return `false` to deny with `FORBIDDEN`.
+3. **Transport-layer isolation**: production deployments often expose the sandbox endpoint on a separate URL with separate auth.
+
+The helper warns once per construction if it's registered without a `sandboxGate` AND without `ADCP_SANDBOX=1` / `ADCP_COMPLY_CONTROLLER_UNGATED=1` to silence the warning in setups where transport isolation handles it.
+
 ## Custom webhook emitter
 
 Default behavior: when the host wires `webhooks` on `serve()`, the framework binds the per-request `ctx.emitWebhook` to a signed RFC 9421 path. You don't need a custom emitter unless you want a different retry policy, a different signing key for task webhooks vs. status-change webhooks, or a fake for tests.

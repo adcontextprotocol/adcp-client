@@ -95,6 +95,7 @@ const DEFAULT_FRAMEWORK_LOGGER: AdcpLogger = {
   error: console.error.bind(console),
 };
 import { createInMemoryStatusChangeBus, type StatusChangeBus, type PublishStatusChangeOpts } from '../status-changes';
+import { createComplyController, type ComplyControllerConfig } from '../../../testing/comply-controller';
 
 /**
  * Lifecycle observability hooks the v6 runtime fires at well-known points.
@@ -287,6 +288,36 @@ export interface CreateAdcpServerFromPlatformOptions extends Omit<
     unsigned?: boolean;
   };
 
+  /**
+   * `comply_test_controller` adapter set. When supplied, the framework
+   * registers the wire tool automatically by composing `createComplyController`
+   * (`@adcp/client/testing`) with the adopter's adapters and calling
+   * `controller.register(server)` after platform handlers wire up.
+   *
+   * Adopter declares the scenarios they support — `seed: { product, … }`,
+   * `force: { creative_status, … }`, `simulate: { delivery, … }`. The
+   * framework auto-derives `capabilities.compliance_testing.scenarios`
+   * from which adapters are present, projecting the discovery field to
+   * `get_adcp_capabilities` so conformance harnesses see what's
+   * supported.
+   *
+   * **Sandbox gating.** `complyTest.sandboxGate(input)` is the per-request
+   * gate; tools/list visibility is controlled by whether you supply
+   * `complyTest` at all. Production agents typically gate registration
+   * itself on `process.env.ADCP_SANDBOX === '1'` or wrap construction in
+   * an environment check; the helper logs a loud warning if registered
+   * without a gate AND without an env-flag escape (matches the standalone
+   * `createComplyController` warning behavior).
+   *
+   * **Capability-vs-adapter consistency.** If
+   * `capabilities.compliance_testing` is declared but `complyTest` is
+   * omitted, construction throws `PlatformConfigError` — the framework
+   * refuses to project a discovery block the runtime can't honor.
+   *
+   * @public
+   */
+  complyTest?: ComplyControllerConfig;
+
   // ---------------------------------------------------------------------
   // Custom-handler escape hatch (incremental migration seam)
   // ---------------------------------------------------------------------
@@ -386,6 +417,40 @@ export function createAdcpServerFromPlatform<P extends DecisioningPlatform<any, 
   opts: CreateAdcpServerFromPlatformOptions
 ): DecisioningAdcpServer {
   validatePlatform(platform);
+
+  // Compliance-testing capability/adapter consistency.
+  //
+  // Two failure modes the framework refuses to ship:
+  //   1. Capability declared, no adapter — discovery field projects to
+  //      `get_adcp_capabilities` but the wire tool has no implementation
+  //      behind it. Conformance harnesses would dispatch and crash.
+  //   2. Adapter wired, capability not declared — discovery field is
+  //      missing from `get_adcp_capabilities` so buyers / harnesses can't
+  //      tell the agent supports compliance testing.
+  //
+  // Both throw at construction with `PlatformConfigError`. Adopters who
+  // want one without the other are doing it wrong; the right escape hatch
+  // is to set `compliance_testing.scenarios = []` (a noop block, but the
+  // spec disallows empty `scenarios` so this should never come up in
+  // practice — included only to make the constraint explicit).
+  const capHasComplianceTesting = platform.capabilities.compliance_testing != null;
+  const optsHasComplyTest = opts.complyTest != null;
+  if (capHasComplianceTesting && !optsHasComplyTest) {
+    throw new PlatformConfigError(
+      `capabilities.compliance_testing is declared but opts.complyTest is missing. ` +
+        `Either supply complyTest (the ComplyControllerConfig adapter set) or remove ` +
+        `the compliance_testing capability block — the framework refuses to advertise ` +
+        `comply_test_controller without an implementation.`
+    );
+  }
+  if (optsHasComplyTest && !capHasComplianceTesting) {
+    throw new PlatformConfigError(
+      `opts.complyTest is supplied but capabilities.compliance_testing is not declared. ` +
+        `Add 'compliance_testing: {}' to your platform.capabilities — the framework needs ` +
+        `the discovery block to project comply_test_controller scenarios on get_adcp_capabilities. ` +
+        `Scenarios auto-derive from your supplied adapters; explicit 'scenarios: [...]' is optional.`
+    );
+  }
 
   // Sec-M2: warn when `signed-requests` is claimed but a custom
   // taskWebhookEmitter is wired without acknowledging signing posture.
@@ -540,6 +605,17 @@ export function createAdcpServerFromPlatform<P extends DecisioningPlatform<any, 
   };
 
   const server = createAdcpServer(config);
+
+  // Wire `comply_test_controller` if the adopter supplied adapters.
+  // `createComplyController` builds the tool definition + handler + raw
+  // dispatch; `register(server)` calls server.registerTool. Sandbox
+  // gating is the adopter's job (per-request via complyTest.sandboxGate
+  // or environment-level by guarding the createAdcpServerFromPlatform
+  // call site itself).
+  if (opts.complyTest != null) {
+    const controller = createComplyController(opts.complyTest);
+    controller.register(server);
+  }
 
   return Object.assign(server, {
     getTaskState: async <TResult = unknown>(
