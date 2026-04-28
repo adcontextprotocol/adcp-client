@@ -264,6 +264,8 @@ describe('storyboard schema drift', () => {
     // universal/v3-envelope-integrity.yaml) asserts the canonical v3
     // envelope contract — the schema constraint lives on the envelope's
     // `not: { anyOf: [...] }`, which the runner enforces at wire time.
+    // Filed upstream as adcp#3429 (storyboard authoring: response_schema_ref
+    // vs envelope-level field assertions).
     'v3_envelope_integrity/no_legacy_status_fields:status',
   ]);
 
