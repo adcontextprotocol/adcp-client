@@ -1,6 +1,6 @@
 {
   "name": "@adcp/client",
-  "version": "5.22.0",
+  "version": "5.23.0",
   "description": "Renamed to @adcp/sdk. Compatibility shim that re-exports @adcp/sdk under the legacy package name.",
   "main": "index.js",
   "types": "index.d.ts",
@@ -105,7 +105,7 @@
     "LICENSE"
   ],
   "dependencies": {
-    "@adcp/sdk": "^5.22.0"
+    "@adcp/sdk": "^5.23.0"
   },
   "keywords": [
     "adcp",
