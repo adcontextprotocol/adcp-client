@@ -405,12 +405,20 @@ export function createAdcpServerFromPlatform<P extends DecisioningPlatform<any, 
   // emitter that doesn't declare `unsigned: true` and doesn't delegate
   // to the framework's signed pipeline ships unsigned webhooks to buyers
   // who expect signatures.
+  //
+  // Gate via DEV_ALLOWLIST inversion (matches feedback_node_env_allowlist):
+  // warn when NODE_ENV is NOT in {test, development} AND no explicit ack
+  // env. Catches NODE_ENV unset, 'staging', 'prod', 'live' — common
+  // production deployments that the previous `=== 'production'` check
+  // failed open on.
   if (opts.taskWebhookEmitter && !opts.taskWebhookEmitter.unsigned) {
     const claimsSigned = platform.capabilities?.specialisms?.includes(
       'signed-requests' as never
     );
-    const isProd = process.env.NODE_ENV === 'production';
-    if (claimsSigned && isProd) {
+    const env = process.env.NODE_ENV;
+    const isDevOrTest = env === 'test' || env === 'development';
+    const ackUnsignedTestEmitter = process.env.ADCP_DECISIONING_ALLOW_UNSIGNED_TEST_EMITTER === '1';
+    if (claimsSigned && !isDevOrTest && !ackUnsignedTestEmitter) {
       // eslint-disable-next-line no-console
       console.warn(
         '[adcp/decisioning] taskWebhookEmitter wired without unsigned:true while ' +
@@ -418,7 +426,8 @@ export function createAdcpServerFromPlatform<P extends DecisioningPlatform<any, 
           'Buyers expecting RFC 9421 signatures will receive unsigned webhooks ' +
           'unless your custom emitter delegates to the framework signing path. ' +
           'If this is intentional (your emitter signs internally), set ' +
-          'unsigned: true to silence this warn.'
+          'unsigned: true on the emitter. For dev/test fakes, set ' +
+          'ADCP_DECISIONING_ALLOW_UNSIGNED_TEST_EMITTER=1 or NODE_ENV=test.'
       );
     }
   }
@@ -605,9 +614,13 @@ function buildTasksGetTool<P extends DecisioningPlatform<any, any>>(
   };
   return {
     description:
-      'Poll the lifecycle of a HITL task (create_media_buy / sync_creatives) by task_id. ' +
-      'Returns the spec-flat lifecycle shape (`tasks-get-response.json`). ' +
-      'Spec-aligned alternative to the MCP-native `tasks/get` method (native integration lands in v6.1).',
+      'Call this when you receive `{ status: "submitted", task_id }` from create_media_buy ' +
+      'or sync_creatives — pass the same `task_id` plus your `account` to retrieve the ' +
+      'terminal lifecycle state. Returns the spec-flat tasks-get-response shape ' +
+      '(`status`, `result` on completed, `error: { code, message }` on failed). ' +
+      'Snake-case substitute for the spec\'s `tasks/get` method (MCP tool names disallow ' +
+      '`/`); native MCP method dispatch lands in v6.1. Webhook delivery is the push-based ' +
+      'alternative when the buyer set `push_notification_config` on the original request.',
     title: 'Get Task State',
     inputSchema: inputShape,
     annotations: { readOnlyHint: true },
@@ -680,12 +693,14 @@ function buildTasksGetTool<P extends DecisioningPlatform<any, any>>(
       // Spec shape: `tasks-get-response.json` requires task_id, task_type,
       // status, created_at, updated_at, protocol. Optional: completed_at
       // (terminal states), error (failed tasks — top-level, NOT inside
-      // result), result (success-arm body for completed tasks).
+      // result), result (success-arm body for completed tasks),
+      // has_webhook (whether buyer wired push_notification_config).
       const payload: Record<string, unknown> = {
         task_id: record.taskId,
         task_type: record.tool,
         status: record.status,
         protocol: protocolForTool(record.tool),
+        has_webhook: record.hasWebhook === true,
         created_at: record.createdAt,
         updated_at: record.updatedAt,
       };
@@ -969,7 +984,11 @@ async function dispatchHitl<TResult>(
   taskFn: (taskId: string) => Promise<TResult>
 ): Promise<SubmittedEnvelope> {
   const createStart = Date.now();
-  const { taskId } = await taskRegistry.create({ tool: opts.tool, accountId: opts.accountId });
+  const { taskId } = await taskRegistry.create({
+    tool: opts.tool,
+    accountId: opts.accountId,
+    hasWebhook: opts.pushNotificationUrl !== undefined,
+  });
   safeFire(
     opts.observability?.onTaskCreate,
     {
@@ -1208,9 +1227,15 @@ function bucketWebhookError(msg: string): string {
   if (lower.includes('timeout') || lower.includes('etimedout')) return 'TIMEOUT';
   if (lower.includes('econnrefused') || lower.includes('connection refused')) return 'CONNECTION_REFUSED';
   if (lower.includes('signature') || lower.includes('rfc 9421')) return 'SIGNATURE_FAILURE';
-  const httpMatch = lower.match(/\b(4\d\d|5\d\d)\b/);
-  if (httpMatch) {
-    return httpMatch[1]!.startsWith('4') ? 'HTTP_4XX' : 'HTTP_5XX';
+  // Find ALL 3-digit HTTP-status-shaped tokens. Take the LARGEST one —
+  // operator triage cares about the most-severe status, not the
+  // left-most occurrence. Fixes "upstream 502 (proxy received 401)"
+  // which would mis-bucket as HTTP_4XX under a first-match policy.
+  const matches = lower.match(/\b[45]\d\d\b/g);
+  if (matches && matches.length > 0) {
+    const codes = matches.map(m => parseInt(m, 10));
+    const max = Math.max(...codes);
+    return max >= 500 ? 'HTTP_5XX' : 'HTTP_4XX';
   }
   return 'UNKNOWN';
 }

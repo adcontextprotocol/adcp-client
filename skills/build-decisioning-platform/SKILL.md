@@ -30,12 +30,14 @@ Minimal copy-paste-runnable example. Single tenant, one product, sync `create_me
 import {
   AdcpError,
   createAdcpServerFromPlatform,
-  type DecisioningPlatform,
   type SalesPlatform,
   type AccountStore,
 } from '@adcp/client/server/decisioning';
 
-const platform: DecisioningPlatform = {
+// Don't annotate `platform: DecisioningPlatform` — let TS infer the
+// `specialisms: ['sales-non-guaranteed']` literal so RequiredPlatformsFor
+// narrows the constraint to "must provide sales: SalesPlatform".
+const platform = {
   capabilities: {
     specialisms: ['sales-non-guaranteed'] as const,
     creative_agents: [{ agent_url: 'https://creative.example.com/mcp' }],
@@ -60,24 +62,42 @@ const platform: DecisioningPlatform = {
   sales: {
     getProducts: async (req, ctx) => ({
       products: [
-        { product_id: 'p_homepage', name: 'Homepage display',
-          formats: ['display_300x250'], pricing_options: [
-            { pricing_option_id: 'cpm_5', model: 'cpm', amount: 5, currency: 'USD' },
-          ] },
+        {
+          product_id: 'p_homepage',
+          name: 'Homepage display',
+          description: 'Above-the-fold homepage display, IAB display 300x250',
+          delivery_type: 'non_guaranteed',
+          format_ids: [{ id: 'display_300x250', agent_url: 'https://creative.example.com/mcp' }],
+          publisher_properties: [{ publisher_domain: 'publisher.example.com', selection_type: 'all' }],
+          pricing_options: [{ pricing_option_id: 'cpm_5', pricing_model: 'cpm', rate: 5, currency: 'USD' }],
+          reporting_capabilities: {
+            available_reporting_frequencies: ['hourly', 'daily'],
+            expected_delay_minutes: 30,
+            timezone: 'UTC',
+            supports_webhooks: false,
+            available_metrics: [],
+            date_range_support: 'date_range',
+          },
+        },
       ],
     }),
     createMediaBuy: async (req, ctx) => ({
       media_buy_id: `mb_${Date.now()}`,
-      status: 'active',
+      status: 'pending_creatives',
+      confirmed_at: new Date().toISOString(),
       packages: [],
     }),
     updateMediaBuy: async (mediaBuyId, patch, ctx) => ({
       media_buy_id: mediaBuyId,
-      status: 'active',
+      status: patch.paused === true ? 'paused' : 'active',
     }),
     syncCreatives: async (creatives, ctx) =>
       creatives.map(c => ({ creative_id: c.creative_id, action: 'created' })),
-    getMediaBuyDelivery: async (filter, ctx) => ({ media_buys: [] }),
+    getMediaBuyDelivery: async (filter, ctx) => ({
+      currency: 'USD',
+      reporting_period: { start: filter.start_date ?? '2026-04-01', end: filter.end_date ?? '2026-04-30' },
+      media_buy_deliveries: [],
+    }),
   } satisfies SalesPlatform,
 };
 
@@ -121,15 +141,20 @@ createMediaBuy: async (req, ctx) => {
 
 ```ts
 createMediaBuy: async (req, ctx) => {
-  if (req.total_budget.amount < this.floor) {
+  // total_budget is `number | { amount?: number; currency?: string }`
+  // depending on buyer shape; discriminate before access.
+  const budget = typeof req.total_budget === 'number'
+    ? req.total_budget
+    : req.total_budget?.amount ?? 0;
+  if (budget < FLOOR_BUDGET) {
     throw new AdcpError('BUDGET_TOO_LOW', {
       recovery: 'correctable',
-      message: `Floor is $${this.floor} CPM`,
-      field: 'total_budget.amount',
-      suggestion: `Raise total_budget to at least ${this.floor * 1000}`,
+      message: `Floor is $${FLOOR_BUDGET}`,
+      field: 'total_budget',
+      suggestion: `Raise total_budget to at least ${FLOOR_BUDGET}`,
     });
   }
-  return await this.platform.create(req);
+  return /* ... your createMediaBuy success body ... */;
 };
 ```
 

@@ -94,6 +94,11 @@ function assertValidIdentifier(name: string): void {
  * result would OOM the Node process before pg complains. 4MB matches the
  * default Postgres `toast` row threshold and gives plenty of headroom for
  * legitimate task payloads.
+ *
+ * **This cap protects the DB write path only.** Adopter code that
+ * serializes `result` / `error` for logs, metrics, or downstream services
+ * MUST impose its own size cap — `JSON.stringify(result)` in a logger
+ * call is unbounded.
  */
 const MAX_RESULT_BYTES = 4 * 1024 * 1024;
 
@@ -104,6 +109,24 @@ function assertResultSize(json: string, taskId: string): void {
       `Task ${taskId}: result/error JSON exceeds ${MAX_RESULT_BYTES} bytes ` +
         `(adopter *Task method returned an oversized payload — investigate ` +
         `whether the body should be persisted via blob storage and referenced).`
+    );
+  }
+}
+
+/**
+ * Wrap `JSON.stringify` with a clearer error when the adopter `*Task`
+ * return contains circular references. Default `TypeError: Converting
+ * circular structure to JSON` doesn't surface the task id; this version
+ * bubbles a registry-write error pointing at the adopter return shape.
+ */
+function safeStringify(value: unknown, taskId: string): string {
+  try {
+    return JSON.stringify(value);
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    throw new Error(
+      `Task ${taskId}: adopter *Task return is not JSON-serializable: ${msg}. ` +
+        `Strip circular refs / non-plain-data before returning from your *Task method.`
     );
   }
 }
@@ -134,6 +157,7 @@ CREATE TABLE IF NOT EXISTS ${table} (
   status_message  TEXT,
   result          JSONB,
   error           JSONB,
+  has_webhook     BOOLEAN NOT NULL DEFAULT FALSE,
   created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   updated_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
 
@@ -167,6 +191,7 @@ interface DbTaskRow {
   status_message: string | null;
   result: unknown;
   error: AdcpStructuredError | null;
+  has_webhook: boolean;
   created_at: Date;
   updated_at: Date;
 }
@@ -180,6 +205,7 @@ function rowToRecord<TResult>(row: DbTaskRow): TaskRecord<TResult> {
     ...(row.status_message !== null && { statusMessage: row.status_message }),
     ...(row.result !== null && row.result !== undefined && { result: row.result as TResult }),
     ...(row.error !== null && row.error !== undefined && { error: row.error }),
+    ...(row.has_webhook && { hasWebhook: true }),
     createdAt: row.created_at.toISOString(),
     updatedAt: row.updated_at.toISOString(),
   };
@@ -204,18 +230,18 @@ export function createPostgresTaskRegistry(opts: CreatePostgresTaskRegistryOptio
   const backgrounds = new Map<string, Promise<void>>();
 
   return {
-    async create(createOpts: { tool: string; accountId: string }): Promise<{ taskId: string }> {
+    async create(createOpts: { tool: string; accountId: string; hasWebhook?: boolean }): Promise<{ taskId: string }> {
       const taskId = `task_${randomUUID()}`;
       await pool.query(
-        `INSERT INTO ${table} (task_id, tool, account_id, status) VALUES ($1, $2, $3, 'submitted')`,
-        [taskId, createOpts.tool, createOpts.accountId]
+        `INSERT INTO ${table} (task_id, tool, account_id, status, has_webhook) VALUES ($1, $2, $3, 'submitted', $4)`,
+        [taskId, createOpts.tool, createOpts.accountId, createOpts.hasWebhook === true]
       );
       return { taskId };
     },
 
     async getTask<TResult = unknown>(taskId: string): Promise<TaskRecord<TResult> | null> {
       const { rows } = await pool.query(
-        `SELECT task_id, tool, account_id, status, status_message, result, error, created_at, updated_at
+        `SELECT task_id, tool, account_id, status, status_message, result, error, has_webhook, created_at, updated_at
          FROM ${table} WHERE task_id = $1`,
         [taskId]
       );
@@ -224,7 +250,7 @@ export function createPostgresTaskRegistry(opts: CreatePostgresTaskRegistryOptio
     },
 
     async complete<TResult>(taskId: string, result: TResult): Promise<void> {
-      const json = JSON.stringify(result);
+      const json = safeStringify(result, taskId);
       assertResultSize(json, taskId);
       await pool.query(
         `UPDATE ${table}
@@ -235,7 +261,7 @@ export function createPostgresTaskRegistry(opts: CreatePostgresTaskRegistryOptio
     },
 
     async fail(taskId: string, error: AdcpStructuredError): Promise<void> {
-      const json = JSON.stringify(error);
+      const json = safeStringify(error, taskId);
       assertResultSize(json, taskId);
       await pool.query(
         `UPDATE ${table}

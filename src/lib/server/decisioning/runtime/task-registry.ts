@@ -55,6 +55,13 @@ export interface TaskRecord<TResult = unknown, TError extends AdcpStructuredErro
   result?: TResult;
   /** Terminal error on `failed`. */
   error?: TError;
+  /**
+   * Whether the buyer wired `push_notification_config.url` on the original
+   * request. Surfaced to the buyer via `tasks_get`'s spec-defined
+   * `has_webhook: boolean` field so they can decide between long-poll vs.
+   * single-shot polling.
+   */
+  hasWebhook?: boolean;
   /** ISO 8601 timestamps. */
   createdAt: string;
   updatedAt: string;
@@ -68,8 +75,11 @@ export interface TaskRegistry {
   /**
    * Allocate a new task record. Returns the `taskId` the framework hands
    * to `platform.xxxTask(taskId, ...)`. Initial status is `submitted`.
+   *
+   * `hasWebhook: true` when the buyer wired `push_notification_config.url`
+   * — surfaced via `tasks_get`'s `has_webhook` field. Defaults to `false`.
    */
-  create(opts: { tool: string; accountId: string }): Promise<{ taskId: string }>;
+  create(opts: { tool: string; accountId: string; hasWebhook?: boolean }): Promise<{ taskId: string }>;
 
   /** Read a task by id. Returns `null` if unknown. */
   getTask<TResult = unknown>(taskId: string): Promise<TaskRecord<TResult> | null>;
@@ -108,7 +118,7 @@ export function createInMemoryTaskRegistry(): TaskRegistry {
   const backgrounds = new Map<string, Promise<void>>();
 
   return {
-    async create(opts: { tool: string; accountId: string }): Promise<{ taskId: string }> {
+    async create(opts: { tool: string; accountId: string; hasWebhook?: boolean }): Promise<{ taskId: string }> {
       const taskId = `task_${randomUUID()}`;
       const now = new Date().toISOString();
       tasks.set(taskId, {
@@ -116,6 +126,7 @@ export function createInMemoryTaskRegistry(): TaskRegistry {
         tool: opts.tool,
         accountId: opts.accountId,
         status: 'submitted',
+        ...(opts.hasWebhook && { hasWebhook: true }),
         createdAt: now,
         updatedAt: now,
       });
