@@ -543,4 +543,94 @@ describe('PropertyCrawler', () => {
       );
     });
   });
+
+  describe('Malformed property handling', () => {
+    test('should skip properties with missing identifiers and emit a warning', async () => {
+      global.fetch = async () => ({
+        ok: true,
+        status: 200,
+        statusText: 'OK',
+        json: async () => ({
+          authorized_agents: [{ url: 'https://agent.example.com', authorized_for: 'Test' }],
+          properties: [
+            {
+              property_type: 'website',
+              name: 'Valid Property',
+              identifiers: [{ type: 'domain', value: 'example.com' }],
+            },
+            {
+              property_type: 'website',
+              name: 'Missing identifiers',
+              // identifiers omitted
+            },
+          ],
+        }),
+      });
+
+      const { PropertyCrawler } = require('../../dist/lib/discovery/property-crawler.js');
+      const crawler = new PropertyCrawler({ logLevel: 'silent' });
+
+      const result = await crawler.fetchAdAgentsJson('example.com');
+
+      assert.strictEqual(result.properties.length, 1, 'Should keep only the valid property');
+      assert.strictEqual(result.properties[0].name, 'Valid Property');
+      assert.ok(result.warning, 'Should surface a warning when properties are skipped');
+      assert.ok(
+        result.warning.includes('missing or empty identifiers'),
+        `Warning should mention identifiers, got: ${result.warning}`
+      );
+    });
+
+    test('should skip properties with non-array identifiers', async () => {
+      global.fetch = async () => ({
+        ok: true,
+        status: 200,
+        statusText: 'OK',
+        json: async () => ({
+          authorized_agents: [{ url: 'https://agent.example.com', authorized_for: 'Test' }],
+          properties: [
+            {
+              property_type: 'website',
+              name: 'Bad shape',
+              identifiers: 'domain:example.com',
+            },
+          ],
+        }),
+      });
+
+      const { PropertyCrawler } = require('../../dist/lib/discovery/property-crawler.js');
+      const crawler = new PropertyCrawler({ logLevel: 'silent' });
+
+      const result = await crawler.fetchAdAgentsJson('example.com');
+
+      assert.strictEqual(result.properties.length, 0, 'Should drop the malformed property');
+      assert.ok(result.warning, 'Should surface a warning');
+    });
+
+    test('should skip properties with empty identifiers array', async () => {
+      global.fetch = async () => ({
+        ok: true,
+        status: 200,
+        statusText: 'OK',
+        json: async () => ({
+          authorized_agents: [{ url: 'https://agent.example.com', authorized_for: 'Test' }],
+          properties: [
+            {
+              property_type: 'website',
+              name: 'Empty identifiers',
+              identifiers: [],
+            },
+          ],
+        }),
+      });
+
+      const { PropertyCrawler } = require('../../dist/lib/discovery/property-crawler.js');
+      const crawler = new PropertyCrawler({ logLevel: 'silent' });
+
+      const result = await crawler.fetchAdAgentsJson('example.com');
+
+      assert.strictEqual(result.properties.length, 0);
+      assert.ok(result.warning);
+    });
+  });
 });

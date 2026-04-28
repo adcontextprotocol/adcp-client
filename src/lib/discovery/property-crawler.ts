@@ -323,12 +323,32 @@ export class PropertyCrawler {
         return { properties: [] };
       }
 
-      // Add publisher_domain to each property if not present
-      return {
-        properties: data.properties.map(prop => ({
+      // Filter out malformed properties (missing/empty identifiers). The
+      // schema requires a non-empty identifiers array, but real adagents.json
+      // files in the wild sometimes omit it. Skipping is preferable to
+      // crashing the whole crawl on one bad publisher.
+      const normalized: Property[] = [];
+      let skipped = 0;
+      for (const prop of data.properties) {
+        if (!Array.isArray(prop.identifiers) || prop.identifiers.length === 0) {
+          skipped++;
+          this.logger.warn(
+            `Skipping property in ${originalDomain} adagents.json: missing or empty identifiers`,
+            { domain: originalDomain, name: prop.name }
+          );
+          continue;
+        }
+        normalized.push({
           ...prop,
           publisher_domain: prop.publisher_domain || originalDomain,
-        })),
+        });
+      }
+
+      return {
+        properties: normalized,
+        ...(skipped > 0 && {
+          warning: `Skipped ${skipped} ${skipped === 1 ? 'property' : 'properties'} with missing or empty identifiers`,
+        }),
       };
     } catch (error) {
       throw new Error(`Failed to fetch adagents.json: ${error instanceof Error ? error.message : String(error)}`);

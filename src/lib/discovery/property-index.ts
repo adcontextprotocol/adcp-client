@@ -80,8 +80,15 @@ export class PropertyIndex {
    * Add a property to the index
    */
   addProperty(property: Property, agentUrl: string, publisherDomain: string): void {
+    // identifiers is required by the schema, but malformed adagents.json
+    // entries occasionally omit it. Treat missing/non-array identifiers as
+    // "no identifier lookups for this property" rather than crashing the
+    // crawler — PropertyCrawler already filters most of these at parse time;
+    // this is a defensive guard for any other call site.
+    const identifiers = Array.isArray(property.identifiers) ? property.identifiers : [];
+
     // Add to identifier index for all identifiers
-    for (const identifier of property.identifiers) {
+    for (const identifier of identifiers) {
       const key = this.makeIdentifierKey(identifier.type, identifier.value);
       const match: PropertyMatch = {
         property: { ...property, publisher_domain: publisherDomain },
