@@ -2686,15 +2686,21 @@ export class SingleAgentClient {
         // Log when executeTask returns but success is false — this causes
         // the server to be treated as v2 even though it advertises
         // get_adcp_capabilities, which will trigger v2 field adapters.
+        // We deliberately omit `result.data` from the log: it can carry
+        // OAuth metadata that flowed through `agent.oauth_client_credentials`,
+        // and CodeQL traces clear-text logging when it appears here. The
+        // shape booleans + status are enough to triage the v2 fallback.
         console.warn(
           `[AdCP] Agent "${this.agent.id}" advertises get_adcp_capabilities but the call ` +
             `returned non-success — falling back to v2 synthetic capabilities. ` +
             `This may cause v2 field adapters to run against a v3 server.`,
           {
             success: result.success,
-            error: result.error,
+            // result.error is a string error message; we don't include its full
+            // text because it can carry agent identifiers from transport-level
+            // failures, but presence/absence is useful for triage.
+            hasError: !!result.error,
             hasData: !!result.data,
-            data: result.data,
           }
         );
       } catch (error: unknown) {

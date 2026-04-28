@@ -3573,7 +3573,19 @@ credential material — never sync or commit.
           discoveredRequirements = await discoverAuthorizationRequirements(url, { allowPrivateIp: true });
           if (discoveredRequirements && discoveredRequirements.tokenEndpoint) {
             resolvedOauthEndpoint = discoveredRequirements.tokenEndpoint;
-            console.log(`   Found token endpoint: ${resolvedOauthEndpoint}`);
+            // Print only the host so the operator can confirm the discovered
+            // realm without exposing query-string or path components that
+            // sometimes carry tenant identifiers. CodeQL flags this site as
+            // clear-text logging when it sees the full URL flowing from the
+            // discovery probe.
+            const endpointHost = (() => {
+              try {
+                return new URL(resolvedOauthEndpoint).host;
+              } catch {
+                return '<unparseable>';
+              }
+            })();
+            console.log(`   Found token endpoint host: ${endpointHost}`);
             if (discoveredRequirements.authorizationServer) {
               console.log(`   Authorization server: ${discoveredRequirements.authorizationServer}`);
             }

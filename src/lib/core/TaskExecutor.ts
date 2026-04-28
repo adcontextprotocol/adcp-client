@@ -1285,7 +1285,11 @@ export class TaskExecutor {
     try {
       return await this.listTasksForAgent(agent);
     } catch (error) {
-      console.warn('Failed to list tasks:', error instanceof Error ? error.message : 'unknown error');
+      // Log only the error class name — `error.message` can carry agent
+      // identifiers / OAuth endpoint data that flowed through transport
+      // helpers, so CodeQL flags clear-text logging when it appears here.
+      // The class name is enough for triage; full detail goes to debug logs.
+      console.warn('Failed to list tasks:', error instanceof Error ? error.name : 'unknown error');
       return [];
     }
   }
@@ -1611,7 +1615,9 @@ export class TaskExecutor {
       try {
         return await this.listTasksForAgent(agent);
       } catch (error) {
-        console.warn('Failed to get remote task list:', error instanceof Error ? error.message : 'unknown error');
+        // See comment on listTasks — log class name, not message, to keep
+        // agent/OAuth identifiers out of console output.
+        console.warn('Failed to get remote task list:', error instanceof Error ? error.name : 'unknown error');
       }
     }
 
