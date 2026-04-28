@@ -1270,7 +1270,7 @@ describe('Observability hooks (DecisioningObservabilityHooks)', () => {
       },
       sales: {
         getProducts: async () => ({ products: [] }),
-        createMediaBuy: (req, ctx) => ctx.handoffToTask(async () => taskFn(req, ctx)),
+        createMediaBuy: (_req, ctx) => ctx.handoffToTask(async () => taskFn()),
         updateMediaBuy: async () => ({ media_buy_id: 'mb_1' }),
         syncCreatives: async () => [],
         getMediaBuyDelivery: async () => ({ media_buys: [] }),
@@ -1579,7 +1579,7 @@ describe('HITL push notification webhook on terminal state', () => {
       },
       sales: {
         getProducts: async () => ({ products: [] }),
-        createMediaBuy: (req, ctx) => ctx.handoffToTask(async () => taskFn(req, ctx)),
+        createMediaBuy: (_req, ctx) => ctx.handoffToTask(async () => taskFn()),
         updateMediaBuy: async () => ({ media_buy_id: 'mb_1' }),
         syncCreatives: async () => [],
         getMediaBuyDelivery: async () => ({ media_buys: [] }),
@@ -1724,7 +1724,7 @@ describe('Push notification webhook URL/token validation (B5/B6)', () => {
       },
       sales: {
         getProducts: async () => ({ products: [] }),
-        createMediaBuy: (req, ctx) => ctx.handoffToTask(async () => taskFn(req, ctx)),
+        createMediaBuy: (_req, ctx) => ctx.handoffToTask(async () => taskFn()),
         updateMediaBuy: async () => ({ media_buy_id: 'mb_1' }),
         syncCreatives: async () => [],
         getMediaBuyDelivery: async () => ({ media_buys: [] }),
@@ -1885,7 +1885,7 @@ describe('tasks_get wire tool (B9)', () => {
       },
       sales: {
         getProducts: async () => ({ products: [] }),
-        createMediaBuy: (req, ctx) => ctx.handoffToTask(async () => taskFn(req, ctx)),
+        createMediaBuy: (_req, ctx) => ctx.handoffToTask(async () => taskFn()),
         updateMediaBuy: async () => ({ media_buy_id: 'mb_42' }),
         syncCreatives: async () => [],
         getMediaBuyDelivery: async () => ({ media_buys: [] }),
