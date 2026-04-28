@@ -10,7 +10,8 @@
  *   - Param validation + typed error envelopes (`UNKNOWN_SCENARIO`,
  *     `INVALID_PARAMS`, `NOT_FOUND`, `INVALID_TRANSITION`, `FORBIDDEN`)
  *   - Seed re-seed idempotency (same id + equivalent fixture =
- *     `previous_state: "existing"`; divergent fixture = `INVALID_PARAMS`)
+ *     `SeedSuccess` with `message: "Fixture re-seeded (equivalent)"`;
+ *     divergent fixture = `INVALID_PARAMS`)
  *   - Optional sandbox gating at both `tools/list` and per-request level
  *
  * The helper does NOT own the state machine. Transition enforcement lives
@@ -145,9 +146,10 @@ export interface SimulateBudgetSpendParams {
 // ────────────────────────────────────────────────────────────
 
 /** Seed adapters persist the fixture to the seller's data layer. Return
- * value is ignored — the helper builds the `previous_state` / `current_state`
- * envelope from its own idempotency cache. Throw {@link TestControllerError}
- * for typed errors (`INVALID_PARAMS`, `FORBIDDEN`). */
+ * value is ignored — the helper builds the `SeedSuccess` envelope (the
+ * 3.0.1+ message-only seed arm) from its own idempotency cache. Throw
+ * {@link TestControllerError} for typed errors (`INVALID_PARAMS`,
+ * `FORBIDDEN`). */
 export type SeedAdapter<P> = (params: P, ctx: ComplyControllerContext) => Promise<void> | void;
 
 /** Force adapters return a {@link StateTransitionSuccess}. Throw

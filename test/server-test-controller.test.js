@@ -340,8 +340,8 @@ describe('handleTestControllerRequest', () => {
         params: { format_id: 'audio_30s', fixture: { duration: 30 } },
       });
       assert.strictEqual(result.success, true);
-      assert.strictEqual(result.previous_state, 'none');
-      assert.strictEqual(result.current_state, 'seeded');
+      assert.strictEqual(result.message, 'Fixture seeded');
+      assert.strictEqual(result.previous_state, undefined);
       assert.deepStrictEqual(calls, [{ formatId: 'audio_30s', fixture: { duration: 30 } }]);
     });
 
@@ -1093,11 +1093,11 @@ describe('expectControllerSuccess', () => {
     assert.strictEqual(ok.forced.task_id, 'task-abc');
   });
 
-  it('narrows to seed arm when kind="seed" (interop with sellers that emit SeedSuccess)', () => {
+  it('narrows to seed arm when kind="seed"', () => {
     // SeedSuccess is the message-only arm 3.0.1 introduced. The SDK's own
-    // dispatchSeed still returns StateTransitionSuccess (previous_state /
-    // current_state), but `expectControllerSuccess(_, 'seed')` covers
-    // responses from third-party sellers that emit the new arm.
+    // dispatchSeed emits this arm (`{ success: true, message: 'Fixture
+    // seeded' | 'Fixture re-seeded (equivalent)' }`). Third-party sellers
+    // can use any message string the spec allows.
     const ok = expectControllerSuccess({ success: true, message: 'Format pre-populated' }, 'seed');
     assert.strictEqual(ok.message, 'Format pre-populated');
   });
