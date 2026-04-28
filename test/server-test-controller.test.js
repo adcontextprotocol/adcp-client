@@ -896,7 +896,7 @@ describe('registerTestController compliance_testing auto-emission', () => {
         forceMediaBuyStatus: async () => ({ success: true, previous_state: 'active', current_state: 'paused' }),
       }),
     });
-    const caps = server[Symbol.for('@adcp/sdk.capabilities')];
+    const caps = server[Symbol.for('@adcp/client.capabilities')];
     assert.ok(caps.compliance_testing, 'compliance_testing block must be emitted');
     assert.deepStrictEqual(caps.compliance_testing.scenarios, ['force_media_buy_status', 'simulate_delivery']);
   });
@@ -912,7 +912,7 @@ describe('registerTestController compliance_testing auto-emission', () => {
       async forceCreativeStatus() {},
       async simulateBudgetSpend() {},
     });
-    const caps = server[Symbol.for('@adcp/sdk.capabilities')];
+    const caps = server[Symbol.for('@adcp/client.capabilities')];
     assert.ok(caps.compliance_testing);
     assert.ok(caps.compliance_testing.scenarios.includes('force_creative_status'));
     assert.ok(caps.compliance_testing.scenarios.includes('simulate_budget_spend'));
@@ -929,7 +929,7 @@ describe('registerTestController compliance_testing auto-emission', () => {
       scenarios: ['force_account_status'],
       createStore: () => ({ forceAccountStatus: async () => ({}) }),
     });
-    const caps = server[Symbol.for('@adcp/sdk.capabilities')];
+    const caps = server[Symbol.for('@adcp/client.capabilities')];
     assert.ok(!caps.supported_protocols.includes('compliance_testing'));
   });
 
@@ -960,7 +960,7 @@ describe('registerTestController compliance_testing auto-emission', () => {
     } catch {
       /* tool already registered — expected on the second call */
     }
-    const caps = server[Symbol.for('@adcp/sdk.capabilities')];
+    const caps = server[Symbol.for('@adcp/client.capabilities')];
     assert.deepStrictEqual(
       [...caps.compliance_testing.scenarios].sort(),
       ['force_account_status', 'force_media_buy_status', 'simulate_delivery'].sort(),
