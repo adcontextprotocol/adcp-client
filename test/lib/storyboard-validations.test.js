@@ -141,6 +141,56 @@ describe('validateErrorCode', () => {
   });
 });
 
+describe('envelope_field_value (adcp#3429)', () => {
+  it('passes when the envelope field equals the expected value', () => {
+    const taskResult = { success: true, data: { status: 'completed', task_id: 'task-1' } };
+    const [result] = runOne(
+      [{ check: 'envelope_field_value', path: 'status', value: 'completed', description: 'envelope status' }],
+      'get_adcp_capabilities',
+      taskResult
+    );
+    assert.strictEqual(result.passed, true, result.error);
+    assert.strictEqual(result.check, 'envelope_field_value');
+  });
+
+  it('fails on mismatch and reports the envelope-scoped check name', () => {
+    const taskResult = { success: true, data: { status: 'submitted' } };
+    const [result] = runOne(
+      [{ check: 'envelope_field_value', path: 'status', value: 'completed', description: 'envelope status' }],
+      'get_adcp_capabilities',
+      taskResult
+    );
+    assert.strictEqual(result.passed, false);
+    assert.strictEqual(result.check, 'envelope_field_value');
+    assert.match(result.error, /Expected "completed", got "submitted"/);
+  });
+});
+
+describe('envelope_field_value_or_absent (adcp#3429)', () => {
+  it('passes when the envelope field is absent (tolerant arm)', () => {
+    const taskResult = { success: true, data: { task_id: 'task-1' } };
+    const [result] = runOne(
+      [{ check: 'envelope_field_value_or_absent', path: 'replayed', value: true, description: 'replayed marker' }],
+      'create_media_buy',
+      taskResult
+    );
+    assert.strictEqual(result.passed, true, result.error);
+    assert.strictEqual(result.check, 'envelope_field_value_or_absent');
+  });
+
+  it('fails when the envelope field is present with a disallowed value', () => {
+    const taskResult = { success: true, data: { replayed: false } };
+    const [result] = runOne(
+      [{ check: 'envelope_field_value_or_absent', path: 'replayed', value: true, description: 'replayed marker' }],
+      'create_media_buy',
+      taskResult
+    );
+    assert.strictEqual(result.passed, false);
+    assert.strictEqual(result.check, 'envelope_field_value_or_absent');
+    assert.match(result.error, /Expected absent or true, got false/);
+  });
+});
+
 describe('envelope_field_present (adcp#3429)', () => {
   // Runtime semantics are identical to field_present — TaskResult merges
   // envelope fields into its surface so `data.status` is the envelope's

@@ -401,13 +401,16 @@ export interface StoryboardStep {
 export type StoryboardValidationCheck =
   | 'response_schema'
   | 'field_present'
-  // Envelope-scoped variant of field_present — the asserted path lives on the
-  // v3 protocol envelope (`status`, `task_id`, `adcp_version`, `errors`)
-  // rather than the inner response. Runtime semantics are identical to
-  // field_present (TaskResult merges envelope fields into the surface);
-  // the distinction is for static drift detection, which walks the envelope
-  // schema instead of the per-tool response schema. Added per adcp#3429.
+  // Envelope-scoped variants — the asserted path lives on the v3 protocol
+  // envelope (`status`, `task_id`, `message`, `replayed`, `governance_context`,
+  // `timestamp`, `context_id`, `push_notification_config`) rather than the
+  // inner response. Runtime semantics are identical to the un-prefixed checks
+  // (TaskResult merges envelope fields onto its surface); the distinction is
+  // for static drift detection, which walks `protocol-envelope.json` instead
+  // of the per-tool response schema. Added per adcp#3429.
   | 'envelope_field_present'
+  | 'envelope_field_value'
+  | 'envelope_field_value_or_absent'
   | 'field_value'
   | 'field_value_or_absent'
   | 'status_code'
