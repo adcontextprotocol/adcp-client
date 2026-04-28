@@ -813,6 +813,15 @@ export async function handleTestControllerRequest(
             "force_create_media_buy_arm with arm='submitted' requires params.task_id"
           );
         }
+        // Spec: task_id is "Present only when arm is 'submitted'" — reject
+        // it on the input-required arm so sellers can rely on the field's
+        // presence as a discriminator.
+        if (arm === 'input-required' && params?.task_id !== undefined) {
+          return controllerError(
+            'INVALID_PARAMS',
+            "force_create_media_buy_arm with arm='input-required' must not include params.task_id"
+          );
+        }
         return await store.forceCreateMediaBuyArm({
           arm,
           task_id: params?.task_id as string | undefined,
@@ -827,8 +836,15 @@ export async function handleTestControllerRequest(
         if (!params?.task_id) {
           return controllerError('INVALID_PARAMS', 'force_task_completion requires params.task_id');
         }
-        if (!params?.result || typeof params.result !== 'object') {
-          return controllerError('INVALID_PARAMS', 'force_task_completion requires params.result (completion payload)');
+        // Reject arrays explicitly — `typeof [] === 'object'` would let an
+        // array slip past the object check, but `result` is a structured
+        // completion payload (validates against async-response-data.json),
+        // never an array.
+        if (!params?.result || typeof params.result !== 'object' || Array.isArray(params.result)) {
+          return controllerError(
+            'INVALID_PARAMS',
+            'force_task_completion requires params.result (completion payload object)'
+          );
         }
         return await store.forceTaskCompletion(params.task_id as string, params.result as Record<string, unknown>);
       }

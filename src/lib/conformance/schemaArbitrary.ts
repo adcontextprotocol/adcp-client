@@ -19,6 +19,13 @@ export interface ArbitraryOptions {
    * samples that fail validation.
    */
   rootSchema?: JsonSchema;
+  /**
+   * Set of `$ref` pointers already in the resolution chain. Cycle guard —
+   * AdCP's bundled schemas don't ship self-referential defs today, but a
+   * future schema that did would otherwise stack-overflow this generator.
+   * On revisit, the generator returns `fc.anything()` rather than recursing.
+   */
+  seenRefs?: Set<string>;
 }
 
 /** Resolve a `#/`-prefixed JSON pointer against the root schema. */
@@ -53,8 +60,15 @@ export function schemaToArbitrary(schema: JsonSchema, opts: ArbitraryOptions = {
   const optsWithRoot: ArbitraryOptions = opts.rootSchema ? opts : { ...opts, rootSchema };
 
   if (typeof schema.$ref === 'string') {
-    const resolved = resolveLocalRef(rootSchema, schema.$ref);
-    if (resolved) return schemaToArbitrary(resolved, optsWithRoot);
+    const ref = schema.$ref;
+    const seenRefs = optsWithRoot.seenRefs ?? new Set<string>();
+    if (seenRefs.has(ref)) return fc.anything();
+    const resolved = resolveLocalRef(rootSchema, ref);
+    if (resolved) {
+      const nextSeen = new Set(seenRefs);
+      nextSeen.add(ref);
+      return schemaToArbitrary(resolved, { ...optsWithRoot, seenRefs: nextSeen });
+    }
     return fc.anything();
   }
 

@@ -80,6 +80,52 @@ describe('conformance: schemaToArbitrary', () => {
     }
   });
 
+  // ── 3.0.1: $ref resolution against root schema ───────────
+  // adcp#3170's bundler hoist emits `#/$defs/Name` pointers in bundled
+  // requests. Without root resolution the generator falls through to
+  // fc.anything() and produces samples that fail validation.
+
+  test('$ref: pointer to $defs resolves and produces enum values', () => {
+    const schema = {
+      $defs: { Status: { type: 'string', enum: ['active', 'paused'] } },
+      type: 'object',
+      properties: { status: { $ref: '#/$defs/Status' } },
+      required: ['status'],
+    };
+    for (const v of fc.sample(schemaToArbitrary(schema), { numRuns: 50, seed: 11 })) {
+      assert.ok(['active', 'paused'].includes(v.status), `${v.status} not in enum`);
+    }
+  });
+
+  test('$ref: pointer to definitions (legacy keyword) resolves the same way', () => {
+    const schema = {
+      definitions: { Color: { type: 'string', enum: ['red', 'green', 'blue'] } },
+      type: 'object',
+      properties: { color: { $ref: '#/definitions/Color' } },
+      required: ['color'],
+    };
+    for (const v of fc.sample(schemaToArbitrary(schema), { numRuns: 30, seed: 12 })) {
+      assert.ok(['red', 'green', 'blue'].includes(v.color));
+    }
+  });
+
+  test('$ref: cycle short-circuits to fc.anything() instead of stack-overflowing', () => {
+    // A future spec might emit a self-referential def. The seenRefs guard
+    // returns fc.anything() on revisit so generation terminates.
+    const schema = {
+      $defs: { Self: { $ref: '#/$defs/Self' } },
+      $ref: '#/$defs/Self',
+    };
+    // Just exercising the path — no assertion on values, the win is that
+    // fc.sample doesn't throw / hang.
+    fc.sample(schemaToArbitrary(schema), { numRuns: 5, seed: 13 });
+  });
+
+  test('$ref: unresolvable pointer falls through to fc.anything() (no crash)', () => {
+    const schema = { $ref: '#/$defs/Missing' };
+    fc.sample(schemaToArbitrary(schema), { numRuns: 5, seed: 14 });
+  });
+
   test('anyOf-required: satisfies at least one required branch', () => {
     const schema = {
       type: 'object',

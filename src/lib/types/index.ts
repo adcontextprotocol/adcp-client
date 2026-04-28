@@ -26,6 +26,13 @@ export type {
 // so SDK consumers don't break across the version bump.
 export type { FormatReferenceStructuredObject } from './core.generated';
 import type { FormatReferenceStructuredObject } from './core.generated';
+/**
+ * @deprecated AdCP 3.0.1 renamed this type to `FormatReferenceStructuredObject`
+ * (the wire shape is identical — pure documentation rename per the spec). This
+ * alias is preserved for one minor cycle so existing imports keep compiling;
+ * editor tooling will surface the rename so downstream code can migrate at its
+ * own pace. Slated for removal in the next major.
+ */
 export type FormatID = FormatReferenceStructuredObject;
 
 // Strict format asset slot types (hand-authored — the codegen drops the
@@ -57,3 +64,9 @@ export * from './enums.generated';
 // VideoAssetRequirements_ContainersValues). Companion to enums.generated;
 // see scripts/generate-inline-enum-arrays.ts.
 export * from './inline-enums.generated';
+
+// Back-compat aliases for inline-enum exports collapsed in AdCP 3.0.1
+// (adcp#3148 / #3174 hoisted byte-identical literal sets into shared
+// `enums/*.json` files). Each alias is `@deprecated` so editor tooling
+// surfaces the canonical replacement; slated for removal in the next major.
+export * from './inline-enums.aliases';
