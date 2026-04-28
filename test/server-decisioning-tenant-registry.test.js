@@ -49,7 +49,7 @@ function fakeValidator(impl) {
 }
 
 describe('TenantRegistry — register, resolve, health', () => {
-  it('register without auto-validate; manual recheck transitions to healthy', async () => {
+  it('register without auto-validate lands in pending; manual recheck transitions to healthy', async () => {
     const validator = fakeValidator(async () => ({ ok: true }));
     const registry = createTenantRegistry({
       jwksValidator: validator,
@@ -64,11 +64,15 @@ describe('TenantRegistry — register, resolve, health', () => {
     });
 
     let status = registry.getStatus('tenant_a');
-    assert.strictEqual(status.health, 'unverified');
+    assert.strictEqual(status.health, 'pending');
     assert.strictEqual(status.tenantId, 'tenant_a');
+
+    // Pending tenant refuses traffic — closes register-then-serve race window.
+    assert.strictEqual(registry.resolveByHost('a.example.com'), null, 'pending tenant does not resolve');
 
     status = await registry.recheck('tenant_a');
     assert.strictEqual(status.health, 'healthy');
+    assert.ok(registry.resolveByHost('a.example.com'), 'healthy tenant resolves');
   });
 
   it('disabled tenant does not resolveByHost; healthy tenant does', async () => {
@@ -106,7 +110,7 @@ describe('TenantRegistry — register, resolve, health', () => {
     assert.strictEqual(badResolved, null, 'disabled tenant does not resolve');
   });
 
-  it('unverified tenant still resolves (graceful degradation during validation)', async () => {
+  it('pending tenant (first validation in flight) does NOT resolve — closes race window', async () => {
     let resolveValidator;
     const validator = fakeValidator(
       () =>
@@ -120,24 +124,100 @@ describe('TenantRegistry — register, resolve, health', () => {
       autoValidate: true,
     });
 
-    registry.register('pending', {
-      agentUrl: 'https://pending.example.com',
+    registry.register('newt', {
+      agentUrl: 'https://newt.example.com',
       signingKey: SAMPLE_KEY,
       platform: basePlatform(),
     });
 
-    const status = registry.getStatus('pending');
-    assert.strictEqual(status.health, 'unverified');
+    const status = registry.getStatus('newt');
+    assert.strictEqual(status.health, 'pending');
+    assert.strictEqual(registry.resolveByHost('newt.example.com'), null, 'pending tenant refuses traffic');
 
-    const resolved = registry.resolveByHost('pending.example.com');
-    assert.ok(resolved, 'unverified tenant accepts traffic during validation');
-    assert.strictEqual(resolved.tenantId, 'pending');
-
-    // Settle to keep test deterministic
+    // Settle to healthy → now resolves.
     resolveValidator({ ok: true });
+    // Wait one microtask flush for the validation promise to settle.
+    await new Promise(r => setImmediate(r));
+    assert.strictEqual(registry.getStatus('newt').health, 'healthy');
+    assert.ok(registry.resolveByHost('newt.example.com'), 'healthy tenant accepts traffic');
   });
 
-  it('transient validation failure → unverified (not disabled)', async () => {
+  it('unverified tenant (post-healthy transient failure) still resolves — graceful degradation', async () => {
+    // Different from pending: tenant was healthy, then a recheck failed
+    // transiently. Operators choose to keep serving.
+    let validateImpl = async () => ({ ok: true });
+    const validator = { validate: (...args) => validateImpl(...args) };
+    const registry = createTenantRegistry({
+      jwksValidator: validator,
+      defaultServerOptions: DEFAULT_SERVER_OPTIONS,
+      autoValidate: false,
+    });
+
+    registry.register('seasoned', {
+      agentUrl: 'https://seasoned.example.com',
+      signingKey: SAMPLE_KEY,
+      platform: basePlatform(),
+    });
+
+    // First validation succeeds → healthy
+    let status = await registry.recheck('seasoned');
+    assert.strictEqual(status.health, 'healthy');
+
+    // Recheck fails transiently → unverified
+    validateImpl = async () => ({ ok: false, recovery: 'transient', reason: 'brand.json 503' });
+    status = await registry.recheck('seasoned');
+    assert.strictEqual(status.health, 'unverified');
+    assert.ok(registry.resolveByHost('seasoned.example.com'), 'unverified (post-healthy) still resolves');
+  });
+
+  it('register({ awaitFirstValidation: true }) returns the resolved status', async () => {
+    const validator = fakeValidator(async () => ({ ok: true }));
+    const registry = createTenantRegistry({
+      jwksValidator: validator,
+      defaultServerOptions: DEFAULT_SERVER_OPTIONS,
+      autoValidate: true,
+    });
+
+    const status = await registry.register(
+      'sync_register',
+      { agentUrl: 'https://sync.example.com', signingKey: SAMPLE_KEY, platform: basePlatform() },
+      { awaitFirstValidation: true }
+    );
+    assert.strictEqual(status.health, 'healthy');
+    // Caller can use the returned status to make a deploy-time go/no-go decision.
+  });
+
+  it('runValidation catches validator throws — tenant transitions to unverified, not stuck pending', async () => {
+    // Validator throws (e.g., uncaught network error in adopter validator).
+    // Without the catch the validation promise rejects, entry.status
+    // never updates, tenant stuck in pending forever.
+    const validator = fakeValidator(async () => {
+      throw new Error('connection reset');
+    });
+    const registry = createTenantRegistry({
+      jwksValidator: validator,
+      defaultServerOptions: DEFAULT_SERVER_OPTIONS,
+      autoValidate: false,
+    });
+
+    registry.register('flaky', {
+      agentUrl: 'https://flaky.example.com',
+      signingKey: SAMPLE_KEY,
+      platform: basePlatform(),
+    });
+
+    const status = await registry.recheck('flaky');
+    // Throw is treated as transient; first validation → still pending.
+    assert.strictEqual(status.health, 'pending');
+    assert.match(status.reason, /validator threw.*connection reset/);
+  });
+
+  it('transient validation failure on FIRST validation → stays pending (not disabled)', async () => {
+    // Under the race-window-closing semantics, a first-validation
+    // transient failure keeps the tenant in `pending` — refuse traffic
+    // until at least one validation has succeeded. Previously this
+    // test asserted `unverified`; that posture only applies AFTER a
+    // tenant has been healthy at least once.
     const validator = fakeValidator(async () => ({
       ok: false,
       recovery: 'transient',
@@ -156,8 +236,9 @@ describe('TenantRegistry — register, resolve, health', () => {
     });
 
     const status = await registry.recheck('transient');
-    assert.strictEqual(status.health, 'unverified');
+    assert.strictEqual(status.health, 'pending');
     assert.match(status.reason, /connection refused/);
+    assert.strictEqual(registry.resolveByHost('transient.example.com'), null);
   });
 
   it('recheck after fix transitions disabled → healthy', async () => {

@@ -61,7 +61,27 @@ export interface TenantConfig<P extends DecisioningPlatform = DecisioningPlatfor
   serverOptions?: Partial<CreateAdcpServerFromPlatformOptions>;
 }
 
-export type TenantHealth = 'healthy' | 'unverified' | 'disabled';
+/**
+ * Tenant health lifecycle:
+ *   - `'pending'` — first JWKS validation hasn't succeeded yet. Brand-new
+ *     tenants land here. `resolveByHost` REFUSES TRAFFIC for `pending`
+ *     tenants — host transport should respond 503 + Retry-After. This
+ *     closes the register-then-serve race window where a tenant
+ *     registered with a wrong signing key would have served signed
+ *     responses no buyer can verify until the first refresh detected
+ *     the mismatch (60+ seconds).
+ *   - `'healthy'` — JWKS validation has succeeded at least once.
+ *     Periodic rechecks confirm.
+ *   - `'unverified'` — was previously `healthy`; latest recheck failed
+ *     transiently (network error, 5xx, etc.). `resolveByHost` still
+ *     returns the tenant — graceful degradation for known-good tenants
+ *     when brand.json is briefly unreachable. Distinct from `'pending'`
+ *     where we've never validated.
+ *   - `'disabled'` — permanent validation failure (key not in published
+ *     JWKS, brand.json malformed, etc.). `resolveByHost` returns null;
+ *     operator must fix and call `recheck()` to revive.
+ */
+export type TenantHealth = 'pending' | 'healthy' | 'unverified' | 'disabled';
 
 export interface TenantStatus {
   tenantId: string;
@@ -103,7 +123,29 @@ export interface TenantRegistryOptions {
 }
 
 export interface TenantRegistry {
-  register<P extends DecisioningPlatform>(tenantId: string, config: TenantConfig<P>): void;
+  /**
+   * Register a tenant. Tenant lands in `'pending'` health initially —
+   * `resolveByHost` refuses traffic until the first JWKS validation
+   * succeeds. Pass `{ awaitFirstValidation: true }` to block on the
+   * synchronous validation outcome (returns the resulting status; throws
+   * if registration is incompatible). Without the flag, register fires
+   * validation in the background and returns immediately; the caller
+   * polls `getStatus(tenantId).health === 'healthy'` if needed.
+   *
+   * **Admin-API security.** This method is the privileged surface — any
+   * caller invoking `register` can introduce a tenant that will sign
+   * outbound webhooks. Hosts wiring an HTTP/RPC endpoint in front of
+   * `register` MUST gate it with operator-level auth (mTLS, signed
+   * admin tokens, network ACL). The framework doesn't ship admin-HTTP
+   * scaffolding because the right auth shape varies by deployment;
+   * adopters who want a vetted shape can layer Express middleware
+   * around their `registry.register(...)` route handler.
+   */
+  register<P extends DecisioningPlatform>(
+    tenantId: string,
+    config: TenantConfig<P>,
+    opts?: { awaitFirstValidation?: boolean }
+  ): Promise<TenantStatus> | void;
   unregister(tenantId: string): void;
   /**
    * Resolve a tenant by host (the lowercased authority of the request).
@@ -241,23 +283,43 @@ export function createTenantRegistry(opts: TenantRegistryOptions): TenantRegistr
     if (!entry) {
       throw new Error(`runValidation: tenant '${tenantId}' not registered`);
     }
-    const result = await validator.validate({
-      agentUrl: entry.config.agentUrl,
-      signingKey: entry.config.signingKey,
-    });
+    let result: JwksValidationResult;
+    try {
+      result = await validator.validate({
+        agentUrl: entry.config.agentUrl,
+        signingKey: entry.config.signingKey,
+      });
+    } catch (err) {
+      // Validator threw — treat as transient (network glitch, etc.).
+      // Without this catch the tenant would be stuck in `pending`
+      // forever — `runValidation` rejects, `entry.status` never
+      // transitions. Closes Emma's round-1 #16.
+      result = {
+        ok: false,
+        recovery: 'transient',
+        reason: `validator threw: ${err instanceof Error ? err.message : String(err)}`,
+      };
+    }
     const now = new Date().toISOString();
+    const wasFirstValidation = entry.status.health === 'pending';
     let status: TenantStatus;
     if (result.ok) {
       status = { tenantId, agentUrl: entry.config.agentUrl, health: 'healthy', lastCheckedAt: now };
     } else if (result.recovery === 'transient') {
+      // Transient failure on FIRST validation → stay `pending` (refuse
+      // traffic). Transient failure AFTER first success → `unverified`
+      // (graceful degradation — the tenant's known good).
       status = {
         tenantId,
         agentUrl: entry.config.agentUrl,
-        health: 'unverified',
+        health: wasFirstValidation ? 'pending' : 'unverified',
         reason: result.reason,
         lastCheckedAt: now,
       };
     } else {
+      // Permanent failure → `disabled` regardless of prior state. The
+      // signing-key material doesn't match what's published; refusing
+      // traffic is the safe default.
       status = {
         tenantId,
         agentUrl: entry.config.agentUrl,
@@ -271,7 +333,11 @@ export function createTenantRegistry(opts: TenantRegistryOptions): TenantRegistr
   }
 
   return {
-    register<P extends DecisioningPlatform>(tenantId: string, config: TenantConfig<P>): void {
+    register<P extends DecisioningPlatform>(
+      tenantId: string,
+      config: TenantConfig<P>,
+      opts?: { awaitFirstValidation?: boolean }
+    ): Promise<TenantStatus> | void {
       if (tenants.has(tenantId)) {
         throw new Error(`tenant '${tenantId}' already registered; unregister first`);
       }
@@ -279,20 +345,33 @@ export function createTenantRegistry(opts: TenantRegistryOptions): TenantRegistr
       const initialStatus: TenantStatus = {
         tenantId,
         agentUrl: config.agentUrl,
-        health: 'unverified',
+        // `pending` (NOT `unverified`) — first validation hasn't run.
+        // resolveByHost refuses traffic until validation succeeds at
+        // least once. Closes the register-then-serve race window.
+        health: 'pending',
         reason: 'awaiting initial JWKS validation',
         lastCheckedAt: new Date().toISOString(),
       };
       const entry: TenantEntry = { config: config as unknown as TenantConfig, server, status: initialStatus };
       tenants.set(tenantId, entry);
-      if (autoValidate) {
-        // Fire-and-forget; status updates land on completion.
-        entry.pending = runValidation(tenantId);
-        entry.pending.catch((err: unknown) => {
-          // eslint-disable-next-line no-console
-          console.warn(`[adcp] tenant '${tenantId}' validation threw:`, err);
-        });
+      if (!autoValidate) return;
+      const validation = runValidation(tenantId);
+      entry.pending = validation;
+      // Always clear pending on settle so subsequent recheck() doesn't
+      // dedupe against a settled promise.
+      validation.finally(() => {
+        if (entry.pending === validation) entry.pending = undefined;
+      });
+      if (opts?.awaitFirstValidation) {
+        return validation;
       }
+      // Background fire — log throws so they don't surface as
+      // UnhandledPromiseRejection. (runValidation now catches inside;
+      // belt-and-suspenders.)
+      validation.catch((err: unknown) => {
+        // eslint-disable-next-line no-console
+        console.warn(`[adcp] tenant '${tenantId}' validation threw:`, err);
+      });
     },
 
     unregister(tenantId: string): void {
@@ -304,7 +383,11 @@ export function createTenantRegistry(opts: TenantRegistryOptions): TenantRegistr
       for (const [tenantId, entry] of tenants) {
         const tenantHost = new URL(entry.config.agentUrl).host.toLowerCase();
         if (tenantHost !== lowered) continue;
-        if (entry.status.health === 'disabled') return null;
+        // Refuse traffic for pending (first validation hasn't succeeded)
+        // and disabled (permanent validation failure). `unverified` —
+        // previously healthy, latest recheck failed transiently — still
+        // resolves; operators choose graceful degradation here.
+        if (entry.status.health === 'pending' || entry.status.health === 'disabled') return null;
         return { tenantId, config: entry.config, server: entry.server };
       }
       return null;
