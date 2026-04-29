@@ -596,8 +596,8 @@ describe(
           { type: 'response', status: 200 },
         ];
 
-        ProtocolClient.callTool = mock.fn(async (agent, toolName, params, debugLogs) => {
-          debugLogs.push(...expectedLogs);
+        ProtocolClient.callTool = mock.fn(async (agent, toolName, params, options) => {
+          options.debugLogs.push(...expectedLogs);
           return { status: ADCP_STATUS.COMPLETED, data: { success: true } };
         });
 
@@ -653,8 +653,8 @@ describe(
           contextId: customContextId,
         });
 
-        const sessionArg = ProtocolClient.callTool.mock.calls[0].arguments[8];
-        assert.deepStrictEqual(sessionArg, { contextId: customContextId, taskId: undefined });
+        const optionsArg = ProtocolClient.callTool.mock.calls[0].arguments[3];
+        assert.deepStrictEqual(optionsArg.session, { contextId: customContextId, taskId: undefined });
         assert.notStrictEqual(result.metadata.taskId, customContextId);
         assert.match(result.metadata.taskId, /^[0-9a-f-]{36}$/, 'taskId is a fresh UUID');
       });

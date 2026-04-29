@@ -156,7 +156,7 @@ export class Agent {
 
       const circuitBreaker = getCircuitBreaker(this.config.id);
       const protocolResponse = await circuitBreaker.call(async () => {
-        return await ProtocolClient.callTool(this.config, toolName, params, debugLogs);
+        return await ProtocolClient.callTool(this.config, toolName, params, { debugLogs });
       });
 
       // Unwrap and validate protocol response using tool-specific Zod schema

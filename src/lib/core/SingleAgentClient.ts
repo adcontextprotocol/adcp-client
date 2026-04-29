@@ -4,7 +4,7 @@ import { z } from 'zod';
 import * as schemas from '../types/schemas.generated';
 import type { AgentConfig } from '../types';
 import { ADCP_ENVELOPE_FIELDS } from '../types/adcp';
-import { ADCP_VERSION, parseAdcpMajorVersion, type AdcpVersion } from '../version';
+import { parseAdcpMajorVersion, type AdcpVersion } from '../version';
 import { resolveAdcpVersion } from '../utils/adcp-version-config';
 import type {
   GetProductsRequest,

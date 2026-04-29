@@ -211,18 +211,10 @@ export class GovernanceMiddleware {
         plan_id: config.planId,
       });
 
-      const response = await ProtocolClient.callTool(
-        config.agent,
-        'check_governance',
-        request as Record<string, any>,
+      const response = await ProtocolClient.callTool(config.agent, 'check_governance', request as Record<string, any>, {
         debugLogs,
-        undefined,
-        undefined,
-        undefined,
-        undefined,
-        undefined,
-        this.adcpVersion
-      );
+        adcpVersion: this.adcpVersion,
+      });
 
       // Unwrap protocol response (MCP text content, structuredContent, A2A artifacts)
       const responseData = unwrapProtocolResponse(response);
@@ -340,13 +332,7 @@ export class GovernanceMiddleware {
         config.agent,
         'report_plan_outcome',
         request as Record<string, any>,
-        debugLogs,
-        undefined,
-        undefined,
-        undefined,
-        undefined,
-        undefined,
-        this.adcpVersion
+        { debugLogs, adcpVersion: this.adcpVersion }
       );
 
       const responseData = unwrapProtocolResponse(response) as unknown as ReportPlanOutcomeResponse;

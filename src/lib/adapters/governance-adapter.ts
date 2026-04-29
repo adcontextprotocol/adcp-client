@@ -139,13 +139,7 @@ export class GovernanceAdapter implements IGovernanceAdapter {
         this.agentConfig.agent,
         'check_governance',
         checkRequest as Record<string, any>,
-        undefined,
-        undefined,
-        undefined,
-        undefined,
-        undefined,
-        undefined,
-        this.agentConfig.adcpVersion
+        { adcpVersion: this.agentConfig.adcpVersion }
       );
 
       return unwrapProtocolResponse(response) as unknown as CheckGovernanceResponse;

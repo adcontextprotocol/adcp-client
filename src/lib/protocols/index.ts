@@ -72,42 +72,55 @@ function resolveWireMajor(adcpVersion: string | undefined): number {
 }
 
 /**
+ * Options for {@link ProtocolClient.callTool}. All fields are optional.
+ *
+ * `webhookUrl` / `webhookSecret` / `webhookToken` are for ASYNC TASK STATUS
+ * notifications (push_notification_config). For reporting webhooks
+ * (reporting_webhook), include them directly in `args` — they stay in skill
+ * parameters and are sent verbatim to the agent.
+ */
+export interface CallToolOptions {
+  /** Debug log array. Mutated in place by the protocol layer. */
+  debugLogs?: DebugLogEntry[];
+  /** URL for async task status notifications. */
+  webhookUrl?: string;
+  /** HMAC-SHA256 secret for push_notification_config authentication. */
+  webhookSecret?: string;
+  /** Bearer token for push_notification_config validation. */
+  webhookToken?: string;
+  /** Pinned protocol generation when the agent advertises both v2 and v3. */
+  serverVersion?: 'v2' | 'v3';
+  /** A2A session continuity (contextId carries conversation, taskId resumes a task). */
+  session?: { contextId?: string; taskId?: string };
+  /**
+   * AdCP version pin from the calling client/server instance. Sets the
+   * wire-level `adcp_major_version` field per-call instead of from the
+   * SDK-pinned `ADCP_MAJOR_VERSION` constant. Default falls back to the
+   * constant so call sites that don't plumb a per-instance version keep
+   * their existing behavior.
+   */
+  adcpVersion?: string;
+}
+
+/**
  * Universal protocol client - automatically routes to the correct protocol implementation
  */
 export class ProtocolClient {
   /**
-   * Call a tool on an agent using the appropriate protocol
+   * Call a tool on an agent using the appropriate protocol.
    *
    * @param agent - Agent configuration
    * @param toolName - Name of the tool/skill to call
    * @param args - Tool arguments (includes reporting_webhook if needed - NOT removed)
-   * @param debugLogs - Debug log array
-   * @param webhookUrl - Optional: URL for async task status notifications (push_notification_config)
-   * @param webhookSecret - Optional: Secret for push_notification_config authentication
-   * @param webhookToken - Optional: Token for push_notification_config validation
-   *
-   * IMPORTANT: webhookUrl/Secret/Token are for ASYNC TASK STATUS (push_notification_config).
-   * For reporting webhooks (reporting_webhook), include them directly in args - they stay in skill parameters.
+   * @param options - Optional call-level configuration. See {@link CallToolOptions}.
    */
   static async callTool(
     agent: AgentConfig,
     toolName: string,
     args: Record<string, unknown>,
-    debugLogs: DebugLogEntry[] = [],
-    webhookUrl?: string,
-    webhookSecret?: string,
-    webhookToken?: string,
-    serverVersion?: 'v2' | 'v3',
-    session?: { contextId?: string; taskId?: string },
-    /**
-     * AdCP version pin from the calling client/server instance. Sets the
-     * wire-level `adcp_major_version` field per-call instead of from the
-     * SDK-pinned `ADCP_MAJOR_VERSION` constant. Default falls back to the
-     * constant so call sites that don't yet plumb a per-instance version
-     * keep their existing behavior.
-     */
-    adcpVersion?: string
+    options: CallToolOptions = {}
   ): Promise<unknown> {
+    const { debugLogs = [], webhookUrl, webhookSecret, webhookToken, serverVersion, session, adcpVersion } = options;
     // Per-instance major. Throws on unparseable pins via `resolveWireMajor`;
     // construction-time `resolveAdcpVersion` is the primary gate but this
     // is the failsafe for callers reaching `ProtocolClient.callTool`
@@ -166,18 +179,11 @@ export class ProtocolClient {
         const signingContext = buildAgentSigningContext(agent);
         if (signingContext && toolName !== CAPABILITY_OP) {
           await ensureCapabilityLoaded(agent, signingContext, primeArgs =>
-            ProtocolClient.callTool(
-              agent,
-              CAPABILITY_OP,
-              primeArgs,
+            ProtocolClient.callTool(agent, CAPABILITY_OP, primeArgs, {
               debugLogs,
-              undefined,
-              undefined,
-              undefined,
               serverVersion,
-              undefined,
-              adcpVersion
-            )
+              adcpVersion,
+            })
           );
         }
 

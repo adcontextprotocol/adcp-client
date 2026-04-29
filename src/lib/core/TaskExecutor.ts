@@ -537,18 +537,14 @@ export class TaskExecutor {
       // Pass the caller's A2A session ids (contextId for conversation binding,
       // taskId for resuming a non-terminal server-side task). The adapter
       // drops these on the wire for MCP (no session concept there).
-      const response = await ProtocolClient.callTool(
-        agent,
-        taskName,
-        effectiveParams,
+      const response = await ProtocolClient.callTool(agent, taskName, effectiveParams, {
         debugLogs,
         webhookUrl,
-        this.config.webhookSecret,
-        undefined,
+        webhookSecret: this.config.webhookSecret,
         serverVersion,
-        { contextId: options.contextId, taskId: options.taskId },
-        this.config.adcpVersion
-      );
+        session: { contextId: options.contextId, taskId: options.taskId },
+        adcpVersion: this.config.adcpVersion,
+      });
 
       // Emit protocol_response activity
       const respStatus = this.responseParser.getStatus(response) as string | undefined;
@@ -1287,13 +1283,10 @@ export class TaskExecutor {
       agent,
       'tasks/list',
       {},
-      [],
-      undefined,
-      undefined,
-      undefined,
-      this.lastKnownServerVersion,
-      undefined,
-      this.config.adcpVersion
+      {
+        serverVersion: this.lastKnownServerVersion,
+        adcpVersion: this.config.adcpVersion,
+      }
     )) as Record<string, unknown>;
     return (response.tasks as TaskInfo[]) || [];
   }
@@ -1346,13 +1339,10 @@ export class TaskExecutor {
       agent,
       'tasks/get',
       { task_id: taskId, include_result: true },
-      [],
-      undefined,
-      undefined,
-      undefined,
-      this.lastKnownServerVersion,
-      undefined,
-      this.config.adcpVersion
+      {
+        serverVersion: this.lastKnownServerVersion,
+        adcpVersion: this.config.adcpVersion,
+      }
     )) as Record<string, unknown>;
     // We don't run `extractResponseData` here: that helper's
     // generic AdCP-error-arm detection treats any top-level
@@ -1523,13 +1513,11 @@ export class TaskExecutor {
         contextId,
         input,
       },
-      debugLogs,
-      undefined,
-      undefined,
-      undefined,
-      this.lastKnownServerVersion,
-      undefined,
-      this.config.adcpVersion
+      {
+        debugLogs,
+        serverVersion: this.lastKnownServerVersion,
+        adcpVersion: this.config.adcpVersion,
+      }
     );
 
     // Add response message
