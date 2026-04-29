@@ -8,7 +8,6 @@ const { describe, it } = require('node:test');
 const assert = require('node:assert');
 
 const { createAdcpServerFromPlatform } = require('../dist/lib/server/decisioning/runtime/from-platform');
-const { AdcpError } = require('../dist/lib/server/decisioning/async-outcome');
 const {
   setStatusChangeBus,
   createInMemoryStatusChangeBus,

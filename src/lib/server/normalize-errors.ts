@@ -73,7 +73,7 @@ export function normalizeError(input: unknown): NormalizedError {
   // structurally rather than via instanceof so framework code in different
   // module realms (test fixtures, server-side renderers) still gets the
   // typed projection.
-  if (typeof input === 'object' && input !== null && 'code' in input) {
+  if (typeof input === 'object' && 'code' in input) {
     const obj = input as Record<string, unknown>;
     const code = typeof obj.code === 'string' && obj.code.length > 0 ? obj.code : 'GENERIC_ERROR';
     const message = typeof obj.message === 'string' && obj.message.length > 0 ? obj.message : code; // fall back to code when message missing — never empty-string

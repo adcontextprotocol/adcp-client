@@ -27,7 +27,6 @@
  */
 
 import {
-  AdcpError,
   publishStatusChange,
   type DecisioningPlatform,
   type AccountStore,
