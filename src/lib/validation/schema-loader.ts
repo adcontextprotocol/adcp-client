@@ -61,8 +61,13 @@ export function resolveBundleKey(version: string): string {
   // Bare 'MAJOR.MINOR' (no patch).
   const minorOnly = version.match(/^(\d+)\.(\d+)$/);
   if (minorOnly) return `${minorOnly[1]}.${minorOnly[2]}`;
-  // Full 'MAJOR.MINOR.PATCH' with optional prerelease.
-  const semver = version.match(/^(\d+)\.(\d+)\.(\d+)(?:-(.+))?$/);
+  // Full 'MAJOR.MINOR.PATCH' with optional prerelease. Prerelease group
+  // restricted to SemVer §9 identifiers (alphanumerics + hyphen,
+  // dot-separated) so `'3.0.0-/../etc'`-style strings can't slip through
+  // and reach `path.join` as a directory component. The full version is
+  // returned verbatim for prereleases, so this is the last line of defense
+  // before that string becomes a path segment.
+  const semver = version.match(/^(\d+)\.(\d+)\.(\d+)(?:-([0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*))?$/);
   if (semver) {
     const [, major, minor, , prerelease] = semver;
     if (prerelease !== undefined) return version;

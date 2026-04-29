@@ -158,6 +158,29 @@ describe('schema-loader per-version state', () => {
     assert.strictEqual(hasSchemaBundle(''), false);
   });
 
+  test('resolveBundleKey rejects prerelease tags with non-SemVer chars (path-traversal hardening)', () => {
+    // Prerelease group restricts to [0-9A-Za-z-] so traversal-like strings
+    // can't slip through verbatim into `path.join`. SemVer §9 identifiers
+    // are dot-separated alphanumerics; anything else is rejected.
+    assert.throws(
+      () => resolveBundleKey('3.0.0-/../etc'),
+      err => err.code === 'CONFIGURATION_ERROR'
+    );
+    assert.throws(
+      () => resolveBundleKey('3.0.0-foo/bar'),
+      err => err.code === 'CONFIGURATION_ERROR'
+    );
+    assert.throws(
+      () => resolveBundleKey('3.0.0-..'),
+      err => err.code === 'CONFIGURATION_ERROR'
+    );
+    assert.strictEqual(hasSchemaBundle('3.0.0-/../etc'), false);
+    // Valid SemVer prereleases still pass through.
+    assert.strictEqual(resolveBundleKey('3.1.0-beta.1'), '3.1.0-beta.1');
+    assert.strictEqual(resolveBundleKey('3.1.0-rc.2'), '3.1.0-rc.2');
+    assert.strictEqual(resolveBundleKey('3.0.0-beta-final'), '3.0.0-beta-final');
+  });
+
   test('resolveBundleKey throws ConfigurationError for non-version input', () => {
     assert.throws(
       () => resolveBundleKey('../etc'),
