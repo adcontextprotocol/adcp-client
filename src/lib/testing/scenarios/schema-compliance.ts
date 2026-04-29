@@ -52,8 +52,8 @@ export async function testSchemaCompliance(
     return { steps, profile };
   }
 
-  // Path A: no supported discovery tool — skip field-shape checks gracefully
   if (!profile.tools.includes('get_products') && !profile.tools.includes('get_signals')) {
+    // Path A: no supported discovery tool — skip field-shape checks gracefully
     steps.push({
       step: 'Schema compliance check support',
       passed: true,
@@ -62,10 +62,8 @@ export async function testSchemaCompliance(
       warnings: ['Schema compliance: no supported discovery tool (get_products, get_signals) found; checks skipped'],
     });
     // Fall through to list_creative_formats check below
-  }
-
-  // Path B: signals agent — validate GetSignalsResponse schema and field semantics
-  else if (profile.tools.includes('get_signals') && !profile.tools.includes('get_products')) {
+  } else if (profile.tools.includes('get_signals') && !profile.tools.includes('get_products')) {
+    // Path B: signals agent — validate GetSignalsResponse schema and field semantics
     const { result: signalsResult, step: signalsStep } = await runStep<TaskResult>(
       'Get signals (schema compliance)',
       'get_signals',
@@ -84,41 +82,26 @@ export async function testSchemaCompliance(
     steps.push(signalsStep);
 
     const signalsData = signalsResult.data as GetSignalsResponse;
+    // Zod schema validation covers required-field presence (signal_agent_segment_id, name, signal_type).
     steps.push(validateResponseSchema('get_signals', signalsData));
 
     const signals = signalsData.signals ?? [];
-    if (signals.length === 0) {
-      steps.push({
-        step: 'Schema compliance: no signals to validate',
-        passed: true,
-        duration_ms: 0,
-        details: 'Agent returned no signals — field-shape checks skipped',
-        warnings: ['No signals returned; cannot validate signal_agent_segment_id, name, signal_type fields'],
-      });
-    } else {
-      const missing: string[] = [];
-      for (const signal of signals) {
-        const raw = signal as unknown as Record<string, unknown>;
-        if (!raw.signal_agent_segment_id) missing.push('signal missing signal_agent_segment_id');
-        if (!raw.name) missing.push('signal missing name');
-        if (!raw.signal_type) missing.push('signal missing signal_type');
-      }
-      steps.push({
-        step: 'Validate signal required fields',
-        passed: missing.length === 0,
-        duration_ms: 0,
-        details:
-          missing.length === 0
-            ? `All ${signals.length} signal(s) have required fields (signal_agent_segment_id, name, signal_type)`
-            : `Required fields missing: ${missing.slice(0, 5).join('; ')}`,
-        error: missing.length > 0 ? missing.slice(0, 5).join('; ') : undefined,
-      });
-    }
+    steps.push({
+      step: 'Validate signal required fields',
+      passed: true,
+      duration_ms: 0,
+      details:
+        signals.length === 0
+          ? 'Agent returned no signals — field-shape checks skipped'
+          : `${signals.length} signal(s) validated via schema check (signal_agent_segment_id, name, signal_type)`,
+      warnings:
+        signals.length === 0
+          ? ['No signals returned; cannot validate signal_agent_segment_id, name, signal_type fields']
+          : undefined,
+    });
     // Fall through to list_creative_formats check below
-  }
-
-  // Path C: get_products present — existing product catalog checks
-  else {
+  } else {
+    // Path C: get_products present — existing product catalog checks
     const { result: productsResult, step: productsStep } = await runStep<TaskResult>(
       'Get products (schema compliance)',
       'get_products',
