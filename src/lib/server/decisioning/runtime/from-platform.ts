@@ -97,6 +97,21 @@ const DEFAULT_FRAMEWORK_LOGGER: AdcpLogger = {
 };
 import { createInMemoryStatusChangeBus, type StatusChangeBus, type PublishStatusChangeOpts } from '../status-changes';
 import { createComplyController, type ComplyControllerConfig } from '../../../testing/comply-controller';
+import { normalizeErrors } from '../../normalize-errors';
+
+/**
+ * Apply `normalizeErrors` to a sync_creatives row's optional `errors`
+ * field. Adopters often return errors as bare strings, native Error
+ * instances, or vendor-specific shapes; the wire schema requires
+ * `Error[]` with `{ code, message, ... }`. Normalizing at the
+ * projection seam means every adopter's syncCreatives method gets
+ * coerced to wire shape — the row passes strict response validation
+ * even when the adopter doesn't hand-shape every error.
+ */
+function normalizeRowErrors<TRow extends { errors?: unknown }>(row: TRow): TRow {
+  if (row?.errors == null) return row;
+  return { ...row, errors: normalizeErrors(row.errors) } as TRow;
+}
 
 /**
  * Lifecycle observability hooks the v6 runtime fires at well-known points.
@@ -1732,7 +1747,7 @@ function buildMediaBuyHandlers<P extends DecisioningPlatform<any, any>>(
               logger,
             },
             result,
-            rows => ({ creatives: rows })
+            rows => ({ creatives: rows.map(normalizeRowErrors) })
           );
         },
         r => r
@@ -1849,7 +1864,7 @@ function buildCreativeHandlers<P extends DecisioningPlatform<any, any>>(
               logger,
             },
             result,
-            rows => ({ creatives: rows })
+            rows => ({ creatives: rows.map(normalizeRowErrors) })
           );
         },
         r => r

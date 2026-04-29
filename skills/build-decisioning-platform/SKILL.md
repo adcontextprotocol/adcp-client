@@ -306,6 +306,57 @@ Common codes:
 
 Generic thrown errors (`Error`, `TypeError`) become `SERVICE_UNAVAILABLE` at the framework boundary.
 
+### Sanitizing error details with `pickSafeDetails`
+
+`AdcpError`'s optional `details` field is freeform — adopters often want to surface upstream-platform error context (request IDs, HTTP statuses, vendor codes). Raw upstream error objects almost always carry credentials, PII, or internal stack traces that MUST NOT cross the wire boundary.
+
+`pickSafeDetails(input, allowlist, opts?)` is an explicit-allowlist sanitizer at `@adcp/client/server`. Only allowlisted keys survive; default caps at depth 2 + 2 KB serialized.
+
+```ts
+import { pickSafeDetails } from '@adcp/client/server';
+
+try {
+  await gamClient.createOrder(req);
+} catch (upstreamErr) {
+  throw new AdcpError('UPSTREAM_REJECTED', {
+    recovery: 'transient',
+    message: 'Ad server rejected the order',
+    // Allowlist: only safe upstream fields cross the wire.
+    details: pickSafeDetails(upstreamErr, [
+      'http_status',
+      'request_id',
+      'gam_error_code',
+    ]),
+  });
+}
+```
+
+What gets dropped silently: any key not in the allowlist (no warning — the design assumes the allowlist is the contract); functions / Symbols / Date / RegExp / class instances; nested objects beyond `maxDepth`; results exceeding `maxSizeBytes`. Returns `undefined` (not `{}`) when nothing survives, so the spread into `details: ...` is a no-op rather than emitting an empty block.
+
+### Wire-shape normalizer for `errors[]`
+
+The wire spec for tools that surface partial-batch failures (`sync_creatives`, `sync_audiences`, `sync_accounts`, `report_usage`) requires `errors: Error[]` with the canonical `{ code, message, recovery? ... }` shape. Adopters often have errors in ad-hoc shapes — bare strings, native `Error` instances, vendor-specific objects. The framework applies `normalizeErrors` automatically at the `sync_creatives` projection seam (sales + creative dispatch); for adopter code that constructs `errors[]` directly (in custom handlers, or in tools where the framework doesn't auto-normalize yet), the helper is exported at `@adcp/client/server`:
+
+```ts
+import { normalizeErrors } from '@adcp/client/server';
+
+return creatives.map(c => ({
+  creative_id: c.id,
+  action: c.passed ? 'created' : 'failed',
+  // Adopter passes whatever shape they have — strings, Error
+  // instances, partial wire objects. normalizeErrors coerces.
+  errors: normalizeErrors(c.upstreamErrors),
+}));
+```
+
+Coercion rules (per-entry):
+- `string` → `{ code: 'GENERIC_ERROR', message: <input>, recovery: 'terminal' }`
+- `Error` instance → `{ code: 'GENERIC_ERROR', message: err.message, recovery: 'terminal' }`
+- Object with `code` + `message` → wire shape (vendor-specific keys dropped — use `details` for those)
+- `null` / `undefined` → `{ code: 'GENERIC_ERROR', message: 'Unknown error', recovery: 'terminal' }`
+
+`normalizeErrors` does NOT sanitize `details`; pair with `pickSafeDetails` on the adopter side before constructing the row.
+
 ## Account resolution
 
 `accounts.resolve(ref, ctx?)` is the single tenant boundary. Three resolution modes:

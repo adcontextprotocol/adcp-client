@@ -1,6 +1,12 @@
 export { adcpError } from './errors';
 export type { AdcpErrorOptions, AdcpErrorPayload, AdcpErrorResponse } from './errors';
 
+export { normalizeError, normalizeErrors } from './normalize-errors';
+export type { NormalizedError } from './normalize-errors';
+
+export { pickSafeDetails } from './pick-safe-details';
+export type { PickSafeDetailsOptions } from './pick-safe-details';
+
 export { wrapEnvelope } from './wrap-envelope';
 export type { WrapEnvelopeOptions } from './wrap-envelope';
 
