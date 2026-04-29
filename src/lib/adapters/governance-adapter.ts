@@ -26,6 +26,17 @@ export interface GovernanceAdapterConfig {
   agent: AgentConfig;
   /** The seller's caller URL for governance checks */
   callerUrl: string;
+  /**
+   * AdCP version pin sent to the governance agent. Should match the
+   * seller's `createAdcpServer({ adcpVersion })` value so the wire-level
+   * `adcp_major_version` field is consistent across the seller's
+   * inbound (buyer-facing) and outbound (governance-agent-facing) traffic.
+   *
+   * Defaults to `undefined`, which `ProtocolClient.callTool` resolves to
+   * the SDK-pinned `ADCP_VERSION`. Pass an explicit value when the seller
+   * pins a non-default version.
+   */
+  adcpVersion?: string;
 }
 
 /**
@@ -127,7 +138,8 @@ export class GovernanceAdapter implements IGovernanceAdapter {
       const response = await ProtocolClient.callTool(
         this.agentConfig.agent,
         'check_governance',
-        checkRequest as Record<string, any>
+        checkRequest as Record<string, any>,
+        { adcpVersion: this.agentConfig.adcpVersion }
       );
 
       return unwrapProtocolResponse(response) as unknown as CheckGovernanceResponse;

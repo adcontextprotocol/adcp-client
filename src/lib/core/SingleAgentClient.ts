@@ -4,7 +4,7 @@ import { z } from 'zod';
 import * as schemas from '../types/schemas.generated';
 import type { AgentConfig } from '../types';
 import { ADCP_ENVELOPE_FIELDS } from '../types/adcp';
-import { ADCP_VERSION, type AdcpVersion } from '../version';
+import { parseAdcpMajorVersion, type AdcpVersion } from '../version';
 import { resolveAdcpVersion } from '../utils/adcp-version-config';
 import type {
   GetProductsRequest,
@@ -390,6 +390,7 @@ export class SingleAgentClient {
       },
       onActivity: config.onActivity,
       governance: config.governance,
+      adcpVersion: this.resolvedAdcpVersion,
     });
 
     // Create async handler if handlers are provided
@@ -1137,7 +1138,7 @@ export class SingleAgentClient {
 
     // Guard mutating calls against pre-v3 sellers when opted in.
     if (this.config.requireV3ForMutations && isMutatingTask(taskType)) {
-      await this.requireV3(taskType);
+      await this.requireSupportedMajor(taskType);
     }
 
     // Check for v3 features used against v2 servers - return empty result if unsupported
@@ -2108,7 +2109,7 @@ export class SingleAgentClient {
     });
     await this.validateTaskFeatures(taskName);
     if (this.config.requireV3ForMutations && isMutatingTask(taskName)) {
-      await this.requireV3(taskName);
+      await this.requireSupportedMajor(taskName);
     }
     const agent = await this.ensureEndpointDiscovered();
 
@@ -2855,35 +2856,56 @@ export class SingleAgentClient {
   }
 
   /**
-   * Assert that the seller's capabilities corroborate AdCP v3.
+   * Assert that the seller's capabilities corroborate the major this client
+   * is pinned to (per `getAdcpVersion()`).
    *
    * A self-reported `version: 'v3'` is not enough — a hostile or
    * misconfigured seller can just string-claim the version. The guard
    * requires:
    *
-   *   1. `capabilities.majorVersions.includes(3)` (multi-version aware)
+   *   1. `capabilities.majorVersions.includes(<this client's major>)`
    *   2. `capabilities.idempotency.replayTtlSeconds` present (spec-required
-   *      for real v3 sellers; synthetic capabilities don't get this free)
+   *      for real major-3+ sellers; synthetic capabilities don't get this
+   *      free)
    *   3. capabilities were not synthesized from a tool list
    *
    * Per-client `allowV2: true` or, when that's undefined,
-   * `ADCP_ALLOW_V2=1` in the environment bypasses the check.
+   * `ADCP_ALLOW_V2=1` in the environment bypasses the check (the v2 escape
+   * hatch is named for the original v2/v3 split; it's the generic
+   * "skip the major-version guard" knob).
    *
    * Throws `VersionUnsupportedError` with the specific reason on failure.
    */
-  async requireV3(taskType: string = 'request'): Promise<void> {
+  async requireSupportedMajor(taskType: string = 'request'): Promise<void> {
     if (this.isV2Allowed()) return;
     const capabilities = await this.getCapabilities();
 
     if (capabilities._synthetic) {
       throw new VersionUnsupportedError(taskType, 'synthetic', capabilities.version, this.agent.agent_uri);
     }
-    if (!capabilities.majorVersions.includes(3)) {
+    // `AdcpMajorVersion` is currently `2 | 3` — cast through `number[]` because
+    // the parsed major is a plain number; a future SDK release that supports
+    // major 4 will widen the union.
+    const expectedMajor = parseAdcpMajorVersion(this.resolvedAdcpVersion);
+    const advertisedMajors = capabilities.majorVersions as readonly number[];
+    if (!Number.isFinite(expectedMajor) || !advertisedMajors.includes(expectedMajor)) {
       throw new VersionUnsupportedError(taskType, 'version', capabilities.version, this.agent.agent_uri);
     }
     if (!capabilities.idempotency?.replayTtlSeconds) {
       throw new VersionUnsupportedError(taskType, 'idempotency', capabilities.version, this.agent.agent_uri);
     }
+  }
+
+  /**
+   * Deprecated alias for {@link requireSupportedMajor}. Original name from
+   * the AdCP v2/v3 split; the function generalized in Stage 3 to check the
+   * client's per-instance major instead of hardcoded 3, and `requireV3`
+   * stopped reflecting what the function actually does.
+   *
+   * @deprecated Use `requireSupportedMajor()` instead.
+   */
+  async requireV3(taskType: string = 'request'): Promise<void> {
+    return this.requireSupportedMajor(taskType);
   }
 
   private isV2Allowed(): boolean {

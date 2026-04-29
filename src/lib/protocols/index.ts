@@ -44,38 +44,88 @@ import { is401Error } from '../errors';
 import { isLikelyPrivateUrl } from '../net';
 import { validateAgentUrl } from '../validation';
 import { withSpan } from '../observability/tracing';
-import { ADCP_MAJOR_VERSION } from '../version';
+import { ADCP_MAJOR_VERSION, parseAdcpMajorVersion } from '../version';
+import { ConfigurationError } from '../errors';
 import { buildAgentSigningContext, CAPABILITY_OP, ensureCapabilityLoaded } from '../signing/client';
+
+/**
+ * Derive the wire-level `adcp_major_version` integer from a caller-supplied
+ * pin. Returns the SDK default when no pin is provided; throws on a pin
+ * that doesn't parse so misuse surfaces at the factory boundary instead
+ * of silently emitting the SDK's major.
+ *
+ * Throws `ConfigurationError` (not a plain `Error`) so a typo'd pin
+ * surfaces with the same error class as the construction-time gate in
+ * `resolveAdcpVersion` — one shape for all pin-misuse paths.
+ */
+function resolveWireMajor(adcpVersion: string | undefined): number {
+  if (adcpVersion === undefined) return ADCP_MAJOR_VERSION;
+  const parsed = parseAdcpMajorVersion(adcpVersion);
+  if (!Number.isFinite(parsed)) {
+    throw new ConfigurationError(
+      `adcpVersion ${JSON.stringify(adcpVersion)} is not a valid AdCP version. ` +
+        `Expected a semver string (e.g. '3.0.1', '3.1.0-beta.1') or a legacy alias (e.g. 'v3').`,
+      'adcpVersion'
+    );
+  }
+  return parsed;
+}
+
+/**
+ * Options for {@link ProtocolClient.callTool}. All fields are optional.
+ *
+ * `webhookUrl` / `webhookSecret` / `webhookToken` are for ASYNC TASK STATUS
+ * notifications (push_notification_config). For reporting webhooks
+ * (reporting_webhook), include them directly in `args` — they stay in skill
+ * parameters and are sent verbatim to the agent.
+ */
+export interface CallToolOptions {
+  /** Debug log array. Mutated in place by the protocol layer. */
+  debugLogs?: DebugLogEntry[];
+  /** URL for async task status notifications. */
+  webhookUrl?: string;
+  /** HMAC-SHA256 secret for push_notification_config authentication. */
+  webhookSecret?: string;
+  /** Bearer token for push_notification_config validation. */
+  webhookToken?: string;
+  /** Pinned protocol generation when the agent advertises both v2 and v3. */
+  serverVersion?: 'v2' | 'v3';
+  /** A2A session continuity (contextId carries conversation, taskId resumes a task). */
+  session?: { contextId?: string; taskId?: string };
+  /**
+   * AdCP version pin from the calling client/server instance. Sets the
+   * wire-level `adcp_major_version` field per-call instead of from the
+   * SDK-pinned `ADCP_MAJOR_VERSION` constant. Default falls back to the
+   * constant so call sites that don't plumb a per-instance version keep
+   * their existing behavior.
+   */
+  adcpVersion?: string;
+}
 
 /**
  * Universal protocol client - automatically routes to the correct protocol implementation
  */
 export class ProtocolClient {
   /**
-   * Call a tool on an agent using the appropriate protocol
+   * Call a tool on an agent using the appropriate protocol.
    *
    * @param agent - Agent configuration
    * @param toolName - Name of the tool/skill to call
    * @param args - Tool arguments (includes reporting_webhook if needed - NOT removed)
-   * @param debugLogs - Debug log array
-   * @param webhookUrl - Optional: URL for async task status notifications (push_notification_config)
-   * @param webhookSecret - Optional: Secret for push_notification_config authentication
-   * @param webhookToken - Optional: Token for push_notification_config validation
-   *
-   * IMPORTANT: webhookUrl/Secret/Token are for ASYNC TASK STATUS (push_notification_config).
-   * For reporting webhooks (reporting_webhook), include them directly in args - they stay in skill parameters.
+   * @param options - Optional call-level configuration. See {@link CallToolOptions}.
    */
   static async callTool(
     agent: AgentConfig,
     toolName: string,
     args: Record<string, unknown>,
-    debugLogs: DebugLogEntry[] = [],
-    webhookUrl?: string,
-    webhookSecret?: string,
-    webhookToken?: string,
-    serverVersion?: 'v2' | 'v3',
-    session?: { contextId?: string; taskId?: string }
+    options: CallToolOptions = {}
   ): Promise<unknown> {
+    const { debugLogs = [], webhookUrl, webhookSecret, webhookToken, serverVersion, session, adcpVersion } = options;
+    // Per-instance major. Throws on unparseable pins via `resolveWireMajor`;
+    // construction-time `resolveAdcpVersion` is the primary gate but this
+    // is the failsafe for callers reaching `ProtocolClient.callTool`
+    // directly (test harnesses, the in-process MCP path).
+    const wireMajor = resolveWireMajor(adcpVersion);
     return withSpan(
       `adcp.${agent.protocol}.call_tool`,
       {
@@ -90,7 +140,7 @@ export class ProtocolClient {
         // still apply (they run in SingleAgentClient above this call). We skip
         // URL validation, OAuth refresh, and signing — none apply in-process.
         if (agent.protocol === 'mcp' && agent._inProcessMcpClient) {
-          const inProcArgs = serverVersion === 'v2' ? args : { adcp_major_version: ADCP_MAJOR_VERSION, ...args };
+          const inProcArgs = serverVersion === 'v2' ? args : { adcp_major_version: wireMajor, ...args };
           return callMCPToolWithClient(agent._inProcessMcpClient, toolName, inProcArgs, debugLogs);
         }
 
@@ -129,22 +179,19 @@ export class ProtocolClient {
         const signingContext = buildAgentSigningContext(agent);
         if (signingContext && toolName !== CAPABILITY_OP) {
           await ensureCapabilityLoaded(agent, signingContext, primeArgs =>
-            ProtocolClient.callTool(
-              agent,
-              CAPABILITY_OP,
-              primeArgs,
+            ProtocolClient.callTool(agent, CAPABILITY_OP, primeArgs, {
               debugLogs,
-              undefined,
-              undefined,
-              undefined,
-              serverVersion
-            )
+              serverVersion,
+              adcpVersion,
+            })
           );
         }
 
         // Declare AdCP major version on every request so sellers can validate compatibility.
         // Skip for v2 servers — they don't recognise the field and strict-schema agents reject it.
-        const argsWithVersion = serverVersion === 'v2' ? args : { adcp_major_version: ADCP_MAJOR_VERSION, ...args };
+        // `wireMajor` is derived per-call from the caller's `adcpVersion` pin so a 3.0 client
+        // emits `adcp_major_version: 3` and a 4.x client emits 4.
+        const argsWithVersion = serverVersion === 'v2' ? args : { adcp_major_version: wireMajor, ...args };
 
         // Build push_notification_config for ASYNC TASK STATUS notifications
         // (NOT for reporting_webhook - that stays in args)
@@ -324,33 +371,44 @@ export const createMCPClient = (
   agentUrl: string,
   authToken?: string,
   headers?: Record<string, string>,
-  serverVersion?: 'v2' | 'v3'
-) => ({
-  callTool: (toolName: string, args: Record<string, unknown>, debugLogs?: DebugLogEntry[]) =>
-    callMCPToolWithTasks(
-      agentUrl,
-      toolName,
-      serverVersion === 'v2' ? args : { adcp_major_version: ADCP_MAJOR_VERSION, ...args },
-      authToken,
-      debugLogs,
-      headers
-    ),
-});
+  serverVersion?: 'v2' | 'v3',
+  adcpVersion?: string
+) => {
+  // Throw at factory time on unparseable pins. The previous shape silently
+  // defaulted to `ADCP_MAJOR_VERSION`, which masked misuse — a typo'd pin
+  // would emit `adcp_major_version: 3` regardless of the caller's intent.
+  const wireMajor = resolveWireMajor(adcpVersion);
+  return {
+    callTool: (toolName: string, args: Record<string, unknown>, debugLogs?: DebugLogEntry[]) =>
+      callMCPToolWithTasks(
+        agentUrl,
+        toolName,
+        serverVersion === 'v2' ? args : { adcp_major_version: wireMajor, ...args },
+        authToken,
+        debugLogs,
+        headers
+      ),
+  };
+};
 
 export const createA2AClient = (
   agentUrl: string,
   authToken?: string,
   headers?: Record<string, string>,
-  serverVersion?: 'v2' | 'v3'
-) => ({
-  callTool: (toolName: string, parameters: Record<string, unknown>, debugLogs?: DebugLogEntry[]) =>
-    callA2ATool(
-      agentUrl,
-      toolName,
-      serverVersion === 'v2' ? parameters : { adcp_major_version: ADCP_MAJOR_VERSION, ...parameters },
-      authToken,
-      debugLogs,
-      undefined,
-      headers
-    ),
-});
+  serverVersion?: 'v2' | 'v3',
+  adcpVersion?: string
+) => {
+  const wireMajor = resolveWireMajor(adcpVersion);
+  return {
+    callTool: (toolName: string, parameters: Record<string, unknown>, debugLogs?: DebugLogEntry[]) =>
+      callA2ATool(
+        agentUrl,
+        toolName,
+        serverVersion === 'v2' ? parameters : { adcp_major_version: wireMajor, ...parameters },
+        authToken,
+        debugLogs,
+        undefined,
+        headers
+      ),
+  };
+};

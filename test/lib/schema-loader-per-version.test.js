@@ -22,6 +22,7 @@ const {
   getValidator,
   listValidatorKeys,
   resolveBundleKey,
+  hasSchemaBundle,
   _resetValidationLoader,
 } = require('../../dist/lib/validation/schema-loader.js');
 const { ADCP_VERSION } = require('../../dist/lib/version.js');
@@ -135,5 +136,65 @@ describe('schema-loader per-version state', () => {
     _resetValidationLoader('3.0.1'); // patch-pinned reset must clear the '3.0' bundle
     const afterReset = getValidator('get_products', 'request', '3.0');
     assert.notStrictEqual(beforeReset, afterReset, 'resetting via a patch-pin clears the resolved minor bundle');
+  });
+
+  test('hasSchemaBundle returns true for shipped versions', () => {
+    assert.strictEqual(hasSchemaBundle(ADCP_VERSION), true);
+    assert.strictEqual(hasSchemaBundle('3.0.0'), true, '3.0.0 collapses to the 3.0 bundle');
+    assert.strictEqual(hasSchemaBundle('3.0'), true, 'bare minor resolves to the same bundle');
+  });
+
+  test('hasSchemaBundle returns false for unshipped versions', () => {
+    assert.strictEqual(hasSchemaBundle('4.0.0'), false, 'no major-4 bundle');
+    assert.strictEqual(hasSchemaBundle('99.0.0-beta.1'), false, 'no synthetic prerelease bundle');
+  });
+
+  test('hasSchemaBundle returns false for non-version garbage (defense in depth)', () => {
+    // resolveBundleKey throws ConfigurationError for unrecognized shapes;
+    // hasSchemaBundle's try/catch surfaces the throw as `false` so a
+    // malformed input never reaches `path.join` as a directory component.
+    assert.strictEqual(hasSchemaBundle('../etc'), false);
+    assert.strictEqual(hasSchemaBundle('3foo'), false);
+    assert.strictEqual(hasSchemaBundle(''), false);
+  });
+
+  test('resolveBundleKey rejects prerelease tags with non-SemVer chars (path-traversal hardening)', () => {
+    // Prerelease group restricts to [0-9A-Za-z-] so traversal-like strings
+    // can't slip through verbatim into `path.join`. SemVer §9 identifiers
+    // are dot-separated alphanumerics; anything else is rejected.
+    assert.throws(
+      () => resolveBundleKey('3.0.0-/../etc'),
+      err => err.code === 'CONFIGURATION_ERROR'
+    );
+    assert.throws(
+      () => resolveBundleKey('3.0.0-foo/bar'),
+      err => err.code === 'CONFIGURATION_ERROR'
+    );
+    assert.throws(
+      () => resolveBundleKey('3.0.0-..'),
+      err => err.code === 'CONFIGURATION_ERROR'
+    );
+    assert.strictEqual(hasSchemaBundle('3.0.0-/../etc'), false);
+    // Valid SemVer prereleases still pass through.
+    assert.strictEqual(resolveBundleKey('3.1.0-beta.1'), '3.1.0-beta.1');
+    assert.strictEqual(resolveBundleKey('3.1.0-rc.2'), '3.1.0-rc.2');
+    assert.strictEqual(resolveBundleKey('3.0.0-beta-final'), '3.0.0-beta-final');
+  });
+
+  test('resolveBundleKey throws ConfigurationError for non-version input', () => {
+    assert.throws(
+      () => resolveBundleKey('../etc'),
+      err => err.code === 'CONFIGURATION_ERROR' && /not a recognized version format/.test(err.message)
+    );
+    assert.throws(
+      () => resolveBundleKey('3foo'),
+      err => err.code === 'CONFIGURATION_ERROR'
+    );
+  });
+
+  test('resolveBundleKey accepts legacy v-prefix aliases', () => {
+    assert.strictEqual(resolveBundleKey('v3'), 'v3');
+    assert.strictEqual(resolveBundleKey('v2.5'), 'v2.5');
+    assert.strictEqual(resolveBundleKey('v2.6'), 'v2.6');
   });
 });

@@ -116,12 +116,37 @@ import type {
  *
  * Returns raw AdCP responses matching schema exactly.
  * No SDK wrapping - responses follow AdCP discriminated union patterns.
+ *
+ * @deprecated Use `SingleAgentClient` / `AgentClient` / `ADCPMultiAgentClient`
+ * from `@adcp/sdk` instead. The `Agent` class predates Stage 3's per-instance
+ * `adcpVersion` plumbing — it always emits the SDK-pinned `ADCP_MAJOR_VERSION`
+ * on the wire regardless of caller pin, which silently drifts from a buyer
+ * who pins a non-default version. The conversation-aware clients honor the
+ * per-instance pin end-to-end (validators, wire field, capability check).
  */
+let _agentDeprecationWarned = false;
+
 export class Agent {
   constructor(
     private config: AgentConfig,
     private client: any // Will be AdCPClient
-  ) {}
+  ) {
+    if (!_agentDeprecationWarned) {
+      // Flag is set only after a successful emitWarning so a runtime that
+      // throws on the first call (monkey-patched test harness, polyfilled
+      // worker) still surfaces the deprecation on a later construction.
+      try {
+        process.emitWarning(
+          'Agent class is deprecated. Use SingleAgentClient / AgentClient / ADCPMultiAgentClient from @adcp/sdk; ' +
+            'Agent does not honor per-instance adcpVersion pins (always emits the SDK default major).',
+          'DeprecationWarning'
+        );
+        _agentDeprecationWarned = true;
+      } catch {
+        // emitWarning is best-effort observability; never fatal.
+      }
+    }
+  }
 
   private async callTool<T>(toolName: string, params: any): Promise<T> {
     const debugLogs: any[] = [];
@@ -131,7 +156,7 @@ export class Agent {
 
       const circuitBreaker = getCircuitBreaker(this.config.id);
       const protocolResponse = await circuitBreaker.call(async () => {
-        return await ProtocolClient.callTool(this.config, toolName, params, debugLogs);
+        return await ProtocolClient.callTool(this.config, toolName, params, { debugLogs });
       });
 
       // Unwrap and validate protocol response using tool-specific Zod schema

@@ -2046,6 +2046,15 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
     testController: testControllerBridge,
   } = config;
 
+  // Resolve `adcpVersion` early — the validator-call closures below capture
+  // it by reference and would hit a TDZ ReferenceError if any of them ran
+  // synchronously during setup. They don't today (`createAdcpServer`
+  // registers handlers; the handlers fire on incoming requests after
+  // `wrapMcpServer` returns), but the ordering hides a sharp edge for
+  // future refactors. Throws `ConfigurationError` on cross-major pins
+  // whose schema bundle isn't shipped — see utils/adcp-version-config.ts.
+  const adcpVersion = resolveAdcpVersion(configuredAdcpVersion);
+
   // Defaults gated on `process.env.NODE_ENV`:
   //   - Production → both sides `'off'` (zero AJV overhead; trust the
   //     handler after its test suite has exercised it).
@@ -2314,7 +2323,7 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
         // Runs before idempotency so drifted payloads never touch the
         // replay cache. `off` short-circuits without calling AJV.
         if (requestValidationMode !== 'off') {
-          const outcome = validateRequest(toolName, params);
+          const outcome = validateRequest(toolName, params, adcpVersion);
           if (!outcome.valid) {
             // When `idempotency: 'disabled'` is set, drop the synthetic
             // "missing idempotency_key" failure on mutating tools — the
@@ -2623,7 +2632,7 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
           // their shape is enforced by the adcpError() builder.
           if (responseValidationMode !== 'off' && !isErrorResponse(formatted)) {
             const payload = formatted.structuredContent;
-            const outcome = validateResponse(toolName, payload);
+            const outcome = validateResponse(toolName, payload, adcpVersion);
             if (!outcome.valid) {
               logger.warn(`Schema validation warning (response) for ${toolName}: ${formatIssues(outcome.issues)}`, {
                 tool: toolName,
@@ -3084,8 +3093,6 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
       if (idempotency && idempotency.clearAll) await idempotency.clearAll();
     },
   };
-  // Throws ConfigurationError on cross-major pin. See utils/adcp-version-config.ts.
-  const adcpVersion = resolveAdcpVersion(configuredAdcpVersion);
   const wrapped: AdcpServerInternal = wrapMcpServer(server, compliance, adcpVersion);
 
   // Attach the auto-wired preTransport so `serve()` mounts the verifier
