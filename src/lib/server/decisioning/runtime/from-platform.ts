@@ -357,6 +357,34 @@ export interface CreateAdcpServerFromPlatformOptions extends Omit<
    */
   allowPrivateWebhookUrls?: boolean;
 
+  /**
+   * Auto-fire a completion webhook on the sync-success arm of mutating
+   * tools when the request supplied `push_notification_config.url`.
+   * Default is `true` — buyers passing the URL expect notification
+   * regardless of whether the seller routed the call sync vs HITL, and
+   * v5 adopters routinely wired this manually inside every handler.
+   * The framework now does it for them.
+   *
+   * Webhook payload mirrors the HITL completion shape: top-level
+   * `task_type` (the wire tool name), `status: 'completed'`, and
+   * `result` carrying the projected sync response. `task_id` is
+   * synthesized per call (sync responses don't allocate a registry
+   * task); buyers correlate via the resource IDs (`media_buy_id`,
+   * `creative_id`, etc.) on `result`.
+   *
+   * Same `SPEC_WEBHOOK_TASK_TYPES` gate as the HITL path: tools outside
+   * the closed wire enum don't emit (adopters use `publishStatusChange`
+   * for those). Sync auto-emit and the HITL path share the same
+   * `emitWebhook` plumbing — host-wired signing, redelivery, and
+   * observability hooks all apply uniformly.
+   *
+   * Set `false` to suppress the auto-emit for adopters who emit
+   * webhooks manually inside their handlers (idempotency duplication
+   * concern) or for transitional deployments that don't yet have the
+   * webhook receiver path stood up.
+   */
+  autoEmitCompletionWebhooks?: boolean;
+
   // ---------------------------------------------------------------------
   // Custom-handler escape hatch (incremental migration seam)
   // ---------------------------------------------------------------------
@@ -754,6 +782,7 @@ export function createAdcpServerFromPlatform<P extends DecisioningPlatform<any, 
       opts.mediaBuy,
       buildMediaBuyHandlers(platform, taskRegistry, taskWebhookEmit, observability, fwLogger, {
         allowPrivateWebhookUrls: opts.allowPrivateWebhookUrls === true,
+        autoEmitCompletionWebhooks: opts.autoEmitCompletionWebhooks !== false,
       }),
       'mediaBuy',
       mergeOpts
@@ -762,6 +791,7 @@ export function createAdcpServerFromPlatform<P extends DecisioningPlatform<any, 
       opts.creative,
       buildCreativeHandlers(platform, taskRegistry, taskWebhookEmit, observability, fwLogger, {
         allowPrivateWebhookUrls: opts.allowPrivateWebhookUrls === true,
+        autoEmitCompletionWebhooks: opts.autoEmitCompletionWebhooks !== false,
       }),
       'creative',
       mergeOpts
@@ -1260,6 +1290,14 @@ interface DispatchHitlOpts {
   emitWebhook?: HandlerContext<Account>['emitWebhook'];
   observability?: DecisioningObservabilityHooks;
   logger: AdcpLogger;
+  /**
+   * Auto-emit a completion webhook on the sync-success arm too — see
+   * `CreateAdcpServerFromPlatformOptions.autoEmitCompletionWebhooks`.
+   * `routeIfHandoff` consults this when the platform returns a sync
+   * Success (not a TaskHandoff). Threaded from per-handler call sites
+   * so each tool's dispatcher reads the constructor flag once.
+   */
+  autoEmitCompletion?: boolean;
 }
 
 /**
@@ -1296,7 +1334,81 @@ async function routeIfHandoff<TInner, TWire>(
       return project(inner);
     });
   }
-  return project(result);
+  const projected = project(result);
+  if (opts.autoEmitCompletion === true && opts.pushNotificationUrl) {
+    // Auto-emit completion webhook on sync-success arm — shares the
+    // SPEC_WEBHOOK_TASK_TYPES gate with the HITL path, so tools outside
+    // the closed wire enum (adopter-only specialism methods, etc.) skip
+    // delivery silently and surface state via publishStatusChange
+    // instead. Failures don't block the sync response: webhook delivery
+    // is best-effort, the buyer already has the result inline.
+    await emitSyncCompletionWebhook(opts, projected);
+  }
+  return projected;
+}
+
+/**
+ * Auto-fire the post-success webhook for the sync arm of a mutating
+ * tool. Mirrors `emitTaskWebhook` (HITL path) but synthesizes a
+ * `task_id` since sync responses don't allocate a registry task.
+ * Buyers correlate via the resource IDs embedded in `result`
+ * (`media_buy_id`, `creative_id`, etc.) — `task_id` is informational
+ * for the spec's required-field shape.
+ *
+ * Webhook delivery failures are logged-and-swallowed: the sync
+ * response succeeded and the buyer has the result inline, so blocking
+ * the response on a flaky webhook receiver would be strictly worse
+ * than the buyer eventually polling.
+ */
+async function emitSyncCompletionWebhook(opts: DispatchHitlOpts, result: unknown): Promise<void> {
+  if (!opts.emitWebhook || !opts.pushNotificationUrl) return;
+  if (!SPEC_WEBHOOK_TASK_TYPES.has(opts.tool)) {
+    opts.logger.warn(
+      `[adcp/decisioning] sync completion webhook for ${opts.tool} skipped — ` +
+        `tool not in spec task-type enum (closed 20-value set per enums/task-type.json). ` +
+        `Use publishStatusChange for long-running ${opts.tool} state.`
+    );
+    return;
+  }
+  const taskId = `sync-${randomUUID()}`;
+  const wirePayload = buildTaskWebhookPayload(opts, taskId, 'completed', { result });
+  const start = Date.now();
+  let success = false;
+  let errorMessages: string[] | undefined;
+  let errorCode: string | undefined;
+  try {
+    const r = await opts.emitWebhook({
+      url: opts.pushNotificationUrl,
+      payload: wirePayload,
+      operation_id: `${opts.tool}.${taskId}`,
+    });
+    success = r?.delivered === true;
+    if (r && Array.isArray(r.errors) && r.errors.length > 0) {
+      errorMessages = r.errors;
+      errorCode = bucketWebhookError(r.errors[0] ?? '');
+    }
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    errorMessages = [msg];
+    errorCode = bucketWebhookError(msg);
+    opts.logger.warn(`[adcp/decisioning] sync completion webhook for ${opts.tool} failed: ${msg}`);
+  } finally {
+    safeFire(
+      opts.observability?.onWebhookEmit,
+      {
+        taskId,
+        tool: opts.tool,
+        status: 'completed' as const,
+        url: opts.pushNotificationUrl,
+        success,
+        durationMs: Date.now() - start,
+        ...(errorCode && { errorCode }),
+        ...(errorMessages && { errorMessages }),
+      },
+      'onWebhookEmit',
+      opts.logger
+    );
+  }
 }
 
 async function dispatchHitl<TResult>(
@@ -1800,7 +1912,7 @@ function buildMediaBuyHandlers<P extends DecisioningPlatform<any, any>>(
   taskWebhookEmit: NonNullable<HandlerContext<Account>['emitWebhook']> | undefined,
   observability: DecisioningObservabilityHooks | undefined,
   logger: AdcpLogger,
-  pushOpts: { allowPrivateWebhookUrls: boolean }
+  pushOpts: { allowPrivateWebhookUrls: boolean; autoEmitCompletionWebhooks: boolean }
 ): MediaBuyHandlers<Account> | undefined {
   const sales = platform.sales;
   if (!sales) return undefined;
@@ -1828,6 +1940,7 @@ function buildMediaBuyHandlers<P extends DecisioningPlatform<any, any>>(
               pushNotificationUrl: push.url,
               pushNotificationToken: push.token,
               emitWebhook: taskWebhookEmit ?? ctx.emitWebhook,
+              autoEmitCompletion: pushOpts.autoEmitCompletionWebhooks,
               observability,
               logger,
             },
@@ -1880,6 +1993,7 @@ function buildMediaBuyHandlers<P extends DecisioningPlatform<any, any>>(
               pushNotificationUrl: push.url,
               pushNotificationToken: push.token,
               emitWebhook: taskWebhookEmit ?? ctx.emitWebhook,
+              autoEmitCompletion: pushOpts.autoEmitCompletionWebhooks,
               observability,
               logger,
             },
@@ -1949,7 +2063,7 @@ function buildCreativeHandlers<P extends DecisioningPlatform<any, any>>(
   taskWebhookEmit: NonNullable<HandlerContext<Account>['emitWebhook']> | undefined,
   observability: DecisioningObservabilityHooks | undefined,
   logger: AdcpLogger,
-  pushOpts: { allowPrivateWebhookUrls: boolean }
+  pushOpts: { allowPrivateWebhookUrls: boolean; autoEmitCompletionWebhooks: boolean }
 ): CreativeHandlers<Account> | undefined {
   const creative = platform.creative;
   if (!creative) return undefined;
@@ -1998,6 +2112,7 @@ function buildCreativeHandlers<P extends DecisioningPlatform<any, any>>(
               pushNotificationUrl: push.url,
               pushNotificationToken: push.token,
               emitWebhook: taskWebhookEmit ?? ctx.emitWebhook,
+              autoEmitCompletion: pushOpts.autoEmitCompletionWebhooks,
               observability,
               logger,
             },
