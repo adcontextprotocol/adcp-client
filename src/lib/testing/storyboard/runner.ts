@@ -82,7 +82,7 @@ import type {
   ValidationResult,
 } from './types';
 import { DETAILED_SKIP_TO_CANONICAL } from './types';
-import type { AgentProfile, TaskResult } from '../types';
+import type { AgentProfile, TaskResult, TestStepResult } from '../types';
 import {
   type AssertionContext,
   type AssertionSpec,
@@ -460,6 +460,68 @@ function buildCapabilityUnsupportedResult(
 }
 
 /**
+ * Build a hard-failure StoryboardResult for when agent capability
+ * discovery (`get_agent_info` / MCP `tools/list`) failed. Surfacing
+ * discovery errors as a hard storyboard failure prevents the silent
+ * "X/X clean, 100% skipped" failure mode where transport / auth
+ * misconfiguration produced an empty `agentTools: []` and every step
+ * skipped with `missing_tool`.
+ *
+ * @public — exported for direct testing of the failure-result shape;
+ * called from `runStoryboard` when discovery throws.
+ */
+export function buildDiscoveryFailedResult(
+  agentUrls: string[],
+  storyboard: Storyboard,
+  discoveryStep: TestStepResult
+): StoryboardResult {
+  const detail = discoveryStep.error ?? 'Discovery failed (no agent tools advertised).';
+  const syntheticStep: StoryboardStepResult = {
+    storyboard_id: storyboard.id,
+    step_id: 'discovery_failed',
+    phase_id: 'discovery_failed',
+    title: 'Storyboard failed: agent capability discovery did not succeed',
+    task: '',
+    passed: false,
+    skipped: false,
+    duration_ms: discoveryStep.duration_ms,
+    validations: [],
+    context: {},
+    error: `Discovery failure: ${detail}. The runner refuses to proceed with empty agentTools — that mode produces silent "all clean" reports when the underlying transport / auth / network policy is broken. Fix the discovery error before re-running.`,
+    extraction: { path: 'none' },
+  };
+  return {
+    storyboard_id: storyboard.id,
+    storyboard_title: storyboard.title,
+    agent_url: agentUrls[0]!,
+    overall_passed: false,
+    phases: [
+      {
+        phase_id: 'discovery_failed',
+        phase_title: 'Discovery failed',
+        passed: false,
+        steps: [syntheticStep],
+        duration_ms: discoveryStep.duration_ms,
+      },
+    ],
+    context: {},
+    total_duration_ms: discoveryStep.duration_ms,
+    passed_count: 0,
+    failed_count: 1,
+    skipped_count: 0,
+    tested_at: new Date().toISOString(),
+    strict_validation_summary: {
+      observable: false,
+      checked: 0,
+      passed: 0,
+      failed: 0,
+      strict_only_failures: 0,
+      lenient_also_failed: 0,
+    },
+  };
+}
+
+/**
  * Execute a single pass of the storyboard against the supplied replica URLs
  * using round-robin dispatch starting at `dispatchOffset`. Called directly
  * by `runStoryboard` (offset 0) and repeatedly by `runMultiPass` (offsets
@@ -487,6 +549,16 @@ async function executeStoryboardPass(
   let profile: AgentProfile | undefined;
   if (!options._client) {
     const discovered = await getOrDiscoverProfile(clients[0]!, options);
+    // Discovery failure must surface as a HARD STORYBOARD FAILURE, not a
+    // silent empty `agentTools: []` that lets every step skip with
+    // `missing_tool`. The latter mode produces "X/X clean" summaries with
+    // 100% skipped — invisible CI failure when transport setup is broken
+    // (auth misconfig, MCP transport-fallback bugs, network policy, etc.).
+    // See: https://github.com/adcontextprotocol/adcp-client/issues/...
+    if (discovered.step.passed === false) {
+      if (!options._client) await closeConnections(options.protocol);
+      return buildDiscoveryFailedResult(agentUrls, storyboard, discovered.step);
+    }
     profile = discovered.profile;
     // Populate agentTools and _profile from discovered profile if not already set.
     // _profile is threaded into executeStep so capability-based skip gates
