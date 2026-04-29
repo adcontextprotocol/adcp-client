@@ -570,10 +570,18 @@ export function createAdcpServerFromPlatform<P extends DecisioningPlatform<any, 
   // grades `sync_accounts` steps as `'not_applicable'` (rather than the
   // misleading `'missing_tool'`) for explicit-mode adopters who correctly
   // don't implement that tool. See storyboard runner.ts account-mode gate.
+  //
+  // `supportedBillings` projects onto the parallel `account.supported_billing`
+  // wire field — buyers pre-flight check whether the seller bills the
+  // operator (retail-media model) or the buying agent (pass-through). Without
+  // the projection, retail-media adopters that declared `['operator']` saw
+  // their buyers default-route to agent-billed flows.
   const requireOperatorAuth = platform.capabilities.requireOperatorAuth ?? platform.accounts.resolution === 'explicit';
-  const hasAccountProjection = requireOperatorAuth === true;
+  const supportedBillings = platform.capabilities.supportedBillings;
+  const hasAccountProjection = requireOperatorAuth === true || (supportedBillings?.length ?? 0) > 0;
   const accountOverrides: Partial<NonNullable<GetAdCPCapabilitiesResponse['account']>> = {
-    require_operator_auth: true,
+    ...(requireOperatorAuth === true && { require_operator_auth: true }),
+    ...(supportedBillings?.length && { supported_billing: [...supportedBillings] }),
   };
 
   const projectedCapabilitiesConfig =

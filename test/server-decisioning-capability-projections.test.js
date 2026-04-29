@@ -255,6 +255,36 @@ describe('Capability projections — declarative capability blocks on Decisionin
     assert.notStrictEqual(requireOperatorAuth, true);
   });
 
+  it('capabilities.supportedBillings projects onto wire account.supported_billing', async () => {
+    // Retail-media adopters declare ['operator'] so buyers route through
+    // operator-billed (Criteo / Amazon) settlement flows. Without this
+    // projection buyers default-route to agent-billed pass-through.
+    const platform = basePlatform({ supportedBillings: ['operator', 'agent'] });
+    const server = createAdcpServerFromPlatform(platform, {
+      name: 'h',
+      version: '0.0.1',
+      validation: { requests: 'off', responses: 'off' },
+    });
+    const result = await dispatchCapabilities(server);
+    const account = result.structuredContent?.account;
+    assert.ok(account, 'account block projected');
+    assert.deepStrictEqual(account.supported_billing, ['operator', 'agent']);
+  });
+
+  it('supportedBillings + explicit resolution project together', async () => {
+    const platform = basePlatform({ supportedBillings: ['operator'] });
+    platform.accounts.resolution = 'explicit';
+    const server = createAdcpServerFromPlatform(platform, {
+      name: 'h',
+      version: '0.0.1',
+      validation: { requests: 'off', responses: 'off' },
+    });
+    const result = await dispatchCapabilities(server);
+    const account = result.structuredContent?.account;
+    assert.strictEqual(account.require_operator_auth, true);
+    assert.deepStrictEqual(account.supported_billing, ['operator']);
+  });
+
   it('omitting all three leaves get_adcp_capabilities unchanged (no empty media_buy block)', async () => {
     const server = createAdcpServerFromPlatform(basePlatform(), {
       name: 'h',
