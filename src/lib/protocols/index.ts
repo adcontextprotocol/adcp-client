@@ -45,25 +45,31 @@ import { isLikelyPrivateUrl } from '../net';
 import { validateAgentUrl } from '../validation';
 import { withSpan } from '../observability/tracing';
 import { ADCP_MAJOR_VERSION, parseAdcpMajorVersion } from '../version';
+import { ConfigurationError } from '../errors';
+import { buildAgentSigningContext, CAPABILITY_OP, ensureCapabilityLoaded } from '../signing/client';
 
 /**
  * Derive the wire-level `adcp_major_version` integer from a caller-supplied
  * pin. Returns the SDK default when no pin is provided; throws on a pin
  * that doesn't parse so misuse surfaces at the factory boundary instead
  * of silently emitting the SDK's major.
+ *
+ * Throws `ConfigurationError` (not a plain `Error`) so a typo'd pin
+ * surfaces with the same error class as the construction-time gate in
+ * `resolveAdcpVersion` — one shape for all pin-misuse paths.
  */
 function resolveWireMajor(adcpVersion: string | undefined): number {
   if (adcpVersion === undefined) return ADCP_MAJOR_VERSION;
   const parsed = parseAdcpMajorVersion(adcpVersion);
   if (!Number.isFinite(parsed)) {
-    throw new Error(
+    throw new ConfigurationError(
       `adcpVersion ${JSON.stringify(adcpVersion)} is not a valid AdCP version. ` +
-        `Expected a semver string (e.g. '3.0.1', '3.1.0-beta.1') or a legacy alias (e.g. 'v3').`
+        `Expected a semver string (e.g. '3.0.1', '3.1.0-beta.1') or a legacy alias (e.g. 'v3').`,
+      'adcpVersion'
     );
   }
   return parsed;
 }
-import { buildAgentSigningContext, CAPABILITY_OP, ensureCapabilityLoaded } from '../signing/client';
 
 /**
  * Universal protocol client - automatically routes to the correct protocol implementation

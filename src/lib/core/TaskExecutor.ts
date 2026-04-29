@@ -308,7 +308,7 @@ export class TaskExecutor {
       this.conversationStorage = new Map();
     }
     if (config.governance) {
-      this.governanceMiddleware = new GovernanceMiddleware(config.governance, config.onActivity);
+      this.governanceMiddleware = new GovernanceMiddleware(config.governance, config.onActivity, config.adcpVersion);
     }
     const modes = resolveValidationModes(config.validation);
     this.requestValidationMode = modes.requests;

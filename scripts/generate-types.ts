@@ -1199,12 +1199,37 @@ import type {
  *
  * Returns raw AdCP responses matching schema exactly.
  * No SDK wrapping - responses follow AdCP discriminated union patterns.
+ *
+ * @deprecated Use \`SingleAgentClient\` / \`AgentClient\` / \`ADCPMultiAgentClient\`
+ * from \`@adcp/sdk\` instead. The \`Agent\` class predates Stage 3's per-instance
+ * \`adcpVersion\` plumbing — it always emits the SDK-pinned \`ADCP_MAJOR_VERSION\`
+ * on the wire regardless of caller pin, which silently drifts from a buyer
+ * who pins a non-default version. The conversation-aware clients honor the
+ * per-instance pin end-to-end (validators, wire field, capability check).
  */
+let _agentDeprecationWarned = false;
+
 export class Agent {
   constructor(
     private config: AgentConfig,
     private client: any // Will be AdCPClient
-  ) {}
+  ) {
+    if (!_agentDeprecationWarned) {
+      _agentDeprecationWarned = true;
+      // One-time process.emitWarning surfaces in dev/test; production callers
+      // who set NODE_NO_WARNINGS suppress it. JSDoc \`@deprecated\` carries the
+      // signal in editors regardless.
+      try {
+        process.emitWarning(
+          'Agent class is deprecated. Use SingleAgentClient / AgentClient / ADCPMultiAgentClient from @adcp/sdk; ' +
+            'Agent does not honor per-instance adcpVersion pins (always emits the SDK default major).',
+          'DeprecationWarning'
+        );
+      } catch {
+        // emitWarning is best-effort observability; never fatal.
+      }
+    }
+  }
 
   private async callTool<T>(toolName: string, params: any): Promise<T> {
     const debugLogs: any[] = [];

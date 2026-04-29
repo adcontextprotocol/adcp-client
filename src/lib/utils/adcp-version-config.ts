@@ -42,10 +42,13 @@ export function resolveAdcpVersion(adcpVersion: string | undefined): string {
     );
   }
 
-  // Skip the bundle-existence check for the SDK default — every published
-  // tarball includes that version's schemas by construction. This keeps the
-  // common-path constructor cost at zero fs calls.
-  if (adcpVersion === ADCP_VERSION) return adcpVersion;
+  // Skip the bundle-existence check when the pin resolves to the same bundle
+  // as the SDK default — every published tarball includes that bundle by
+  // construction. The bundle-key compare (rather than literal-string compare)
+  // catches the common patterns: `'3.0'`, `'3.0.0'`, and `'3.0.1'` all
+  // resolve to the same `'3.0'` bundle when `ADCP_VERSION === '3.0.1'`, so
+  // none of those paths pay an fs round-trip.
+  if (resolveBundleKey(adcpVersion) === resolveBundleKey(ADCP_VERSION)) return adcpVersion;
 
   if (!hasSchemaBundle(adcpVersion)) {
     const resolvedKey = resolveBundleKey(adcpVersion);
