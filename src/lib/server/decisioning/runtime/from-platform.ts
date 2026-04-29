@@ -70,7 +70,13 @@ import type { CreativeBuilderPlatform } from '../specialisms/creative';
 import type { CreativeAdServerPlatform } from '../specialisms/creative-ad-server';
 import type { Audience } from '../specialisms/audiences';
 import type { RequestContext } from '../context';
-import type { AccountReference, GetAdCPCapabilitiesResponse } from '../../../types/tools.generated';
+import type {
+  AccountReference,
+  BuildCreativeMultiSuccess,
+  BuildCreativeSuccess,
+  CreativeManifest,
+  GetAdCPCapabilitiesResponse,
+} from '../../../types/tools.generated';
 import { adcpError, type AdcpErrorResponse } from '../../errors';
 import { validatePlatform, PlatformConfigError } from './validate-platform';
 import type { AdcpLogger } from '../../create-adcp-server';
@@ -2057,6 +2063,35 @@ function buildMediaBuyHandlers<P extends DecisioningPlatform<any, any>>(
   };
 }
 
+/**
+ * Project an adopter `buildCreative` return value into the wire response
+ * shape. Handles the four legal adopter shapes per `BuildCreativeReturn`:
+ *
+ *   - Already-shaped Single envelope (`creative_manifest` field present) →
+ *     passthrough. Adopter set `sandbox` / `expires_at` / `preview` themselves.
+ *   - Already-shaped Multi envelope (`creative_manifests` field present) →
+ *     passthrough. Same metadata-controlled case for multi-format requests.
+ *   - Bare array → wrap as `{ creative_manifests: <array> }` (multi, no metadata).
+ *   - Plain `CreativeManifest` → wrap as `{ creative_manifest: <obj> }`
+ *     (single, no metadata).
+ *
+ * The discriminator order matters: check shaped envelopes first so an
+ * adopter that returned `{ creative_manifest, sandbox: true }` (a Single
+ * envelope) doesn't get re-wrapped into
+ * `{ creative_manifest: { creative_manifest, sandbox: true } }`. Same
+ * concern applies symmetrically for Multi.
+ */
+function projectBuildCreativeReturn(ret: unknown): BuildCreativeSuccess | BuildCreativeMultiSuccess {
+  if (ret != null && typeof ret === 'object' && !Array.isArray(ret)) {
+    if ('creative_manifest' in ret) return ret as BuildCreativeSuccess;
+    if ('creative_manifests' in ret) return ret as BuildCreativeMultiSuccess;
+  }
+  if (Array.isArray(ret)) {
+    return { creative_manifests: ret as CreativeManifest[] };
+  }
+  return { creative_manifest: ret as CreativeManifest };
+}
+
 function buildCreativeHandlers<P extends DecisioningPlatform<any, any>>(
   platform: P,
   taskRegistry: TaskRegistry,
@@ -2073,7 +2108,7 @@ function buildCreativeHandlers<P extends DecisioningPlatform<any, any>>(
       const reqCtx = ctxFor(ctx);
       return projectSync(
         () => creative.buildCreative(params, reqCtx),
-        manifest => ({ creative_manifest: manifest })
+        ret => projectBuildCreativeReturn(ret)
       );
     },
 

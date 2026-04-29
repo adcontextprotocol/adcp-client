@@ -238,8 +238,10 @@ export interface ComplyControllerConfig {
    * `createAdcpServerFromPlatform({ complyTest })` get the same
    * extension seam as adopters wiring `registerTestController` directly.
    *
-   * Storyboard fixtures that send a top-level `account` (rather than
-   * `context.account`) are the canonical case for this option.
+   * Storyboard fixtures that send a top-level `account` or `brand`
+   * (rather than `context.account` / `context.brand`) are the canonical
+   * cases for this option — both are stripped by the spec-canonical
+   * shape.
    *
    * @example
    * ```ts
@@ -248,6 +250,7 @@ export interface ComplyControllerConfig {
    * complyTest: {
    *   inputSchema: {
    *     account: z.object({ account_id: z.string() }).passthrough().optional(),
+   *     brand: z.object({ domain: z.string() }).passthrough().optional(),
    *   },
    *   force: { ... },
    * }

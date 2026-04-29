@@ -22,10 +22,43 @@ import type {
   CreativeAsset,
   CreativeManifest,
   BuildCreativeRequest,
+  BuildCreativeSuccess,
+  BuildCreativeMultiSuccess,
   PreviewCreativeRequest,
   PreviewCreativeResponse,
 } from '../../../types/tools.generated';
 import type { SyncCreativesRow } from './sales';
+
+/**
+ * Adopter return shape for `buildCreative`. Discriminated by the wire
+ * spec's Single vs Multi response arms — pick whichever matches the
+ * request the framework dispatched:
+ *
+ *   - **Single manifest, no metadata**: return a `CreativeManifest`
+ *     directly. Framework wraps as `{ creative_manifest: <manifest> }`.
+ *     Use this for single-format requests (`target_format_id`) when
+ *     you don't need to set `sandbox` / `expires_at` / `preview`.
+ *   - **Multi-format manifests, no metadata**: return a
+ *     `CreativeManifest[]`. Framework wraps as
+ *     `{ creative_manifests: [...] }`. Use this for multi-format
+ *     requests (`target_format_ids`) when you don't need rich metadata.
+ *   - **Fully-shaped envelope**: return a `BuildCreativeSuccess` (single)
+ *     or `BuildCreativeMultiSuccess` (multi) with `sandbox` /
+ *     `expires_at` / `preview` populated. Framework passes through
+ *     unchanged. Detected by the presence of `creative_manifest` (single
+ *     envelope) or `creative_manifests` (multi envelope) at the top level.
+ *
+ * Adopters route on `req.target_format_ids` (multi) vs `req.target_format_id`
+ * (single) and return the matching arm. Returning a `CreativeManifest[]`
+ * for a single-format request, or a single `CreativeManifest` for a
+ * multi-format request, is an adopter contract violation that surfaces
+ * as schema-validation failure on the wire response.
+ */
+export type BuildCreativeReturn =
+  | CreativeManifest
+  | CreativeManifest[]
+  | BuildCreativeSuccess
+  | BuildCreativeMultiSuccess;
 
 type Creative = CreativeAsset;
 type Ctx<TMeta> = RequestContext<Account<TMeta>>;
@@ -76,8 +109,14 @@ export interface CreativeBuilderPlatform<TMeta = Record<string, unknown>> {
    * (`req.template_id` + asset slots), brief-to-creative generation
    * (`req.brief`), and any hybrid the platform supports — adopters
    * route internally on `req` shape.
+   *
+   * Return shape is discriminated; see {@link BuildCreativeReturn}:
+   * single `CreativeManifest`, `CreativeManifest[]` for multi-format
+   * requests, OR a fully-shaped `BuildCreativeSuccess` /
+   * `BuildCreativeMultiSuccess` envelope when you need to set
+   * `sandbox` / `expires_at` / `preview`.
    */
-  buildCreative(req: BuildCreativeRequest, ctx: Ctx<TMeta>): Promise<CreativeManifest>;
+  buildCreative(req: BuildCreativeRequest, ctx: Ctx<TMeta>): Promise<BuildCreativeReturn>;
 
   /**
    * Preview-only variant — sandbox URL or inline HTML, expires. Always

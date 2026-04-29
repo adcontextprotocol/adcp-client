@@ -37,6 +37,8 @@ import type {
   GetCreativeDeliveryRequest,
   GetCreativeDeliveryResponse,
   CreativeAsset,
+  BuildCreativeSuccess,
+  BuildCreativeMultiSuccess,
 } from '../../../types/tools.generated';
 import type { SyncCreativesRow } from './sales';
 
@@ -64,7 +66,10 @@ export interface CreativeAdServerPlatform<TMeta = Record<string, unknown>> {
    * that lands, slow tag-generation pipelines await in-request; status
    * changes flow via `publishStatusChange`.
    */
-  buildCreative(req: BuildCreativeRequest, ctx: Ctx<TMeta>): Promise<CreativeManifest>;
+  buildCreative(
+    req: BuildCreativeRequest,
+    ctx: Ctx<TMeta>
+  ): Promise<CreativeManifest | CreativeManifest[] | BuildCreativeSuccess | BuildCreativeMultiSuccess>;
 
   /** Preview-only variant — sandbox URL or inline HTML, expires. Always sync. */
   previewCreative(req: PreviewCreativeRequest, ctx: Ctx<TMeta>): Promise<PreviewCreativeResponse>;
