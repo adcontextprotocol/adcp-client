@@ -16,7 +16,7 @@ Both share the same `SignalsPlatform` interface. Pick the specialism that matche
 
 - User wants a signals platform on the **v6.0 DecisioningPlatform** surface (preview, pre-GA)
 - Specialism: `signal-marketplace` OR `signal-owned`
-- SDK package: `@adcp/client` v5.18+ with the `decisioning` preview surface
+- SDK package: `@adcp/sdk` v5.18+ with the `decisioning` preview surface
 
 **Wrong skill if:**
 - User wants v5.x handler-style API → `skills/build-signals-agent/`
@@ -42,15 +42,15 @@ import {
   type DecisioningPlatform,
   type SignalsPlatform,
   type AccountStore,
-} from '@adcp/client/server/decisioning';
+} from '@adcp/sdk/server/decisioning';
 import type {
   GetSignalsRequest,
   GetSignalsResponse,
   ActivateSignalRequest,
   ActivateSignalSuccess,
   AccountReference,
-} from '@adcp/client/types';
-import { serve } from '@adcp/client/server';
+} from '@adcp/sdk/types';
+import { serve } from '@adcp/sdk/server';
 
 interface DataMatrixConfig {
   /** Match-rate floor — signals below this rate to a destination are filtered out. */
@@ -204,7 +204,7 @@ capabilities = {
 ## Testing your platform
 
 ```ts
-import { createAdcpServerFromPlatform } from '@adcp/client/server/decisioning';
+import { createAdcpServerFromPlatform } from '@adcp/sdk/server/decisioning';
 
 const platform = new DataMatrixPlatform();
 const server = createAdcpServerFromPlatform(platform, {
@@ -228,7 +228,7 @@ console.log(result.structuredContent);
 
 ## What NOT to do
 
-❌ **Don't import from `@adcp/client/server` for the platform shape.** Use `@adcp/client/server/decisioning` for v6.0.
+❌ **Don't import from `@adcp/sdk/server` for the platform shape.** Use `@adcp/sdk/server/decisioning` for v6.0.
 
 ❌ **Don't try to make activateSignal HITL.** The wire response has no `Submitted` arm. Sync ack + `publishStatusChange` is the correct pattern.
 
@@ -239,7 +239,7 @@ console.log(result.structuredContent);
 ## Reference: imports cheat sheet
 
 ```ts
-// From @adcp/client/server/decisioning
+// From @adcp/sdk/server/decisioning
 import {
   AdcpError,
   AccountNotFoundError,
@@ -252,17 +252,17 @@ import {
   type RequestContext,
   type ErrorCode,
   type AdcpStructuredError,
-} from '@adcp/client/server/decisioning';
+} from '@adcp/sdk/server/decisioning';
 
-// From @adcp/client/types — wire schemas (auto-generated)
+// From @adcp/sdk/types — wire schemas (auto-generated)
 import type {
   GetSignalsRequest,
   GetSignalsResponse,
   ActivateSignalRequest,
   ActivateSignalSuccess,
   AccountReference,
-} from '@adcp/client/types';
+} from '@adcp/sdk/types';
 
-// From @adcp/client/server — HTTP serving
-import { serve } from '@adcp/client/server';
+// From @adcp/sdk/server — HTTP serving
+import { serve } from '@adcp/sdk/server';
 ```

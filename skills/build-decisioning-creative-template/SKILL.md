@@ -11,7 +11,7 @@ You're building a **stateless creative transform** service that fits the AdCP `c
 
 - User wants a creative-template service on the **v6.0 DecisioningPlatform** surface (preview, pre-GA)
 - Specialism: `creative-template` (stateless transform; not `creative-ad-server` which is stateful, not `creative-generative` which is brief-driven)
-- SDK package: `@adcp/client` v5.18+ with the `decisioning` preview surface
+- SDK package: `@adcp/sdk` v5.18+ with the `decisioning` preview surface
 
 **Wrong skill if:**
 - User wants v5.x handler-style API → `skills/build-creative-agent/`
@@ -50,7 +50,7 @@ import {
   type DecisioningPlatform,
   type AccountStore,
   type CreativeTemplatePlatform,
-} from '@adcp/client/server/decisioning';
+} from '@adcp/sdk/server/decisioning';
 import type {
   BuildCreativeRequest,
   CreativeManifest,
@@ -59,8 +59,8 @@ import type {
   CreativeAsset,
   AccountReference,
   ImageAsset,
-} from '@adcp/client/types';
-import { serve } from '@adcp/client/server';
+} from '@adcp/sdk/types';
+import { serve } from '@adcp/sdk/server';
 
 interface WatermarkConfig {
   watermarkUrl: string;
@@ -277,7 +277,7 @@ return {
 };
 ```
 
-**Do not write `as any` or `as never` on platform code.** If you find yourself reaching for those, you almost certainly want to `import type` the right asset from `@adcp/client/types` and use the discriminator instead.
+**Do not write `as any` or `as never` on platform code.** If you find yourself reaching for those, you almost certainly want to `import type` the right asset from `@adcp/sdk/types` and use the discriminator instead.
 
 The asset types are generated from the spec; full list at `src/lib/types/tools.generated.ts`. Each carries `asset_type` as a literal-typed discriminator.
 
@@ -286,7 +286,7 @@ The asset types are generated from the spec; full list at `src/lib/types/tools.g
 Most platform methods do the same null-check + discriminator-check + extract pattern over and over. The SDK ships two helpers that collapse it:
 
 ```ts
-import { getAsset, requireAsset } from '@adcp/client/server/decisioning';
+import { getAsset, requireAsset } from '@adcp/sdk/server/decisioning';
 
 // Soft form — returns undefined if missing or wrong asset_type
 const optionalVoice = getAsset(req.creative_manifest, 'voice', 'text');
@@ -340,7 +340,7 @@ new AdcpError(code: ErrorCode | string, options: {
 })
 ```
 
-Common codes for creative-template: `INVALID_REQUEST`, `UNSUPPORTED_FEATURE`, `VALIDATION_ERROR`, `RATE_LIMITED`, `SERVICE_UNAVAILABLE`, `CREATIVE_REJECTED`. The full vocabulary is in `@adcp/client/server/decisioning`'s `ErrorCode` type — return any spec code OR your own platform-specific string (agents fall back to `recovery` classification on unknowns).
+Common codes for creative-template: `INVALID_REQUEST`, `UNSUPPORTED_FEATURE`, `VALIDATION_ERROR`, `RATE_LIMITED`, `SERVICE_UNAVAILABLE`, `CREATIVE_REJECTED`. The full vocabulary is in `@adcp/sdk/server/decisioning`'s `ErrorCode` type — return any spec code OR your own platform-specific string (agents fall back to `recovery` classification on unknowns).
 
 ## Idempotency — the framework dedupes; you thread the key downstream
 
@@ -374,7 +374,7 @@ type AccountReference =
   | { agency_buyer: { brand_domain: string }; advertiser: { brand_domain: string }; sandbox?: boolean };
 ```
 
-Throw `AccountNotFoundError` (importable from `@adcp/client/server/decisioning`) when you can't resolve — the framework projects to the wire `ACCOUNT_NOT_FOUND` envelope.
+Throw `AccountNotFoundError` (importable from `@adcp/sdk/server/decisioning`) when you can't resolve — the framework projects to the wire `ACCOUNT_NOT_FOUND` envelope.
 
 `sandbox: true` — the buyer is asking you to validate against your platform without actually transacting. Route reads/writes to your sandbox backend if you have one; otherwise just return realistic-shaped responses without persisting.
 
@@ -382,7 +382,7 @@ Throw `AccountNotFoundError` (importable from `@adcp/client/server/decisioning`)
 
 <!-- skill-example-skip: continuation of the watermark example above; re-uses identifiers defined there -->
 ```ts
-import { serve } from '@adcp/client/server';
+import { serve } from '@adcp/sdk/server';
 
 const platform = new WatermarkPlatform();
 const server = createAdcpServerFromPlatform(platform, {
@@ -422,7 +422,7 @@ The `as const` is load-bearing — it preserves the literal types so `RequiredPl
 
 ```
 my-creative-template-agent/
-├── package.json          # depends on @adcp/client ^5.18.0
+├── package.json          # depends on @adcp/sdk ^5.18.0
 ├── tsconfig.json         # strict: true
 ├── src/
 │   ├── platform.ts       # MyPlatform implements DecisioningPlatform
@@ -436,7 +436,7 @@ my-creative-template-agent/
   "name": "my-creative-template-agent",
   "type": "module",
   "scripts": { "start": "tsx src/serve.ts" },
-  "dependencies": { "@adcp/client": "^5.18.0" },
+  "dependencies": { "@adcp/sdk": "^5.18.0" },
   "devDependencies": { "tsx": "^4", "typescript": "^5" }
 }
 ```
@@ -447,7 +447,7 @@ The fastest test loop: instantiate your platform, build a server, and dispatch a
 
 ```ts
 import { AudioStackPlatform } from './platform';
-import { createAdcpServerFromPlatform } from '@adcp/client/server/decisioning';
+import { createAdcpServerFromPlatform } from '@adcp/sdk/server/decisioning';
 
 const platform = new AudioStackPlatform();
 const server = createAdcpServerFromPlatform(platform, {
@@ -479,7 +479,7 @@ For HITL platforms, `server.awaitTask(taskId)` settles the background promise; `
 
 ## What NOT to do
 
-❌ **Don't import from `@adcp/client/server` for the platform shape.** That's the v5.x handler-style API. Use `@adcp/client/server/decisioning` for v6.0.
+❌ **Don't import from `@adcp/sdk/server` for the platform shape.** That's the v5.x handler-style API. Use `@adcp/sdk/server/decisioning` for v6.0.
 
 ❌ **Don't use `ctx.runAsync(...)` or `ctx.startTask(...)`.** Those were in earlier preview drops; they're gone in v2.1. The async story is dual-method (`xxx` vs `xxxTask`), period.
 
@@ -498,7 +498,7 @@ For HITL platforms, `server.awaitTask(taskId)` settles the background promise; `
 ## Reference: imports cheat sheet
 
 ```ts
-// From @adcp/client/server/decisioning
+// From @adcp/sdk/server/decisioning
 import {
   AdcpError,
   AccountNotFoundError,
@@ -514,9 +514,9 @@ import {
   type RequestContext,
   type ErrorCode,
   type AdcpStructuredError,
-} from '@adcp/client/server/decisioning';
+} from '@adcp/sdk/server/decisioning';
 
-// From @adcp/client/types — wire schemas (auto-generated)
+// From @adcp/sdk/types — wire schemas (auto-generated)
 import type {
   BuildCreativeRequest,
   CreativeManifest,
@@ -532,10 +532,10 @@ import type {
   URLAsset,
   HTMLAsset,
   VASTAsset,
-} from '@adcp/client/types';
+} from '@adcp/sdk/types';
 
-// From @adcp/client/server — HTTP serving
-import { serve } from '@adcp/client/server';
+// From @adcp/sdk/server — HTTP serving
+import { serve } from '@adcp/sdk/server';
 ```
 
 ## When you're stuck
