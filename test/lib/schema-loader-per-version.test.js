@@ -1,12 +1,16 @@
 // Phase A of Stage 3: schema-loader holds per-version state.
 //
-// Asserts that the same SDK process can compile validators for `3.0.0`
-// and `3.0.1` side by side, and that asking for an unbundled version
-// produces a clear error rather than silently falling back to the
-// SDK-pinned default.
+// Asserts that the loader keys its compiled validators by AdCP version, so
+// the same SDK process can hold validators for `3.0.1`, `3.1.0-beta.1`, and
+// any future version side by side. The test creates a synthetic version
+// directory in `dist/lib/schemas-data/` so we don't depend on whichever
+// patch versions happen to be in the local schemas/cache (the build copies
+// only the latest patch per stable minor — see scripts/copy-schemas-to-dist.ts).
 
-const { test, describe } = require('node:test');
+const { test, describe, before, after } = require('node:test');
 const assert = require('node:assert');
+const fs = require('node:fs');
+const path = require('node:path');
 
 const {
   getValidator,
@@ -14,6 +18,32 @@ const {
   _resetValidationLoader,
 } = require('../../dist/lib/validation/schema-loader.js');
 const { ADCP_VERSION } = require('../../dist/lib/version.js');
+
+// Create a synthetic 'test-fixture' version by copying the bundled ADCP_VERSION
+// directory under a different name. The loader has no version-string
+// validation — it only checks that schemas-data/<version>/ exists — so this
+// gives us a second real-schema-tree to assert per-version state on without
+// requiring multiple AdCP releases be in the cache.
+const FIXTURE_VERSION = 'test-fixture-1.0.0';
+const SCHEMAS_DATA_ROOT = path.resolve(__dirname, '..', '..', 'dist', 'lib', 'schemas-data');
+const SOURCE_DIR = path.join(SCHEMAS_DATA_ROOT, ADCP_VERSION);
+const FIXTURE_DIR = path.join(SCHEMAS_DATA_ROOT, FIXTURE_VERSION);
+
+before(() => {
+  if (!fs.existsSync(SOURCE_DIR)) {
+    throw new Error(`Test setup expects ${SOURCE_DIR} to exist. Run \`npm run build:lib\` first.`);
+  }
+  if (fs.existsSync(FIXTURE_DIR)) {
+    fs.rmSync(FIXTURE_DIR, { recursive: true, force: true });
+  }
+  fs.cpSync(SOURCE_DIR, FIXTURE_DIR, { recursive: true });
+});
+
+after(() => {
+  if (fs.existsSync(FIXTURE_DIR)) {
+    fs.rmSync(FIXTURE_DIR, { recursive: true, force: true });
+  }
+});
 
 describe('schema-loader per-version state', () => {
   test('default version (no argument) uses ADCP_VERSION', () => {
@@ -23,31 +53,33 @@ describe('schema-loader per-version state', () => {
     assert.ok(keys.includes('get_products::request'), 'expected get_products::request in default version');
   });
 
-  test('3.0.0 and 3.0.1 produce distinct compiled validators', () => {
+  test('two distinct versions produce distinct compiled validators', () => {
     _resetValidationLoader();
 
-    const v300 = getValidator('get_products', 'request', '3.0.0');
-    const v301 = getValidator('get_products', 'request', '3.0.1');
+    const vCurrent = getValidator('get_products', 'request', ADCP_VERSION);
+    const vFixture = getValidator('get_products', 'request', FIXTURE_VERSION);
 
-    assert.ok(v300, '3.0.0 validator compiled');
-    assert.ok(v301, '3.0.1 validator compiled');
-    assert.notStrictEqual(v300, v301, 'each version compiles its own validator instance — they must not be aliased');
+    assert.ok(vCurrent, `${ADCP_VERSION} validator compiled`);
+    assert.ok(vFixture, `${FIXTURE_VERSION} validator compiled`);
+    assert.notStrictEqual(
+      vCurrent,
+      vFixture,
+      'each version compiles its own validator instance — they must not be aliased'
+    );
   });
 
   test('listValidatorKeys is per-version', () => {
     _resetValidationLoader();
-    const keys300 = listValidatorKeys('3.0.0');
-    const keys301 = listValidatorKeys('3.0.1');
-    // Both versions ship the same canonical AdCP tool surface; the keys
-    // should match. (When a future minor adds a tool, this assertion lifts
-    // to a containment check on the older version.)
-    assert.deepStrictEqual(keys300, keys301);
+    const keysCurrent = listValidatorKeys(ADCP_VERSION);
+    const keysFixture = listValidatorKeys(FIXTURE_VERSION);
+    // Fixture is a copy of current — same key set.
+    assert.deepStrictEqual(keysCurrent, keysFixture);
   });
 
   test('repeated calls cache the per-version validator', () => {
     _resetValidationLoader();
-    const first = getValidator('get_products', 'request', '3.0.1');
-    const second = getValidator('get_products', 'request', '3.0.1');
+    const first = getValidator('get_products', 'request', FIXTURE_VERSION);
+    const second = getValidator('get_products', 'request', FIXTURE_VERSION);
     assert.strictEqual(first, second, 'same call returns the same compiled validator instance');
   });
 
@@ -61,10 +93,7 @@ describe('schema-loader per-version state', () => {
     );
   });
 
-  test('default version export matches package state', () => {
-    // Sanity check: the default falls back to ADCP_VERSION (currently 3.0.1).
-    // If ADCP_VERSION ever bumps without a corresponding schema bundle, this
-    // test surfaces the mismatch immediately.
+  test('default version path aliases to ADCP_VERSION explicit path', () => {
     _resetValidationLoader();
     const fromDefault = getValidator('get_products', 'request');
     const fromExplicit = getValidator('get_products', 'request', ADCP_VERSION);
@@ -77,12 +106,20 @@ describe('schema-loader per-version state', () => {
 
   test('_resetValidationLoader(version) clears one version, leaves others', () => {
     _resetValidationLoader();
-    const v300First = getValidator('get_products', 'request', '3.0.0');
-    const v301First = getValidator('get_products', 'request', '3.0.1');
-    _resetValidationLoader('3.0.0');
-    const v300After = getValidator('get_products', 'request', '3.0.0');
-    const v301After = getValidator('get_products', 'request', '3.0.1');
-    assert.notStrictEqual(v300First, v300After, '3.0.0 was reset — should re-compile to a new function instance');
-    assert.strictEqual(v301First, v301After, '3.0.1 was untouched — should still be the same instance');
+    const vCurrentFirst = getValidator('get_products', 'request', ADCP_VERSION);
+    const vFixtureFirst = getValidator('get_products', 'request', FIXTURE_VERSION);
+    _resetValidationLoader(ADCP_VERSION);
+    const vCurrentAfter = getValidator('get_products', 'request', ADCP_VERSION);
+    const vFixtureAfter = getValidator('get_products', 'request', FIXTURE_VERSION);
+    assert.notStrictEqual(
+      vCurrentFirst,
+      vCurrentAfter,
+      `${ADCP_VERSION} was reset — should re-compile to a new function instance`
+    );
+    assert.strictEqual(
+      vFixtureFirst,
+      vFixtureAfter,
+      `${FIXTURE_VERSION} was untouched — should still be the same instance`
+    );
   });
 });

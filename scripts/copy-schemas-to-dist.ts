@@ -1,23 +1,27 @@
 #!/usr/bin/env tsx
 /**
- * Copy every `schemas/cache/<ver>/` directory into the built package so the
+ * Copy `schemas/cache/<ver>/` directories into the built package so the
  * runtime validator (src/lib/validation/schema-loader.ts) can read them
  * without a dependency on the source tree.
  *
  * Source: schemas/cache/<ver>/{bundled,core,<domain>}/
  * Dest:   dist/lib/schemas-data/<ver>/{bundled,core,<domain>}/
  *
- * Stage 3 (per-instance schema selection) requires that every supported AdCP
- * version's bundle ship inside the npm tarball, not just the one currently
- * pinned in `ADCP_VERSION`. Consumers that pin `adcpVersion: '3.0.0'` in their
- * client config get the 3.0.0 schemas; consumers that pin `'3.0.1'` (or omit
- * the option and inherit the SDK default) get the 3.0.1 schemas. The bundle
- * grows by ~50–100 KB per AdCP minor — tolerable indefinitely; if it ever
- * becomes a problem, drop schemas more than two majors old at SDK major bumps.
+ * Stage 3 (per-instance schema selection) requires every supported AdCP
+ * version's bundle ship inside the npm tarball. To keep the bundle from
+ * growing linearly with patch releases, we ship at most one **stable**
+ * patch per `MAJOR.MINOR` (the highest patch in the cache). Per the AdCP
+ * spec convention patch releases don't change wire shape, so collapsing
+ * `3.0.0` + `3.0.1` to just `3.0.1` is functionally equivalent for any
+ * validator consumer. Prereleases (`3.1.0-beta.1`, `3.1.0-rc.2`, …) are
+ * **never collapsed** — pinning a beta is intentional and bit-fidelity
+ * matters for cross-version interop tests.
  *
  * Skipped from copy:
  *   - `latest` symlink — duplicates a real version directory
  *   - `*.previous` backup snapshots from `sync-schemas` replaceTree
+ *   - older patch versions of stable releases — collapsed into the
+ *     highest-patch sibling
  *   - `tmp/`, `compliance/` subtrees — runtime validator doesn't read them
  *
  * Invoked by the `build:lib` npm script after tsc emits JS.
@@ -25,6 +29,75 @@
 
 import { cpSync, existsSync, lstatSync, mkdirSync, readdirSync } from 'fs';
 import path from 'path';
+
+interface ParsedVersion {
+  version: string;
+  major: number;
+  minor: number;
+  patch: number;
+  prerelease: string | undefined;
+}
+
+/**
+ * Parse the directory name as a semver. Returns `undefined` for anything
+ * that doesn't look like an AdCP version (skipped at the call site).
+ *
+ * Handles:
+ *   - `'3.0.1'` → { major:3, minor:0, patch:1, prerelease:undefined }
+ *   - `'3.1.0-beta.1'` → { major:3, minor:1, patch:0, prerelease:'beta.1' }
+ *   - `'v3'` / `'v2.5'` (legacy aliases) — returned as-is, no collapse
+ *
+ * Anything else (`'tmp'`, free-text directory) returns `undefined`.
+ */
+function parseSemver(version: string): ParsedVersion | undefined {
+  // Legacy 'vN' / 'vN.M' aliases — never collapse, treat as opaque.
+  if (/^v\d/.test(version)) {
+    const m = version.match(/^v(\d+)(?:\.(\d+))?$/);
+    if (!m) return undefined;
+    return {
+      version,
+      major: parseInt(m[1]!, 10),
+      minor: m[2] ? parseInt(m[2], 10) : 0,
+      patch: 0,
+      prerelease: 'legacy',
+    };
+  }
+  const m = version.match(/^(\d+)\.(\d+)\.(\d+)(?:-(.+))?$/);
+  if (!m) return undefined;
+  return {
+    version,
+    major: parseInt(m[1]!, 10),
+    minor: parseInt(m[2]!, 10),
+    patch: parseInt(m[3]!, 10),
+    prerelease: m[4],
+  };
+}
+
+/**
+ * Apply the collapse-stable-by-minor rule.
+ *
+ * For each (major, minor) group of stable versions (no prerelease tag),
+ * keep only the highest patch. Prereleases pass through unchanged.
+ */
+function selectVersionsToCopy(parsed: ParsedVersion[]): ParsedVersion[] {
+  const stableHighestPatch = new Map<string, ParsedVersion>();
+  const prereleases: ParsedVersion[] = [];
+
+  for (const v of parsed) {
+    if (v.prerelease !== undefined) {
+      // Includes 'legacy' alias marker — keep all, no collapse.
+      prereleases.push(v);
+      continue;
+    }
+    const key = `${v.major}.${v.minor}`;
+    const current = stableHighestPatch.get(key);
+    if (!current || v.patch > current.patch) {
+      stableHighestPatch.set(key, v);
+    }
+  }
+
+  return [...stableHighestPatch.values(), ...prereleases];
+}
 
 function main(): void {
   const repoRoot = path.resolve(__dirname, '..');
@@ -43,12 +116,12 @@ function main(): void {
     return;
   }
 
-  const destBase = path.join(repoRoot, 'dist', 'lib', 'schemas-data');
-  let copied = 0;
-
+  // Collect parseable version directories.
+  const candidates: ParsedVersion[] = [];
+  const skipped: string[] = [];
   for (const entry of readdirSync(cacheRoot, { withFileTypes: true })) {
     // `latest` is a symlink to the current default version; the loader
-    // resolves versions by name, not via that alias, so skip the duplicate.
+    // resolves versions by name, not via that alias.
     if (entry.name === 'latest') continue;
     // `*.previous` are sync-schemas replaceTree backup snapshots.
     if (entry.name.endsWith('.previous')) continue;
@@ -63,18 +136,25 @@ function main(): void {
         continue;
       }
     }
+    const parsed = parseSemver(entry.name);
+    if (!parsed) {
+      skipped.push(entry.name);
+      continue;
+    }
+    candidates.push(parsed);
+  }
 
-    const version = entry.name;
-    const srcRoot = path.join(cacheRoot, version);
-    const destRoot = path.join(destBase, version);
+  const selected = selectVersionsToCopy(candidates);
+  const collapsed = candidates.filter(c => !selected.some(s => s.version === c.version));
+
+  const destBase = path.join(repoRoot, 'dist', 'lib', 'schemas-data');
+
+  for (const v of selected) {
+    const srcRoot = path.join(cacheRoot, v.version);
+    const destRoot = path.join(destBase, v.version);
     mkdirSync(destRoot, { recursive: true });
-
-    // Copy bundled/ and every per-domain directory; the async response
-    // variants live in the flat per-domain tree, plus bundled/ (sync) and
-    // core/ (ref targets for async).
     cpSync(srcRoot, destRoot, {
       recursive: true,
-      // Skip heavy subtrees that the runtime validator doesn't read.
       filter: src => {
         const rel = path.relative(srcRoot, src);
         if (!rel) return true;
@@ -83,12 +163,18 @@ function main(): void {
         return true;
       },
     });
-
     console.log(`[copy-schemas-to-dist] copied ${srcRoot} → ${destRoot}`);
-    copied++;
   }
 
-  if (copied === 0) {
+  for (const v of collapsed) {
+    console.log(`[copy-schemas-to-dist] collapsed ${v.version} (older patch in ${v.major}.${v.minor}.x; not bundled)`);
+  }
+
+  for (const name of skipped) {
+    console.log(`[copy-schemas-to-dist] skipped ${name} (not a parseable version)`);
+  }
+
+  if (selected.length === 0) {
     console.warn(`[copy-schemas-to-dist] no version directories under ${cacheRoot}; bundle ships without schemas.`);
   }
 }
