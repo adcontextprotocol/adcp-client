@@ -60,7 +60,6 @@ describe('createPostgresTaskRegistry', { skip: !DATABASE_URL && 'DATABASE_URL no
     const { taskId } = await registry.create({ tool: 'create_media_buy', accountId: 'acc_1' });
     assert.ok(taskId.startsWith('task_'));
 
-
     const record = await registry.getTask(taskId);
     assert.ok(record);
     assert.strictEqual(record.taskId, taskId);
@@ -91,7 +90,11 @@ describe('createPostgresTaskRegistry', { skip: !DATABASE_URL && 'DATABASE_URL no
     await registry.complete(taskId, { media_buy_id: 'mb_99', status: 'paused' });
 
     record = await registry.getTask(taskId);
-    assert.deepStrictEqual(record.result, { media_buy_id: 'mb_42', status: 'active' }, 'second complete must be a no-op');
+    assert.deepStrictEqual(
+      record.result,
+      { media_buy_id: 'mb_42', status: 'active' },
+      'second complete must be a no-op'
+    );
   });
 
   test('fail updates status + error + status_message, then is idempotent', async () => {
@@ -192,10 +195,7 @@ describe('createPostgresTaskRegistry', { skip: !DATABASE_URL && 'DATABASE_URL no
     const { taskId } = await registry.create({ tool: 'create_media_buy', accountId: 'acc_1' });
 
     const oversized = { huge: 'x'.repeat(5 * 1024 * 1024) };
-    await assert.rejects(
-      registry.complete(taskId, oversized),
-      /exceeds.*bytes/
-    );
+    await assert.rejects(registry.complete(taskId, oversized), /exceeds.*bytes/);
 
     // Task stays submitted — failed write didn't transition.
     const record = await registry.getTask(taskId);
@@ -211,10 +211,7 @@ describe('createPostgresTaskRegistry', { skip: !DATABASE_URL && 'DATABASE_URL no
 
     const circular = { name: 'mb_42' };
     circular.self = circular;
-    await assert.rejects(
-      registry.complete(taskId, circular),
-      /not JSON-serializable/
-    );
+    await assert.rejects(registry.complete(taskId, circular), /not JSON-serializable/);
 
     const record = await registry.getTask(taskId);
     assert.strictEqual(record.status, 'submitted');

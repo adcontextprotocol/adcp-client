@@ -60,10 +60,7 @@ export interface CreativeTemplatePlatform<TMeta = Record<string, unknown>> {
    * adopters needing mandatory pre-persist review return
    * `ctx.handoffToTask(fn)` to defer to a background task.
    */
-  syncCreatives?(
-    creatives: Creative[],
-    ctx: Ctx<TMeta>
-  ): Promise<SyncCreativesRow[] | TaskHandoff<SyncCreativesRow[]>>;
+  syncCreatives?(creatives: Creative[], ctx: Ctx<TMeta>): Promise<SyncCreativesRow[] | TaskHandoff<SyncCreativesRow[]>>;
 }
 
 // ---------------------------------------------------------------------------
@@ -93,10 +90,7 @@ export interface CreativeGenerativePlatform<TMeta = Record<string, unknown>> {
    */
   refineCreative(taskId: string, refinement: RefinementMessage, ctx: Ctx<TMeta>): Promise<CreativeManifest>;
 
-  syncCreatives?(
-    creatives: Creative[],
-    ctx: Ctx<TMeta>
-  ): Promise<SyncCreativesRow[] | TaskHandoff<SyncCreativesRow[]>>;
+  syncCreatives?(creatives: Creative[], ctx: Ctx<TMeta>): Promise<SyncCreativesRow[] | TaskHandoff<SyncCreativesRow[]>>;
 }
 
 // ---------------------------------------------------------------------------

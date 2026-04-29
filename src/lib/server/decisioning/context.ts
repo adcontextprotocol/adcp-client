@@ -23,7 +23,12 @@
  */
 
 import type { Account } from './account';
-import type { Format, FormatReferenceStructuredObject, PropertyList, CollectionList } from '../../types/tools.generated';
+import type {
+  Format,
+  FormatReferenceStructuredObject,
+  PropertyList,
+  CollectionList,
+} from '../../types/tools.generated';
 import type { TaskHandoff, TaskHandoffContext } from './async-outcome';
 
 // Unconstrained `TAccount` (no `extends Account`) so adopters with metadata
@@ -70,9 +75,7 @@ export interface RequestContext<TAccount = Account> {
    * }
    * ```
    */
-  handoffToTask<TResult>(
-    fn: (taskCtx: TaskHandoffContext) => Promise<TResult>
-  ): TaskHandoff<TResult>;
+  handoffToTask<TResult>(fn: (taskCtx: TaskHandoffContext) => Promise<TResult>): TaskHandoff<TResult>;
 }
 
 // ---------------------------------------------------------------------------

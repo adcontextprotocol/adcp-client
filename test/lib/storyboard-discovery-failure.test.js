@@ -67,11 +67,7 @@ describe('buildDiscoveryFailedResult — hard-failure result shape', () => {
     assert.equal(step.passed, false);
     assert.equal(step.skipped, false, 'step.skipped MUST be false — this is a failure, not a skip');
     assert.ok(step.error, 'step.error MUST carry a discovery diagnostic');
-    assert.match(
-      step.error,
-      /[Dd]iscovery failure/,
-      'error message must clearly identify discovery as the problem'
-    );
+    assert.match(step.error, /[Dd]iscovery failure/, 'error message must clearly identify discovery as the problem');
     assert.match(
       step.error,
       /SSE error: Non-200 status code \(405\)/,

@@ -112,12 +112,14 @@ export class ProgrammaticSeller implements DecisioningPlatform<ProgrammaticConfi
             available_metrics: [],
             date_range_support: 'date_range',
           },
-          pricing_options: [{
-            pricing_option_id: 'cpm_2_50',
-            pricing_model: 'cpm',
-            fixed_price: 2.5,
-            currency: 'USD',
-          }],
+          pricing_options: [
+            {
+              pricing_option_id: 'cpm_2_50',
+              pricing_model: 'cpm',
+              fixed_price: 2.5,
+              currency: 'USD',
+            },
+          ],
         },
         {
           product_id: 'prod_premium_video_15s',
@@ -134,12 +136,14 @@ export class ProgrammaticSeller implements DecisioningPlatform<ProgrammaticConfi
             available_metrics: [],
             date_range_support: 'date_range',
           },
-          pricing_options: [{
-            pricing_option_id: 'cpm_18_00',
-            pricing_model: 'cpm',
-            fixed_price: 18.0,
-            currency: 'USD',
-          }],
+          pricing_options: [
+            {
+              pricing_option_id: 'cpm_18_00',
+              pricing_model: 'cpm',
+              fixed_price: 18.0,
+              currency: 'USD',
+            },
+          ],
         },
       ],
     }),

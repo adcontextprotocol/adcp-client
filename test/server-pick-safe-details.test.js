@@ -38,26 +38,17 @@ describe('pickSafeDetails — allowlist filtering', () => {
   });
 
   it('returns undefined when no allowlisted keys are present', () => {
-    const result = pickSafeDetails(
-      { auth_token: 'SECRET', stack: 'at line 42' },
-      ['http_status', 'request_id']
-    );
+    const result = pickSafeDetails({ auth_token: 'SECRET', stack: 'at line 42' }, ['http_status', 'request_id']);
     assert.strictEqual(result, undefined);
   });
 
   it('preserves primitive values: string, number, boolean, null', () => {
-    const result = pickSafeDetails(
-      { s: 'string', n: 42, b: true, nl: null, dropped: 'x' },
-      ['s', 'n', 'b', 'nl']
-    );
+    const result = pickSafeDetails({ s: 'string', n: 42, b: true, nl: null, dropped: 'x' }, ['s', 'n', 'b', 'nl']);
     assert.deepStrictEqual(result, { s: 'string', n: 42, b: true, nl: null });
   });
 
   it('drops functions, symbols, undefined values', () => {
-    const result = pickSafeDetails(
-      { a: () => 0, b: Symbol('x'), c: undefined, d: 'kept' },
-      ['a', 'b', 'c', 'd']
-    );
+    const result = pickSafeDetails({ a: () => 0, b: Symbol('x'), c: undefined, d: 'kept' }, ['a', 'b', 'c', 'd']);
     assert.deepStrictEqual(result, { d: 'kept' });
   });
 
@@ -110,10 +101,7 @@ describe('pickSafeDetails — allowlist filtering', () => {
     assert.ok(result, 'result should not be undefined');
     assert.strictEqual(result.shallow, 'kept');
     assert.strictEqual(result.nested.shallow, 'kept_at_level2');
-    assert.ok(
-      !JSON.stringify(result).includes('should_drop'),
-      'deeply-nested values must drop at default depth'
-    );
+    assert.ok(!JSON.stringify(result).includes('should_drop'), 'deeply-nested values must drop at default depth');
   });
 
   it('respects custom maxDepth', () => {
@@ -129,19 +117,12 @@ describe('pickSafeDetails — allowlist filtering', () => {
   });
 
   it('respects custom maxSizeBytes', () => {
-    const result = pickSafeDetails(
-      { data: 'small' },
-      ['data'],
-      { maxSizeBytes: 1024 }
-    );
+    const result = pickSafeDetails({ data: 'small' }, ['data'], { maxSizeBytes: 1024 });
     assert.deepStrictEqual(result, { data: 'small' });
   });
 
   it('preserves arrays of primitives', () => {
-    const result = pickSafeDetails(
-      { tags: ['a', 'b', 'c'], dropped: 'x' },
-      ['tags']
-    );
+    const result = pickSafeDetails({ tags: ['a', 'b', 'c'], dropped: 'x' }, ['tags']);
     assert.deepStrictEqual(result, { tags: ['a', 'b', 'c'] });
   });
 
@@ -173,12 +154,7 @@ describe('pickSafeDetails — allowlist filtering', () => {
       stack_trace: 'at line 42 in /opt/internal/billing.ts',
       tenant_secret_key: 'kms-key-id-aaa',
     };
-    const safe = pickSafeDetails(upstream, [
-      'http_status',
-      'request_id',
-      'gam_error_code',
-      'details',
-    ]);
+    const safe = pickSafeDetails(upstream, ['http_status', 'request_id', 'gam_error_code', 'details']);
     assert.deepStrictEqual(safe, {
       http_status: 503,
       request_id: 'gam-req-abc-123',

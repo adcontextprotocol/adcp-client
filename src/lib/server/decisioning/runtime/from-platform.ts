@@ -429,9 +429,9 @@ export interface DecisioningAdcpServer extends AdcpServer {
 // which is a needless friction point — adopter metadata is opaque to the
 // framework, so we don't need to constrain it here.
 export function createAdcpServerFromPlatform<P extends DecisioningPlatform<any, any>>(
-  platform: P
-    & RequiredPlatformsFor<P['capabilities']['specialisms'][number]>
-    & RequiredCapabilitiesFor<P['capabilities']['specialisms'][number]>,
+  platform: P &
+    RequiredPlatformsFor<P['capabilities']['specialisms'][number]> &
+    RequiredCapabilitiesFor<P['capabilities']['specialisms'][number]>,
   opts: CreateAdcpServerFromPlatformOptions
 ): DecisioningAdcpServer {
   validatePlatform(platform);
@@ -670,12 +670,7 @@ export function createAdcpServerFromPlatform<P extends DecisioningPlatform<any, 
     signals: mergeHandlers(opts.signals, buildSignalsHandlers(platform), 'signals', mergeOpts),
     governance: mergeHandlers(opts.governance, buildGovernanceHandlers(platform), 'governance', mergeOpts),
     accounts: mergeHandlers(opts.accounts, buildAccountHandlers(platform), 'accounts', mergeOpts),
-    brandRights: mergeHandlers(
-      opts.brandRights,
-      buildBrandRightsHandlers(platform),
-      'brandRights',
-      mergeOpts
-    ),
+    brandRights: mergeHandlers(opts.brandRights, buildBrandRightsHandlers(platform), 'brandRights', mergeOpts),
     customTools: {
       ...opts.customTools,
       tasks_get: buildTasksGetTool(platform, taskRegistry),

@@ -419,11 +419,12 @@ describe('HITL dual-method dispatch — *Task variants', () => {
   it('createMediaBuy returning ctx.handoffToTask: submitted envelope, background completes terminal state', async () => {
     let capturedTaskId;
     const platform = buildHitlPlatform({
-      createMediaBuy: async (req, ctx) => ctx.handoffToTask(async (taskCtx) => {
-        capturedTaskId = taskCtx.id;
-        await new Promise(r => setTimeout(r, 30));
-        return { media_buy_id: 'mb_final', status: 'active' };
-      }),
+      createMediaBuy: async (req, ctx) =>
+        ctx.handoffToTask(async taskCtx => {
+          capturedTaskId = taskCtx.id;
+          await new Promise(r => setTimeout(r, 30));
+          return { media_buy_id: 'mb_final', status: 'active' };
+        }),
     });
     const server = createAdcpServerFromPlatform(platform, {
       name: 'spike',
@@ -453,28 +454,45 @@ describe('HITL dual-method dispatch — *Task variants', () => {
     // (here: a flag on req); buyer pattern-matches on response shape.
     const platform = buildHitlPlatform({
       createMediaBuy: async (req, ctx) => {
-        if ((req).buyer_ref === 'fast') {
-          return { media_buy_id: 'mb_sync_fast', status: 'active', confirmed_at: new Date().toISOString(), packages: [] };
+        if (req.buyer_ref === 'fast') {
+          return {
+            media_buy_id: 'mb_sync_fast',
+            status: 'active',
+            confirmed_at: new Date().toISOString(),
+            packages: [],
+          };
         }
         return ctx.handoffToTask(async () => {
           await new Promise(r => setTimeout(r, 20));
-          return { media_buy_id: 'mb_hitl_slow', status: 'pending_creatives', confirmed_at: new Date().toISOString(), packages: [] };
+          return {
+            media_buy_id: 'mb_hitl_slow',
+            status: 'pending_creatives',
+            confirmed_at: new Date().toISOString(),
+            packages: [],
+          };
         });
       },
     });
     const server = createAdcpServerFromPlatform(platform, {
-      name: 'hybrid', version: '0.0.1',
+      name: 'hybrid',
+      version: '0.0.1',
       validation: { requests: 'off', responses: 'off' },
     });
 
     // Fast path: returns Success directly. No task_id, has media_buy_id.
     const fastResult = await server.dispatchTestRequest({
       method: 'tools/call',
-      params: { name: 'create_media_buy', arguments: {
-        buyer_ref: 'fast', idempotency_key: '11111111-1111-1111-1111-111111111111',
-        packages: [], start_time: '2026-05-01T00:00:00Z', end_time: '2026-06-01T00:00:00Z',
-        account: { account_id: 'acc_1' },
-      } },
+      params: {
+        name: 'create_media_buy',
+        arguments: {
+          buyer_ref: 'fast',
+          idempotency_key: '11111111-1111-1111-1111-111111111111',
+          packages: [],
+          start_time: '2026-05-01T00:00:00Z',
+          end_time: '2026-06-01T00:00:00Z',
+          account: { account_id: 'acc_1' },
+        },
+      },
     });
     assert.strictEqual(fastResult.structuredContent.media_buy_id, 'mb_sync_fast');
     assert.strictEqual(fastResult.structuredContent.task_id, undefined);
@@ -482,11 +500,17 @@ describe('HITL dual-method dispatch — *Task variants', () => {
     // Slow path: returns Submitted. Has task_id, no media_buy_id yet.
     const slowResult = await server.dispatchTestRequest({
       method: 'tools/call',
-      params: { name: 'create_media_buy', arguments: {
-        buyer_ref: 'slow', idempotency_key: '22222222-2222-2222-2222-222222222222',
-        packages: [], start_time: '2026-05-01T00:00:00Z', end_time: '2026-06-01T00:00:00Z',
-        account: { account_id: 'acc_1' },
-      } },
+      params: {
+        name: 'create_media_buy',
+        arguments: {
+          buyer_ref: 'slow',
+          idempotency_key: '22222222-2222-2222-2222-222222222222',
+          packages: [],
+          start_time: '2026-05-01T00:00:00Z',
+          end_time: '2026-06-01T00:00:00Z',
+          account: { account_id: 'acc_1' },
+        },
+      },
     });
     assert.strictEqual(slowResult.structuredContent.status, 'submitted');
     assert.ok(slowResult.structuredContent.task_id);
@@ -497,10 +521,11 @@ describe('HITL dual-method dispatch — *Task variants', () => {
 
   it('createMediaBuy handoff throwing AdcpError records terminal failed with structured fields', async () => {
     const platform = buildHitlPlatform({
-      createMediaBuy: async (req, ctx) => ctx.handoffToTask(async () => {
-        await new Promise(r => setTimeout(r, 20));
-        throw new AdcpError('GOVERNANCE_DENIED', { recovery: 'terminal', message: 'operator declined' });
-      }),
+      createMediaBuy: async (req, ctx) =>
+        ctx.handoffToTask(async () => {
+          await new Promise(r => setTimeout(r, 20));
+          throw new AdcpError('GOVERNANCE_DENIED', { recovery: 'terminal', message: 'operator declined' });
+        }),
     });
     const server = createAdcpServerFromPlatform(platform, {
       name: 'spike',
@@ -522,10 +547,11 @@ describe('HITL dual-method dispatch — *Task variants', () => {
 
   it('createMediaBuy handoff throwing generic Error records terminal failed as SERVICE_UNAVAILABLE', async () => {
     const platform = buildHitlPlatform({
-      createMediaBuy: async (req, ctx) => ctx.handoffToTask(async () => {
-        await new Promise(r => setTimeout(r, 20));
-        throw new Error('upstream API timeout');
-      }),
+      createMediaBuy: async (req, ctx) =>
+        ctx.handoffToTask(async () => {
+          await new Promise(r => setTimeout(r, 20));
+          throw new Error('upstream API timeout');
+        }),
     });
     const server = createAdcpServerFromPlatform(platform, {
       name: 'spike',
@@ -689,7 +715,9 @@ describe('SalesPlatform optional methods (v1.0 gap-fill for rc.1)', () => {
       },
     });
     const server = createAdcpServerFromPlatform(platform, {
-      name: 'gap', version: '0.0.1', validation: { requests: 'off', responses: 'off' },
+      name: 'gap',
+      version: '0.0.1',
+      validation: { requests: 'off', responses: 'off' },
     });
     const result = await server.dispatchTestRequest({
       method: 'tools/call',
@@ -724,7 +752,9 @@ describe('SalesPlatform optional methods (v1.0 gap-fill for rc.1)', () => {
       },
     });
     const server = createAdcpServerFromPlatform(platform, {
-      name: 'gap', version: '0.0.1', validation: { requests: 'off', responses: 'off' },
+      name: 'gap',
+      version: '0.0.1',
+      validation: { requests: 'off', responses: 'off' },
     });
     const result = await server.dispatchTestRequest({
       method: 'tools/call',
@@ -748,7 +778,11 @@ describe('SalesPlatform optional methods (v1.0 gap-fill for rc.1)', () => {
       accounts: {
         resolution: 'derived',
         resolve: async () => ({
-          id: 'singleton', name: 'Acme', status: 'active', metadata: {}, authInfo: { kind: 'api_key' },
+          id: 'singleton',
+          name: 'Acme',
+          status: 'active',
+          metadata: {},
+          authInfo: { kind: 'api_key' },
         }),
       },
       sales: {
@@ -763,7 +797,9 @@ describe('SalesPlatform optional methods (v1.0 gap-fill for rc.1)', () => {
       },
     });
     const server = createAdcpServerFromPlatform(platform, {
-      name: 'gap', version: '0.0.1', validation: { requests: 'off', responses: 'off' },
+      name: 'gap',
+      version: '0.0.1',
+      validation: { requests: 'off', responses: 'off' },
     });
     const result = await server.dispatchTestRequest({
       method: 'tools/call',
@@ -779,7 +815,11 @@ describe('AccountStore optional methods (v1.0 gap-fill for rc.1)', () => {
     return buildPlatform({
       accounts: {
         resolve: async () => ({
-          id: 'acc_1', name: 'Acme', status: 'active', metadata: {}, authInfo: { kind: 'api_key' },
+          id: 'acc_1',
+          name: 'Acme',
+          status: 'active',
+          metadata: {},
+          authInfo: { kind: 'api_key' },
         }),
         ...extras,
       },
@@ -795,7 +835,9 @@ describe('AccountStore optional methods (v1.0 gap-fill for rc.1)', () => {
       },
     });
     const server = createAdcpServerFromPlatform(platform, {
-      name: 'gap', version: '0.0.1', validation: { requests: 'off', responses: 'off' },
+      name: 'gap',
+      version: '0.0.1',
+      validation: { requests: 'off', responses: 'off' },
     });
     const result = await server.dispatchTestRequest({
       method: 'tools/call',
@@ -824,7 +866,9 @@ describe('AccountStore optional methods (v1.0 gap-fill for rc.1)', () => {
       }),
     });
     const server = createAdcpServerFromPlatform(platform, {
-      name: 'gap', version: '0.0.1', validation: { requests: 'off', responses: 'off' },
+      name: 'gap',
+      version: '0.0.1',
+      validation: { requests: 'off', responses: 'off' },
     });
     const result = await server.dispatchTestRequest({
       method: 'tools/call',
@@ -904,7 +948,9 @@ describe('Custom-handler merge seam (incremental migration)', () => {
       accounts: {
         syncAccounts: async (params, ctx) => {
           sawCall = { params, account: ctx.account };
-          return { accounts: [{ brand: { domain: 'acme.com' }, operator: 'acme.com', action: 'created', status: 'active' }] };
+          return {
+            accounts: [{ brand: { domain: 'acme.com' }, operator: 'acme.com', action: 'created', status: 'active' }],
+          };
         },
       },
     });
@@ -984,7 +1030,20 @@ describe('Custom-handler merge seam (incremental migration)', () => {
       mediaBuy: {
         // Custom handler tries to override platform.sales.getProducts.
         // Platform-derived MUST win — opts is the gap-filler, not an override.
-        getProducts: async () => ({ products: [{ product_id: 'opts_should_lose', name: 'opts', description: '', format_ids: [], delivery_type: 'non_guaranteed', publisher_properties: { reportable: true }, reporting_capabilities: { available_dimensions: [] }, pricing_options: [] }] }),
+        getProducts: async () => ({
+          products: [
+            {
+              product_id: 'opts_should_lose',
+              name: 'opts',
+              description: '',
+              format_ids: [],
+              delivery_type: 'non_guaranteed',
+              publisher_properties: { reportable: true },
+              reporting_capabilities: { available_dimensions: [] },
+              pricing_options: [],
+            },
+          ],
+        }),
       },
     });
     const result = await server.dispatchTestRequest({
@@ -1077,7 +1136,9 @@ describe('SalesPlatform retail-media tools (M2)', () => {
       },
     });
     const server = createAdcpServerFromPlatform(platform, {
-      name: 'rm', version: '0.0.1', validation: { requests: 'off', responses: 'off' },
+      name: 'rm',
+      version: '0.0.1',
+      validation: { requests: 'off', responses: 'off' },
     });
     const result = await server.dispatchTestRequest({
       method: 'tools/call',
@@ -1099,7 +1160,11 @@ describe('SalesPlatform retail-media tools (M2)', () => {
       accounts: {
         resolution: 'derived',
         resolve: async () => ({
-          id: 'acc_1', name: 'Acme', status: 'active', metadata: {}, authInfo: { kind: 'api_key' },
+          id: 'acc_1',
+          name: 'Acme',
+          status: 'active',
+          metadata: {},
+          authInfo: { kind: 'api_key' },
         }),
       },
       sales: {
@@ -1112,7 +1177,9 @@ describe('SalesPlatform retail-media tools (M2)', () => {
       },
     });
     const server = createAdcpServerFromPlatform(platform, {
-      name: 'rm', version: '0.0.1', validation: { requests: 'off', responses: 'off' },
+      name: 'rm',
+      version: '0.0.1',
+      validation: { requests: 'off', responses: 'off' },
     });
     const result = await server.dispatchTestRequest({
       method: 'tools/call',
@@ -1142,7 +1209,9 @@ describe('SalesPlatform retail-media tools (M2)', () => {
       },
     });
     const server = createAdcpServerFromPlatform(platform, {
-      name: 'rm', version: '0.0.1', validation: { requests: 'off', responses: 'off' },
+      name: 'rm',
+      version: '0.0.1',
+      validation: { requests: 'off', responses: 'off' },
     });
     const result = await server.dispatchTestRequest({
       method: 'tools/call',
@@ -1183,7 +1252,9 @@ describe('ContentStandardsPlatform (M1)', () => {
       },
     });
     const server = createAdcpServerFromPlatform(platform, {
-      name: 'cs', version: '0.0.1', validation: { requests: 'off', responses: 'off' },
+      name: 'cs',
+      version: '0.0.1',
+      validation: { requests: 'off', responses: 'off' },
     });
     const result = await server.dispatchTestRequest({
       method: 'tools/call',
@@ -1222,10 +1293,12 @@ describe('Merge-seam collision warning (M3)', () => {
       },
     });
     createAdcpServerFromPlatform(platform, {
-      name: 'collide', version: '0.0.1',
+      name: 'collide',
+      version: '0.0.1',
       validation: { requests: 'off', responses: 'off' },
       logger: {
-        debug: () => {}, info: () => {},
+        debug: () => {},
+        info: () => {},
         warn: msg => warnings.push(msg),
         error: () => {},
       },
@@ -1249,14 +1322,19 @@ describe('Merge-seam collision warning (M3)', () => {
         getMediaBuys: async () => ({ media_buys: [] }),
       },
     });
-    assert.throws(() => createAdcpServerFromPlatform(platform, {
-      name: 'collide', version: '0.0.1',
-      validation: { requests: 'off', responses: 'off' },
-      mergeSeam: 'strict',
-      mediaBuy: {
-        getMediaBuys: async () => ({ media_buys: [] }),
-      },
-    }), /opts\.mediaBuy.*shadowed/);
+    assert.throws(
+      () =>
+        createAdcpServerFromPlatform(platform, {
+          name: 'collide',
+          version: '0.0.1',
+          validation: { requests: 'off', responses: 'off' },
+          mergeSeam: 'strict',
+          mediaBuy: {
+            getMediaBuys: async () => ({ media_buys: [] }),
+          },
+        }),
+      /opts\.mediaBuy.*shadowed/
+    );
   });
 
   it('log-once mode: first construction warns, subsequent identical-collision constructions stay silent', () => {
@@ -1280,7 +1358,8 @@ describe('Merge-seam collision warning (M3)', () => {
     const warnings2 = [];
 
     createAdcpServerFromPlatform(buildCollidingPlatform(), {
-      name: 't1', version: '0.0.1',
+      name: 't1',
+      version: '0.0.1',
       validation: { requests: 'off', responses: 'off' },
       mergeSeam: 'log-once',
       logger: { debug: () => {}, info: () => {}, warn: m => warnings1.push(m), error: () => {} },
@@ -1288,7 +1367,8 @@ describe('Merge-seam collision warning (M3)', () => {
     });
 
     createAdcpServerFromPlatform(buildCollidingPlatform(), {
-      name: 't2', version: '0.0.1',
+      name: 't2',
+      version: '0.0.1',
       validation: { requests: 'off', responses: 'off' },
       mergeSeam: 'log-once',
       logger: { debug: () => {}, info: () => {}, warn: m => warnings2.push(m), error: () => {} },
@@ -1313,17 +1393,21 @@ describe('Merge-seam collision warning (M3)', () => {
         getMediaBuys: async () => ({ media_buys: [] }),
       },
     });
-    assert.doesNotThrow(() => createAdcpServerFromPlatform(platform, {
-      name: 'silent', version: '0.0.1',
-      validation: { requests: 'off', responses: 'off' },
-      mergeSeam: 'silent',
-      logger: {
-        debug: () => {}, info: () => {},
-        warn: msg => warnings.push(msg),
-        error: () => {},
-      },
-      mediaBuy: { getMediaBuys: async () => ({ media_buys: [] }) },
-    }));
+    assert.doesNotThrow(() =>
+      createAdcpServerFromPlatform(platform, {
+        name: 'silent',
+        version: '0.0.1',
+        validation: { requests: 'off', responses: 'off' },
+        mergeSeam: 'silent',
+        logger: {
+          debug: () => {},
+          info: () => {},
+          warn: msg => warnings.push(msg),
+          error: () => {},
+        },
+        mediaBuy: { getMediaBuys: async () => ({ media_buys: [] }) },
+      })
+    );
     const mergeWarnings = warnings.filter(w => w.includes('shadowed by platform-derived'));
     assert.strictEqual(mergeWarnings.length, 0, 'silent mode emits no merge-seam warnings');
   });
@@ -1341,8 +1425,11 @@ describe('Observability hooks (DecisioningObservabilityHooks)', () => {
       },
       accounts: {
         resolve: async ref => ({
-          id: ref?.account_id ?? 'acc_1', name: 'Acme', status: 'active',
-          metadata: {}, authInfo: { kind: 'api_key' },
+          id: ref?.account_id ?? 'acc_1',
+          name: 'Acme',
+          status: 'active',
+          metadata: {},
+          authInfo: { kind: 'api_key' },
         }),
       },
       sales: {
@@ -1359,7 +1446,8 @@ describe('Observability hooks (DecisioningObservabilityHooks)', () => {
     const calls = [];
     const platform = buildPlatform();
     const server = createAdcpServerFromPlatform(platform, {
-      name: 'obs', version: '0.0.1',
+      name: 'obs',
+      version: '0.0.1',
       validation: { requests: 'off', responses: 'off' },
       observability: {
         onAccountResolve: info => calls.push(info),
@@ -1367,7 +1455,10 @@ describe('Observability hooks (DecisioningObservabilityHooks)', () => {
     });
     await server.dispatchTestRequest({
       method: 'tools/call',
-      params: { name: 'get_products', arguments: { brief: 'x', promoted_offering: 'y', account: { account_id: 'acc_1' } } },
+      params: {
+        name: 'get_products',
+        arguments: { brief: 'x', promoted_offering: 'y', account: { account_id: 'acc_1' } },
+      },
     });
     assert.ok(calls.length >= 1, 'onAccountResolve fired at least once');
     const call = calls[0];
@@ -1382,7 +1473,13 @@ describe('Observability hooks (DecisioningObservabilityHooks)', () => {
     const platform = buildPlatform({
       accounts: {
         resolution: 'derived',
-        resolve: async () => ({ id: 'singleton', name: 'X', status: 'active', metadata: {}, authInfo: { kind: 'api_key' } }),
+        resolve: async () => ({
+          id: 'singleton',
+          name: 'X',
+          status: 'active',
+          metadata: {},
+          authInfo: { kind: 'api_key' },
+        }),
       },
       sales: {
         getProducts: async () => ({ products: [] }),
@@ -1394,7 +1491,8 @@ describe('Observability hooks (DecisioningObservabilityHooks)', () => {
       },
     });
     const server = createAdcpServerFromPlatform(platform, {
-      name: 'obs', version: '0.0.1',
+      name: 'obs',
+      version: '0.0.1',
       validation: { requests: 'off', responses: 'off' },
       observability: { onAccountResolve: info => calls.push(info) },
     });
@@ -1421,7 +1519,8 @@ describe('Observability hooks (DecisioningObservabilityHooks)', () => {
     const events = [];
     const platform = buildHitlPlatform(async () => ({ media_buy_id: 'mb_42', status: 'active' }));
     const server = createAdcpServerFromPlatform(platform, {
-      name: 'obs', version: '0.0.1',
+      name: 'obs',
+      version: '0.0.1',
       validation: { requests: 'off', responses: 'off' },
       observability: {
         onTaskCreate: info => events.push({ kind: 'create', ...info }),
@@ -1433,8 +1532,11 @@ describe('Observability hooks (DecisioningObservabilityHooks)', () => {
       params: {
         name: 'create_media_buy',
         arguments: {
-          buyer_ref: 'b1', idempotency_key: '11111111-1111-1111-1111-111111111111',
-          packages: [], start_time: '2026-05-01T00:00:00Z', end_time: '2026-06-01T00:00:00Z',
+          buyer_ref: 'b1',
+          idempotency_key: '11111111-1111-1111-1111-111111111111',
+          packages: [],
+          start_time: '2026-05-01T00:00:00Z',
+          end_time: '2026-06-01T00:00:00Z',
           account: { account_id: 'acc_1' },
         },
       },
@@ -1463,24 +1565,29 @@ describe('Observability hooks (DecisioningObservabilityHooks)', () => {
     const errors = [];
     const platform = buildHitlPlatform(async () => ({ media_buy_id: 'mb_42' }));
     const flakyRegistry = (() => {
-      const inner = require('../dist/lib/server/decisioning/runtime/task-registry')
-        .createInMemoryTaskRegistry();
+      const inner = require('../dist/lib/server/decisioning/runtime/task-registry').createInMemoryTaskRegistry();
       return {
         ...inner,
         create: opts => inner.create(opts),
         getTask: id => inner.getTask(id),
-        complete: async () => { throw new Error('connection refused'); },
+        complete: async () => {
+          throw new Error('connection refused');
+        },
         fail: (id, err) => inner.fail(id, err),
         _registerBackground: (id, p) => inner._registerBackground(id, p),
         awaitTask: id => inner.awaitTask(id),
       };
     })();
     const server = createAdcpServerFromPlatform(platform, {
-      name: 'obs', version: '0.0.1',
+      name: 'obs',
+      version: '0.0.1',
       validation: { requests: 'off', responses: 'off' },
       taskRegistry: flakyRegistry,
       taskWebhookEmitter: {
-        emit: async params => { emits.push(params); return { operation_id: params.operation_id, idempotency_key: 'k', attempts: 1, delivered: true, errors: [] }; },
+        emit: async params => {
+          emits.push(params);
+          return { operation_id: params.operation_id, idempotency_key: 'k', attempts: 1, delivered: true, errors: [] };
+        },
         unsigned: true,
       },
       logger: { debug: () => {}, info: () => {}, warn: () => {}, error: m => errors.push(m) },
@@ -1491,8 +1598,11 @@ describe('Observability hooks (DecisioningObservabilityHooks)', () => {
       params: {
         name: 'create_media_buy',
         arguments: {
-          buyer_ref: 'b1', idempotency_key: '11111111-1111-1111-1111-111111111111',
-          packages: [], start_time: '2026-05-01T00:00:00Z', end_time: '2026-06-01T00:00:00Z',
+          buyer_ref: 'b1',
+          idempotency_key: '11111111-1111-1111-1111-111111111111',
+          packages: [],
+          start_time: '2026-05-01T00:00:00Z',
+          end_time: '2026-06-01T00:00:00Z',
           account: { account_id: 'acc_1' },
           push_notification_config: { url: 'https://buyer.example.com/webhook' },
         },
@@ -1503,7 +1613,10 @@ describe('Observability hooks (DecisioningObservabilityHooks)', () => {
     assert.strictEqual(transitions[0].status, 'failed');
     assert.strictEqual(transitions[0].errorCode, 'REGISTRY_WRITE_FAILED');
     assert.strictEqual(emits.length, 0, 'no webhook delivered when registry write failed');
-    assert.ok(errors.find(e => e.includes('registry write failed')), 'error logged');
+    assert.ok(
+      errors.find(e => e.includes('registry write failed')),
+      'error logged'
+    );
   });
 
   it('onTaskTransition status="failed" carries errorCode on AdcpError', async () => {
@@ -1513,7 +1626,8 @@ describe('Observability hooks (DecisioningObservabilityHooks)', () => {
       throw new AdcpError('GOVERNANCE_DENIED', { recovery: 'terminal', message: 'denied' });
     });
     const server = createAdcpServerFromPlatform(platform, {
-      name: 'obs', version: '0.0.1',
+      name: 'obs',
+      version: '0.0.1',
       validation: { requests: 'off', responses: 'off' },
       observability: { onTaskTransition: info => transitions.push(info) },
     });
@@ -1522,8 +1636,11 @@ describe('Observability hooks (DecisioningObservabilityHooks)', () => {
       params: {
         name: 'create_media_buy',
         arguments: {
-          buyer_ref: 'b1', idempotency_key: '11111111-1111-1111-1111-111111111111',
-          packages: [], start_time: '2026-05-01T00:00:00Z', end_time: '2026-06-01T00:00:00Z',
+          buyer_ref: 'b1',
+          idempotency_key: '11111111-1111-1111-1111-111111111111',
+          packages: [],
+          start_time: '2026-05-01T00:00:00Z',
+          end_time: '2026-06-01T00:00:00Z',
           account: { account_id: 'acc_1' },
         },
       },
@@ -1538,10 +1655,17 @@ describe('Observability hooks (DecisioningObservabilityHooks)', () => {
     const emits = [];
     const platform = buildHitlPlatform(async () => ({ media_buy_id: 'mb_1' }));
     const server = createAdcpServerFromPlatform(platform, {
-      name: 'obs', version: '0.0.1',
+      name: 'obs',
+      version: '0.0.1',
       validation: { requests: 'off', responses: 'off' },
       taskWebhookEmitter: {
-        emit: async params => ({ operation_id: params.operation_id, idempotency_key: 'k', attempts: 1, delivered: true, errors: [] }),
+        emit: async params => ({
+          operation_id: params.operation_id,
+          idempotency_key: 'k',
+          attempts: 1,
+          delivered: true,
+          errors: [],
+        }),
       },
       observability: { onWebhookEmit: info => emits.push(info) },
     });
@@ -1550,8 +1674,11 @@ describe('Observability hooks (DecisioningObservabilityHooks)', () => {
       params: {
         name: 'create_media_buy',
         arguments: {
-          buyer_ref: 'b1', idempotency_key: '11111111-1111-1111-1111-111111111111',
-          packages: [], start_time: '2026-05-01T00:00:00Z', end_time: '2026-06-01T00:00:00Z',
+          buyer_ref: 'b1',
+          idempotency_key: '11111111-1111-1111-1111-111111111111',
+          packages: [],
+          start_time: '2026-05-01T00:00:00Z',
+          end_time: '2026-06-01T00:00:00Z',
           account: { account_id: 'acc_1' },
           push_notification_config: { url: 'https://buyer.example.com/webhook' },
         },
@@ -1569,7 +1696,8 @@ describe('Observability hooks (DecisioningObservabilityHooks)', () => {
     const events = [];
     const platform = buildPlatform();
     const server = createAdcpServerFromPlatform(platform, {
-      name: 'obs', version: '0.0.1',
+      name: 'obs',
+      version: '0.0.1',
       validation: { requests: 'off', responses: 'off' },
       observability: { onStatusChangePublish: info => events.push(info) },
     });
@@ -1589,16 +1717,22 @@ describe('Observability hooks (DecisioningObservabilityHooks)', () => {
     const warns = [];
     const platform = buildPlatform();
     const server = createAdcpServerFromPlatform(platform, {
-      name: 'obs', version: '0.0.1',
+      name: 'obs',
+      version: '0.0.1',
       validation: { requests: 'off', responses: 'off' },
       logger: { debug: () => {}, info: () => {}, warn: m => warns.push(m), error: () => {} },
       observability: {
-        onAccountResolve: () => { throw new Error('telemetry exploded'); },
+        onAccountResolve: () => {
+          throw new Error('telemetry exploded');
+        },
       },
     });
     const result = await server.dispatchTestRequest({
       method: 'tools/call',
-      params: { name: 'get_products', arguments: { brief: 'x', promoted_offering: 'y', account: { account_id: 'acc_1' } } },
+      params: {
+        name: 'get_products',
+        arguments: { brief: 'x', promoted_offering: 'y', account: { account_id: 'acc_1' } },
+      },
     });
     assert.notStrictEqual(result.isError, true, 'dispatch succeeded despite hook throw');
     const hookWarn = warns.find(w => w.includes('observability hook onAccountResolve threw'));
@@ -1614,16 +1748,22 @@ describe('Observability hooks (DecisioningObservabilityHooks)', () => {
     const warns = [];
     const platform = buildPlatform();
     const server = createAdcpServerFromPlatform(platform, {
-      name: 'obs', version: '0.0.1',
+      name: 'obs',
+      version: '0.0.1',
       validation: { requests: 'off', responses: 'off' },
       logger: { debug: () => {}, info: () => {}, warn: m => warns.push(m), error: () => {} },
       observability: {
-        onAccountResolve: async () => { throw new Error('async telemetry exploded'); },
+        onAccountResolve: async () => {
+          throw new Error('async telemetry exploded');
+        },
       },
     });
     const result = await server.dispatchTestRequest({
       method: 'tools/call',
-      params: { name: 'get_products', arguments: { brief: 'x', promoted_offering: 'y', account: { account_id: 'acc_1' } } },
+      params: {
+        name: 'get_products',
+        arguments: { brief: 'x', promoted_offering: 'y', account: { account_id: 'acc_1' } },
+      },
     });
     assert.notStrictEqual(result.isError, true, 'dispatch succeeded despite async hook rejection');
     // Allow microtask queue to flush so the rejection .catch runs.
@@ -1650,8 +1790,11 @@ describe('HITL push notification webhook on terminal state', () => {
       },
       accounts: {
         resolve: async ref => ({
-          id: ref?.account_id ?? 'acc_1', name: 'Acme', status: 'active',
-          metadata: {}, authInfo: { kind: 'api_key' },
+          id: ref?.account_id ?? 'acc_1',
+          name: 'Acme',
+          status: 'active',
+          metadata: {},
+          authInfo: { kind: 'api_key' },
         }),
       },
       sales: {
@@ -1675,7 +1818,8 @@ describe('HITL push notification webhook on terminal state', () => {
 
     const platform = buildHitlPlatform(async () => ({ media_buy_id: 'mb_42', status: 'active' }));
     const server = createAdcpServerFromPlatform(platform, {
-      name: 'webhook', version: '0.0.1',
+      name: 'webhook',
+      version: '0.0.1',
       validation: { requests: 'off', responses: 'off' },
       taskWebhookEmitter: fakeEmitter,
     });
@@ -1721,14 +1865,18 @@ describe('HITL push notification webhook on terminal state', () => {
     const { AdcpError } = require('../dist/lib/server/decisioning/async-outcome');
     const emits = [];
     const fakeEmitter = {
-      emit: async params => { emits.push(params); return { operation_id: params.operation_id, idempotency_key: 'k', attempts: 1, delivered: true, errors: [] }; },
+      emit: async params => {
+        emits.push(params);
+        return { operation_id: params.operation_id, idempotency_key: 'k', attempts: 1, delivered: true, errors: [] };
+      },
     };
 
     const platform = buildHitlPlatform(async () => {
       throw new AdcpError('GOVERNANCE_DENIED', { recovery: 'terminal', message: 'op declined' });
     });
     const server = createAdcpServerFromPlatform(platform, {
-      name: 'webhook', version: '0.0.1',
+      name: 'webhook',
+      version: '0.0.1',
       validation: { requests: 'off', responses: 'off' },
       taskWebhookEmitter: fakeEmitter,
     });
@@ -1737,9 +1885,11 @@ describe('HITL push notification webhook on terminal state', () => {
       params: {
         name: 'create_media_buy',
         arguments: {
-          buyer_ref: 'b1', idempotency_key: '11111111-1111-1111-1111-111111111111',
+          buyer_ref: 'b1',
+          idempotency_key: '11111111-1111-1111-1111-111111111111',
           packages: [],
-          start_time: '2026-05-01T00:00:00Z', end_time: '2026-06-01T00:00:00Z',
+          start_time: '2026-05-01T00:00:00Z',
+          end_time: '2026-06-01T00:00:00Z',
           account: { account_id: 'acc_1' },
           push_notification_config: { url: 'https://buyer.example.com/webhook' },
         },
@@ -1751,17 +1901,21 @@ describe('HITL push notification webhook on terminal state', () => {
     assert.strictEqual(emits[0].payload.status, 'failed');
     assert.deepStrictEqual(emits[0].payload.result.errors[0].code, 'GOVERNANCE_DENIED');
     assert.strictEqual(emits[0].payload.message, 'op declined');
-    assert.strictEqual(emits[0].payload.token, undefined, 'token omitted when buyer didn\'t supply one');
+    assert.strictEqual(emits[0].payload.token, undefined, "token omitted when buyer didn't supply one");
   });
 
   it('does not emit webhook when push_notification_config is absent', async () => {
     const emits = [];
     const fakeEmitter = {
-      emit: async params => { emits.push(params); return { operation_id: params.operation_id, idempotency_key: 'k', attempts: 1, delivered: true, errors: [] }; },
+      emit: async params => {
+        emits.push(params);
+        return { operation_id: params.operation_id, idempotency_key: 'k', attempts: 1, delivered: true, errors: [] };
+      },
     };
     const platform = buildHitlPlatform(async () => ({ media_buy_id: 'mb_silent' }));
     const server = createAdcpServerFromPlatform(platform, {
-      name: 'webhook', version: '0.0.1',
+      name: 'webhook',
+      version: '0.0.1',
       validation: { requests: 'off', responses: 'off' },
       taskWebhookEmitter: fakeEmitter,
     });
@@ -1770,16 +1924,18 @@ describe('HITL push notification webhook on terminal state', () => {
       params: {
         name: 'create_media_buy',
         arguments: {
-          buyer_ref: 'b1', idempotency_key: '11111111-1111-1111-1111-111111111111',
+          buyer_ref: 'b1',
+          idempotency_key: '11111111-1111-1111-1111-111111111111',
           packages: [],
-          start_time: '2026-05-01T00:00:00Z', end_time: '2026-06-01T00:00:00Z',
+          start_time: '2026-05-01T00:00:00Z',
+          end_time: '2026-06-01T00:00:00Z',
           account: { account_id: 'acc_1' },
         },
       },
     });
     await server.awaitTask(result.structuredContent.task_id);
 
-    assert.strictEqual(emits.length, 0, 'no webhook when buyer didn\'t opt in');
+    assert.strictEqual(emits.length, 0, "no webhook when buyer didn't opt in");
   });
 });
 
@@ -1791,12 +1947,18 @@ describe('Push notification webhook URL/token validation (B5/B6)', () => {
     return {
       capabilities: {
         specialisms: ['sales-non-guaranteed'],
-        creative_agents: [], channels: ['display'], pricingModels: ['cpm'], config: {},
+        creative_agents: [],
+        channels: ['display'],
+        pricingModels: ['cpm'],
+        config: {},
       },
       accounts: {
         resolve: async ref => ({
-          id: ref?.account_id ?? 'acc_1', name: 'Acme', status: 'active',
-          metadata: {}, authInfo: { kind: 'api_key' },
+          id: ref?.account_id ?? 'acc_1',
+          name: 'Acme',
+          status: 'active',
+          metadata: {},
+          authInfo: { kind: 'api_key' },
         }),
       },
       sales: {
@@ -1815,9 +1977,11 @@ describe('Push notification webhook URL/token validation (B5/B6)', () => {
       params: {
         name: 'create_media_buy',
         arguments: {
-          buyer_ref: 'b1', idempotency_key: '11111111-1111-1111-1111-111111111111',
+          buyer_ref: 'b1',
+          idempotency_key: '11111111-1111-1111-1111-111111111111',
           packages: [],
-          start_time: '2026-05-01T00:00:00Z', end_time: '2026-06-01T00:00:00Z',
+          start_time: '2026-05-01T00:00:00Z',
+          end_time: '2026-06-01T00:00:00Z',
           account: { account_id: 'acc_1' },
           push_notification_config: { url, ...(token != null && { token }) },
         },
@@ -1829,12 +1993,24 @@ describe('Push notification webhook URL/token validation (B5/B6)', () => {
     return createAdcpServerFromPlatform(
       buildHitlPlatform(async () => ({ media_buy_id: 'mb_1' })),
       {
-        name: 'ssrf', version: '0.0.1',
+        name: 'ssrf',
+        version: '0.0.1',
         validation: { requests: 'off', responses: 'off' },
         logger: warns ? { debug: () => {}, info: () => {}, warn: m => warns.push(m), error: () => {} } : undefined,
-        taskWebhookEmitter: emits ? {
-          emit: async params => { emits.push(params); return { operation_id: params.operation_id, idempotency_key: 'k', attempts: 1, delivered: true, errors: [] }; },
-        } : undefined,
+        taskWebhookEmitter: emits
+          ? {
+              emit: async params => {
+                emits.push(params);
+                return {
+                  operation_id: params.operation_id,
+                  idempotency_key: 'k',
+                  attempts: 1,
+                  delivered: true,
+                  errors: [],
+                };
+              },
+            }
+          : undefined,
       }
     );
   }
@@ -1952,12 +2128,18 @@ describe('tasks_get wire tool (B9)', () => {
     return {
       capabilities: {
         specialisms: ['sales-non-guaranteed'],
-        creative_agents: [], channels: ['display'], pricingModels: ['cpm'], config: {},
+        creative_agents: [],
+        channels: ['display'],
+        pricingModels: ['cpm'],
+        config: {},
       },
       accounts: {
         resolve: async ref => ({
-          id: ref?.account_id ?? 'acc_1', name: 'Acme', status: 'active',
-          metadata: {}, authInfo: { kind: 'api_key' },
+          id: ref?.account_id ?? 'acc_1',
+          name: 'Acme',
+          status: 'active',
+          metadata: {},
+          authInfo: { kind: 'api_key' },
         }),
       },
       sales: {
@@ -1976,8 +2158,11 @@ describe('tasks_get wire tool (B9)', () => {
       params: {
         name: 'create_media_buy',
         arguments: {
-          buyer_ref: 'b1', idempotency_key: '11111111-1111-1111-1111-111111111111',
-          packages: [], start_time: '2026-05-01T00:00:00Z', end_time: '2026-06-01T00:00:00Z',
+          buyer_ref: 'b1',
+          idempotency_key: '11111111-1111-1111-1111-111111111111',
+          packages: [],
+          start_time: '2026-05-01T00:00:00Z',
+          end_time: '2026-06-01T00:00:00Z',
           account: { account_id: accountId },
         },
       },
@@ -2051,12 +2236,18 @@ describe('tasks_get wire tool (B9)', () => {
       {
         capabilities: {
           specialisms: ['sales-non-guaranteed'],
-          creative_agents: [], channels: ['display'], pricingModels: ['cpm'], config: {},
+          creative_agents: [],
+          channels: ['display'],
+          pricingModels: ['cpm'],
+          config: {},
         },
         accounts: {
           resolve: async ref => ({
-            id: ref?.account_id ?? 'acc_unknown', name: 'X', status: 'active',
-            metadata: {}, authInfo: { kind: 'api_key' },
+            id: ref?.account_id ?? 'acc_unknown',
+            name: 'X',
+            status: 'active',
+            metadata: {},
+            authInfo: { kind: 'api_key' },
           }),
         },
         sales: {
@@ -2088,7 +2279,10 @@ describe('tasks_get wire tool (B9)', () => {
       {
         capabilities: {
           specialisms: ['sales-non-guaranteed'],
-          creative_agents: [], channels: ['display'], pricingModels: ['cpm'], config: {},
+          creative_agents: [],
+          channels: ['display'],
+          pricingModels: ['cpm'],
+          config: {},
         },
         accounts: {
           resolve: async ref => {
@@ -2096,8 +2290,11 @@ describe('tasks_get wire tool (B9)', () => {
             // `undefined` ref as unauthenticated (no auth-derived match).
             if (!ref?.account_id) return null;
             return {
-              id: ref.account_id, name: 'X', status: 'active',
-              metadata: {}, authInfo: { kind: 'api_key' },
+              id: ref.account_id,
+              name: 'X',
+              status: 'active',
+              metadata: {},
+              authInfo: { kind: 'api_key' },
             };
           },
         },
@@ -2143,12 +2340,18 @@ describe('getTaskState account-scoping (B7)', () => {
     return {
       capabilities: {
         specialisms: ['sales-non-guaranteed'],
-        creative_agents: [], channels: ['display'], pricingModels: ['cpm'], config: {},
+        creative_agents: [],
+        channels: ['display'],
+        pricingModels: ['cpm'],
+        config: {},
       },
       accounts: {
         resolve: async ref => ({
-          id: ref?.account_id ?? 'acc_1', name: 'Acme', status: 'active',
-          metadata: {}, authInfo: { kind: 'api_key' },
+          id: ref?.account_id ?? 'acc_1',
+          name: 'Acme',
+          status: 'active',
+          metadata: {},
+          authInfo: { kind: 'api_key' },
         }),
       },
       sales: {
@@ -2167,8 +2370,11 @@ describe('getTaskState account-scoping (B7)', () => {
       params: {
         name: 'create_media_buy',
         arguments: {
-          buyer_ref: 'b1', idempotency_key: '11111111-1111-1111-1111-111111111111',
-          packages: [], start_time: '2026-05-01T00:00:00Z', end_time: '2026-06-01T00:00:00Z',
+          buyer_ref: 'b1',
+          idempotency_key: '11111111-1111-1111-1111-111111111111',
+          packages: [],
+          start_time: '2026-05-01T00:00:00Z',
+          end_time: '2026-06-01T00:00:00Z',
           account: { account_id: accountId },
         },
       },
@@ -2179,7 +2385,9 @@ describe('getTaskState account-scoping (B7)', () => {
 
   it('returns task for the owning account', async () => {
     const server = createAdcpServerFromPlatform(buildHitlPlatform(), {
-      name: 't', version: '0.0.1', validation: { requests: 'off', responses: 'off' },
+      name: 't',
+      version: '0.0.1',
+      validation: { requests: 'off', responses: 'off' },
     });
     const taskId = await createTaskFor(server, 'acc_owner');
     const record = await server.getTaskState(taskId, 'acc_owner');
@@ -2189,7 +2397,9 @@ describe('getTaskState account-scoping (B7)', () => {
 
   it('returns null when expectedAccountId mismatches (cross-tenant probe)', async () => {
     const server = createAdcpServerFromPlatform(buildHitlPlatform(), {
-      name: 't', version: '0.0.1', validation: { requests: 'off', responses: 'off' },
+      name: 't',
+      version: '0.0.1',
+      validation: { requests: 'off', responses: 'off' },
     });
     const taskId = await createTaskFor(server, 'acc_owner');
     const record = await server.getTaskState(taskId, 'acc_other');
@@ -2198,7 +2408,9 @@ describe('getTaskState account-scoping (B7)', () => {
 
   it('unscoped read still works (ops/test contexts)', async () => {
     const server = createAdcpServerFromPlatform(buildHitlPlatform(), {
-      name: 't', version: '0.0.1', validation: { requests: 'off', responses: 'off' },
+      name: 't',
+      version: '0.0.1',
+      validation: { requests: 'off', responses: 'off' },
     });
     const taskId = await createTaskFor(server, 'acc_owner');
     const record = await server.getTaskState(taskId);

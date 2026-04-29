@@ -121,24 +121,25 @@ function makeSyncMockSeller({ floorCpm = 1.0 } = {}) {
 
 function makeHitlMockSeller({ floorCpm = 1.0, approvalDurationMs = 30 } = {}) {
   const platform = basePlatformShape({
-    createMediaBuy: (req, ctx) => ctx.handoffToTask(async () => {
-      const errors = preflight(req, { floorCpm });
-      if (errors.length > 0) {
-        throw new AdcpError('INVALID_REQUEST', {
-          recovery: 'correctable',
-          message: errors[0].message,
-          field: errors[0].field,
-          details: { errors },
-        });
-      }
-      // Trafficker review window
-      await new Promise(r => setTimeout(r, approvalDurationMs));
-      const buyId = `mb_${Date.now()}_${Math.floor(Math.random() * 1000)}`;
-      const totalBudget = typeof req.total_budget === 'number' ? req.total_budget : (req.total_budget?.amount ?? 0);
-      const buy = { media_buy_id: buyId, status: 'active', total_budget: totalBudget };
-      platform.mediaBuys.set(buyId, buy);
-      return buy;
-    }),
+    createMediaBuy: (req, ctx) =>
+      ctx.handoffToTask(async () => {
+        const errors = preflight(req, { floorCpm });
+        if (errors.length > 0) {
+          throw new AdcpError('INVALID_REQUEST', {
+            recovery: 'correctable',
+            message: errors[0].message,
+            field: errors[0].field,
+            details: { errors },
+          });
+        }
+        // Trafficker review window
+        await new Promise(r => setTimeout(r, approvalDurationMs));
+        const buyId = `mb_${Date.now()}_${Math.floor(Math.random() * 1000)}`;
+        const totalBudget = typeof req.total_budget === 'number' ? req.total_budget : (req.total_budget?.amount ?? 0);
+        const buy = { media_buy_id: buyId, status: 'active', total_budget: totalBudget };
+        platform.mediaBuys.set(buyId, buy);
+        return buy;
+      }),
   });
   return platform;
 }

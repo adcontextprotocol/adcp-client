@@ -73,8 +73,5 @@ export interface AudiencePlatform<TMeta = Record<string, unknown>> {
    * APIs that natively return per-audience-id arrays — adopters do NOT
    * need to wrap a single-id lookup over an N-call loop.
    */
-  pollAudienceStatuses(
-    audienceIds: readonly string[],
-    ctx: Ctx<TMeta>
-  ): Promise<Map<string, AudienceStatus>>;
+  pollAudienceStatuses(audienceIds: readonly string[], ctx: Ctx<TMeta>): Promise<Map<string, AudienceStatus>>;
 }

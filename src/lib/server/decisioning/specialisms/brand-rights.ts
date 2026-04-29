@@ -51,10 +51,7 @@ export interface BrandRightsPlatform<TMeta = Record<string, unknown>> {
    * Throw `AdcpError('REFERENCE_NOT_FOUND')` when the brand reference
    * doesn't resolve to an identity the platform tracks.
    */
-  getBrandIdentity(
-    req: GetBrandIdentityRequest,
-    ctx: Ctx<TMeta>
-  ): Promise<GetBrandIdentitySuccess>;
+  getBrandIdentity(req: GetBrandIdentityRequest, ctx: Ctx<TMeta>): Promise<GetBrandIdentitySuccess>;
 
   /**
    * List rights matching a brand + use query. Sync read; framework
@@ -111,7 +108,5 @@ export interface BrandRightsPlatform<TMeta = Record<string, unknown>> {
   acquireRights(
     req: AcquireRightsRequest,
     ctx: Ctx<TMeta>
-  ): Promise<
-    AcquireRightsAcquired | AcquireRightsPendingApproval | AcquireRightsRejected
-  >;
+  ): Promise<AcquireRightsAcquired | AcquireRightsPendingApproval | AcquireRightsRejected>;
 }

@@ -471,14 +471,8 @@ describe('TenantRegistry — path-based routing', () => {
     // resolveByHost still works (legacy/convenience).
     assert.strictEqual(registry.resolveByHost('sales.training.example.com').tenantId, 'subdomain');
     // resolveByRequest with any path also works (root prefix matches everything).
-    assert.strictEqual(
-      registry.resolveByRequest('sales.training.example.com', '/mcp').tenantId,
-      'subdomain'
-    );
-    assert.strictEqual(
-      registry.resolveByRequest('sales.training.example.com', '/anything/deep').tenantId,
-      'subdomain'
-    );
+    assert.strictEqual(registry.resolveByRequest('sales.training.example.com', '/mcp').tenantId, 'subdomain');
+    assert.strictEqual(registry.resolveByRequest('sales.training.example.com', '/anything/deep').tenantId, 'subdomain');
   });
 
   it('mixed subdomain + path tenants on the same registry', async () => {
@@ -503,14 +497,8 @@ describe('TenantRegistry — path-based routing', () => {
     });
     await Promise.all([registry.recheck('sub'), registry.recheck('path')]);
 
-    assert.strictEqual(
-      registry.resolveByRequest('sales.training.example.com', '/mcp').tenantId,
-      'sub'
-    );
-    assert.strictEqual(
-      registry.resolveByRequest('training.example.com', '/creative/mcp').tenantId,
-      'path'
-    );
+    assert.strictEqual(registry.resolveByRequest('sales.training.example.com', '/mcp').tenantId, 'sub');
+    assert.strictEqual(registry.resolveByRequest('training.example.com', '/creative/mcp').tenantId, 'path');
   });
 
   it('strips query strings and fragments before path matching (defensive for raw req.url callers)', async () => {
@@ -531,18 +519,9 @@ describe('TenantRegistry — path-based routing', () => {
     // Adopter passes Node's raw req.url instead of Express's req.path.
     // Without query stripping, /sales/mcp?token=abc fails the boundary
     // check at the `?` char.
-    assert.strictEqual(
-      registry.resolveByRequest('training.example.com', '/sales/mcp?token=abc').tenantId,
-      'sales'
-    );
-    assert.strictEqual(
-      registry.resolveByRequest('training.example.com', '/sales/mcp#frag').tenantId,
-      'sales'
-    );
-    assert.strictEqual(
-      registry.resolveByRequest('training.example.com', '/sales?x=1#y').tenantId,
-      'sales'
-    );
+    assert.strictEqual(registry.resolveByRequest('training.example.com', '/sales/mcp?token=abc').tenantId, 'sales');
+    assert.strictEqual(registry.resolveByRequest('training.example.com', '/sales/mcp#frag').tenantId, 'sales');
+    assert.strictEqual(registry.resolveByRequest('training.example.com', '/sales?x=1#y').tenantId, 'sales');
   });
 
   it('trailing-slash and exact-prefix paths normalize the same way', async () => {
@@ -563,14 +542,8 @@ describe('TenantRegistry — path-based routing', () => {
     // Either request-path style hits the tenant — trailing slash on
     // agentUrl normalizes to /sales prefix; both /sales/mcp and /sales
     // match.
-    assert.strictEqual(
-      registry.resolveByRequest('training.example.com', '/sales/mcp').tenantId,
-      'with_trailing'
-    );
-    assert.strictEqual(
-      registry.resolveByRequest('training.example.com', '/sales').tenantId,
-      'with_trailing'
-    );
+    assert.strictEqual(registry.resolveByRequest('training.example.com', '/sales/mcp').tenantId, 'with_trailing');
+    assert.strictEqual(registry.resolveByRequest('training.example.com', '/sales').tenantId, 'with_trailing');
   });
 });
 

@@ -74,33 +74,34 @@ function makeBroadcastTvSeller({
         };
       },
 
-      createMediaBuy: (req, ctx) => ctx.handoffToTask(async () => {
-        const totalBudget = typeof req.total_budget === 'number' ? req.total_budget : (req.total_budget?.amount ?? 0);
-        if (totalBudget < 5000) {
-          throw new AdcpError('BUDGET_TOO_LOW', {
-            recovery: 'correctable',
-            message: 'Broadcast minimum is $5,000 per IO',
-            field: 'total_budget',
-          });
-        }
-        await new Promise(r => setTimeout(r, config.trafficReviewMs));
-        const buyId = `mb_${config.affiliateId}_${Date.now()}_${Math.floor(Math.random() * 1000)}`;
-        const buy = { media_buy_id: buyId, status: 'pending_start', daypart: 'primetime' };
-        mediaBuys.set(buyId, buy);
+      createMediaBuy: (req, ctx) =>
+        ctx.handoffToTask(async () => {
+          const totalBudget = typeof req.total_budget === 'number' ? req.total_budget : (req.total_budget?.amount ?? 0);
+          if (totalBudget < 5000) {
+            throw new AdcpError('BUDGET_TOO_LOW', {
+              recovery: 'correctable',
+              message: 'Broadcast minimum is $5,000 per IO',
+              field: 'total_budget',
+            });
+          }
+          await new Promise(r => setTimeout(r, config.trafficReviewMs));
+          const buyId = `mb_${config.affiliateId}_${Date.now()}_${Math.floor(Math.random() * 1000)}`;
+          const buy = { media_buy_id: buyId, status: 'pending_start', daypart: 'primetime' };
+          mediaBuys.set(buyId, buy);
 
-        const accountId = req?.account?.account_id ?? 'broadcast_acc_1';
-        setTimeout(() => {
-          buy.status = 'active';
-          publishStatusChange({
-            account_id: accountId,
-            resource_type: 'media_buy',
-            resource_id: buyId,
-            payload: { status: 'active', activated_at: new Date().toISOString() },
-          });
-        }, config.activationOffsetMs).unref?.();
+          const accountId = req?.account?.account_id ?? 'broadcast_acc_1';
+          setTimeout(() => {
+            buy.status = 'active';
+            publishStatusChange({
+              account_id: accountId,
+              resource_type: 'media_buy',
+              resource_id: buyId,
+              payload: { status: 'active', activated_at: new Date().toISOString() },
+            });
+          }, config.activationOffsetMs).unref?.();
 
-        return buy;
-      }),
+          return buy;
+        }),
 
       updateMediaBuy: async (buyId, patch) => {
         const existing = mediaBuys.get(buyId);
@@ -115,22 +116,23 @@ function makeBroadcastTvSeller({
         return existing;
       },
 
-      syncCreatives: (creatives, ctx) => ctx.handoffToTask(async () => {
-        await new Promise(r => setTimeout(r, config.standardsReviewMs));
-        return creatives.map(c => {
-          const id = c.creative_id ?? `cr_${Math.random()}`;
-          const tags = (c.tags ?? []).map(t => t.toLowerCase());
-          if (tags.includes('political')) {
-            return {
-              creative_id: id,
-              action: 'failed',
-              status: 'rejected',
-              errors: [{ code: 'CREATIVE_REJECTED', message: 'FCC + station GM sign-off required' }],
-            };
-          }
-          return { creative_id: id, action: 'created', status: 'approved' };
-        });
-      }),
+      syncCreatives: (creatives, ctx) =>
+        ctx.handoffToTask(async () => {
+          await new Promise(r => setTimeout(r, config.standardsReviewMs));
+          return creatives.map(c => {
+            const id = c.creative_id ?? `cr_${Math.random()}`;
+            const tags = (c.tags ?? []).map(t => t.toLowerCase());
+            if (tags.includes('political')) {
+              return {
+                creative_id: id,
+                action: 'failed',
+                status: 'rejected',
+                errors: [{ code: 'CREATIVE_REJECTED', message: 'FCC + station GM sign-off required' }],
+              };
+            }
+            return { creative_id: id, action: 'created', status: 'approved' };
+          });
+        }),
 
       getMediaBuyDelivery: async () => ({
         currency: 'USD',

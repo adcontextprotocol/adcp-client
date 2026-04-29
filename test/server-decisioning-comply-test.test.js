@@ -99,11 +99,30 @@ describe('createAdcpServerFromPlatform — comply_test_controller wiring', () =>
       validation: { requests: 'off', responses: 'off' },
       complyTest: {
         force: {
-          creative_status: async () => ({ success: true, transition: 'forced', resource_type: 'creative', resource_id: 'x', previous_state: 'a', current_state: 'b' }),
-          media_buy_status: async () => ({ success: true, transition: 'forced', resource_type: 'media_buy', resource_id: 'x', previous_state: 'a', current_state: 'b' }),
+          creative_status: async () => ({
+            success: true,
+            transition: 'forced',
+            resource_type: 'creative',
+            resource_id: 'x',
+            previous_state: 'a',
+            current_state: 'b',
+          }),
+          media_buy_status: async () => ({
+            success: true,
+            transition: 'forced',
+            resource_type: 'media_buy',
+            resource_id: 'x',
+            previous_state: 'a',
+            current_state: 'b',
+          }),
         },
         simulate: {
-          delivery: async () => ({ success: true, simulation: 'delivery', resource_type: 'media_buy', resource_id: 'mb_1' }),
+          delivery: async () => ({
+            success: true,
+            simulation: 'delivery',
+            resource_type: 'media_buy',
+            resource_id: 'mb_1',
+          }),
         },
       },
     });
@@ -156,7 +175,9 @@ describe('createAdcpServerFromPlatform — comply_test_controller wiring', () =>
           validation: { requests: 'off', responses: 'off' },
           // complyTest deliberately omitted
         }),
-      err => err instanceof PlatformConfigError && /compliance_testing is declared but opts.complyTest is missing/.test(err.message)
+      err =>
+        err instanceof PlatformConfigError &&
+        /compliance_testing is declared but opts.complyTest is missing/.test(err.message)
     );
   });
 
@@ -169,11 +190,20 @@ describe('createAdcpServerFromPlatform — comply_test_controller wiring', () =>
           validation: { requests: 'off', responses: 'off' },
           complyTest: {
             force: {
-              creative_status: async () => ({ success: true, transition: 'forced', resource_type: 'creative', resource_id: 'x', previous_state: 'a', current_state: 'b' }),
+              creative_status: async () => ({
+                success: true,
+                transition: 'forced',
+                resource_type: 'creative',
+                resource_id: 'x',
+                previous_state: 'a',
+                current_state: 'b',
+              }),
             },
           },
         }),
-      err => err instanceof PlatformConfigError && /opts.complyTest is supplied but capabilities.compliance_testing is not declared/.test(err.message)
+      err =>
+        err instanceof PlatformConfigError &&
+        /opts.complyTest is supplied but capabilities.compliance_testing is not declared/.test(err.message)
     );
   });
 
@@ -185,7 +215,14 @@ describe('createAdcpServerFromPlatform — comply_test_controller wiring', () =>
       complyTest: {
         sandboxGate: () => false,
         force: {
-          creative_status: async () => ({ success: true, transition: 'forced', resource_type: 'creative', resource_id: 'x', previous_state: 'a', current_state: 'b' }),
+          creative_status: async () => ({
+            success: true,
+            transition: 'forced',
+            resource_type: 'creative',
+            resource_id: 'x',
+            previous_state: 'a',
+            current_state: 'b',
+          }),
         },
       },
     });

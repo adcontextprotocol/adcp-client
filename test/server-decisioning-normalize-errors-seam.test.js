@@ -61,7 +61,8 @@ describe('sync_creatives — framework normalizes adopter errors at projection s
       },
     ]);
     const server = createAdcpServerFromPlatform(platform, {
-      name: 'norm-host', version: '0.0.1',
+      name: 'norm-host',
+      version: '0.0.1',
       validation: { requests: 'off', responses: 'strict' },
     });
 
@@ -95,7 +96,8 @@ describe('sync_creatives — framework normalizes adopter errors at projection s
       },
     ]);
     const server = createAdcpServerFromPlatform(platform, {
-      name: 'norm-host', version: '0.0.1',
+      name: 'norm-host',
+      version: '0.0.1',
       validation: { requests: 'off', responses: 'strict' },
     });
 
@@ -136,7 +138,8 @@ describe('sync_creatives — framework normalizes adopter errors at projection s
       },
     ]);
     const server = createAdcpServerFromPlatform(platform, {
-      name: 'norm-host', version: '0.0.1',
+      name: 'norm-host',
+      version: '0.0.1',
       validation: { requests: 'off', responses: 'strict' },
     });
 
@@ -162,11 +165,10 @@ describe('sync_creatives — framework normalizes adopter errors at projection s
   });
 
   it('rows without errors pass through unchanged', async () => {
-    const platform = basePlatform(async () => [
-      { creative_id: 'cr_ok', action: 'created', status: 'approved' },
-    ]);
+    const platform = basePlatform(async () => [{ creative_id: 'cr_ok', action: 'created', status: 'approved' }]);
     const server = createAdcpServerFromPlatform(platform, {
-      name: 'norm-host', version: '0.0.1',
+      name: 'norm-host',
+      version: '0.0.1',
       validation: { requests: 'off', responses: 'strict' },
     });
 

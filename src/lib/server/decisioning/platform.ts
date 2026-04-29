@@ -98,10 +98,7 @@ export interface DecisioningPlatform<TConfig = unknown, TMeta = Record<string, u
   // by `TMeta` so adopters get typed `ctx.account.metadata` access in their
   // method bodies without casting.
   sales?: SalesPlatform<TMeta>;
-  creative?:
-    | CreativeTemplatePlatform<TMeta>
-    | CreativeGenerativePlatform<TMeta>
-    | CreativeAdServerPlatform<TMeta>;
+  creative?: CreativeTemplatePlatform<TMeta> | CreativeGenerativePlatform<TMeta> | CreativeAdServerPlatform<TMeta>;
   audiences?: AudiencePlatform<TMeta>;
   signals?: SignalsPlatform<TMeta>;
   campaignGovernance?: CampaignGovernancePlatform<TMeta>;

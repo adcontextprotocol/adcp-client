@@ -117,9 +117,7 @@ export function buildMultiTenantRegistry(): TenantRegistry {
  * unverified tenants log a warning per request so operators know which
  * are awaiting validation.
  */
-export function makeMultiTenantFactory(
-  registry: TenantRegistry
-): (ctx: { host: string }) => DecisioningAdcpServer {
+export function makeMultiTenantFactory(registry: TenantRegistry): (ctx: { host: string }) => DecisioningAdcpServer {
   return ctx => {
     const resolved = registry.resolveByHost(ctx.host);
     if (!resolved) {

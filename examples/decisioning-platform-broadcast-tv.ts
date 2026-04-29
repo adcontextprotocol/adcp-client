@@ -143,13 +143,15 @@ export class BroadcastTvSeller implements DecisioningPlatform<BroadcastTvConfig,
               available_metrics: [],
               date_range_support: 'date_range',
             },
-            pricing_options: [{
-              pricing_option_id: 'cpm_42_00',
-              pricing_model: 'cpm',
-              fixed_price: 42.0,
-              currency: 'USD',
-              min_spend_per_package: 5_000,
-            }],
+            pricing_options: [
+              {
+                pricing_option_id: 'cpm_42_00',
+                pricing_model: 'cpm',
+                fixed_price: 42.0,
+                currency: 'USD',
+                min_spend_per_package: 5_000,
+              },
+            ],
           },
         ],
       };
@@ -177,38 +179,40 @@ export class BroadcastTvSeller implements DecisioningPlatform<BroadcastTvConfig,
         });
       }
 
-      return Promise.resolve(ctx.handoffToTask(async (taskCtx) => {
-        void taskCtx; // taskCtx.id available if you need to log it
-        // Trafficker review window
-        await new Promise(r => setTimeout(r, this.capabilities.config.trafficReviewMs));
+      return Promise.resolve(
+        ctx.handoffToTask(async taskCtx => {
+          void taskCtx; // taskCtx.id available if you need to log it
+          // Trafficker review window
+          await new Promise(r => setTimeout(r, this.capabilities.config.trafficReviewMs));
 
-        const buyId = `mb_${this.capabilities.config.affiliateId}_${Date.now()}`;
-        const buy: BroadcastBuy = {
-          media_buy_id: buyId,
-          status: 'pending_start',
-          confirmed_at: new Date().toISOString(),
-          revision: 1,
-          daypart: 'primetime',
-          packages: [],
-        };
-        this.mediaBuys.set(buyId, buy);
+          const buyId = `mb_${this.capabilities.config.affiliateId}_${Date.now()}`;
+          const buy: BroadcastBuy = {
+            media_buy_id: buyId,
+            status: 'pending_start',
+            confirmed_at: new Date().toISOString(),
+            revision: 1,
+            daypart: 'primetime',
+            packages: [],
+          };
+          this.mediaBuys.set(buyId, buy);
 
-        // After acceptance, the broadcast traffic system controls the
-        // campaign window. Schedule the post-acceptance status-change.
-        const account = (req as { account?: { account_id?: string } }).account;
-        const accountId = account?.account_id ?? 'broadcast_acc_1';
-        setTimeout(() => {
-          buy.status = 'active';
-          publishStatusChange({
-            account_id: accountId,
-            resource_type: 'media_buy',
-            resource_id: buyId,
-            payload: { status: 'active', activated_at: new Date().toISOString() },
-          });
-        }, this.capabilities.config.activationOffsetMs).unref?.();
+          // After acceptance, the broadcast traffic system controls the
+          // campaign window. Schedule the post-acceptance status-change.
+          const account = (req as { account?: { account_id?: string } }).account;
+          const accountId = account?.account_id ?? 'broadcast_acc_1';
+          setTimeout(() => {
+            buy.status = 'active';
+            publishStatusChange({
+              account_id: accountId,
+              resource_type: 'media_buy',
+              resource_id: buyId,
+              payload: { status: 'active', activated_at: new Date().toISOString() },
+            });
+          }, this.capabilities.config.activationOffsetMs).unref?.();
 
-        return buy;
-      }));
+          return buy;
+        })
+      );
     },
 
     updateMediaBuy: async (buyId: string, patch: UpdateMediaBuyRequest): Promise<UpdateMediaBuySuccess> => {
@@ -234,29 +238,31 @@ export class BroadcastTvSeller implements DecisioningPlatform<BroadcastTvConfig,
      * immediately and the review runs in background.
      */
     syncCreatives: (creatives, ctx) =>
-      Promise.resolve(ctx.handoffToTask(async (taskCtx) => {
-        void taskCtx;
-        await new Promise(r => setTimeout(r, this.capabilities.config.standardsReviewMs));
-        // Mock policy: anything tagged "political" rejects; rest approve.
-        return creatives.map(c => {
-          const id = (c as { creative_id?: string }).creative_id ?? `cr_${Math.random()}`;
-          const tags = ((c as { tags?: string[] }).tags ?? []).map(t => t.toLowerCase());
-          if (tags.includes('political')) {
-            return {
-              creative_id: id,
-              action: 'failed',
-              status: 'rejected',
-              errors: [
-                {
-                  code: 'CREATIVE_REJECTED',
-                  message: 'Political ads require FCC disclosure file + station GM sign-off',
-                },
-              ],
-            } satisfies SyncCreativesRow;
-          }
-          return { creative_id: id, action: 'created', status: 'approved' } satisfies SyncCreativesRow;
-        });
-      })),
+      Promise.resolve(
+        ctx.handoffToTask(async taskCtx => {
+          void taskCtx;
+          await new Promise(r => setTimeout(r, this.capabilities.config.standardsReviewMs));
+          // Mock policy: anything tagged "political" rejects; rest approve.
+          return creatives.map(c => {
+            const id = (c as { creative_id?: string }).creative_id ?? `cr_${Math.random()}`;
+            const tags = ((c as { tags?: string[] }).tags ?? []).map(t => t.toLowerCase());
+            if (tags.includes('political')) {
+              return {
+                creative_id: id,
+                action: 'failed',
+                status: 'rejected',
+                errors: [
+                  {
+                    code: 'CREATIVE_REJECTED',
+                    message: 'Political ads require FCC disclosure file + station GM sign-off',
+                  },
+                ],
+              } satisfies SyncCreativesRow;
+            }
+            return { creative_id: id, action: 'created', status: 'approved' } satisfies SyncCreativesRow;
+          });
+        })
+      ),
 
     getMediaBuyDelivery: async (filter: GetMediaBuyDeliveryRequest): Promise<GetMediaBuyDeliveryResponse> => {
       return {

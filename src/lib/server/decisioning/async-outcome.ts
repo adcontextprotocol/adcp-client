@@ -227,10 +227,7 @@ const TASK_HANDOFF_BRAND: unique symbol = Symbol.for('@adcp/decisioning/task-han
  * type-visible field that adopters could forge with their own
  * `Symbol.for(...)` call.
  */
-const taskHandoffFns = new WeakMap<
-  object,
-  (taskCtx: TaskHandoffContext) => Promise<unknown>
->();
+const taskHandoffFns = new WeakMap<object, (taskCtx: TaskHandoffContext) => Promise<unknown>>();
 
 /**
  * Marker the framework recognizes as "promote this call to a task."

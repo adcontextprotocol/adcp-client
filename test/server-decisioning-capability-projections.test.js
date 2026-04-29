@@ -193,7 +193,8 @@ describe('Capability projections — declarative capability blocks on Decisionin
       },
     };
     const server = createAdcpServerFromPlatform(platform, {
-      name: 'br-host', version: '0.0.1',
+      name: 'br-host',
+      version: '0.0.1',
       validation: { requests: 'off', responses: 'off' },
     });
     const result = await dispatchCapabilities(server);

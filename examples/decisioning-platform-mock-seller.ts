@@ -153,12 +153,14 @@ const SHARED_GET_PRODUCTS = async (_req: GetProductsRequest): Promise<GetProduct
       delivery_type: 'non_guaranteed',
       format_ids: [{ id: 'video_15s', agent_url: 'https://example.com/creative-agent/mcp' }],
       publisher_properties: [{ publisher_domain: 'publisher.example.com', selection_type: 'all' }],
-      pricing_options: [{
-        pricing_option_id: 'cpm_12_50',
-        pricing_model: 'cpm',
-        fixed_price: 12.5,
-        currency: 'USD',
-      }],
+      pricing_options: [
+        {
+          pricing_option_id: 'cpm_12_50',
+          pricing_model: 'cpm',
+          fixed_price: 12.5,
+          currency: 'USD',
+        },
+      ],
       reporting_capabilities: {
         available_reporting_frequencies: ['hourly', 'daily'],
         expected_delay_minutes: 30,
@@ -261,21 +263,23 @@ export class MockHybridSeller implements DecisioningPlatform<MockSellerConfig, M
       }
 
       // Slow path: hand off to background task.
-      return Promise.resolve(ctx.handoffToTask(async (taskCtx) => {
-        void taskCtx;  // taskCtx.id available if you need to persist it
-        // Trafficker review window
-        await new Promise(r => setTimeout(r, this.capabilities.config.approvalDurationMs));
+      return Promise.resolve(
+        ctx.handoffToTask(async taskCtx => {
+          void taskCtx; // taskCtx.id available if you need to persist it
+          // Trafficker review window
+          await new Promise(r => setTimeout(r, this.capabilities.config.approvalDurationMs));
 
-        const buyId = `mb_${Date.now()}_${Math.floor(Math.random() * 1000)}`;
-        const buy: MockMediaBuy = {
-          media_buy_id: buyId,
-          status: 'active',
-          confirmed_at: new Date().toISOString(),
-          packages: [],
-        };
-        this.mediaBuys.set(buyId, buy);
-        return buy;
-      }));
+          const buyId = `mb_${Date.now()}_${Math.floor(Math.random() * 1000)}`;
+          const buy: MockMediaBuy = {
+            media_buy_id: buyId,
+            status: 'active',
+            confirmed_at: new Date().toISOString(),
+            packages: [],
+          };
+          this.mediaBuys.set(buyId, buy);
+          return buy;
+        })
+      );
     },
 
     updateMediaBuy: async (buyId: string, patch: UpdateMediaBuyRequest): Promise<UpdateMediaBuySuccess> => {
@@ -312,7 +316,8 @@ export class MockHybridSeller implements DecisioningPlatform<MockSellerConfig, M
 
 export function buildHybridServerExample(platform: MockHybridSeller) {
   return createAdcpServerFromPlatform(platform, {
-    name: 'mock-hybrid', version: '0.0.1',
+    name: 'mock-hybrid',
+    version: '0.0.1',
     validation: { requests: 'off', responses: 'off' },
     mergeSeam: 'strict',
     mediaBuy: {

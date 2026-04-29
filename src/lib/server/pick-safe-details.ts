@@ -141,11 +141,7 @@ function filterByAllowlist(
   return Object.keys(out).length === 0 ? null : out;
 }
 
-function sanitizeValue(
-  value: unknown,
-  allow: ReadonlySet<string>,
-  remainingDepth: number
-): unknown {
+function sanitizeValue(value: unknown, allow: ReadonlySet<string>, remainingDepth: number): unknown {
   // Primitives pass through.
   if (value === null) return null;
   const t = typeof value;

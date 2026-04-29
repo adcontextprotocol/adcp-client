@@ -76,10 +76,7 @@ export function normalizeError(input: unknown): NormalizedError {
   if (typeof input === 'object' && input !== null && 'code' in input) {
     const obj = input as Record<string, unknown>;
     const code = typeof obj.code === 'string' && obj.code.length > 0 ? obj.code : 'GENERIC_ERROR';
-    const message =
-      typeof obj.message === 'string' && obj.message.length > 0
-        ? obj.message
-        : code; // fall back to code when message missing — never empty-string
+    const message = typeof obj.message === 'string' && obj.message.length > 0 ? obj.message : code; // fall back to code when message missing — never empty-string
     const out: NormalizedError = { code, message };
     if (typeof obj.field === 'string') out.field = obj.field;
     if (typeof obj.suggestion === 'string') out.suggestion = obj.suggestion;
@@ -87,11 +84,7 @@ export function normalizeError(input: unknown): NormalizedError {
       // Wire spec clamps retry_after to [1, 3600]
       out.retry_after = Math.max(1, Math.min(3600, Math.floor(obj.retry_after)));
     }
-    if (
-      obj.recovery === 'transient' ||
-      obj.recovery === 'correctable' ||
-      obj.recovery === 'terminal'
-    ) {
+    if (obj.recovery === 'transient' || obj.recovery === 'correctable' || obj.recovery === 'terminal') {
       out.recovery = obj.recovery;
     }
     if (typeof obj.details === 'object' && obj.details !== null) {

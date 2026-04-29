@@ -170,9 +170,7 @@ describe('IdentityGraphProvider — sync ack + multi-stage status changes', () =
 
       // Wait for the full match → activating → active pipeline
       await waitFor(
-        () =>
-          received.filter(e => e.resource_type === 'audience' && e.resource_id === 'aud_42')
-            .length >= 3
+        () => received.filter(e => e.resource_type === 'audience' && e.resource_id === 'aud_42').length >= 3
       );
 
       const stages = received
