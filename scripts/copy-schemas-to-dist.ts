@@ -4,18 +4,17 @@
  * runtime validator (src/lib/validation/schema-loader.ts) can read them
  * without a dependency on the source tree.
  *
- * Source: schemas/cache/<ver>/{bundled,core,<domain>}/
- * Dest:   dist/lib/schemas-data/<ver>/{bundled,core,<domain>}/
- *
- * Stage 3 (per-instance schema selection) requires every supported AdCP
- * version's bundle ship inside the npm tarball. To keep the bundle from
- * growing linearly with patch releases, we ship at most one **stable**
- * patch per `MAJOR.MINOR` (the highest patch in the cache). Per the AdCP
- * spec convention patch releases don't change wire shape, so collapsing
- * `3.0.0` + `3.0.1` to just `3.0.1` is functionally equivalent for any
- * validator consumer. Prereleases (`3.1.0-beta.1`, `3.1.0-rc.2`, …) are
- * **never collapsed** — pinning a beta is intentional and bit-fidelity
- * matters for cross-version interop tests.
+ * Source: schemas/cache/<exact-version>/{bundled,core,<domain>}/
+ *   - mirrors the spec repo tag we synced from (`3.0.0/`, `3.0.1/`,
+ *     `3.1.0-beta.1/`, …)
+ * Dest:   dist/lib/schemas-data/<bundle-key>/{bundled,core,<domain>}/
+ *   - **stable releases use MAJOR.MINOR**: `3.0/` (whatever 3.0.x patch
+ *     is current). Per the AdCP spec convention patch releases don't
+ *     change wire shape, so consumer pins of `3.0.0`, `3.0.1`, or `3.0`
+ *     all resolve to the same bundle. Stable filesystem path per minor;
+ *     no fake exact-version directories holding a different patch's bytes.
+ *   - **prereleases use full version**: `3.1.0-beta.1/`. Pinning a beta
+ *     is intentional and bit-fidelity matters for cross-version interop.
  *
  * Skipped from copy:
  *   - `latest` symlink — duplicates a real version directory
@@ -74,29 +73,40 @@ function parseSemver(version: string): ParsedVersion | undefined {
 }
 
 /**
- * Apply the collapse-stable-by-minor rule.
- *
- * For each (major, minor) group of stable versions (no prerelease tag),
- * keep only the highest patch. Prereleases pass through unchanged.
+ * Bundle key the dist directory is named under. Stable releases collapse
+ * to `MAJOR.MINOR`; prereleases keep their full version. The schema-loader
+ * resolves consumer pins to the same key.
  */
-function selectVersionsToCopy(parsed: ParsedVersion[]): ParsedVersion[] {
-  const stableHighestPatch = new Map<string, ParsedVersion>();
-  const prereleases: ParsedVersion[] = [];
+function bundleKey(v: ParsedVersion): string {
+  if (v.prerelease !== undefined) return v.version;
+  return `${v.major}.${v.minor}`;
+}
+
+/**
+ * Group source versions by their bundle key. For each key the highest-patch
+ * stable version (or the only prerelease) wins. Prereleases each get their
+ * own key so they don't collapse against each other.
+ */
+function selectVersionsToCopy(parsed: ParsedVersion[]): { source: ParsedVersion; key: string }[] {
+  const winnerByKey = new Map<string, ParsedVersion>();
 
   for (const v of parsed) {
-    if (v.prerelease !== undefined) {
-      // Includes 'legacy' alias marker — keep all, no collapse.
-      prereleases.push(v);
+    const key = bundleKey(v);
+    const current = winnerByKey.get(key);
+    if (!current) {
+      winnerByKey.set(key, v);
       continue;
     }
-    const key = `${v.major}.${v.minor}`;
-    const current = stableHighestPatch.get(key);
-    if (!current || v.patch > current.patch) {
-      stableHighestPatch.set(key, v);
+    // Stable group: keep highest patch.
+    if (v.prerelease === undefined && current.prerelease === undefined) {
+      if (v.patch > current.patch) winnerByKey.set(key, v);
+      continue;
     }
+    // Different prerelease tags would have produced different keys above —
+    // collision here would mean an exact duplicate, ignore.
   }
 
-  return [...stableHighestPatch.values(), ...prereleases];
+  return [...winnerByKey.entries()].map(([key, source]) => ({ source, key }));
 }
 
 function main(): void {
@@ -145,13 +155,13 @@ function main(): void {
   }
 
   const selected = selectVersionsToCopy(candidates);
-  const collapsed = candidates.filter(c => !selected.some(s => s.version === c.version));
+  const collapsed = candidates.filter(c => !selected.some(s => s.source.version === c.version));
 
   const destBase = path.join(repoRoot, 'dist', 'lib', 'schemas-data');
 
-  for (const v of selected) {
-    const srcRoot = path.join(cacheRoot, v.version);
-    const destRoot = path.join(destBase, v.version);
+  for (const { source, key } of selected) {
+    const srcRoot = path.join(cacheRoot, source.version);
+    const destRoot = path.join(destBase, key);
     mkdirSync(destRoot, { recursive: true });
     cpSync(srcRoot, destRoot, {
       recursive: true,
@@ -163,7 +173,8 @@ function main(): void {
         return true;
       },
     });
-    console.log(`[copy-schemas-to-dist] copied ${srcRoot} → ${destRoot}`);
+    const note = key === source.version ? '' : ` (key collapsed from ${source.version})`;
+    console.log(`[copy-schemas-to-dist] copied ${srcRoot} → ${destRoot}${note}`);
   }
 
   for (const v of collapsed) {

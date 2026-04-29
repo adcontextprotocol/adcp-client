@@ -1,11 +1,17 @@
-// Phase A of Stage 3: schema-loader holds per-version state.
+// Phase A of Stage 3: schema-loader holds per-version state, keyed by the
+// resolved bundle key (`MAJOR.MINOR` for stable, full version for prereleases).
 //
-// Asserts that the loader keys its compiled validators by AdCP version, so
-// the same SDK process can hold validators for `3.0.1`, `3.1.0-beta.1`, and
-// any future version side by side. The test creates a synthetic version
-// directory in `dist/lib/schemas-data/` so we don't depend on whichever
-// patch versions happen to be in the local schemas/cache (the build copies
-// only the latest patch per stable minor — see scripts/copy-schemas-to-dist.ts).
+// Asserts that:
+//   - Stable patch pins (`'3.0.0'`, `'3.0.1'`, `'3.0'`) collapse to one
+//     compiled validator — the SDK doesn't ship distinct schemas per patch.
+//   - Distinct minors (`'3.0'` vs a synthetic `'1.0'` fixture) produce
+//     distinct compiled validators.
+//   - Prereleases stay exact (cached separately from any stable bundle).
+//
+// The test creates a synthetic minor directory in `dist/lib/schemas-data/`
+// so the assertions don't depend on whichever AdCP versions happen to be in
+// the local cache. The build collapses stable patches to MAJOR.MINOR keys
+// (see scripts/copy-schemas-to-dist.ts).
 
 const { test, describe, before, after } = require('node:test');
 const assert = require('node:assert');
@@ -15,19 +21,18 @@ const path = require('node:path');
 const {
   getValidator,
   listValidatorKeys,
+  resolveBundleKey,
   _resetValidationLoader,
 } = require('../../dist/lib/validation/schema-loader.js');
 const { ADCP_VERSION } = require('../../dist/lib/version.js');
 
-// Create a synthetic 'test-fixture' version by copying the bundled ADCP_VERSION
-// directory under a different name. The loader has no version-string
-// validation — it only checks that schemas-data/<version>/ exists — so this
-// gives us a second real-schema-tree to assert per-version state on without
-// requiring multiple AdCP releases be in the cache.
-const FIXTURE_VERSION = 'test-fixture-1.0.0';
+// Synthetic fixture under a different MAJOR.MINOR so the loader's state map
+// keeps it separate from the real bundle.
+const FIXTURE_KEY = '1.0';
+const FIXTURE_VERSION_PIN = '1.0.0';
 const SCHEMAS_DATA_ROOT = path.resolve(__dirname, '..', '..', 'dist', 'lib', 'schemas-data');
-const SOURCE_DIR = path.join(SCHEMAS_DATA_ROOT, ADCP_VERSION);
-const FIXTURE_DIR = path.join(SCHEMAS_DATA_ROOT, FIXTURE_VERSION);
+const SOURCE_DIR = path.join(SCHEMAS_DATA_ROOT, resolveBundleKey(ADCP_VERSION));
+const FIXTURE_DIR = path.join(SCHEMAS_DATA_ROOT, FIXTURE_KEY);
 
 before(() => {
   if (!fs.existsSync(SOURCE_DIR)) {
@@ -53,43 +58,56 @@ describe('schema-loader per-version state', () => {
     assert.ok(keys.includes('get_products::request'), 'expected get_products::request in default version');
   });
 
-  test('two distinct versions produce distinct compiled validators', () => {
-    _resetValidationLoader();
-
-    const vCurrent = getValidator('get_products', 'request', ADCP_VERSION);
-    const vFixture = getValidator('get_products', 'request', FIXTURE_VERSION);
-
-    assert.ok(vCurrent, `${ADCP_VERSION} validator compiled`);
-    assert.ok(vFixture, `${FIXTURE_VERSION} validator compiled`);
-    assert.notStrictEqual(
-      vCurrent,
-      vFixture,
-      'each version compiles its own validator instance — they must not be aliased'
-    );
+  test('resolveBundleKey collapses stable patches to MAJOR.MINOR', () => {
+    assert.strictEqual(resolveBundleKey('3.0.0'), '3.0');
+    assert.strictEqual(resolveBundleKey('3.0.1'), '3.0');
+    assert.strictEqual(resolveBundleKey('3.0'), '3.0');
+    assert.strictEqual(resolveBundleKey('3.1.0'), '3.1');
   });
 
-  test('listValidatorKeys is per-version', () => {
+  test('resolveBundleKey keeps prereleases exact', () => {
+    assert.strictEqual(resolveBundleKey('3.1.0-beta.1'), '3.1.0-beta.1');
+    assert.strictEqual(resolveBundleKey('3.1.0-rc.2'), '3.1.0-rc.2');
+  });
+
+  test('stable patch pins share a compiled validator (3.0.0 ≡ 3.0.1 ≡ 3.0)', () => {
+    _resetValidationLoader();
+    const v300 = getValidator('get_products', 'request', '3.0.0');
+    const v301 = getValidator('get_products', 'request', '3.0.1');
+    const vMinor = getValidator('get_products', 'request', '3.0');
+    assert.ok(v300, '3.0.0 resolves to a compiled validator');
+    assert.strictEqual(v300, v301, 'patch pins in same minor share a state');
+    assert.strictEqual(v301, vMinor, 'minor pin shares the same state');
+  });
+
+  test('distinct minors produce distinct compiled validators', () => {
+    _resetValidationLoader();
+    const vCurrent = getValidator('get_products', 'request', ADCP_VERSION);
+    const vFixture = getValidator('get_products', 'request', FIXTURE_VERSION_PIN);
+    assert.ok(vCurrent, `${ADCP_VERSION} validator compiled`);
+    assert.ok(vFixture, `${FIXTURE_VERSION_PIN} validator compiled`);
+    assert.notStrictEqual(vCurrent, vFixture, 'distinct minors compile distinct validator instances');
+  });
+
+  test('listValidatorKeys is per-bundle', () => {
     _resetValidationLoader();
     const keysCurrent = listValidatorKeys(ADCP_VERSION);
-    const keysFixture = listValidatorKeys(FIXTURE_VERSION);
-    // Fixture is a copy of current — same key set.
+    const keysFixture = listValidatorKeys(FIXTURE_VERSION_PIN);
     assert.deepStrictEqual(keysCurrent, keysFixture);
   });
 
-  test('repeated calls cache the per-version validator', () => {
+  test('repeated calls cache the per-bundle validator', () => {
     _resetValidationLoader();
-    const first = getValidator('get_products', 'request', FIXTURE_VERSION);
-    const second = getValidator('get_products', 'request', FIXTURE_VERSION);
-    assert.strictEqual(first, second, 'same call returns the same compiled validator instance');
+    const first = getValidator('get_products', 'request', FIXTURE_VERSION_PIN);
+    const second = getValidator('get_products', 'request', FIXTURE_VERSION_PIN);
+    assert.strictEqual(first, second);
   });
 
   test('unknown version throws with a clear message', () => {
     _resetValidationLoader();
     assert.throws(
       () => getValidator('get_products', 'request', '99.99.99-not-a-real-version'),
-      err =>
-        /AdCP schema data for version "99\.99\.99-not-a-real-version" not found/.test(err.message) &&
-        /sync-schemas/.test(err.message)
+      err => /AdCP schema data for version "99\.99\.99-not-a-real-version" not found/.test(err.message)
     );
   });
 
@@ -97,29 +115,25 @@ describe('schema-loader per-version state', () => {
     _resetValidationLoader();
     const fromDefault = getValidator('get_products', 'request');
     const fromExplicit = getValidator('get_products', 'request', ADCP_VERSION);
-    assert.strictEqual(
-      fromDefault,
-      fromExplicit,
-      'default version path must alias to ADCP_VERSION explicit path (same compiled validator)'
-    );
+    assert.strictEqual(fromDefault, fromExplicit);
   });
 
-  test('_resetValidationLoader(version) clears one version, leaves others', () => {
+  test('_resetValidationLoader(version) clears one bundle, leaves others', () => {
     _resetValidationLoader();
     const vCurrentFirst = getValidator('get_products', 'request', ADCP_VERSION);
-    const vFixtureFirst = getValidator('get_products', 'request', FIXTURE_VERSION);
+    const vFixtureFirst = getValidator('get_products', 'request', FIXTURE_VERSION_PIN);
     _resetValidationLoader(ADCP_VERSION);
     const vCurrentAfter = getValidator('get_products', 'request', ADCP_VERSION);
-    const vFixtureAfter = getValidator('get_products', 'request', FIXTURE_VERSION);
-    assert.notStrictEqual(
-      vCurrentFirst,
-      vCurrentAfter,
-      `${ADCP_VERSION} was reset — should re-compile to a new function instance`
-    );
-    assert.strictEqual(
-      vFixtureFirst,
-      vFixtureAfter,
-      `${FIXTURE_VERSION} was untouched — should still be the same instance`
-    );
+    const vFixtureAfter = getValidator('get_products', 'request', FIXTURE_VERSION_PIN);
+    assert.notStrictEqual(vCurrentFirst, vCurrentAfter, 'reset bundle re-compiles');
+    assert.strictEqual(vFixtureFirst, vFixtureAfter, 'untouched bundle stays cached');
+  });
+
+  test('reset by stable patch pin clears the same bundle as the minor pin', () => {
+    _resetValidationLoader();
+    const beforeReset = getValidator('get_products', 'request', '3.0');
+    _resetValidationLoader('3.0.1'); // patch-pinned reset must clear the '3.0' bundle
+    const afterReset = getValidator('get_products', 'request', '3.0');
+    assert.notStrictEqual(beforeReset, afterReset, 'resetting via a patch-pin clears the resolved minor bundle');
   });
 });

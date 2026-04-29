@@ -7,7 +7,7 @@ export { validateRequest, validateResponse, formatIssues } from './schema-valida
 export type { ValidationIssue, ValidationOutcome } from './schema-validator';
 export { buildValidationError, buildAdcpValidationErrorPayload } from './schema-errors';
 export type { ValidationErrorDetails, AdcpValidationErrorDetails } from './schema-errors';
-export { getValidator, listValidatorKeys } from './schema-loader';
+export { getValidator, listValidatorKeys, resolveBundleKey } from './schema-loader';
 export type { Direction, ResponseVariant } from './schema-loader';
 export { validateOutgoingRequest, validateIncomingResponse, resolveValidationModes } from './client-hooks';
 export type { ValidationMode, ValidationHookConfig } from './client-hooks';

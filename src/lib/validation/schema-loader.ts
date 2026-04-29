@@ -36,26 +36,88 @@ const SCHEMA_FILENAME_SUFFIX: Record<Direction, string> = {
 };
 
 /**
+ * Map a consumer-provided version pin to the loader's bundle key.
+ *
+ *   - Stable semver `'3.0.0'` / `'3.0.1'` → `'3.0'` (latest patch in minor)
+ *   - Bare minor `'3.0'` → `'3.0'` (already the bundle key)
+ *   - Prerelease `'3.1.0-beta.1'` → `'3.1.0-beta.1'` (exact-version, intentional pin)
+ *   - Legacy alias `'v3'` → `'v3'` (pass-through; cache keeps these as-is)
+ *   - Unparseable input → returned as-is so the existsSync check fails with
+ *     a clear "not found" error rather than a confusing rewrite
+ *
+ * Per the AdCP spec convention patches don't change wire shape, so collapsing
+ * stable patches into the minor is functionally equivalent for any validator
+ * consumer. Prereleases are kept exact because pinning a beta is intentional
+ * and bit-fidelity matters for cross-version interop tests.
+ */
+export function resolveBundleKey(version: string): string {
+  // Bare 'MAJOR.MINOR' (no patch).
+  const minorOnly = version.match(/^(\d+)\.(\d+)$/);
+  if (minorOnly) return `${minorOnly[1]}.${minorOnly[2]}`;
+  // Full 'MAJOR.MINOR.PATCH' with optional prerelease.
+  const semver = version.match(/^(\d+)\.(\d+)\.(\d+)(?:-(.+))?$/);
+  if (semver) {
+    const [, major, minor, , prerelease] = semver;
+    if (prerelease !== undefined) return version;
+    return `${major}.${minor}`;
+  }
+  // Legacy alias / unrecognized — pass through.
+  return version;
+}
+
+/**
  * Resolve the directory that holds the bundled + core schemas for a given
  * AdCP version. Source layout (dev):
- *   schemas/cache/<ver>/{bundled,core}
+ *   schemas/cache/<exact-version>/{bundled,core}
  * Built layout (dist):
- *   dist/lib/schemas-data/<ver>/{bundled,core}
+ *   dist/lib/schemas-data/<bundle-key>/{bundled,core}
  *
- * Throws when no bundle exists for the requested version. Callers that
- * accept any-version-the-SDK-knows-about should catch and fall back to
- * `ADCP_VERSION`; callers pinning a specific version surface the error.
+ * Stable releases use minor-name keys (`3.0/`); prereleases use full-version
+ * keys (`3.1.0-beta.1/`). See {@link resolveBundleKey}.
+ *
+ * Falls back to the source-tree cache when dist isn't built (dev workflow
+ * before `npm run build:lib`). For stable pins, the cache fallback scans
+ * for the highest-patch sibling in the requested minor — `'3.0.0'` resolves
+ * to `schemas/cache/3.0.1/` when only `3.0.1` is cached, matching dist's
+ * collapse behavior.
+ *
+ * Throws when no bundle exists. Callers pinning a specific prerelease
+ * surface the error; the construction-time fence in `resolveAdcpVersion`
+ * catches most cross-major mistakes before this point.
  */
 function resolveSchemaRoot(version: string): string {
-  const distCandidate = path.join(__dirname, '..', 'schemas-data', version);
+  const key = resolveBundleKey(version);
+  const distCandidate = path.join(__dirname, '..', 'schemas-data', key);
   if (existsSync(distCandidate)) return distCandidate;
 
-  const srcCandidate = path.join(__dirname, '..', '..', '..', 'schemas', 'cache', version);
-  if (existsSync(srcCandidate)) return srcCandidate;
+  // Source-tree fallback: cache stays exact-version-named, so map the key
+  // back to the highest-patch cache directory in the same minor for stable
+  // pins. Prereleases need an exact match.
+  const cacheRoot = path.join(__dirname, '..', '..', '..', 'schemas', 'cache');
+  const exactCandidate = path.join(cacheRoot, version);
+  if (existsSync(exactCandidate)) return exactCandidate;
+
+  // For minor-only or stable-patch pins, find the highest stable patch in
+  // the cache that matches the resolved minor.
+  const minorMatch = key.match(/^(\d+)\.(\d+)$/);
+  if (minorMatch && existsSync(cacheRoot)) {
+    const [, major, minor] = minorMatch;
+    const prefix = `${major}.${minor}.`;
+    const cached = readdirSync(cacheRoot, { withFileTypes: true })
+      .filter(e => e.isDirectory() && e.name.startsWith(prefix) && /^\d+\.\d+\.\d+$/.test(e.name))
+      .map(e => ({
+        name: e.name,
+        patch: parseInt(e.name.slice(prefix.length), 10),
+      }))
+      .filter(c => Number.isFinite(c.patch))
+      .sort((a, b) => b.patch - a.patch);
+    if (cached.length > 0) return path.join(cacheRoot, cached[0]!.name);
+  }
 
   throw new Error(
     `AdCP schema data for version "${version}" not found. ` +
-      `Looked in ${distCandidate} and ${srcCandidate}. ` +
+      `Looked for bundle key "${key}" in ${distCandidate}, exact path ${exactCandidate}, ` +
+      `and the latest-patch fallback in ${cacheRoot}. ` +
       `Run \`npm run sync-schemas\` and \`npm run build:lib\` to populate the bundle.`
   );
 }
@@ -192,7 +254,12 @@ function buildFileIndex(root: string): Map<string, string> {
 }
 
 function ensureInit(version: string): LoaderState {
-  const cached = states.get(version);
+  // States are keyed by bundle key, not by raw version string, so
+  // `getValidator('foo', 'request', '3.0.0')` and the same call with
+  // `'3.0.1'` share state — both resolve to bundle key `'3.0'` and the
+  // same compiled AJV instance.
+  const key = resolveBundleKey(version);
+  const cached = states.get(key);
   if (cached) return cached;
 
   const root = resolveSchemaRoot(version);
@@ -210,9 +277,9 @@ function ensureInit(version: string): LoaderState {
     rawSchemas: new Map(),
     root,
     coreLoaded: false,
-    version,
+    version: key,
   };
-  states.set(version, state);
+  states.set(key, state);
   return state;
 }
 
@@ -305,13 +372,15 @@ export { SCHEMA_FILENAME_SUFFIX };
 
 /**
  * Test hook: reset cached state. With no argument, clears every version's
- * loader state; with a version, clears only that one's.
+ * loader state; with a version, clears only the bundle that version
+ * resolves to (so passing `'3.0.0'` and `'3.0.1'` both clear the `'3.0'`
+ * bundle).
  */
 export function _resetValidationLoader(version?: string): void {
   if (version === undefined) {
     states.clear();
   } else {
-    states.delete(version);
+    states.delete(resolveBundleKey(version));
   }
 }
 
