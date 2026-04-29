@@ -13,7 +13,7 @@
  * incorrectly ran the assertion against absent governance state.
  */
 
-const { describe, test, beforeEach, afterEach } = require('node:test');
+const { describe, test, afterEach } = require('node:test');
 const assert = require('node:assert');
 const http = require('http');
 
