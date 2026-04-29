@@ -488,9 +488,13 @@ async function executeStoryboardPass(
   if (!options._client) {
     const discovered = await getOrDiscoverProfile(clients[0]!, options);
     profile = discovered.profile;
-    // Populate agentTools from discovered profile if not already set
+    // Populate agentTools and _profile from discovered profile if not already set.
+    // _profile is threaded into executeStep so capability-based skip gates
+    // (e.g. account-mode branching) can read raw_capabilities at step time.
     if (!options.agentTools && profile?.tools) {
-      options = { ...options, agentTools: profile.tools };
+      options = { ...options, agentTools: profile.tools, _profile: profile };
+    } else if (profile && !options._profile) {
+      options = { ...options, _profile: profile };
     }
   } else {
     profile = options._profile;
@@ -1244,11 +1248,16 @@ export async function runStoryboardStep(
 
   // Discover agent profile for standalone step execution. Captured so the
   // executeStep call below can thread `library_version` through to
-  // shape-drift hint detection (issue #850).
+  // shape-drift hint detection (issue #850). Also threads _profile into
+  // options so capability-based skip gates in executeStep (e.g. account-mode
+  // branching) can read raw_capabilities, mirroring executeStoryboardPass.
   let profile: AgentProfile | undefined;
   if (!options._client) {
     const discovered = await getOrDiscoverProfile(client, options);
     profile = discovered.profile;
+    if (profile && !options._profile) {
+      options = { ...options, _profile: profile };
+    }
   } else {
     profile = options._profile;
   }
@@ -1421,6 +1430,46 @@ async function executeStep(
       next,
       extraction: { path: 'none' },
     };
+  }
+
+  // Account-mode capability gate: sync_accounts is exclusive to implicit mode
+  // (require_operator_auth: false). When the seller declared explicit mode
+  // (require_operator_auth: true), sync_accounts does not apply — grade
+  // not_applicable rather than missing_tool so adopters can distinguish
+  // "your capability declaration says this path isn't yours" from "you forgot
+  // to implement a required tool."
+  //
+  // list_accounts is NOT gated here: it appears in audience_sync and other
+  // storyboard flows regardless of account mode, so it is always applicable.
+  //
+  // Requires _profile threaded from the discovery block in
+  // executeStoryboardPass or runStoryboardStep.
+  if (effectiveStep.task === 'sync_accounts') {
+    const rawCaps = options._profile?.raw_capabilities;
+    if (rawCaps !== undefined) {
+      const requireOperatorAuth = resolveCapabilityPath(rawCaps, 'account.require_operator_auth');
+      if (requireOperatorAuth === true) {
+        const detail =
+          `Agent declared explicit account mode (require_operator_auth: true); ` +
+          `sync_accounts is not applicable — list_accounts is the correct tool for this account shape.`;
+        const next = getNextStepPreview(step.id, allSteps, context, runState.runnerVars);
+        return {
+          step_id: step.id,
+          phase_id: phaseId,
+          title: step.title,
+          task: step.task,
+          passed: true,
+          skipped: true,
+          skip_reason: 'not_applicable',
+          skip: buildSkip('not_applicable', detail),
+          duration_ms: 0,
+          validations: [],
+          context,
+          next,
+          extraction: { path: 'none' },
+        };
+      }
+    }
   }
 
   // Skip if agent doesn't implement the tool this step calls.
