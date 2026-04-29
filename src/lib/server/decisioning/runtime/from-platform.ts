@@ -2207,27 +2207,30 @@ function buildGovernanceHandlers<P extends DecisioningPlatform<any, any>>(
 function buildAccountHandlers<P extends DecisioningPlatform<any, any>>(platform: P): AccountHandlers<Account> {
   const accounts = platform.accounts;
 
-  const handlers: AccountHandlers<Account> = {
-    syncAccounts: async (params, _ctx) => {
-      if (!accounts.upsert) {
-        return adcpError('UNSUPPORTED_FEATURE', {
-          message: 'sync_accounts not supported by this platform',
-          recovery: 'terminal',
-        });
-      }
+  // Only emit framework-derived handlers for methods the platform actually
+  // implements. Emitting an UNSUPPORTED_FEATURE stub for an undefined
+  // method shadows adopter-supplied `opts.accounts.{syncAccounts,listAccounts}`
+  // fillers under the merge seam (platform-derived wins per-key), so the
+  // adopter's working handler silently never runs. This pattern matches the
+  // gating already used for `reportUsage` / `getAccountFinancials` below.
+  // Adopters who claim sync_accounts / list_accounts capability without
+  // implementing `accounts.upsert` / `accounts.list` AND without supplying a
+  // merge-seam override get framework's "tool not registered" path —
+  // closer to the truth than a fabricated UNSUPPORTED_FEATURE envelope.
+  const handlers: AccountHandlers<Account> = {};
+
+  if (accounts.upsert) {
+    handlers.syncAccounts = async (params, _ctx) => {
       const refs = (params.accounts ?? []) as AccountReference[];
       return projectSync(
         () => accounts.upsert!(refs),
         rows => ({ accounts: rows })
       );
-    },
-    listAccounts: async (params, _ctx) => {
-      if (!accounts.list) {
-        return adcpError('UNSUPPORTED_FEATURE', {
-          message: 'list_accounts not supported by this platform',
-          recovery: 'terminal',
-        });
-      }
+    };
+  }
+
+  if (accounts.list) {
+    handlers.listAccounts = async (params, _ctx) => {
       const filter = params as Parameters<NonNullable<typeof accounts.list>>[0];
       // Wrap in projectSync so adopter `throw new AdcpError('PERMISSION_DENIED', ...)`
       // from the list impl projects to the structured wire envelope rather
@@ -2239,8 +2242,8 @@ function buildAccountHandlers<P extends DecisioningPlatform<any, any>>(platform:
           ...(page.nextCursor != null && { next_cursor: page.nextCursor }),
         })
       );
-    },
-  };
+    };
+  }
 
   if (accounts.reportUsage) {
     handlers.reportUsage = async (params, ctx) => {

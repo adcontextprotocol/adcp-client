@@ -230,6 +230,32 @@ createAdcpServerFromPlatform(platform, {
 - **`accounts.resolve()` is mandatory.** Even single-tenant agents must
   declare `resolution: 'derived'` and return a synthetic singleton. The
   framework calls `resolve()` on every request.
+- **`mergeSeam: 'strict'` from day 1.** The default is `'warn'` for
+  back-compat, but `'strict'` is what you want during migration — it
+  surfaces collisions as `PlatformConfigError` at construction time
+  instead of as silent runtime UNSUPPORTED_FEATURE responses. Adopters
+  who shipped without `strict` and discovered a collision in production
+  invariably wished they'd had it on. Set it from the first commit and
+  keep it on through GA; the v5-handler-style escape hatches still work
+  underneath.
+- **`resolveIdempotencyPrincipal` MUST be forwarded to `opts`.** v5.x
+  adopters who passed it to `createAdcpServer({ resolveIdempotencyPrincipal })`
+  need to pass it to `createAdcpServerFromPlatform` too — the framework
+  doesn't synthesize one. Without it, every mutating tool (`create_media_buy`,
+  `update_media_buy`, `sync_*`, `acquire_rights`, etc.) returns
+  `SERVICE_UNAVAILABLE: Idempotency principal could not be resolved`.
+  Symptoms: looks like a transient outage at first run; same call
+  consistently fails the second time. Check that `opts.resolveIdempotencyPrincipal`
+  is populated before you debug anything else.
+- **`ctx.account.authInfo` (specialism methods) vs `ctx.authInfo`
+  (`ResolveContext` only).** Inside your `accounts.resolve(ref, ctx)`,
+  the second arg is `ResolveContext` and exposes `ctx.authInfo`. Inside
+  a `SalesPlatform` / `AudiencePlatform` / etc. method, the second arg
+  is `RequestContext` and the auth principal lives at
+  `ctx.account.authInfo` — NOT `ctx.authInfo` (which doesn't exist
+  there). The migration doc shows the resolver signature first, so
+  adopters naturally try the same name in their handler bodies and hit
+  a TypeScript error. Distinct shapes; same field, different paths.
 - **`mergeSeam: 'warn'` is the default.** Set `'strict'` in CI to catch
   silent migration regressions where v6.x adds a tool to a specialism
   interface and your prior v5 handler stops running.

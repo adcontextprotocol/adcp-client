@@ -877,6 +877,83 @@ describe('Custom-handler merge seam (incremental migration)', () => {
     assert.strictEqual(sawArgs.account.id, 'acc_1', 'custom handler received the resolved account in ctx');
   });
 
+  it('opts.accounts.syncAccounts runs when platform.accounts.upsert is undefined (no UNSUPPORTED_FEATURE shadow)', async () => {
+    // Regression: the framework previously emitted an UNSUPPORTED_FEATURE
+    // stub for syncAccounts whenever platform.accounts.upsert was undefined.
+    // Under the merge seam (platform-derived wins per-key), that stub
+    // shadowed adopter-supplied opts.accounts.syncAccounts fillers — every
+    // mutating sync_accounts call returned UNSUPPORTED_FEATURE even though
+    // the adopter had wired a working handler. Fixed by gating the
+    // platform-derived handler on whether `accounts.upsert` is defined.
+    let sawCall;
+    const platform = buildPlatform({
+      // Note: NO upsert/list defined on platform.accounts — the v6.0 platform
+      // doesn't model these methods, so adopters fill via opts.accounts.
+      accounts: {
+        resolve: async ref => ({
+          id: ref?.account_id ?? 'acc_1',
+          metadata: {},
+          authInfo: { kind: 'api_key' },
+        }),
+      },
+    });
+    const server = createAdcpServerFromPlatform(platform, {
+      name: 'merged',
+      version: '0.0.1',
+      validation: { requests: 'off', responses: 'off' },
+      accounts: {
+        syncAccounts: async (params, ctx) => {
+          sawCall = { params, account: ctx.account };
+          return { accounts: [{ brand: { domain: 'acme.com' }, operator: 'acme.com', action: 'created', status: 'active' }] };
+        },
+      },
+    });
+    const result = await server.dispatchTestRequest({
+      method: 'tools/call',
+      params: {
+        name: 'sync_accounts',
+        arguments: {
+          account: { account_id: 'acc_1' },
+          accounts: [{ brand: { domain: 'acme.com' }, operator: 'acme.com' }],
+          idempotency_key: '11111111-1111-1111-1111-111111111111',
+        },
+      },
+    });
+    assert.notStrictEqual(result.isError, true, `expected success, got ${JSON.stringify(result.structuredContent)}`);
+    assert.ok(sawCall, 'opts.accounts.syncAccounts MUST run when platform.accounts.upsert is undefined');
+    assert.strictEqual(result.structuredContent.accounts[0].brand.domain, 'acme.com');
+  });
+
+  it('opts.accounts.listAccounts runs when platform.accounts.list is undefined', async () => {
+    let sawCall = false;
+    const platform = buildPlatform({
+      accounts: {
+        resolve: async ref => ({
+          id: ref?.account_id ?? 'acc_1',
+          metadata: {},
+          authInfo: { kind: 'api_key' },
+        }),
+      },
+    });
+    const server = createAdcpServerFromPlatform(platform, {
+      name: 'merged',
+      version: '0.0.1',
+      validation: { requests: 'off', responses: 'off' },
+      accounts: {
+        listAccounts: async () => {
+          sawCall = true;
+          return { accounts: [], next_cursor: undefined };
+        },
+      },
+    });
+    const result = await server.dispatchTestRequest({
+      method: 'tools/call',
+      params: { name: 'list_accounts', arguments: { account: { account_id: 'acc_1' } } },
+    });
+    assert.notStrictEqual(result.isError, true);
+    assert.ok(sawCall, 'opts.accounts.listAccounts MUST run when platform.accounts.list is undefined');
+  });
+
   it('platform-derived handler wins when both define the same key', async () => {
     const platform = buildPlatform({
       sales: {

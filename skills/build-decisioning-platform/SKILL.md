@@ -850,6 +850,8 @@ Until v6.1, adopters running in security-sensitive environments (handling buyer-
 
 If you have a v5.x agent built on `createAdcpServer({ mediaBuy: { ... } })`, you don't need to rewrite all of it before adopting v6.0. `createAdcpServerFromPlatform` accepts the v5 handler-style domains (`mediaBuy`, `creative`, `accounts`, `eventTracking`, `signals`, `governance`, `brandRights`, `sponsoredIntelligence`) as `opts` alongside the v6 platform interface. Platform-derived handlers WIN per-key; adopter handlers fill gaps for tools the platform doesn't yet model. Migrate one specialism at a time.
 
+**`mergeSeam: 'strict'` is the recommended default during migration.** Set it from the first commit of your migration PR and keep it on through GA — `'strict'` throws `PlatformConfigError` at construction time when the v6 platform interface and your v5 leftover handlers collide, so you find shadowed overrides in CI rather than as silent runtime UNSUPPORTED_FEATURE responses. The default is `'warn'` only for back-compat with adopters who upgraded mid-flight; `'strict'` is the right posture for new deployments. Adopters who deferred this almost always wished they hadn't — by the time a collision shows up in production logs, the affected request has already failed in some confusing way.
+
 The seam logs a warning when an adopter handler is shadowed by a platform-derived one — the failure mode where v6.x adds a tool to a specialism interface and your prior merge-seam override silently stops running on next deploy. Pick a `mergeSeam` mode based on your environment:
 
 | Mode | When to pick |
