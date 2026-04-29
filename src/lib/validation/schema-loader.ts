@@ -98,13 +98,22 @@ function resolveSchemaRoot(version: string): string {
   if (existsSync(exactCandidate)) return exactCandidate;
 
   // For minor-only or stable-patch pins, find the highest stable patch in
-  // the cache that matches the resolved minor.
+  // the cache that matches the resolved minor. Skip `*.previous` snapshots
+  // — `sync-schemas` writes those as transient backups during replaceTree;
+  // a partially-written snapshot whose patch number happens to be highest
+  // would otherwise win the sort.
   const minorMatch = key.match(/^(\d+)\.(\d+)$/);
   if (minorMatch && existsSync(cacheRoot)) {
     const [, major, minor] = minorMatch;
     const prefix = `${major}.${minor}.`;
     const cached = readdirSync(cacheRoot, { withFileTypes: true })
-      .filter(e => e.isDirectory() && e.name.startsWith(prefix) && /^\d+\.\d+\.\d+$/.test(e.name))
+      .filter(
+        e =>
+          e.isDirectory() &&
+          e.name.startsWith(prefix) &&
+          !e.name.endsWith('.previous') &&
+          /^\d+\.\d+\.\d+$/.test(e.name)
+      )
       .map(e => ({
         name: e.name,
         patch: parseInt(e.name.slice(prefix.length), 10),
