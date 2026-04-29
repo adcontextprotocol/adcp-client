@@ -18,6 +18,7 @@ import addFormats from 'ajv-formats';
 import { readdirSync, readFileSync, existsSync } from 'fs';
 import path from 'path';
 import { ADCP_VERSION } from '../version';
+import { ConfigurationError } from '../errors';
 
 export type ResponseVariant = 'sync' | 'submitted' | 'working' | 'input-required';
 export type Direction = 'request' | ResponseVariant;
@@ -41,14 +42,20 @@ const SCHEMA_FILENAME_SUFFIX: Record<Direction, string> = {
  *   - Stable semver `'3.0.0'` / `'3.0.1'` → `'3.0'` (latest patch in minor)
  *   - Bare minor `'3.0'` → `'3.0'` (already the bundle key)
  *   - Prerelease `'3.1.0-beta.1'` → `'3.1.0-beta.1'` (exact-version, intentional pin)
- *   - Legacy alias `'v3'` → `'v3'` (pass-through; cache keeps these as-is)
- *   - Unparseable input → returned as-is so the existsSync check fails with
- *     a clear "not found" error rather than a confusing rewrite
+ *   - Legacy alias `'v3'` / `'v2.5'` / `'v2.6'` → returned verbatim (cache
+ *     historically keyed these directories by the alias name)
  *
  * Per the AdCP spec convention patches don't change wire shape, so collapsing
  * stable patches into the minor is functionally equivalent for any validator
  * consumer. Prereleases are kept exact because pinning a beta is intentional
  * and bit-fidelity matters for cross-version interop tests.
+ *
+ * Throws `ConfigurationError` for any input that doesn't match one of the
+ * recognized shapes. Strings reach `path.join` via `resolveSchemaRoot`, and
+ * pass-through of arbitrary garbage (`'../etc'`, `'3foo'`) lets a non-version
+ * directory probe leak through `hasSchemaBundle`'s boolean. The throw is
+ * caught by `hasSchemaBundle`'s try/catch (still returns false) and surfaces
+ * with a useful field name from `resolveAdcpVersion`.
  */
 export function resolveBundleKey(version: string): string {
   // Bare 'MAJOR.MINOR' (no patch).
@@ -61,8 +68,15 @@ export function resolveBundleKey(version: string): string {
     if (prerelease !== undefined) return version;
     return `${major}.${minor}`;
   }
-  // Legacy alias / unrecognized — pass through.
-  return version;
+  // Legacy alias: 'v' followed by a major and optional minor. Restricted to
+  // this exact shape so non-version garbage can't reach the filesystem.
+  const legacyAlias = version.match(/^v\d+(\.\d+)?$/);
+  if (legacyAlias) return version;
+  throw new ConfigurationError(
+    `AdCP version ${JSON.stringify(version)} is not a recognized version format. ` +
+      `Expected semver (e.g. '3.0.1', '3.1.0-beta.1'), bare minor ('3.0'), or legacy alias ('v3', 'v2.5').`,
+    'adcpVersion'
+  );
 }
 
 /**

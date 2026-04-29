@@ -132,16 +132,16 @@ export class Agent {
     private client: any // Will be AdCPClient
   ) {
     if (!_agentDeprecationWarned) {
-      _agentDeprecationWarned = true;
-      // One-time process.emitWarning surfaces in dev/test; production callers
-      // who set NODE_NO_WARNINGS suppress it. JSDoc `@deprecated` carries the
-      // signal in editors regardless.
+      // Flag is set only after a successful emitWarning so a runtime that
+      // throws on the first call (monkey-patched test harness, polyfilled
+      // worker) still surfaces the deprecation on a later construction.
       try {
         process.emitWarning(
           'Agent class is deprecated. Use SingleAgentClient / AgentClient / ADCPMultiAgentClient from @adcp/sdk; ' +
             'Agent does not honor per-instance adcpVersion pins (always emits the SDK default major).',
           'DeprecationWarning'
         );
+        _agentDeprecationWarned = true;
       } catch {
         // emitWarning is best-effort observability; never fatal.
       }

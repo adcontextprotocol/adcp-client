@@ -22,6 +22,7 @@ const {
   getValidator,
   listValidatorKeys,
   resolveBundleKey,
+  hasSchemaBundle,
   _resetValidationLoader,
 } = require('../../dist/lib/validation/schema-loader.js');
 const { ADCP_VERSION } = require('../../dist/lib/version.js');
@@ -135,5 +136,42 @@ describe('schema-loader per-version state', () => {
     _resetValidationLoader('3.0.1'); // patch-pinned reset must clear the '3.0' bundle
     const afterReset = getValidator('get_products', 'request', '3.0');
     assert.notStrictEqual(beforeReset, afterReset, 'resetting via a patch-pin clears the resolved minor bundle');
+  });
+
+  test('hasSchemaBundle returns true for shipped versions', () => {
+    assert.strictEqual(hasSchemaBundle(ADCP_VERSION), true);
+    assert.strictEqual(hasSchemaBundle('3.0.0'), true, '3.0.0 collapses to the 3.0 bundle');
+    assert.strictEqual(hasSchemaBundle('3.0'), true, 'bare minor resolves to the same bundle');
+  });
+
+  test('hasSchemaBundle returns false for unshipped versions', () => {
+    assert.strictEqual(hasSchemaBundle('4.0.0'), false, 'no major-4 bundle');
+    assert.strictEqual(hasSchemaBundle('99.0.0-beta.1'), false, 'no synthetic prerelease bundle');
+  });
+
+  test('hasSchemaBundle returns false for non-version garbage (defense in depth)', () => {
+    // resolveBundleKey throws ConfigurationError for unrecognized shapes;
+    // hasSchemaBundle's try/catch surfaces the throw as `false` so a
+    // malformed input never reaches `path.join` as a directory component.
+    assert.strictEqual(hasSchemaBundle('../etc'), false);
+    assert.strictEqual(hasSchemaBundle('3foo'), false);
+    assert.strictEqual(hasSchemaBundle(''), false);
+  });
+
+  test('resolveBundleKey throws ConfigurationError for non-version input', () => {
+    assert.throws(
+      () => resolveBundleKey('../etc'),
+      err => err.code === 'CONFIGURATION_ERROR' && /not a recognized version format/.test(err.message)
+    );
+    assert.throws(
+      () => resolveBundleKey('3foo'),
+      err => err.code === 'CONFIGURATION_ERROR'
+    );
+  });
+
+  test('resolveBundleKey accepts legacy v-prefix aliases', () => {
+    assert.strictEqual(resolveBundleKey('v3'), 'v3');
+    assert.strictEqual(resolveBundleKey('v2.5'), 'v2.5');
+    assert.strictEqual(resolveBundleKey('v2.6'), 'v2.6');
   });
 });

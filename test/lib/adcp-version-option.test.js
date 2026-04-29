@@ -150,4 +150,48 @@ describe('adcpVersion constructor option', () => {
       );
     });
   });
+
+  describe('requireV3 ↔ requireSupportedMajor parity', () => {
+    test('SingleAgentClient.requireV3 delegates to requireSupportedMajor', async () => {
+      const client = new SingleAgentClient(TEST_AGENT);
+      let calledWith;
+      client.requireSupportedMajor = async function (taskType) {
+        calledWith = taskType;
+      };
+      await client.requireV3('create_media_buy');
+      assert.strictEqual(calledWith, 'create_media_buy');
+    });
+
+    test('SingleAgentClient.requireV3 forwards default taskType', async () => {
+      const client = new SingleAgentClient(TEST_AGENT);
+      let calledWith;
+      client.requireSupportedMajor = async function (taskType) {
+        calledWith = taskType;
+      };
+      await client.requireV3();
+      assert.strictEqual(calledWith, 'request');
+    });
+
+    test('AgentClient.requireV3 delegates to underlying client.requireSupportedMajor', async () => {
+      const wrapper = new AgentClient(TEST_AGENT);
+      let calledWith;
+      // AgentClient delegates to the inner SingleAgentClient via `this.client`.
+      wrapper.client.requireSupportedMajor = async function (taskType) {
+        calledWith = taskType;
+      };
+      await wrapper.requireV3('update_media_buy');
+      assert.strictEqual(calledWith, 'update_media_buy');
+    });
+
+    test('AgentClient.requireSupportedMajor and requireV3 reach the same underlying call', async () => {
+      const wrapper = new AgentClient(TEST_AGENT);
+      const seen = [];
+      wrapper.client.requireSupportedMajor = async function (taskType) {
+        seen.push(taskType);
+      };
+      await wrapper.requireSupportedMajor('a');
+      await wrapper.requireV3('b');
+      assert.deepStrictEqual(seen, ['a', 'b']);
+    });
+  });
 });
