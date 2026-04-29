@@ -358,4 +358,60 @@ describe('createAdcpServerFromPlatform — comply_test_controller wiring', () =>
     assert.strictEqual(result.structuredContent.success, false);
     assert.strictEqual(result.structuredContent.error, 'FORBIDDEN');
   });
+
+  it('F10: complyTest.inputSchema extends the canonical TOOL_INPUT_SHAPE', async () => {
+    // Round-5 spike (training-agent): adopters routed through
+    // createAdcpServerFromPlatform({ complyTest }) couldn't extend the
+    // canonical schema with a top-level `account` field — the
+    // documented `{ ...TOOL_INPUT_SHAPE, account: ... }` extension
+    // pattern was unreachable through the v6 wiring path. The
+    // inputSchema option is the seam.
+    const { z } = require('zod');
+    let receivedAccount = null;
+    const server = createAdcpServerFromPlatform(basePlatform({ withComplianceTesting: true }), {
+      name: 'comply-host',
+      version: '0.0.1',
+      validation: { requests: 'off', responses: 'off' },
+      complyTest: {
+        inputSchema: {
+          // Extension: storyboard fixtures send a top-level `account`
+          // (rather than `context.account`); the spec-canonical shape
+          // strips it but adopters can opt in via this seam.
+          account: z.object({ account_id: z.string() }).passthrough().optional(),
+        },
+        force: {
+          creative_status: async params => {
+            // The wrapper passes the raw input through; sandbox-gating
+            // in the adopter would inspect input.account before this
+            // adapter runs. Test asserts the schema accepts the field.
+            receivedAccount = params.creative_id;
+            return {
+              success: true,
+              transition: 'forced',
+              resource_type: 'creative',
+              resource_id: params.creative_id,
+              previous_state: 'a',
+              current_state: 'b',
+            };
+          },
+        },
+      },
+    });
+    const result = await server.dispatchTestRequest({
+      method: 'tools/call',
+      params: {
+        name: 'comply_test_controller',
+        arguments: {
+          scenario: 'force_creative_status',
+          params: { creative_id: 'cr_42', status: 'approved' },
+          // Top-level account — the extension allows this without the
+          // schema validator rejecting it as unknown.
+          account: { account_id: 'acc_extension_test' },
+        },
+      },
+    });
+    assert.notStrictEqual(result.isError, true, JSON.stringify(result.structuredContent));
+    assert.strictEqual(receivedAccount, 'cr_42', 'force adapter ran with extended schema accepted');
+    assert.strictEqual(result.structuredContent.success, true);
+  });
 });

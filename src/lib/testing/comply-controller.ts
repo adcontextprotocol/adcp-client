@@ -44,6 +44,7 @@
  */
 
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
+import type { ZodTypeAny } from 'zod';
 import {
   CONTROLLER_SCENARIOS,
   TOOL_INPUT_SHAPE,
@@ -216,6 +217,37 @@ export interface ComplyControllerConfig {
   /** Override the seed idempotency cache (e.g., to scope by tenant or
    * persist across restarts). Defaults to an unbounded in-memory cache. */
   seedCache?: SeedFixtureCache;
+
+  /**
+   * Extra Zod fields to merge into the canonical `comply_test_controller`
+   * input schema. Use this when a custom wrapper routes sandbox gating
+   * or tenant scoping through a top-level field (e.g., `account`) that
+   * the spec-canonical {@link TOOL_INPUT_SHAPE} doesn't include.
+   * Keys override canonical fields if there's a name collision; the
+   * resulting shape is what the framework passes to
+   * `mcp.registerTool(..., { inputSchema })` at registration.
+   *
+   * Mirrors the documented `{ ...TOOL_INPUT_SHAPE, account: ... }`
+   * pattern from `test-controller.ts` so adopters routed through
+   * `createAdcpServerFromPlatform({ complyTest })` get the same
+   * extension seam as adopters wiring `registerTestController` directly.
+   *
+   * Storyboard fixtures that send a top-level `account` (rather than
+   * `context.account`) are the canonical case for this option.
+   *
+   * @example
+   * ```ts
+   * import { z } from 'zod';
+   *
+   * complyTest: {
+   *   inputSchema: {
+   *     account: z.object({ account_id: z.string() }).passthrough().optional(),
+   *   },
+   *   force: { ... },
+   * }
+   * ```
+   */
+  inputSchema?: Record<string, ZodTypeAny>;
 }
 
 // ────────────────────────────────────────────────────────────
@@ -225,7 +257,14 @@ export interface ComplyControllerConfig {
 export interface ComplyControllerToolDefinition {
   name: 'comply_test_controller';
   description: string;
-  inputSchema: typeof TOOL_INPUT_SHAPE;
+  /**
+   * The merged Zod input shape — canonical {@link TOOL_INPUT_SHAPE}
+   * fields plus any adopter-supplied {@link ComplyControllerConfig.inputSchema}
+   * extensions. Adopter keys win on collision. Pass directly to
+   * `server.registerTool(name, { inputSchema }, handler)` when wiring
+   * the controller manually.
+   */
+  inputSchema: typeof TOOL_INPUT_SHAPE & Record<string, ZodTypeAny>;
 }
 
 export interface ComplyController {
@@ -377,13 +416,15 @@ export function createComplyController(config: ComplyControllerConfig): ComplyCo
     return toMcpResponse(await handleRaw(input));
   }
 
-  // Shallow-copy the shape so a caller who mutates toolDefinition.inputSchema
-  // doesn't poison subsequent registrations. Zod schema values inside are
-  // themselves immutable, so a one-level copy is enough.
+  // Shallow-copy the canonical shape and overlay any adopter-supplied
+  // extension fields. Spread order is canonical-then-extensions so a
+  // collision (e.g., adopter redefines `params`) lets the adopter win.
+  // Zod schema values are themselves immutable, so a one-level copy is
+  // enough to keep callers from poisoning subsequent registrations.
   const toolDefinition: ComplyControllerToolDefinition = Object.freeze({
     name: 'comply_test_controller',
     description: 'Triggers seller-side state transitions for compliance testing. Sandbox only.',
-    inputSchema: { ...TOOL_INPUT_SHAPE },
+    inputSchema: { ...TOOL_INPUT_SHAPE, ...(config.inputSchema ?? {}) },
   });
 
   // Per-controller latch so the "ungated controller" warning fires once even

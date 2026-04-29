@@ -334,6 +334,29 @@ export interface CreateAdcpServerFromPlatformOptions extends Omit<
    */
   complyTest?: ComplyControllerConfig;
 
+  /**
+   * Allow `push_notification_config.url` to point at loopback / private-IP
+   * destinations. Default is `false` — the framework's request-ingest
+   * validator rejects loopback (`localhost`, `127.0.0.0/8`, `::1`),
+   * RFC 1918 / CGNAT / link-local ranges, and IPv4-mapped IPv6 forms
+   * targeting any of those, since accepting them at production webhook
+   * endpoints is a SSRF / cloud-metadata exfiltration path.
+   *
+   * Set `true` for sandbox / local-testing deployments where
+   * adopter-controlled receivers (storyboard webhook receivers, pytest
+   * httptest fixtures) bind to `127.0.0.1:<ephemeral>`. The flag bypasses
+   * ONLY the private-range branch — malformed-URL, non-http(s) scheme,
+   * and the `http://` reject (separately gated by NODE_ENV / the
+   * `ADCP_DECISIONING_ALLOW_HTTP_WEBHOOKS` env) all still fire.
+   *
+   * Adopters typically scope this themselves on `NODE_ENV !== 'production'`
+   * or a sandbox env flag — the framework doesn't auto-enable it because
+   * the safe default is "reject private destinations." When the flag is
+   * `true` AND `NODE_ENV` is unset / `'production'`, the framework emits
+   * a one-shot console.warn at construction calling out the relaxation.
+   */
+  allowPrivateWebhookUrls?: boolean;
+
   // ---------------------------------------------------------------------
   // Custom-handler escape hatch (incremental migration seam)
   // ---------------------------------------------------------------------
@@ -482,6 +505,30 @@ export function createAdcpServerFromPlatform<P extends DecisioningPlatform<any, 
   // env. Catches NODE_ENV unset, 'staging', 'prod', 'live' — common
   // production deployments that the previous `=== 'production'` check
   // failed open on.
+  // Footgun guard for `allowPrivateWebhookUrls` — same DEV_ALLOWLIST
+  // inversion pattern as the unsigned-emitter check below. Adopters
+  // intentionally relaxing the SSRF gate for sandbox testing aren't
+  // doing anything wrong; production deployments that flip this on
+  // accidentally are. Warn on construction when the flag is true AND
+  // NODE_ENV is unset / 'staging' / 'prod' / 'live' AND no explicit
+  // ack env. Keeps the relaxation usable for real local-test setups
+  // without letting it sneak into production.
+  if (opts.allowPrivateWebhookUrls === true) {
+    const env = process.env.NODE_ENV;
+    const isDevOrTest = env === 'test' || env === 'development';
+    const ack = process.env.ADCP_DECISIONING_ALLOW_PRIVATE_WEBHOOK_URLS === '1';
+    if (!isDevOrTest && !ack) {
+      // eslint-disable-next-line no-console
+      console.warn(
+        '[adcp/decisioning] allowPrivateWebhookUrls: true relaxes the loopback / private-IP ' +
+          'guard on push_notification_config.url. NODE_ENV is not test/development and ' +
+          'ADCP_DECISIONING_ALLOW_PRIVATE_WEBHOOK_URLS is not set — accepting private ' +
+          'destinations in production is a SSRF / cloud-metadata exfiltration path. ' +
+          'For sandbox/local testing, scope this on your own NODE_ENV check.'
+      );
+    }
+  }
+
   if (opts.taskWebhookEmitter && !opts.taskWebhookEmitter.unsigned) {
     const claimsSigned = platform.capabilities?.specialisms?.includes('signed-requests' as never);
     const env = process.env.NODE_ENV;
@@ -705,13 +752,17 @@ export function createAdcpServerFromPlatform<P extends DecisioningPlatform<any, 
     // JSDoc for the migration-seam contract.
     mediaBuy: mergeHandlers(
       opts.mediaBuy,
-      buildMediaBuyHandlers(platform, taskRegistry, taskWebhookEmit, observability, fwLogger),
+      buildMediaBuyHandlers(platform, taskRegistry, taskWebhookEmit, observability, fwLogger, {
+        allowPrivateWebhookUrls: opts.allowPrivateWebhookUrls === true,
+      }),
       'mediaBuy',
       mergeOpts
     ),
     creative: mergeHandlers(
       opts.creative,
-      buildCreativeHandlers(platform, taskRegistry, taskWebhookEmit, observability, fwLogger),
+      buildCreativeHandlers(platform, taskRegistry, taskWebhookEmit, observability, fwLogger, {
+        allowPrivateWebhookUrls: opts.allowPrivateWebhookUrls === true,
+      }),
       'creative',
       mergeOpts
     ),
@@ -1561,7 +1612,11 @@ function ctxFor(handlerCtx: HandlerContext<Account>): RequestContext<Account> {
  * buyer sees the bad config at the request boundary. Previous silent-skip
  * posture lost buyer visibility.
  */
-function extractPushConfig(params: unknown, _logger: AdcpLogger): { url?: string; token?: string } {
+function extractPushConfig(
+  params: unknown,
+  _logger: AdcpLogger,
+  opts: { allowPrivateWebhookUrls?: boolean } = {}
+): { url?: string; token?: string } {
   if (!params || typeof params !== 'object') return {};
   const cfg = (params as { push_notification_config?: unknown }).push_notification_config;
   if (!cfg || typeof cfg !== 'object') return {};
@@ -1570,7 +1625,7 @@ function extractPushConfig(params: unknown, _logger: AdcpLogger): { url?: string
 
   let url: string | undefined;
   if (typeof rawUrl === 'string') {
-    const validation = validatePushNotificationUrl(rawUrl);
+    const validation = validatePushNotificationUrl(rawUrl, { allowPrivate: opts.allowPrivateWebhookUrls === true });
     if (!validation.ok) {
       // Fail fast: buyers thought they wired push and never saw it under
       // the previous silent-skip posture. Rejecting upfront with
@@ -1611,7 +1666,7 @@ interface UrlValidationResult {
   reason?: string;
 }
 
-function validatePushNotificationUrl(rawUrl: string): UrlValidationResult {
+function validatePushNotificationUrl(rawUrl: string, opts: { allowPrivate?: boolean } = {}): UrlValidationResult {
   let parsed: URL;
   try {
     parsed = new URL(rawUrl);
@@ -1632,6 +1687,14 @@ function validatePushNotificationUrl(rawUrl: string): UrlValidationResult {
   }
   if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
     return { ok: false, reason: `unsupported scheme "${parsed.protocol}" (only http: / https:)` };
+  }
+
+  // Adopter-set flag bypasses ONLY the private-IP / loopback rejection.
+  // Malformed-URL and scheme checks above always fire — the relaxation
+  // is scoped to "let sandbox webhook receivers bind to loopback" not
+  // "trust everything." See CreateAdcpServerFromPlatformOptions.
+  if (opts.allowPrivate === true) {
+    return { ok: true };
   }
 
   // Node's `URL.hostname` returns IPv6 literals WITH brackets — so
@@ -1736,7 +1799,8 @@ function buildMediaBuyHandlers<P extends DecisioningPlatform<any, any>>(
   taskRegistry: TaskRegistry,
   taskWebhookEmit: NonNullable<HandlerContext<Account>['emitWebhook']> | undefined,
   observability: DecisioningObservabilityHooks | undefined,
-  logger: AdcpLogger
+  logger: AdcpLogger,
+  pushOpts: { allowPrivateWebhookUrls: boolean }
 ): MediaBuyHandlers<Account> | undefined {
   const sales = platform.sales;
   if (!sales) return undefined;
@@ -1754,7 +1818,7 @@ function buildMediaBuyHandlers<P extends DecisioningPlatform<any, any>>(
       const reqCtx = ctxFor(ctx);
       return projectSync(
         async () => {
-          const push = extractPushConfig(params, logger);
+          const push = extractPushConfig(params, logger, { allowPrivateWebhookUrls: pushOpts.allowPrivateWebhookUrls });
           const result = await sales.createMediaBuy(params, reqCtx);
           return routeIfHandoff(
             taskRegistry,
@@ -1806,7 +1870,7 @@ function buildMediaBuyHandlers<P extends DecisioningPlatform<any, any>>(
       }
       return projectSync(
         async () => {
-          const push = extractPushConfig(params, logger);
+          const push = extractPushConfig(params, logger, { allowPrivateWebhookUrls: pushOpts.allowPrivateWebhookUrls });
           const result = await sales.syncCreatives!(creatives, reqCtx);
           return routeIfHandoff(
             taskRegistry,
@@ -1884,7 +1948,8 @@ function buildCreativeHandlers<P extends DecisioningPlatform<any, any>>(
   taskRegistry: TaskRegistry,
   taskWebhookEmit: NonNullable<HandlerContext<Account>['emitWebhook']> | undefined,
   observability: DecisioningObservabilityHooks | undefined,
-  logger: AdcpLogger
+  logger: AdcpLogger,
+  pushOpts: { allowPrivateWebhookUrls: boolean }
 ): CreativeHandlers<Account> | undefined {
   const creative = platform.creative;
   if (!creative) return undefined;
@@ -1923,7 +1988,7 @@ function buildCreativeHandlers<P extends DecisioningPlatform<any, any>>(
       }
       return projectSync(
         async () => {
-          const push = extractPushConfig(params, logger);
+          const push = extractPushConfig(params, logger, { allowPrivateWebhookUrls: pushOpts.allowPrivateWebhookUrls });
           const result = await creative.syncCreatives!(creatives, reqCtx);
           return routeIfHandoff(
             taskRegistry,
