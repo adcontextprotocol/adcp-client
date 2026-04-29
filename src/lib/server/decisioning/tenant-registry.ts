@@ -47,10 +47,27 @@ export interface TenantSigningKey {
 export interface TenantConfig<P extends DecisioningPlatform = DecisioningPlatform> {
   /**
    * Public URL the tenant accepts traffic on (e.g.,
-   * `https://acme-tv.example.com`). Used for host-route matching and as
-   * the JWKS fetch base.
+   * `https://acme-tv.example.com`). Used for host-route matching and —
+   * unless `jwksUrl` overrides — as the JWKS fetch base (the default
+   * validator computes `{host}/.well-known/brand.json` from this URL).
    */
   agentUrl: string;
+  /**
+   * Override the JWKS fetch URL for this tenant. Use this when the
+   * tenant's brand.json doesn't sit at the host root — i.e., a single
+   * host serves multiple agents under path prefixes
+   * (`https://shared.example.com/api/agent-a`,
+   * `https://shared.example.com/api/agent-b`) and each prefix has its
+   * own brand identity. Without this override, the default validator
+   * resolves `/.well-known/brand.json` against the host root, which
+   * collapses both agents onto the same brand.
+   *
+   * Spec convention is host-root, so the override is only needed for
+   * sub-routed multi-tenant deployments. Custom validators that take a
+   * different shape entirely (e.g., reading from a vault) read this
+   * field via the `jwksUrl` argument on `JwksValidator.validate`.
+   */
+  jwksUrl?: string;
   /** Signing keypair for RFC 9421 response signing. */
   signingKey: TenantSigningKey;
   /** The DecisioningPlatform impl for this tenant. */
@@ -103,7 +120,17 @@ export interface JwksValidationResult {
 }
 
 export interface JwksValidator {
-  validate(opts: { agentUrl: string; signingKey: TenantSigningKey }): Promise<JwksValidationResult>;
+  /**
+   * Validate that the tenant's signing key appears in the published JWKS.
+   *
+   * - `agentUrl` is the tenant's public URL (used for host-relative URL
+   *   computation by the default validator).
+   * - `jwksUrl` is the explicit JWKS fetch URL when the tenant's
+   *   `TenantConfig.jwksUrl` was set; absent for the spec-default
+   *   host-root resolution.
+   * - `signingKey` is what to look for in the published JWKS.
+   */
+  validate(opts: { agentUrl: string; jwksUrl?: string; signingKey: TenantSigningKey }): Promise<JwksValidationResult>;
 }
 
 export interface TenantRegistryOptions {
@@ -119,7 +146,14 @@ export interface TenantRegistryOptions {
   defaultServerOptions: CreateAdcpServerFromPlatformOptions;
   /**
    * Auto-validate tenants when they're registered. Defaults to `true`.
-   * Disable for tests that want to drive validation manually via `recheck`.
+   *
+   * Disable ONLY for tests that drive validation manually via `recheck` —
+   * with this off, every `register()` leaves the tenant in `'pending'`
+   * health and `resolveByRequest` silently refuses traffic until the
+   * caller recheck()s each tenant. Production deployments should leave
+   * this at the default; the framework emits a one-shot console.warn at
+   * registry construction when `autoValidate: false` is set, to surface
+   * the "all traffic blocked" consequence.
    */
   autoValidate?: boolean;
 }
@@ -216,8 +250,16 @@ export function createDefaultJwksValidator(opts?: { fetchImpl?: typeof fetch; ti
   // CDN can extend it. Round-6 Sec-M1.
   const timeoutMs = opts?.timeoutMs ?? 10_000;
   return {
-    async validate({ agentUrl, signingKey }): Promise<JwksValidationResult> {
-      const url = new URL('/.well-known/brand.json', agentUrl).toString();
+    async validate({ agentUrl, jwksUrl, signingKey }): Promise<JwksValidationResult> {
+      // Explicit jwksUrl wins (sub-routed deployments where brand.json
+      // lives under a path prefix). Default falls back to the spec-
+      // canonical host-root location — `new URL('/.well-known/brand.json',
+      // agentUrl)` REPLACES the path because the second arg starts with
+      // '/'. That's correct for host-level brand identity (one brand per
+      // host), wrong for multi-tenant sub-routed deployments — adopters
+      // there set `TenantConfig.jwksUrl` to point at the per-tenant
+      // brand.json.
+      const url = jwksUrl ?? new URL('/.well-known/brand.json', agentUrl).toString();
       let response: Response;
       try {
         response = await fetchImpl(url, { method: 'GET', signal: AbortSignal.timeout(timeoutMs) });
@@ -371,6 +413,23 @@ function stripQueryAndFragment(pathname: string): string {
 export function createTenantRegistry(opts: TenantRegistryOptions): TenantRegistry {
   const validator = opts.jwksValidator ?? createDefaultJwksValidator();
   const autoValidate = opts.autoValidate ?? true;
+  // One-shot footgun guard: developers reaching for `autoValidate: false`
+  // typically expect "skip the validation cost," but the actual semantics
+  // are "every tenant lands in `pending` and `resolveByRequest` silently
+  // refuses traffic until the operator calls `recheck()` on each one."
+  // That divergence is hard to debug without a clue. Surface it once at
+  // construction so the test/dev path stays usable but the production
+  // misuse is visible.
+  if (opts.autoValidate === false) {
+    // eslint-disable-next-line no-console
+    console.warn(
+      '[adcp] TenantRegistry created with autoValidate: false. Tenants will stay ' +
+        "in 'pending' health and resolveByRequest will refuse all traffic until you " +
+        'call recheck(tenantId) for each tenant. This option is intended for tests ' +
+        'driving validation manually; production deployments should leave autoValidate ' +
+        'at the default (true).'
+    );
+  }
   const tenants = new Map<string, TenantEntry>();
 
   function buildServer(config: TenantConfig): DecisioningAdcpServer {
@@ -390,6 +449,7 @@ export function createTenantRegistry(opts: TenantRegistryOptions): TenantRegistr
     try {
       result = await validator.validate({
         agentUrl: entry.config.agentUrl,
+        ...(entry.config.jwksUrl !== undefined && { jwksUrl: entry.config.jwksUrl }),
         signingKey: entry.config.signingKey,
       });
     } catch (err) {

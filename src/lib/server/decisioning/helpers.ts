@@ -44,13 +44,13 @@ import { pickSafeDetails } from '../pick-safe-details';
  */
 export async function batchPoll<TKey extends string, TValue>(
   ids: readonly TKey[],
-  lookup: (id: TKey) => Promise<{ isOk(): boolean; value?: TValue }>,
+  lookup: (id: TKey) => Promise<{ isOk(): boolean; value?: TValue }>
 ): Promise<Map<TKey, TValue>> {
   const pairs = await Promise.all(
-    ids.map(async (id) => {
+    ids.map(async id => {
       const r = await lookup(id);
       return [id, r] as const;
-    }),
+    })
   );
   const result = new Map<TKey, TValue>();
   for (const [id, r] of pairs) {
@@ -86,7 +86,7 @@ export async function batchPoll<TKey extends string, TValue>(
  */
 export function validationError(
   message: string,
-  opts?: { field?: string; code?: ErrorCode | (string & {}) },
+  opts?: { field?: string; code?: ErrorCode | (string & {}) }
 ): AdcpError {
   return new AdcpError((opts?.code ?? 'VALIDATION_ERROR') as ErrorCode, {
     recovery: 'correctable',
@@ -130,17 +130,13 @@ export function validationError(
 export function upstreamError(
   prefix: string,
   e: { message?: string; code?: number | string; status?: number },
-  extraDetails?: Record<string, unknown>,
+  extraDetails?: Record<string, unknown>
 ): AdcpError {
   const statusCode = e.status ?? (typeof e.code === 'number' ? e.code : undefined);
   const isRateLimited = statusCode === 429;
   const errorCode: ErrorCode = isRateLimited ? 'RATE_LIMITED' : 'SERVICE_UNAVAILABLE';
-  const upstreamMsg =
-    typeof e.message === 'string' && e.message.length > 0 ? e.message : 'upstream error';
-  const details =
-    extraDetails !== undefined
-      ? pickSafeDetails(extraDetails, Object.keys(extraDetails))
-      : undefined;
+  const upstreamMsg = typeof e.message === 'string' && e.message.length > 0 ? e.message : 'upstream error';
+  const details = extraDetails !== undefined ? pickSafeDetails(extraDetails, Object.keys(extraDetails)) : undefined;
 
   return new AdcpError(errorCode, {
     recovery: 'transient',

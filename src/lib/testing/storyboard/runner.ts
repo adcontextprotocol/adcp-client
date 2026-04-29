@@ -149,6 +149,18 @@ function buildSkip(reason: RunnerSkipReason, detail?: string): { reason: RunnerS
 }
 
 /**
+ * True for skip reasons that imply the step's state never materialized —
+ * the runner treats these as equivalent to a failed stateful step for
+ * cascade-skip purposes. Benign skips (peer branch took, OAuth wasn't
+ * advertised, controller seeding cascaded — all handled elsewhere) don't
+ * appear here. Accepts both the canonical `RunnerSkipReason` and the
+ * detailed variant so callers don't need to narrow before checking.
+ */
+function isMissingStateSkipReason(reason: RunnerSkipReason | RunnerDetailedSkipReason | undefined): boolean {
+  return reason === 'missing_tool' || reason === 'missing_test_controller' || reason === 'not_applicable';
+}
+
+/**
  * Resolve each phase's branch-set membership, combining explicit
  * `branch_set: { id, semantics }` declarations with the implicit detection
  * fallback the schema + adcp#2646 mandate: an `optional: true` phase with a
@@ -967,6 +979,19 @@ async function executeStoryboardPass(
       if (result.skipped) {
         skippedCount++;
         context = result.context;
+        // Cascade-skip extension: a stateful step that SKIPS for a
+        // missing-state reason (`missing_tool`, `missing_test_controller`,
+        // `not_applicable`) is morally equivalent to a stateful step that
+        // failed — the state downstream steps depend on never
+        // materialized. Without this trip, a follow-up stateful step
+        // runs against absent state and surfaces a misleading
+        // assertion failure. Skips that imply state DID materialize via
+        // another path (`peer_branch_taken`, `controller_seeding_failed`
+        // — already handled by phase-level cascade, `oauth_not_advertised`
+        // — phase-absent path) deliberately don't trip the flag.
+        if (step.stateful && isMissingStateSkipReason(result.skip_reason)) {
+          statefulFailed = true;
+        }
       } else if (result.passed) {
         context = result.context;
         passedCount++;

@@ -647,4 +647,120 @@ describe('TenantRegistry — default JWKS validator (fetch-based)', () => {
     });
     assert.strictEqual(r4.recovery, 'permanent');
   });
+
+  it('default validator hits host-root /.well-known/brand.json when no jwksUrl override', async () => {
+    let fetchedUrl = '';
+    const validator = createDefaultJwksValidator({
+      fetchImpl: async url => {
+        fetchedUrl = url;
+        return { ok: false, status: 404, statusText: 'Not Found' };
+      },
+    });
+    await validator.validate({
+      agentUrl: 'https://shared.example.com/api/training-agent/signals/mcp',
+      signingKey: { keyId: 'k', publicJwk: {}, privateJwk: {} },
+    });
+    // Spec convention: brand.json is host-level, NOT path-relative. The
+    // URL constructor with a leading-slash path replaces the path
+    // component of agentUrl, so we end up at host root regardless of
+    // the agent's path prefix. Sub-routed deployments override via
+    // TenantConfig.jwksUrl (see next test).
+    assert.strictEqual(fetchedUrl, 'https://shared.example.com/.well-known/brand.json');
+  });
+
+  it('F8: jwksUrl override forces the validator to fetch from a sub-path', async () => {
+    let fetchedUrl = '';
+    const validator = createDefaultJwksValidator({
+      fetchImpl: async url => {
+        fetchedUrl = url;
+        return { ok: false, status: 404, statusText: 'Not Found' };
+      },
+    });
+    await validator.validate({
+      agentUrl: 'https://shared.example.com/api/training-agent/signals/mcp',
+      jwksUrl: 'https://shared.example.com/api/training-agent/signals/.well-known/brand.json',
+      signingKey: { keyId: 'k', publicJwk: {}, privateJwk: {} },
+    });
+    assert.strictEqual(fetchedUrl, 'https://shared.example.com/api/training-agent/signals/.well-known/brand.json');
+  });
+
+  it('F8: TenantConfig.jwksUrl threads through runValidation into the validator', async () => {
+    let received = null;
+    const validator = fakeValidator(async args => {
+      received = args;
+      return { ok: true };
+    });
+    const registry = createTenantRegistry({
+      jwksValidator: validator,
+      defaultServerOptions: DEFAULT_SERVER_OPTIONS,
+      autoValidate: false,
+    });
+    registry.register('subrouted', {
+      agentUrl: 'https://shared.example.com/api/training-agent/signals',
+      jwksUrl: 'https://shared.example.com/api/training-agent/signals/.well-known/brand.json',
+      signingKey: SAMPLE_KEY,
+      platform: basePlatform(),
+    });
+    await registry.recheck('subrouted');
+    assert.ok(received, 'validator invoked');
+    assert.strictEqual(
+      received.jwksUrl,
+      'https://shared.example.com/api/training-agent/signals/.well-known/brand.json'
+    );
+    assert.strictEqual(received.agentUrl, 'https://shared.example.com/api/training-agent/signals');
+  });
+});
+
+describe('TenantRegistry — autoValidate footgun guard (F7)', () => {
+  it('emits a one-shot console.warn at construction when autoValidate: false', () => {
+    const warnings = [];
+    const originalWarn = console.warn;
+    console.warn = (...args) => warnings.push(args.join(' '));
+    try {
+      createTenantRegistry({
+        jwksValidator: fakeValidator(async () => ({ ok: true })),
+        defaultServerOptions: DEFAULT_SERVER_OPTIONS,
+        autoValidate: false,
+      });
+    } finally {
+      console.warn = originalWarn;
+    }
+    const hit = warnings.find(w => w.includes('autoValidate: false'));
+    assert.ok(hit, `expected warning about autoValidate: false, got: ${JSON.stringify(warnings)}`);
+    assert.match(hit, /resolveByRequest will refuse all traffic/);
+    assert.match(hit, /recheck/);
+  });
+
+  it('does NOT warn when autoValidate is left at the default', () => {
+    const warnings = [];
+    const originalWarn = console.warn;
+    console.warn = (...args) => warnings.push(args.join(' '));
+    try {
+      createTenantRegistry({
+        jwksValidator: fakeValidator(async () => ({ ok: true })),
+        defaultServerOptions: DEFAULT_SERVER_OPTIONS,
+      });
+    } finally {
+      console.warn = originalWarn;
+    }
+    const hit = warnings.find(w => w.includes('autoValidate'));
+    assert.strictEqual(hit, undefined, 'no autoValidate warning when default');
+  });
+
+  it('does NOT warn when autoValidate: true is explicitly set', () => {
+    const warnings = [];
+    const originalWarn = console.warn;
+    console.warn = (...args) => warnings.push(args.join(' '));
+    try {
+      createTenantRegistry({
+        jwksValidator: fakeValidator(async () => ({ ok: true })),
+        defaultServerOptions: DEFAULT_SERVER_OPTIONS,
+        autoValidate: true,
+      });
+    } finally {
+      console.warn = originalWarn;
+    }
+    const hit = warnings.find(w => w.includes('autoValidate'));
+    assert.strictEqual(hit, undefined, 'no autoValidate warning when explicitly true');
+  });
 });
