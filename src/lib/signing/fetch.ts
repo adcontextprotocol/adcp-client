@@ -82,9 +82,29 @@ function headersToRecord(headers: HeadersInit | Headers | undefined): Record<str
 function bodyToString(body: RequestInit['body']): string | undefined {
   if (body === undefined || body === null) return undefined;
   if (typeof body === 'string') return body;
-  if (body instanceof Uint8Array) return Buffer.from(body).toString('utf8');
-  if (body instanceof ArrayBuffer) return Buffer.from(body).toString('utf8');
+  if (body instanceof Uint8Array) return decodeUtf8Strict(body);
+  if (body instanceof ArrayBuffer) return decodeUtf8Strict(new Uint8Array(body));
   throw new TypeError(
     'createSigningFetch requires a string, Uint8Array, or ArrayBuffer body. FormData / Blob / ReadableStream are not supported because the signature must cover the exact wire bytes.'
   );
+}
+
+/**
+ * Decode bytes to UTF-8, throwing on invalid sequences. Permissive decode
+ * (the `Buffer.toString('utf8')` default) replaces invalid bytes with
+ * `U+FFFD`, which would silently corrupt binary or non-UTF-8 payloads — the
+ * signer would commit to the lossy string and the wire would carry the same
+ * lossy bytes, so verification still passes but the seller receives
+ * mangled content. Throwing forces the caller to send a string body or
+ * ensure their Uint8Array is valid UTF-8.
+ */
+function decodeUtf8Strict(bytes: Uint8Array): string {
+  try {
+    return new TextDecoder('utf-8', { fatal: true }).decode(bytes);
+  } catch {
+    throw new TypeError(
+      'createSigningFetch received a Uint8Array/ArrayBuffer body that is not valid UTF-8. ' +
+        'Pass a string body, ensure the bytes are UTF-8, or sign the request manually with `signRequest` against the exact wire bytes you intend to send.'
+    );
+  }
 }

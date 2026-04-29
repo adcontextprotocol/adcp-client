@@ -64,6 +64,7 @@ export function validateStoryboardShape(storyboard: Storyboard): void {
     for (const step of phase.steps) {
       resolveContributesShorthand(storyboard.id, phase, step);
       validateFixtureForMutatingStep(storyboard.id, phase, step);
+      validateContextOutputs(storyboard.id, phase, step);
     }
   }
 }
@@ -99,6 +100,46 @@ function validateFixtureForMutatingStep(
       `write payloads. Author sample_request in the step or, for intentionally malformed ` +
       `payloads, set expect_error: true.`
   );
+}
+
+/**
+ * Each `context_outputs` entry must declare exactly one source: either
+ * `path` (extract from response) or `generate` (mint at run time). An entry
+ * with neither is a silent no-op; one with both would silently pick `generate`
+ * and ignore `path`. Both are authoring foot-guns that should fail loud.
+ */
+function validateContextOutputs(
+  storyboardId: string,
+  phase: Storyboard['phases'][number],
+  step: Storyboard['phases'][number]['steps'][number]
+): void {
+  if (!step.context_outputs?.length) return;
+  for (const output of step.context_outputs) {
+    const hasPath = output.path !== undefined;
+    const hasGenerate = output.generate !== undefined;
+    if (!hasPath && !hasGenerate) {
+      throw new Error(
+        `[${storyboardId}] phase '${phase.id}' step '${step.id}': context_outputs entry ` +
+          `'${output.key}' must set exactly one of 'path' or 'generate'.`
+      );
+    }
+    if (hasPath && hasGenerate) {
+      throw new Error(
+        `[${storyboardId}] phase '${phase.id}' step '${step.id}': context_outputs entry ` +
+          `'${output.key}' sets both 'path' and 'generate' — they are mutually exclusive.`
+      );
+    }
+    // Validate generator name. The runtime resolver also checks but the loader
+    // catches typos at storyboard-load time so authors see the failure on
+    // build, not on the first run.
+    if (hasGenerate && output.generate !== 'uuid_v4' && output.generate !== 'opaque_id') {
+      throw new Error(
+        `[${storyboardId}] phase '${phase.id}' step '${step.id}': context_outputs entry ` +
+          `'${output.key}' has unknown generate value '${output.generate}'. ` +
+          `Supported: 'uuid_v4', 'opaque_id'.`
+      );
+    }
+  }
 }
 
 function validateBranchSet(storyboardId: string, phase: Storyboard['phases'][number]): void {

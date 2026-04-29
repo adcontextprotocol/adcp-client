@@ -7,7 +7,7 @@
  *   1. **Dual-package hazard.** Re-exporting the SDK's `McpServer` type from
  *      our public API forces downstream consumers through a specific SDK
  *      resolution path (ESM or CJS). When a TypeScript ESM consumer
- *      imports `@adcp/client` (CJS) and separately imports the SDK (ESM),
+ *      imports `@adcp/sdk` (CJS) and separately imports the SDK (ESM),
  *      the two `McpServer` types are structurally identical but distinct
  *      — the SDK's private `_serverInfo` field breaks assignment
  *      compatibility between them. Owning the type on our side
@@ -30,6 +30,7 @@
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js';
 import type { McpToolResponse } from './responses';
+import { ADCP_VERSION } from '../version';
 
 /**
  * Structural shape of an MCP transport the server can connect to.
@@ -278,6 +279,19 @@ export interface AdcpServer {
    * as structured `VALIDATION_ERROR` envelopes inside the return value.
    */
   invoke(options: AdcpInvokeOptions): Promise<McpToolResponse>;
+
+  /**
+   * Returns the AdCP protocol version this server is configured to speak.
+   *
+   * Defaults to {@link ADCP_VERSION} (the GA version the SDK ships against)
+   * unless overridden via `createAdcpServer({ adcpVersion })`. This is the
+   * protocol version, **not** the publisher's app version (`config.version`).
+   *
+   * Plumbing surface — Stage 2 of the multi-version refactor exposes the
+   * configured value but does not yet vary validator/schema selection by
+   * version. Wire-shape adapters key off this getter in subsequent stages.
+   */
+  getAdcpVersion(): string;
 }
 
 /**
@@ -294,7 +308,7 @@ export const ADCP_SDK_SERVER: unique symbol = Symbol.for('@adcp/client.sdkServer
 /**
  * Symbol-keyed accessor for the state store backing an `AdcpServer`.
  * Test harnesses and helpers like
- * `@adcp/client/compliance-fixtures`'s `seedComplianceFixtures` need
+ * `@adcp/sdk/compliance-fixtures`'s `seedComplianceFixtures` need
  * to reach the store without widening the public `AdcpServer`
  * interface (handlers already get `ctx.store`; production code paths
  * don't need a second accessor).
@@ -412,7 +426,8 @@ function getRequestHandler(
  */
 export function wrapMcpServer(
   inner: McpServer | AdcpServerInternal,
-  compliance?: AdcpServerComplianceApi
+  compliance?: AdcpServerComplianceApi,
+  adcpVersion: string = ADCP_VERSION
 ): AdcpServerInternal {
   if (isAdcpServer(inner)) return inner;
   const mcp = inner as McpServer;
@@ -474,6 +489,7 @@ export function wrapMcpServer(
     // runtime dispatcher is a single function that narrows by method.
     dispatchTestRequest: dispatch as AdcpServerInternal['dispatchTestRequest'],
     invoke,
+    getAdcpVersion: () => adcpVersion,
   };
   return wrapper;
 }

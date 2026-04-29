@@ -1,4 +1,4 @@
-# Documentation Strategy for @adcp/client
+# Documentation Strategy for @adcp/sdk
 
 ## Overview
 

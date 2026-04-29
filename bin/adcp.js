@@ -646,6 +646,12 @@ function parseAgentOptions(args) {
   const debug = args.includes('--debug') || process.env.ADCP_DEBUG === 'true';
   const dryRun = args.includes('--dry-run');
   const allowHttp = args.includes('--allow-http');
+  // `--no-sandbox` forces `account.sandbox: false` (production) on every
+  // request the runner builds. The default behavior leaves the field unset
+  // (spec-equivalent to false), but agents that key sandbox routing on
+  // field PRESENCE rather than VALUE behave differently. Setting the flag
+  // makes the production intent explicit on the wire.
+  const noSandbox = args.includes('--no-sandbox');
 
   // Webhook-receiver flags are captured here solely so their values are excluded
   // from `positionalArgs`. The authoritative parse lives in
@@ -722,6 +728,7 @@ function parseAgentOptions(args) {
     debug,
     dryRun,
     allowHttp,
+    noSandbox,
     positionalArgs,
     localAgent: localAgentValue,
     format: formatValue,
@@ -1104,6 +1111,10 @@ RUN OPTIONS (full assessment):
   --file PATH         Run an ad-hoc storyboard YAML (spec evolution)
   --timeout SECONDS   Timeout in seconds (default: 120)
   --brief TEXT        Custom brief for product discovery
+  --no-sandbox        Force account.sandbox=false on every request. The
+                      default leaves sandbox unset (spec-equivalent to false),
+                      but agents that branch on field PRESENCE behave
+                      differently from agents that branch on VALUE.
 
 WEBHOOK OPTIONS:
   --webhook-receiver [MODE]       Host an ephemeral receiver so expect_webhook*
@@ -1426,7 +1437,7 @@ async function handleStoryboardRun(args) {
   // --local-agent <module>: spin the agent up in-process, seed fixtures,
   // run storyboards, tear down. Collapses the 300-line seller-side
   // bootstrap into one command. See `runAgainstLocalAgent` in
-  // `@adcp/client/testing`.
+  // `@adcp/sdk/testing`.
   if (localAgent) {
     return handleLocalAgentStoryboardRun(localAgent, args, opts);
   }
@@ -1520,7 +1531,11 @@ async function handleStoryboardRun(args) {
   if (!jsonOutput) {
     console.error(`Running storyboard: ${storyboard.title}`);
     console.error(`Agent: ${agentUrl} (${protocol})`);
-    console.error(`Steps: ${stepCount}\n`);
+    console.error(`Steps: ${stepCount}`);
+    if (opts.noSandbox) {
+      console.error(`Run mode: production (account.sandbox=false on every request)`);
+    }
+    console.error('');
   }
 
   // --dry-run: preview mode — show the plan without executing
@@ -1564,6 +1579,7 @@ async function handleStoryboardRun(args) {
       resolvedOauthClientCredentials,
     }),
     ...(webhookReceiverOpts ?? {}),
+    ...(opts.noSandbox && { sandbox: false }),
   };
 
   const restoreLogs = jsonOutput ? captureStdoutLogs() : null;
@@ -2243,6 +2259,7 @@ async function handleLocalAgentStoryboardRun(modulePath, args, opts) {
     result = await runAgainstLocalAgent({
       createAgent,
       storyboards: storyboardsSpec,
+      ...(opts.noSandbox && { runStoryboardOptions: { sandbox: false } }),
       onStoryboardComplete:
         jsonOutput || format === 'junit'
           ? undefined
@@ -2455,8 +2472,12 @@ async function handleMultiInstanceStoryboardRun(args, opts, urls) {
     console.error(`  Storyboards: ${storyboards.map(s => s.id).join(', ')}`);
     const effectiveSteps = strategy === 'multi-pass' ? totalSteps * urls.length : totalSteps;
     console.error(
-      `  Total steps: ${effectiveSteps}${strategy === 'multi-pass' ? ` (${totalSteps} × ${urls.length} passes)` : ''}\n`
+      `  Total steps: ${effectiveSteps}${strategy === 'multi-pass' ? ` (${totalSteps} × ${urls.length} passes)` : ''}`
     );
+    if (opts.noSandbox) {
+      console.error(`  Run mode: production (account.sandbox=false on every request)`);
+    }
+    console.error('');
     // N=2 is the deployment shape most operators have. Offset-shift preserves
     // pair parity there, so every even-distance write→read pair lands
     // same-replica in every pass — including the canonical property_lists
@@ -2549,6 +2570,7 @@ async function handleMultiInstanceStoryboardRun(args, opts, urls) {
     ...(opts.allowHttp && { allow_http: true }),
     multi_instance_strategy: strategy,
     ...(webhookReceiverOpts ?? {}),
+    ...(opts.noSandbox && { sandbox: false }),
   };
 
   const restoreLogs = jsonOutput ? captureStdoutLogs() : null;
@@ -2715,6 +2737,7 @@ async function runFullAssessment(agentArg, rawArgs, parsedOpts) {
     ...(authOption && { auth: authOption }),
     ...(opts.allowHttp && { allow_http: true }),
     ...(webhookReceiverOpts ?? {}),
+    ...(opts.noSandbox && { sandbox: false }),
   };
 
   if (!opts.jsonOutput) {
@@ -3232,6 +3255,17 @@ function formatVerdict(verdict) {
 async function main() {
   const args = process.argv.slice(2);
 
+  // `--version` / `-v` is handled before subcommands and before the
+  // staleness probe — it should be a fast, side-effect-free identity
+  // check. Adds a (compat shim) note when invoked through @adcp/client
+  // so users know which package they're actually running. The shim sets
+  // ADCP_INVOKED_VIA_SHIM=1 in its bin wrapper.
+  if (args[0] === '--version' || args[0] === '-v') {
+    const viaShim = process.env.ADCP_INVOKED_VIA_SHIM === '1';
+    process.stdout.write(`@adcp/sdk@${LIBRARY_VERSION}${viaShim ? ' (invoked via @adcp/client compat shim)' : ''}\n`);
+    process.exit(0);
+  }
+
   // Fire a staleness check in the background so a months-old cached
   // CLI doesn't run silently. Fails silent on any network/FS hiccup;
   // skipped in CI, non-TTY, --json, and when ADCP_SKIP_VERSION_CHECK=1.
@@ -3539,7 +3573,19 @@ credential material — never sync or commit.
           discoveredRequirements = await discoverAuthorizationRequirements(url, { allowPrivateIp: true });
           if (discoveredRequirements && discoveredRequirements.tokenEndpoint) {
             resolvedOauthEndpoint = discoveredRequirements.tokenEndpoint;
-            console.log(`   Found token endpoint: ${resolvedOauthEndpoint}`);
+            // Print only the host so the operator can confirm the discovered
+            // realm without exposing query-string or path components that
+            // sometimes carry tenant identifiers. CodeQL flags this site as
+            // clear-text logging when it sees the full URL flowing from the
+            // discovery probe.
+            const endpointHost = (() => {
+              try {
+                return new URL(resolvedOauthEndpoint).host;
+              } catch {
+                return '<unparseable>';
+              }
+            })();
+            console.log(`   Found token endpoint host: ${endpointHost}`);
             if (discoveredRequirements.authorizationServer) {
               console.log(`   Authorization server: ${discoveredRequirements.authorizationServer}`);
             }

@@ -1,5 +1,380 @@
 # Changelog
 
+## 5.23.0
+
+### Minor Changes
+
+- 88e3b02: feat: add `adcpVersion` constructor option on client + server surfaces
+
+  `SingleAgentClient`, `AgentClient`, `ADCPMultiAgentClient`, and `createAdcpServer` now accept an `adcpVersion?: AdcpVersion | (string & {})` option that surfaces via a new `getAdcpVersion()` instance method. Typed as a union of `COMPATIBLE_ADCP_VERSIONS` literals plus an open-string escape hatch so editors autocomplete canonical values without forcing a closed enum.
+
+  Defaults to the SDK's pinned `ADCP_VERSION` (currently `'3.0.1'`) when omitted. Pin to an older stable (`'3.0.0'`) or opt into a beta channel (`'3.1.0-beta.1'`) once the corresponding registry ships.
+
+  Validated at construction time via `resolveAdcpVersion`: pins whose derived major differs from `ADCP_MAJOR_VERSION` throw `ConfigurationError` with a roadmap-aware message pointing at Stage 3. This fence keeps Stage 2's wire emission honest while the global `ADCP_MAJOR_VERSION` constant still drives the `adcp_major_version` request field — within major 3, every accepted pin agrees with the wire.
+
+  Plumbing surface only — Stage 2 of the multi-version refactor. The configured value is exposed and propagated, but validators and schema selection still key off the global `ADCP_VERSION` constant. Stage 3 wires per-instance schema loading off this getter so cross-version testing (a 3.0 client speaking to a 3.1 server in the same process) works without npm aliases.
+
+  `AdcpServerConfig.adcpVersion` is independent of `AdcpServerConfig.version`; the latter is the publisher's app version, the former is the AdCP protocol version on the wire.
+
+- 88e3b02: feat: rename `@adcp/client` to `@adcp/sdk` + add `/client` and `/compliance` subpath umbrellas
+
+  The library is now published as `@adcp/sdk` to reflect the three surfaces it ships — buyer-side client, server builder, and compliance harness. `@adcp/client` continues to publish from `packages/client-shim/` as a thin re-export of `@adcp/sdk` (including a CLI delegator so `npx @adcp/client@latest …` keeps working), so existing installs keep functioning without code changes. Replace `@adcp/client` with `@adcp/sdk` in your imports when convenient — APIs are identical.
+
+  New subpath exports group the surfaces so `@adcp/sdk/client`, `@adcp/sdk/server`, and `@adcp/sdk/compliance` resolve to the right slice for each use case. The root export (`@adcp/sdk`) continues to re-export the client surface verbatim, so `import { AdcpClient } from '@adcp/sdk'` and `import { AdcpClient } from '@adcp/sdk/client'` are equivalent. The new `@adcp/sdk/compliance` umbrella re-exports `testing` + `conformance` + `compliance-fixtures` + `signing/testing` for compliance harnesses that want one import path; the individual subpaths still resolve directly so callers who only need fuzzing don't pay the bundle cost of test agents.
+
+  Repo restructure: top-level `package.json` now declares an npm workspace covering `.` plus `packages/*`. The two packages stay version-linked via `.changeset/config.json` so they always release at the same number; the shim's `dependencies."@adcp/sdk"` covers the published range (`^5.22.0`) so npm dedupes consumers' trees that pull both names. (We tried `peerDependencies` first; changesets treats every minor bump on a peer as a major bump for the dependent, which would force `@adcp/client` to 6.0.0 every time `@adcp/sdk` released a feature.)
+
+  Post-release maintainer task: run `npm deprecate '@adcp/client@5.23.0' 'Renamed to @adcp/sdk. Replace @adcp/client with @adcp/sdk in your imports — APIs are identical. https://www.npmjs.com/package/@adcp/sdk'` so the rename pointer surfaces at install time. Auto-deprecation in the release workflow is on the follow-up list — OIDC trusted-publishing tokens are package-scoped, so the token issued for `@adcp/sdk`'s publish can't deprecate `@adcp/client`. Lands back in `release.yml` once a maintainer-scoped `NPM_TOKEN` secret with deprecate rights on `@adcp/client` is provisioned.
+
+## 5.22.0
+
+### Minor Changes
+
+- 14623ee: Bump AdCP spec to 3.0.1; expose new sandbox conformance scenarios.
+
+  `ADCP_VERSION` advances from `3.0.0` to `3.0.1`. Per the spec release notes, 3.0.1 is a stable-surface no-op for 3.0-conformant agents — no wire-format changes, no field renames on stable schemas. Adopters whose handlers compile against 3.0.0 keep working unchanged.
+
+  **New test-controller scenarios** (sandbox-only, opt-in via store methods on `TestControllerStore`). Sellers wanting compliance coverage for the AdCP 3.0.1 submitted-arm storyboard, async task completion path, or creative-format storyboards opt in by implementing the matching method — no breaking change for existing stores:
+  - `force_create_media_buy_arm` — register a directive shaping the next `create_media_buy` call from this authenticated sandbox account into the requested arm (`submitted` / `input-required`). Returns `ForcedDirectiveSuccess` with the registered arm + optional `task_id` echo. Implement `forceCreateMediaBuyArm({ arm, task_id?, message? })` to advertise. Param validation rejects `task_id` on the `input-required` arm (spec: present only when `submitted`).
+  - `force_task_completion` — transition an in-flight task to `completed` and record the supplied completion payload (delivered verbatim to the buyer's `push_notification_config.url`). Returns `StateTransitionSuccess`. Implement `forceTaskCompletion(taskId, result)` to advertise. Param validation rejects array values for `result` (spec: object that validates against `async-response-data.json`).
+  - `seed_creative_format` — pre-populate a creative-format fixture so storyboards can reference it by stable ID. Returns `StateTransitionSuccess` (`previous_state` / `current_state` per the existing seed envelope). Implement `seedCreativeFormat(formatId, fixture)` to advertise.
+
+  `expectControllerSuccess` now narrows on `'forced'` and `'seed'` kinds in addition to `'list' | 'transition' | 'simulation'`. The `'seed'` overload is in place for inter-op with sellers that emit the new `SeedSuccess` arm; the SDK's own `dispatchSeed` continues to return `StateTransitionSuccess` (a follow-up will migrate it).
+
+  **Codegen rename — `FormatID` → `FormatReferenceStructuredObject`**: AdCP 3.0.1 changed the `format-id.json` schema title from `"Format ID"` to `"Format Reference (Structured Object)"` (purely documentation; wire shape is identical). The generated TypeScript type follows. The historical `FormatID` name remains exported as an `@deprecated` alias from `@adcp/client` and `@adcp/client/types`, so consumer imports keep working across the bump while editor tooling surfaces the rename. Slated for removal in the next major.
+
+  **Codegen rename — `RATE_LIMITEDDetails` → `RateLimitedDetails`**: 3.0.1 added an explicit `title` to the rate-limited error-details schema so `json-schema-to-typescript` produces PascalCase. The previously-shipped `RATE_LIMITEDDetails_ScopeValues` export is preserved as `@deprecated` pointing at the canonical `RateLimitedDetails_ScopeValues`.
+
+  **Inline-enum count drop** is expected — adcp#3148 + adcp#3174 hoisted ~20 byte-identical inline string-literal unions into shared `enums/*.json` files (e.g. `payment-terms`, `audio-channel-layout`, `match-type`, `governance-decision`). The corresponding per-parent `Foo_BarValues` exports collapse into single canonical names (`PaymentTermsValues`, `AudioChannelLayoutValues`, `MatchTypeValues`, `GovernanceDecisionValues`, …); `inline-enums.generated.ts` now ships 78 entries (was ~100).
+
+  **Back-compat aliases for the 26 collapsed/renamed `Foo_BarValues` exports** ship in `@adcp/client/types` for one minor cycle so existing consumer imports keep compiling. Each is `@deprecated` with a JSDoc pointing at the canonical name. Slated for removal in the next major.
+
+  **Bundler-side enum hoist** (adcp#3170) deduplicates the `Foo` / `Foo1` numbered-suffix codegen artifact at the bundle stage. `core.generated.ts` no longer ships `AgeVerificationMethod1` and similar duplicates.
+
+- 49849f8: feat(testing): add envelope-scoped storyboard validation checks
+
+  Storyboards that assert v3 envelope-level fields (`status`, `task_id`, `message`, `replayed`, `governance_context`, `timestamp`, `context_id`, `push_notification_config`) need a way to tell static drift detection to walk `protocol-envelope.json` instead of the per-tool response schema. The previous un-prefixed checks pointed at the inner response schema, which doesn't contain envelope fields, so the `v3-envelope-integrity.yaml` storyboard required a `VERIFIER_UNREACHABLE` exemption.
+
+  Adds five new `StoryboardValidationCheck` values:
+  - `field_absent` — passes when the path is absent; fails when present (companion to `field_present`)
+  - `envelope_field_absent` — envelope-scoped companion to `field_absent`; signals drift detection to walk `protocol-envelope.json`; absence checks skip reachability assertions by design
+  - `envelope_field_present` — companion to `field_present`
+  - `envelope_field_value` — companion to `field_value`
+  - `envelope_field_value_or_absent` — companion to `field_value_or_absent`
+
+  **Runtime**: identical semantics to the un-prefixed checks — `TaskResult` already exposes envelope fields at its surface (`data.status`, `data.task_id`, etc.), so the dispatcher passes through to the existing handlers. Result objects report the original check name verbatim so reporters can distinguish. The same passthrough lands in `scripts/conformance-replay.ts` so storyboard replay grades the new checks.
+
+  **Drift detection**: walks `ProtocolEnvelopeSchema` (from `core/protocol-envelope.json`) instead of `TOOL_RESPONSE_SCHEMAS[task]` for envelope-scoped entries. `field_absent` and `envelope_field_absent` are collected by the drift detector but skip reachability assertions — absence checks have no schema target by design.
+
+  **Not envelope fields**: `errors` lives inside `payload` (per the per-tool response schema), and `adcp_version` / `adcp_major_version` are request-side only — these stay on the un-prefixed checks.
+
+  Forward-compatible with the current 3.0.1 storyboards. Lights up when the upstream PR migrates `v3-envelope-integrity.yaml` from `field_present: status` to `envelope_field_present: status` (the `VERIFIER_UNREACHABLE` exemption gets dropped after the next `npm run sync-schemas` post-3.0.2). The `task_status` / `response_status` MUST-NOT assertions in `v3-envelope-integrity.yaml` can now land using `field_absent` / `envelope_field_absent` without a further SDK release.
+
+  Refs adcp#3429.
+
+- 302bb12: feat(server): `dispatchSeed` emits `SeedSuccess` (3.0.1's seed-specific arm)
+
+  AdCP 3.0.1 added a dedicated `SeedSuccess` arm to `comply-test-controller-response.json` for `seed_*` scenarios:
+
+  ```json
+  { "success": true, "message": "Fixture seeded" }
+  ```
+
+  The schema's `oneOf` excludes `previous_state`/`current_state` from this branch via `not.anyOf` — seeds are pre-population, not entity transitions. The SDK previously borrowed `StateTransitionSuccess`'s shape (`{ success: true, previous_state: 'none' | 'existing', current_state: 'seeded' | 'existing' }`) which wire-validated as the transition arm under the open `oneOf` but didn't realize the storyboard ergonomics 3.0.1 designed for.
+
+  `createComplyController` / `handleTestControllerRequest` now return `SeedSuccess` from every `seed_*` scenario:
+  - Fresh seed → `{ success: true, message: 'Fixture seeded' }`
+  - Idempotent replay (same id + equivalent fixture) → `{ success: true, message: 'Fixture re-seeded (equivalent)' }`
+  - Divergent fixture → unchanged (`INVALID_PARAMS`)
+
+  Affects all six seed scenarios: `seed_product`, `seed_pricing_option`, `seed_creative`, `seed_plan`, `seed_media_buy`, `seed_creative_format`. `force_*` scenarios continue to return `StateTransitionSuccess`.
+
+  ### Migration
+  - Callers narrowing seed responses with `expectControllerSuccess(result, 'transition')` switch to `expectControllerSuccess(result, 'seed')`. The narrowing falls through to the new arm via the existing `'seed'` overload.
+  - Adopters consuming raw `comply_test_controller` responses for seed scenarios stop reading `previous_state`/`current_state` on those responses (the spec's `not.anyOf` forbids them on `SeedSuccess`).
+  - Idempotent-replay detection: the SDK now exports `SEED_MESSAGES.replay` (`'Fixture re-seeded (equivalent)'`) and `SEED_MESSAGES.fresh` (`'Fixture seeded'`) for adopters that want to match the SDK's own emission. **Note**: `message` is not a portable replay protocol — third-party sellers MAY emit any string the spec allows (only `success: true` is required), so cross-implementation buyers should not rely on `message` strings. For SDK-emitted responses the constants give a non-magic-string contract.
+
+- 3f7dcbb: feat(server): `createPinAndBindFetch` — DNS-rebinding-resistant fetch for outbound webhook delivery
+
+  Adopters who pass `createPinAndBindFetch()` as the `fetch` option to `createWebhookEmitter` (or `createAdcpServer({ webhooks: { fetch } })`) now get pin-and-bind SSRF defense for free: DNS is resolved at request time, every resolved IP is validated against the webhook SSRF policy (RFC 1918, loopback, link-local, CGNAT, IPv6 ULA, IPv4-mapped IPv6, cloud metadata), and the TCP/TLS connection is pinned to the validated address. TLS SNI and the `Host:` header are preserved so HTTPS routing still works.
+
+  This closes the gap where validating only the literal hostname at `push_notification_config.url` registration time leaves the SDK vulnerable to a DNS-rebinding attack that flips the A record between validation and delivery — the literal-host check passes, then the connection routes to `169.254.169.254` (cloud metadata) or `127.0.0.1` (loopback) at fire time.
+
+  The default `fetch` for `createWebhookEmitter` remains `globalThis.fetch` in this release for backwards compatibility — pin-and-bind would block the storyboard runner's loopback http receiver and break in-process storyboard tests without a migration. The default flips to `createPinAndBindFetch()` in v6.
+
+  The webhook emitter also now walks `Error.cause` chains when reporting transport errors in `result.errors[]`, so operators see the actual blocked rule (e.g. `EADCP_SSRF_BLOCKED: hosts_denied_ipv4_cidrs:169.254.0.0/16`) instead of the opaque outer "fetch failed". Pin-and-bind SSRF blocks are treated as terminal — no retries — because the policy violation won't change on the next attempt.
+
+  Public API:
+  - `createPinAndBindFetch(options?: PinAndBindFetchOptions): typeof fetch` — re-exported from `@adcp/client/server`.
+  - `WEBHOOK_SSRF_POLICY` — the default strict policy (https-only, all common private ranges denied, IP literals allowed subject to CIDR rules).
+  - `LOOPBACK_OK_WEBHOOK_SSRF_POLICY` — pre-built relaxation that allows http and IPv4/IPv6 loopback for storyboard / in-process tests; every other deny range is preserved. Safer than swapping in `globalThis.fetch` as a test escape hatch because the rest of the SSRF policy still applies.
+  - `PinAndBindFetchOptions` — accepts a `policy` override and a `lookup` override (for tests / custom resolvers).
+
+  See `docs/guides/SIGNING-GUIDE.md` § Webhook SSRF defense for usage and the v6 default-flip migration plan.
+
+- a2124b6: feat(cli): `adcp storyboard run --no-sandbox` forces production routing on every request
+
+  Adds an opt-in `--no-sandbox` flag to `adcp storyboard run` (single-storyboard, multi-instance, full-assessment, and `--local-agent` paths). When set, every request the runner builds carries `account.sandbox: false` explicitly, signaling to the agent: "route to the production code path, not the sandbox stub."
+
+  The default behavior is unchanged — `account.sandbox` stays unset (spec-equivalent to `false`), so existing storyboard runs keep working without modification. The flag is for adopters whose agents have BOTH a real adapter and a sandbox handler and where the sandbox heuristic (env var, brand domain) might otherwise mask non-conformance in the real path. Spec-compliant agents key sandbox routing on the `account.sandbox` field; this flag makes the production intent explicit on the wire so well-behaved agents are forced to exercise their real handler.
+
+  The `comply_test_controller` scenario continues to force `account.sandbox: true` regardless of the flag — that's the spec contract for the test controller and the runner's seeding works against sandbox accounts only.
+
+  The dry-run header and live-run header now show "Run mode: production accounts (--no-sandbox: account.sandbox=false)" when the flag is set, so operators have a visible signal that production routing was requested.
+
+  Skill docs in `skills/build-*-agent/` will be updated in a follow-up to recommend that adopters key their real-vs-sandbox routing on `ctx.account.sandbox` rather than env vars or brand-domain heuristics.
+
+  Filed against #841.
+
+- 36d3c81: fix(grader): make neg/016 replay-window detection deterministic against multi-instance verifiers and add cross-instance diagnostic
+
+  Vector neg/016-replayed-nonce previously sent one (probe1, probe2) pair. Against multi-instance deployments (Fly, AWS ALB, k8s replicas > 1) with per-process `InMemoryReplayStore`, the two probes could land on different instances — each with its own replay state — causing the vector to fail non-deterministically and emit a "got 200, expected 401" diagnostic that pointed at the verifier code rather than the deployment topology.
+
+  The grader now runs K probe pairs (default 10, configurable via `replayProbePairs` / `--replay-probe-pairs`). Each pair uses a fresh nonce on a new TCP connection. On a single-instance or properly-distributed verifier, all K pairs are rejected and the vector passes. When some pairs accept the replayed nonce, the diagnostic surfaces the count and points directly at the multi-instance replay-store topology, with guidance to use `PostgresReplayStore` or a Redis-backed `ReplayStore`.
+
+  New `VectorGradeResult` fields `replay_pairs_tried` and `replay_pairs_rejected` are emitted for neg/016 results.
+
+- c807ca6: feat(testing): version-staleness suffix on shape-drift hints when agent reports old SDK version
+
+  When a storyboard drift hint recommends a server-side helper (e.g. `buildCreativeResponse()`)
+  and the agent's `get_adcp_capabilities` response reports a `library_version` below the
+  minimum release that shipped that helper, the hint message is now suffixed with an upgrade
+  note: "Note: your agent reports @adcp/client@X.Y.Z — helperFn() ships in @adcp/client ≥N.N.N.
+  Upgrade your SDK dep."
+
+  The `createAdcpServer` capabilities handler now stamps `library_version: "@adcp/client@X.Y.Z"` in
+  the `get_adcp_capabilities` response so agents built on this SDK surface the version automatically.
+  Agents that don't emit `library_version` are unaffected — the suffix is silently omitted.
+
+### Patch Changes
+
+- 5fb6729: fix(testing): signals governance advisory block now fires correctly
+
+  The governance advisory check in `testSignalsFlow` was silently a no-op: it
+  re-parsed `signalsStep.response_preview` (a pre-formatted summary string) looking
+  for `.signals`/`.all_signals` keys that never exist in that format, so
+  `withRestrictedAttrs` and `withPolicyCategories` were always empty arrays.
+
+  `discoverSignals` now returns the raw `GetSignalsResponse.signals` array alongside
+  the digested `AgentProfile.supported_signals` array. The advisory block uses the
+  raw array directly and also evaluates signals discovered via the fallback-brief
+  loop, so agents whose first `get_signals` call returns empty are still graded.
+  The advisory hint now points operators at the spec-correct surface for declaring
+  `restricted_attributes`/`policy_categories` (the `signal_catalog` in
+  `adagents.json`).
+
+- 71df387: fix(grader): add agentContentDigestPolicy option + --covers-content-digest CLI flag to auto-skip neg/007 and neg/018 when verifier advertises covers_content_digest='either'
+- 108ad8e: fix(crawler): skip properties with missing or non-array `identifiers` instead of crashing the crawl. PropertyCrawler now drops malformed entries at parse time and surfaces a per-domain warning; PropertyIndex.addProperty is also defensive so any other caller path stays safe.
+
+## 5.21.1
+
+### Patch Changes
+
+- 5ff8aa8: fix(grader): repair undici lookup callback shape in request-signing probe
+
+  `adcp grade request-signing` failed with "Invalid IP address: undefined" against any endpoint behind Cloudflare or an anycast load balancer. On Node 22+ with HTTPS targets, undici calls the `connect.lookup` function with `{ all: true }` and expects the array form of the callback (`cb(null, [{address, family}])`), but the probe was using the single-value form (`cb(null, address, family)`). The fix aligns the callback with the pattern already used in `ssrf-fetch.ts` and preserves DNS-rebinding protection.
+
+## 5.21.0
+
+### Minor Changes
+
+- 602d0a3: Address SigningProvider first-adopter friction (#1022 from #3283 KMS integration)
+
+  Six small additions surfaced by the first KMS-backed SigningProvider deployment. All additive — no breaking changes, no wire-format changes.
+  - **`pemToAdcpJwk(pem, { kid, algorithm, adcp_use })`** — new export from `@adcp/client/signing` (via `src/lib/signing/jwks-helpers.ts`). Converts a public-key PEM to an AdCP JWK with the fields that matter for publication at `/.well-known/jwks.json`: `alg` uses the JOSE name (`"EdDSA"` / `"ES256"`), not the AdCP wire identifier — confusing the two is the most common footgun and silently produces `request_signature_key_purpose_invalid` at step 8. `adcp_use` is required by AdCP verifiers at step 8 (hard gate). `key_ops: ["verify"]` because the published JWK is the public half. Throws `TypeError` on private-key PEM input (credential leak guard) and on unsupported algorithm values.
+  - **`createGcpKmsSigningProviderLazy`** (example) — synchronous variant of the eager factory. Defers `getPublicKey` to the first `sign()` call. Uses rejection-clearing in-flight promise dedup to prevent thundering herd on concurrent first calls and avoid permanently caching transient init failures.
+  - **`expectedPublicKeyPem` tripwire** (example) — optional field on `GcpKmsSigningProviderOptions` (both factories). Compares SPKI bytes at init time; throws explicitly when KMS returns null PEM with the tripwire set (no silent bypass). Catches out-of-band key rotations before they cause widespread verifier `request_signature_key_unknown` failures.
+  - **`SigningProvider.fingerprint` JSDoc** — clarifies that the field may embed infra identifiers (e.g., GCP project ID via the version resource name) and recommends `kid` for shared observability pipelines.
+  - **Multi-purpose key publication guidance** — example JSDoc now points at the JWKS-shape guidance (two JWK entries with different `kid` values and matching key bytes, tagged `adcp_use: 'request-signing'` / `'webhook-signing'`). Cryptographically safe via RFC 9421's `tag` profile isolation.
+  - **`jwks_uri` informational override** — new optional field on `AgentRequestSigningOperationOverrides` (visible on both inline and provider config shapes). Mirrors what brand.json publishes for split-domain setups where the JWKS lives off the conventional `${agent_url}/.well-known/jwks.json` path. Carried for self-describing config + audit logs; the SDK doesn't consume it for signing (verifiers walk brand.json from `agent_url`).
+
+- ecf015e: feat(signing): add `signerProvider` option to `createWebhookEmitter` for KMS-backed webhook signing
+
+  Adopters who moved request signing to a managed key store (GCP KMS, AWS KMS, Azure Key Vault) via the 5.20.0 `SigningProvider` abstraction previously still had to hold a private JWK in process for webhook signing, defeating the KMS threat model.
+
+  `WebhookEmitterOptions` now accepts `signerProvider?: SigningProvider` as a KMS-backed alternative to `signerKey`. Internally, the emitter routes to `signWebhookAsync` when a provider is set and `signWebhook` when a `signerKey` is set. Exactly one must be provided; construction throws `TypeError` if neither or both are given.
+
+  All existing emitter semantics (retries, idempotency-key stability, content-digest, redirect policy) are identical between the two paths — only the signing dispatch differs.
+
+  **Migration note:** `signerKey` changes from required to optional at the TypeScript type level. Existing callers that pass `signerKey` are unaffected. Callers who forward `WebhookEmitterOptions` and rely on `signerKey` being a required field in their own type signatures should update those types.
+
+  **JWKS note:** The JWK published at `jwks_uri` for the key wrapped by a `signerProvider` MUST carry `adcp_use: "webhook-signing"` — receivers validate key purpose against this field.
+
+## 5.20.0
+
+### Minor Changes
+
+- b43b39d: feat(signing): PostgresReplayStore for distributed verifier deployments
+
+  Adds a Postgres-backed `ReplayStore` so multi-instance verifier deployments share replay-protection state. The default `InMemoryReplayStore` is per-process; on a fleet, an attacker who captures a signed request can replay it against a sibling whose cache hasn't seen the nonce — RFC 9421's 5-minute expiry bounds the window but that's plenty of time for an in-flight replay. `PostgresReplayStore` closes that hole using a `(keyid, scope, nonce)` primary key the verifier checks on every signed request.
+
+  New exports from `@adcp/client/signing/server`:
+  - `PostgresReplayStore` — `ReplayStore` implementation against the structural `PgQueryable` interface (same pattern as `PostgresTaskStore` and `PostgresStateStore`; the SDK stays free of a hard `pg` dependency).
+  - `getReplayStoreMigration(tableName?)` — idempotent DDL for the cache table plus indexes on `expires_at` and `(keyid, scope, expires_at)`.
+  - `sweepExpiredReplays(pool, options?)` — exported helper for callers to schedule (cron, app timer, `pg_cron`, etc.); Postgres has no native row-level TTL, so expired rows have to be deleted explicitly.
+
+  The insert path is a single CTE statement that handles replay/cap/insert decision atomically. `ON CONFLICT DO UPDATE WHERE existing-is-expired` recycles expired rows in place — a same-nonce insert after the previous registration's TTL elapsed (but before the sweeper ran) correctly returns `'ok'` rather than falsely reporting `'replayed'`. Concurrent same-nonce inserts (10 parallel) consistently produce exactly one `'ok'` and the rest `'replayed'`, matching `InMemoryReplayStore` semantics.
+
+  Wire format unchanged. No AdCP version bump.
+
+  See [`docs/guides/SIGNING-GUIDE.md` § Verify Inbound Signatures](./guides/SIGNING-GUIDE.md#step-4-verify-inbound-signatures-seller) for the multi-instance failure mode and the wire-up.
+
+  Closes #1015.
+
+- 78fdb54: feat(testing): `adcp grade signer` — validate a signer end-to-end before going live
+
+  Adds a CLI grader and matching library function that exercises a signer (typically KMS-backed) end-to-end: produces a sample signed AdCP request through the operator's signer, then verifies the result against the operator's published JWKS via the SDK's RFC 9421 verifier. Pass means a counterparty verifier will accept your signatures; fail produces a specific `error_code` + step matching the verifier-checklist semantics, so DER-vs-P1363 / kid-mismatch / wrong-key / algorithm-mismatch each surface as a distinct diagnostic instead of the generic `request_signature_invalid` you'd see in the seller's monitoring after pushing live traffic.
+
+  Two signer-source modes:
+  - `--key-file <path>` — local JWK file. Easy path for local dev / non-KMS testing.
+  - `--signer-url <url>` — HTTP signing oracle for KMS-backed signers. Wire contract is intentionally minimal — `POST {payload_b64, kid, alg}` returns `{signature_b64}` (raw wire-format bytes, not DER) — so any KMS adapter can put a small handler in front of `provider.sign()` for grading without exposing the underlying KMS to the grader.
+
+  Programmatic API: `gradeSigner(options)` exported from `@adcp/client/testing/storyboard/signer-grader`. Returns a `SignerGradeReport` with `passed`, `step.{status,error_code,diagnostic}`, the JWKS URI it resolved against, and the sample request the signer produced headers for (useful for operator-side diagnostics).
+
+  Pairs with the `SigningProvider` abstraction (also in 5.20.0) — that release added the surface for KMS-backed signing; this one closes the loop by giving operators a way to validate their adapter before going live.
+
+  Closes #610.
+
+- c4afc75: feat(signing): add SigningProvider abstraction for KMS-backed RFC 9421 signing
+
+  Adds a pluggable `SigningProvider` interface so private keys can live in a
+  managed key store (GCP KMS, AWS KMS, Azure Key Vault, HashiCorp Vault Transit)
+  instead of process memory. The async `sign(payload)` boundary matches RFC
+  9421 §3.1 — the SDK produces the canonical signature base, the provider
+  returns wire-format signature bytes.
+
+  New surface:
+  - `SigningProvider` interface and `AdcpSignAlg` type (exported from
+    `@adcp/client/signing`).
+  - `signRequestAsync` / `signWebhookAsync` — async variants that accept a
+    provider; sync `signRequest` / `signWebhook` are unchanged.
+  - `createSigningFetchAsync(upstream, provider, options)` — async-signing
+    fetch wrapper, paired with the existing sync `createSigningFetch`. Two
+    symbols rather than one overload so the latency-cost distinction is
+    visible at integration time.
+  - `derEcdsaToP1363(der, componentLen)` — DER → IEEE P1363 ECDSA signature
+    converter for KMS adapters whose `sign` API returns DER (GCP, AWS, Azure).
+  - `SigningProviderAlgorithmMismatchError` — typed error adapters throw when
+    the declared algorithm doesn't match the underlying key, so misconfigurations
+    fail fast at adapter construction rather than producing signatures verifiers
+    reject downstream.
+  - `@adcp/client/signing/testing` sub-path exporting `InMemorySigningProvider`
+    and `signerKeyToProvider`. Constructor refuses to instantiate when
+    `NODE_ENV=production` unless `ADCP_ALLOW_IN_MEMORY_SIGNER=1` is set.
+
+  `AgentRequestSigningConfig` is now a discriminated union on `kind`:
+  - `kind: 'inline'` (default — `kind` is optional on this shape so existing
+    literals work unchanged) holds a private JWK in process.
+  - `kind: 'provider'` delegates `sign()` to a `SigningProvider`.
+
+  `buildAgentSigningContext` defensively hashes the provider-supplied
+  `fingerprint` together with `algorithm` and `kid` before composing
+  transport- and capability-cache keys, preserving the multi-tenant isolation
+  property the in-memory path has always provided. The signing identity is
+  snapshotted at context-build time so a provider object whose fields drift
+  between build and outbound request cannot desynchronize the on-wire `keyid`
+  from the cache key the connection was bound to.
+
+  **Behavior change for non-UTF-8 byte bodies:** `createSigningFetch` and
+  `createSigningFetchAsync` now throw `TypeError` on `Uint8Array` /
+  `ArrayBuffer` request bodies that aren't valid UTF-8. Previously, invalid
+  bytes were silently replaced with U+FFFD by `Buffer.toString('utf8')` —
+  verification still passed because the wire and the digest agreed on the
+  lossy string, but the seller received mangled content. Callers hitting
+  this should pass a string body, ensure their bytes are UTF-8, or sign
+  manually with `signRequest` / `signRequestAsync` against the exact wire
+  bytes they intend to send. Error message names the escape hatch.
+
+  Wire format unchanged. No AdCP version bump.
+
+  A reference GCP KMS adapter ships at `examples/gcp-kms-signing-provider.ts`,
+  type-checked under `npm run typecheck:examples`. AWS KMS and Azure Key Vault
+  adapters can mirror the same pattern; users `npm i` the cloud SDK they need.
+
+  See adcontextprotocol/adcp-client#1009.
+
+### Patch Changes
+
+- a8e50ac: fix(hints): drop AJV-prose fallback in `groupRequiredIssues`
+
+  `MissingRequiredFieldHint.missing_fields` is documented as "Field name(s) the parent object was required to carry." When the field-name extraction regex did not match an AJV `required` error message (e.g. a reworded or locale-variant message), the fallback `?? issue.message` wrote the entire AJV prose string into `missing_fields[]` as if it were a field name. Downstream renderers (CLI, Addie, JUnit) wrap entries in backticks and generate "add the X field" coaching, so they would produce nonsense output for these entries.
+
+  The fallback is now removed. When the regex does not match, the issue is skipped — `missing_fields` contains only clean field identifiers. Unextractable issues remain visible via `ValidationResult.warning`.
+
+- 976c6e0: docs(testing): add @provenance annotations to StoryboardStepHint fields
+
+  Each field on the five hint kinds (ContextValueRejectedHint, ShapeDriftHint,
+  MissingRequiredFieldHint, FormatMismatchHint, MonotonicViolationHint) now
+  carries a @provenance seller|storyboard|runner tag so downstream renderers
+  (Addie, CLI, JUnit) can identify which fields contain seller-controlled bytes
+  that must be sanitized before reaching prompt-injection-vulnerable surfaces.
+
+  Also annotates StoryboardStepHintBase.message with an explicit warning that
+  the pre-formatted string embeds seller bytes for context_value_rejected and
+  monotonic_violation kinds; and adds @provenance to typedoc.json blockTags so
+  the TypeDoc build recognises the new tag.
+
+  Motivated by adcp#3084 and adcp#3220, where undocumented seller provenance on
+  request_field and from_status produced prompt-injection vectors in downstream
+  renderers.
+
+## 5.19.0
+
+### Minor Changes
+
+- af944a1: feat(AgentClient): add `AgentClient.fromMCPClient()` factory for in-process MCP transport
+
+  Adds a new static factory method that accepts a pre-connected `@modelcontextprotocol/sdk` `Client` instance instead of a URL-based agent config. This enables compliance test fleets to wire up a full `AgentClient` against an `InMemoryTransport` pair without an HTTP loopback server.
+
+  **MCP only.** This factory wraps an MCP `Client` from `@modelcontextprotocol/sdk`. There is no equivalent in-process bridge for A2A today — for A2A agents, run them on a loopback HTTP server and use the standard `AgentClient` constructor with the agent's `agent_uri`.
+
+  Key behaviors preserved over the in-process path:
+  - `adcp_major_version` is injected on every tool call
+  - `idempotency_key` is auto-generated for mutating tasks
+  - `isError` envelopes surface as `TaskResult<{ success: false }>`
+  - HTTP-only methods (`resolveCanonicalUrl`, `getWebhookUrl`, `registerWebhook`, `unregisterWebhook`) throw descriptive `in-process` guard errors
+  - Endpoint discovery and SSRF validation are bypassed for the sentinel URI
+
+  Exports the new `InProcessAgentClientConfig` type for typed factory usage.
+
+- efbe785: Add `pgBackend.probe()` and `serve({ readinessCheck })` for fail-fast pool validation
+
+  Sellers wiring `createIdempotencyStore({ backend: pgBackend(pool) })` from a `DATABASE_URL` env var previously got a silent failure mode: a bad URL (typo, deprovisioned DB, missing creds) lets the server boot successfully, advertise `IdempotencySupported`, then fail every mutating call indefinitely.
+
+  This release adds:
+  - **`pgBackend.probe()`** — runs `SELECT 1 FROM "<table>" LIMIT 0` at startup, validating both connectivity and that the idempotency table has been migrated. Throws a descriptive error naming the table, root cause, and remediation steps.
+  - **`IdempotencyStore.probe()`** — delegates to `backend.probe()` when the backend implements it; no-ops for `memoryBackend`.
+  - **`probeIdempotencyStore(store)`** — convenience export for callers that manage their own lifecycle (Lambda, custom HTTP frameworks).
+  - **`ServeOptions.readinessCheck?: () => Promise<void>`** — called before `httpServer.listen()`. The server never accepts connections if the check throws, so a misconfigured pool crashes the process at deploy time rather than silently failing live traffic.
+
+  Wire the probe in `serve()`:
+
+  ```ts
+  const store = createIdempotencyStore({ backend: pgBackend(pool), ttlSeconds: 86400 });
+  pool.on('error', err => console.error('pg pool error', err)); // prevent crash on idle-client errors
+  serve(createAgent, {
+    readinessCheck: () => store.probe(),
+  });
+  ```
+
+  `readinessCheck` is general-purpose — use it for any startup dependency check, not just idempotency.
+
+  **Non-breaking.** `createIdempotencyStore` remains synchronous. Existing callers require no changes. Option A (async constructor) is tracked separately as a future major-version enhancement.
+
+- a26db16: Storyboard runner: add `$generate:opaque_id` substitution and `context_outputs[generate]` for threading runner-minted task IDs through multi-step lifecycle storyboards.
+
+  `$generate:opaque_id` and `$generate:opaque_id#<alias>` work identically to `$generate:uuid_v4` / `$generate:uuid_v4#<alias>` but carry explicit task-ID semantics. Both share the same alias cache namespace.
+
+  `context_outputs` entries now accept `generate: "opaque_id" | "uuid_v4"` as an alternative to `path:`. When `generate` is set the runner mints (or reuses, via alias-cache coherence) a UUID at post-step time and writes it into `$context.<key>` for subsequent steps. If an inline `$generate:opaque_id#<key>` substitution already ran in the same step's `sample_request`, the generator reuses that value — the two forms are alias-coherent.
+
+  `ContextProvenanceEntry.source_kind` and `ContextValueRejectedHint.source_kind` gain a `'generator'` variant for accurate diagnostic attribution. `ContextOutput.path` is now optional (mutually exclusive with the new `generate` field).
+
+### Patch Changes
+
+- c58ff99: **Fix `get_media_buys` convention extractor poisoning context during multi-page pagination walks (#998).** The extractor unconditionally captured `media_buys[0].media_buy_id` from every successful `get_media_buys` response. When a storyboard walks multi-page results, the page-1 response carries `pagination.has_more: true` — buys[0] is not the canonical buy, it is just the first item in a list slice. The captured ID was then picked up by the request-builder enricher on step 2 and injected as `media_buy_ids: [that_id]`, turning the pagination continuation into a single-ID lookup. The agent returned one buy with `has_more: false, total_count: 1`, failing `total_count: 3` storyboard assertions.
+
+  The extractor now skips extraction when `pagination.has_more === true`, matching the conservative `=== true` convention used elsewhere in the codebase (`hasMorePages()` in `validations.ts`). When `has_more` is absent or `false` — i.e., a terminal or single-page response — extraction proceeds as before. This unblocks `get-media-buys-pagination-integrity` in `adcontextprotocol/adcp#3122` from upgrading to the seeded multi-page walk model used by `list_creatives` and other paginated storyboards.
+
 ## 5.18.0
 
 ### Minor Changes

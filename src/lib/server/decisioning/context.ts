@@ -23,7 +23,7 @@
  */
 
 import type { Account } from './account';
-import type { Format, FormatID, PropertyList, CollectionList } from '../../types/tools.generated';
+import type { Format, FormatReferenceStructuredObject, PropertyList, CollectionList } from '../../types/tools.generated';
 import type { TaskHandoff, TaskHandoffContext } from './async-outcome';
 
 // Unconstrained `TAccount` (no `extends Account`) so adopters with metadata
@@ -127,7 +127,7 @@ export interface ResourceResolver {
    * formats hit the local CreativePlatform.listFormats(). Returns the
    * resolved Format with full asset slot definitions.
    */
-  creativeFormat(formatId: FormatID): Promise<Format>;
+  creativeFormat(formatId: FormatReferenceStructuredObject): Promise<Format>;
 }
 
 // ---------------------------------------------------------------------------

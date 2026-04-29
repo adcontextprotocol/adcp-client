@@ -1,5 +1,5 @@
 // Basic MCP Client Example
-import { createMCPClient, type AgentConfig } from '@adcp/client';
+import { createMCPClient, type AgentConfig } from '@adcp/sdk';
 
 async function basicMCPExample() {
   // Simple MCP client usage
@@ -18,7 +18,7 @@ async function basicMCPExample() {
 }
 
 // Using AgentConfig with AdCPClient
-import { AdCPClient } from '@adcp/client';
+import { AdCPClient } from '@adcp/sdk';
 
 async function configuredMCPExample() {
   const agent: AgentConfig = {

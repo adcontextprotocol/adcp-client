@@ -17,7 +17,7 @@
  *       retries breaks at-least-once delivery semantics).
  *
  *   - `expect_webhook_signature_valid`
- *       Delegate to the @adcp/client 9421 webhook verifier (pending; grades
+ *       Delegate to the @adcp/sdk 9421 webhook verifier (pending; grades
  *       `not_applicable` until the client verifier lands). Asserts the
  *       arriving webhook verifies under the `adcp/webhook-signing/v1` profile.
  *

@@ -396,9 +396,9 @@ function deepReplace(value: unknown, context: StoryboardContext, runnerVars?: Ru
       const key = ctxMatch[1];
       return key in context ? context[key] : expanded;
     }
-    const genMatch = expanded.match(/^\$generate:uuid_v4(?:#([A-Za-z0-9_.-]+))?$/);
+    const genMatch = expanded.match(/^\$generate:(uuid_v4|opaque_id)(?:#([A-Za-z0-9_.-]+))?$/);
     if (genMatch) {
-      const alias = genMatch[1];
+      const alias = genMatch[2];
       if (alias) {
         const cache = getAliasCache(context);
         if (!(alias in cache)) cache[alias] = randomUUID();
@@ -470,10 +470,13 @@ function expandMustache(input: string, runnerVars: RunnerVariables): string {
 
 /**
  * Apply explicit context_outputs rules to extract values from response data.
+ * Entries with `generate` set are skipped — use `applyContextOutputsWithProvenance`
+ * (which accepts a context for alias-cache access) to handle those.
  */
 export function applyContextOutputs(data: unknown, outputs: ContextOutput[]): Record<string, unknown> {
   const result: Record<string, unknown> = {};
   for (const output of outputs) {
+    if (!output.path) continue;
     const value = resolvePath(data, output.path);
     if (value !== undefined && value !== null) {
       result[output.key] = value;
@@ -516,25 +519,67 @@ export function extractContextWithProvenance(taskName: string, data: unknown, st
 /**
  * Like `applyContextOutputs`, but also returns provenance for each written
  * key carrying the YAML `response_path` so diagnostics can cite it verbatim.
+ *
+ * Pass `context` to enable `generate:` entries with alias-cache coherence.
+ * When an output declares `generate`, the runner mints a UUID v4 (or reuses
+ * the value already cached under `output.key` if an inline `$generate:…#<alias>`
+ * substitution ran in the same step). The generated value is written back into
+ * the alias cache so that any later step referencing `$generate:opaque_id#<key>`
+ * resolves to the same UUID.
+ *
+ * Omitting `context` disables alias-cache coherence: each generator entry mints
+ * an independent UUID that cannot be matched by an inline `$generate:…` form.
+ *
+ * Generator entries fire regardless of whether `data` is present; path
+ * entries are silently skipped when the resolved value is null/undefined.
  */
 export function applyContextOutputsWithProvenance(
   data: unknown,
   outputs: ContextOutput[],
   stepId: string,
-  taskName: string
+  taskName: string,
+  context?: StoryboardContext
 ): ContextWriteResult {
   const values: Record<string, unknown> = {};
   const provenance: Record<string, ContextProvenanceEntry> = {};
   for (const output of outputs) {
-    const value = resolvePath(data, output.path);
-    if (value !== undefined && value !== null) {
+    if (output.generate !== undefined) {
+      // Generator entries require a context — without one the alias cache
+      // can't be populated, so a later step's `$generate:opaque_id#<key>` would
+      // mint an independent UUID that doesn't match the value stored here.
+      // Loud error beats silent divergence.
+      if (!context) {
+        throw new Error(
+          `applyContextOutputsWithProvenance: context_outputs entry '${output.key}' ` +
+            `declares generate='${output.generate}' but no context was provided. ` +
+            `Generator entries require a context for alias-cache coherence.`
+        );
+      }
+      const cache = getAliasCache(context);
+      let value: string;
+      if (output.key in cache) {
+        value = cache[output.key]!;
+      } else {
+        value = randomUUID();
+        cache[output.key] = value;
+      }
       values[output.key] = value;
       provenance[output.key] = {
         source_step_id: stepId,
-        source_kind: 'context_outputs',
-        response_path: output.path,
+        source_kind: 'generator',
         source_task: taskName,
       };
+    } else if (output.path) {
+      const value = resolvePath(data, output.path);
+      if (value !== undefined && value !== null) {
+        values[output.key] = value;
+        provenance[output.key] = {
+          source_step_id: stepId,
+          source_kind: 'context_outputs',
+          response_path: output.path,
+          source_task: taskName,
+        };
+      }
     }
   }
   return { values, provenance };

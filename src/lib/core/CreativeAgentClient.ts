@@ -4,7 +4,7 @@ import { SingleAgentClient } from './SingleAgentClient';
 import type { SingleAgentClientConfig } from './SingleAgentClient';
 import type { InputHandler, TaskOptions } from './ConversationTypes';
 import type { AgentConfig } from '../types';
-import type { FormatID } from '../types/core.generated';
+import type { FormatReferenceStructuredObject as FormatID } from '../types/core.generated';
 import type {
   ListCreativeFormatsRequest,
   ListCreativeFormatsResponse,

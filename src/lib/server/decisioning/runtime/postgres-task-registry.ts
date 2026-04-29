@@ -15,7 +15,7 @@
  *   createAdcpServerFromPlatform,
  *   createPostgresTaskRegistry,
  *   getDecisioningTaskRegistryMigration,
- * } from '@adcp/client/server/decisioning';
+ * } from '@adcp/sdk/server/decisioning';
  *
  * const pool = new Pool({ connectionString: process.env.DATABASE_URL });
  *
@@ -140,7 +140,7 @@ function safeStringify(value: unknown, taskId: string): string {
  *
  * @example
  * ```typescript
- * import { getDecisioningTaskRegistryMigration } from '@adcp/client/server/decisioning';
+ * import { getDecisioningTaskRegistryMigration } from '@adcp/sdk/server/decisioning';
  * await pool.query(getDecisioningTaskRegistryMigration());
  * await pool.query(getDecisioningTaskRegistryMigration({ tableName: 'my_tasks' }));
  * ```

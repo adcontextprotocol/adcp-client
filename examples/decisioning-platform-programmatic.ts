@@ -26,8 +26,8 @@ import {
   type DecisioningPlatform,
   type SalesPlatform,
   type AccountStore,
-} from '@adcp/client/server/decisioning';
-import type { SyncCreativesRow } from '@adcp/client/server/decisioning';
+} from '@adcp/sdk/server/decisioning';
+import type { SyncCreativesRow } from '@adcp/sdk/server/decisioning';
 import type {
   GetProductsRequest,
   GetProductsResponse,
@@ -39,7 +39,7 @@ import type {
   GetMediaBuyDeliveryResponse,
   CreativeAsset,
   AccountReference,
-} from '@adcp/client/types';
+} from '@adcp/sdk/types';
 
 export interface ProgrammaticConfig {
   /** SSP network identifier. */

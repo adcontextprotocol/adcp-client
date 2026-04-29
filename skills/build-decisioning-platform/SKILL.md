@@ -32,7 +32,7 @@ import {
   createAdcpServerFromPlatform,
   type SalesPlatform,
   type AccountStore,
-} from '@adcp/client/server/decisioning';
+} from '@adcp/sdk/server/decisioning';
 
 // Don't annotate `platform: DecisioningPlatform` — let TS infer the
 // `specialisms: ['sales-non-guaranteed']` literal so RequiredPlatformsFor
@@ -310,10 +310,10 @@ Generic thrown errors (`Error`, `TypeError`) become `SERVICE_UNAVAILABLE` at the
 
 `AdcpError`'s optional `details` field is freeform — adopters often want to surface upstream-platform error context (request IDs, HTTP statuses, vendor codes). Raw upstream error objects almost always carry credentials, PII, or internal stack traces that MUST NOT cross the wire boundary.
 
-`pickSafeDetails(input, allowlist, opts?)` is an explicit-allowlist sanitizer at `@adcp/client/server`. Only allowlisted keys survive; default caps at depth 2 + 2 KB serialized.
+`pickSafeDetails(input, allowlist, opts?)` is an explicit-allowlist sanitizer at `@adcp/sdk/server`. Only allowlisted keys survive; default caps at depth 2 + 2 KB serialized.
 
 ```ts
-import { pickSafeDetails } from '@adcp/client/server';
+import { pickSafeDetails } from '@adcp/sdk/server';
 
 try {
   await gamClient.createOrder(req);
@@ -335,10 +335,10 @@ What gets dropped silently: any key not in the allowlist (no warning — the des
 
 ### Wire-shape normalizer for `errors[]`
 
-The wire spec for tools that surface partial-batch failures (`sync_creatives`, `sync_audiences`, `sync_accounts`, `report_usage`) requires `errors: Error[]` with the canonical `{ code, message, recovery? ... }` shape. Adopters often have errors in ad-hoc shapes — bare strings, native `Error` instances, vendor-specific objects. The framework applies `normalizeErrors` automatically at the `sync_creatives` projection seam (sales + creative dispatch); for adopter code that constructs `errors[]` directly (in custom handlers, or in tools where the framework doesn't auto-normalize yet), the helper is exported at `@adcp/client/server`:
+The wire spec for tools that surface partial-batch failures (`sync_creatives`, `sync_audiences`, `sync_accounts`, `report_usage`) requires `errors: Error[]` with the canonical `{ code, message, recovery? ... }` shape. Adopters often have errors in ad-hoc shapes — bare strings, native `Error` instances, vendor-specific objects. The framework applies `normalizeErrors` automatically at the `sync_creatives` projection seam (sales + creative dispatch); for adopter code that constructs `errors[]` directly (in custom handlers, or in tools where the framework doesn't auto-normalize yet), the helper is exported at `@adcp/sdk/server`:
 
 ```ts
-import { normalizeErrors } from '@adcp/client/server';
+import { normalizeErrors } from '@adcp/sdk/server';
 
 return creatives.map(c => ({
   creative_id: c.id,
@@ -439,7 +439,7 @@ OAuth verifiers live on `serve()`, not on the platform. The platform only sees t
 
 <!-- skill-example-skip: documentation-pattern, references undeclared `server`, `parseBearerToken`, `myOAuthProvider` -->
 ```ts
-import { serve } from '@adcp/client/server';
+import { serve } from '@adcp/sdk/server';
 
 serve(() => server, {
   publicUrl: 'https://my-agent.example.com',
@@ -482,7 +482,7 @@ import {
   createAdcpServerFromPlatform,
   createPostgresTaskRegistry,
   getDecisioningTaskRegistryMigration,
-} from '@adcp/client/server/decisioning';
+} from '@adcp/sdk/server/decisioning';
 
 const pool = new Pool({ connectionString: process.env.DATABASE_URL });
 
@@ -506,7 +506,7 @@ Custom backend? Implement the `TaskRegistry` interface (8 methods) for Redis / D
 Running multiple tenants from one process — different sellers, or multiple variants of the same agent under different specialisms? `TenantRegistry` is the framework primitive. Each tenant gets its own `DecisioningPlatform`, its own signing key, its own per-tenant capability declaration, and its own `'pending' → 'healthy' → 'unverified' → 'disabled'` lifecycle.
 
 ```ts
-import { createTenantRegistry } from '@adcp/client/server/decisioning';
+import { createTenantRegistry } from '@adcp/sdk/server/decisioning';
 
 const registry = createTenantRegistry({
   defaultServerOptions: { name: 'Multi-Tenant', version: '1.0.0', /* shared opts */ },
@@ -605,7 +605,7 @@ import type {
   AcquireRightsAcquired,
   AcquireRightsPendingApproval,
   AcquireRightsRejected,
-} from '@adcp/client/server/decisioning';
+} from '@adcp/sdk/server/decisioning';
 
 class MyBrandRightsAgent implements DecisioningPlatform {
   capabilities = {
@@ -746,7 +746,7 @@ createAdcpServerFromPlatform(myBrandRightsAgent, {
 Conformance harnesses (the AdCP storyboard suite, in particular) drive seller-side state-machine tests via the wire-spec `comply_test_controller` tool. The framework registers it for you when you supply `complyTest` adapters on `createAdcpServerFromPlatform`.
 
 ```ts
-import { createAdcpServerFromPlatform } from '@adcp/client/server/decisioning';
+import { createAdcpServerFromPlatform } from '@adcp/sdk/server/decisioning';
 
 const server = createAdcpServerFromPlatform(myPlatform, {
   name: 'my-seller', version: '1.0.0',
@@ -910,7 +910,7 @@ const server = createAdcpServerFromPlatform(platform, {
 });
 ```
 
-Hooks are throw-safe — adopter callback exceptions are caught and logged via the framework logger; they never break dispatch. Per-tool dispatch latency hooks (`onDispatchStart` / `onDispatchEnd`) land in v6.1 with the per-handler instrumentation pass; an opt-in `@adcp/client/telemetry/otel` peer-dep adapter ships with AdCP-aligned span / metric names.
+Hooks are throw-safe — adopter callback exceptions are caught and logged via the framework logger; they never break dispatch. Per-tool dispatch latency hooks (`onDispatchStart` / `onDispatchEnd`) land in v6.1 with the per-handler instrumentation pass; an opt-in `@adcp/sdk/telemetry/otel` peer-dep adapter ships with AdCP-aligned span / metric names.
 
 ## Reference
 

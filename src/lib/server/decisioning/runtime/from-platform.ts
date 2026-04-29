@@ -42,7 +42,7 @@
  * no-account path in `'explicit'`-mode adopters (see `SalesPlatform` JSDoc).
  *
  * Status: Preview / 6.0. Not yet exported from the public `./server`
- * subpath; reach in via `@adcp/client/server/decisioning/runtime` for
+ * subpath; reach in via `@adcp/sdk/server/decisioning/runtime` for
  * spike experimentation only.
  *
  * @public
@@ -120,7 +120,7 @@ function normalizeRowErrors<TRow extends { errors?: unknown }>(row: TRow): TRow 
  *
  * Reach for these to wire DataDog / Prometheus / OpenTelemetry / structured
  * logging without baking any specific backend into the framework. For
- * OpenTelemetry, the `@adcp/client/telemetry/otel` peer-dep adapter returns
+ * OpenTelemetry, the `@adcp/sdk/telemetry/otel` peer-dep adapter returns
  * a pre-wired implementation with AdCP-aligned span / metric names.
  *
  * **What's instrumented today (v6.0):**
@@ -243,7 +243,7 @@ export interface CreateAdcpServerFromPlatformOptions extends Omit<
    * at well-known dispatch points; throws inside callbacks are caught and
    * logged via `opts.logger.warn` — they never break dispatch.
    *
-   * For an out-of-the-box OpenTelemetry binding, `@adcp/client/telemetry/otel`
+   * For an out-of-the-box OpenTelemetry binding, `@adcp/sdk/telemetry/otel`
    * (peer-dep, opt-in) returns a pre-wired `DecisioningObservabilityHooks`
    * object. Adopters using DataDog, Prometheus, or hand-rolled metrics
    * implement the callbacks directly.
@@ -307,7 +307,7 @@ export interface CreateAdcpServerFromPlatformOptions extends Omit<
   /**
    * `comply_test_controller` adapter set. When supplied, the framework
    * registers the wire tool automatically by composing `createComplyController`
-   * (`@adcp/client/testing`) with the adopter's adapters and calling
+   * (`@adcp/sdk/testing`) with the adopter's adapters and calling
    * `controller.register(server)` after platform handlers wire up.
    *
    * Adopter declares the scenarios they support — `seed: { product, … }`,
@@ -1057,7 +1057,7 @@ function buildDefaultTaskRegistry(): TaskRegistry {
       'createAdcpServerFromPlatform: in-memory task registry refused outside ' +
         '{NODE_ENV=test, NODE_ENV=development}. Pass `taskRegistry` explicitly ' +
         '(e.g., `createPostgresTaskRegistry({ pool })` — see ' +
-        '`@adcp/client/server/decisioning`), OR set ' +
+        '`@adcp/sdk/server/decisioning`), OR set ' +
         'ADCP_DECISIONING_ALLOW_INMEMORY_TASKS=1 if you accept that ' +
         'in-flight tasks are lost on process restart.'
     );

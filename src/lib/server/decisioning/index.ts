@@ -106,9 +106,9 @@ export type { SignalsPlatform } from './specialisms/signals';
 
 export type { BrandRightsPlatform } from './specialisms/brand-rights';
 
-// Brand-rights wire types — re-exported from `@adcp/client/server/decisioning`
+// Brand-rights wire types — re-exported from `@adcp/sdk/server/decisioning`
 // because brand-rights is the only specialism whose wire types live in
-// `core.generated` (not `tools.generated`), and the public `@adcp/client/types`
+// `core.generated` (not `tools.generated`), and the public `@adcp/sdk/types`
 // barrel doesn't surface them. Adopters typing their own helper functions
 // import these from here, NOT from the deep `core.generated` path.
 export type {

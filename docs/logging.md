@@ -5,7 +5,7 @@ The AdCP Client includes a structured logger utility to provide consistent, leve
 ## Basic Usage
 
 ```typescript
-import { logger } from '@adcp/client';
+import { logger } from '@adcp/sdk';
 
 // Log at different levels
 logger.debug('Detailed debugging information');
@@ -40,7 +40,7 @@ LOG_ENABLED=false
 ### Programmatic Configuration
 
 ```typescript
-import { logger } from '@adcp/client';
+import { logger } from '@adcp/sdk';
 
 // Change log level at runtime
 logger.configure({ level: 'warn' });
@@ -54,7 +54,7 @@ logger.configure({ enabled: false });
 Create custom logger instances with specific configurations:
 
 ```typescript
-import { createLogger } from '@adcp/client';
+import { createLogger } from '@adcp/sdk';
 
 const debugLogger = createLogger({
   level: 'debug',
@@ -70,7 +70,7 @@ debugLogger.info('This will also be logged');
 Create child loggers with contextual prefixes:
 
 ```typescript
-import { logger } from '@adcp/client';
+import { logger } from '@adcp/sdk';
 
 // Create a logger for MCP protocol
 const mcpLogger = logger.child('MCP');
@@ -88,7 +88,7 @@ toolLogger.debug('Calling agent');
 Add structured metadata to your logs:
 
 ```typescript
-import { logger } from '@adcp/client';
+import { logger } from '@adcp/sdk';
 
 logger.info('Task completed', {
   taskId: 'task_123',
@@ -102,7 +102,7 @@ logger.info('Task completed', {
 Implement custom log handling (e.g., for external logging services):
 
 ```typescript
-import { createLogger } from '@adcp/client';
+import { createLogger } from '@adcp/sdk';
 
 const customLogger = createLogger({
   level: 'info',
@@ -173,7 +173,7 @@ console.error('Failed to connect:', error);
 console.warn('Retry in 5s');
 
 // After
-import { logger } from '@adcp/client';
+import { logger } from '@adcp/sdk';
 
 logger.info('Agent connected');
 logger.error('Failed to connect', { error });

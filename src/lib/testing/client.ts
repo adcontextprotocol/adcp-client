@@ -260,6 +260,8 @@ export async function discoverAgentProfile(
         if (Array.isArray(specialisms)) {
           profile.specialisms = specialisms.filter((s): s is string => typeof s === 'string');
         }
+        const libVersion = (caps.data as Record<string, unknown>).library_version;
+        if (typeof libVersion === 'string') profile.library_version = libVersion;
       } else {
         profile.capabilities_probe_error = caps?.error || 'get_adcp_capabilities returned no data';
       }
@@ -466,12 +468,19 @@ export async function discoverSignals(
   client: TestClient,
   profile: AgentProfile,
   options: TestOptions
-): Promise<{ signals: AgentProfile['supported_signals']; step: TestStepResult; schemaStep?: TestStepResult }> {
+): Promise<{
+  signals: AgentProfile['supported_signals'];
+  rawSignals: GetSignalsResponse['signals'];
+  step: TestStepResult;
+  schemaStep?: TestStepResult;
+}> {
   const signals: AgentProfile['supported_signals'] = [];
+  let rawSignals: GetSignalsResponse['signals'] = [];
 
   if (!profile.tools.includes('get_signals')) {
     return {
       signals,
+      rawSignals,
       step: {
         step: 'Discover signals',
         passed: false,
@@ -495,7 +504,7 @@ export async function discoverSignals(
   if (result?.success && result?.data) {
     schemaStep = validateResponseSchema('get_signals', result.data);
     const responseData = result.data as GetSignalsResponse;
-    const rawSignals = responseData.signals ?? [];
+    rawSignals = responseData.signals ?? [];
 
     for (const signal of rawSignals) {
       signals.push({
@@ -524,7 +533,7 @@ export async function discoverSignals(
     step.error = result.error || 'get_signals failed';
   }
 
-  return { signals, step, schemaStep };
+  return { signals, rawSignals, step, schemaStep };
 }
 
 /**

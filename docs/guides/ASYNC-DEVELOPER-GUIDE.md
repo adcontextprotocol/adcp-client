@@ -13,7 +13,7 @@ The ADCP TypeScript client library v2.0 introduces a sophisticated async executi
 **Use cases**: Simple queries, cached data, fast operations
 
 ```typescript
-import { ADCPMultiAgentClient, createFieldHandler } from '@adcp/client';
+import { ADCPMultiAgentClient, createFieldHandler } from '@adcp/sdk';
 
 const client = ADCPMultiAgentClient.fromConfig();
 const agent = client.agent('my-agent');
@@ -158,7 +158,7 @@ import {
   createFieldHandler, 
   createConditionalHandler,
   InputRequiredError 
-} from '@adcp/client';
+} from '@adcp/sdk';
 
 // Simple field-based handler
 const simpleHandler = createFieldHandler({
@@ -216,11 +216,11 @@ try {
 **Handler patterns**:
 ```typescript
 // Pattern 1: Auto-approve everything
-import { autoApproveHandler } from '@adcp/client';
+import { autoApproveHandler } from '@adcp/sdk';
 const result = await agent.getProducts(params, autoApproveHandler);
 
 // Pattern 2: Defer everything to human
-import { deferAllHandler } from '@adcp/client';
+import { deferAllHandler } from '@adcp/sdk';
 const result = await agent.getProducts(params, deferAllHandler);
 
 // Pattern 3: Field-specific responses
@@ -358,7 +358,7 @@ async function compareAgentCapabilities(brief: string) {
 ### Task Tracking and Management
 
 ```typescript
-import { TaskExecutor } from '@adcp/client';
+import { TaskExecutor } from '@adcp/sdk';
 
 const executor = new TaskExecutor({
   workingTimeout: 120000,
@@ -409,7 +409,7 @@ import {
   InputRequiredError,
   TaskTimeoutError,
   MaxClarificationError 
-} from '@adcp/client';
+} from '@adcp/sdk';
 
 async function robustTaskExecution(params, handler) {
   try {

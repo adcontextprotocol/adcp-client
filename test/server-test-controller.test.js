@@ -234,6 +234,128 @@ describe('handleTestControllerRequest', () => {
     });
   });
 
+  // ── 3.0.1 sandbox scenarios ────────────────────────────
+
+  describe('force_create_media_buy_arm (3.0.1)', () => {
+    it('forwards arm + task_id + message to store on submitted arm', async () => {
+      const calls = [];
+      const store = {
+        async forceCreateMediaBuyArm(p) {
+          calls.push(p);
+          return { success: true, forced: { arm: p.arm, task_id: p.task_id }, message: p.message };
+        },
+      };
+      const result = await handleTestControllerRequest(store, {
+        scenario: 'force_create_media_buy_arm',
+        params: { arm: 'submitted', task_id: 'task-abc', message: 'ack' },
+      });
+      assert.strictEqual(result.success, true);
+      assert.deepStrictEqual(calls, [{ arm: 'submitted', task_id: 'task-abc', message: 'ack' }]);
+      assert.strictEqual(result.forced.arm, 'submitted');
+      assert.strictEqual(result.forced.task_id, 'task-abc');
+    });
+
+    it('returns INVALID_PARAMS when arm is omitted', async () => {
+      const store = { async forceCreateMediaBuyArm() {} };
+      const result = await handleTestControllerRequest(store, {
+        scenario: 'force_create_media_buy_arm',
+        params: {},
+      });
+      assert.strictEqual(result.error, 'INVALID_PARAMS');
+      assert.match(result.error_detail, /arm = 'submitted' or 'input-required'/);
+    });
+
+    it('returns INVALID_PARAMS when arm=submitted lacks task_id', async () => {
+      const store = { async forceCreateMediaBuyArm() {} };
+      const result = await handleTestControllerRequest(store, {
+        scenario: 'force_create_media_buy_arm',
+        params: { arm: 'submitted' },
+      });
+      assert.strictEqual(result.error, 'INVALID_PARAMS');
+      assert.match(result.error_detail, /requires params\.task_id/);
+    });
+
+    it("returns INVALID_PARAMS when arm='input-required' carries task_id (spec: present only when 'submitted')", async () => {
+      const store = { async forceCreateMediaBuyArm() {} };
+      const result = await handleTestControllerRequest(store, {
+        scenario: 'force_create_media_buy_arm',
+        params: { arm: 'input-required', task_id: 'should-not-be-here' },
+      });
+      assert.strictEqual(result.error, 'INVALID_PARAMS');
+      assert.match(result.error_detail, /must not include params\.task_id/);
+    });
+  });
+
+  describe('force_task_completion (3.0.1)', () => {
+    it('forwards taskId + result to store', async () => {
+      const calls = [];
+      const store = {
+        async forceTaskCompletion(taskId, result) {
+          calls.push({ taskId, result });
+          return { success: true, previous_state: 'submitted', current_state: 'completed' };
+        },
+      };
+      const result = await handleTestControllerRequest(store, {
+        scenario: 'force_task_completion',
+        params: { task_id: 'task-1', result: { media_buy_id: 'mb-1', packages: [] } },
+      });
+      assert.strictEqual(result.success, true);
+      assert.deepStrictEqual(calls, [{ taskId: 'task-1', result: { media_buy_id: 'mb-1', packages: [] } }]);
+    });
+
+    it('returns INVALID_PARAMS when result is omitted', async () => {
+      const store = { async forceTaskCompletion() {} };
+      const result = await handleTestControllerRequest(store, {
+        scenario: 'force_task_completion',
+        params: { task_id: 'task-1' },
+      });
+      assert.strictEqual(result.error, 'INVALID_PARAMS');
+      assert.match(result.error_detail, /requires params\.result/);
+    });
+
+    it('returns INVALID_PARAMS when result is an array (typeof [] === object footgun)', async () => {
+      // Spec: result validates against async-response-data.json — an object,
+      // never an array. Without the explicit Array.isArray guard, the previous
+      // typeof check would let arrays slip through.
+      const store = { async forceTaskCompletion() {} };
+      const result = await handleTestControllerRequest(store, {
+        scenario: 'force_task_completion',
+        params: { task_id: 'task-1', result: ['oops'] },
+      });
+      assert.strictEqual(result.error, 'INVALID_PARAMS');
+      assert.match(result.error_detail, /completion payload object/);
+    });
+  });
+
+  describe('seed_creative_format (3.0.1)', () => {
+    it('forwards formatId + fixture to store', async () => {
+      const calls = [];
+      const store = {
+        async seedCreativeFormat(formatId, fixture) {
+          calls.push({ formatId, fixture });
+        },
+      };
+      const result = await handleTestControllerRequest(store, {
+        scenario: 'seed_creative_format',
+        params: { format_id: 'audio_30s', fixture: { duration: 30 } },
+      });
+      assert.strictEqual(result.success, true);
+      assert.strictEqual(result.message, 'Fixture seeded');
+      assert.strictEqual(result.previous_state, undefined);
+      assert.deepStrictEqual(calls, [{ formatId: 'audio_30s', fixture: { duration: 30 } }]);
+    });
+
+    it('returns INVALID_PARAMS without format_id', async () => {
+      const store = { async seedCreativeFormat() {} };
+      const result = await handleTestControllerRequest(store, {
+        scenario: 'seed_creative_format',
+        params: { fixture: {} },
+      });
+      assert.strictEqual(result.error, 'INVALID_PARAMS');
+      assert.match(result.error_detail, /requires params\.format_id/);
+    });
+  });
+
   // ── TestControllerError handling ────────────────────────
 
   describe('TestControllerError', () => {
@@ -886,6 +1008,8 @@ describe('CONTROLLER_SCENARIOS / SCENARIO_MAP coverage', () => {
       async forceAccountStatus() {},
       async forceMediaBuyStatus() {},
       async forceSessionStatus() {},
+      async forceCreateMediaBuyArm() {},
+      async forceTaskCompletion() {},
       async simulateDelivery() {},
       async simulateBudgetSpend() {},
     };
@@ -955,6 +1079,33 @@ describe('expectControllerSuccess', () => {
     assert.throws(
       () => expectControllerSuccess({ success: true, previous_state: 'active', current_state: 'suspended' }, 'list'),
       /expected "list" arm but got "transition"/
+    );
+  });
+
+  // ── 3.0.1: forced + seed arms ──────────────────────────────
+
+  it('narrows to forced arm when kind="forced"', () => {
+    const ok = expectControllerSuccess(
+      { success: true, forced: { arm: 'submitted', task_id: 'task-abc' }, message: 'directive registered' },
+      'forced'
+    );
+    assert.strictEqual(ok.forced.arm, 'submitted');
+    assert.strictEqual(ok.forced.task_id, 'task-abc');
+  });
+
+  it('narrows to seed arm when kind="seed"', () => {
+    // SeedSuccess is the message-only arm 3.0.1 introduced. The SDK's own
+    // dispatchSeed emits this arm (`{ success: true, message: 'Fixture
+    // seeded' | 'Fixture re-seeded (equivalent)' }`). Third-party sellers
+    // can use any message string the spec allows.
+    const ok = expectControllerSuccess({ success: true, message: 'Format pre-populated' }, 'seed');
+    assert.strictEqual(ok.message, 'Format pre-populated');
+  });
+
+  it('rejects forced kind on a transition payload', () => {
+    assert.throws(
+      () => expectControllerSuccess({ success: true, previous_state: 'active', current_state: 'paused' }, 'forced'),
+      /expected "forced" arm but got "transition"/
     );
   });
 });

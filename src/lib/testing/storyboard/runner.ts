@@ -816,6 +816,7 @@ async function executeStoryboardPass(
         runnerVars,
         contextProvenance,
         priorA2aEnvelopes,
+        agentLibraryVersion: profile?.library_version,
       });
       const result: StoryboardStepResult = { ...rawResult, storyboard_id: storyboard.id };
       if (isMultiInstance) {
@@ -1241,9 +1242,15 @@ export async function runStoryboardStep(
   validateTestKit(options.test_kit);
   const client = getOrCreateClient(agentUrl, options);
 
-  // Discover agent profile for standalone step execution
+  // Discover agent profile for standalone step execution. Captured so the
+  // executeStep call below can thread `library_version` through to
+  // shape-drift hint detection (issue #850).
+  let profile: AgentProfile | undefined;
   if (!options._client) {
-    await getOrDiscoverProfile(client, options);
+    const discovered = await getOrDiscoverProfile(client, options);
+    profile = discovered.profile;
+  } else {
+    profile = options._profile;
   }
 
   const context: StoryboardContext = { ...options.context };
@@ -1286,6 +1293,7 @@ export async function runStoryboardStep(
     runnerVars,
     contextProvenance,
     priorA2aEnvelopes: new Map(),
+    agentLibraryVersion: profile?.library_version,
   });
 
   if (!options._client) {
@@ -1330,6 +1338,14 @@ interface ExecutionState {
    * up from the per-step `ExecutionState` literal.
    */
   priorA2aEnvelopes?: Map<string, A2ATaskEnvelope>;
+  /**
+   * Agent's reported `@adcp/client@X.Y.Z` library version, captured from
+   * the `get_adcp_capabilities` discovery probe. Threaded into shape-drift
+   * hints so the runner can suffix recommendations with a version-staleness
+   * note when a recommended helper postdates the agent's pinned SDK. Issue
+   * #850. Undefined when the agent did not advertise `library_version`.
+   */
+  agentLibraryVersion?: string;
 }
 
 async function executeStep(
@@ -1737,13 +1753,23 @@ async function executeStep(
     }
   }
 
-  // Explicit context_outputs (always applied when data exists)
-  if (hasData && taskResult && step.context_outputs?.length) {
+  // Explicit context_outputs. `generate:` entries fire unconditionally —
+  // including on failed steps — because the generated ID was already
+  // determined (and may already be inline-substituted via $generate:…#<key>)
+  // before the request went out. Propagating it even on failure lets the
+  // next step use the same ID for a forced-completion or tasks/get follow-up.
+  // `path:` entries are gated on a non-null response and skip silently when
+  // data is absent. Both paths write into updatedContext and receive
+  // updatedContext for alias-cache coherence — forwardAliasCache above
+  // ensures the minted value from any same-step $generate:…#<key> inline
+  // substitution is visible here.
+  if (step.context_outputs?.length) {
     const explicit = applyContextOutputsWithProvenance(
-      taskResult.data,
+      hasData && taskResult ? taskResult.data : undefined,
       step.context_outputs,
       step.id,
-      effectiveStep.task
+      effectiveStep.task,
+      updatedContext
     );
     Object.assign(updatedContext, explicit.values);
     if (runState.contextProvenance) {
@@ -1800,7 +1826,10 @@ async function executeStep(
     }
     return raw;
   })();
-  const shapeDriftHints = driftPayload === undefined ? [] : detectShapeDriftHints(effectiveStep.task, driftPayload);
+  const shapeDriftHints =
+    driftPayload === undefined
+      ? []
+      : detectShapeDriftHints(effectiveStep.task, driftPayload, runState.agentLibraryVersion);
   const strictHints = detectStrictValidationHints(effectiveStep.task, validations);
   // Same root cause MAY produce both a `shape_drift` hint and a
   // `format_mismatch` (keyword: 'type') hint — e.g. `list_creatives`

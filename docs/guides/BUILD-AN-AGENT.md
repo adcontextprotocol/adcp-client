@@ -2,22 +2,22 @@
 
 ## Overview
 
-This guide walks through building an AdCP agent (server) using `@adcp/client`. While most documentation covers the client side — calling existing agents — this guide covers the server side: implementing an agent that other clients can discover and call.
+This guide walks through building an AdCP agent (server) using `@adcp/sdk`. While most documentation covers the client side — calling existing agents — this guide covers the server side: implementing an agent that other clients can discover and call.
 
 We'll build a **signals agent** that serves audience segments via the `get_signals` tool. The same patterns apply to any AdCP tool (`get_products`, `create_media_buy`, etc.) — for mutating tools, see the `create_media_buy` example in the Calling Tools section below.
 
 ## Prerequisites
 
 - Node.js 18+
-- `@adcp/client` installed (`npm install @adcp/client`)
-- `@modelcontextprotocol/sdk` (installed as a dependency of `@adcp/client`)
+- `@adcp/sdk` installed (`npm install @adcp/sdk`)
+- `@modelcontextprotocol/sdk` (installed as a dependency of `@adcp/sdk`)
 
 ## Quick Start
 
 A minimal signals agent using `createAdcpServer`:
 
 ```typescript
-import { createAdcpServer, serve } from '@adcp/client';
+import { createAdcpServer, serve } from '@adcp/sdk';
 
 serve(() => createAdcpServer({
   name: 'My Signals Agent',
@@ -51,8 +51,8 @@ Start it and test immediately:
 
 ```bash
 npx tsx agent.ts
-npx @adcp/client@latest http://localhost:3001/mcp                    # discover tools
-npx @adcp/client@latest http://localhost:3001/mcp get_signals '{}'   # call get_signals
+npx @adcp/sdk@latest http://localhost:3001/mcp                    # discover tools
+npx @adcp/sdk@latest http://localhost:3001/mcp get_signals '{}'   # call get_signals
 ```
 
 ## Key Concepts
@@ -62,7 +62,7 @@ npx @adcp/client@latest http://localhost:3001/mcp get_signals '{}'   # call get_
 The declarative way to build AdCP agents. You provide domain-grouped handler functions, and the framework handles schema validation, response formatting, account resolution, capabilities generation, and error catching.
 
 ```typescript
-import { createAdcpServer, serve } from '@adcp/client';
+import { createAdcpServer, serve } from '@adcp/sdk';
 
 serve(() => createAdcpServer({
   name: 'My Publisher',
@@ -104,7 +104,7 @@ MCP is the default transport (`serve({ server: adcp })`). To additionally expose
 
 ```typescript
 import express from 'express';
-import { createAdcpServer, serve, createA2AAdapter } from '@adcp/client';
+import { createAdcpServer, serve, createA2AAdapter } from '@adcp/sdk';
 
 const adcp = createAdcpServer({
   mediaBuy: { getProducts: async () => ({ products: [] }) },
@@ -165,7 +165,7 @@ Both transports share the same `AdcpServer` — handlers, idempotency store, sta
 The framework emits responses with typed data in `structuredContent` (MCP L3) and a human-readable summary in `content[0].text` (L2). When calling an AdCP agent from client code, prefer `structuredContent`; only fall back to parsing the text block for pre-`structuredContent` servers. The SDK ships two helpers with different failure modes:
 
 ```typescript
-import { extractResult, unwrapProtocolResponse } from '@adcp/client';
+import { extractResult, unwrapProtocolResponse } from '@adcp/sdk';
 
 const res = await mcpClient.callTool({ name: 'get_products', arguments: { brief: '...' } });
 
@@ -250,7 +250,7 @@ If `resolveAccount` returns `null`, the framework responds with `ACCOUNT_NOT_FOU
 
 ### Idempotency (mutating tools)
 
-AdCP v3 requires `idempotency_key` on every mutating request and requires sellers to declare a replay window. `@adcp/client/server` ships `createIdempotencyStore` which handles validation, JCS canonicalization, replay, and capability declaration:
+AdCP v3 requires `idempotency_key` on every mutating request and requires sellers to declare a replay window. `@adcp/sdk/server` ships `createIdempotencyStore` which handles validation, JCS canonicalization, replay, and capability declaration:
 
 ```typescript
 import {
@@ -259,10 +259,11 @@ import {
   memoryBackend,
   pgBackend,
   serve,
-} from '@adcp/client/server';
+} from '@adcp/sdk/server';
 
+// Development — in-process store, resets on restart:
 const idempotency = createIdempotencyStore({
-  backend: memoryBackend(),       // or pgBackend(pool) — run getIdempotencyMigration() once
+  backend: memoryBackend(),
   ttlSeconds: 86400,              // 1h–7d, clamped to spec bounds
 });
 
@@ -278,6 +279,24 @@ serve(() => createAdcpServer({
     }),
   },
 }));
+```
+
+**Production (pgBackend).** `pg.Pool` is lazy — a bad `DATABASE_URL` lets the server boot, advertise `IdempotencySupported`, then silently fail every mutating call. Wire `readinessCheck` so the server never accepts traffic with a broken pool:
+
+```typescript
+import { createIdempotencyStore, pgBackend, getIdempotencyMigration, serve } from '@adcp/sdk/server';
+import { Pool } from 'pg';
+
+// Run getIdempotencyMigration() once before first boot to create the table —
+// readinessCheck below queries it to catch missing migrations, not just connectivity.
+
+const pool = new Pool({ connectionString: process.env.DATABASE_URL });
+pool.on('error', (err) => console.error('pg pool error', err)); // prevent crash on idle-client errors
+const idempotency = createIdempotencyStore({ backend: pgBackend(pool), ttlSeconds: 86400 });
+
+serve(createAdcpServer, {
+  readinessCheck: () => idempotency.probe(), // throws with a descriptive error if pool/table is broken
+});
 ```
 
 The framework auto-handles:
@@ -309,7 +328,7 @@ createAdcpServer({
 
 Modes per side: `'strict' | 'warn' | 'off'`. Default is `'off'` — enable explicitly. `VALIDATION_ERROR` envelopes carry the full issue list (pointer, message, keyword, schema path) at the top level `adcp_error.issues` (and mirrored at `details.issues` for spec-convention compatibility) so buyers can surface each offending field without drilling into nested metadata.
 
-**Note on MCP `tools/list` introspection**: `@adcp/client` agents register framework tools with a passthrough input schema so the framework AJV validator is authoritative on both MCP and A2A (see [#909](https://github.com/adcontextprotocol/adcp-client/issues/909)). One visible consequence: MCP `tools/list` publishes `{ type: 'object', properties: {}, additionalProperties: {} }` for every framework tool — not the per-tool parameter schema. Generic MCP discovery clients that lean on `tools/list` inputSchema for field-level introspection will see an untyped surface. AdCP-native discovery via `get_adcp_capabilities` is unaffected; upstream [adcp#3057](https://github.com/adcontextprotocol/adcp/issues/3057) proposes a `get_schema` capability tool for per-tool shape discovery across transports.
+**Note on MCP `tools/list` introspection**: `@adcp/sdk` agents register framework tools with a passthrough input schema so the framework AJV validator is authoritative on both MCP and A2A (see [#909](https://github.com/adcontextprotocol/adcp-client/issues/909)). One visible consequence: MCP `tools/list` publishes `{ type: 'object', properties: {}, additionalProperties: {} }` for every framework tool — not the per-tool parameter schema. Generic MCP discovery clients that lean on `tools/list` inputSchema for field-level introspection will see an untyped surface. AdCP-native discovery via `get_adcp_capabilities` is unaffected; upstream [adcp#3057](https://github.com/adcontextprotocol/adcp/issues/3057) proposes a `get_schema` capability tool for per-tool shape discovery across transports.
 
 The same validator runs on the `AdcpClient` side — storyboards and third-party clients configure it via `validation: { requests, responses }` on the client config. Request default is `warn` (so existing callers that send partial payloads still work); response default is `strict` in dev/test, `warn` in production. Set either side to `'off'` for zero overhead.
 
@@ -318,14 +337,14 @@ The same validator runs on the `AdcpClient` side — storyboards and third-party
 If your agent receives signed requests from buyers, verify them using `requireAuthenticatedOrSigned()` — one call that bundles signature verification with credential fallback and `requiredFor` enforcement:
 
 ```typescript
-import { createAdcpServer, serve } from '@adcp/client';
+import { createAdcpServer, serve } from '@adcp/sdk';
 import {
   verifySignatureAsAuthenticator,
   verifyApiKey,
   requireAuthenticatedOrSigned,
   mcpToolNameResolver,
-} from '@adcp/client/server';
-import { BrandJsonJwksResolver } from '@adcp/client/signing/server';
+} from '@adcp/sdk/server';
+import { BrandJsonJwksResolver } from '@adcp/sdk/signing/server';
 
 serve(() => createAdcpServer({
   name: 'My Seller',
@@ -371,14 +390,16 @@ createAdcpServer({
 });
 ```
 
-See [SIGNING-GUIDE.md](./SIGNING-GUIDE.md) for the full walkthrough: key generation, JWKS publication, brand.json, and conformance testing.
+**Production key storage.** For outbound *request* signing (calling other agents' tools), prefer a KMS-backed `SigningProvider` over in-process JWKs — `request_signing` accepts `{ kind: 'provider', provider, agent_url }` for any KMS / HSM / Vault backend. See [SIGNING-GUIDE.md § Production Key Storage](./SIGNING-GUIDE.md#step-35-production-key-storage--kms--hsm--vault) for the full walkthrough including a reference GCP KMS adapter. Server-side `webhooks.signerKey` currently accepts only an in-process `SignerKey`; KMS-backed webhook signing on the server is a follow-up.
+
+See [SIGNING-GUIDE.md](./SIGNING-GUIDE.md) for the full walkthrough: key generation, JWKS publication, brand.json, conformance testing, and KMS-backed production deployment.
 
 ### createTaskCapableServer (Low-Level)
 
 For advanced cases where you need direct control over MCP tool registration, schema wiring, and response formatting. `createAdcpServer` uses this internally.
 
 ```typescript
-import { createTaskCapableServer, taskToolResponse, GetSignalsRequestSchema } from '@adcp/client';
+import { createTaskCapableServer, taskToolResponse, GetSignalsRequestSchema } from '@adcp/sdk';
 
 function createAgent({ taskStore }) {
   const server = createTaskCapableServer('Agent Name', '1.0.0', { taskStore });
@@ -402,7 +423,7 @@ When using `createTaskCapableServer` directly, you are responsible for:
 Attach `replayed`, `context`, and `operation_id` onto your inner response without reimplementing the per-error-code allowlist (IDEMPOTENCY_CONFLICT drops `replayed`, keeps `context`):
 
 ```typescript
-import { wrapEnvelope } from '@adcp/client/server';
+import { wrapEnvelope } from '@adcp/sdk/server';
 
 const inner = await createMediaBuy(request.params);
 return wrapEnvelope(inner, { replayed: false, context: request.context });
@@ -422,7 +443,7 @@ return wrapEnvelope(
 With `createAdcpServer`, response builders are applied automatically — return raw data and the framework wraps it. If you need manual control (e.g., with `createTaskCapableServer`), builders are available:
 
 ```typescript
-import { productsResponse, mediaBuyResponse, deliveryResponse, adcpError, taskToolResponse } from '@adcp/client';
+import { productsResponse, mediaBuyResponse, deliveryResponse, adcpError, taskToolResponse } from '@adcp/sdk';
 ```
 
 ### Task Statuses (Server-Side Contract)
@@ -442,7 +463,7 @@ With `createAdcpServer`, synchronous handlers return raw data and the framework 
 For async tools that need background processing, use `registerAdcpTaskTool()`:
 
 ```typescript
-import { registerAdcpTaskTool, InMemoryTaskStore } from '@adcp/client';
+import { registerAdcpTaskTool, InMemoryTaskStore } from '@adcp/sdk';
 
 const taskStore = new InMemoryTaskStore();
 
@@ -464,7 +485,7 @@ registerAdcpTaskTool(server, taskStore, {
 **Error responses**: Use `adcpError()` with standard error codes. The buyer agent uses the `recovery` classification to decide retry behavior:
 
 ```typescript
-import { adcpError } from '@adcp/client';
+import { adcpError } from '@adcp/sdk';
 
 // correctable — buyer should fix params and retry
 return adcpError('BUDGET_TOO_LOW', 'Minimum budget is $1,000');
@@ -496,7 +517,7 @@ Key storyboards for server-side builders:
 The `serve()` helper handles HTTP transport setup. Pass it a factory function that returns a configured `McpServer`:
 
 ```typescript
-import { createAdcpServer, serve } from '@adcp/client';
+import { createAdcpServer, serve } from '@adcp/sdk';
 
 serve(() => createAdcpServer({ name: 'My Agent', version: '1.0.0', /* handlers */ }));
 serve(() => createAdcpServer({ /* ... */ }), { port: 8080 });          // custom port
@@ -541,7 +562,7 @@ const httpServer = createServer(async (req, res) => {
 ### Tool Discovery
 
 ```bash
-npx @adcp/client@latest http://localhost:3001/mcp
+npx @adcp/sdk@latest http://localhost:3001/mcp
 ```
 
 This lists all tools your agent exposes, their descriptions, and parameters. If `get_signals` appears with the correct schema, your agent is wired up correctly.
@@ -550,16 +571,16 @@ This lists all tools your agent exposes, their descriptions, and parameters. If 
 
 ```bash
 # All segments
-npx @adcp/client@latest http://localhost:3001/mcp get_signals '{"signal_spec":"audience segments"}'
+npx @adcp/sdk@latest http://localhost:3001/mcp get_signals '{"signal_spec":"audience segments"}'
 
 # Filtered by text
-npx @adcp/client@latest http://localhost:3001/mcp get_signals '{"signal_spec":"shoppers"}'
+npx @adcp/sdk@latest http://localhost:3001/mcp get_signals '{"signal_spec":"shoppers"}'
 
 # Filtered by catalog type
-npx @adcp/client@latest http://localhost:3001/mcp get_signals '{"filters":{"catalog_types":["marketplace"]}}'
+npx @adcp/sdk@latest http://localhost:3001/mcp get_signals '{"filters":{"catalog_types":["marketplace"]}}'
 
 # JSON output for scripting
-npx @adcp/client@latest http://localhost:3001/mcp get_signals '{}' --json
+npx @adcp/sdk@latest http://localhost:3001/mcp get_signals '{}' --json
 ```
 
 ```bash
@@ -567,7 +588,7 @@ npx @adcp/client@latest http://localhost:3001/mcp get_signals '{}' --json
 # Schema traps: idempotency_key must be 16-255 chars (UUID v4 recommended);
 # package-level budget is a plain number (not {amount,currency}); brand uses {domain} (not {brand_id});
 # packages require product_id, budget, and pricing_option_id
-npx @adcp/client@latest http://localhost:3001/mcp create_media_buy '{
+npx @adcp/sdk@latest http://localhost:3001/mcp create_media_buy '{
   "idempotency_key": "550e8400-e29b-41d4-a716-446655440000",
   "account": { "account_id": "acct_123" },
   "brand": { "domain": "acme.example" },
@@ -582,7 +603,7 @@ npx @adcp/client@latest http://localhost:3001/mcp create_media_buy '{
 ### Compliance Check
 
 ```bash
-npx @adcp/client@latest storyboard run http://localhost:3001/mcp
+npx @adcp/sdk@latest storyboard run http://localhost:3001/mcp
 ```
 
 This runs a standard validation suite against your agent to check AdCP compliance. For the full validation picture — storyboard runner, property-based fuzzing (`adcp fuzz`), multi-instance testing, webhook conformance, request-signing, schema-driven validation, and the skill→agent→grader dogfood harness — see [**VALIDATE-YOUR-AGENT.md**](./VALIDATE-YOUR-AGENT.md).

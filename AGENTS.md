@@ -16,11 +16,11 @@ This document contains essential guidelines for AI coding assistants (Claude, Co
 
 **Building a server-side agent?** — Read `docs/guides/BUILD-AN-AGENT.md` and the published compliance storyboards at `https://adcontextprotocol.org/compliance/{version}/` (mirrored locally in `compliance/cache/{version}/` after `npm run sync-schemas`).
 
-**Testing an agent for conformance?** — Read `docs/guides/CONFORMANCE.md` and call `runConformance(agentUrl, opts)` from `@adcp/client/conformance`. Property-based fuzzing against the bundled JSON schemas; stateless tier covers 11 discovery tools across every protocol.
+**Testing an agent for conformance?** — Read `docs/guides/CONFORMANCE.md` and call `runConformance(agentUrl, opts)` from `@adcp/sdk/conformance`. Property-based fuzzing against the bundled JSON schemas; stateless tier covers 11 discovery tools across every protocol.
 
 ## Project Overview
 
-**@adcp/client** is the official TypeScript client library for the Ad Context Protocol (AdCP), documented at [docs.adcontextprotocol.org](https://docs.adcontextprotocol.org/docs/).
+**@adcp/sdk** is the official TypeScript client library for the Ad Context Protocol (AdCP), documented at [docs.adcontextprotocol.org](https://docs.adcontextprotocol.org/docs/).
 
 **Components:**
 

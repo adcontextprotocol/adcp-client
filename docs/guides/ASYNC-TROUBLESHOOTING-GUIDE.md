@@ -48,7 +48,7 @@ import {
   TaskTimeoutError,
   MaxClarificationError,
   DeferredTaskError
-} from '@adcp/client';
+} from '@adcp/sdk';
 
 try {
   const result = await agent.getProducts(params, handler);

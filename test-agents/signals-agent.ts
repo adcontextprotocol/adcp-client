@@ -3,8 +3,8 @@
  * Marketplace signals agent with 4 audience segments, CPM pricing, DSP activation
  */
 
-import { createAdcpServer, serve, adcpError } from '@adcp/client';
-import type { GetSignalsResponse } from '@adcp/client';
+import { createAdcpServer, serve, adcpError } from '@adcp/sdk';
+import type { GetSignalsResponse } from '@adcp/sdk';
 
 type Signal = GetSignalsResponse['signals'][number];
 

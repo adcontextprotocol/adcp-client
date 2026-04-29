@@ -42,3 +42,10 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           NPM_CONFIG_PROVENANCE: true
+
+      # `npm deprecate '@adcp/client@…'` is run manually post-release for now.
+      # OIDC trusted-publishing tokens are scoped to the publishing package, so
+      # the token issued for @adcp/sdk's publish does not have deprecate rights
+      # on @adcp/client. Once we provision a maintainer NPM_TOKEN secret with
+      # deprecate scope on @adcp/client, this step can land back here. See the
+      # PR description for the manual-deprecate snippet to run after release.

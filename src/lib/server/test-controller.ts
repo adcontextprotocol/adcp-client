@@ -2,7 +2,7 @@
  * Server-side comply_test_controller implementation.
  *
  * Most new code should use {@link createComplyController} from
- * `@adcp/client/testing` — it wraps this module with a domain-grouped
+ * `@adcp/sdk/testing` — it wraps this module with a domain-grouped
  * (`seed` / `force` / `simulate`) adapter surface, typed params, sandbox
  * gating, and built-in seed idempotency. The functions below remain
  * supported for existing integrations and for custom wrappers that need
@@ -16,7 +16,7 @@
  * @example Basic usage — single in-memory store
  * ```typescript
  * import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
- * import { registerTestController, TestControllerError } from '@adcp/client';
+ * import { registerTestController, TestControllerError } from '@adcp/sdk';
  *
  * const accounts = new Map<string, string>();
  *
@@ -40,7 +40,7 @@
  * session.
  *
  * ```typescript
- * import { registerTestController, CONTROLLER_SCENARIOS, enforceMapCap } from '@adcp/client';
+ * import { registerTestController, CONTROLLER_SCENARIOS, enforceMapCap } from '@adcp/sdk';
  *
  * registerTestController(server, {
  *   scenarios: [CONTROLLER_SCENARIOS.FORCE_ACCOUNT_STATUS, CONTROLLER_SCENARIOS.FORCE_MEDIA_BUY_STATUS],
@@ -72,7 +72,7 @@
  *   handleTestControllerRequest,
  *   toMcpResponse,
  *   TOOL_INPUT_SHAPE,
- * } from '@adcp/client';
+ * } from '@adcp/sdk';
  *
  * const sessionContext = new AsyncLocalStorage<{ sessionId: string }>();
  * const store = { async forceAccountStatus() { ... } };
@@ -102,6 +102,7 @@ import type {
   ListScenariosSuccess,
   StateTransitionSuccess,
   SimulationSuccess,
+  ForcedDirectiveSuccess,
   ControllerError,
   ComplyTestControllerResponse,
 } from '../types/tools.generated';
@@ -123,7 +124,13 @@ export type ControllerScenario = Exclude<ListScenariosSuccess['scenarios'][numbe
 
 /** Scenario names accepted in `scenario` requests but not advertised via
  * `list_scenarios`. Sellers opt in by implementing the matching store method. */
-export type SeedScenario = 'seed_product' | 'seed_pricing_option' | 'seed_creative' | 'seed_plan' | 'seed_media_buy';
+export type SeedScenario =
+  | 'seed_product'
+  | 'seed_pricing_option'
+  | 'seed_creative'
+  | 'seed_plan'
+  | 'seed_media_buy'
+  | 'seed_creative_format';
 
 /**
  * Scenario name constants for force_* and simulate_* (the advertised set).
@@ -139,6 +146,8 @@ export const CONTROLLER_SCENARIOS = {
   FORCE_ACCOUNT_STATUS: 'force_account_status',
   FORCE_MEDIA_BUY_STATUS: 'force_media_buy_status',
   FORCE_SESSION_STATUS: 'force_session_status',
+  FORCE_CREATE_MEDIA_BUY_ARM: 'force_create_media_buy_arm',
+  FORCE_TASK_COMPLETION: 'force_task_completion',
   SIMULATE_DELIVERY: 'simulate_delivery',
   SIMULATE_BUDGET_SPEND: 'simulate_budget_spend',
 } as const satisfies Record<string, ControllerScenario>;
@@ -154,7 +163,23 @@ export const SEED_SCENARIOS = {
   SEED_CREATIVE: 'seed_creative',
   SEED_PLAN: 'seed_plan',
   SEED_MEDIA_BUY: 'seed_media_buy',
+  SEED_CREATIVE_FORMAT: 'seed_creative_format',
 } as const satisfies Record<string, SeedScenario>;
+
+/**
+ * Stable `SeedSuccess.message` strings the SDK's `dispatchSeed` emits.
+ * Adopters who want to detect first-seed vs idempotent-replay can match
+ * on these constants instead of grepping for the literal prose.
+ *
+ * Third-party sellers MAY emit any string the spec allows (the spec only
+ * requires `success: true`); these constants are SDK-specific contracts
+ * and not portable across implementations. For cross-implementation
+ * replay detection, do not rely on `message`.
+ */
+export const SEED_MESSAGES = {
+  fresh: 'Fixture seeded',
+  replay: 'Fixture re-seeded (equivalent)',
+} as const;
 
 /**
  * Build-time check: every scenario in the generated union must appear in
@@ -208,6 +233,26 @@ export interface TestControllerStore {
     terminationReason?: string
   ): Promise<StateTransitionSuccess>;
 
+  /**
+   * Register a directive shaping the next `create_media_buy` call from this
+   * authenticated sandbox account into the requested arm. The directive is
+   * consumed on the next call. `arm: 'submitted'` requires `task_id` so the
+   * seller's task envelope is deterministic (the buyer can drive
+   * `tasks/get` with the registered id).
+   */
+  forceCreateMediaBuyArm?(params: {
+    arm: 'submitted' | 'input-required';
+    task_id?: string;
+    message?: string;
+  }): Promise<ForcedDirectiveSuccess>;
+
+  /**
+   * Transition an in-flight task to `completed` and record the supplied
+   * completion payload. The seller MUST deliver `result` verbatim to the
+   * buyer's `push_notification_config.url` per the AdCP 3.0 completion path.
+   */
+  forceTaskCompletion?(taskId: string, result: Record<string, unknown>): Promise<StateTransitionSuccess>;
+
   /** Inject synthetic delivery data for a media buy. */
   simulateDelivery?(
     mediaBuyId: string,
@@ -244,6 +289,13 @@ export interface TestControllerStore {
 
   /** Seed a media-buy fixture. */
   seedMediaBuy?(mediaBuyId: string, fixture: Record<string, unknown> | undefined): Promise<void>;
+
+  /**
+   * Seed a creative-format fixture. The seller MUST expose this format ID
+   * in `list_creative_formats` responses for the duration of the compliance
+   * session.
+   */
+  seedCreativeFormat?(formatId: string, fixture: Record<string, unknown> | undefined): Promise<void>;
 }
 
 /**
@@ -373,6 +425,8 @@ const SCENARIO_MAP: Array<[keyof TestControllerStore, ControllerScenario]> = [
   ['forceAccountStatus', CONTROLLER_SCENARIOS.FORCE_ACCOUNT_STATUS],
   ['forceMediaBuyStatus', CONTROLLER_SCENARIOS.FORCE_MEDIA_BUY_STATUS],
   ['forceSessionStatus', CONTROLLER_SCENARIOS.FORCE_SESSION_STATUS],
+  ['forceCreateMediaBuyArm', CONTROLLER_SCENARIOS.FORCE_CREATE_MEDIA_BUY_ARM],
+  ['forceTaskCompletion', CONTROLLER_SCENARIOS.FORCE_TASK_COMPLETION],
   ['simulateDelivery', CONTROLLER_SCENARIOS.SIMULATE_DELIVERY],
   ['simulateBudgetSpend', CONTROLLER_SCENARIOS.SIMULATE_BUDGET_SPEND],
 ];
@@ -401,8 +455,8 @@ function controllerError(
 /**
  * Per-controller cache for seed-fixture equivalence checks. The handler uses
  * it to enforce the spec-level rule that re-seeding with the same ID and an
- * equivalent fixture yields `previous_state: "existing"`, while a divergent
- * fixture returns `INVALID_PARAMS`.
+ * equivalent fixture yields `SeedSuccess` with `message: "Fixture re-seeded
+ * (equivalent)"`, while a divergent fixture returns `INVALID_PARAMS`.
  *
  * Passed explicitly to {@link handleTestControllerRequest} so custom wrappers
  * can scope the cache to a session, tenant, or test run. Keys are
@@ -564,6 +618,19 @@ async function dispatchSeed(
       };
       break;
     }
+    case SEED_SCENARIOS.SEED_CREATIVE_FORMAT: {
+      if (!params?.format_id) {
+        missingParam = 'seed_creative_format requires params.format_id';
+        break;
+      }
+      if (!store.seedCreativeFormat) return controllerError('UNKNOWN_SCENARIO', `Scenario not supported: ${scenario}`);
+      const formatId = params.format_id as string;
+      dispatch = {
+        key: `seed_creative_format:${formatId}`,
+        invoke: () => store.seedCreativeFormat!(formatId, fixture),
+      };
+      break;
+    }
   }
 
   if (missingParam) return controllerError('INVALID_PARAMS', missingParam);
@@ -582,12 +649,16 @@ async function dispatchSeed(
       );
     }
     await dispatch.invoke();
-    return { success: true, previous_state: 'existing', current_state: 'existing' };
+    // SeedSuccess (3.0.1+): message-only arm. The schema's `oneOf` excludes
+    // `previous_state`/`current_state` from this branch — seeds are
+    // pre-population, not entity transitions. {@link SEED_MESSAGES} carries
+    // the SDK-specific replay-detection token.
+    return { success: true, message: SEED_MESSAGES.replay };
   }
 
   await dispatch.invoke();
   cache?.set(dispatch.key, fixture);
-  return { success: true, previous_state: 'none', current_state: 'seeded' };
+  return { success: true, message: SEED_MESSAGES.fresh };
 }
 
 /**
@@ -744,11 +815,65 @@ export async function handleTestControllerRequest(
         });
       }
 
+      case CONTROLLER_SCENARIOS.FORCE_CREATE_MEDIA_BUY_ARM: {
+        if (!store.forceCreateMediaBuyArm) {
+          return controllerError('UNKNOWN_SCENARIO', `Scenario not supported: ${scenario}`);
+        }
+        const arm = params?.arm;
+        if (arm !== 'submitted' && arm !== 'input-required') {
+          return controllerError(
+            'INVALID_PARAMS',
+            "force_create_media_buy_arm requires params.arm = 'submitted' or 'input-required'"
+          );
+        }
+        if (arm === 'submitted' && !params?.task_id) {
+          return controllerError(
+            'INVALID_PARAMS',
+            "force_create_media_buy_arm with arm='submitted' requires params.task_id"
+          );
+        }
+        // Spec: task_id is "Present only when arm is 'submitted'" — reject
+        // it on the input-required arm so sellers can rely on the field's
+        // presence as a discriminator.
+        if (arm === 'input-required' && params?.task_id !== undefined) {
+          return controllerError(
+            'INVALID_PARAMS',
+            "force_create_media_buy_arm with arm='input-required' must not include params.task_id"
+          );
+        }
+        return await store.forceCreateMediaBuyArm({
+          arm,
+          task_id: params?.task_id as string | undefined,
+          message: params?.message as string | undefined,
+        });
+      }
+
+      case CONTROLLER_SCENARIOS.FORCE_TASK_COMPLETION: {
+        if (!store.forceTaskCompletion) {
+          return controllerError('UNKNOWN_SCENARIO', `Scenario not supported: ${scenario}`);
+        }
+        if (!params?.task_id) {
+          return controllerError('INVALID_PARAMS', 'force_task_completion requires params.task_id');
+        }
+        // Reject arrays explicitly — `typeof [] === 'object'` would let an
+        // array slip past the object check, but `result` is a structured
+        // completion payload (validates against async-response-data.json),
+        // never an array.
+        if (!params?.result || typeof params.result !== 'object' || Array.isArray(params.result)) {
+          return controllerError(
+            'INVALID_PARAMS',
+            'force_task_completion requires params.result (completion payload object)'
+          );
+        }
+        return await store.forceTaskCompletion(params.task_id as string, params.result as Record<string, unknown>);
+      }
+
       case SEED_SCENARIOS.SEED_PRODUCT:
       case SEED_SCENARIOS.SEED_PRICING_OPTION:
       case SEED_SCENARIOS.SEED_CREATIVE:
       case SEED_SCENARIOS.SEED_PLAN:
       case SEED_SCENARIOS.SEED_MEDIA_BUY:
+      case SEED_SCENARIOS.SEED_CREATIVE_FORMAT:
         return await dispatchSeed(store, scenario as SeedScenario, params, options?.seedCache);
 
       default:
@@ -770,12 +895,15 @@ function summarize(data: ComplyTestControllerResponse): string {
   if (data.success === false) return `Controller error: ${data.error}`;
   if ('scenarios' in data) return `Supported scenarios: ${data.scenarios.join(', ')}`;
   if ('previous_state' in data) {
-    if (data.previous_state === 'none' && data.current_state === 'seeded') return 'Fixture seeded';
-    if (data.previous_state === 'existing' && data.current_state === 'existing')
-      return 'Fixture re-seeded (equivalent)';
     return `Transitioned from ${data.previous_state} to ${data.current_state}`;
   }
-  return `Simulation complete: ${JSON.stringify(data.simulated)}`;
+  if ('simulated' in data) return `Simulation complete: ${JSON.stringify(data.simulated)}`;
+  if ('forced' in data) return `Directive registered: arm=${data.forced.arm}`;
+  // SeedSuccess (3.0.1+): message-only arm. dispatchSeed sets the message
+  // to 'Fixture seeded' / 'Fixture re-seeded (equivalent)'; third-party
+  // sellers may emit other strings (or none — the spec only requires
+  // success).
+  return data.message ?? 'Scenario succeeded';
 }
 
 /**

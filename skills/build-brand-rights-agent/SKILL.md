@@ -34,7 +34,7 @@ Storyboard: `brand_rights`. The specialism tests identity discovery → rights s
 Full treatment in `skills/build-seller-agent/SKILL.md` §Protocol-Wide Requirements and §Composing. Minimum viable pointers:
 
 - **`idempotency_key`** on every mutating request (`acquire_rights` — and `update_rights` / `creative_approval` once their schemas land). Wire `createIdempotencyStore` into `createAdcpServer({ idempotency })`.
-- **Authentication** via `serve({ authenticate })` with `verifyApiKey`/`verifyBearer` from `@adcp/client/server`. Unauthenticated agents fail the universal `security_baseline` storyboard.
+- **Authentication** via `serve({ authenticate })` with `verifyApiKey`/`verifyBearer` from `@adcp/sdk/server`. Unauthenticated agents fail the universal `security_baseline` storyboard.
 - **Signature-header transparency**: accept `Signature-Input`/`Signature` headers even if you don't claim `signed-requests`.
 
 ## Before Writing Code
@@ -219,13 +219,13 @@ Every AdCP request may include a `context` field. The framework echoes it back o
 | `serve(() => createAdcpServer(...))`         | Start HTTP server on `:3001/mcp`                             |
 | `adcpError(code, { message })`               | Structured error (BRAND_NOT_FOUND, RIGHTS_UNAVAILABLE, etc.) |
 
-Import: `import { createAdcpServer, serve, adcpError } from '@adcp/client';`
+Import: `import { createAdcpServer, serve, adcpError } from '@adcp/sdk';`
 
 ## Setup
 
 ```bash
 npm init -y
-npm install @adcp/client
+npm install @adcp/sdk
 npm install -D typescript @types/node
 ```
 
@@ -255,8 +255,8 @@ Single `.ts` file, one `createAdcpServer` call with a `brandRights` domain group
 Creative-approval webhooks are implemented as a regular outbound HTTP call — outside the MCP server, after you accept `acquire_rights`.
 
 ```typescript
-import { createAdcpServer, serve, adcpError } from '@adcp/client';
-import { createIdempotencyStore, memoryBackend } from '@adcp/client/server';
+import { createAdcpServer, serve, adcpError } from '@adcp/sdk';
+import { createIdempotencyStore, memoryBackend } from '@adcp/sdk/server';
 
 // Idempotency — required for v3. `acquire_rights` is mutating (issues
 // credentials + may trigger billing); `get_brand_identity` and
@@ -388,7 +388,7 @@ serve(() =>
         const accountKey = `${params.account.brand.domain}:${params.account.operator}`;
         const registration = await ctx.store.get('governance', accountKey);
         if (registration?.governance_agents?.length) {
-          const { checkGovernance } = await import('@adcp/client'); // buyer-side helper
+          const { checkGovernance } = await import('@adcp/sdk'); // buyer-side helper
           const plan = await checkGovernance({
             agentUrl: registration.governance_agents[0].url,
             plan_id: params.plan_id ?? registration.plan_id,
@@ -457,8 +457,8 @@ For brand-rights only `acquire_rights` is mutating (`get_brand_identity` and `ge
 Authentication is mandatory (otherwise `security_baseline` fails). Minimum viable:
 
 ```typescript
-import { serve } from '@adcp/client';
-import { verifyApiKey } from '@adcp/client/server';
+import { serve } from '@adcp/sdk';
+import { verifyApiKey } from '@adcp/sdk/server';
 
 serve(createAgent, {
   authenticate: verifyApiKey({
@@ -478,18 +478,18 @@ For OAuth, `anyOf(verifyApiKey, verifyBearer)` composition, or `publicUrl` + `pr
 npx tsx agent.ts &
 
 # Happy path — brand_rights bundle (includes governance_denied sub-scenario)
-npx @adcp/client@latest storyboard run http://localhost:3001/mcp brand_rights --auth $TOKEN
+npx @adcp/sdk@latest storyboard run http://localhost:3001/mcp brand_rights --auth $TOKEN
 
 # Cross-cutting obligations
-npx @adcp/client@latest storyboard run http://localhost:3001/mcp \
+npx @adcp/sdk@latest storyboard run http://localhost:3001/mcp \
   --storyboards security_baseline,idempotency,schema_validation --auth $TOKEN
 
 # Revocation webhook conformance (if you emit revocations)
-npx @adcp/client@latest storyboard run http://localhost:3001/mcp webhook_emission \
+npx @adcp/sdk@latest storyboard run http://localhost:3001/mcp webhook_emission \
   --webhook-receiver --auth $TOKEN
 
 # Rejection-surface fuzz
-npx @adcp/client@latest fuzz http://localhost:3001/mcp --auth-token $TOKEN
+npx @adcp/sdk@latest fuzz http://localhost:3001/mcp --auth-token $TOKEN
 ```
 
 Common failure decoder:

@@ -142,11 +142,6 @@ function stopMcpAgent(child) {
   });
 }
 
-// Vectors 007/018 depend on the verifier advertising a specific
-// covers_content_digest policy; the MCP agent advertises 'either', so skip
-// them the same way the raw-HTTP e2e test does.
-const CAPABILITY_PROFILE_VECTORS = ['007-missing-content-digest', '018-digest-covered-when-forbidden'];
-
 describe('request-signing grader — MCP transport vs. reference MCP agent', () => {
   // Ephemeral ports (PORT=0) eliminate the parallel-worker collision and
   // zombie-port races that used to flake the rate-abuse subtest (#884).
@@ -169,7 +164,7 @@ describe('request-signing grader — MCP transport vs. reference MCP agent', () 
       allowPrivateIp: true,
       transport: 'mcp',
       skipRateAbuse: true,
-      skipVectors: CAPABILITY_PROFILE_VECTORS,
+      agentContentDigestPolicy: 'either',
     });
 
     // Collect failures so a regression prints all at once.

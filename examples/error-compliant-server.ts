@@ -1,14 +1,14 @@
 /**
  * Example: AdCP-Compliant MCP Server
  *
- * Demonstrates building a server using @adcp/client response builders
+ * Demonstrates building a server using @adcp/sdk response builders
  * for type-safe responses. Run with:
  *
  *   npx tsx examples/error-compliant-server.ts
  *
  * Then test with:
  *
- *   npx @adcp/client@latest comply http://localhost:3456/mcp
+ *   npx @adcp/sdk@latest comply http://localhost:3456/mcp
  */
 
 import {
@@ -22,8 +22,8 @@ import {
   GetProductsRequestSchema,
   CreateMediaBuyRequestSchema,
   GetMediaBuyDeliveryRequestSchema,
-} from '@adcp/client';
-import type { Product, GetAdCPCapabilitiesResponse } from '@adcp/client';
+} from '@adcp/sdk';
+import type { Product, GetAdCPCapabilitiesResponse } from '@adcp/sdk';
 
 // CreateMediaBuyRequestSchema requires account/brand per spec, but a lenient
 // version lets intentionally-incomplete requests reach the handler so it can

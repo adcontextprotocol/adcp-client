@@ -7,7 +7,7 @@ A simple command-line utility for calling AdCP agents directly without writing c
 ### Global Installation (Recommended for CLI usage)
 
 ```bash
-npm install -g @adcp/client
+npm install -g @adcp/sdk
 ```
 
 After global installation, the `adcp` command will be available system-wide.
@@ -15,7 +15,7 @@ After global installation, the `adcp` command will be available system-wide.
 ### Local Installation
 
 ```bash
-npm install @adcp/client
+npm install @adcp/sdk
 ```
 
 Then use via npx:
@@ -585,7 +585,7 @@ adcp mcp https://agent.example.com/mcp get_products '{"brief":"coffee"}' --auth 
 ### Library (TypeScript)
 
 ```typescript
-import { AdCPClient } from '@adcp/client';
+import { AdCPClient } from '@adcp/sdk';
 
 const client = new AdCPClient({
   id: 'agent',

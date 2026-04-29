@@ -7,7 +7,7 @@
  *
  * ```ts
  * import express from 'express';
- * import { createTenantAdminRouter } from '@adcp/client/server/decisioning';
+ * import { createTenantAdminRouter } from '@adcp/sdk/server/decisioning';
  *
  * const adminApp = express();
  * adminApp.use('/admin', requireOpsAuth, createTenantAdminRouter(registry));
@@ -128,7 +128,7 @@ export function mountTenantAdmin(router: RouterLike, registry: TenantRegistry): 
  *
  * ```ts
  * import express from 'express';
- * import { createTenantAdminRouter } from '@adcp/client/server/decisioning';
+ * import { createTenantAdminRouter } from '@adcp/sdk/server/decisioning';
  * adminApp.use('/admin', createTenantAdminRouter(express.Router(), registry));
  * ```
  *

@@ -61,7 +61,7 @@ if ('media_buy_id' in response) {
 
 **Before (v2.x)**:
 ```typescript
-import { ADCPMultiAgentClient } from '@adcp/client';
+import { ADCPMultiAgentClient } from '@adcp/sdk';
 
 const client = new ADCPMultiAgentClient([
   { id: 'agent-1', agent_uri: 'https://agent.com', protocol: 'a2a' }
@@ -73,7 +73,7 @@ const result = await agent.getProducts({ brief: '...' });
 
 **After (v3.0)**:
 ```typescript
-import { AdCPClient } from '@adcp/client';  // ← Changed import name
+import { AdCPClient } from '@adcp/sdk';  // ← Changed import name
 
 const client = new AdCPClient([
   { id: 'agent-1', agent_uri: 'https://agent.com', protocol: 'a2a' }
@@ -91,7 +91,7 @@ const result = await agent.getProducts({ brief: '...' });
 
 **Before (v2.x)**:
 ```typescript
-import { createAdCPClient, createAdCPClientFromEnv } from '@adcp/client';
+import { createAdCPClient, createAdCPClientFromEnv } from '@adcp/sdk';
 
 // Option 1
 const client = createAdCPClient([agentConfig]);
@@ -102,7 +102,7 @@ const client = createAdCPClientFromEnv();
 
 **After (v3.0)**:
 ```typescript
-import { AdCPClient } from '@adcp/client';
+import { AdCPClient } from '@adcp/sdk';
 
 // Option 1: Use constructor
 const client = new AdCPClient([agentConfig]);
@@ -223,9 +223,9 @@ if ('media_buy_id' in response) { ... }
 **Step 2**: Update import names (recommended, but `ADCPMultiAgentClient` still works)
 ```typescript
 // Change from:
-import { ADCPMultiAgentClient } from '@adcp/client';
+import { ADCPMultiAgentClient } from '@adcp/sdk';
 // To:
-import { AdCPClient } from '@adcp/client';
+import { AdCPClient } from '@adcp/sdk';
 ```
 
 **In v4.0**: The `ADCPMultiAgentClient` alias will be removed. You must use `AdCPClient`.

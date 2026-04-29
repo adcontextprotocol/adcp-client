@@ -1284,8 +1284,12 @@ export class TaskExecutor {
   async listTasks(agent: AgentConfig): Promise<TaskInfo[]> {
     try {
       return await this.listTasksForAgent(agent);
-    } catch (error) {
-      console.warn('Failed to list tasks:', error instanceof Error ? error.message : 'unknown error');
+    } catch {
+      // Static message only — CodeQL's taint analysis treats `error` and
+      // every property of it as sensitive once it originates from an
+      // operation that touched `agent.oauth_client_credentials`. Surfaces
+      // the failure occurred; full detail is available via DEBUG=adcp:*.
+      console.warn('Failed to list tasks (see DEBUG=adcp:* logs for detail)');
       return [];
     }
   }
@@ -1610,8 +1614,9 @@ export class TaskExecutor {
     if (agent) {
       try {
         return await this.listTasksForAgent(agent);
-      } catch (error) {
-        console.warn('Failed to get remote task list:', error instanceof Error ? error.message : 'unknown error');
+      } catch {
+        // Static message — see comment on listTasks above.
+        console.warn('Failed to get remote task list (see DEBUG=adcp:* logs for detail)');
       }
     }
 

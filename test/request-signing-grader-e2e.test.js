@@ -129,12 +129,6 @@ function startGraderServer({ replayCap, coversContentDigest = 'either' }) {
   });
 }
 
-// Vectors 007 and 018 depend on the verifier advertising a specific
-// `covers_content_digest` policy. The main-test server advertises `either`;
-// 007 expects `required` and 018 expects `forbidden`. Each has its own test
-// that stands up a matching server.
-const CAPABILITY_PROFILE_VECTORS = ['007-missing-content-digest', '018-digest-covered-when-forbidden'];
-
 describe('request-signing grader — end-to-end vs. reference verifier', () => {
   let instance;
 
@@ -150,7 +144,7 @@ describe('request-signing grader — end-to-end vs. reference verifier', () => {
     const report = await gradeRequestSigning(instance.url, {
       allowPrivateIp: true,
       skipRateAbuse: true, // 020 has its own test below with matched caps.
-      skipVectors: CAPABILITY_PROFILE_VECTORS,
+      agentContentDigestPolicy: 'either',
     });
 
     assert.ok(report.contract_loaded, 'test-kit contract loaded');
@@ -229,7 +223,7 @@ describe('request-signing grader — end-to-end vs. reference verifier', () => {
       const report = await gradeRequestSigning(fresh.url, {
         allowPrivateIp: true,
         skipRateAbuse: true,
-        skipVectors: CAPABILITY_PROFILE_VECTORS,
+        agentContentDigestPolicy: 'either',
       });
       const rateAbuse = report.negative.find(v => v.vector_id === '020-rate-abuse');
       assert.ok(rateAbuse, '020-rate-abuse present');
@@ -246,7 +240,7 @@ describe('request-signing grader — end-to-end vs. reference verifier', () => {
       const report = await gradeRequestSigning(fresh.url, {
         allowPrivateIp: true,
         skipRateAbuse: true,
-        skipVectors: CAPABILITY_PROFILE_VECTORS,
+        agentContentDigestPolicy: 'either',
       });
       for (const p of report.positive) {
         assert.ok(p.passed, `positive/${p.vector_id} should pass: ${p.diagnostic}`);
@@ -255,5 +249,29 @@ describe('request-signing grader — end-to-end vs. reference verifier', () => {
     } finally {
       fresh.server.close();
     }
+  });
+
+  test('agentContentDigestPolicy "either" auto-skips vectors 007 and 018 with capability_profile_mismatch', async () => {
+    const report = await gradeRequestSigning(instance.url, {
+      allowPrivateIp: true,
+      skipRateAbuse: true,
+      agentContentDigestPolicy: 'either',
+    });
+
+    const v007 = report.negative.find(v => v.vector_id === '007-missing-content-digest');
+    const v018 = report.negative.find(v => v.vector_id === '018-digest-covered-when-forbidden');
+    assert.ok(v007, '007 in report');
+    assert.ok(v018, '018 in report');
+    assert.strictEqual(v007.skipped, true, '007 should be skipped under either policy');
+    assert.strictEqual(v018.skipped, true, '018 should be skipped under either policy');
+    assert.strictEqual(v007.skip_reason, 'capability_profile_mismatch', '007 skip_reason');
+    assert.strictEqual(v018.skip_reason, 'capability_profile_mismatch', '018 skip_reason');
+
+    const failures = [...report.positive, ...report.negative].filter(v => !v.passed && !v.skipped);
+    assert.deepStrictEqual(
+      failures.map(v => v.vector_id),
+      [],
+      'no un-skipped failures when content-digest policy is declared'
+    );
   });
 });

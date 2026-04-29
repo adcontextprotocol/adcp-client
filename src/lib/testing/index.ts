@@ -168,7 +168,7 @@ export type {
 } from '../server/test-controller';
 // Status enums every controller implementer mutates. Re-exported here so a
 // seller wiring `forceMediaBuyStatus` / `forceCreativeStatus` doesn't have to
-// reach into `@adcp/client` root just for the literal unions.
+// reach into `@adcp/sdk` root just for the literal unions.
 export type { AccountStatus, CreativeStatus, MediaBuyStatus } from '../types/core.generated';
 
 // Seed fixture merge helpers (permissive defaults + storyboard overlay).
@@ -237,7 +237,7 @@ export {
   isSandboxDomain,
   clearSandboxCache,
   // Assertion registry (adcontextprotocol/adcp#2639) — authors of invariant
-  // modules import these from `@adcp/client/testing` to register cross-step
+  // modules import these from `@adcp/sdk/testing` to register cross-step
   // checks the runner will resolve from `storyboard.invariants: [...]`.
   registerAssertion,
   getAssertion,

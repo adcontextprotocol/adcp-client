@@ -95,7 +95,12 @@ export type {
 // New conversation-aware clients with input handler pattern
 export { SingleAgentClient, createSingleAgentClient, UnsupportedFeatureError } from './core/SingleAgentClient';
 export type { SingleAgentClientConfig } from './core/SingleAgentClient';
-export { AgentClient, type TaskResponseTypeMap, type AdcpTaskName } from './core/AgentClient';
+export {
+  AgentClient,
+  type TaskResponseTypeMap,
+  type AdcpTaskName,
+  type InProcessAgentClientConfig,
+} from './core/AgentClient';
 export { ADCPMultiAgentClient, createADCPMultiAgentClient } from './core/ADCPMultiAgentClient';
 export { ConfigurationManager } from './core/ConfigurationManager';
 export {
@@ -1081,12 +1086,15 @@ export {
   getLibraryVersion,
   isCompatibleWith,
   getCompatibleVersions,
+  parseAdcpMajorVersion,
   ADCP_VERSION,
   ADCP_MAJOR_VERSION,
   LIBRARY_VERSION,
   COMPATIBLE_ADCP_VERSIONS,
   VERSION_INFO,
 } from './version';
+export type { AdcpVersion } from './version';
+export { resolveAdcpVersion } from './utils/adcp-version-config';
 
 // ====== OBSERVABILITY ======
 // OpenTelemetry tracing utilities (no-op if @opentelemetry/api not installed)
@@ -1180,7 +1188,7 @@ export function createAdCPClientFromEnv(): ADCPMultiAgentClient {
 // Runners (conformance graders) import the observer side; sales/retail-
 // media agents implementing the #2620 catalog-item macro encoding rule
 // import `SubstitutionEncoder`. Re-exported here for discoverability;
-// the full surface is also available via `@adcp/client/substitution`.
+// the full surface is also available via `@adcp/sdk/substitution`.
 export {
   SubstitutionObserver,
   SubstitutionEncoder,
@@ -1218,7 +1226,7 @@ export type {
 } from './substitution';
 
 // ====== TEST HELPERS ======
-// Re-export test helpers for convenience (also available via @adcp/client/testing)
+// Re-export test helpers for convenience (also available via @adcp/sdk/testing)
 export {
   testAgent,
   testAgentA2A,

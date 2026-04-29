@@ -4,8 +4,8 @@
  * middleware, pluggable JWKS / replay / revocation stores, and the error
  * taxonomy.
  *
- * Paired with `@adcp/client/signing/client` (signer / fetch wrapper /
- * capability cache). The aggregate `@adcp/client/signing` barrel re-exports
+ * Paired with `@adcp/sdk/signing/client` (signer / fetch wrapper /
+ * capability cache). The aggregate `@adcp/sdk/signing` barrel re-exports
  * both for back-compat.
  */
 export {
@@ -42,6 +42,14 @@ export {
   type ReplayInsertResult,
   type ReplayStore,
 } from './replay';
+export {
+  PostgresReplayStore,
+  REPLAY_CACHE_MIGRATION,
+  getReplayStoreMigration,
+  sweepExpiredReplays,
+  type PostgresReplayStoreOptions,
+  type SweepExpiredReplaysOptions,
+} from './postgres-replay-store';
 export { InMemoryRevocationStore, type RevocationStore } from './revocation';
 export { HttpsRevocationStore, type HttpsRevocationStoreOptions } from './revocation-https';
 export {

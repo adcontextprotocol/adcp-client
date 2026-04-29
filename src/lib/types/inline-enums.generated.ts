@@ -8,7 +8,7 @@
 // the spec's per-field literal sets without re-deriving from the parent
 // schema — e.g.:
 //
-//   import { ImageAssetRequirements_FormatsValues } from '@adcp/client/types';
+//   import { ImageAssetRequirements_FormatsValues } from '@adcp/sdk/types';
 //   const formats = new Set<string>(ImageAssetRequirements_FormatsValues);
 //   if (!formats.has(input)) throw new Error('unsupported image format');
 //
@@ -16,15 +16,6 @@
 // are intentionally skipped — use the matching `${TypeName}Values` export
 // from `enums.generated.ts` instead.
 
-
-// ====== Account ======
-
-/** single | Account.account_scope */
-export const Account_AccountScopeValues = ["operator", "brand", "operator_brand", "agent"] as const;
-/** single | Account.billing */
-export const Account_BillingValues = ["operator", "agent", "advertiser"] as const;
-/** single | Account.payment_terms */
-export const Account_PaymentTermsValues = ["net_15", "net_30", "net_45", "net_60", "net_90", "prepay"] as const;
 
 // ====== ActivateSignalRequest ======
 
@@ -35,11 +26,6 @@ export const ActivateSignalRequest_ActionValues = ["activate", "deactivate"] as 
 
 /** single | AppItem.platform */
 export const AppItem_PlatformValues = ["ios", "android"] as const;
-
-// ====== AudioAsset ======
-
-/** single | AudioAsset.channels */
-export const AudioAsset_ChannelsValues = ["mono", "stereo", "5.1", "7.1"] as const;
 
 // ====== AudioAssetRequirements ======
 
@@ -68,25 +54,10 @@ export const BuildCreativeAsyncInputRequired_ReasonValues = ["APPROVAL_REQUIRED"
 /** single | CatalogFieldMapping.transform */
 export const CatalogFieldMapping_TransformValues = ["date", "divide", "boolean", "split"] as const;
 
-// ====== CheckGovernanceResponse ======
-
-/** single | CheckGovernanceResponse.status */
-export const CheckGovernanceResponse_StatusValues = ["approved", "denied", "conditions"] as const;
-
-// ====== Collection ======
-
-/** single | Collection.kind */
-export const Collection_KindValues = ["series", "publication", "event_series", "rotation"] as const;
-
-// ====== CollectionListFilters ======
-
-/** array of | CollectionListFilters.kinds */
-export const CollectionListFilters_KindsValues = ["series", "publication", "event_series", "rotation"] as const;
-
 // ====== ComplyTestControllerRequest ======
 
 /** single | ComplyTestControllerRequest.scenario */
-export const ComplyTestControllerRequest_ScenarioValues = ["list_scenarios", "force_creative_status", "force_account_status", "force_media_buy_status", "force_session_status", "simulate_delivery", "simulate_budget_spend", "seed_product", "seed_pricing_option", "seed_creative", "seed_plan", "seed_media_buy"] as const;
+export const ComplyTestControllerRequest_ScenarioValues = ["list_scenarios", "force_creative_status", "force_account_status", "force_media_buy_status", "force_create_media_buy_arm", "force_task_completion", "force_session_status", "simulate_delivery", "simulate_budget_spend", "seed_product", "seed_pricing_option", "seed_creative", "seed_plan", "seed_media_buy", "seed_creative_format"] as const;
 
 // ====== ControllerError ======
 
@@ -97,11 +68,6 @@ export const ControllerError_ErrorValues = ["INVALID_TRANSITION", "INVALID_STATE
 
 /** single | CreateMediaBuyAsyncInputRequired.reason */
 export const CreateMediaBuyAsyncInputRequired_ReasonValues = ["APPROVAL_REQUIRED", "BUDGET_EXCEEDS_LIMIT"] as const;
-
-// ====== CreateMediaBuySuccess ======
-
-/** array of | CreateMediaBuySuccess.valid_actions */
-export const CreateMediaBuySuccess_ValidActionsValues = ["pause", "resume", "cancel", "update_budget", "update_dates", "update_packages", "add_packages", "sync_creatives"] as const;
 
 // ====== CreativeBrief ======
 
@@ -156,8 +122,6 @@ export const FlatFeePricing_PeriodValues = ["monthly", "quarterly", "annual", "c
 
 /** single | GetAccountFinancialsSuccess.payment_status */
 export const GetAccountFinancialsSuccess_PaymentStatusValues = ["current", "past_due", "suspended"] as const;
-/** single | GetAccountFinancialsSuccess.payment_terms */
-export const GetAccountFinancialsSuccess_PaymentTermsValues = ["net_15", "net_30", "net_45", "net_60", "net_90", "prepay"] as const;
 
 // ====== GetAdCPCapabilitiesRequest ======
 
@@ -237,12 +201,7 @@ export const ListCreativesRequest_FieldsValues = ["creative_id", "name", "format
 // ====== ListScenariosSuccess ======
 
 /** array of | ListScenariosSuccess.scenarios */
-export const ListScenariosSuccess_ScenariosValues = ["force_creative_status", "force_account_status", "force_media_buy_status", "force_session_status", "simulate_delivery", "simulate_budget_spend", "seed_product", "seed_pricing_option", "seed_creative", "seed_plan", "seed_media_buy"] as const;
-
-// ====== PackageStatus ======
-
-/** single | PackageStatus.snapshot_unavailable_reason */
-export const PackageStatus_SnapshotUnavailableReasonValues = ["SNAPSHOT_UNSUPPORTED", "SNAPSHOT_TEMPORARILY_UNAVAILABLE", "SNAPSHOT_PERMISSION_DENIED"] as const;
+export const ListScenariosSuccess_ScenariosValues = ["force_creative_status", "force_account_status", "force_media_buy_status", "force_create_media_buy_arm", "force_task_completion", "force_session_status", "simulate_delivery", "simulate_budget_spend", "seed_product", "seed_pricing_option", "seed_creative", "seed_plan", "seed_media_buy", "seed_creative_format"] as const;
 
 // ====== PerformanceFeedback ======
 
@@ -284,10 +243,10 @@ export const PropertyFeatureResult_CoverageStatusValues = ["covered", "not_cover
 /** single | Provenance.human_oversight */
 export const Provenance_HumanOversightValues = ["none", "prompt_only", "selected", "edited", "directed"] as const;
 
-// ====== RATE_LIMITEDDetails ======
+// ====== RateLimitedDetails ======
 
-/** single | RATE_LIMITEDDetails.scope */
-export const RATE_LIMITEDDetails_ScopeValues = ["account", "tool", "global"] as const;
+/** single | RateLimitedDetails.scope */
+export const RateLimitedDetails_ScopeValues = ["account", "tool", "global"] as const;
 
 // ====== RealEstateItem ======
 
@@ -300,6 +259,11 @@ export const RealEstateItem_PropertyTypeValues = ["house", "apartment", "condo",
 
 /** single | ReferenceAsset.role */
 export const ReferenceAsset_RoleValues = ["style_reference", "product_shot", "mood_board", "example_creative", "logo", "strategy_doc", "storyboard"] as const;
+
+// ====== RepeatableGroupAsset ======
+
+/** single | RepeatableGroupAsset.selection_mode */
+export const RepeatableGroupAsset_SelectionModeValues = ["sequential", "optimize"] as const;
 
 // ====== ReportingCapabilities ======
 
@@ -315,16 +279,6 @@ export const ReportPlanOutcomeResponse_StatusValues = ["accepted", "findings"] a
 
 /** single | RightsConstraint.approval_status */
 export const RightsConstraint_ApprovalStatusValues = ["pending", "approved", "rejected"] as const;
-
-// ====== RightsPricingOption ======
-
-/** single | RightsPricingOption.period */
-export const RightsPricingOption_PeriodValues = ["daily", "weekly", "monthly", "quarterly", "annual", "one_time"] as const;
-
-// ====== RightsTerms ======
-
-/** single | RightsTerms.period */
-export const RightsTerms_PeriodValues = ["daily", "weekly", "monthly", "quarterly", "annual", "one_time"] as const;
 
 // ====== SIComponentCatalog ======
 
@@ -361,11 +315,6 @@ export const SyncCreativesAsyncInputRequired_ReasonValues = ["APPROVAL_REQUIRED"
 /** single | UpdateMediaBuyAsyncInputRequired.reason */
 export const UpdateMediaBuyAsyncInputRequired_ReasonValues = ["APPROVAL_REQUIRED", "CHANGE_CONFIRMATION"] as const;
 
-// ====== UpdateMediaBuySuccess ======
-
-/** array of | UpdateMediaBuySuccess.valid_actions */
-export const UpdateMediaBuySuccess_ValidActionsValues = ["pause", "resume", "cancel", "update_budget", "update_dates", "update_packages", "add_packages", "sync_creatives"] as const;
-
 // ====== URLAssetRequirements ======
 
 /** array of | URLAssetRequirements.protocols */
@@ -391,38 +340,18 @@ export const VehicleItem_TransmissionValues = ["automatic", "manual", "cvt"] as 
 
 // ====== VideoAsset ======
 
-/** single | VideoAsset.audio_channels */
-export const VideoAsset_AudioChannelsValues = ["mono", "stereo", "5.1", "7.1"] as const;
 /** single | VideoAsset.chroma_subsampling */
 export const VideoAsset_ChromaSubsamplingValues = ["4:2:0", "4:2:2", "4:4:4"] as const;
 /** single | VideoAsset.color_space */
 export const VideoAsset_ColorSpaceValues = ["rec709", "rec2020", "rec2100", "srgb", "dci_p3"] as const;
-/** single | VideoAsset.frame_rate_type */
-export const VideoAsset_FrameRateTypeValues = ["constant", "variable"] as const;
-/** single | VideoAsset.gop_type */
-export const VideoAsset_GopTypeValues = ["closed", "open"] as const;
 /** single | VideoAsset.hdr_format */
 export const VideoAsset_HdrFormatValues = ["sdr", "hdr10", "hdr10_plus", "hlg", "dolby_vision"] as const;
-/** single | VideoAsset.moov_atom_position */
-export const VideoAsset_MoovAtomPositionValues = ["start", "end"] as const;
-/** single | VideoAsset.scan_type */
-export const VideoAsset_ScanTypeValues = ["progressive", "interlaced"] as const;
 
 // ====== VideoAssetRequirements ======
 
-/** array of | VideoAssetRequirements.audio_channels */
-export const VideoAssetRequirements_AudioChannelsValues = ["mono", "stereo", "5.1", "7.1"] as const;
 /** array of | VideoAssetRequirements.audio_codecs */
 export const VideoAssetRequirements_AudioCodecsValues = ["aac", "pcm", "ac3", "eac3", "mp3", "opus", "vorbis", "flac"] as const;
 /** array of | VideoAssetRequirements.codecs */
 export const VideoAssetRequirements_CodecsValues = ["h264", "h265", "vp8", "vp9", "av1", "prores"] as const;
 /** array of | VideoAssetRequirements.containers */
 export const VideoAssetRequirements_ContainersValues = ["mp4", "webm", "mov", "avi", "mkv"] as const;
-/** single | VideoAssetRequirements.frame_rate_type */
-export const VideoAssetRequirements_FrameRateTypeValues = ["constant", "variable"] as const;
-/** single | VideoAssetRequirements.gop_type */
-export const VideoAssetRequirements_GopTypeValues = ["closed", "open"] as const;
-/** single | VideoAssetRequirements.moov_atom_position */
-export const VideoAssetRequirements_MoovAtomPositionValues = ["start", "end"] as const;
-/** single | VideoAssetRequirements.scan_type */
-export const VideoAssetRequirements_ScanTypeValues = ["progressive", "interlaced"] as const;

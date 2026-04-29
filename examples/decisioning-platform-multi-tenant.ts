@@ -18,7 +18,7 @@ import {
   type TenantRegistry,
   type TenantSigningKey,
   type DecisioningAdcpServer,
-} from '@adcp/client/server/decisioning';
+} from '@adcp/sdk/server/decisioning';
 import { BroadcastTvSeller } from './decisioning-platform-broadcast-tv';
 import { ProgrammaticSeller } from './decisioning-platform-programmatic';
 
@@ -107,7 +107,7 @@ export function buildMultiTenantRegistry(): TenantRegistry {
  * In a real deployment this is wired alongside `serve()`:
  *
  * ```ts
- * import { serve } from '@adcp/client/server';
+ * import { serve } from '@adcp/sdk/server';
  * const registry = buildMultiTenantRegistry();
  * serve(makeMultiTenantFactory(registry), { ... });
  * ```

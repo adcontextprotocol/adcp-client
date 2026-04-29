@@ -15,10 +15,10 @@
  * @example
  * ```typescript
  * // ❌ Don't do this - use main AdCPClient instead:
- * import { callA2ATool } from '@adcp/client/advanced';
+ * import { callA2ATool } from '@adcp/sdk/advanced';
  *
  * // ✅ Do this - use the main client:
- * import { AdCPClient } from '@adcp/client';
+ * import { AdCPClient } from '@adcp/sdk';
  * const client = new AdCPClient([agentConfig]);
  * const agent = client.agent('agent-id');
  * await agent.getProducts({ brief: '...' });

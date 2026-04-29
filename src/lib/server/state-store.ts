@@ -11,7 +11,7 @@
  *
  * @example
  * ```typescript
- * import { createAdcpServer, InMemoryStateStore } from '@adcp/client/server';
+ * import { createAdcpServer, InMemoryStateStore } from '@adcp/sdk/server';
  *
  * const store = new InMemoryStateStore();
  *
@@ -243,7 +243,7 @@ export interface AdcpStateStore {
  * `scoped` themselves.
  *
  * ```ts
- * import { scopedStore } from '@adcp/client/server';
+ * import { scopedStore } from '@adcp/sdk/server';
  *
  * const sessionStore = scopedStore(ctx.store, ctx.sessionKey!);
  * await sessionStore.put('media_buys', buyId, buy);

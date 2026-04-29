@@ -2,7 +2,7 @@
  * Types for AdCP Agent E2E Testing
  */
 
-import type { FormatID } from '../types/core.generated';
+import type { FormatReferenceStructuredObject as FormatID } from '../types/core.generated';
 import type { ControllerDetection } from './test-controller';
 
 // Test scenarios that can be run
@@ -257,6 +257,13 @@ export interface AgentProfile {
    * that reference fields not extracted into the normalised profile shape above.
    */
   raw_capabilities?: unknown;
+  /**
+   * SDK version string the agent self-reported in `get_adcp_capabilities`, e.g.
+   * `"@adcp/client@5.14.0"`. Populated opportunistically — absent for hand-rolled
+   * agents that don't emit the field. Used by the storyboard runner to suffix
+   * shape-drift hints when the reported version predates the recommended helper.
+   */
+  library_version?: string;
 }
 
 export interface TestResult {

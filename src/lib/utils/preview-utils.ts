@@ -1,7 +1,7 @@
 // Preview utilities for rendering product/format cards with creative agent
 
 import type { SingleAgentClient } from '../core/SingleAgentClient';
-import type { Format, Product, FormatID } from '../types/tools.generated';
+import type { Format, Product, FormatReferenceStructuredObject as FormatID } from '../types/tools.generated';
 import type { PreviewCreativeRequest, PreviewCreativeResponse } from '../types/tools.generated';
 
 /**

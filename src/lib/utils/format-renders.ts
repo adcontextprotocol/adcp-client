@@ -38,7 +38,7 @@ export interface FormatRenderEntry {
 /**
  * @deprecated Renamed to `FormatRenderEntry`. This alias keeps existing
  * imports compiling but is not re-exported from the package barrel
- * (`@adcp/client`) — the barrel's `FormatRender` identifier now refers to
+ * (`@adcp/sdk`) — the barrel's `FormatRender` identifier now refers to
  * the factory namespace. Migrate to `FormatRenderEntry` next release.
  */
 export type FormatRender = FormatRenderEntry;

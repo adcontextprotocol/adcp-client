@@ -12,7 +12,7 @@
  *
  * @example
  * ```typescript
- * import { createAdcpServer, serve } from '@adcp/client/server';
+ * import { createAdcpServer, serve } from '@adcp/sdk/server';
  *
  * serve(() => createAdcpServer({
  *   name: 'My Publisher',
@@ -37,6 +37,8 @@
 
 import { z } from 'zod';
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
+import { ADCP_VERSION, type AdcpVersion } from '../version';
+import { resolveAdcpVersion } from '../utils/adcp-version-config';
 import type { ToolCallback } from '@modelcontextprotocol/sdk/server/mcp.js';
 import type { ZodRawShapeCompat, AnySchema } from '@modelcontextprotocol/sdk/server/zod-compat.js';
 import type { ToolAnnotations } from '@modelcontextprotocol/sdk/types.js';
@@ -120,6 +122,7 @@ import type { JwksResolver } from '../signing/jwks';
 import type { ReplayStore } from '../signing/replay';
 import type { RevocationStore } from '../signing/revocation';
 import type { ContentDigestPolicy } from '../signing/types';
+import { LIBRARY_VERSION } from '../version';
 
 // Type-only imports for AdcpToolMap handler signatures (z.input<typeof ...>)
 import type {
@@ -782,7 +785,7 @@ export interface AdcpCapabilitiesConfig {
    * Emitted verbatim in `get_adcp_capabilities.request_signing`. Omit unless
    * the agent actually verifies incoming signatures — a `supported: true`
    * claim without a working verifier is graded as FAIL by the conformance
-   * runner (see `@adcp/client/testing/storyboard/request-signing`).
+   * runner (see `@adcp/sdk/testing/storyboard/request-signing`).
    */
   request_signing?: NonNullable<GetAdCPCapabilitiesResponse['request_signing']>;
   /**
@@ -797,7 +800,7 @@ export interface AdcpCapabilitiesConfig {
    * responses per AdCP spec. Defaults to 86400 (24h). Spec bounds are 3600
    * (1h) to 604800 (7d); `clampReplayTtl` enforces the range on output.
    *
-   * When using `createIdempotencyStore` from `@adcp/client/server`, omit
+   * When using `createIdempotencyStore` from `@adcp/sdk/server`, omit
    * this — the framework reads `idempotency.ttlSeconds` from the wired
    * store so the declared capability always matches actual behavior.
    */
@@ -1017,6 +1020,25 @@ export interface AdcpServerConfig<TAccount = unknown> {
   version: string;
 
   /**
+   * AdCP protocol version this server speaks. Defaults to {@link ADCP_VERSION}
+   * — the GA version the SDK ships against. Override to pin to an older
+   * stable (e.g., `'3.0.0'`) or opt into a beta channel (`'3.1.0-beta.1'`)
+   * once that registry ships.
+   *
+   * Not the same as `version` (the publisher's app version, e.g., `'1.4.2'`).
+   *
+   * Stage 2 plumbs the option through and validates it at construction
+   * time; cross-major pins (e.g. `'4.0.0-beta.1'` while the SDK ships
+   * against major 3) throw `ConfigurationError`. Stage 3 wires per-instance
+   * schema/validator selection off this field.
+   *
+   * Typed as `AdcpVersion | (string & {})` so editors autocomplete
+   * canonical values from {@link COMPATIBLE_ADCP_VERSIONS} while still
+   * accepting forward-compatible strings.
+   */
+  adcpVersion?: AdcpVersion | (string & {});
+
+  /**
    * Resolve an account from an AccountReference.
    * Called on every request that has an `account` field.
    * Return null if the account doesn't exist — framework responds ACCOUNT_NOT_FOUND.
@@ -1074,7 +1096,7 @@ export interface AdcpServerConfig<TAccount = unknown> {
    *   - `NODE_ENV === 'production'` → `false` (safe default for live agents).
    *   - Otherwise → `true` (dev/test/CI surface the cause chain so
    *     `SERVICE_UNAVAILABLE: encountered an internal error` becomes
-   *     `SERVICE_UNAVAILABLE: Cannot find module '@adcp/client/foo'`.
+   *     `SERVICE_UNAVAILABLE: Cannot find module '@adcp/sdk/foo'`.
    *     Matrix runs spent weeks on opaque SU errors before this default flipped).
    *
    * Explicit `exposeErrorDetails: true | false` always wins.
@@ -1153,15 +1175,23 @@ export interface AdcpServerConfig<TAccount = unknown> {
    * idempotency-stable webhooks without hand-rolling the pipeline. Omit
    * if your server never emits webhooks.
    *
-   * The `signerKey` MUST have `adcp_use: "webhook-signing"` — a
-   * request-signing key is a conformance violation per adcp#2423 (key
-   * purpose discriminator). Publishers publishing their JWKS at the
-   * `jwks_uri` on brand.json's `agents[]` entry reuse the same key across
-   * every buyer they deliver to.
+   * Provide exactly one of `signerKey` (in-process JWK) or `signerProvider`
+   * (KMS-backed async signing). The signing key or provider key MUST have
+   * `adcp_use: "webhook-signing"` — a request-signing key is a conformance
+   * violation per adcp#2423 (key purpose discriminator). Publishers publishing
+   * their JWKS at the `jwks_uri` on brand.json's `agents[]` entry reuse the
+   * same key across every buyer they deliver to.
    */
   webhooks?: Pick<
     WebhookEmitterOptions,
-    'signerKey' | 'retries' | 'idempotencyKeyStore' | 'generateIdempotencyKey' | 'fetch' | 'userAgent' | 'tag'
+    | 'signerKey'
+    | 'signerProvider'
+    | 'retries'
+    | 'idempotencyKeyStore'
+    | 'generateIdempotencyKey'
+    | 'fetch'
+    | 'userAgent'
+    | 'tag'
   > & {
     /** Observability: emitter-wide onAttempt hook. */
     onAttempt?: WebhookEmitterOptions['onAttempt'];
@@ -1269,7 +1299,7 @@ export interface AdcpServerConfig<TAccount = unknown> {
    *
    * @example
    * ```ts
-   * import { createAdcpServer, bridgeFromTestControllerStore } from '@adcp/client';
+   * import { createAdcpServer, bridgeFromTestControllerStore } from '@adcp/sdk';
    *
    * const seedStore = new Map<string, unknown>();
    * const server = createAdcpServer({
@@ -2067,6 +2097,7 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
   const {
     name,
     version,
+    adcpVersion: configuredAdcpVersion,
     resolveAccount,
     resolveAccountFromAuth,
     resolveSessionKey,
@@ -3072,6 +3103,13 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
     applyCapabilityOverrides(capabilitiesData, capConfig.overrides);
   }
 
+  // Stamp the SDK version so conformance tooling can surface version-staleness
+  // hints when the agent's reported version predates recommended helpers.
+  // Cast needed because GetAdCPCapabilitiesResponse is generated and lacks
+  // this field; it remains a forward-compatible extension until the spec
+  // formally defines library_version in a future AdCP minor.
+  (capabilitiesData as unknown as Record<string, unknown>).library_version = `@adcp/client@${LIBRARY_VERSION}`;
+
   // Passthrough inputSchema — framework validation is authoritative on
   // both transports (#909). Same rationale as the domain-tool loop above.
   server.registerTool(
@@ -3139,7 +3177,9 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
       if (idempotency && idempotency.clearAll) await idempotency.clearAll();
     },
   };
-  const wrapped: AdcpServerInternal = wrapMcpServer(server, compliance);
+  // Throws ConfigurationError on cross-major pin. See utils/adcp-version-config.ts.
+  const adcpVersion = resolveAdcpVersion(configuredAdcpVersion);
+  const wrapped: AdcpServerInternal = wrapMcpServer(server, compliance, adcpVersion);
 
   // Attach the auto-wired preTransport so `serve()` mounts the verifier
   // on the HTTP transport. Stashed under a non-enumerable symbol property

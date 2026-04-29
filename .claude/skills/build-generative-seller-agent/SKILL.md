@@ -213,8 +213,8 @@ deliveryResponse({
 Add `registerTestController` so the comply framework can deterministically test your state machines. One function call — the SDK handles request parsing, status validation, and response formatting.
 
 ```
-import { registerTestController, TestControllerError } from '@adcp/client';
-import type { TestControllerStore } from '@adcp/client';
+import { registerTestController, TestControllerError } from '@adcp/sdk';
+import type { TestControllerStore } from '@adcp/sdk';
 
 const store: TestControllerStore = {
   async forceAccountStatus(accountId, status) {
@@ -253,13 +253,13 @@ Validate with: `adcp storyboard run <agent> deterministic_testing --json`
 | `adcpError(code, { message })`                          | Structured error                                                    |
 | `registerTestController(server, store)`                 | Add `comply_test_controller` for deterministic testing              |
 
-Import everything from `@adcp/client`. Types from `@adcp/client` with `import type`.
+Import everything from `@adcp/sdk`. Types from `@adcp/sdk` with `import type`.
 
 ## Setup
 
 ```bash
 npm init -y
-npm install @adcp/client
+npm install @adcp/sdk
 npm install -D typescript @types/node
 ```
 
@@ -308,7 +308,7 @@ The sync_creatives handler must check the format_id to decide how to process:
 
 ```bash
 npx tsx agent.ts &
-npx @adcp/client@latest storyboard run http://localhost:3001/mcp media_buy_generative_seller --json
+npx @adcp/sdk@latest storyboard run http://localhost:3001/mcp media_buy_generative_seller --json
 ```
 
 **Sandbox validation** (if ports are blocked):

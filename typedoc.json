@@ -2,11 +2,11 @@
   "$schema": "https://typedoc.org/schema.json",
   "entryPoints": ["src/lib/index.ts"],
   "out": "docs/api",
-  "name": "@adcp/client API Reference",
+  "name": "@adcp/sdk API Reference",
   "navigationLinks": {
     "Documentation": "https://docs.adcontextprotocol.org",
     "GitHub": "https://github.com/adcontextprotocol/adcp-client",
-    "npm": "https://www.npmjs.com/package/@adcp/client"
+    "npm": "https://www.npmjs.com/package/@adcp/sdk"
   },
   "includeVersion": true,
   "categorizeByGroup": true,
@@ -34,6 +34,7 @@
     "@internal",
     "@param",
     "@privateRemarks",
+    "@provenance",
     "@public",
     "@readonly",
     "@remarks",

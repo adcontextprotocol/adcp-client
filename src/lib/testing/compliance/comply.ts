@@ -337,7 +337,7 @@ function collectObservations(
                 track,
                 message:
                   `Error compliance at L${level}. L3 (structuredContent.adcp_error) is recommended. ` +
-                  `Use adcpError() from @adcp/client for automatic L3 compliance.`,
+                  `Use adcpError() from @adcp/sdk for automatic L3 compliance.`,
                 evidence: { compliance_level: level, step: step.step },
               });
             }

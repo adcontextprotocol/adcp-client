@@ -25,7 +25,7 @@
  *
  * @example
  * ```ts
- * import { mergeSeedProduct } from '@adcp/client/testing';
+ * import { mergeSeedProduct } from '@adcp/sdk/testing';
  *
  * const baseline: Partial<Product> = {
  *   delivery_type: 'guaranteed',

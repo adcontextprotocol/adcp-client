@@ -5,11 +5,11 @@ The AdCP client library provides **runtime validation schemas** using [Zod](http
 ## Quick Start
 
 ```bash
-npm install @adcp/client zod
+npm install @adcp/sdk zod
 ```
 
 ```typescript
-import { MediaBuySchema, GetProductsRequestSchema } from '@adcp/client';
+import { MediaBuySchema, GetProductsRequestSchema } from '@adcp/sdk';
 
 // Validate data
 const result = MediaBuySchema.safeParse(data);
@@ -44,7 +44,7 @@ if (result.success) {
 ### API Request Validation
 
 ```typescript
-import { GetProductsRequestSchema } from '@adcp/client';
+import { GetProductsRequestSchema } from '@adcp/sdk';
 
 function callGetProducts(request: unknown) {
   const validated = GetProductsRequestSchema.parse(request);
@@ -55,7 +55,7 @@ function callGetProducts(request: unknown) {
 ### API Response Validation
 
 ```typescript
-import { GetProductsResponseSchema } from '@adcp/client';
+import { GetProductsResponseSchema } from '@adcp/sdk';
 
 async function fetchProducts() {
   const response = await agent.getProducts(request);
@@ -69,7 +69,7 @@ async function fetchProducts() {
 ```typescript
 import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
-import { CreateMediaBuyRequestSchema } from '@adcp/client';
+import { CreateMediaBuyRequestSchema } from '@adcp/sdk';
 
 function MediaBuyForm() {
   const { register, handleSubmit } = useForm({
@@ -155,7 +155,7 @@ if (!result.success) {
 ## TypeScript Integration
 
 ```typescript
-import { MediaBuy, MediaBuySchema } from '@adcp/client';
+import { MediaBuy, MediaBuySchema } from '@adcp/sdk';
 import { z } from 'zod';
 
 type MediaBuyInferred = z.infer<typeof MediaBuySchema>;
@@ -164,7 +164,7 @@ type MediaBuyInferred = z.infer<typeof MediaBuySchema>;
 
 ## Platform Implementation
 
-If you're building a platform that **receives** AdCP tool calls (a seller/publisher), you need request types for your handler signatures and schemas for runtime validation. Both are exported from `@adcp/client`.
+If you're building a platform that **receives** AdCP tool calls (a seller/publisher), you need request types for your handler signatures and schemas for runtime validation. Both are exported from `@adcp/sdk`.
 
 ### Naming Convention
 
@@ -201,7 +201,7 @@ import {
   TargetingOverlay,
   // Zod schema for runtime validation
   CreateMediaBuyRequestSchema,
-} from '@adcp/client';
+} from '@adcp/sdk';
 
 function handleCreateMediaBuy(rawParams: unknown): CreateMediaBuyResponse {
   // Validate and parse the incoming request
@@ -233,14 +233,14 @@ import type {
   GetProductsRequest, GetProductsResponse,
   SyncCreativesRequest, SyncCreativesResponse,
   PackageRequest, TargetingOverlay, FrequencyCap,
-} from '@adcp/client';
+} from '@adcp/sdk';
 
 // Schemas — for runtime validation
 import {
   CreateMediaBuyRequestSchema,
   GetProductsRequestSchema,
   SyncCreativesRequestSchema,
-} from '@adcp/client';
+} from '@adcp/sdk';
 ```
 
 ## Example
@@ -255,7 +255,7 @@ See `examples/zod-validation-example.ts` for complete examples.
 
 When you `npm publish`, the package includes:
 ```
-@adcp/client/
+@adcp/sdk/
   ├── dist/lib/types/schemas.generated.js  ← Zod schemas (compiled)
   ├── dist/lib/types/schemas.generated.d.ts ← Type definitions
   └── dist/lib/index.js                    ← Re-exports schemas
@@ -263,11 +263,11 @@ When you `npm publish`, the package includes:
 
 ### What Downstream Users Get
 
-When someone installs `@adcp/client`, they get:
+When someone installs `@adcp/sdk`, they get:
 
 ```typescript
 // Works immediately after npm install
-import { MediaBuySchema } from '@adcp/client';
+import { MediaBuySchema } from '@adcp/sdk';
 
 const result = MediaBuySchema.safeParse(data);
 ```
@@ -287,7 +287,7 @@ The `package.json` declares `zod` as a **peer dependency**:
 ```
 
 This means:
-- Users must install `zod` separately: `npm install @adcp/client zod`
+- Users must install `zod` separately: `npm install @adcp/sdk zod`
 - NPM shows a warning if `zod` is missing
 - Users can choose their `zod` version (within range)
 
@@ -296,13 +296,13 @@ This means:
 After publishing, downstream users can verify:
 
 ```bash
-npm install @adcp/client zod
+npm install @adcp/sdk zod
 
 # Check what's in the package
-npm ls @adcp/client
+npm ls @adcp/sdk
 
 # Verify exports work
-node -e "console.log(require('@adcp/client').MediaBuySchema)"
+node -e "console.log(require('@adcp/sdk').MediaBuySchema)"
 ```
 
 ## Troubleshooting

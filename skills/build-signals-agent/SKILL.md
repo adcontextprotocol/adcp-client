@@ -33,7 +33,7 @@ A signals agent serves audience segments to buyers for campaign targeting. Two t
 Full treatment lives in `skills/build-seller-agent/SKILL.md` §Protocol-Wide Requirements and §Composing. Minimum viable pointers for a signals agent:
 
 - **`idempotency_key`** on every mutating request (`activate_signal`, and any future mutating signals tools). Wire `createIdempotencyStore` into `createAdcpServer({ idempotency })`.
-- **Authentication** via `serve({ authenticate })` with `verifyApiKey`/`verifyBearer` from `@adcp/client/server`. Unauthenticated agents fail the universal `security_baseline` storyboard.
+- **Authentication** via `serve({ authenticate })` with `verifyApiKey`/`verifyBearer` from `@adcp/sdk/server`. Unauthenticated agents fail the universal `security_baseline` storyboard.
 - **Signature-header transparency**: accept requests with `Signature-Input`/`Signature` headers even if you don't claim `signed-requests`.
 
 ## Before Writing Code
@@ -177,18 +177,18 @@ Some schemas also define an `ext` field for vendor-namespaced extensions. If you
 | `activateSignalResponse(data)`                        | Auto-applied response builder (don't call manually)                            |
 | `adcpError(code, { message })`                        | Structured error (`SIGNAL_NOT_FOUND`, `INVALID_DESTINATION`)                   |
 | `createIdempotencyStore({ backend, ttlSeconds })`     | Required on every mutating tool — pass via `createAdcpServer({ idempotency })` |
-| `memoryBackend()` / `pgBackend(pool)`                 | Idempotency backends (from `@adcp/client/server`)                              |
+| `memoryBackend()` / `pgBackend(pool)`                 | Idempotency backends (from `@adcp/sdk/server`)                              |
 | `type Signal = GetSignalsResponse['signals'][number]` | Type for a single signal object                                                |
 
-Import: `import { createAdcpServer, serve, adcpError } from '@adcp/client';`
-Server-only: `import { createIdempotencyStore, memoryBackend } from '@adcp/client/server';`
-Types: `import type { GetSignalsResponse } from '@adcp/client';`
+Import: `import { createAdcpServer, serve, adcpError } from '@adcp/sdk';`
+Server-only: `import { createIdempotencyStore, memoryBackend } from '@adcp/sdk/server';`
+Types: `import type { GetSignalsResponse } from '@adcp/sdk';`
 
 ## Setup
 
 ```bash
 npm init -y
-npm install @adcp/client
+npm install @adcp/sdk
 npm install -D typescript @types/node
 ```
 
@@ -219,8 +219,8 @@ Minimal `tsconfig.json`:
 6. Context passthrough is handled by the framework — no need to manually echo `args.context`
 
 ```typescript
-import { createAdcpServer, serve, adcpError } from '@adcp/client';
-import { createIdempotencyStore, memoryBackend } from '@adcp/client/server';
+import { createAdcpServer, serve, adcpError } from '@adcp/sdk';
+import { createIdempotencyStore, memoryBackend } from '@adcp/sdk/server';
 
 const signals = [
   /* your signal objects */
@@ -331,13 +331,23 @@ AdCP v3 requires an `idempotency_key` on every mutating request — for signals 
 
 Scoping is per-principal via `resolveSessionKey` (override with `resolveIdempotencyPrincipal` for custom scoping). `ttlSeconds` must be 3600–604800 — out of range throws at construction. If you register mutating handlers without wiring `idempotency`, the framework logs an error at server-creation time.
 
+**Critical: probe the pool at boot (pgBackend).** `pg.Pool` is lazy — `new Pool({ connectionString })` does not validate the URL. A bad `DATABASE_URL` lets the server start, advertise `IdempotencySupported`, and then silently fail every `activate_signal` call. Wire `readinessCheck` on `serve()` so the server never accepts traffic with a broken pool:
+
+```ts
+const store = createIdempotencyStore({ backend: pgBackend(pool), ttlSeconds: 86400 });
+pool.on('error', (err) => console.error('pg pool error', err)); // prevent crash on idle-client errors
+serve(createAgent, {
+  readinessCheck: () => store.probe(), // throws with a descriptive error if pool/table is broken
+});
+```
+
 ## Protecting your agent
 
 **An AdCP agent that accepts unauthenticated requests is non-compliant** (see `security_baseline` in the universal storyboard bundle). Ask the operator: "API key, OAuth, or both?" — then wire one of these into `serve()`.
 
 ```typescript
-import { serve } from '@adcp/client';
-import { verifyApiKey, verifyBearer, anyOf } from '@adcp/client/server';
+import { serve } from '@adcp/sdk';
+import { verifyApiKey, verifyBearer, anyOf } from '@adcp/sdk/server';
 
 // API key — simplest, good for B2B integrations
 serve(createAgent, {
@@ -380,18 +390,18 @@ The framework produces RFC 6750-compliant `WWW-Authenticate: Bearer` 401s on fai
 npx tsx agent.ts &
 
 # Happy path — the specialism you're claiming
-npx @adcp/client@latest storyboard run http://localhost:3001/mcp signal_owned --auth $TOKEN        # owned data
-npx @adcp/client@latest storyboard run http://localhost:3001/mcp signal_marketplace --auth $TOKEN  # marketplace
+npx @adcp/sdk@latest storyboard run http://localhost:3001/mcp signal_owned --auth $TOKEN        # owned data
+npx @adcp/sdk@latest storyboard run http://localhost:3001/mcp signal_marketplace --auth $TOKEN  # marketplace
 
 # Marketplace governance sub-scenario (if you claim signal_marketplace)
-npx @adcp/client@latest storyboard run http://localhost:3001/mcp signal_marketplace/governance_denied --auth $TOKEN
+npx @adcp/sdk@latest storyboard run http://localhost:3001/mcp signal_marketplace/governance_denied --auth $TOKEN
 
 # Cross-cutting obligations
-npx @adcp/client@latest storyboard run http://localhost:3001/mcp \
+npx @adcp/sdk@latest storyboard run http://localhost:3001/mcp \
   --storyboards security_baseline,idempotency,schema_validation,error_compliance --auth $TOKEN
 
 # Rejection-surface fuzz
-npx @adcp/client@latest fuzz http://localhost:3001/mcp --tools get_signals --auth-token $TOKEN
+npx @adcp/sdk@latest fuzz http://localhost:3001/mcp --tools get_signals --auth-token $TOKEN
 ```
 
 Common failure decoder:

@@ -1,7 +1,7 @@
 # Ad Context Protocol (AdCP)
 
-> Generated at: 2026-04-24
-> Library: @adcp/client v5.15.0
+> Generated at: 2026-04-28
+> Library: @adcp/sdk v5.21.1
 > AdCP major version: 3
 > Canonical URL: https://adcontextprotocol.github.io/adcp-client/llms.txt
 
@@ -15,7 +15,7 @@ AdCP is an open protocol for AI agents to buy, manage, and optimize advertising 
 - **Server** (implementing an agent that others call): Read `docs/guides/BUILD-AN-AGENT.md` instead. Minimal example:
 
 ```typescript
-import { createTaskCapableServer, taskToolResponse, serve, GetSignalsRequestSchema } from '@adcp/client';
+import { createTaskCapableServer, taskToolResponse, serve, GetSignalsRequestSchema } from '@adcp/sdk';
 
 function createAgent({ taskStore }) {
   const server = createTaskCapableServer('My Agent', '1.0.0', { taskStore });
@@ -30,12 +30,12 @@ function createAgent({ taskStore }) {
 serve(createAgent); // http://localhost:3001/mcp
 ```
 
-Low-level server (bypassing `createAdcpServer`)? Use `wrapEnvelope(inner, { replayed, context, operationId })` from `@adcp/client/server` to attach protocol envelope fields with the per-error-code allowlist applied (IDEMPOTENCY_CONFLICT drops `replayed`).
+Low-level server (bypassing `createAdcpServer`)? Use `wrapEnvelope(inner, { replayed, context, operationId })` from `@adcp/sdk/server` to attach protocol envelope fields with the per-error-code allowlist applied (IDEMPOTENCY_CONFLICT drops `replayed`).
 
 ## Quick Start (Client)
 
 ```typescript
-import { ADCPMultiAgentClient } from '@adcp/client';
+import { ADCPMultiAgentClient } from '@adcp/sdk';
 
 const client = ADCPMultiAgentClient.simple('https://agent.example.com/mcp/', {
   authToken: process.env.ADCP_TOKEN,
@@ -126,7 +126,7 @@ if (result.success && !result.metadata.replayed) {
 **Typed errors:** on failure, `result.errorInstance` carries a typed `ADCPError` subclass for codes with dedicated classes — currently `IdempotencyConflictError` and `IdempotencyExpiredError`. Prefer `instanceof` checks over switching on `adcpError.code` strings.
 
 ```typescript
-import { IdempotencyConflictError, IdempotencyExpiredError } from '@adcp/client';
+import { IdempotencyConflictError, IdempotencyExpiredError } from '@adcp/sdk';
 
 if (result.errorInstance instanceof IdempotencyConflictError) {
   // Agent re-planned with different payload. Retry with a fresh key.
@@ -152,7 +152,7 @@ const ttl = await client.getIdempotencyReplayTtlSeconds();
 Pass your persisted key with `useIdempotencyKey(key)` — it validates against the spec pattern (`^[A-Za-z0-9_.:-]{16,255}$`) before the network round-trip:
 
 ```typescript
-import { useIdempotencyKey } from '@adcp/client';
+import { useIdempotencyKey } from '@adcp/sdk';
 const key = await db.getOrCreateIdempotencyKey(campaign.id);
 await client.createMediaBuy({ ...params, ...useIdempotencyKey(key) });
 ```
@@ -235,7 +235,7 @@ Request parameters for querying financial status of an operator-billed account.
 
 **Response (success branch):**
 - Required: `account: Account Ref`, `currency: string`, `period: Date Range`, `timezone: string`
-- Optional: `spend: object`, `credit: object`, `balance: object`, `payment_status: 'current' | 'past_due' | 'suspended'`, `payment_terms: 'net_15' | 'net_30' | 'net_45' | 'net_60' | 'net_90' | 'prepay'`, `invoices: object[]`, `context: Context`
+- Optional: `spend: object`, `credit: object`, `balance: object`, `payment_status: 'current' | 'past_due' | 'suspended'`, `payment_terms: Payment Terms`, `invoices: object[]`, `context: Context`
 
 **Deep dive:**
 - docs/getting-started.md — authentication and account setup
@@ -267,7 +267,7 @@ Request parameters for discovering format IDs and creative agents supported by t
 
 **Watch out:**
 - Each `renders[]` entry satisfies a `oneOf` — exactly one of `dimensions` (object) OR `parameters_from_format_id: true`. A render with only `{ role }` (or `{ role, duration_seconds }`) fails validation.
-- Use the typed factories from `@adcp/client`: `displayRender({ role, dimensions })` for display/video; `parameterizedRender({ role })` for audio and template formats (auto-injects `parameters_from_format_id: true`).
+- Use the typed factories from `@adcp/sdk`: `displayRender({ role, dimensions })` for display/video; `parameterizedRender({ role })` for audio and template formats (auto-injects `parameters_from_format_id: true`).
 - Audio formats (`type: "audio"`) have no width/height — declare `renders: [parameterizedRender({ role: "primary" })]` and encode duration/codec in `format_id.parameters` (declared via `accepts_parameters`).
 
 #### `create_media_buy`
@@ -280,7 +280,7 @@ Request parameters for creating a media buy.
 
 **Response (success branch):**
 - Required: `media_buy_id: string`, `packages: object[]`
-- Optional: `account: Account`, `invoice_recipient: Business Entity`, `status: Media Buy Status`, `confirmed_at: string`, `creative_deadline: string`, `revision: integer`, `valid_actions: string[]`, `planned_delivery: Planned Delivery`, +2 more
+- Optional: `account: Account`, `invoice_recipient: Business Entity`, `status: Media Buy Status`, `confirmed_at: string`, `creative_deadline: string`, `revision: integer`, `valid_actions: object[]`, `planned_delivery: Planned Delivery`, +2 more
 
 #### `update_media_buy`
 
@@ -292,7 +292,7 @@ Request parameters for updating campaign and package settings.
 
 **Response (success branch):**
 - Required: `media_buy_id: string`
-- Optional: `status: Media Buy Status`, `revision: integer`, `implementation_date: string,null`, `invoice_recipient: Business Entity`, `affected_packages: object[]`, `valid_actions: string[]`, `sandbox: boolean`, `context: Context`
+- Optional: `status: Media Buy Status`, `revision: integer`, `implementation_date: string,null`, `invoice_recipient: Business Entity`, `affected_packages: object[]`, `valid_actions: object[]`, `sandbox: boolean`, `context: Context`
 
 #### `get_media_buys`
 
@@ -398,7 +398,7 @@ Request parameters for AI-powered creative generation.
 
 **Watch out:**
 - Response is ALWAYS `{ creative_manifest }` (single) or `{ creative_manifests }` (multi). Platform-native fields at the top level (`tag_url`, `creative_id`, `media_type`) are invalid.
-- Use `buildCreativeResponse({ creative_manifest })` / `buildCreativeMultiResponse({ creative_manifests })` from `@adcp/client/server` to enforce the shape at compile time.
+- Use `buildCreativeResponse({ creative_manifest })` / `buildCreativeMultiResponse({ creative_manifests })` from `@adcp/sdk/server` to enforce the shape at compile time.
 - Each asset under `creative_manifest.assets` needs an `asset_type` discriminator — use the factories: `imageAsset`, `videoAsset`, `audioAsset`, `htmlAsset`, `urlAsset`, `textAsset` (or `Asset.image(...)`).
 
 #### `preview_creative`
@@ -429,7 +429,7 @@ Request parameters for discovering creative formats from this creative agent.
 
 **Watch out:**
 - Each `renders[]` entry satisfies a `oneOf` — exactly one of `dimensions` (object) OR `parameters_from_format_id: true`. A render with only `{ role }` (or `{ role, duration_seconds }`) fails validation.
-- Use the typed factories from `@adcp/client`: `displayRender({ role, dimensions })` for display/video; `parameterizedRender({ role })` for audio and template formats (auto-injects `parameters_from_format_id: true`).
+- Use the typed factories from `@adcp/sdk`: `displayRender({ role, dimensions })` for display/video; `parameterizedRender({ role })` for audio and template formats (auto-injects `parameters_from_format_id: true`).
 - Audio formats (`type: "audio"`) have no width/height — declare `renders: [parameterizedRender({ role: "primary" })]` and encode duration/codec in `format_id.parameters` (declared via `accepts_parameters`).
 
 #### `get_creative_delivery`
@@ -673,7 +673,7 @@ Request parameters for collaborative calibration dialogue.
 - Optional: `context: Context`
 
 **Response (success branch):**
-- Required: `verdict: 'pass' | 'fail'`
+- Required: `verdict: Binary Verdict`
 - Optional: `confidence: number`, `explanation: string`, `features: object[]`, `context: Context`
 
 #### `validate_content_delivery`
@@ -756,8 +756,8 @@ Orchestrator or seller calls the governance agent to validate an action against 
 - Optional: `purchase_type: Purchase Type`, `tool: string`, `payload: object`, `governance_context: string`, `phase: Governance Phase`, `planned_delivery: Planned Delivery`, `delivery_metrics: object`, `modification_summary: string`, +2 more
 
 **Response (success branch):**
-- Required: `check_id: string`, `status: 'approved' | 'denied' | 'conditions'`, `plan_id: string`, `explanation: string`
-- Optional: `findings: object[]`, `conditions: object[]`, `expires_at: string`, `next_check: string`, `categories_evaluated: string[]`, `policies_evaluated: string[]`, `governance_context: string`, `context: Context`
+- Required: `check_id: string`, `status: Governance Decision`, `plan_id: string`, `explanation: string`
+- Optional: `findings: object[]`, `conditions: object[]`, `expires_at: string`, `next_check: string`, `categories_evaluated: string[]`, `policies_evaluated: string[]`, `mode: Governance Mode`, `governance_context: string`, +1 more
 
 **Deep dive:**
 - docs/guides/HANDLER-PATTERNS-GUIDE.md — input handler patterns for governance flows
@@ -872,6 +872,9 @@ Flow: `get_adcp_capabilities → sync_plans → check_governance → create_medi
 **Media buy seller agent** — Seller agent that receives briefs, returns products, accepts media buys, and reports delivery.
 Flow: `get_adcp_capabilities → sync_accounts → sync_governance → get_products → list_creative_formats → create_media_buy → get_media_buys → list_creative_formats → sync_creatives → get_media_buy_delivery`
 
+**Seller returns submitted task envelope when create_media_buy goes async** — Verifies the AdCP-payload wire shape of the submitted-arm response from create_media_buy: status='submitted', task_id present, no media_buy_id and no packages on the envelope.
+Flow: `comply_test_controller → create_media_buy`
+
 **Creative lifecycle is decoupled from media buy lifecycle** — Validates that canceling a media buy releases package-creative assignments but leaves the underlying creatives in the library with their review state intact, and that buyers can reuse released creatives on a new buy.
 Flow: `get_products → create_media_buy → sync_creatives → list_creatives → update_media_buy → list_creatives → create_media_buy → sync_creatives`
 
@@ -915,6 +918,7 @@ Flow: `get_adcp_capabilities → get_products → create_media_buy → update_me
 Flow: `get_adcp_capabilities → sync_accounts → list_creative_formats → get_products → create_media_buy → sync_creatives → get_media_buy_delivery`
 
 **Governance-aware seller** — Seller agent that composes with a campaign-governance agent on the buyer side — accepts sync_governance, calls check_governance before confirming spend, and propagates governance approvals, conditions, and denials unchanged. Optional claim; pure sellers without governance composition do not claim this specialism and skip the governance scenarios as not_applicable.
+Flow: `get_adcp_capabilities`
 
 **Broadcast linear TV seller agent** — Seller agent for broadcast linear TV inventory — primetime and fringe spots with measurement windows, agency estimate numbers, Ad-ID-based creative sync, and delayed delivery reporting.
 Flow: `get_adcp_capabilities → get_products → create_media_buy → get_media_buys → list_creative_formats → sync_creatives → expect_webhook → get_media_buy_delivery`
@@ -950,6 +954,9 @@ Flow: `sync_plans → sync_accounts → sync_governance → get_signals → acti
 **Owned signal agent** — Signal agent serving first-party or proprietary audience data without external catalog verification.
 Flow: `get_adcp_capabilities → get_signals → activate_signal`
 
+**get_signals pagination cursor integrity** — Validates the cursor↔has_more invariant on a paginated get_signals response by walking from a continuation page to the next page under a broad query.
+Flow: `get_adcp_capabilities → get_signals`
+
 ### Sponsored Intelligence (SI)
 
 **Sponsored intelligence baseline** — Baseline domain storyboard — every SI agent must discover offerings, initiate a session, exchange messages, and terminate cleanly.
@@ -961,7 +968,7 @@ Flow: `get_adcp_capabilities → si_get_offering → si_initiate_session → si_
 Flow: `get_adcp_capabilities → list_accounts → sync_audiences`
 
 **Social platform** — Social media platform that accepts audience segments, native creatives, and conversion events from buyer agents.
-Flow: `get_adcp_capabilities → sync_accounts → list_accounts → sync_audiences → sync_creatives → sync_catalogs → sync_creatives → log_event → get_account_financials`
+Flow: `get_adcp_capabilities → sync_accounts → list_accounts → sync_audiences → sync_creatives → sync_catalogs → sync_creatives → sync_event_sources → log_event → get_account_financials`
 
 ### Core
 
@@ -971,14 +978,38 @@ Flow: `get_adcp_capabilities → get_brand_identity → get_rights → acquire_r
 **Capability discovery** — Buyer calls get_adcp_capabilities to discover what an agent supports before making any buying or creative decisions.
 Flow: `get_adcp_capabilities`
 
+**Pagination cursor integrity — list_collection_lists** — Validates the cursor↔has_more invariant by walking a paginated list_collection_lists response from a continuation page to a terminal page.
+Flow: `get_adcp_capabilities → create_collection_list → list_collection_lists`
+
+**Pagination cursor integrity — list_content_standards** — Validates the cursor↔has_more invariant by walking a paginated list_content_standards response from a continuation page to a terminal page.
+Flow: `get_adcp_capabilities → create_content_standards → list_content_standards`
+
 **Deterministic testing** — Uses comply_test_controller to force state transitions and simulate delivery/budget, verifying state machines and reporting.
 Flow: `get_adcp_capabilities → comply_test_controller → sync_accounts → list_accounts → comply_test_controller → create_media_buy → comply_test_controller → get_media_buys → comply_test_controller → sync_creatives → comply_test_controller → sync_creatives → comply_test_controller → si_initiate_session → comply_test_controller → si_send_message → create_media_buy → comply_test_controller → get_media_buy_delivery → create_media_buy → comply_test_controller`
+
+**Pagination shape — get_media_buys** — Validates that get_media_buys responses carry a well-formed pagination envelope honoring the cursor↔has_more invariant.
+Flow: `get_adcp_capabilities → get_media_buys`
 
 **Idempotency enforcement** — Validates that mutating requests enforce idempotency_key — replays return cached responses, key reuse with a different payload returns IDEMPOTENCY_CONFLICT, and fresh keys create new resources.
 Flow: `get_adcp_capabilities → create_media_buy → expect_webhook → create_media_buy → get_media_buys`
 
+**Pagination cursor integrity — list_creative_formats** — Validates the cursor↔has_more invariant on list_creative_formats by seeding two formats and walking pages with max_results=1.
+Flow: `get_adcp_capabilities → comply_test_controller → list_creative_formats`
+
+**Pagination cursor integrity — list_accounts** — Validates the cursor↔has_more invariant by walking a paginated list_accounts response from a continuation page to a terminal page.
+Flow: `get_adcp_capabilities → sync_accounts → list_accounts`
+
+**Pagination cursor integrity** — Validates the cursor↔has_more invariant by walking a paginated list_creatives response from a continuation page to a terminal page.
+Flow: `get_adcp_capabilities → list_creatives`
+
+**Pagination cursor integrity — list_property_lists** — Validates the cursor↔has_more invariant by walking a paginated list_property_lists response from a continuation page to a terminal page.
+Flow: `get_adcp_capabilities → create_property_list → list_property_lists`
+
 **Schema compliance and temporal validation** — Validates that agent responses conform to AdCP schemas and that temporal constraints are enforced.
 Flow: `get_adcp_capabilities → get_products → list_creative_formats → create_media_buy`
+
+**v3 envelope integrity — no legacy status fields** — v3 protocol envelopes MUST NOT carry task_status or response_status — v2 legacy field names that have no semantics in v3.
+Flow: `get_adcp_capabilities`
 
 **Webhook emission — outbound webhook conformance (signing + idempotency)** — Any agent that emits webhooks MUST carry a stable idempotency_key across retries and — when the buyer has not opted into the deprecated HMAC fallback — MUST sign deliveries under the RFC 9421 webhook profile. Graded by a runner hosting a webhook receiver during storyboard execution.
 Flow: `get_adcp_capabilities → expect_webhook → expect_webhook_retry_keys_stable → expect_webhook_signature_valid`
@@ -1001,11 +1032,6 @@ Flow: `get_adcp_capabilities → list_creative_formats → build_creative → sy
 
 **Runner output contract** — Required failure-detail shape that AdCP storyboard runners MUST emit so implementors can self-diagnose validation failures.
 
-### Security transport
-
-**Signed requests — RFC 9421 transport-layer verification** — Agent verifies RFC 9421 HTTP Signatures on incoming AdCP requests per the transport-layer profile. Graded against conformance vectors covering every checklist step and canonicalization-edge rule.
-Flow: `get_adcp_capabilities`
-
 ### Error Handling
 
 **Error handling and compliance** — Validates that agents return properly structured AdCP errors with correct codes, recovery hints, and transport bindings.
@@ -1014,6 +1040,11 @@ Flow: `get_adcp_capabilities → create_media_buy → get_products → create_me
 ### Security
 
 **Authentication baseline** — Every AdCP agent MUST require authentication on protected operations. At least one of API key or OAuth MUST be implemented and correctly advertised.
+
+### Security transport
+
+**Signed requests — RFC 9421 transport-layer verification** — Agent verifies RFC 9421 HTTP Signatures on incoming AdCP requests per the transport-layer profile. Universal capability-gated storyboard — runs for any agent advertising `request_signing.supported: true` regardless of `supported_protocols`. Graded against conformance vectors covering every checklist step and canonicalization-edge rule.
+Flow: `get_adcp_capabilities`
 
 ## Error Codes
 
@@ -1161,6 +1192,6 @@ JSON schemas (source of truth): `schemas/cache/latest/index.json` (local only)
 ## External Resources
 
 - Documentation: https://adcontextprotocol.github.io/adcp-client/
-- npm: https://www.npmjs.com/package/@adcp/client
+- npm: https://www.npmjs.com/package/@adcp/sdk
 - Spec: https://adcontextprotocol.org
-- CLI: `npx @adcp/client@latest`
+- CLI: `npx @adcp/sdk@latest`

@@ -1,6 +1,6 @@
 # ADCP Client Documentation
 
-Welcome to the official documentation for `@adcp/client`, the TypeScript/JavaScript client library for the Ad Context Protocol.
+Welcome to the official documentation for `@adcp/sdk`, the TypeScript/JavaScript client library for the Ad Context Protocol.
 
 ## Quick Navigation
 
@@ -27,7 +27,7 @@ Welcome to the official documentation for `@adcp/client`, the TypeScript/JavaScr
 - [Troubleshooting](./guides/ASYNC-TROUBLESHOOTING-GUIDE.md)
 
 ### 📦 Resources
-- [npm Package](https://www.npmjs.com/package/@adcp/client)
+- [npm Package](https://www.npmjs.com/package/@adcp/sdk)
 - [GitHub Repository](https://github.com/adcontextprotocol/adcp-client)
 - [AdCP Specification](https://adcontextprotocol.org)
 

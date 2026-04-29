@@ -1,6 +1,6 @@
 # TaskResult 5.0 Migration Guide
 
-`@adcp/client` 5.0 turned `TaskResult` into a discriminated union. Failed
+`@adcp/sdk` 5.0 turned `TaskResult` into a discriminated union. Failed
 tasks now use `status: 'failed'` instead of `status: 'completed'`, and MCP
 `isError` responses preserve structured data (`adcp_error`, `context`,
 `ext`) instead of throwing.
@@ -85,7 +85,7 @@ guaranteed `string`; on the success arms it's `undefined`. Always guard on
 ### Retry helpers
 
 ```ts
-import { isRetryable, getRetryDelay } from '@adcp/client';
+import { isRetryable, getRetryDelay } from '@adcp/sdk';
 
 if (!result.success && isRetryable(result)) {
   await sleep(getRetryDelay(result, /* default */ 5000));

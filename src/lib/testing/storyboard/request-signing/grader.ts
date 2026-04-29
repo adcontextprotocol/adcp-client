@@ -66,6 +66,23 @@ export interface GradeOptions extends LoadVectorsOptions {
    */
   allowLiveSideEffects?: boolean;
   /**
+   * Agent's declared `covers_content_digest` policy from
+   * `get_adcp_capabilities.request_signing.covers_content_digest`. When set
+   * without `agentCapability`, the grader auto-skips **negative** vectors whose
+   * `verifier_capability.covers_content_digest` asserts a policy the agent
+   * didn't advertise (positive vectors are always gradable regardless of policy):
+   *   - `'either'` → skips neg/007 (`'required'`) and neg/018 (`'forbidden'`)
+   *   - `'required'` → skips neg/018; neg/007 still runs
+   *   - `'forbidden'` → skips neg/007; neg/018 still runs
+   *
+   * Skipped vectors use `skip_reason: 'capability_profile_mismatch'`.
+   *
+   * Has no effect when `agentCapability` is provided — the full capability
+   * fixture's `covers_content_digest` field governs via `capabilityMismatch()`.
+   * Use `agentCapability` when you also need `required_for` skip behavior.
+   */
+  agentContentDigestPolicy?: 'required' | 'forbidden' | 'either';
+  /**
    * Transport shape the agent speaks. `'raw'` (default) POSTs per-operation
    * AdCP endpoints matching the vectors' URL shape. `'mcp'` wraps each
    * vector body in a JSON-RPC `tools/call` envelope and POSTs to the MCP
@@ -84,6 +101,16 @@ export interface GradeOptions extends LoadVectorsOptions {
   agentUrl?: string;
   /** Per-probe timeout. Default 10s. */
   timeoutMs?: number;
+  /**
+   * Number of (probe1, probe2) pairs to run for vector neg/016
+   * (replayed-nonce). Each pair uses a fresh nonce and a new TCP
+   * connection, so on a multi-instance deployment the two probes
+   * may land on different instances. K pairs make the failure
+   * deterministic: if any second probe is accepted the count and
+   * the cross-instance hypothesis surface in the diagnostic.
+   * Must be ≥ 2. Default 10.
+   */
+  replayProbePairs?: number;
 }
 
 export interface VectorGradeResult {
@@ -99,6 +126,17 @@ export interface VectorGradeResult {
   http_status: number;
   diagnostic?: string;
   probe_duration_ms: number;
+  /**
+   * For neg/016 (replayed-nonce) only: total number of (probe1, probe2)
+   * pairs attempted by the K-pair grader.
+   */
+  replay_pairs_tried?: number;
+  /**
+   * For neg/016 (replayed-nonce) only: number of pairs where the second
+   * probe was correctly rejected with `request_signature_replayed`.
+   * Equal to `replay_pairs_tried` on a passing run.
+   */
+  replay_pairs_rejected?: number;
 }
 
 export interface GradeReport {
@@ -262,6 +300,19 @@ function preflightSkip(
       };
     }
   }
+  if (kind === 'negative' && !options.agentCapability && options.agentContentDigestPolicy) {
+    const vectorCd = vector.verifier_capability.covers_content_digest;
+    if (vectorCd !== 'either' && vectorCd !== options.agentContentDigestPolicy) {
+      return {
+        ...base,
+        skipped: true,
+        skip_reason: 'capability_profile_mismatch',
+        diagnostic:
+          `Vector asserts covers_content_digest='${vectorCd}' but agent declares '${options.agentContentDigestPolicy}'. ` +
+          `The agent's policy is incompatible with the vector's expected verifier behavior.`,
+      };
+    }
+  }
   const transportReason = TRANSPORT_UNGRADABLE[vector.id];
   if (transportReason) {
     return { ...base, skipped: true, skip_reason: 'transport_ungradable', diagnostic: transportReason };
@@ -390,7 +441,7 @@ async function gradeNegative(
   }
   switch (vector.requires_contract) {
     case 'replay_window':
-      return gradeReplayWindow(vector, loaded, probeOpts, buildOpts);
+      return gradeReplayWindow(vector, loaded, probeOpts, buildOpts, options.replayProbePairs ?? 10);
     case 'rate_abuse':
       return gradeRateAbuse(vector, loaded, contract!, probeOpts, buildOpts, options);
     case 'revocation':
@@ -474,40 +525,101 @@ async function gradeReplayWindow(
   vector: NegativeVector,
   loaded: ReturnType<typeof loadRequestSigningVectors>,
   probeOpts: { allowPrivateIp: boolean; timeoutMs?: number },
-  buildOpts: BuildOptions
+  buildOpts: BuildOptions,
+  pairCount: number
 ): Promise<VectorGradeResult> {
-  // Build one valid signed request with a fixed nonce, then send it twice.
-  const fixedNonce = randomBytes(16).toString('base64url');
-  const signed = buildPositiveRequestFromNegative(vector, loaded, { ...buildOpts, nonce: fixedNonce });
+  // Run pairCount independent (probe1, probe2) pairs. Each pair uses a fresh
+  // nonce so pair N's probe1 doesn't consume pair N+1's replay-window slot.
+  // probeSignedRequest already closes its undici Agent on completion, so each
+  // call gets a new TCP connection — no keep-alive pinning to the same upstream.
+  let totalDurationMs = 0;
+  let rejectedCount = 0;
+  let lastSecondStatus = 0;
+  let lastSecondErrorCode: string | undefined;
 
-  const first = await probeSignedRequest(signed, probeOpts);
-  if (first.status < 200 || first.status >= 300) {
+  for (let i = 0; i < pairCount; i++) {
+    const nonce = randomBytes(16).toString('base64url');
+    const signed = buildPositiveRequestFromNegative(vector, loaded, { ...buildOpts, nonce });
+
+    const first = await probeSignedRequest(signed, probeOpts);
+    totalDurationMs += first.duration_ms;
+
+    if (first.status < 200 || first.status >= 300) {
+      return {
+        vector_id: vector.id,
+        kind: 'negative',
+        passed: false,
+        http_status: first.status,
+        expected_error_code: vector.expected_error_code,
+        actual_error_code: first.wwwAuthenticateErrorCode,
+        diagnostic:
+          `replay_window contract: first submission MUST be accepted but agent returned ${first.status}` +
+          (first.wwwAuthenticateErrorCode ? ` (error="${first.wwwAuthenticateErrorCode}")` : '') +
+          '. Check runner JWKS registration with the agent.',
+        probe_duration_ms: totalDurationMs,
+        replay_pairs_tried: i + 1,
+        replay_pairs_rejected: rejectedCount,
+      };
+    }
+
+    const second = await probeSignedRequest(signed, probeOpts);
+    totalDurationMs += second.duration_ms;
+    lastSecondStatus = second.status;
+    lastSecondErrorCode = second.wwwAuthenticateErrorCode;
+
+    if (negativeAcceptedErrorCode(vector, second)) {
+      rejectedCount++;
+    }
+  }
+
+  if (rejectedCount === pairCount) {
     return {
       vector_id: vector.id,
       kind: 'negative',
-      passed: false,
-      http_status: first.status,
+      passed: true,
+      http_status: lastSecondStatus,
       expected_error_code: vector.expected_error_code,
-      actual_error_code: first.wwwAuthenticateErrorCode,
-      diagnostic:
-        `replay_window contract: first submission MUST be accepted but agent returned ${first.status}` +
-        (first.wwwAuthenticateErrorCode ? ` (error="${first.wwwAuthenticateErrorCode}")` : '') +
-        '. Check runner JWKS registration with the agent.',
-      probe_duration_ms: first.duration_ms,
+      actual_error_code: lastSecondErrorCode,
+      probe_duration_ms: totalDurationMs,
+      replay_pairs_tried: pairCount,
+      replay_pairs_rejected: pairCount,
     };
   }
 
-  const second = await probeSignedRequest(signed, probeOpts);
   return {
     vector_id: vector.id,
     kind: 'negative',
-    passed: negativeAcceptedErrorCode(vector, second),
-    http_status: second.status,
+    passed: false,
+    http_status: lastSecondStatus,
     expected_error_code: vector.expected_error_code,
-    actual_error_code: second.wwwAuthenticateErrorCode,
-    diagnostic: buildNegativeDiagnostic(vector, second),
-    probe_duration_ms: first.duration_ms + second.duration_ms,
+    actual_error_code: lastSecondErrorCode,
+    diagnostic: buildReplayWindowFailDiagnostic(vector, rejectedCount, pairCount),
+    probe_duration_ms: totalDurationMs,
+    replay_pairs_tried: pairCount,
+    replay_pairs_rejected: rejectedCount,
   };
+}
+
+function buildReplayWindowFailDiagnostic(vector: NegativeVector, rejectedCount: number, pairCount: number): string {
+  if (rejectedCount === 0) {
+    return (
+      `expected 401 with error="${vector.expected_error_code}" on replayed nonce, but all ${pairCount} probe ` +
+      `pairs were accepted (got 200 on second submission every time). Verifier has no replay protection for this nonce. ` +
+      `If your verifier runs more than one process or machine instance, confirm the replay store is shared across ` +
+      `the pool — the default \`InMemoryReplayStore\` is per-process. For distributed deployments use ` +
+      `\`PostgresReplayStore\` from \`@adcp/sdk/signing/server\` or a Redis-backed \`ReplayStore\` ` +
+      `implementation. See https://github.com/adcontextprotocol/adcp-client/pull/1018`
+    );
+  }
+  return (
+    `${rejectedCount} of ${pairCount} probe pairs were correctly rejected; ` +
+    `${pairCount - rejectedCount} pair(s) had the second submission accepted. ` +
+    `This is the classic multi-instance \`InMemoryReplayStore\` pattern — the two probes in an ` +
+    `accepted pair landed on different load-balanced instances, each with its own per-process replay store. ` +
+    `For distributed deployments use \`PostgresReplayStore\` from \`@adcp/sdk/signing/server\` ` +
+    `or a Redis-backed \`ReplayStore\` implementation so all instances share one replay cache. ` +
+    `See https://github.com/adcontextprotocol/adcp-client/pull/1018`
+  );
 }
 
 async function gradeRateAbuse(

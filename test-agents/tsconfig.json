@@ -7,7 +7,7 @@
     "skipLibCheck": true,
     "outDir": "dist",
     "paths": {
-      "@adcp/client": ["../dist/lib/index.d.ts"]
+      "@adcp/sdk": ["../dist/lib/index.d.ts"]
     }
   },
   "include": ["./*.ts"]

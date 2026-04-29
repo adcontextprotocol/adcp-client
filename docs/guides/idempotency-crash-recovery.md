@@ -35,8 +35,8 @@ import {
   useIdempotencyKey,
   IdempotencyConflictError,
   IdempotencyExpiredError,
-} from '@adcp/client';
-import type { CreateMediaBuyRequest } from '@adcp/client';
+} from '@adcp/sdk';
+import type { CreateMediaBuyRequest } from '@adcp/sdk';
 import { Pool } from 'pg';
 
 const pool = new Pool();

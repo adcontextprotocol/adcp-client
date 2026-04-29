@@ -46,7 +46,7 @@ import {
   type AccountStore,
   type AdcpStructuredError,
   type SyncCreativesRow,
-} from '@adcp/client/server/decisioning';
+} from '@adcp/sdk/server/decisioning';
 import type {
   GetProductsRequest,
   GetProductsResponse,
@@ -58,7 +58,7 @@ import type {
   GetMediaBuyDeliveryResponse,
   CreativeAsset,
   AccountReference,
-} from '@adcp/client/types';
+} from '@adcp/sdk/types';
 
 // ---------------------------------------------------------------------------
 // Shared config + state

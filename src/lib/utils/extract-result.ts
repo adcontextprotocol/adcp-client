@@ -24,7 +24,7 @@
  *
  * @example
  * ```ts
- * import { extractResult } from '@adcp/client';
+ * import { extractResult } from '@adcp/sdk';
  *
  * const res = await mcpClient.callTool({ name: 'get_products', arguments: {} });
  * const payload = extractResult<GetProductsResponse>(res);

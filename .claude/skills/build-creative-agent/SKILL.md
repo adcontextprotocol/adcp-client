@@ -192,13 +192,13 @@ Asset values use type-specific shapes, not a generic `asset_type` discriminator:
 
 Schemas: `ListCreativeFormatsRequestSchema`, `SyncCreativesRequestSchema`, `ListCreativesRequestSchema`, `PreviewCreativeSingleRequestSchema`, `BuildCreativeRequestSchema`.
 
-Import everything from `@adcp/client`. Types from `@adcp/client` with `import type`.
+Import everything from `@adcp/sdk`. Types from `@adcp/sdk` with `import type`.
 
 ## Setup
 
 ```bash
 npm init -y
-npm install @adcp/client
+npm install @adcp/sdk
 npm install -D typescript @types/node
 ```
 
@@ -244,7 +244,7 @@ The `sync_creatives` handler adds/updates entries. The `list_creatives` handler 
 
 ```bash
 npx tsx agent.ts &
-npx @adcp/client@latest storyboard run http://localhost:3001/mcp creative_lifecycle --json
+npx @adcp/sdk@latest storyboard run http://localhost:3001/mcp creative_lifecycle --json
 ```
 
 **Sandbox validation** (if ports are blocked):

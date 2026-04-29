@@ -9,7 +9,7 @@
  * grader — they test that our library's HTTPS stores glue into the verifier
  * pipeline correctly under state transitions. External agents have no way to
  * let a remote tester drive their JWKS / revocation snapshots, so this file
- * intentionally lives outside `@adcp/client/testing/storyboard/request-signing`
+ * intentionally lives outside `@adcp/sdk/testing/storyboard/request-signing`
  * (the operator-facing grader stays pure spec-conformance) and is not exposed
  * via any public barrel. It runs as part of `npm test` and in CI.
  *

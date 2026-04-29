@@ -1,7 +1,11 @@
 {
-  "name": "@adcp/client",
-  "version": "5.18.0",
-  "description": "AdCP client library with protocol support for MCP and A2A",
+  "name": "@adcp/sdk",
+  "version": "5.23.0",
+  "description": "AdCP SDK — client, server, and compliance harnesses for the AdContext Protocol (MCP + A2A)",
+  "workspaces": [
+    ".",
+    "packages/*"
+  ],
   "main": "dist/lib/index.js",
   "types": "dist/lib/index.d.ts",
   "type": "commonjs",
@@ -10,6 +14,16 @@
       "import": "./dist/lib/index.js",
       "require": "./dist/lib/index.js",
       "types": "./dist/lib/index.d.ts"
+    },
+    "./client": {
+      "import": "./dist/lib/client/index.js",
+      "require": "./dist/lib/client/index.js",
+      "types": "./dist/lib/client/index.d.ts"
+    },
+    "./compliance": {
+      "import": "./dist/lib/compliance/index.js",
+      "require": "./dist/lib/compliance/index.js",
+      "types": "./dist/lib/compliance/index.d.ts"
     },
     "./advanced": {
       "import": "./dist/lib/advanced.js",
@@ -56,6 +70,11 @@
       "require": "./dist/lib/signing/server.js",
       "types": "./dist/lib/signing/server.d.ts"
     },
+    "./signing/testing": {
+      "import": "./dist/lib/signing/testing.js",
+      "require": "./dist/lib/signing/testing.js",
+      "types": "./dist/lib/signing/testing.d.ts"
+    },
     "./schemas": {
       "import": "./dist/lib/schemas/index.js",
       "require": "./dist/lib/schemas/index.js",
@@ -80,10 +99,17 @@
       "import": "./dist/lib/express-mcp/index.js",
       "require": "./dist/lib/express-mcp/index.js",
       "types": "./dist/lib/express-mcp/index.d.ts"
-    }
+    },
+    "./package.json": "./package.json"
   },
   "typesVersions": {
     "*": {
+      "client": [
+        "dist/lib/client/index.d.ts"
+      ],
+      "compliance": [
+        "dist/lib/compliance/index.d.ts"
+      ],
       "advanced": [
         "dist/lib/advanced.d.ts"
       ],
@@ -110,6 +136,9 @@
       ],
       "signing/server": [
         "dist/lib/signing/server.d.ts"
+      ],
+      "signing/testing": [
+        "dist/lib/signing/testing.d.ts"
       ],
       "schemas": [
         "dist/lib/schemas/index.d.ts"
@@ -147,7 +176,7 @@
   ],
   "scripts": {
     "prepare": "node scripts/install-hooks.js 2>/dev/null || true",
-    "prepublishOnly": "npm run clean && npm run sync-schemas && (test -f src/lib/types/tools.generated.ts || npm run generate-types) && npm run build:lib && node --test-timeout=60000 --test test/lib/adcp-client.test.js test/lib/validation.test.js test/lib/zod-schemas.test.js",
+    "prepublishOnly": "npm run clean && npm run sync-schemas && (test -f src/lib/types/tools.generated.ts || npm run generate-types) && npm run build:lib && node --test-timeout=60000 --test-force-exit --test test/lib/adcp-client.test.js test/lib/validation.test.js test/lib/zod-schemas.test.js",
     "build": "npm run build:lib",
     "build:lib": "npm run sync-version && tsc --project tsconfig.lib.json && tsx scripts/copy-schemas-to-dist.ts",
     "build:test-agents": "npm run build:lib && tsc -p test-agents/tsconfig.json --rootDir test-agents",
@@ -191,7 +220,7 @@
     "ci:validate": "node scripts/ci-validate.js",
     "ci:quick": "npm run format:check && npm run typecheck && npm run build:lib && npm test",
     "ci:schema-check": "npm run sync-schemas && npm run generate-types && npm run generate-registry-types && git diff --exit-code -I '// Generated at:' src/lib/types/ src/lib/agents/ src/lib/registry/types.generated.ts schemas/registry/registry.yaml || (echo '⚠️  Generated files are out of sync. Run: npm run sync-schemas && npm run generate-types && npm run generate-registry-types' && exit 1)",
-    "ci:docs-check": "npm run generate-agent-docs && git diff --exit-code -I '> Generated at:' -I '> (Library: )?@adcp/client v' docs/llms.txt docs/TYPE-SUMMARY.md || (echo '⚠️  Agent docs are out of sync. Run: npm run generate-agent-docs' && exit 1)",
+    "ci:docs-check": "npm run generate-agent-docs && git diff --exit-code -I '> Generated at:' -I '> (Library: )?@adcp/sdk v' docs/llms.txt docs/TYPE-SUMMARY.md || (echo '⚠️  Agent docs are out of sync. Run: npm run generate-agent-docs' && exit 1)",
     "ci:pre-push": "npm run ci:schema-check && npm run ci:quick",
     "hooks:install": "node scripts/install-hooks.js",
     "hooks:uninstall": "rm -f .git/hooks/pre-push",
@@ -288,5 +317,5 @@
     },
     "minimatch": "^10.2.1"
   },
-  "adcp_version": "3.0.0"
+  "adcp_version": "3.0.1"
 }

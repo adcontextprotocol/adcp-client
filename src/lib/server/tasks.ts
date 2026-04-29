@@ -8,7 +8,7 @@
  *
  * @example
  * ```typescript
- * import { createTaskCapableServer, registerAdcpTaskTool, InMemoryTaskStore } from '@adcp/client';
+ * import { createTaskCapableServer, registerAdcpTaskTool, InMemoryTaskStore } from '@adcp/sdk';
  *
  * const server = createTaskCapableServer('My Publisher', '1.0.0');
  *

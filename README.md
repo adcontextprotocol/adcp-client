@@ -1,7 +1,7 @@
-# @adcp/client
+# @adcp/sdk
 
-[![npm version](https://badge.fury.io/js/@adcp%2Fclient.svg)](https://badge.fury.io/js/@adcp%2Fclient)
-[![npm downloads](https://img.shields.io/npm/dm/@adcp/client.svg)](https://www.npmjs.com/package/@adcp/client)
+[![npm version](https://badge.fury.io/js/@adcp%2Fsdk.svg)](https://badge.fury.io/js/@adcp%2Fsdk)
+[![npm downloads](https://img.shields.io/npm/dm/@adcp/sdk.svg)](https://www.npmjs.com/package/@adcp/sdk)
 [![License: Apache 2.0](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](https://www.apache.org/licenses/LICENSE-2.0)
 [![TypeScript](https://img.shields.io/badge/TypeScript-Ready-blue.svg)](https://www.typescriptlang.org/)
 [![API Documentation](https://img.shields.io/badge/API-Documentation-blue.svg)](https://adcontextprotocol.github.io/adcp-client/api/)
@@ -13,7 +13,7 @@ Official TypeScript/JavaScript client for the **Ad Context Protocol (AdCP)**. Bu
 
 Start with [`docs/llms.txt`](./docs/llms.txt) — the full protocol spec in one file (tools, types, error codes, examples). Building a server? See [`docs/guides/BUILD-AN-AGENT.md`](./docs/guides/BUILD-AN-AGENT.md). **Calling** an AdCP agent as a buyer? Load [`skills/call-adcp-agent/SKILL.md`](./skills/call-adcp-agent/SKILL.md) — wire contract, async flow, and error-recovery priors that aren't in the type signatures. Setting up request signing? See [`docs/guides/SIGNING-GUIDE.md`](./docs/guides/SIGNING-GUIDE.md). For type signatures, use [`docs/TYPE-SUMMARY.md`](./docs/TYPE-SUMMARY.md). Skip `src/lib/types/*.generated.ts` — they're machine-generated and will burn context.
 
-These docs are also available in `node_modules/@adcp/client/docs/` after install.
+These docs are also available in `node_modules/@adcp/sdk/docs/` after install.
 
 ## The Core Concept
 
@@ -29,13 +29,13 @@ AdCP operations are **distributed and asynchronous by default**. An agent might:
 ## Installation
 
 ```bash
-npm install @adcp/client
+npm install @adcp/sdk
 ```
 
 ## Quick Start: Distributed Operations
 
 ```typescript
-import { ADCPMultiAgentClient } from '@adcp/client';
+import { ADCPMultiAgentClient } from '@adcp/sdk';
 
 // Configure agents and handlers
 const client = new ADCPMultiAgentClient(
@@ -278,7 +278,7 @@ handlers: {
 Building a server that receives AdCP tool calls? Import request types for handler signatures and Zod schemas for validation:
 
 ```typescript
-import { CreateMediaBuyRequest, CreateMediaBuyResponse, CreateMediaBuyRequestSchema } from '@adcp/client';
+import { CreateMediaBuyRequest, CreateMediaBuyResponse, CreateMediaBuyRequestSchema } from '@adcp/sdk';
 
 function handleCreateMediaBuy(rawParams: unknown): CreateMediaBuyResponse {
   const request: CreateMediaBuyRequest = CreateMediaBuyRequestSchema.parse(rawParams);
@@ -329,7 +329,7 @@ result.metadata.replayed;
 **Typed errors on replay conflicts** — check `result.errorInstance` with `instanceof` instead of switching on error codes:
 
 ```typescript
-import { IdempotencyConflictError, IdempotencyExpiredError } from '@adcp/client';
+import { IdempotencyConflictError, IdempotencyExpiredError } from '@adcp/sdk';
 
 if (result.errorInstance instanceof IdempotencyConflictError) {
   // Agent re-planned with a different payload. Mint a fresh key and retry.
@@ -342,7 +342,7 @@ if (result.errorInstance instanceof IdempotencyExpiredError) {
 **BYOK** (persist keys across process restarts so crash-recovery can resend the exact key):
 
 ```typescript
-import { useIdempotencyKey } from '@adcp/client';
+import { useIdempotencyKey } from '@adcp/sdk';
 
 // Validates against the spec pattern `^[A-Za-z0-9_.:-]{16,255}$` before the round-trip.
 const key = await db.getOrCreateIdempotencyKey(campaign.id);
@@ -386,7 +386,7 @@ adcp signing generate-key --alg ed25519 --kid my-agent-2026 \
 **Sign outbound requests (buyer):**
 
 ```typescript
-import { createSigningFetch } from '@adcp/client/signing';
+import { createSigningFetch } from '@adcp/sdk/signing';
 
 const signingFetch = createSigningFetch(fetch, {
   keyid: 'my-agent-2026',
@@ -409,7 +409,7 @@ import {
   createExpressVerifier,
   StaticJwksResolver,
   InMemoryReplayStore,
-} from '@adcp/client/signing';
+} from '@adcp/sdk/signing';
 
 app.post(
   '/mcp',
@@ -506,7 +506,7 @@ Build agent registries by discovering properties agents can sell. Works with AdC
 ### Three Key Queries
 
 ```typescript
-import { PropertyCrawler, getPropertyIndex } from '@adcp/client';
+import { PropertyCrawler, getPropertyIndex } from '@adcp/sdk';
 
 // First, crawl agents to discover properties
 const crawler = new PropertyCrawler();
@@ -532,7 +532,7 @@ const premiumProperties = index.findAgentsByPropertyTags(['premium', 'ctv']);
 ### Full Example
 
 ```typescript
-import { PropertyCrawler, getPropertyIndex } from '@adcp/client';
+import { PropertyCrawler, getPropertyIndex } from '@adcp/sdk';
 
 const crawler = new PropertyCrawler();
 
@@ -612,13 +612,13 @@ Save agents for quick access:
 
 ```bash
 # Save an agent with an alias
-npx @adcp/client@latest --save-auth test https://test-agent.adcontextprotocol.org
+npx @adcp/sdk@latest --save-auth test https://test-agent.adcontextprotocol.org
 
 # Use the alias
-npx @adcp/client@latest test get_products '{"brief":"Coffee brands"}'
+npx @adcp/sdk@latest test get_products '{"brief":"Coffee brands"}'
 
 # List saved agents
-npx @adcp/client@latest --list-agents
+npx @adcp/sdk@latest --list-agents
 ```
 
 ### Direct URL Usage
@@ -627,20 +627,20 @@ Auto-detect protocol and call directly:
 
 ```bash
 # Protocol auto-detection (default)
-npx @adcp/client@latest https://test-agent.adcontextprotocol.org get_products '{"brief":"Coffee"}'
+npx @adcp/sdk@latest https://test-agent.adcontextprotocol.org get_products '{"brief":"Coffee"}'
 
 # Force specific protocol with --protocol flag
-npx @adcp/client@latest https://agent.example.com get_products '{"brief":"Coffee"}' --protocol mcp
-npx @adcp/client@latest https://agent.example.com list_authorized_properties --protocol a2a
+npx @adcp/sdk@latest https://agent.example.com get_products '{"brief":"Coffee"}' --protocol mcp
+npx @adcp/sdk@latest https://agent.example.com list_authorized_properties --protocol a2a
 
 # List available tools
-npx @adcp/client@latest https://agent.example.com
+npx @adcp/sdk@latest https://agent.example.com
 
 # Use a file for payload
-npx @adcp/client@latest https://agent.example.com create_media_buy @payload.json
+npx @adcp/sdk@latest https://agent.example.com create_media_buy @payload.json
 
 # JSON output for scripting
-npx @adcp/client@latest https://agent.example.com get_products '{"brief":"..."}' --json | jq '.products'
+npx @adcp/sdk@latest https://agent.example.com get_products '{"brief":"..."}' --json | jq '.products'
 ```
 
 ### Authentication
@@ -649,44 +649,44 @@ Three ways to provide auth tokens (priority order):
 
 ```bash
 # 1. Explicit flag (highest priority)
-npx @adcp/client@latest test get_products '{"brief":"..."}' --auth your-token
+npx @adcp/sdk@latest test get_products '{"brief":"..."}' --auth your-token
 
 # 2. Saved in agent config (recommended)
-npx @adcp/client@latest --save-auth prod https://prod-agent.com
+npx @adcp/sdk@latest --save-auth prod https://prod-agent.com
 # Will prompt for auth token securely
 
 # 3. Environment variable (fallback)
 export ADCP_AUTH_TOKEN=your-token
-npx @adcp/client@latest test get_products '{"brief":"..."}'
+npx @adcp/sdk@latest test get_products '{"brief":"..."}'
 ```
 
 ### Agent Management
 
 ```bash
 # Save agent with auth
-npx @adcp/client@latest --save-auth prod https://prod-agent.com mcp
+npx @adcp/sdk@latest --save-auth prod https://prod-agent.com mcp
 
 # List all saved agents
-npx @adcp/client@latest --list-agents
+npx @adcp/sdk@latest --list-agents
 
 # Remove an agent
-npx @adcp/client@latest --remove-agent test
+npx @adcp/sdk@latest --remove-agent test
 
 # Show config file location
-npx @adcp/client@latest --show-config
+npx @adcp/sdk@latest --show-config
 ```
 
 ### Testing & Compliance
 
 ```bash
 # Run test scenarios against an agent
-npx @adcp/client@latest test test-mcp full_sales_flow
-npx @adcp/client@latest test test-mcp --list-scenarios
+npx @adcp/sdk@latest test test-mcp full_sales_flow
+npx @adcp/sdk@latest test test-mcp --list-scenarios
 
 # Run compliance assessment
-npx @adcp/client@latest comply test-mcp
-npx @adcp/client@latest comply test-mcp --platform-type social_platform
-npx @adcp/client@latest comply --list-platform-types
+npx @adcp/sdk@latest comply test-mcp
+npx @adcp/sdk@latest comply test-mcp --platform-type social_platform
+npx @adcp/sdk@latest comply --list-platform-types
 ```
 
 **Protocol Auto-Detection**: The CLI automatically detects whether an endpoint uses MCP or A2A by checking URL patterns and discovery endpoints. Override with `--protocol mcp` or `--protocol a2a` if needed.
@@ -786,7 +786,7 @@ The skill guides domain decisions, scaffolds code, and tells you how to validate
 
 ```bash
 npx tsx agent.ts
-npx @adcp/client@latest storyboard run http://localhost:3001/mcp media_buy_seller --json
+npx @adcp/sdk@latest storyboard run http://localhost:3001/mcp media_buy_seller --json
 ```
 
 Available skills:

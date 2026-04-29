@@ -6,7 +6,7 @@
  *
  * @example
  * ```typescript
- * import { createTaskCapableServer, serve } from '@adcp/client';
+ * import { createTaskCapableServer, serve } from '@adcp/sdk';
  *
  * function createAgent({ taskStore }) {
  *   const server = createTaskCapableServer('My Agent', '1.0.0', { taskStore });
@@ -106,6 +106,22 @@ export interface ServeOptions {
   path?: string;
   /** Called when the server starts listening. */
   onListening?: (url: string) => void;
+  /**
+   * Async check called before the server begins accepting connections.
+   * Throw to abort boot — `serve()` logs the error and calls `process.exit(1)`,
+   * so the server never enters listen mode and no traffic arrives during the
+   * check. Use to validate external dependencies (database pools, credential
+   * fetches) so a misconfigured deployment fails loudly at startup rather than
+   * silently on the first live request.
+   *
+   * @example
+   * ```ts
+   * serve(createAgent, {
+   *   readinessCheck: () => store.probe(),
+   * });
+   * ```
+   */
+  readinessCheck?: () => Promise<void>;
   /**
    * Custom task store. Defaults to a shared InMemoryTaskStore.
    *
@@ -635,16 +651,31 @@ export function serve(createAgent: (ctx: ServeContext) => AdcpServer | McpServer
     }
   });
 
-  httpServer.listen(port, () => {
-    const actualPort = (httpServer.address() as { port: number }).port;
-    const url = `http://localhost:${actualPort}${mountPath}`;
-    if (options?.onListening) {
-      options.onListening(url);
-    } else {
-      console.log(`AdCP agent running at ${url}`);
-      console.log(`\nTest with:\n  npx @adcp/client@latest ${url}`);
-    }
-  });
+  const doListen = () => {
+    httpServer.listen(port, () => {
+      const actualPort = (httpServer.address() as { port: number }).port;
+      const url = `http://localhost:${actualPort}${mountPath}`;
+      if (options?.onListening) {
+        options.onListening(url);
+      } else {
+        console.log(`AdCP agent running at ${url}`);
+        console.log(`\nTest with:\n  npx @adcp/sdk@latest ${url}`);
+      }
+    });
+  };
+
+  if (options?.readinessCheck) {
+    options
+      .readinessCheck()
+      .then(doListen)
+      .catch((err: unknown) => {
+        const message = err instanceof Error ? err.message : String(err);
+        console.error('[adcp/serve] readinessCheck failed — aborting boot:', message);
+        process.exit(1);
+      });
+  } else {
+    doListen();
+  }
 
   return httpServer;
 }
@@ -728,7 +759,7 @@ export function hostname(host: string): string {
  * @example
  * ```ts
  * import express from 'express';
- * import { resolveHost } from '@adcp/client/server';
+ * import { resolveHost } from '@adcp/sdk/server';
  *
  * const routersByHost = new Map<string, express.Router>();
  *

@@ -1,7 +1,7 @@
 # AdCP Type Summary
 
-> Generated at: 2026-04-24
-> @adcp/client v5.15.0
+> Generated at: 2026-04-28
+> @adcp/sdk v5.21.1
 
 Curated reference of the types that matter for using the AdCP client. For full generated types see `src/lib/types/tools.generated.ts` and `src/lib/types/core.generated.ts`.
 
@@ -208,7 +208,7 @@ _Response (success branch):_
   credit: object
   balance: object
   payment_status: 'current' | 'past_due' | 'suspended'
-  payment_terms: 'net_15' | 'net_30' | 'net_45' | 'net_60' | 'net_90' | 'prepay'
+  payment_terms: Payment Terms
   invoices: object[]
   context: Context
 }
@@ -326,7 +326,7 @@ _Response (success branch):_
   confirmed_at: string
   creative_deadline: string
   revision: integer
-  valid_actions: string[]
+  valid_actions: object[]
   planned_delivery: Planned Delivery
   sandbox: boolean
   context: Context
@@ -365,7 +365,7 @@ _Response (success branch):_
   implementation_date: string,null
   invoice_recipient: Business Entity
   affected_packages: object[]
-  valid_actions: string[]
+  valid_actions: object[]
   sandbox: boolean
   context: Context
 }
@@ -1160,7 +1160,7 @@ _Request:_
 _Response (success branch):_
 ```
 {
-  verdict: 'pass' | 'fail'  // required
+  verdict: Binary Verdict  // required
   confidence: number
   explanation: string
   features: object[]
@@ -1338,7 +1338,7 @@ _Response (success branch):_
 ```
 {
   check_id: string  // required
-  status: 'approved' | 'denied' | 'conditions'  // required
+  status: Governance Decision  // required
   plan_id: string  // required
   explanation: string  // required
   findings: object[]
@@ -1347,6 +1347,7 @@ _Response (success branch):_
   next_check: string
   categories_evaluated: string[]
   policies_evaluated: string[]
+  mode: Governance Mode
   governance_context: string
   context: Context
 }

@@ -1,9 +1,9 @@
-# Getting Started with @adcp/client
+# Getting Started with @adcp/sdk
 
 ## Installation
 
 ```bash
-npm install @adcp/client
+npm install @adcp/sdk
 ```
 
 ## Basic Usage
@@ -13,7 +13,7 @@ npm install @adcp/client
 The easiest way to get started is with the simple client:
 
 ```typescript
-import { ADCPMultiAgentClient } from '@adcp/client';
+import { ADCPMultiAgentClient } from '@adcp/sdk';
 
 // Create a client for a single agent
 const client = ADCPMultiAgentClient.simple('https://agent.example.com/mcp/', {
@@ -39,7 +39,7 @@ if (result.success && result.status === 'completed') {
 For working with multiple agents:
 
 ```typescript
-import { ADCPMultiAgentClient } from '@adcp/client';
+import { ADCPMultiAgentClient } from '@adcp/sdk';
 
 const client = new ADCPMultiAgentClient([
   {
@@ -184,7 +184,7 @@ console.log('Data:', result.data);
 For retry logic, use the built-in utilities:
 
 ```typescript
-import { isRetryable, getRetryDelay } from '@adcp/client';
+import { isRetryable, getRetryDelay } from '@adcp/sdk';
 
 async function withRetry(fn: () => Promise<TaskResult>, maxRetries = 3) {
   for (let i = 0; i <= maxRetries; i++) {

@@ -80,6 +80,11 @@ export type VerifyResult = ({ status: 'verified' } & VerifiedSigner) | { status:
 
 export const REQUEST_SIGNING_TAG = 'adcp/request-signing/v1';
 export const ALLOWED_ALGS = new Set(['ed25519', 'ecdsa-p256-sha256']);
+/**
+ * Wire-format algorithm identifier — the string that appears in
+ * `Signature-Input`'s `alg` parameter. Same vocabulary as `ALLOWED_ALGS`.
+ */
+export type AdcpSignAlg = 'ed25519' | 'ecdsa-p256-sha256';
 export const MAX_SIGNATURE_WINDOW_SECONDS = 300;
 export const CLOCK_SKEW_TOLERANCE_SECONDS = 60;
 export const MANDATORY_COMPONENTS: ReadonlyArray<string> = ['@method', '@target-uri', '@authority'];

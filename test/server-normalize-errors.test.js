@@ -1,4 +1,4 @@
-// Unit tests for the wire-error normalizer at @adcp/client/server.
+// Unit tests for the wire-error normalizer at @adcp/sdk/server.
 // Coerces ad-hoc adopter shapes (strings, Error instances, plain
 // objects, AdcpError-shaped objects) into the canonical wire `Error`
 // shape so the response validator accepts the projected envelope.

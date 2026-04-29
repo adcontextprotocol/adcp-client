@@ -25,8 +25,8 @@
  *     touching handler code.
  *
  * ```ts
- * import { createAdcpServer } from '@adcp/client/server';
- * import { seedComplianceFixtures, COMPLIANCE_FIXTURES } from '@adcp/client/compliance-fixtures';
+ * import { createAdcpServer } from '@adcp/sdk/server';
+ * import { seedComplianceFixtures, COMPLIANCE_FIXTURES } from '@adcp/sdk/compliance-fixtures';
  *
  * const server = createAdcpServer({
  *   mediaBuy: {

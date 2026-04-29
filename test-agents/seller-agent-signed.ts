@@ -38,7 +38,7 @@ import {
   InMemoryRevocationStore,
   StaticJwksResolver,
   type AdcpJsonWebKey,
-} from '@adcp/client/signing';
+} from '@adcp/sdk/signing';
 
 const COMPLIANCE_CACHE = process.env.ADCP_COMPLIANCE_DIR ?? resolveComplianceCache();
 

@@ -179,6 +179,91 @@ describe('detectStrictValidationHints', () => {
     }
   });
 
+  test('skips a required issue when the AJV message does not match the field-name regex', () => {
+    // A future AJV rewording or locale variant may not carry the
+    // `required property 'X'` pattern. The entire message must not leak into
+    // missing_fields as a "field name".
+    const out = detectStrictValidationHints(
+      'get_products',
+      withStrict('get_products', {
+        valid: false,
+        variant: 'sync',
+        issues: [
+          {
+            instance_path: '/products/0',
+            schema_path: '#/properties/products/items/required',
+            keyword: 'required',
+            message: "must have required 'foo'", // missing the word "property" — regex won't match
+          },
+        ],
+      })
+    );
+    const hints = out.filter(h => h.kind === 'missing_required_field');
+    assert.equal(hints.length, 0, 'no hint when field name cannot be cleanly extracted');
+  });
+
+  test('emits no hint when all required issues at a path fail regex extraction', () => {
+    const out = detectStrictValidationHints(
+      'get_products',
+      withStrict('get_products', {
+        valid: false,
+        variant: 'sync',
+        issues: [
+          {
+            instance_path: '/products/0',
+            schema_path: '#/properties/products/items/required',
+            keyword: 'required',
+            message: 'some unrecognised AJV message format without field markers',
+          },
+          {
+            instance_path: '/products/0',
+            schema_path: '#/properties/products/items/required',
+            keyword: 'required',
+            message: "the 'foo' field is required",
+          },
+        ],
+      })
+    );
+    const hints = out.filter(h => h.kind === 'missing_required_field');
+    assert.equal(hints.length, 0, 'no hint emitted when every issue in the group fails extraction');
+    for (const h of out) {
+      assert.ok(
+        typeof h.missing_fields === 'undefined' || h.missing_fields.every(f => !/\s/.test(f)),
+        'missing_fields must not contain prose strings with spaces'
+      );
+    }
+  });
+
+  test('emits only extractable field names when a path has mixed matching/non-matching issues', () => {
+    const out = detectStrictValidationHints(
+      'get_products',
+      withStrict('get_products', {
+        valid: false,
+        variant: 'sync',
+        issues: [
+          {
+            instance_path: '/products/0',
+            schema_path: '#/properties/products/items/required',
+            keyword: 'required',
+            message: "must have required property 'title'",
+          },
+          {
+            instance_path: '/products/0',
+            schema_path: '#/properties/products/items/required',
+            keyword: 'required',
+            // Missing "property" keyword — regex won't match; this issue is dropped.
+            message: "must have required 'price'",
+          },
+        ],
+      })
+    );
+    const hints = out.filter(h => h.kind === 'missing_required_field');
+    assert.equal(hints.length, 1, 'one grouped hint for the path');
+    assert.deepEqual(hints[0].missing_fields, ['title'], 'only the extractable field name appears');
+    assert.match(hints[0].message, /title/, 'message reflects only the extractable field');
+    assert.ok(!hints[0].missing_fields.some(f => f.includes('must have')), 'no AJV prose in missing_fields');
+  });
+
   test('schema_url field absent when ValidationResult does not carry one', () => {
     const out = detectStrictValidationHints(
       'list_creative_formats',

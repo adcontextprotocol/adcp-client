@@ -1,5 +1,5 @@
 // Basic A2A Client Example
-import { AdCPClient, type AgentConfig } from '@adcp/client';
+import { AdCPClient, type AgentConfig } from '@adcp/sdk';
 
 // Using AdCPClient with A2A protocol (recommended)
 async function configuredA2AExample() {

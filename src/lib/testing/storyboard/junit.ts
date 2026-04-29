@@ -41,7 +41,7 @@ function firstHintMessage(step: StoryboardStepResult): string | undefined {
  * (see adcp-client#870 / #883 for when steps fail without a task-level
  * error).
  *
- * @internal — CLI tooling; not part of the published `@adcp/client` API
+ * @internal — CLI tooling; not part of the published `@adcp/sdk` API
  * surface. `stripInternal` removes this declaration from the generated
  * `.d.ts`; the runtime module is still present in `dist/` for the CLI
  * (`bin/adcp.js`) to `require()` directly.

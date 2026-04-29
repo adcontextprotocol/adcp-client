@@ -6,15 +6,16 @@
     "baseUrl": ".",
     "paths": {
       "structured-headers": ["./node_modules/structured-headers/cjs/index.d.cts"],
-      "@adcp/client": ["./dist/lib/index.d.ts"],
-      "@adcp/client/testing": ["./dist/lib/testing/index.d.ts"],
-      "@adcp/client/server": ["./dist/lib/server/index.d.ts"],
-      "@adcp/client/*": ["./dist/lib/*"]
+      "@adcp/sdk": ["./dist/lib/index.d.ts"],
+      "@adcp/sdk/testing": ["./dist/lib/testing/index.d.ts"],
+      "@adcp/sdk/server": ["./dist/lib/server/index.d.ts"],
+      "@adcp/sdk/*": ["./dist/lib/*"]
     }
   },
   "include": [
     "examples/comply-controller-seller.ts",
     "examples/seller-test-controller.ts",
+    "examples/gcp-kms-signing-provider.ts",
     "examples/decisioning-platform-mock-seller.ts",
     "examples/decisioning-platform-broadcast-tv.ts",
     "examples/decisioning-platform-identity-graph.ts",

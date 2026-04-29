@@ -1,6 +1,6 @@
 # GitHub Pages Configuration
 title: ADCP Client Documentation
-description: Official documentation for the @adcp/client TypeScript/JavaScript library
+description: Official documentation for the @adcp/sdk TypeScript/JavaScript library
 url: https://adcontextprotocol.github.io
 baseurl: /adcp-client
 

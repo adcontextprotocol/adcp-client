@@ -2,7 +2,7 @@
 
 ## Supported Versions
 
-We actively support the following versions of @adcp/client with security updates:
+We actively support the following versions of @adcp/sdk with security updates:
 
 | Version | Supported          |
 | ------- | ------------------ |
@@ -13,7 +13,7 @@ We actively support the following versions of @adcp/client with security updates
 
 ### Built-in Security Measures
 
-The @adcp/client library implements several security measures by default:
+The @adcp/sdk library implements several security measures by default:
 
 #### 🛡️ **URL Validation & SSRF Protection**
 - All agent URLs are validated before making requests
@@ -229,7 +229,7 @@ We believe in responsible disclosure and will:
 
 ### 🏆 **Hall of Fame**
 
-Security researchers who have helped improve @adcp/client security:
+Security researchers who have helped improve @adcp/sdk security:
 
 - *Your name here!* - Report your first vulnerability to get listed
 

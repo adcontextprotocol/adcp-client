@@ -10,7 +10,7 @@
  *
  * @example
  * ```ts
- * import { gradeRequestSigning } from '@adcp/client/testing/storyboard/request-signing';
+ * import { gradeRequestSigning } from '@adcp/sdk/testing/storyboard/request-signing';
  *
  * const report = await gradeRequestSigning('https://sandbox.seller.com/adcp', {
  *   skipRateAbuse: true, // skip the 101-request flood in routine runs
