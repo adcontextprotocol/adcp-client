@@ -584,13 +584,36 @@ export function createAdcpServerFromPlatform<P extends DecisioningPlatform<any, 
     ...(supportedBillings?.length && { supported_billing: [...supportedBillings] }),
   };
 
+  // Compliance-testing scenarios projection. Adopters who claim the
+  // `compliance_testing` capability AND wire `complyTest` adapters
+  // expect buyers to discover which scenarios they implement via
+  // `get_adcp_capabilities.compliance_testing.scenarios`. Without
+  // projection the wire response carried an empty `compliance_testing: {}`
+  // block, the comply-track runner emitted a warning on every call,
+  // and adopters saw an actionable-looking message pointing at
+  // something they'd already done correctly. Auto-derive scenario names
+  // from the wired adapters; let an explicit
+  // `capabilities.compliance_testing.scenarios` override the
+  // auto-derivation when adopters want to advertise a subset.
+  const declaredCT = platform.capabilities.compliance_testing;
+  const wiredComplyTest = opts.complyTest;
+  const hasComplianceTestingProjection = declaredCT != null && wiredComplyTest != null;
+  const complianceTestingOverrides: NonNullable<GetAdCPCapabilitiesResponse['compliance_testing']> | undefined =
+    hasComplianceTestingProjection
+      ? {
+          scenarios: declaredCT.scenarios ? [...declaredCT.scenarios] : deriveScenariosFromAdapters(wiredComplyTest),
+        }
+      : undefined;
+
   const projectedCapabilitiesConfig =
-    hasMediaBuyProjection || hasBrandProjection || hasAccountProjection
+    hasMediaBuyProjection || hasBrandProjection || hasAccountProjection || hasComplianceTestingProjection
       ? {
           overrides: {
             ...(hasMediaBuyProjection && { media_buy: mediaBuyOverrides }),
             ...(hasBrandProjection && { brand: brandOverrides }),
             ...(hasAccountProjection && { account: accountOverrides }),
+            ...(hasComplianceTestingProjection &&
+              complianceTestingOverrides != null && { compliance_testing: complianceTestingOverrides }),
           },
         }
       : undefined;
@@ -994,6 +1017,35 @@ function mergeHandlers<T extends object>(
  * callback; if you need async tracer work, do it inside the callback and
  * the framework will not hold the dispatch path waiting for it.
  */
+/**
+ * Derive scenario names from a wired `ComplyControllerConfig` adapter
+ * set. Each adapter slot maps to one wire scenario name. Order is
+ * stable (force → simulate) so adopter wire-fixture snapshots don't
+ * churn between releases. Used by the projection seam to populate
+ * `get_adcp_capabilities.compliance_testing.scenarios` when the adopter
+ * doesn't supply an explicit subset.
+ *
+ * Seed scenarios (`seed_product`, `seed_creative`, etc.) are
+ * deliberately NOT advertised on the wire — the spec scopes the
+ * `compliance_testing.scenarios` enum to forces + simulates, and the
+ * controller's own `list_scenarios` response follows the same rule.
+ * Adopters who wire seed adapters get them dispatched correctly at
+ * runtime; they just don't appear in capability discovery.
+ */
+function deriveScenariosFromAdapters(
+  cfg: ComplyControllerConfig
+): NonNullable<NonNullable<GetAdCPCapabilitiesResponse['compliance_testing']>['scenarios']> {
+  const out: Array<NonNullable<NonNullable<GetAdCPCapabilitiesResponse['compliance_testing']>['scenarios']>[number]> =
+    [];
+  if (cfg.force?.creative_status) out.push('force_creative_status');
+  if (cfg.force?.account_status) out.push('force_account_status');
+  if (cfg.force?.media_buy_status) out.push('force_media_buy_status');
+  if (cfg.force?.session_status) out.push('force_session_status');
+  if (cfg.simulate?.delivery) out.push('simulate_delivery');
+  if (cfg.simulate?.budget_spend) out.push('simulate_budget_spend');
+  return out;
+}
+
 function safeFire<T>(fn: ((arg: T) => unknown) | undefined, arg: T, hookName: string, logger: AdcpLogger): void {
   if (!fn) return;
   let result: unknown;

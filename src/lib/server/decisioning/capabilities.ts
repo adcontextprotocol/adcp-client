@@ -275,9 +275,13 @@ export type BrandCapabilities = NonNullable<NonNullable<GetAdCPCapabilitiesRespo
 export interface ComplianceTestingCapabilities {
   /**
    * Scenarios this agent advertises support for. Wire enum is the
-   * `comply_test_controller` request `scenario` field minus
-   * `'list_scenarios'`. Framework defaults this from the adopter-
-   * supplied `complyTest` adapter set when omitted.
+   * spec-narrowed force + simulate set; seed scenarios are
+   * deliberately NOT advertised here (the controller's own
+   * `list_scenarios` response follows the same rule). Adopters who
+   * wire seed adapters get them dispatched correctly at runtime; they
+   * just don't appear in capability discovery. Framework defaults
+   * this from the adopter-supplied `complyTest` adapter set when
+   * omitted.
    */
   scenarios?: ReadonlyArray<
     | 'force_creative_status'
@@ -286,10 +290,5 @@ export interface ComplianceTestingCapabilities {
     | 'force_session_status'
     | 'simulate_delivery'
     | 'simulate_budget_spend'
-    | 'seed_product'
-    | 'seed_pricing_option'
-    | 'seed_creative'
-    | 'seed_plan'
-    | 'seed_media_buy'
   >;
 }

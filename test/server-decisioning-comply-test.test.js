@@ -207,6 +207,123 @@ describe('createAdcpServerFromPlatform — comply_test_controller wiring', () =>
     );
   });
 
+  it('projects compliance_testing.scenarios onto get_adcp_capabilities', async () => {
+    // Round-5 spike (training-agent): framework validates the
+    // capability/adapter consistency but doesn't project scenarios onto
+    // wire. Adopter sees compliance_testing: {} on get_adcp_capabilities
+    // and the comply-track runner emits a warning on every call. Fix:
+    // auto-derive scenarios from wired adapters and project via the
+    // overrides seam.
+    const server = createAdcpServerFromPlatform(basePlatform({ withComplianceTesting: true }), {
+      name: 'comply-host',
+      version: '0.0.1',
+      validation: { requests: 'off', responses: 'off' },
+      complyTest: {
+        force: {
+          creative_status: async () => ({
+            success: true,
+            transition: 'forced',
+            resource_type: 'creative',
+            resource_id: 'x',
+            previous_state: 'a',
+            current_state: 'b',
+          }),
+          media_buy_status: async () => ({
+            success: true,
+            transition: 'forced',
+            resource_type: 'media_buy',
+            resource_id: 'x',
+            previous_state: 'a',
+            current_state: 'b',
+          }),
+        },
+        simulate: {
+          delivery: async () => ({
+            success: true,
+            simulation: 'delivery',
+            resource_type: 'media_buy',
+            resource_id: 'mb_1',
+          }),
+        },
+      },
+    });
+
+    const result = await server.dispatchTestRequest({
+      method: 'tools/call',
+      params: { name: 'get_adcp_capabilities', arguments: {} },
+    });
+
+    assert.notStrictEqual(result.isError, true, JSON.stringify(result.structuredContent));
+    const ct = result.structuredContent?.compliance_testing;
+    assert.ok(ct, `compliance_testing block missing from wire response: ${JSON.stringify(result.structuredContent)}`);
+    assert.ok(Array.isArray(ct.scenarios), 'scenarios must be an array');
+    assert.ok(ct.scenarios.includes('force_creative_status'));
+    assert.ok(ct.scenarios.includes('force_media_buy_status'));
+    assert.ok(ct.scenarios.includes('simulate_delivery'));
+    assert.ok(!ct.scenarios.includes('force_account_status'), 'unwired scenario must not appear');
+  });
+
+  it('explicit capabilities.compliance_testing.scenarios overrides auto-derivation', async () => {
+    const platform = basePlatform({ withComplianceTesting: true });
+    // Adopter wires three adapters but only wants to advertise two.
+    platform.capabilities.compliance_testing = {
+      scenarios: ['force_creative_status', 'simulate_delivery'],
+    };
+    const server = createAdcpServerFromPlatform(platform, {
+      name: 'comply-host',
+      version: '0.0.1',
+      validation: { requests: 'off', responses: 'off' },
+      complyTest: {
+        force: {
+          creative_status: async () => ({
+            success: true,
+            transition: 'forced',
+            resource_type: 'creative',
+            resource_id: 'x',
+            previous_state: 'a',
+            current_state: 'b',
+          }),
+          // wired but not advertised
+          media_buy_status: async () => ({
+            success: true,
+            transition: 'forced',
+            resource_type: 'media_buy',
+            resource_id: 'x',
+            previous_state: 'a',
+            current_state: 'b',
+          }),
+        },
+        simulate: {
+          delivery: async () => ({
+            success: true,
+            simulation: 'delivery',
+            resource_type: 'media_buy',
+            resource_id: 'mb_1',
+          }),
+        },
+      },
+    });
+    const result = await server.dispatchTestRequest({
+      method: 'tools/call',
+      params: { name: 'get_adcp_capabilities', arguments: {} },
+    });
+    const scenarios = result.structuredContent?.compliance_testing?.scenarios;
+    assert.deepStrictEqual(scenarios, ['force_creative_status', 'simulate_delivery']);
+  });
+
+  it('does NOT project compliance_testing block when capability + complyTest are both omitted', async () => {
+    const server = createAdcpServerFromPlatform(basePlatform({ withComplianceTesting: false }), {
+      name: 'no-comply-host',
+      version: '0.0.1',
+      validation: { requests: 'off', responses: 'off' },
+    });
+    const result = await server.dispatchTestRequest({
+      method: 'tools/call',
+      params: { name: 'get_adcp_capabilities', arguments: {} },
+    });
+    assert.strictEqual(result.structuredContent?.compliance_testing, undefined);
+  });
+
   it('sandboxGate denial returns FORBIDDEN', async () => {
     const server = createAdcpServerFromPlatform(basePlatform({ withComplianceTesting: true }), {
       name: 'gated-host',
