@@ -69,6 +69,27 @@ function trackStreamableHTTPUrl(url: string): void {
   }
 }
 
+/**
+ * Returns true for loopback and RFC-1918 private addresses where SSE fallback
+ * is counterproductive: these agents are always StreamableHTTP-capable and will
+ * return 405 on the SSE GET probe, masking the real StreamableHTTP failure.
+ * Covers IPv4 loopback/private ranges and IPv6 loopback/link-local.
+ */
+export function isPrivateAddress(url: URL): boolean {
+  // WHATWG URL strips brackets from IPv6 literals; hostname is already bare
+  const host = url.hostname.toLowerCase();
+  if (host === 'localhost' || host === '::1' || host === '::ffff:127.0.0.1') return true;
+  // IPv4 loopback
+  if (/^127\./.test(host)) return true;
+  // RFC-1918 private ranges
+  if (/^10\./.test(host)) return true;
+  if (/^192\.168\./.test(host)) return true;
+  if (/^172\.(1[6-9]|2[0-9]|3[01])\./.test(host)) return true;
+  // IPv6 link-local
+  if (/^fe80:/i.test(host)) return true;
+  return false;
+}
+
 function connectionCacheKey(agentUrl: string, authToken?: string, signingCacheKey?: string): string {
   const base = authToken
     ? `${agentUrl}::${createHash('sha256').update(authToken).digest('hex').slice(0, 16)}`
@@ -328,9 +349,11 @@ async function connectMCPWithFallbackImpl(
     }
 
     const errorMessage = error instanceof Error ? error.message : String(error);
+    const errorClass = error instanceof Error ? error.constructor.name : typeof error;
+    const httpStatus = error instanceof StreamableHTTPError ? ` [HTTP ${error.code}]` : '';
     debugLogs.push({
       type: 'error',
-      message: `MCP: StreamableHTTP failed for ${label}: ${errorMessage}`,
+      message: `MCP: StreamableHTTP failed for ${label}${httpStatus} (${errorClass}): ${errorMessage}`,
       timestamp: new Date().toISOString(),
       error,
     });
@@ -383,9 +406,21 @@ async function connectMCPWithFallbackImpl(
       throw error;
     }
 
-    // Fall back to SSE
+    // Private/loopback addresses always support StreamableHTTP — SSE would return
+    // 405 on GET /mcp, masking the actual failure and producing a misleading error.
+    // Surface the StreamableHTTP failure directly so operators can diagnose it.
+    if (isPrivateAddress(url)) {
+      debugLogs.push({
+        type: 'warning',
+        message: `MCP: SSE fallback skipped for private/loopback address ${url} — StreamableHTTP failure is the root cause for ${label}`,
+        timestamp: new Date().toISOString(),
+      });
+      throw error;
+    }
+
+    // Fall back to SSE (public addresses only)
     debugLogs.push({
-      type: 'info',
+      type: 'warning',
       message: `MCP: Falling back to SSE transport for ${label}`,
       timestamp: new Date().toISOString(),
     });
