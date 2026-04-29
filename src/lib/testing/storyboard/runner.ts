@@ -460,6 +460,64 @@ function buildCapabilityUnsupportedResult(
 }
 
 /**
+ * Build a minimal StoryboardResult for a storyboard skipped because the agent
+ * does not advertise any of the tools listed in `required_tools`. The result
+ * carries `skip_reason: 'not_applicable'` and `overall_passed: true` so CLI
+ * reports and JUnit consumers render it as a skip, not a failure.
+ */
+function buildRequiredToolsMissingResult(
+  agentUrls: string[],
+  storyboard: Storyboard,
+  detail: string
+): StoryboardResult {
+  return {
+    storyboard_id: storyboard.id,
+    storyboard_title: storyboard.title,
+    agent_url: agentUrls[0]!,
+    overall_passed: true,
+    phases: [
+      {
+        phase_id: 'not_applicable',
+        phase_title: 'Not applicable — required tools not advertised',
+        passed: true,
+        duration_ms: 0,
+        steps: [
+          {
+            storyboard_id: storyboard.id,
+            step_id: 'not_applicable',
+            phase_id: 'not_applicable',
+            title: `Not applicable — ${detail}`,
+            task: '',
+            passed: true,
+            skipped: true,
+            skip_reason: 'not_applicable' as const,
+            skip: { reason: 'not_applicable' as const, detail },
+            duration_ms: 0,
+            validations: [],
+            context: {},
+            extraction: { path: 'none' },
+          },
+        ],
+      },
+    ],
+    context: {},
+    total_duration_ms: 0,
+    passed_count: 0,
+    failed_count: 0,
+    skipped_count: 1,
+    tested_at: new Date().toISOString(),
+    strict_validation_summary: {
+      observable: false,
+      checked: 0,
+      passed: 0,
+      failed: 0,
+      strict_only_failures: 0,
+      lenient_also_failed: 0,
+    },
+  };
+}
+
+/**
  * Execute a single pass of the storyboard against the supplied replica URLs
  * using round-robin dispatch starting at `dispatchOffset`. Called directly
  * by `runStoryboard` (offset 0) and repeatedly by `runMultiPass` (offsets
@@ -521,6 +579,22 @@ async function executeStoryboardPass(
         if (!options._client) await closeConnections(options.protocol);
         return buildCapabilityUnsupportedResult(agentUrls, storyboard, detail);
       }
+    }
+  }
+
+  // Enforce required_tools pre-flight gate: if the storyboard declares tools
+  // that make it applicable (at least one must be present) and the agent
+  // advertises none of them, skip the whole storyboard instead of producing
+  // misleading per-step failures.
+  if (storyboard.required_tools?.length && options.agentTools) {
+    const hasAnyRequired = storyboard.required_tools.some(t => options.agentTools!.includes(t));
+    if (!hasAnyRequired) {
+      if (!options._client) await closeConnections(options.protocol);
+      return buildRequiredToolsMissingResult(
+        agentUrls,
+        storyboard,
+        `agent does not advertise any of [${storyboard.required_tools.join(', ')}]`
+      );
     }
   }
 
