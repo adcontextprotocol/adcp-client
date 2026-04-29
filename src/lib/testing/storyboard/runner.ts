@@ -462,8 +462,12 @@ function buildCapabilityUnsupportedResult(
 /**
  * Build a minimal StoryboardResult for a storyboard skipped because the agent
  * does not advertise any of the tools listed in `required_tools`. The result
- * carries `skip_reason: 'not_applicable'` and `overall_passed: true` so CLI
+ * carries `skip_reason: 'missing_tool'` and `overall_passed: true` so CLI
  * reports and JUnit consumers render it as a skip, not a failure.
+ *
+ * `missing_tool` (not `not_applicable`) is the correct canonical reason here:
+ * the agent declared a compatible protocol/specialism but lacks the specific
+ * tools this storyboard exercises — distinct from a protocol/version mismatch.
  */
 function buildRequiredToolsMissingResult(
   agentUrls: string[],
@@ -477,21 +481,21 @@ function buildRequiredToolsMissingResult(
     overall_passed: true,
     phases: [
       {
-        phase_id: 'not_applicable',
-        phase_title: 'Not applicable — required tools not advertised',
+        phase_id: 'missing_tool',
+        phase_title: 'Skipped — required tools not advertised',
         passed: true,
         duration_ms: 0,
         steps: [
           {
             storyboard_id: storyboard.id,
-            step_id: 'not_applicable',
-            phase_id: 'not_applicable',
-            title: `Not applicable — ${detail}`,
+            step_id: 'missing_tool',
+            phase_id: 'missing_tool',
+            title: `Skipped — ${detail}`,
             task: '',
             passed: true,
             skipped: true,
-            skip_reason: 'not_applicable' as const,
-            skip: { reason: 'not_applicable' as const, detail },
+            skip_reason: 'missing_tool' as const,
+            skip: { reason: 'missing_tool' as const, detail },
             duration_ms: 0,
             validations: [],
             context: {},
@@ -586,6 +590,13 @@ async function executeStoryboardPass(
   // that make it applicable (at least one must be present) and the agent
   // advertises none of them, skip the whole storyboard instead of producing
   // misleading per-step failures.
+  //
+  // Gate condition: `options.agentTools` is falsy when the caller set
+  // `options._client` without also supplying `agentTools`. In that case the
+  // gate is a no-op — the caller accepted responsibility for tool compatibility
+  // by reusing an external client. The comply() path always populates
+  // `agentTools` before calling runStoryboard(), so the gate is always active
+  // in the standard runner flow.
   if (storyboard.required_tools?.length && options.agentTools) {
     const hasAnyRequired = storyboard.required_tools.some(t => options.agentTools!.includes(t));
     if (!hasAnyRequired) {
@@ -1035,10 +1046,10 @@ async function executeStoryboardPass(
   // Overall pass requires (a) no required-phase failures AND (b) at least one
   // required phase actually passed with at least one non-skipped step AND
   // (c) no assertion failures. Without (b) a storyboard where every phase is
-  // marked optional and every required phase's steps are skipped (e.g.
-  // required_tools filtered out everything) would pass vacuously. (c) makes
-  // assertions gating — a run with all validations green but a cross-step
-  // invariant broken is not conformant.
+  // marked optional and every required phase's steps are individually skipped
+  // (e.g. all steps have requires_tool and none matched) would pass vacuously.
+  // (c) makes assertions gating — a run with all validations green but a
+  // cross-step invariant broken is not conformant.
   // When no phases had executable steps the storyboard result is a skip, not a
   // failure. The index-aligned guard below would hit storyboard.phases[0] ===
   // undefined for an empty-phases storyboard and force requiredPhasesPassed to

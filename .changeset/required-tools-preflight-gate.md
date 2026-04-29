@@ -1,5 +1,4 @@
 ---
-"@adcp/sdk": patch
 "@adcp/client": patch
 ---
 
@@ -15,6 +14,5 @@ failures instead of a clean skip.
 `executeStoryboardPass` now checks `storyboard.required_tools` immediately
 after profile discovery. If the storyboard declares required tools and the
 agent advertises none of them, the runner returns a synthetic
-`overall_passed: true` / `skip_reason: 'not_applicable'` result — the same
-shape `buildNotApplicableStoryboardResult` produces in comply.ts. Agents that
+`overall_passed: true` / `skip_reason: 'missing_tool'` result. Agents that
 advertise at least one required tool proceed normally.
