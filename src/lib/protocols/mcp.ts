@@ -73,19 +73,22 @@ function trackStreamableHTTPUrl(url: string): void {
  * Returns true for loopback and RFC-1918 private addresses where SSE fallback
  * is counterproductive: these agents are always StreamableHTTP-capable and will
  * return 405 on the SSE GET probe, masking the real StreamableHTTP failure.
- * Covers IPv4 loopback/private ranges and IPv6 loopback/link-local.
+ * Covers IPv4 loopback/private ranges, IPv6 loopback/link-local, IPv4-mapped
+ * IPv6 (::ffff:x.y.z.w), and unspecified addresses (0.0.0.0 / ::).
  */
-export function isPrivateAddress(url: URL): boolean {
+function isPrivateAddress(url: URL): boolean {
   // WHATWG URL strips brackets from IPv6 literals; hostname is already bare
   const host = url.hostname.toLowerCase();
-  if (host === 'localhost' || host === '::1' || host === '::ffff:127.0.0.1') return true;
+  if (host === 'localhost' || host === '0.0.0.0' || host === '::' || host === '::1') return true;
+  // Unwrap IPv4-mapped IPv6 (::ffff:x.y.z.w) so the IPv4-range checks below apply to both
+  const bare = host.startsWith('::ffff:') ? host.slice(7) : host;
   // IPv4 loopback
-  if (/^127\./.test(host)) return true;
+  if (/^127\./.test(bare)) return true;
   // RFC-1918 private ranges
-  if (/^10\./.test(host)) return true;
-  if (/^192\.168\./.test(host)) return true;
-  if (/^172\.(1[6-9]|2[0-9]|3[01])\./.test(host)) return true;
-  // IPv6 link-local
+  if (/^10\./.test(bare)) return true;
+  if (/^192\.168\./.test(bare)) return true;
+  if (/^172\.(1[6-9]|2[0-9]|3[01])\./.test(bare)) return true;
+  // IPv6 link-local (not affected by ::ffff: stripping)
   if (/^fe80:/i.test(host)) return true;
   return false;
 }
