@@ -26,11 +26,7 @@
  * @see `skills/build-decisioning-platform/SKILL.md`
  */
 
-import {
-  publishStatusChange,
-  type DecisioningPlatform,
-  type AccountStore,
-} from '@adcp/sdk/server/decisioning';
+import { publishStatusChange, type DecisioningPlatform, type AccountStore } from '@adcp/sdk/server/decisioning';
 import type { AudiencePlatform, Audience, AudienceStatus, SyncAudiencesRow } from '@adcp/sdk/server/decisioning';
 import type { AccountReference } from '@adcp/sdk/types';
 
