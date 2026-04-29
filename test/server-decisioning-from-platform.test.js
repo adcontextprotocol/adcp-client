@@ -274,7 +274,7 @@ describe('SalesPlatform — full surface dispatch', () => {
   });
 });
 
-describe('CreativeTemplatePlatform + AudiencePlatform wiring', () => {
+describe('CreativeBuilderPlatform + AudiencePlatform wiring', () => {
   it('build_creative dispatches through platform.creative.buildCreative', async () => {
     let sawReq;
     const platform = {
@@ -318,6 +318,98 @@ describe('CreativeTemplatePlatform + AudiencePlatform wiring', () => {
     });
     assert.notStrictEqual(result.isError, true, JSON.stringify(result.structuredContent));
     assert.ok(sawReq, 'creative.buildCreative should be invoked');
+  });
+
+  it('F13: creative-generative specialism accepts the merged CreativeBuilderPlatform shape', async () => {
+    // Pre-merge, creative-generative required CreativeGenerativePlatform
+    // (which had `refineCreative` required and no previewCreative). After
+    // the merge, the same CreativeBuilderPlatform satisfies both specialism
+    // claims — refineCreative + previewCreative are both optional. This
+    // test asserts a generative-only adopter (no preview) still wires.
+    let sawReq;
+    const platform = {
+      capabilities: {
+        specialisms: ['creative-generative'],
+        creative_agents: [],
+        channels: ['display'],
+        pricingModels: ['cpm'],
+        config: {},
+      },
+      accounts: {
+        resolve: async () => ({ id: 'acc_1', metadata: {}, authInfo: { kind: 'api_key' } }),
+      },
+      statusMappers: {},
+      creative: {
+        buildCreative: async req => {
+          sawReq = req;
+          return { manifest_id: 'mf_gen_1', assets: [] };
+        },
+        // No previewCreative — generative platforms typically render
+        // preview from the generated manifest itself, not as a separate
+        // step. Optional in the merged shape.
+        // refineCreative could be wired here for iterative generation.
+      },
+    };
+    const server = createAdcpServerFromPlatform(platform, {
+      name: 'gen',
+      version: '0.0.1',
+      validation: { requests: 'off', responses: 'off' },
+    });
+    const result = await server.dispatchTestRequest({
+      method: 'tools/call',
+      params: {
+        name: 'build_creative',
+        arguments: {
+          format_id: { id: 'gen-square', agent_url: 'https://example.com/mcp' },
+          creative_manifest: { assets: [] },
+          account: { account_id: 'acc_1' },
+        },
+      },
+    });
+    assert.notStrictEqual(result.isError, true, JSON.stringify(result.structuredContent));
+    assert.ok(sawReq, 'generative builder.buildCreative invoked');
+  });
+
+  it('F13: preview_creative against builder without previewCreative returns UNSUPPORTED_FEATURE', async () => {
+    // Generative-only platforms that omit previewCreative MUST surface
+    // an UNSUPPORTED_FEATURE error to buyers calling preview_creative,
+    // not a runtime crash. Pre-merge this was structurally impossible
+    // (Template required previewCreative, Generative didn't have the
+    // field at all); post-merge the framework's optional-method check
+    // is the only guard.
+    const platform = {
+      capabilities: {
+        specialisms: ['creative-generative'],
+        creative_agents: [],
+        channels: ['display'],
+        pricingModels: ['cpm'],
+        config: {},
+      },
+      accounts: {
+        resolve: async () => ({ id: 'acc_1', metadata: {}, authInfo: { kind: 'api_key' } }),
+      },
+      statusMappers: {},
+      creative: {
+        buildCreative: async () => ({ manifest_id: 'mf_1', assets: [] }),
+      },
+    };
+    const server = createAdcpServerFromPlatform(platform, {
+      name: 'gen',
+      version: '0.0.1',
+      validation: { requests: 'off', responses: 'off' },
+    });
+    const result = await server.dispatchTestRequest({
+      method: 'tools/call',
+      params: {
+        name: 'preview_creative',
+        arguments: {
+          creative_manifest: { assets: [] },
+          account: { account_id: 'acc_1' },
+        },
+      },
+    });
+    assert.strictEqual(result.isError, true);
+    assert.match(result.structuredContent.adcp_error?.code ?? '', /UNSUPPORTED_FEATURE/);
   });
 
   it('sync_audiences dispatches through platform.audiences.syncAudiences', async () => {

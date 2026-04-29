@@ -17,6 +17,7 @@ import type {
   DecisioningCapabilities,
   TargetingCapabilities,
   StatusMappers,
+  CreativeBuilderPlatform,
   CreativeTemplatePlatform,
   SalesPlatform,
   AudiencePlatform,
@@ -70,14 +71,32 @@ async function _adcp_error_throw_pattern(): Promise<{ id: string }> {
 type _ok_sales_only = RequiredPlatformsFor<'sales-non-guaranteed'> extends { sales: SalesPlatform } ? true : false;
 const _check_sales_only: _ok_sales_only = true;
 
-// Positive: claiming creative-template AND providing creative: CreativeTemplatePlatform satisfies.
+// Positive: claiming creative-template AND providing creative: CreativeBuilderPlatform satisfies.
+// (CreativeTemplatePlatform is a deprecated alias of CreativeBuilderPlatform — both
+// resolve to the same shape; the alias check below confirms source compat.)
 type _ok_creative_template =
   RequiredPlatformsFor<'creative-template'> extends {
-    creative: CreativeTemplatePlatform;
+    creative: CreativeBuilderPlatform;
   }
     ? true
     : false;
 const _check_creative_template: _ok_creative_template = true;
+
+// Positive: claiming creative-generative ALSO maps to CreativeBuilderPlatform
+// (the merged interface). Both specialism IDs share the implementation surface.
+type _ok_creative_generative =
+  RequiredPlatformsFor<'creative-generative'> extends {
+    creative: CreativeBuilderPlatform;
+  }
+    ? true
+    : false;
+const _check_creative_generative: _ok_creative_generative = true;
+
+// Source compat: CreativeTemplatePlatform alias still resolves to
+// CreativeBuilderPlatform — adopters who imported the deprecated name
+// see the same shape until the alias is removed.
+type _ok_template_alias = CreativeTemplatePlatform extends CreativeBuilderPlatform ? true : false;
+const _check_template_alias: _ok_template_alias = true;
 
 // Positive: claiming audience-sync AND providing audiences: AudiencePlatform satisfies.
 type _ok_audience_sync = RequiredPlatformsFor<'audience-sync'> extends { audiences: AudiencePlatform } ? true : false;

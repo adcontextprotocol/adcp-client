@@ -84,6 +84,9 @@ export type { DecisioningPlatform, RequiredPlatformsFor, RequiredCapabilitiesFor
 
 // Specialism interfaces (v1.0)
 export type {
+  CreativeBuilderPlatform,
+  // Deprecated aliases — kept for one-release source compat. Both
+  // resolve to CreativeBuilderPlatform; see specialisms/creative.ts.
   CreativeTemplatePlatform,
   CreativeGenerativePlatform,
   RefinementMessage,

@@ -35,63 +35,95 @@ type Ctx<TMeta> = RequestContext<Account<TMeta>>;
 export type { SyncCreativesRow };
 
 // ---------------------------------------------------------------------------
-// CreativeTemplatePlatform — stateless transform
-// ---------------------------------------------------------------------------
-
-export interface CreativeTemplatePlatform<TMeta = Record<string, unknown>> {
-  /**
-   * Build the creative. Stateless transform. Spec defines a Submitted arm
-   * via `async-response-data.json` (`BuildCreativeAsyncSubmitted`) but the
-   * per-tool `build-creative-response.json` `oneOf` doesn't include it —
-   * a SPEC inconsistency tracked as adcontextprotocol/adcp#3392 (same
-   * issue as `get_products`, `update_media_buy`, `sync_catalogs`). Until
-   * the spec rolls Submitted into the `oneOf`, slow operations (TTS,
-   * audio mixing) await in-request; long-running generation surfaces
-   * via `publishStatusChange` on `resource_type: 'creative'`.
-   */
-  buildCreative(req: BuildCreativeRequest, ctx: Ctx<TMeta>): Promise<CreativeManifest>;
-
-  /** Preview-only variant — sandbox URL or inline HTML, expires. Always sync. */
-  previewCreative(req: PreviewCreativeRequest, ctx: Ctx<TMeta>): Promise<PreviewCreativeResponse>;
-
-  // sync_creatives: unified hybrid shape — return rows OR ctx.handoffToTask(fn).
-  /**
-   * Sync review surface. Stateless template platforms typically auto-approve;
-   * adopters needing mandatory pre-persist review return
-   * `ctx.handoffToTask(fn)` to defer to a background task.
-   */
-  syncCreatives?(creatives: Creative[], ctx: Ctx<TMeta>): Promise<SyncCreativesRow[] | TaskHandoff<SyncCreativesRow[]>>;
-}
-
-// ---------------------------------------------------------------------------
-// CreativeGenerativePlatform — brief-to-creative
+// CreativeBuilderPlatform — produces creatives (template-driven OR generative)
 // ---------------------------------------------------------------------------
 
 /**
- * Brief-to-creative agent. Generative pipelines often want HITL semantics
- * (generation takes seconds-to-minutes) but the per-tool
- * `build-creative-response.json` `oneOf` doesn't include the Submitted
- * arm (spec inconsistency — adcontextprotocol/adcp#3392), so generation
- * runs sync today. Refinement is sync (mutation on existing task state).
+ * Creative-builder agent. Produces creatives from buyer inputs — equally
+ * suited to template-driven dynamic creative platforms (Bannerflow,
+ * Celtra), brief-to-creative AI agents (Pencil, Omneky, AdCreative.ai),
+ * and hybrids that mix both modes. The wire shape doesn't distinguish
+ * "transform a template" from "generate from a brief" — both produce a
+ * `CreativeManifest` from a `BuildCreativeRequest`. The previous v6
+ * preview separated them into `CreativeTemplatePlatform` and
+ * `CreativeGenerativePlatform`, but every interface field is the same;
+ * the only meaningful difference was whether `refineCreative` was
+ * supported, which is now optional on the unified shape.
+ *
+ * Spec defines a Submitted arm via `async-response-data.json`
+ * (`BuildCreativeAsyncSubmitted`) but the per-tool
+ * `build-creative-response.json` `oneOf` doesn't include it — a SPEC
+ * inconsistency tracked as adcontextprotocol/adcp#3392. Until the spec
+ * rolls Submitted into the `oneOf`, slow operations (TTS, audio mixing,
+ * long-running generation) await in-request; status changes surface via
+ * `publishStatusChange` on `resource_type: 'creative'`.
+ *
+ * Both `creative-template` and `creative-generative` specialism claims
+ * map to this interface in `RequiredPlatformsFor<S>` — the discovery
+ * distinction is preserved at the buyer-facing spec level (so buyers
+ * filtering for "AI brief-to-creative" still find generative agents)
+ * while implementation surface stays unified.
+ *
+ * Adopters that ALSO want library + tag generation + delivery reporting
+ * (i.e., a full ad server on top of the builder) declare
+ * `CreativeAdServerPlatform` instead. Multi-archetype omni agents
+ * (rare in the wild) front each archetype as a separate tenant via
+ * `TenantRegistry`.
  */
-export interface CreativeGenerativePlatform<TMeta = Record<string, unknown>> {
+export interface CreativeBuilderPlatform<TMeta = Record<string, unknown>> {
   /**
-   * Build the creative. Same codegen-gap caveat as
-   * `CreativeTemplatePlatform.buildCreative`. For long-running generation,
-   * return a placeholder manifest with `expires_at` and emit
-   * `publishStatusChange` events as iterations land.
+   * Build the creative. Single method covers template-driven transform
+   * (`req.template_id` + asset slots), brief-to-creative generation
+   * (`req.brief`), and any hybrid the platform supports — adopters
+   * route internally on `req` shape.
    */
   buildCreative(req: BuildCreativeRequest, ctx: Ctx<TMeta>): Promise<CreativeManifest>;
 
   /**
-   * Refine an in-flight or completed generation. `taskId` references
-   * a prior submission. Sync — refinement is a mutation on existing
-   * state, not a new task creation.
+   * Preview-only variant — sandbox URL or inline HTML, expires. Always
+   * sync. Optional because generative-only adopters that don't render
+   * preview ahead of generation can omit it; the framework returns
+   * `UNSUPPORTED_FEATURE` to buyers calling `preview_creative` against
+   * a platform that didn't wire this.
    */
-  refineCreative(taskId: string, refinement: RefinementMessage, ctx: Ctx<TMeta>): Promise<CreativeManifest>;
+  previewCreative?(req: PreviewCreativeRequest, ctx: Ctx<TMeta>): Promise<PreviewCreativeResponse>;
 
+  /**
+   * Refine a prior generation. `taskId` references a prior submission.
+   * Sync — refinement is a mutation on existing state, not a new task
+   * creation. Optional because pure template platforms iterate by
+   * re-calling `buildCreative` with different inputs and don't carry
+   * generation state across calls.
+   */
+  refineCreative?(taskId: string, refinement: RefinementMessage, ctx: Ctx<TMeta>): Promise<CreativeManifest>;
+
+  /**
+   * Sync review surface. Stateless platforms typically auto-approve;
+   * adopters needing mandatory pre-persist review return
+   * `ctx.handoffToTask(fn)` to defer to a background task. Unified
+   * hybrid shape — return rows OR `ctx.handoffToTask(fn)`.
+   */
   syncCreatives?(creatives: Creative[], ctx: Ctx<TMeta>): Promise<SyncCreativesRow[] | TaskHandoff<SyncCreativesRow[]>>;
 }
+
+/**
+ * @deprecated Use `CreativeBuilderPlatform` — the unified interface
+ * covering both template-driven and brief-to-creative agents. The
+ * v6 preview's separation of `CreativeTemplatePlatform` and
+ * `CreativeGenerativePlatform` had no meaningful interface
+ * distinction; this alias preserves source compatibility for one
+ * release while adopters migrate. Will be removed in a future
+ * release.
+ */
+export type CreativeTemplatePlatform<TMeta = Record<string, unknown>> = CreativeBuilderPlatform<TMeta>;
+
+/**
+ * @deprecated Use `CreativeBuilderPlatform` — the unified interface
+ * covering both template-driven and brief-to-creative agents. See
+ * `CreativeTemplatePlatform` deprecation note. Will be removed in a
+ * future release.
+ */
+export type CreativeGenerativePlatform<TMeta = Record<string, unknown>> = CreativeBuilderPlatform<TMeta>;
 
 // ---------------------------------------------------------------------------
 // Shared shapes

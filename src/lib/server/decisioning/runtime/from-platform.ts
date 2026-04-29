@@ -28,8 +28,8 @@
  *
  * **Wired surface (6.0):** `SalesPlatform` (14 tools — 3 required core +
  * 11 optional; unified hybrid on `create_media_buy` / `sync_creatives`),
- * `CreativeTemplatePlatform` / `CreativeGenerativePlatform` (build_creative /
- * sync_creatives unified hybrid, preview_creative sync-only),
+ * `CreativeBuilderPlatform` (build_creative / sync_creatives unified
+ * hybrid, optional preview_creative sync-only, optional refineCreative),
  * `AudiencePlatform.syncAudiences`, `SignalsPlatform` (activate_signal,
  * list_signals), `AccountStore` (reportUsage, getAccountFinancials),
  * `ContentStandardsPlatform`, `CampaignGovernancePlatform`,
@@ -66,7 +66,7 @@ import type { DecisioningPlatform, RequiredPlatformsFor, RequiredCapabilitiesFor
 import type { Account, ResolvedAuthInfo } from '../account';
 import { AccountNotFoundError, toWireAccount } from '../account';
 import { AdcpError, type AdcpStructuredError } from '../async-outcome';
-import type { CreativeTemplatePlatform } from '../specialisms/creative';
+import type { CreativeBuilderPlatform } from '../specialisms/creative';
 import type { CreativeAdServerPlatform } from '../specialisms/creative-ad-server';
 import type { Audience } from '../specialisms/audiences';
 import type { RequestContext } from '../context';
@@ -2086,7 +2086,7 @@ function buildCreativeHandlers<P extends DecisioningPlatform<any, any>>(
       }
       const reqCtx = ctxFor(ctx);
       return projectSync(
-        () => (creative as CreativeTemplatePlatform).previewCreative(params, reqCtx),
+        () => (creative as CreativeBuilderPlatform).previewCreative!(params, reqCtx),
         preview => preview
       );
     },

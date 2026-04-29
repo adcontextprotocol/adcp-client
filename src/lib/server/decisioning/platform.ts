@@ -14,7 +14,7 @@ import type { DecisioningCapabilities, BrandCapabilities } from './capabilities'
 import type { Account, AccountStore } from './account';
 import type { StatusMappers } from './status-mappers';
 import type { SalesPlatform } from './specialisms/sales';
-import type { CreativeTemplatePlatform, CreativeGenerativePlatform } from './specialisms/creative';
+import type { CreativeBuilderPlatform } from './specialisms/creative';
 import type { CreativeAdServerPlatform } from './specialisms/creative-ad-server';
 import type { AudiencePlatform } from './specialisms/audiences';
 import type { SignalsPlatform } from './specialisms/signals';
@@ -54,7 +54,7 @@ import type { AdCPSpecialism } from '../../types/tools.generated';
  *   shape-validated against the wire schema after the platform returns
  *
  * **What the platform owns**: the business decisions in each `SalesPlatform` /
- * `CreativeTemplatePlatform` / `AudiencePlatform` method. Nothing else.
+ * `CreativeBuilderPlatform` / `AudiencePlatform` method. Nothing else.
  *
  * @template TConfig Platform-specific config typed at the call site.
  *                   Example: `class GAM implements DecisioningPlatform<{ networkId: string }>`.
@@ -98,7 +98,7 @@ export interface DecisioningPlatform<TConfig = unknown, TMeta = Record<string, u
   // by `TMeta` so adopters get typed `ctx.account.metadata` access in their
   // method bodies without casting.
   sales?: SalesPlatform<TMeta>;
-  creative?: CreativeTemplatePlatform<TMeta> | CreativeGenerativePlatform<TMeta> | CreativeAdServerPlatform<TMeta>;
+  creative?: CreativeBuilderPlatform<TMeta> | CreativeAdServerPlatform<TMeta>;
   audiences?: AudiencePlatform<TMeta>;
   signals?: SignalsPlatform<TMeta>;
   campaignGovernance?: CampaignGovernancePlatform<TMeta>;
@@ -167,29 +167,27 @@ export type RequiredPlatformsFor<
   S extends AdCPSpecialism,
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   TMeta = any,
-> = S extends 'creative-template'
-  ? { creative: CreativeTemplatePlatform<TMeta> }
-  : S extends 'creative-generative'
-    ? { creative: CreativeGenerativePlatform<TMeta> }
-    : S extends 'creative-ad-server'
-      ? { creative: CreativeAdServerPlatform<TMeta> }
-      : S extends SalesSpecialism
-        ? { sales: SalesPlatform<TMeta> }
-        : S extends 'audience-sync'
-          ? { audiences: AudiencePlatform<TMeta> }
-          : S extends SignalSpecialism
-            ? { signals: SignalsPlatform<TMeta> }
-            : S extends CampaignGovernanceSpecialism
-              ? { campaignGovernance: CampaignGovernancePlatform<TMeta> }
-              : S extends 'property-lists'
-                ? { propertyLists: PropertyListsPlatform<TMeta> }
-                : S extends 'collection-lists'
-                  ? { collectionLists: CollectionListsPlatform<TMeta> }
-                  : S extends 'content-standards'
-                    ? { contentStandards: ContentStandardsPlatform<TMeta> }
-                    : S extends 'brand-rights'
-                      ? { brandRights: BrandRightsPlatform<TMeta> }
-                      : Record<string, never>;
+> = S extends 'creative-template' | 'creative-generative'
+  ? { creative: CreativeBuilderPlatform<TMeta> }
+  : S extends 'creative-ad-server'
+    ? { creative: CreativeAdServerPlatform<TMeta> }
+    : S extends SalesSpecialism
+      ? { sales: SalesPlatform<TMeta> }
+      : S extends 'audience-sync'
+        ? { audiences: AudiencePlatform<TMeta> }
+        : S extends SignalSpecialism
+          ? { signals: SignalsPlatform<TMeta> }
+          : S extends CampaignGovernanceSpecialism
+            ? { campaignGovernance: CampaignGovernancePlatform<TMeta> }
+            : S extends 'property-lists'
+              ? { propertyLists: PropertyListsPlatform<TMeta> }
+              : S extends 'collection-lists'
+                ? { collectionLists: CollectionListsPlatform<TMeta> }
+                : S extends 'content-standards'
+                  ? { contentStandards: ContentStandardsPlatform<TMeta> }
+                  : S extends 'brand-rights'
+                    ? { brandRights: BrandRightsPlatform<TMeta> }
+                    : Record<string, never>;
 
 /**
  * The framework's createAdcpServer<P> signature uses this intersection to
