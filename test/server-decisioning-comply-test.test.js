@@ -414,4 +414,44 @@ describe('createAdcpServerFromPlatform — comply_test_controller wiring', () =>
     assert.strictEqual(receivedAccount, 'cr_42', 'force adapter ran with extended schema accepted');
     assert.strictEqual(result.structuredContent.success, true);
   });
+
+  it('F14: complyTest.seed.creative_format slot wires through to seed_creative_format scenario', async () => {
+    // Wire enum / scenario constant / TestControllerStore method already
+    // existed; the domain-grouped façade just didn't expose a slot for
+    // creative-format seeding. Adopters with v5 seed_creative_format
+    // wired manually had to drop down to registerTestController; now
+    // the v6 complyTest path covers it.
+    const seeded = [];
+    const server = createAdcpServerFromPlatform(basePlatform({ withComplianceTesting: true }), {
+      name: 'comply-host',
+      version: '0.0.1',
+      validation: { requests: 'off', responses: 'off' },
+      complyTest: {
+        seed: {
+          creative_format: async params => {
+            seeded.push(params);
+            return { success: true, seeded: 'fresh', resource_type: 'creative_format', resource_id: params.format_id };
+          },
+        },
+      },
+    });
+    const result = await server.dispatchTestRequest({
+      method: 'tools/call',
+      params: {
+        name: 'comply_test_controller',
+        arguments: {
+          scenario: 'seed_creative_format',
+          params: {
+            format_id: 'fmt_300x250',
+            fixture: { width: 300, height: 250, format_type: 'image' },
+          },
+        },
+      },
+    });
+    assert.notStrictEqual(result.isError, true, JSON.stringify(result.structuredContent));
+    assert.strictEqual(seeded.length, 1);
+    assert.strictEqual(seeded[0].format_id, 'fmt_300x250');
+    assert.deepStrictEqual(seeded[0].fixture, { width: 300, height: 250, format_type: 'image' });
+    assert.strictEqual(result.structuredContent.success, true);
+  });
 });

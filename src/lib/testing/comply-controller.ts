@@ -105,6 +105,11 @@ export interface SeedMediaBuyParams {
   fixture: Record<string, unknown>;
 }
 
+export interface SeedCreativeFormatParams {
+  format_id: string;
+  fixture: Record<string, unknown>;
+}
+
 export interface ForceCreativeStatusParams {
   creative_id: string;
   status: CreativeStatus;
@@ -198,6 +203,7 @@ export interface ComplyControllerConfig {
     creative?: SeedAdapter<SeedCreativeParams>;
     plan?: SeedAdapter<SeedPlanParams>;
     media_buy?: SeedAdapter<SeedMediaBuyParams>;
+    creative_format?: SeedAdapter<SeedCreativeFormatParams>;
   };
 
   /** Force adapters (state transitions). */
@@ -326,6 +332,11 @@ function buildStore(config: ComplyControllerConfig, ctx: ComplyControllerContext
   if (seed?.media_buy) {
     store.seedMediaBuy = async (mediaBuyId, fixture) => {
       await seed.media_buy!({ media_buy_id: mediaBuyId, fixture: fixture ?? {} }, ctx);
+    };
+  }
+  if (seed?.creative_format) {
+    store.seedCreativeFormat = async (formatId, fixture) => {
+      await seed.creative_format!({ format_id: formatId, fixture: fixture ?? {} }, ctx);
     };
   }
 
