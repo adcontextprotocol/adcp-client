@@ -290,6 +290,17 @@ export class TaskExecutor {
       onActivity?: (activity: Activity) => void | Promise<void>;
       /** Governance configuration for buyer-side campaign governance */
       governance?: GovernanceConfig;
+      /**
+       * AdCP version this executor speaks. Selects which schema bundle
+       * `validateIncomingResponse` / `validateOutgoingRequest` validate
+       * against, and which `adcp_major_version` value goes on the wire.
+       * Defaults to the SDK-pinned `ADCP_VERSION` when omitted.
+       *
+       * Plumbed from `SingleAgentClient.resolvedAdcpVersion` so the
+       * client/agent's `getAdcpVersion()` value is the single source of
+       * truth for both validation and wire-level major.
+       */
+      adcpVersion?: string;
     } = {}
   ) {
     this.responseParser = new ProtocolResponseParser();
@@ -514,7 +525,13 @@ export class TaskExecutor {
       };
 
       // Pre-send schema check — throws in strict, logs in warn, skips in off.
-      validateOutgoingRequest(taskName, effectiveParams, this.requestValidationMode, debugLogs);
+      validateOutgoingRequest(
+        taskName,
+        effectiveParams,
+        this.requestValidationMode,
+        debugLogs,
+        this.config.adcpVersion
+      );
 
       // Send initial request and get streaming response with webhook URL.
       // Pass the caller's A2A session ids (contextId for conversation binding,
@@ -529,7 +546,8 @@ export class TaskExecutor {
         this.config.webhookSecret,
         undefined,
         serverVersion,
-        { contextId: options.contextId, taskId: options.taskId }
+        { contextId: options.contextId, taskId: options.taskId },
+        this.config.adcpVersion
       );
 
       // Emit protocol_response activity
@@ -1273,7 +1291,9 @@ export class TaskExecutor {
       undefined,
       undefined,
       undefined,
-      this.lastKnownServerVersion
+      this.lastKnownServerVersion,
+      undefined,
+      this.config.adcpVersion
     )) as Record<string, unknown>;
     return (response.tasks as TaskInfo[]) || [];
   }
@@ -1330,7 +1350,9 @@ export class TaskExecutor {
       undefined,
       undefined,
       undefined,
-      this.lastKnownServerVersion
+      this.lastKnownServerVersion,
+      undefined,
+      this.config.adcpVersion
     )) as Record<string, unknown>;
     // We don't run `extractResponseData` here: that helper's
     // generic AdCP-error-arm detection treats any top-level
@@ -1505,7 +1527,9 @@ export class TaskExecutor {
       undefined,
       undefined,
       undefined,
-      this.lastKnownServerVersion
+      this.lastKnownServerVersion,
+      undefined,
+      this.config.adcpVersion
     );
 
     // Add response message
@@ -1796,7 +1820,7 @@ export class TaskExecutor {
 
     try {
       const normalizedResponse = this.normalizeResponseForValidation(response, taskName);
-      const outcome = validateIncomingResponse(taskName, normalizedResponse, mode, debugLogs);
+      const outcome = validateIncomingResponse(taskName, normalizedResponse, mode, debugLogs, this.config.adcpVersion);
       if (outcome.valid) return { valid: true, errors: [] };
 
       const errorStrings = outcome.issues.map(i => `${i.pointer}: ${i.message}`);

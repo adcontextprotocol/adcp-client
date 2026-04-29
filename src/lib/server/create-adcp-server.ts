@@ -2314,7 +2314,7 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
         // Runs before idempotency so drifted payloads never touch the
         // replay cache. `off` short-circuits without calling AJV.
         if (requestValidationMode !== 'off') {
-          const outcome = validateRequest(toolName, params);
+          const outcome = validateRequest(toolName, params, adcpVersion);
           if (!outcome.valid) {
             // When `idempotency: 'disabled'` is set, drop the synthetic
             // "missing idempotency_key" failure on mutating tools — the
@@ -2623,7 +2623,7 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
           // their shape is enforced by the adcpError() builder.
           if (responseValidationMode !== 'off' && !isErrorResponse(formatted)) {
             const payload = formatted.structuredContent;
-            const outcome = validateResponse(toolName, payload);
+            const outcome = validateResponse(toolName, payload, adcpVersion);
             if (!outcome.valid) {
               logger.warn(`Schema validation warning (response) for ${toolName}: ${formatIssues(outcome.issues)}`, {
                 tool: toolName,

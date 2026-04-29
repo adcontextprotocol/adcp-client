@@ -4,7 +4,7 @@ import { z } from 'zod';
 import * as schemas from '../types/schemas.generated';
 import type { AgentConfig } from '../types';
 import { ADCP_ENVELOPE_FIELDS } from '../types/adcp';
-import { ADCP_VERSION, type AdcpVersion } from '../version';
+import { ADCP_VERSION, parseAdcpMajorVersion, type AdcpVersion } from '../version';
 import { resolveAdcpVersion } from '../utils/adcp-version-config';
 import type {
   GetProductsRequest,
@@ -390,6 +390,7 @@ export class SingleAgentClient {
       },
       onActivity: config.onActivity,
       governance: config.governance,
+      adcpVersion: this.resolvedAdcpVersion,
     });
 
     // Create async handler if handlers are provided
@@ -2878,7 +2879,15 @@ export class SingleAgentClient {
     if (capabilities._synthetic) {
       throw new VersionUnsupportedError(taskType, 'synthetic', capabilities.version, this.agent.agent_uri);
     }
-    if (!capabilities.majorVersions.includes(3)) {
+    // Per-instance major: a 3.x client requires the seller to advertise major 3,
+    // a 4.x client (once the SDK ships major-4 schemas) requires major 4.
+    // Function name is grandfathered from the v2/v3 split — the check generalizes.
+    // `AdcpMajorVersion` is currently `2 | 3` — cast through `number[]` because
+    // the parsed major is a plain number; a future SDK release that supports
+    // major 4 will widen the union.
+    const expectedMajor = parseAdcpMajorVersion(this.resolvedAdcpVersion);
+    const advertisedMajors = capabilities.majorVersions as readonly number[];
+    if (!Number.isFinite(expectedMajor) || !advertisedMajors.includes(expectedMajor)) {
       throw new VersionUnsupportedError(taskType, 'version', capabilities.version, this.agent.agent_uri);
     }
     if (!capabilities.idempotency?.replayTtlSeconds) {

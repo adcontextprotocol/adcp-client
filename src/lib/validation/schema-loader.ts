@@ -380,6 +380,21 @@ export function listValidatorKeys(version: string = ADCP_VERSION): string[] {
 export { SCHEMA_FILENAME_SUFFIX };
 
 /**
+ * Returns true when the schema bundle for `version` is reachable from the
+ * dist build or the source-tree fallback. Cheap synchronous check; safe
+ * to call at construction time of clients/servers to fail fast on a pin
+ * we don't have schemas for.
+ */
+export function hasSchemaBundle(version: string): boolean {
+  try {
+    resolveSchemaRoot(version);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/**
  * Test hook: reset cached state. With no argument, clears every version's
  * loader state; with a version, clears only the bundle that version
  * resolves to (so passing `'3.0.0'` and `'3.0.1'` both clear the `'3.0'`

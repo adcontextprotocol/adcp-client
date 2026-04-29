@@ -32,8 +32,8 @@ describe('adcpVersion constructor option', () => {
     });
 
     test('returns the configured value when provided', () => {
-      const client = new SingleAgentClient(TEST_AGENT, { adcpVersion: '3.1.0-beta.1' });
-      assert.strictEqual(client.getAdcpVersion(), '3.1.0-beta.1');
+      const client = new SingleAgentClient(TEST_AGENT, { adcpVersion: '3.0.0' });
+      assert.strictEqual(client.getAdcpVersion(), '3.0.0');
     });
   });
 
@@ -56,8 +56,8 @@ describe('adcpVersion constructor option', () => {
     });
 
     test('returns the configured value when provided', () => {
-      const client = new ADCPMultiAgentClient([TEST_AGENT], { adcpVersion: '3.1.0-beta.1' });
-      assert.strictEqual(client.getAdcpVersion(), '3.1.0-beta.1');
+      const client = new ADCPMultiAgentClient([TEST_AGENT], { adcpVersion: '3.0.0' });
+      assert.strictEqual(client.getAdcpVersion(), '3.0.0');
     });
   });
 
@@ -71,9 +71,9 @@ describe('adcpVersion constructor option', () => {
       const server = createAdcpServer({
         name: 'test-server',
         version: '1.0.0',
-        adcpVersion: '3.1.0-beta.1',
+        adcpVersion: '3.0.0',
       });
-      assert.strictEqual(server.getAdcpVersion(), '3.1.0-beta.1');
+      assert.strictEqual(server.getAdcpVersion(), '3.0.0');
     });
 
     test('config.version (app version) and adcpVersion are independent', () => {
@@ -89,7 +89,7 @@ describe('adcpVersion constructor option', () => {
   describe('parseAdcpMajorVersion', () => {
     test('extracts major from semver', () => {
       assert.strictEqual(parseAdcpMajorVersion('3.0.1'), 3);
-      assert.strictEqual(parseAdcpMajorVersion('3.1.0-beta.1'), 3);
+      assert.strictEqual(parseAdcpMajorVersion('3.0.0'), 3);
       assert.strictEqual(parseAdcpMajorVersion('4.0.0'), 4);
     });
 
@@ -104,20 +104,28 @@ describe('adcpVersion constructor option', () => {
     });
   });
 
-  describe('resolveAdcpVersion validation (Stage 2 fence)', () => {
+  describe('resolveAdcpVersion validation', () => {
     test('returns the default when undefined', () => {
       assert.strictEqual(resolveAdcpVersion(undefined), ADCP_VERSION);
     });
 
-    test('accepts same-major pins (different patch/beta)', () => {
+    test('accepts pins that resolve to a bundled version', () => {
+      // SDK ships bundle for ADCP_VERSION's minor; '3.0.0' / '3.0.1' / '3.0'
+      // all collapse to that bundle and accept.
       assert.strictEqual(resolveAdcpVersion('3.0.0'), '3.0.0');
-      assert.strictEqual(resolveAdcpVersion('3.1.0-beta.1'), '3.1.0-beta.1');
+      assert.strictEqual(resolveAdcpVersion('3.0.1'), '3.0.1');
+      assert.strictEqual(resolveAdcpVersion('3.0'), '3.0');
     });
 
-    test('rejects cross-major pins until Stage 3', () => {
+    test('rejects pins for which no schema bundle ships', () => {
+      // Stage 3 lifts the Stage 2 cross-major fence; the new gate is
+      // "schemas exist for this pin". '4.0.0' has no bundle in this build.
       assert.throws(
         () => resolveAdcpVersion('4.0.0'),
-        err => err.code === 'CONFIGURATION_ERROR' && /major 4.*ships against major 3/.test(err.message)
+        err =>
+          err.code === 'CONFIGURATION_ERROR' &&
+          /no schema bundle for that key ships/.test(err.message) &&
+          /sync-schemas/.test(err.message)
       );
     });
 

@@ -1,26 +1,33 @@
-// Validation helpers for the per-instance `adcpVersion` constructor option
-// added in Stage 2 of the multi-version refactor.
+// Validation helpers for the per-instance `adcpVersion` constructor option.
 //
-// Stage 2 plumbs the option onto every client/server constructor and exposes
-// `getAdcpVersion()` for inspection, but the wire-level `adcp_major_version`
-// field is still emitted from the global `ADCP_MAJOR_VERSION` constant.
-// To prevent silent drift between the configured pin and what actually goes
-// out on the wire, we fence the constructor: only `adcpVersion` strings whose
-// derived major matches `ADCP_MAJOR_VERSION` are accepted today. Cross-major
-// pinning (e.g. `'4.0.0-beta.1'` while the SDK ships against major 3) waits
-// until Stage 3 wires the per-instance major into the protocol layer.
+// Stage 2 plumbed the option onto every client/server constructor with a
+// fence: cross-major pins were rejected at construction because the wire
+// field and validators still keyed off the global `ADCP_MAJOR_VERSION`.
+//
+// Stage 3 lifts that fence. Validators now key off the resolved bundle in
+// `dist/lib/schemas-data/<MAJOR.MINOR>/`, and the protocol layer derives
+// the wire-level `adcp_major_version` from the per-instance pin. Construction
+// now accepts any pin that has a schema bundle reachable from the SDK build,
+// and rejects pins for which no bundle is present (`'4.0.0'` while the SDK
+// only ships major-3 schemas, mistyped versions, etc.) with a clear pointer
+// at `sync-schemas` + `build:lib`.
 
-import { ADCP_MAJOR_VERSION, ADCP_VERSION, COMPATIBLE_ADCP_VERSIONS, parseAdcpMajorVersion } from '../version';
+import { ADCP_VERSION, COMPATIBLE_ADCP_VERSIONS, parseAdcpMajorVersion } from '../version';
 import { ConfigurationError } from '../errors';
+import { hasSchemaBundle, resolveBundleKey } from '../validation/schema-loader';
 
 /**
  * Resolve and validate a configured `adcpVersion`. Returns the value to store
  * on the instance — either the caller's pin or the SDK default.
  *
- * Throws `ConfigurationError` when the pin is unparseable or its derived major
- * differs from `ADCP_MAJOR_VERSION`. The error message points at the Stage 3+
- * roadmap so callers know cross-major support isn't a missing feature, just
- * not landed yet.
+ * Throws `ConfigurationError` when:
+ *   - The pin is unparseable as a semver / legacy alias
+ *   - The pin parses but no schema bundle exists for the resolved key
+ *
+ * Cross-major pins are accepted as long as the corresponding bundle ships
+ * with this SDK build (e.g. `'3.1.0-beta.1'` when `dist/lib/schemas-data/
+ * 3.1.0-beta.1/` exists). Pins of the SDK's currently-pinned `ADCP_VERSION`
+ * always succeed without an fs check — the bundle is guaranteed.
  */
 export function resolveAdcpVersion(adcpVersion: string | undefined): string {
   if (adcpVersion === undefined) return ADCP_VERSION;
@@ -30,18 +37,25 @@ export function resolveAdcpVersion(adcpVersion: string | undefined): string {
     throw new ConfigurationError(
       `adcpVersion ${JSON.stringify(adcpVersion)} is not a valid AdCP version. ` +
         `Expected a semver string (e.g. '3.0.1', '3.1.0-beta.1') or a legacy alias. ` +
-        `Currently accepted: ${COMPATIBLE_ADCP_VERSIONS.filter(v => parseAdcpMajorVersion(v) === ADCP_MAJOR_VERSION).join(', ')}.`,
+        `Currently bundled: ${COMPATIBLE_ADCP_VERSIONS.join(', ')}.`,
       'adcpVersion'
     );
   }
 
-  if (major !== ADCP_MAJOR_VERSION) {
+  // Skip the bundle-existence check for the SDK default — every published
+  // tarball includes that version's schemas by construction. This keeps the
+  // common-path constructor cost at zero fs calls.
+  if (adcpVersion === ADCP_VERSION) return adcpVersion;
+
+  if (!hasSchemaBundle(adcpVersion)) {
+    const resolvedKey = resolveBundleKey(adcpVersion);
     throw new ConfigurationError(
-      `adcpVersion ${JSON.stringify(adcpVersion)} pins major ${major}, but this ` +
-        `SDK build ships against major ${ADCP_MAJOR_VERSION}. Cross-major pinning ` +
-        `lands in Stage 3 of the multi-version refactor (per-instance schema + ` +
-        `wire-major plumbing). Within a major, beta and patch pins are accepted: ` +
-        `${COMPATIBLE_ADCP_VERSIONS.filter(v => parseAdcpMajorVersion(v) === ADCP_MAJOR_VERSION).join(', ')}.`,
+      `adcpVersion ${JSON.stringify(adcpVersion)} resolves to bundle key "${resolvedKey}", ` +
+        `but no schema bundle for that key ships with this SDK build. ` +
+        `Currently bundled: ${COMPATIBLE_ADCP_VERSIONS.join(', ')}. ` +
+        `If you're testing against a beta that the spec repo has tagged but the SDK hasn't synced yet, ` +
+        `run \`npm run sync-schemas\` and \`npm run build:lib\` to populate the cache, ` +
+        `then re-construct.`,
       'adcpVersion'
     );
   }

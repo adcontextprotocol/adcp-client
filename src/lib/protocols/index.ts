@@ -44,7 +44,7 @@ import { is401Error } from '../errors';
 import { isLikelyPrivateUrl } from '../net';
 import { validateAgentUrl } from '../validation';
 import { withSpan } from '../observability/tracing';
-import { ADCP_MAJOR_VERSION } from '../version';
+import { ADCP_MAJOR_VERSION, parseAdcpMajorVersion } from '../version';
 import { buildAgentSigningContext, CAPABILITY_OP, ensureCapabilityLoaded } from '../signing/client';
 
 /**
@@ -74,8 +74,23 @@ export class ProtocolClient {
     webhookSecret?: string,
     webhookToken?: string,
     serverVersion?: 'v2' | 'v3',
-    session?: { contextId?: string; taskId?: string }
+    session?: { contextId?: string; taskId?: string },
+    /**
+     * AdCP version pin from the calling client/server instance. Sets the
+     * wire-level `adcp_major_version` field per-call instead of from the
+     * SDK-pinned `ADCP_MAJOR_VERSION` constant. Default falls back to the
+     * constant so call sites that don't yet plumb a per-instance version
+     * keep their existing behavior.
+     */
+    adcpVersion?: string
   ): Promise<unknown> {
+    // Per-instance major. NaN-fallback handles unparseable pins (caught by
+    // resolveAdcpVersion at construction; defensive here).
+    const wireMajor = (() => {
+      if (!adcpVersion) return ADCP_MAJOR_VERSION;
+      const parsed = parseAdcpMajorVersion(adcpVersion);
+      return Number.isFinite(parsed) ? parsed : ADCP_MAJOR_VERSION;
+    })();
     return withSpan(
       `adcp.${agent.protocol}.call_tool`,
       {
@@ -90,7 +105,7 @@ export class ProtocolClient {
         // still apply (they run in SingleAgentClient above this call). We skip
         // URL validation, OAuth refresh, and signing — none apply in-process.
         if (agent.protocol === 'mcp' && agent._inProcessMcpClient) {
-          const inProcArgs = serverVersion === 'v2' ? args : { adcp_major_version: ADCP_MAJOR_VERSION, ...args };
+          const inProcArgs = serverVersion === 'v2' ? args : { adcp_major_version: wireMajor, ...args };
           return callMCPToolWithClient(agent._inProcessMcpClient, toolName, inProcArgs, debugLogs);
         }
 
@@ -144,7 +159,9 @@ export class ProtocolClient {
 
         // Declare AdCP major version on every request so sellers can validate compatibility.
         // Skip for v2 servers — they don't recognise the field and strict-schema agents reject it.
-        const argsWithVersion = serverVersion === 'v2' ? args : { adcp_major_version: ADCP_MAJOR_VERSION, ...args };
+        // `wireMajor` is derived per-call from the caller's `adcpVersion` pin so a 3.0 client
+        // emits `adcp_major_version: 3` and a 4.x client emits 4.
+        const argsWithVersion = serverVersion === 'v2' ? args : { adcp_major_version: wireMajor, ...args };
 
         // Build push_notification_config for ASYNC TASK STATUS notifications
         // (NOT for reporting_webhook - that stays in args)
@@ -324,33 +341,47 @@ export const createMCPClient = (
   agentUrl: string,
   authToken?: string,
   headers?: Record<string, string>,
-  serverVersion?: 'v2' | 'v3'
-) => ({
-  callTool: (toolName: string, args: Record<string, unknown>, debugLogs?: DebugLogEntry[]) =>
-    callMCPToolWithTasks(
-      agentUrl,
-      toolName,
-      serverVersion === 'v2' ? args : { adcp_major_version: ADCP_MAJOR_VERSION, ...args },
-      authToken,
-      debugLogs,
-      headers
-    ),
-});
+  serverVersion?: 'v2' | 'v3',
+  adcpVersion?: string
+) => {
+  const wireMajor =
+    adcpVersion !== undefined && Number.isFinite(parseAdcpMajorVersion(adcpVersion))
+      ? parseAdcpMajorVersion(adcpVersion)
+      : ADCP_MAJOR_VERSION;
+  return {
+    callTool: (toolName: string, args: Record<string, unknown>, debugLogs?: DebugLogEntry[]) =>
+      callMCPToolWithTasks(
+        agentUrl,
+        toolName,
+        serverVersion === 'v2' ? args : { adcp_major_version: wireMajor, ...args },
+        authToken,
+        debugLogs,
+        headers
+      ),
+  };
+};
 
 export const createA2AClient = (
   agentUrl: string,
   authToken?: string,
   headers?: Record<string, string>,
-  serverVersion?: 'v2' | 'v3'
-) => ({
-  callTool: (toolName: string, parameters: Record<string, unknown>, debugLogs?: DebugLogEntry[]) =>
-    callA2ATool(
-      agentUrl,
-      toolName,
-      serverVersion === 'v2' ? parameters : { adcp_major_version: ADCP_MAJOR_VERSION, ...parameters },
-      authToken,
-      debugLogs,
-      undefined,
-      headers
-    ),
-});
+  serverVersion?: 'v2' | 'v3',
+  adcpVersion?: string
+) => {
+  const wireMajor =
+    adcpVersion !== undefined && Number.isFinite(parseAdcpMajorVersion(adcpVersion))
+      ? parseAdcpMajorVersion(adcpVersion)
+      : ADCP_MAJOR_VERSION;
+  return {
+    callTool: (toolName: string, parameters: Record<string, unknown>, debugLogs?: DebugLogEntry[]) =>
+      callA2ATool(
+        agentUrl,
+        toolName,
+        serverVersion === 'v2' ? parameters : { adcp_major_version: wireMajor, ...parameters },
+        authToken,
+        debugLogs,
+        undefined,
+        headers
+      ),
+  };
+};
