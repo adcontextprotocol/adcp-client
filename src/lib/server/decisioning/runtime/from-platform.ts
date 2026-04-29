@@ -559,12 +559,30 @@ export function createAdcpServerFromPlatform<P extends DecisioningPlatform<any, 
     ...adopterBrand,
   };
 
+  // Account-mode capability projection. Two redundant adopter signals
+  // resolve into the same wire bit:
+  //   - `capabilities.requireOperatorAuth: true` — explicit override
+  //   - `accounts.resolution: 'explicit'` — derived from the account-store
+  //     model (operators authenticate independently with the seller; the
+  //     buyer discovers accounts via `list_accounts`, NOT `sync_accounts`).
+  // Either, taken alone, projects to `account.require_operator_auth: true`.
+  // The conformance storyboard runner reads this bit at step time and
+  // grades `sync_accounts` steps as `'not_applicable'` (rather than the
+  // misleading `'missing_tool'`) for explicit-mode adopters who correctly
+  // don't implement that tool. See storyboard runner.ts account-mode gate.
+  const requireOperatorAuth = platform.capabilities.requireOperatorAuth ?? platform.accounts.resolution === 'explicit';
+  const hasAccountProjection = requireOperatorAuth === true;
+  const accountOverrides: Partial<NonNullable<GetAdCPCapabilitiesResponse['account']>> = {
+    require_operator_auth: true,
+  };
+
   const projectedCapabilitiesConfig =
-    hasMediaBuyProjection || hasBrandProjection
+    hasMediaBuyProjection || hasBrandProjection || hasAccountProjection
       ? {
           overrides: {
             ...(hasMediaBuyProjection && { media_buy: mediaBuyOverrides }),
             ...(hasBrandProjection && { brand: brandOverrides }),
+            ...(hasAccountProjection && { account: accountOverrides }),
           },
         }
       : undefined;

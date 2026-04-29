@@ -263,6 +263,15 @@ createAdcpServerFromPlatform(platform, {
   `if (ctx?.authInfo?.clientId)` branch in your resolver or single-tenant
   agents will hit `ACCOUNT_NOT_FOUND` on `list_creative_formats` /
   `provide_performance_feedback` / `report_usage`.
+- **`accounts.resolution: 'explicit'` projects to wire
+  `account.require_operator_auth: true`.** The framework derives this bit
+  from your declared `resolution` mode (or the explicit
+  `capabilities.requireOperatorAuth: true` flag if you set it). Conformance
+  storyboards read it to grade `sync_accounts` as `'not_applicable'` for
+  explicit-mode adopters who correctly don't implement that tool. If you
+  see `sync_accounts` skipped as `'missing_tool'` (rather than
+  `'not_applicable'`) on a storyboard run, double-check your
+  `accounts.resolution` declaration is actually `'explicit'`.
 - **`AccountNotFoundError`** should be thrown from `accounts.resolve()`,
   not from specialism methods. The framework projects either to
   `ACCOUNT_NOT_FOUND`, but resolve() is the canonical surface.

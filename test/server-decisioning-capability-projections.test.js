@@ -207,6 +207,54 @@ describe('Capability projections — declarative capability blocks on Decisionin
     assert.strictEqual(brand.description, 'Acme Brand-Rights Agent');
   });
 
+  it('accounts.resolution: explicit projects onto wire account.require_operator_auth', async () => {
+    // Storyboard runner reads `account.require_operator_auth` to grade
+    // `sync_accounts` as `'not_applicable'` (rather than `'missing_tool'`)
+    // for explicit-mode adopters who correctly don't implement the tool.
+    // Without this projection the runner's gate never fires for v6
+    // platforms — see runner.ts account-mode capability gate.
+    const platform = basePlatform();
+    platform.accounts.resolution = 'explicit';
+    const server = createAdcpServerFromPlatform(platform, {
+      name: 'h',
+      version: '0.0.1',
+      validation: { requests: 'off', responses: 'off' },
+    });
+    const result = await dispatchCapabilities(server);
+    const account = result.structuredContent?.account;
+    assert.ok(account, 'account block projected');
+    assert.strictEqual(account.require_operator_auth, true);
+  });
+
+  it('explicit capabilities.requireOperatorAuth: true overrides resolution-derived bit', async () => {
+    // Either signal alone projects to require_operator_auth: true.
+    const platform = basePlatform({ requireOperatorAuth: true });
+    platform.accounts.resolution = 'derived';
+    const server = createAdcpServerFromPlatform(platform, {
+      name: 'h',
+      version: '0.0.1',
+      validation: { requests: 'off', responses: 'off' },
+    });
+    const result = await dispatchCapabilities(server);
+    assert.strictEqual(result.structuredContent?.account?.require_operator_auth, true);
+  });
+
+  it('accounts.resolution: implicit does NOT project account block (sync_accounts is the correct tool)', async () => {
+    const platform = basePlatform();
+    platform.accounts.resolution = 'implicit';
+    const server = createAdcpServerFromPlatform(platform, {
+      name: 'h',
+      version: '0.0.1',
+      validation: { requests: 'off', responses: 'off' },
+    });
+    const result = await dispatchCapabilities(server);
+    // Implicit-mode adopters use sync_accounts; require_operator_auth must
+    // remain false / unset so the runner does NOT mark sync_accounts as
+    // not_applicable.
+    const requireOperatorAuth = result.structuredContent?.account?.require_operator_auth;
+    assert.notStrictEqual(requireOperatorAuth, true);
+  });
+
   it('omitting all three leaves get_adcp_capabilities unchanged (no empty media_buy block)', async () => {
     const server = createAdcpServerFromPlatform(basePlatform(), {
       name: 'h',
