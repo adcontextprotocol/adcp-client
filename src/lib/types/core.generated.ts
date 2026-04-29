@@ -1,5 +1,5 @@
 // Generated AdCP core types from official schemas v3.0.1
-// Generated at: 2026-04-28T13:09:10.511Z
+// Generated at: 2026-04-29T10:03:50.622Z
 
 // MEDIA-BUY SCHEMA
 /**
@@ -4132,9 +4132,21 @@ export type PreviewRender =
  */
 export type SyncCreativesResponse = SyncCreativesSuccess | SyncCreativesError | SyncCreativesSubmitted;
 /**
+ * Action taken for this creative during this sync operation (lifecycle operation, not approval state).
+ */
+export type CreativeAction = 'created' | 'updated' | 'unchanged' | 'failed' | 'deleted';
+/**
  * Response for completed or failed sync_catalogs
  */
 export type SyncCatalogsResponse = SyncCatalogsSuccess | SyncCatalogsError;
+/**
+ * Action taken for this catalog
+ */
+export type CatalogAction = 'created' | 'updated' | 'unchanged' | 'failed' | 'deleted';
+/**
+ * Item review status
+ */
+export type CatalogItemStatus = 'approved' | 'pending' | 'rejected' | 'warning';
 
 /**
  * Standard envelope for HTTP-based push notifications (MCP). This defines the wire format sent to the URL configured in `pushNotificationConfig`. NOTE: This envelope is NOT used in A2A integration, which uses native Task/TaskStatusUpdateEvent messages with the AdCP payload nested in `status.message.parts[].data`.
@@ -5125,7 +5137,53 @@ export interface SyncCreativesSuccess {
    * Results for each creative processed. Items with action='failed' indicate per-item validation/processing failures, not operation-level failures.
    */
   creatives: {
-    [k: string]: unknown | undefined;
+    /**
+     * Creative ID from the request
+     */
+    creative_id: string;
+    account?: Account;
+    action: CreativeAction;
+    status?: CreativeStatus;
+    /**
+     * Platform-specific ID assigned to the creative
+     */
+    platform_id?: string;
+    /**
+     * Field names that were modified (only present when action='updated')
+     */
+    changes?: string[];
+    /**
+     * Validation or processing errors (only present when action='failed')
+     */
+    errors?: Error[];
+    /**
+     * Non-fatal warnings about this creative
+     */
+    warnings?: string[];
+    /**
+     * Preview URL for generative creatives (only present for generative formats)
+     */
+    preview_url?: string;
+    /**
+     * ISO 8601 timestamp when preview link expires (only present when preview_url exists)
+     */
+    expires_at?: string;
+    /**
+     * Package IDs this creative was successfully assigned to (only present when assignments were requested)
+     */
+    assigned_to?: string[];
+    /**
+     * Assignment errors by package ID (only present when assignment failures occurred)
+     */
+    assignment_errors?: {
+      /**
+       * Error message for this package assignment
+       *
+       * This interface was referenced by `undefined`'s JSON-Schema definition
+       * via the `patternProperty` "^[a-zA-Z0-9_-]+$".
+       */
+      [k: string]: string | undefined;
+    };
   }[];
   /**
    * When true, this response contains simulated data from sandbox mode.
@@ -5229,7 +5287,65 @@ export interface SyncCatalogsSuccess {
    * Results for each catalog processed. Items with action='failed' indicate per-catalog validation/processing failures, not operation-level failures.
    */
   catalogs: {
-    [k: string]: unknown | undefined;
+    /**
+     * Catalog ID from the request
+     */
+    catalog_id: string;
+    action: CatalogAction;
+    /**
+     * Platform-specific ID assigned to the catalog
+     */
+    platform_id?: string;
+    /**
+     * Total number of items in the catalog after sync. Required when action is 'created', 'updated', or 'unchanged'. Omitted on 'failed' and 'deleted'.
+     */
+    item_count?: number;
+    /**
+     * Number of items approved by the platform. Populated when the platform performs item-level review.
+     */
+    items_approved?: number;
+    /**
+     * Number of items pending platform review. Common for product catalogs where items must pass content policy checks.
+     */
+    items_pending?: number;
+    /**
+     * Number of items rejected by the platform. Check item_issues for rejection reasons.
+     */
+    items_rejected?: number;
+    /**
+     * Per-item issues reported by the platform (rejections, warnings). Only present when the platform performs item-level review.
+     */
+    item_issues?: {
+      /**
+       * ID of the catalog item with an issue
+       */
+      item_id: string;
+      status: CatalogItemStatus;
+      /**
+       * Reasons for rejection or warning
+       */
+      reasons?: string[];
+    }[];
+    /**
+     * ISO 8601 timestamp of when the most recent sync was accepted by the platform
+     */
+    last_synced_at?: string;
+    /**
+     * ISO 8601 timestamp of when the platform will next fetch the feed URL. Only present for URL-based catalogs with update_frequency.
+     */
+    next_fetch_at?: string;
+    /**
+     * Field names that were modified (only present when action='updated')
+     */
+    changes?: string[];
+    /**
+     * Validation or processing errors (only present when action='failed')
+     */
+    errors?: Error[];
+    /**
+     * Non-fatal warnings about this catalog
+     */
+    warnings?: string[];
   }[];
   /**
    * When true, this response contains simulated data from sandbox mode.
@@ -8425,11 +8541,13 @@ export interface CreativeFeatureResult {
 
 // bundled/creative/list-creative-formats-request.json
 /**
+ * Filter to formats that meet at least this WCAG conformance level (A < AA < AAA)
+ */
+export type WCAGLevel = 'A' | 'AA' | 'AAA';
+/**
  * Request parameters for discovering creative formats provided by this creative agent
  */
-export type ListCreativeFormatsRequestCreativeAgent = {
-  [k: string]: unknown | undefined;
-} & {
+export interface ListCreativeFormatsRequestCreativeAgent {
   /**
    * The AdCP major version the buyer's payloads conform to. Sellers validate against their supported major_versions and return VERSION_UNSUPPORTED if unsupported. When omitted, the seller assumes its highest supported version.
    */
@@ -8495,19 +8613,17 @@ export type ListCreativeFormatsRequestCreativeAgent = {
   pagination?: PaginationRequest;
   context?: ContextObject;
   ext?: ExtensionObject;
-};
-/**
- * Filter to formats that meet at least this WCAG conformance level (A < AA < AAA)
- */
-export type WCAGLevel = 'A' | 'AA' | 'AAA';
+}
 
 // bundled/creative/list-creatives-request.json
 /**
+ * Field to sort by
+ */
+export type CreativeSortField = 'created_date' | 'updated_date' | 'name' | 'status' | 'assignment_count';
+/**
  * Request parameters for querying creative assets from a creative library with filtering, sorting, and pagination. Implemented by any agent that hosts a creative library — creative agents (ad servers, creative platforms) and sales agents that manage creatives.
  */
-export type ListCreativesRequest = {
-  [k: string]: unknown | undefined;
-} & {
+export interface ListCreativesRequest {
   /**
    * The AdCP major version the buyer's payloads conform to. Sellers validate against their supported major_versions and return VERSION_UNSUPPORTED if unsupported. When omitted, the seller assumes its highest supported version.
    */
@@ -8562,11 +8678,7 @@ export type ListCreativesRequest = {
   )[];
   context?: ContextObject;
   ext?: ExtensionObject;
-};
-/**
- * Field to sort by
- */
-export type CreativeSortField = 'created_date' | 'updated_date' | 'name' | 'status' | 'assignment_count';
+}
 /**
  * Filter criteria for querying creatives from a creative library. By default, archived creatives are excluded from results. To include archived creatives, explicitly filter by status='archived' or include 'archived' in the statuses array.
  */
@@ -8910,11 +9022,74 @@ export interface CreativeVariable {
 
 // bundled/creative/preview-creative-request.json
 /**
+ * Render quality. 'draft' produces fast, lower-fidelity renderings. 'production' produces full-quality renderings. In batch mode, sets the default for all requests (individual items can override).
+ */
+export type CreativeQuality = 'draft' | 'production';
+/**
+ * Output format. 'url' returns preview_url (iframe-embeddable URL), 'html' returns preview_html (raw HTML). In batch mode, sets the default for all requests (individual items can override). Default: 'url'.
+ */
+export type PreviewOutputFormat = 'url' | 'html';
+/**
+ * VAST (Video Ad Serving Template) tag for third-party video ad serving
+ */
+export type VASTAsset1 =
+  | {
+      /**
+       * Discriminator indicating VAST is delivered via URL endpoint
+       */
+      delivery_type: 'url';
+      /**
+       * URL endpoint that returns VAST XML
+       */
+      url: string;
+    }
+  | {
+      /**
+       * Discriminator indicating VAST is delivered as inline XML content
+       */
+      delivery_type: 'inline';
+      /**
+       * Inline VAST XML content
+       */
+      content: string;
+    };
+/**
+ * DAAST (Digital Audio Ad Serving Template) tag for third-party audio ad serving
+ */
+export type DAASTAsset1 =
+  | {
+      /**
+       * Discriminator indicating DAAST is delivered via URL endpoint
+       */
+      delivery_type: 'url';
+      /**
+       * URL endpoint that returns DAAST XML
+       */
+      url: string;
+    }
+  | {
+      /**
+       * Discriminator indicating DAAST is delivered as inline XML content
+       */
+      delivery_type: 'inline';
+      /**
+       * Inline DAAST XML content
+       */
+      content: string;
+    };
+/**
+ * Campaign-level creative context as an asset. Carries the creative brief through the manifest so it travels with the creative through regeneration, resizing, and auditing.
+ */
+export type BriefAsset1 = CreativeBrief;
+/**
+ * A typed data feed as a creative asset. Carries catalog context (products, stores, jobs, etc.) within the manifest's assets map.
+ */
+export type CatalogAsset1 = Catalog;
+
+/**
  * Request to generate previews of creative manifests. Uses request_type to select single, batch, or variant mode.
  */
-export type PreviewCreativeRequest = {
-  [k: string]: unknown | undefined;
-} & {
+export interface PreviewCreativeRequest {
   /**
    * The AdCP major version the buyer's payloads conform to. Sellers validate against their supported major_versions and return VERSION_UNSUPPORTED if unsupported. When omitted, the seller assumes its highest supported version.
    */
@@ -9000,72 +9175,7 @@ export type PreviewCreativeRequest = {
   creative_id?: string;
   context?: ContextObject;
   ext?: ExtensionObject;
-};
-/**
- * Render quality. 'draft' produces fast, lower-fidelity renderings. 'production' produces full-quality renderings. In batch mode, sets the default for all requests (individual items can override).
- */
-export type CreativeQuality = 'draft' | 'production';
-/**
- * Output format. 'url' returns preview_url (iframe-embeddable URL), 'html' returns preview_html (raw HTML). In batch mode, sets the default for all requests (individual items can override). Default: 'url'.
- */
-export type PreviewOutputFormat = 'url' | 'html';
-/**
- * VAST (Video Ad Serving Template) tag for third-party video ad serving
- */
-export type VASTAsset1 =
-  | {
-      /**
-       * Discriminator indicating VAST is delivered via URL endpoint
-       */
-      delivery_type: 'url';
-      /**
-       * URL endpoint that returns VAST XML
-       */
-      url: string;
-    }
-  | {
-      /**
-       * Discriminator indicating VAST is delivered as inline XML content
-       */
-      delivery_type: 'inline';
-      /**
-       * Inline VAST XML content
-       */
-      content: string;
-    };
-/**
- * DAAST (Digital Audio Ad Serving Template) tag for third-party audio ad serving
- */
-export type DAASTAsset1 =
-  | {
-      /**
-       * Discriminator indicating DAAST is delivered via URL endpoint
-       */
-      delivery_type: 'url';
-      /**
-       * URL endpoint that returns DAAST XML
-       */
-      url: string;
-    }
-  | {
-      /**
-       * Discriminator indicating DAAST is delivered as inline XML content
-       */
-      delivery_type: 'inline';
-      /**
-       * Inline DAAST XML content
-       */
-      content: string;
-    };
-/**
- * Campaign-level creative context as an asset. Carries the creative brief through the manifest so it travels with the creative through regeneration, resizing, and auditing.
- */
-export type BriefAsset1 = CreativeBrief;
-/**
- * A typed data feed as a creative asset. Carries catalog context (products, stores, jobs, etc.) within the manifest's assets map.
- */
-export type CatalogAsset1 = Catalog;
-
+}
 
 // bundled/creative/preview-creative-response.json
 /**
@@ -13787,12 +13897,6 @@ export interface SIIdentity {
 
 // bundled/sponsored-intelligence/si-initiate-session-response.json
 /**
- * Standard visual component that brand returns and host renders
- */
-export type SIUIElement = {
-  [k: string]: unknown | undefined;
-};
-/**
  * Current session lifecycle state. Returned in initiation, message, and termination responses.
  */
 export type SISessionStatus = 'active' | 'pending_handoff' | 'complete' | 'terminated';
@@ -13830,6 +13934,27 @@ export interface SIInitiateSessionResponse {
   errors?: Error[];
   context?: ContextObject;
   ext?: ExtensionObject;
+}
+/**
+ * Standard visual component that brand returns and host renders
+ */
+export interface SIUIElement {
+  /**
+   * Component type
+   */
+  type:
+    | 'text'
+    | 'link'
+    | 'image'
+    | 'product_card'
+    | 'carousel'
+    | 'action_button'
+    | 'app_handoff'
+    | 'integration_actions';
+  /**
+   * Component-specific data
+   */
+  data?: {};
 }
 
 // bundled/sponsored-intelligence/si-send-message-request.json
@@ -16733,27 +16858,6 @@ export type BrandAgentType =
   | 'sales'
   | 'buying'
   | 'signals';
-
-
-// enums/catalog-action.json
-/**
- * Action taken on a catalog during sync operation
- */
-export type CatalogAction = 'created' | 'updated' | 'unchanged' | 'failed' | 'deleted';
-
-
-// enums/catalog-item-status.json
-/**
- * Approval status of an individual item within a synced catalog. Platforms review catalog items and may approve, reject, or flag them for issues (similar to Google Merchant Center product review).
- */
-export type CatalogItemStatus = 'approved' | 'pending' | 'rejected' | 'warning';
-
-
-// enums/creative-action.json
-/**
- * Action taken on a creative during sync operation
- */
-export type CreativeAction = 'created' | 'updated' | 'unchanged' | 'failed' | 'deleted';
 
 
 // enums/creative-agent-capability.json
