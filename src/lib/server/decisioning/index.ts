@@ -189,3 +189,8 @@ export {
   type TenantAdminHandlers,
   type RouterLike,
 } from './admin-router';
+
+// Adopter helpers — batchPoll, validationError, upstreamError, RequestShape.
+// All opt-in convenience; nothing in the framework calls these internally.
+export { batchPoll, validationError, upstreamError } from './helpers';
+export type { RequestShape } from './helpers';
