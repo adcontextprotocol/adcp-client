@@ -709,6 +709,90 @@ describe('TenantRegistry — default JWKS validator (fetch-based)', () => {
     );
     assert.strictEqual(received.agentUrl, 'https://shared.example.com/api/training-agent/signals');
   });
+
+  it('F8: empty-string jwksUrl falls back to spec-canonical host-root (defense-in-depth)', async () => {
+    let fetchedUrl = '';
+    const validator = createDefaultJwksValidator({
+      fetchImpl: async url => {
+        fetchedUrl = url;
+        return { ok: false, status: 404, statusText: 'Not Found' };
+      },
+    });
+    await validator.validate({
+      agentUrl: 'https://example.com',
+      jwksUrl: '',
+      signingKey: { keyId: 'k', publicJwk: {}, privateJwk: {} },
+    });
+    // Empty-string defense: reach the host-root default rather than
+    // attempting fetch('') and surfacing an opaque error.
+    assert.strictEqual(fetchedUrl, 'https://example.com/.well-known/brand.json');
+  });
+
+  it('F8: agentUrl with port + query + fragment resolves correctly to host-root JWKS', async () => {
+    let fetchedUrl = '';
+    const validator = createDefaultJwksValidator({
+      fetchImpl: async url => {
+        fetchedUrl = url;
+        return { ok: false, status: 404, statusText: 'Not Found' };
+      },
+    });
+    await validator.validate({
+      agentUrl: 'https://x.example.com:8080/foo/bar?session=abc#frag',
+      signingKey: { keyId: 'k', publicJwk: {}, privateJwk: {} },
+    });
+    // Leading-slash path replaces path AND query AND fragment in the
+    // base URL per WHATWG URL semantics. Port survives.
+    assert.strictEqual(fetchedUrl, 'https://x.example.com:8080/.well-known/brand.json');
+  });
+
+  it('F8: register() emits an info log when jwksUrl diverges from agentUrl-relative canonical URL', () => {
+    const infos = [];
+    const originalInfo = console.info;
+    console.info = (...args) => infos.push(args.join(' '));
+    try {
+      const registry = createTenantRegistry({
+        jwksValidator: fakeValidator(async () => ({ ok: true })),
+        defaultServerOptions: DEFAULT_SERVER_OPTIONS,
+        autoValidate: false,
+      });
+      registry.register('subrouted', {
+        agentUrl: 'https://shared.example.com/api/agent-a',
+        jwksUrl: 'https://shared.example.com/api/agent-a/.well-known/brand.json',
+        signingKey: SAMPLE_KEY,
+        platform: basePlatform(),
+      });
+    } finally {
+      console.info = originalInfo;
+    }
+    const hit = infos.find(i => i.includes('jwksUrl override'));
+    assert.ok(hit, `expected divergence info log, got: ${JSON.stringify(infos)}`);
+    assert.match(hit, /agent-a\/\.well-known\/brand\.json/);
+    assert.match(hit, /spec-canonical/);
+  });
+
+  it('F8: register() does NOT log when jwksUrl matches the spec-canonical resolution', () => {
+    const infos = [];
+    const originalInfo = console.info;
+    console.info = (...args) => infos.push(args.join(' '));
+    try {
+      const registry = createTenantRegistry({
+        jwksValidator: fakeValidator(async () => ({ ok: true })),
+        defaultServerOptions: DEFAULT_SERVER_OPTIONS,
+        autoValidate: false,
+      });
+      registry.register('canonical', {
+        agentUrl: 'https://x.example.com',
+        // Matches what `new URL('/.well-known/brand.json', agentUrl)` produces.
+        jwksUrl: 'https://x.example.com/.well-known/brand.json',
+        signingKey: SAMPLE_KEY,
+        platform: basePlatform(),
+      });
+    } finally {
+      console.info = originalInfo;
+    }
+    const hit = infos.find(i => i.includes('jwksUrl override'));
+    assert.strictEqual(hit, undefined, 'no divergence log when override matches canonical');
+  });
 });
 
 describe('TenantRegistry — autoValidate footgun guard (F7)', () => {
@@ -729,6 +813,9 @@ describe('TenantRegistry — autoValidate footgun guard (F7)', () => {
     assert.ok(hit, `expected warning about autoValidate: false, got: ${JSON.stringify(warnings)}`);
     assert.match(hit, /resolveByRequest will refuse all traffic/);
     assert.match(hit, /recheck/);
+    // DX feedback: tell the adopter who probably picked the wrong flag
+    // what they actually wanted, not just how to live with the choice.
+    assert.match(hit, /REMOVE the flag/);
   });
 
   it('does NOT warn when autoValidate is left at the default', () => {

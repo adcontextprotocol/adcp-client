@@ -259,7 +259,11 @@ export function createDefaultJwksValidator(opts?: { fetchImpl?: typeof fetch; ti
       // host), wrong for multi-tenant sub-routed deployments — adopters
       // there set `TenantConfig.jwksUrl` to point at the per-tenant
       // brand.json.
-      const url = jwksUrl ?? new URL('/.well-known/brand.json', agentUrl).toString();
+      // Reject empty-string jwksUrl as defense-in-depth — `??` only
+      // catches null/undefined, so an empty string would otherwise
+      // reach `fetch('')` and produce an opaque error. Treat empty as
+      // "use default."
+      const url = jwksUrl && jwksUrl.length > 0 ? jwksUrl : new URL('/.well-known/brand.json', agentUrl).toString();
       let response: Response;
       try {
         response = await fetchImpl(url, { method: 'GET', signal: AbortSignal.timeout(timeoutMs) });
@@ -423,11 +427,11 @@ export function createTenantRegistry(opts: TenantRegistryOptions): TenantRegistr
   if (opts.autoValidate === false) {
     // eslint-disable-next-line no-console
     console.warn(
-      '[adcp] TenantRegistry created with autoValidate: false. Tenants will stay ' +
-        "in 'pending' health and resolveByRequest will refuse all traffic until you " +
-        'call recheck(tenantId) for each tenant. This option is intended for tests ' +
-        'driving validation manually; production deployments should leave autoValidate ' +
-        'at the default (true).'
+      "[adcp] TenantRegistry created with autoValidate: false — every register() lands tenants in 'pending' " +
+        'health and resolveByRequest will refuse all traffic until you call recheck(tenantId) on each one. ' +
+        'If you wanted to skip validation cost, REMOVE the flag — the default (true) validates in the ' +
+        'background and traffic is served as soon as the first validation succeeds. autoValidate: false ' +
+        'only suits tests that drive recheck() manually.'
     );
   }
   const tenants = new Map<string, TenantEntry>();
@@ -524,6 +528,27 @@ export function createTenantRegistry(opts: TenantRegistryOptions): TenantRegistr
         pathPrefix,
       };
       tenants.set(tenantId, entry);
+      // Operability: log when an explicit jwksUrl points somewhere
+      // OTHER than the spec-canonical agentUrl-relative location. An
+      // admin who pasted a typo into config gets a visible audit trail
+      // before the tenant goes live; a sub-routed deployment that
+      // intentionally overrode sees the configured URL confirmed.
+      // One-shot per register() — not per validate() — so periodic
+      // rechecks don't spam logs.
+      if (config.jwksUrl && config.jwksUrl.length > 0) {
+        let canonical: string;
+        try {
+          canonical = new URL('/.well-known/brand.json', config.agentUrl).toString();
+        } catch {
+          canonical = '<invalid agentUrl>';
+        }
+        if (config.jwksUrl !== canonical) {
+          // eslint-disable-next-line no-console
+          console.info(
+            `[adcp] tenant '${tenantId}' jwksUrl override: '${config.jwksUrl}' (spec-canonical from agentUrl: '${canonical}')`
+          );
+        }
+      }
       if (!autoValidate) return;
       const validation = runValidation(tenantId);
       entry.pending = validation;

@@ -781,6 +781,14 @@ async function executeStoryboardPass(
     const stepResults: StoryboardStepResult[] = [];
     let phasePassed = true;
     let statefulFailed = false;
+    // When `statefulFailed` was tripped by a SKIP (rather than a real
+    // failure), preserve the triggering step + reason so the cascade
+    // detail message can tell the truth ("prior stateful step skipped:
+    // missing_tool on sync_governance") instead of lying about a
+    // "failed" step. Cleared whenever a true fail trips statefulFailed
+    // — failures take precedence in the message because they're the
+    // worse diagnostic.
+    let statefulSkipTrigger: { stepId: string; reason: RunnerSkipReason | RunnerDetailedSkipReason } | null = null;
     // PRM presence-probe state (adcp-client#677). `phaseAbsent` flips when
     // /.well-known/oauth-protected-resource returns 404 — subsequent steps
     // in this phase cascade-skip instead of failing their http_status:200
@@ -870,9 +878,15 @@ async function executeStoryboardPass(
         continue;
       }
 
-      // Skip remaining steps if a stateful dependency failed
+      // Skip remaining steps if a stateful dependency failed (or
+      // skipped for a missing-state reason). The detail message
+      // distinguishes the two so adopters reading the cascade know
+      // whether to look at a real failure or a structural mismatch
+      // (storyboard step requires a tool the agent doesn't advertise).
       if (statefulFailed && step.stateful) {
-        const detail = 'Skipped: prior stateful step failed.';
+        const detail = statefulSkipTrigger
+          ? `Skipped: prior stateful step "${statefulSkipTrigger.stepId}" skipped (${statefulSkipTrigger.reason}); state never materialized.`
+          : 'Skipped: prior stateful step failed.';
         stepResults.push({
           storyboard_id: storyboard.id,
           step_id: step.id,
@@ -991,6 +1005,13 @@ async function executeStoryboardPass(
         // — phase-absent path) deliberately don't trip the flag.
         if (step.stateful && isMissingStateSkipReason(result.skip_reason)) {
           statefulFailed = true;
+          // Record provenance for the cascade detail message. First trip
+          // wins — subsequent triggers don't overwrite, since the cascade
+          // text references the originating diagnostic (the leftmost
+          // missing-state stateful step in the phase).
+          if (statefulSkipTrigger === null) {
+            statefulSkipTrigger = { stepId: step.id, reason: result.skip_reason ?? 'missing_tool' };
+          }
         }
       } else if (result.passed) {
         context = result.context;
@@ -1007,7 +1028,15 @@ async function executeStoryboardPass(
           failedCount++;
           countedAsFailed.add(result);
         }
-        if (step.stateful) statefulFailed = true;
+        if (step.stateful) {
+          statefulFailed = true;
+          // Real failure takes precedence over a prior skip-trigger in
+          // the cascade detail message — failures are the worse
+          // diagnostic, so downstream cascade-skipped steps should
+          // reference the failure rather than the earlier benign-ish
+          // missing-state skip.
+          statefulSkipTrigger = null;
+        }
         // In multi-instance mode, annotate the failure with the cross-instance
         // attribution block so CI readers pattern-match it as a deployment bug.
         if (isMultiInstance) {

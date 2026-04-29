@@ -34,8 +34,13 @@ async function startFakeAgent() {
         })
       );
     const tool = rpc.params?.name;
-    if (tool === '__test_setup' || tool === '__test_assert') {
+    if (tool === '__test_setup' || tool === '__test_assert' || tool === 'sync_accounts') {
       return ok({ ok: true });
+    }
+    if (tool === '__test_fail') {
+      // Always fails — for the cascade-message-truthfulness test that
+      // needs a real fail (not a skip) to trip statefulFailed.
+      return ok({ error: 'simulated failure', code: 'INVALID_ARGUMENT' }, true);
     }
     if (tool === 'get_adcp_capabilities') return ok({ version: '1.0' });
     return ok({ error: `unknown tool ${tool}`, code: 'NOT_FOUND' }, true);
@@ -112,7 +117,96 @@ describe('runStoryboard: F6 cascade-skip on missing-state stateful skip', () => 
     // because the prior stateful step skipped for a missing-state reason.
     assert.strictEqual(assertStep.skipped, true, 'F6: stateful assertion cascade-skips when stateful setup skipped');
     assert.strictEqual(assertStep.skip_reason, 'prerequisite_failed');
-    assert.match(assertStep.skip.detail ?? '', /prior stateful step/);
+    // Detail message MUST tell the truth: prior step skipped (not failed),
+    // and reference the originating step + reason. The pre-fix message
+    // lied with "prior stateful step failed" when the prior step actually
+    // skipped — defeating F6's truthful-diagnostics goal.
+    assert.match(assertStep.skip.detail ?? '', /prior stateful step "setup" skipped \(missing_tool\)/);
+    assert.match(assertStep.skip.detail ?? '', /state never materialized/);
+  });
+
+  test('cascade-skip on not_applicable: explicit-mode sync_accounts skip cascades to dependent stateful step', async () => {
+    // F9 introduced not_applicable for sync_accounts in explicit mode.
+    // F6 ensures a downstream stateful step that needed sync_accounts
+    // state cascade-skips rather than running against absent state.
+    agent = await startFakeAgent();
+    const storyboard = storyboardWith([
+      {
+        id: 'sync',
+        title: 'sync_accounts setup',
+        task: 'sync_accounts',
+        stateful: true,
+        auth: 'none',
+        sample_request: { accounts: [] },
+      },
+      {
+        id: 'assert',
+        title: 'assert against synced state',
+        task: '__test_assert',
+        stateful: true,
+        auth: 'none',
+        sample_request: {},
+      },
+    ]);
+    const ADVERTISED = ['sync_accounts', '__test_assert', 'get_adcp_capabilities'];
+    const result = await runStoryboard([agent.url], storyboard, {
+      protocol: 'mcp',
+      allow_http: true,
+      agentTools: ADVERTISED,
+      _profile: {
+        name: 'fake',
+        tools: ADVERTISED.map(name => ({ name })),
+        // require_operator_auth: true triggers the F9 not_applicable
+        // gate on sync_accounts (runner.ts:1519-1545).
+        raw_capabilities: { account: { require_operator_auth: true } },
+      },
+    });
+    const [syncStep, assertStep] = result.phases[0].steps;
+    assert.strictEqual(syncStep.skipped, true);
+    assert.strictEqual(syncStep.skip_reason, 'not_applicable');
+    assert.strictEqual(assertStep.skipped, true, 'F6: cascade fires on not_applicable');
+    assert.strictEqual(assertStep.skip_reason, 'prerequisite_failed');
+    assert.match(assertStep.skip.detail ?? '', /not_applicable/);
+  });
+
+  test('cascade-skip detail references "failed" (not "skipped") when prior stateful step actually failed', async () => {
+    // Reverse-direction guard for the new message branching: a real
+    // failure must NOT be reported as a skip, otherwise the diagnostic
+    // is worse than before F6 landed.
+    agent = await startFakeAgent();
+    const storyboard = storyboardWith([
+      {
+        id: 'setup',
+        title: 'setup that fails',
+        task: '__test_fail',
+        stateful: true,
+        auth: 'none',
+        sample_request: {},
+        validations: [{ check: 'response_field', path: '$.never_present', expected: true }],
+      },
+      {
+        id: 'assert',
+        title: 'assert against state',
+        task: '__test_assert',
+        stateful: true,
+        auth: 'none',
+        sample_request: {},
+      },
+    ]);
+    const ADVERTISED = ['__test_fail', '__test_assert', 'get_adcp_capabilities'];
+    const result = await runStoryboard([agent.url], storyboard, {
+      protocol: 'mcp',
+      allow_http: true,
+      agentTools: ADVERTISED,
+      _profile: { name: 'fake', tools: ADVERTISED.map(name => ({ name })) },
+    });
+    const [setupStep, assertStep] = result.phases[0].steps;
+    assert.strictEqual(setupStep.passed, false, 'setup actually failed');
+    assert.notStrictEqual(setupStep.skipped, true, 'setup ran and failed (did not skip)');
+    assert.strictEqual(assertStep.skipped, true, 'cascade still fires');
+    assert.strictEqual(assertStep.skip_reason, 'prerequisite_failed');
+    assert.match(assertStep.skip.detail ?? '', /prior stateful step failed/);
+    assert.doesNotMatch(assertStep.skip.detail ?? '', /skipped \(/, 'detail must NOT call a real failure a skip');
   });
 
   test('non-stateful step does NOT cascade-skip when stateful setup skipped', async () => {
