@@ -16,3 +16,9 @@ The per-instance `adcpVersion` constructor option now actually drives runtime be
 Once a future SDK release adds a 3.1 beta or 4.x bundle, those pins start working with no code change here.
 
 This completes Stage 3's runtime-honest contract: `getAdcpVersion()` is now the single source of truth for both validator selection and wire-level major. Stage 3 Phase D (cross-version test harness — 3.0 client speaking to 3.1 server in one process, once 3.1 ships) lands separately.
+
+**Intentionally not plumbed:**
+- Governance call-out paths (`GovernanceMiddleware`, `governance-adapter.ts`) — the governance agent is a separate AdCP endpoint with its own version pin, so the buyer-side `adcpVersion` shouldn't carry over.
+- The legacy `Agent` class generated in `agents/index.generated.ts` — uses the SDK default. Picked up when `Agent` is rewritten to thread the per-instance pin.
+
+**Wider context:** AdCP spec PR `adcontextprotocol/adcp#3493` proposes a top-level `adcp_version` string field (release-precision, e.g. `'3.0'` / `'3.1'`) on every request and response, alongside the existing integer `adcp_major_version`. RECOMMENDED in 3.1, MUST in 4.0. This SDK PR doesn't yet emit the new field — the integer is sufficient for routing today, and dual-emit is one line once the spec PR merges. Tracking for a follow-up.

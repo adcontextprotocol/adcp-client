@@ -2046,6 +2046,15 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
     testController: testControllerBridge,
   } = config;
 
+  // Resolve `adcpVersion` early — the validator-call closures below capture
+  // it by reference and would hit a TDZ ReferenceError if any of them ran
+  // synchronously during setup. They don't today (`createAdcpServer`
+  // registers handlers; the handlers fire on incoming requests after
+  // `wrapMcpServer` returns), but the ordering hides a sharp edge for
+  // future refactors. Throws `ConfigurationError` on cross-major pins
+  // whose schema bundle isn't shipped — see utils/adcp-version-config.ts.
+  const adcpVersion = resolveAdcpVersion(configuredAdcpVersion);
+
   // Defaults gated on `process.env.NODE_ENV`:
   //   - Production → both sides `'off'` (zero AJV overhead; trust the
   //     handler after its test suite has exercised it).
@@ -3084,8 +3093,6 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
       if (idempotency && idempotency.clearAll) await idempotency.clearAll();
     },
   };
-  // Throws ConfigurationError on cross-major pin. See utils/adcp-version-config.ts.
-  const adcpVersion = resolveAdcpVersion(configuredAdcpVersion);
   const wrapped: AdcpServerInternal = wrapMcpServer(server, compliance, adcpVersion);
 
   // Attach the auto-wired preTransport so `serve()` mounts the verifier

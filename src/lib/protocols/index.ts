@@ -45,6 +45,24 @@ import { isLikelyPrivateUrl } from '../net';
 import { validateAgentUrl } from '../validation';
 import { withSpan } from '../observability/tracing';
 import { ADCP_MAJOR_VERSION, parseAdcpMajorVersion } from '../version';
+
+/**
+ * Derive the wire-level `adcp_major_version` integer from a caller-supplied
+ * pin. Returns the SDK default when no pin is provided; throws on a pin
+ * that doesn't parse so misuse surfaces at the factory boundary instead
+ * of silently emitting the SDK's major.
+ */
+function resolveWireMajor(adcpVersion: string | undefined): number {
+  if (adcpVersion === undefined) return ADCP_MAJOR_VERSION;
+  const parsed = parseAdcpMajorVersion(adcpVersion);
+  if (!Number.isFinite(parsed)) {
+    throw new Error(
+      `adcpVersion ${JSON.stringify(adcpVersion)} is not a valid AdCP version. ` +
+        `Expected a semver string (e.g. '3.0.1', '3.1.0-beta.1') or a legacy alias (e.g. 'v3').`
+    );
+  }
+  return parsed;
+}
 import { buildAgentSigningContext, CAPABILITY_OP, ensureCapabilityLoaded } from '../signing/client';
 
 /**
@@ -84,13 +102,11 @@ export class ProtocolClient {
      */
     adcpVersion?: string
   ): Promise<unknown> {
-    // Per-instance major. NaN-fallback handles unparseable pins (caught by
-    // resolveAdcpVersion at construction; defensive here).
-    const wireMajor = (() => {
-      if (!adcpVersion) return ADCP_MAJOR_VERSION;
-      const parsed = parseAdcpMajorVersion(adcpVersion);
-      return Number.isFinite(parsed) ? parsed : ADCP_MAJOR_VERSION;
-    })();
+    // Per-instance major. Throws on unparseable pins via `resolveWireMajor`;
+    // construction-time `resolveAdcpVersion` is the primary gate but this
+    // is the failsafe for callers reaching `ProtocolClient.callTool`
+    // directly (test harnesses, the in-process MCP path).
+    const wireMajor = resolveWireMajor(adcpVersion);
     return withSpan(
       `adcp.${agent.protocol}.call_tool`,
       {
@@ -152,7 +168,9 @@ export class ProtocolClient {
               undefined,
               undefined,
               undefined,
-              serverVersion
+              serverVersion,
+              undefined,
+              adcpVersion
             )
           );
         }
@@ -344,10 +362,10 @@ export const createMCPClient = (
   serverVersion?: 'v2' | 'v3',
   adcpVersion?: string
 ) => {
-  const wireMajor =
-    adcpVersion !== undefined && Number.isFinite(parseAdcpMajorVersion(adcpVersion))
-      ? parseAdcpMajorVersion(adcpVersion)
-      : ADCP_MAJOR_VERSION;
+  // Throw at factory time on unparseable pins. The previous shape silently
+  // defaulted to `ADCP_MAJOR_VERSION`, which masked misuse — a typo'd pin
+  // would emit `adcp_major_version: 3` regardless of the caller's intent.
+  const wireMajor = resolveWireMajor(adcpVersion);
   return {
     callTool: (toolName: string, args: Record<string, unknown>, debugLogs?: DebugLogEntry[]) =>
       callMCPToolWithTasks(
@@ -368,10 +386,7 @@ export const createA2AClient = (
   serverVersion?: 'v2' | 'v3',
   adcpVersion?: string
 ) => {
-  const wireMajor =
-    adcpVersion !== undefined && Number.isFinite(parseAdcpMajorVersion(adcpVersion))
-      ? parseAdcpMajorVersion(adcpVersion)
-      : ADCP_MAJOR_VERSION;
+  const wireMajor = resolveWireMajor(adcpVersion);
   return {
     callTool: (toolName: string, parameters: Record<string, unknown>, debugLogs?: DebugLogEntry[]) =>
       callA2ATool(
