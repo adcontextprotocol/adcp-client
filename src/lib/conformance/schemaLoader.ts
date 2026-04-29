@@ -2,6 +2,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import type { ConformanceToolName } from './types';
 import { ADCP_VERSION } from '../version';
+import { resolveBundleKey } from '../validation/schema-loader';
 
 type JsonSchema = Record<string, unknown>;
 
@@ -42,11 +43,19 @@ const TOOL_SCHEMA_LOCATIONS: Record<ConformanceToolName, ToolSchemaLocation> = {
  * `scripts/copy-schemas-to-dist.ts` stages schemas at build time, and
  * fall back to the source cache for local development.
  *
- * - Built:  <pkg>/dist/lib/schemas-data/<ver>/bundled
- * - Source: <pkg>/schemas/cache/<ver>/bundled
+ * Path keys follow the same `resolveBundleKey` rule the validator uses
+ * (stable patches collapse to MAJOR.MINOR), so the conformance fuzzer's
+ * dist lookup matches what the build script writes.
+ *
+ * - Built:  <pkg>/dist/lib/schemas-data/<bundle-key>/bundled    (e.g. `3.0/bundled`)
+ * - Source: <pkg>/schemas/cache/<exact-version>/bundled          (e.g. `3.0.1/bundled`)
+ *
+ * The cache fallback uses the exact `ADCP_VERSION` string because cache
+ * directories preserve their spec-tag lineage (only the dist layout collapses).
  */
 function findBundledDir(): string {
-  const distCandidate = path.resolve(__dirname, '..', 'schemas-data', ADCP_VERSION, 'bundled');
+  const bundleKey = resolveBundleKey(ADCP_VERSION);
+  const distCandidate = path.resolve(__dirname, '..', 'schemas-data', bundleKey, 'bundled');
   if (fs.existsSync(distCandidate)) return distCandidate;
 
   const srcCandidate = path.resolve(__dirname, '..', '..', '..', 'schemas', 'cache', ADCP_VERSION, 'bundled');
