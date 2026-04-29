@@ -4,6 +4,13 @@
  * Loads the bundled per-tool schemas shipped with the SDK plus the
  * `core/` schemas that async response variants `$ref`, then compiles
  * AJV validators lazily by `(toolName, direction)`.
+ *
+ * Stage 3: state is per-AdCP-version. The same SDK instance can hold
+ * compiled validators for `3.0.0`, `3.0.1`, `3.1.0-beta.1`, etc. side by
+ * side; callers pass the version they're validating against. Default is
+ * the SDK-pinned `ADCP_VERSION` so callers that don't care about
+ * cross-version selection (most internal call sites) keep working
+ * unchanged.
  */
 
 import Ajv, { type ValidateFunction } from 'ajv';
@@ -29,22 +36,27 @@ const SCHEMA_FILENAME_SUFFIX: Record<Direction, string> = {
 };
 
 /**
- * Resolve the directory that holds the bundled + core schemas copied into
- * the package at build time. Source layout (dev):
+ * Resolve the directory that holds the bundled + core schemas for a given
+ * AdCP version. Source layout (dev):
  *   schemas/cache/<ver>/{bundled,core}
  * Built layout (dist):
  *   dist/lib/schemas-data/<ver>/{bundled,core}
+ *
+ * Throws when no bundle exists for the requested version. Callers that
+ * accept any-version-the-SDK-knows-about should catch and fall back to
+ * `ADCP_VERSION`; callers pinning a specific version surface the error.
  */
-function resolveSchemaRoot(): string {
-  const distCandidate = path.join(__dirname, '..', 'schemas-data', ADCP_VERSION);
+function resolveSchemaRoot(version: string): string {
+  const distCandidate = path.join(__dirname, '..', 'schemas-data', version);
   if (existsSync(distCandidate)) return distCandidate;
 
-  const srcCandidate = path.join(__dirname, '..', '..', '..', 'schemas', 'cache', ADCP_VERSION);
+  const srcCandidate = path.join(__dirname, '..', '..', '..', 'schemas', 'cache', version);
   if (existsSync(srcCandidate)) return srcCandidate;
 
   throw new Error(
-    `AdCP schema data not found. Looked in ${distCandidate} and ${srcCandidate}. ` +
-      `Run \`npm run sync-schemas\` and \`npm run build:lib\`.`
+    `AdCP schema data for version "${version}" not found. ` +
+      `Looked in ${distCandidate} and ${srcCandidate}. ` +
+      `Run \`npm run sync-schemas\` and \`npm run build:lib\` to populate the bundle.`
   );
 }
 
@@ -55,9 +67,10 @@ interface LoaderState {
   rawSchemas: Map<string, Record<string, unknown>>;
   root: string;
   coreLoaded: boolean;
+  version: string;
 }
 
-let state: LoaderState | undefined;
+const states: Map<string, LoaderState> = new Map();
 
 function walkJsonFiles(dir: string): string[] {
   if (!existsSync(dir)) return [];
@@ -178,10 +191,11 @@ function buildFileIndex(root: string): Map<string, string> {
   return index;
 }
 
-function ensureInit(): LoaderState {
-  if (state) return state;
+function ensureInit(version: string): LoaderState {
+  const cached = states.get(version);
+  if (cached) return cached;
 
-  const root = resolveSchemaRoot();
+  const root = resolveSchemaRoot(version);
   const ajv = new Ajv({
     strict: false,
     allErrors: true,
@@ -189,14 +203,16 @@ function ensureInit(): LoaderState {
   });
   addFormats(ajv);
 
-  state = {
+  const state: LoaderState = {
     ajv,
     fileIndex: buildFileIndex(root),
     validators: new Map(),
     rawSchemas: new Map(),
     root,
     coreLoaded: false,
+    version,
   };
+  states.set(version, state);
   return state;
 }
 
@@ -241,12 +257,21 @@ function ensureCoreLoaded(s: LoaderState): void {
 }
 
 /**
- * Look up the compiled AJV validator for a given tool + direction.
- * Returns `undefined` when no schema exists for the pair — callers can
- * skip validation cleanly (e.g., custom tools outside the AdCP spec).
+ * Look up the compiled AJV validator for a given tool + direction in the
+ * specified AdCP version's schema bundle. Returns `undefined` when no
+ * schema exists for the pair — callers can skip validation cleanly (e.g.,
+ * custom tools outside the AdCP spec).
+ *
+ * `version` defaults to the SDK-pinned `ADCP_VERSION`. Pass the per-instance
+ * `getAdcpVersion()` value when the validator should track the client/server's
+ * configured pin (Stage 3+).
  */
-export function getValidator(toolName: string, direction: Direction): ValidateFunction | undefined {
-  const s = ensureInit();
+export function getValidator(
+  toolName: string,
+  direction: Direction,
+  version: string = ADCP_VERSION
+): ValidateFunction | undefined {
+  const s = ensureInit(version);
   const cacheKey = `${toolName}::${direction}`;
   const cached = s.validators.get(cacheKey);
   if (cached) return cached;
@@ -270,17 +295,24 @@ export function getValidator(toolName: string, direction: Direction): ValidateFu
 }
 
 /** List of (toolName, direction) pairs that have schemas. Used by tests. */
-export function listValidatorKeys(): string[] {
-  const s = ensureInit();
+export function listValidatorKeys(version: string = ADCP_VERSION): string[] {
+  const s = ensureInit(version);
   return [...s.fileIndex.keys()].sort();
 }
 
 /** Suffix used in the suffix table — exported for testing. */
 export { SCHEMA_FILENAME_SUFFIX };
 
-/** Test hook: reset cached state so a fresh init runs. */
-export function _resetValidationLoader(): void {
-  state = undefined;
+/**
+ * Test hook: reset cached state. With no argument, clears every version's
+ * loader state; with a version, clears only that one's.
+ */
+export function _resetValidationLoader(version?: string): void {
+  if (version === undefined) {
+    states.clear();
+  } else {
+    states.delete(version);
+  }
 }
 
 /**
@@ -302,9 +334,9 @@ export function _resetValidationLoader(): void {
  *
  * @internal — not part of the public API surface; may change without a major bump.
  */
-export function schemaAllowsTopLevelField(toolName: string, field: string): boolean {
+export function schemaAllowsTopLevelField(toolName: string, field: string, version: string = ADCP_VERSION): boolean {
   try {
-    const s = ensureInit();
+    const s = ensureInit(version);
     const cacheKey = `${toolName}::request`;
     const file = s.fileIndex.get(cacheKey);
     if (!file) return true;

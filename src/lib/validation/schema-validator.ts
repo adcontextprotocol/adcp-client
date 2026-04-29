@@ -142,9 +142,16 @@ function enrichWithVariants(issue: ValidationIssue, rootSchema: unknown): Valida
   return { ...issue, variants };
 }
 
-/** Validate an outgoing request against `{tool}-request.json`. */
-export function validateRequest(toolName: string, payload: unknown): ValidationOutcome {
-  const validator = getValidator(toolName, 'request');
+/**
+ * Validate an outgoing request against `{tool}-request.json`.
+ *
+ * `version` selects which AdCP version's schema bundle to validate against;
+ * defaults to the SDK-pinned `ADCP_VERSION`. Pass the per-instance value
+ * from `getAdcpVersion()` to validate against a pinned-version client/server's
+ * schema.
+ */
+export function validateRequest(toolName: string, payload: unknown, version?: string): ValidationOutcome {
+  const validator = getValidator(toolName, 'request', version);
   if (!validator) return OK;
   const valid = validator(payload) as boolean;
   if (valid) return { valid: true, issues: [], variant: 'request' };
@@ -172,14 +179,20 @@ function selectResponseVariant(payload: unknown): ResponseVariant {
   return 'sync';
 }
 
-/** Validate an incoming response; picks the async variant by payload shape. */
-export function validateResponse(toolName: string, payload: unknown): ValidationOutcome {
+/**
+ * Validate an incoming response; picks the async variant by payload shape.
+ *
+ * `version` selects which AdCP version's schema bundle to validate against;
+ * defaults to the SDK-pinned `ADCP_VERSION`. See {@link validateRequest} for
+ * the per-instance use case.
+ */
+export function validateResponse(toolName: string, payload: unknown, version?: string): ValidationOutcome {
   const variant = selectResponseVariant(payload);
-  const validator = getValidator(toolName, variant);
+  const validator = getValidator(toolName, variant, version);
   // If an async variant schema is missing, fall back to the sync one —
   // some tools declare `-response.json` only and use `status` as an
   // in-band marker without a dedicated variant schema.
-  const effective = validator ?? (variant !== 'sync' ? getValidator(toolName, 'sync') : undefined);
+  const effective = validator ?? (variant !== 'sync' ? getValidator(toolName, 'sync', version) : undefined);
   if (!effective) return OK;
   const valid = effective(payload) as boolean;
   const usedVariant: Direction = validator ? variant : 'sync';
