@@ -629,6 +629,14 @@ async function executeStoryboardPass(
   let passedCount = 0;
   let failedCount = 0;
   let skippedCount = 0;
+  // Stateful-cascade flags live at storyboard scope, NOT phase scope —
+  // cross-phase storyboards (e.g. signal_marketplace/governance_denied:
+  // setup in phases 1-2, consumption in phase 3) need the cascade to
+  // survive phase boundaries. Once a stateful step in any phase failed
+  // or skipped to materialize state, every downstream stateful step
+  // stays cascade-skipped regardless of which phase it lives in.
+  let statefulFailed = false;
+  let statefulSkipTrigger: { stepId: string; reason: RunnerSkipReason | RunnerDetailedSkipReason } | null = null;
   // Step results whose failures the main loop added to failedCount. The
   // branch-set post-pass decrements only for entries that were actually
   // counted, so an optional phase that hit `presenceDetected` (a PRM 2xx
@@ -780,15 +788,10 @@ async function executeStoryboardPass(
     const phaseStart = Date.now();
     const stepResults: StoryboardStepResult[] = [];
     let phasePassed = true;
-    let statefulFailed = false;
-    // When `statefulFailed` was tripped by a SKIP (rather than a real
-    // failure), preserve the triggering step + reason so the cascade
-    // detail message can tell the truth ("prior stateful step skipped:
-    // missing_tool on sync_governance") instead of lying about a
-    // "failed" step. Cleared whenever a true fail trips statefulFailed
-    // — failures take precedence in the message because they're the
-    // worse diagnostic.
-    let statefulSkipTrigger: { stepId: string; reason: RunnerSkipReason | RunnerDetailedSkipReason } | null = null;
+    // `statefulFailed` and `statefulSkipTrigger` live at storyboard
+    // scope (declared above the phase loop) so the cascade survives
+    // cross-phase setup → assertion patterns. See declaration site for
+    // the rationale (signal_marketplace/governance_denied story).
     // PRM presence-probe state (adcp-client#677). `phaseAbsent` flips when
     // /.well-known/oauth-protected-resource returns 404 — subsequent steps
     // in this phase cascade-skip instead of failing their http_status:200

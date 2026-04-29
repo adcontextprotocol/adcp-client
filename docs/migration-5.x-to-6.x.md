@@ -281,6 +281,15 @@ createAdcpServerFromPlatform(platform, {
   `fn`'s return value becomes the terminal artifact.
 - **Postgres registry caps `result` / `error` JSON at 4MB** — return
   per-resource references for large payloads, not the full body.
+- **`npm link` and `undici` peer drift.** The SDK depends on
+  `undici@^6.25.0`. Adopters using `npm link` (or `pnpm link`) to point
+  at a locally checked-out SDK during migration may find Node walks up
+  from the resolved canonical SDK path and binds the host workspace's
+  `undici` (often 7.x) instead — the SDK rejects 7.x at startup.
+  Workaround: run with `NODE_OPTIONS=--preserve-symlinks` so resolution
+  stays inside the SDK's own `node_modules`. Once the SDK is consumed
+  via published tarball (`npm install @adcp/sdk@x.y.z`), this
+  disappears — link mode is the only setup that triggers it.
 
 ## What's deferred to v6.1+
 

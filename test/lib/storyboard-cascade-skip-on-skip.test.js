@@ -67,6 +67,20 @@ function storyboardWith(steps) {
   };
 }
 
+function storyboardWithPhases(phases) {
+  return {
+    id: 'cascade_skip_multiphase_sb',
+    version: '1.0.0',
+    title: 'F6 cascade-skip multi-phase',
+    category: 'testing',
+    summary: '',
+    narrative: '',
+    agent: { interaction_model: '*', capabilities: [] },
+    caller: { role: 'buyer_agent' },
+    phases,
+  };
+}
+
 describe('runStoryboard: F6 cascade-skip on missing-state stateful skip', () => {
   let agent;
 
@@ -274,5 +288,96 @@ describe('runStoryboard: F6 cascade-skip on missing-state stateful skip', () => 
     const [setupStep, assertStep] = result.phases[0].steps;
     assert.notStrictEqual(setupStep.skipped, true, 'setup ran');
     assert.notStrictEqual(assertStep.skipped, true, 'assertion ran (no cascade)');
+  });
+});
+
+describe('runStoryboard: F6 round-2 — cascade survives phase boundaries', () => {
+  let agent;
+
+  afterEach(async () => {
+    if (agent) await stopAgent(agent);
+    agent = undefined;
+    await closeMCPConnections().catch(() => {});
+  });
+
+  test('stateful skip in phase 1 cascades to stateful step in phase 3 (cross-phase)', async () => {
+    // Models the real adopter case (signal_marketplace/governance_denied):
+    // sync_governance setup in phase 1 skips with missing_tool, then
+    // activate_signal_denied assertion in phase 3 needs that state.
+    // Pre-fix: statefulFailed reset at phase boundary, assertion ran
+    // against absent state and failed misleadingly. Post-fix: cascade
+    // survives across phases, assertion cleanly skips.
+    agent = await startFakeAgent();
+    const storyboard = storyboardWithPhases([
+      {
+        id: 'phase_setup',
+        title: 'governance setup',
+        steps: [
+          {
+            id: 'sync_gov',
+            title: 'sync_governance setup',
+            task: '__test_setup_gov',
+            stateful: true,
+            auth: 'none',
+            sample_request: {},
+          },
+        ],
+      },
+      {
+        id: 'phase_intermediate',
+        title: 'unrelated step',
+        steps: [
+          {
+            id: 'probe',
+            title: 'unrelated probe (not stateful)',
+            task: '__test_assert',
+            auth: 'none',
+            sample_request: {},
+          },
+        ],
+      },
+      {
+        id: 'phase_consume',
+        title: 'consume governance state',
+        steps: [
+          {
+            id: 'activate_denied',
+            title: 'activate against denied state',
+            task: '__test_assert',
+            stateful: true,
+            auth: 'none',
+            sample_request: {},
+          },
+        ],
+      },
+    ]);
+    // __test_setup_gov is NOT in agentTools — sync skips with missing_tool.
+    // __test_assert IS advertised — without the cascade fix, the
+    // phase-3 stateful step would run and (in a real scenario) fail.
+    const ADVERTISED = ['__test_assert', 'get_adcp_capabilities'];
+    const result = await runStoryboard([agent.url], storyboard, {
+      protocol: 'mcp',
+      allow_http: true,
+      agentTools: ADVERTISED,
+      _profile: { name: 'fake', tools: ADVERTISED.map(name => ({ name })) },
+    });
+    const setupStep = result.phases[0].steps[0];
+    const probeStep = result.phases[1].steps[0];
+    const consumeStep = result.phases[2].steps[0];
+
+    assert.strictEqual(setupStep.skipped, true, 'phase 1 setup skipped');
+    assert.strictEqual(setupStep.skip_reason, 'missing_tool');
+
+    // Non-stateful intermediate step in phase 2 still runs — cascade
+    // gates only stateful steps.
+    assert.notStrictEqual(probeStep.skipped, true, 'phase 2 non-stateful step runs');
+
+    // Phase 3 stateful step cascade-skips even though phase 1's
+    // statefulFailed flag would have been reset under the old per-phase
+    // scope. This is the round-2 lift fix.
+    assert.strictEqual(consumeStep.skipped, true, 'cross-phase cascade fires');
+    assert.strictEqual(consumeStep.skip_reason, 'prerequisite_failed');
+    assert.match(consumeStep.skip.detail ?? '', /sync_gov/, 'detail references the phase-1 trigger');
+    assert.match(consumeStep.skip.detail ?? '', /missing_tool/);
   });
 });
