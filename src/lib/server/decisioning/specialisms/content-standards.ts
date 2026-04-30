@@ -52,31 +52,37 @@ import type {
   GetCreativeFeaturesResponse,
 } from '../../../types/tools.generated';
 
-type Ctx<TMeta> = RequestContext<Account<TMeta>>;
+type Ctx<TCtxMeta> = RequestContext<Account<TCtxMeta>>;
 
-export interface ContentStandardsPlatform<TMeta = Record<string, unknown>> {
+export interface ContentStandardsPlatform<TCtxMeta = Record<string, unknown>> {
   /** Discover content standards published by this agent. */
-  listContentStandards(req: ListContentStandardsRequest, ctx: Ctx<TMeta>): Promise<ListContentStandardsResponse>;
+  listContentStandards(req: ListContentStandardsRequest, ctx: Ctx<TCtxMeta>): Promise<ListContentStandardsResponse>;
 
   /** Read a single content standard by id. */
-  getContentStandards(req: GetContentStandardsRequest, ctx: Ctx<TMeta>): Promise<GetContentStandardsResponse>;
+  getContentStandards(req: GetContentStandardsRequest, ctx: Ctx<TCtxMeta>): Promise<GetContentStandardsResponse>;
 
   /**
    * Create a new content standard. Adopter validates the policy schema
    * and returns the persisted record. Idempotent on the buyer's
    * `idempotency_key`.
    */
-  createContentStandards(req: CreateContentStandardsRequest, ctx: Ctx<TMeta>): Promise<CreateContentStandardsResponse>;
+  createContentStandards(
+    req: CreateContentStandardsRequest,
+    ctx: Ctx<TCtxMeta>
+  ): Promise<CreateContentStandardsResponse>;
 
   /** Update an existing content standard. */
-  updateContentStandards(req: UpdateContentStandardsRequest, ctx: Ctx<TMeta>): Promise<UpdateContentStandardsResponse>;
+  updateContentStandards(
+    req: UpdateContentStandardsRequest,
+    ctx: Ctx<TCtxMeta>
+  ): Promise<UpdateContentStandardsResponse>;
 
   /**
    * Calibrate content against the published standards. Returns the
    * standard's current calibration profile + any flags raised against
    * the submitted content.
    */
-  calibrateContent(req: CalibrateContentRequest, ctx: Ctx<TMeta>): Promise<CalibrateContentResponse>;
+  calibrateContent(req: CalibrateContentRequest, ctx: Ctx<TCtxMeta>): Promise<CalibrateContentResponse>;
 
   /**
    * Validate that a delivered media-buy / creative meets the buyer's
@@ -86,7 +92,7 @@ export interface ContentStandardsPlatform<TMeta = Record<string, unknown>> {
    */
   validateContentDelivery(
     req: ValidateContentDeliveryRequest,
-    ctx: Ctx<TMeta>
+    ctx: Ctx<TCtxMeta>
   ): Promise<ValidateContentDeliveryResponse>;
 
   /**
@@ -95,12 +101,12 @@ export interface ContentStandardsPlatform<TMeta = Record<string, unknown>> {
    * who don't expose artifact archival omit. Required by governance
    * receivers running adjacency validation.
    */
-  getMediaBuyArtifacts?(req: GetMediaBuyArtifactsRequest, ctx: Ctx<TMeta>): Promise<GetMediaBuyArtifactsResponse>;
+  getMediaBuyArtifacts?(req: GetMediaBuyArtifactsRequest, ctx: Ctx<TCtxMeta>): Promise<GetMediaBuyArtifactsResponse>;
 
   /**
    * Read per-creative analyzed features (object detection, scene
    * classification, transcript) the agent extracted during calibration.
    * Optional — adopters without analyzer pipelines omit.
    */
-  getCreativeFeatures?(req: GetCreativeFeaturesRequest, ctx: Ctx<TMeta>): Promise<GetCreativeFeaturesResponse>;
+  getCreativeFeatures?(req: GetCreativeFeaturesRequest, ctx: Ctx<TCtxMeta>): Promise<GetCreativeFeaturesResponse>;
 }

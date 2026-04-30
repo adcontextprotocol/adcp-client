@@ -42,16 +42,16 @@ import type {
   AcquireRightsRejected,
 } from '../../../types/core.generated';
 
-type Ctx<TMeta> = RequestContext<Account<TMeta>>;
+type Ctx<TCtxMeta> = RequestContext<Account<TCtxMeta>>;
 
-export interface BrandRightsPlatform<TMeta = Record<string, unknown>> {
+export interface BrandRightsPlatform<TCtxMeta = Record<string, unknown>> {
   /**
    * Read brand identity record — `brand_id`, `house`, localized `names`,
    * optional logos / industries / `keller_type`. Sync; no async ceremony.
    * Throw `AdcpError('REFERENCE_NOT_FOUND')` when the brand reference
    * doesn't resolve to an identity the platform tracks.
    */
-  getBrandIdentity(req: GetBrandIdentityRequest, ctx: Ctx<TMeta>): Promise<GetBrandIdentitySuccess>;
+  getBrandIdentity(req: GetBrandIdentityRequest, ctx: Ctx<TCtxMeta>): Promise<GetBrandIdentitySuccess>;
 
   /**
    * List rights matching a brand + use query. Sync read; framework
@@ -63,7 +63,7 @@ export interface BrandRightsPlatform<TMeta = Record<string, unknown>> {
    * Note: the wire field is `rights`, NOT `offerings`. Adopters who
    * named their internal model `offerings` translate at this seam.
    */
-  getRights(req: GetRightsRequest, ctx: Ctx<TMeta>): Promise<GetRightsSuccess>;
+  getRights(req: GetRightsRequest, ctx: Ctx<TCtxMeta>): Promise<GetRightsSuccess>;
 
   /**
    * Acquire rights — buyer commits to an offering. Four wire-spec arms:
@@ -107,6 +107,6 @@ export interface BrandRightsPlatform<TMeta = Record<string, unknown>> {
    */
   acquireRights(
     req: AcquireRightsRequest,
-    ctx: Ctx<TMeta>
+    ctx: Ctx<TCtxMeta>
   ): Promise<AcquireRightsAcquired | AcquireRightsPendingApproval | AcquireRightsRejected>;
 }
