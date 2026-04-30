@@ -81,7 +81,13 @@ import { adcpError, type AdcpErrorResponse } from '../../errors';
 import { validatePlatform, PlatformConfigError } from './validate-platform';
 import type { AdcpLogger } from '../../create-adcp-server';
 import { buildRequestContext, buildHandoffContext } from './to-context';
-import { type CtxMetadataStore, createCtxMetadataStore, pgCtxMetadataStore, getCtxMetadataMigration, stripCtxMetadata } from '../../ctx-metadata';
+import {
+  type CtxMetadataStore,
+  createCtxMetadataStore,
+  pgCtxMetadataStore,
+  getCtxMetadataMigration,
+  stripCtxMetadata,
+} from '../../ctx-metadata';
 import { createIdempotencyStore, type IdempotencyStore } from '../../idempotency';
 import { pgBackend, getIdempotencyMigration } from '../../idempotency/backends/pg';
 import { createPostgresTaskRegistry, getDecisioningTaskRegistryMigration } from './postgres-task-registry';
@@ -666,23 +672,17 @@ export function createAdcpServerFromPlatform<P extends DecisioningPlatform<any, 
   // defaults. Explicit per-store opts always win — this is "fill the gaps,"
   // not "override what the adopter passed."
   const pooledIdempotency: IdempotencyStore | undefined =
-    opts.pool && opts.idempotency === undefined
-      ? createIdempotencyStore({ backend: pgBackend(opts.pool) })
-      : undefined;
+    opts.pool && opts.idempotency === undefined ? createIdempotencyStore({ backend: pgBackend(opts.pool) }) : undefined;
   const pooledCtxMetadata: CtxMetadataStore | undefined =
     opts.pool && opts.ctxMetadata === undefined
       ? createCtxMetadataStore({ backend: pgCtxMetadataStore(opts.pool) })
       : undefined;
   const pooledTaskRegistry: TaskRegistry | undefined =
-    opts.pool && opts.taskRegistry === undefined
-      ? createPostgresTaskRegistry({ pool: opts.pool })
-      : undefined;
+    opts.pool && opts.taskRegistry === undefined ? createPostgresTaskRegistry({ pool: opts.pool }) : undefined;
 
   // Effective resolved values. Explicit > pooled > default.
-  const effectiveIdempotency: IdempotencyStore | 'disabled' | undefined =
-    opts.idempotency ?? pooledIdempotency;
-  const effectiveCtxMetadata: CtxMetadataStore | undefined =
-    opts.ctxMetadata ?? pooledCtxMetadata;
+  const effectiveIdempotency: IdempotencyStore | 'disabled' | undefined = opts.idempotency ?? pooledIdempotency;
+  const effectiveCtxMetadata: CtxMetadataStore | undefined = opts.ctxMetadata ?? pooledCtxMetadata;
   const taskRegistry = opts.taskRegistry ?? pooledTaskRegistry ?? buildDefaultTaskRegistry();
   const baseBus = opts.statusChangeBus ?? createInMemoryStatusChangeBus();
   const taskWebhookEmit = opts.taskWebhookEmitter?.emit;
@@ -939,23 +939,45 @@ export function createAdcpServerFromPlatform<P extends DecisioningPlatform<any, 
     // JSDoc for the migration-seam contract.
     mediaBuy: mergeHandlers(
       opts.mediaBuy,
-      buildMediaBuyHandlers(platform, taskRegistry, taskWebhookEmit, observability, fwLogger, {
-        allowPrivateWebhookUrls: opts.allowPrivateWebhookUrls === true,
-        autoEmitCompletionWebhooks: opts.autoEmitCompletionWebhooks !== false,
-      }, ctxFor, effectiveCtxMetadata),
+      buildMediaBuyHandlers(
+        platform,
+        taskRegistry,
+        taskWebhookEmit,
+        observability,
+        fwLogger,
+        {
+          allowPrivateWebhookUrls: opts.allowPrivateWebhookUrls === true,
+          autoEmitCompletionWebhooks: opts.autoEmitCompletionWebhooks !== false,
+        },
+        ctxFor,
+        effectiveCtxMetadata
+      ),
       'mediaBuy',
       mergeOpts
     ),
     creative: mergeHandlers(
       opts.creative,
-      buildCreativeHandlers(platform, taskRegistry, taskWebhookEmit, observability, fwLogger, {
-        allowPrivateWebhookUrls: opts.allowPrivateWebhookUrls === true,
-        autoEmitCompletionWebhooks: opts.autoEmitCompletionWebhooks !== false,
-      }, ctxFor),
+      buildCreativeHandlers(
+        platform,
+        taskRegistry,
+        taskWebhookEmit,
+        observability,
+        fwLogger,
+        {
+          allowPrivateWebhookUrls: opts.allowPrivateWebhookUrls === true,
+          autoEmitCompletionWebhooks: opts.autoEmitCompletionWebhooks !== false,
+        },
+        ctxFor
+      ),
       'creative',
       mergeOpts
     ),
-    eventTracking: mergeHandlers(opts.eventTracking, buildEventTrackingHandlers(platform, ctxFor), 'eventTracking', mergeOpts),
+    eventTracking: mergeHandlers(
+      opts.eventTracking,
+      buildEventTrackingHandlers(platform, ctxFor),
+      'eventTracking',
+      mergeOpts
+    ),
     signals: mergeHandlers(opts.signals, buildSignalsHandlers(platform, ctxFor), 'signals', mergeOpts),
     governance: mergeHandlers(opts.governance, buildGovernanceHandlers(platform, ctxFor), 'governance', mergeOpts),
     accounts: mergeHandlers(opts.accounts, buildAccountHandlers(platform, ctxFor), 'accounts', mergeOpts),
@@ -1385,11 +1407,7 @@ function wrapBusWithObservability(bus: StatusChangeBus, observability: Decisioni
  * @public
  */
 export function getAllAdcpMigrations(): string {
-  return [
-    getIdempotencyMigration(),
-    getCtxMetadataMigration(),
-    getDecisioningTaskRegistryMigration(),
-  ].join('\n\n');
+  return [getIdempotencyMigration(), getCtxMetadataMigration(), getDecisioningTaskRegistryMigration()].join('\n\n');
 }
 
 function buildDefaultTaskRegistry(): TaskRegistry {

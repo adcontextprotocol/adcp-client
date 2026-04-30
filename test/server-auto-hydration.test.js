@@ -1,11 +1,7 @@
 const { describe, it } = require('node:test');
 const assert = require('node:assert/strict');
 
-const {
-  createAdcpServerFromPlatform,
-  createCtxMetadataStore,
-  memoryCtxMetadataStore,
-} = require('../dist/lib/server');
+const { createAdcpServerFromPlatform, createCtxMetadataStore, memoryCtxMetadataStore } = require('../dist/lib/server');
 
 function makePlatform({ getProductsImpl, createMediaBuyImpl, getMediaBuysImpl }) {
   return {
@@ -101,11 +97,7 @@ describe('createAdcpServerFromPlatform — auto-hydration of products', () => {
     assert.ok(pkg.product, 'pkg.product should be hydrated by SDK');
     assert.equal(pkg.product.product_id, 'prod_a', 'hydrated product carries product_id');
     assert.equal(pkg.product.name, 'Sports Display Auction', 'hydrated product carries wire fields (name)');
-    assert.deepEqual(
-      pkg.product.format_ids,
-      [{ id: 'display_300x250' }],
-      'hydrated product carries format_ids'
-    );
+    assert.deepEqual(pkg.product.format_ids, [{ id: 'display_300x250' }], 'hydrated product carries format_ids');
     assert.deepEqual(
       pkg.product.ctx_metadata,
       { gam: { ad_unit_ids: ['au_123'] } },
@@ -116,7 +108,11 @@ describe('createAdcpServerFromPlatform — auto-hydration of products', () => {
   it('does not hydrate when ctxMetadata store is not wired', async () => {
     let observedPackages;
     const platform = makePlatform({
-      getProductsImpl: async () => ({ products: [{ product_id: 'prod_a', name: 'A', formats: [], delivery_type: 'guaranteed', ctx_metadata: { x: 1 } }] }),
+      getProductsImpl: async () => ({
+        products: [
+          { product_id: 'prod_a', name: 'A', formats: [], delivery_type: 'guaranteed', ctx_metadata: { x: 1 } },
+        ],
+      }),
       createMediaBuyImpl: async (req, ctx) => {
         observedPackages = req.packages;
         return { media_buy_id: 'mb_1', status: 'pending_creatives', packages: [] };
@@ -190,7 +186,11 @@ describe('createAdcpServerFromPlatform — auto-hydration of products', () => {
 
     assert.ok(observedPackages);
     assert.equal(observedPackages[0].product_id, 'prod_unknown');
-    assert.equal(observedPackages[0].product, undefined, 'no hydration for unseen product — publisher falls back to its own DB');
+    assert.equal(
+      observedPackages[0].product,
+      undefined,
+      'no hydration for unseen product — publisher falls back to its own DB'
+    );
   });
 
   it('auto-stores media buys returned from getMediaBuys', async () => {
@@ -199,9 +199,7 @@ describe('createAdcpServerFromPlatform — auto-hydration of products', () => {
       getProductsImpl: async () => ({ products: [] }),
       createMediaBuyImpl: async () => ({ media_buy_id: 'mb_1', status: 'active', packages: [] }),
       getMediaBuysImpl: async () => ({
-        media_buys: [
-          { media_buy_id: 'mb_existing', status: 'active', ctx_metadata: { gam_order_id: 'gam_42' } },
-        ],
+        media_buys: [{ media_buy_id: 'mb_existing', status: 'active', ctx_metadata: { gam_order_id: 'gam_42' } }],
       }),
     });
 

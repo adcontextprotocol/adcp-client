@@ -114,12 +114,10 @@ function formatIssue(err: ErrorObject): ValidationIssue {
     err.keyword === 'enum' &&
     err.params != null &&
     Array.isArray((err.params as { allowedValues?: unknown[] }).allowedValues);
-  const allowedValues = isEnum
-    ? ((err.params as { allowedValues: readonly unknown[] }).allowedValues)
-    : undefined;
+  const allowedValues = isEnum ? (err.params as { allowedValues: readonly unknown[] }).allowedValues : undefined;
   const message = isEnum
     ? `must be one of: ${allowedValues!.map(v => JSON.stringify(v)).join(', ')}`
-    : err.message ?? 'validation failed';
+    : (err.message ?? 'validation failed');
 
   return {
     pointer: `${instancePath}${missingProperty}` || '/',

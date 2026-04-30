@@ -232,8 +232,4 @@ export type { RequestShape } from './helpers';
 // boilerplate per resource. Used in slim skill examples so LLMs scaffold
 // correct shapes from first attempt.
 export { buildProduct, buildPricingOption, buildPackage } from './assembly-helpers';
-export type {
-  BuildProductInput,
-  BuildPricingOptionInput,
-  BuildPackageInput,
-} from './assembly-helpers';
+export type { BuildProductInput, BuildPricingOptionInput, BuildPackageInput } from './assembly-helpers';

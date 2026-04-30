@@ -256,7 +256,10 @@ export interface CtxMetadataStore {
  * `CTX_METADATA_TOO_LARGE` (size violation) so callers can branch.
  */
 export class CtxMetadataValidationError extends Error {
-  constructor(public readonly code: 'INVALID_ARGUMENT' | 'CTX_METADATA_TOO_LARGE', message: string) {
+  constructor(
+    public readonly code: 'INVALID_ARGUMENT' | 'CTX_METADATA_TOO_LARGE',
+    message: string
+  ) {
     super(message);
     this.name = 'CtxMetadataValidationError';
   }
@@ -407,7 +410,11 @@ export function createCtxMetadataStore(config: CtxMetadataStoreConfig): CtxMetad
       const next: CtxMetadataEntry = {
         value,
         ...(prior?.resource !== undefined && { resource: prior.resource }),
-        ...(expiresAt !== undefined ? { expiresAt } : prior?.expiresAt !== undefined ? { expiresAt: prior.expiresAt } : {}),
+        ...(expiresAt !== undefined
+          ? { expiresAt }
+          : prior?.expiresAt !== undefined
+            ? { expiresAt: prior.expiresAt }
+            : {}),
       };
       await backend.put(scopeCtxMetadataKey(accountId, kind, id), next);
     },

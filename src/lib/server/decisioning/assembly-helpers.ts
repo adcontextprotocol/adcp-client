@@ -66,7 +66,13 @@ export interface BuildProductInput {
    * builds a single CPM auction pricing option with the given floor.
    */
   pricing?:
-    | { model: 'cpm' | 'vcpm' | 'cpc' | 'cpcv' | 'cpv' | 'cpp' | 'cpa' | 'flat_rate' | 'time'; floor?: number; fixed?: number; currency?: string; pricing_option_id?: string }
+    | {
+        model: 'cpm' | 'vcpm' | 'cpc' | 'cpcv' | 'cpv' | 'cpp' | 'cpa' | 'flat_rate' | 'time';
+        floor?: number;
+        fixed?: number;
+        currency?: string;
+        pricing_option_id?: string;
+      }
     | ReadonlyArray<PricingOption>;
 
   /**
@@ -91,7 +97,11 @@ export interface BuildProductInput {
    */
   publisher_properties?: ReadonlyArray<
     | { publisher_domain: string; selection_type: 'all' }
-    | { publisher_domain: string; selection_type: 'by_id'; property_ids: ReadonlyArray<{ property_type: string; identifier: string; [k: string]: unknown }> }
+    | {
+        publisher_domain: string;
+        selection_type: 'by_id';
+        property_ids: ReadonlyArray<{ property_type: string; identifier: string; [k: string]: unknown }>;
+      }
     | { publisher_domain: string; selection_type: 'by_tag'; property_tags: ReadonlyArray<string> }
   >;
 
@@ -190,9 +200,7 @@ export function buildProduct(input: BuildProductInput): Product {
   } else {
     // No pricing supplied — emit a single CPM placeholder so the wire shape
     // validates. Adopters who skip pricing usually don't realize it's required.
-    pricing_options = [
-      buildPricingOption({ model: 'cpm', floor: 0.01, currency: 'USD' }),
-    ];
+    pricing_options = [buildPricingOption({ model: 'cpm', floor: 0.01, currency: 'USD' })];
   }
 
   const product = {
@@ -249,10 +257,13 @@ export interface BuildPricingOptionInput {
  */
 export function buildPricingOption(input: BuildPricingOptionInput): PricingOption {
   if (input.fixed !== undefined && input.floor !== undefined) {
-    throw new Error('buildPricingOption: `fixed` and `floor` are mutually exclusive (CPM/etc. is either fixed-price or auction).');
+    throw new Error(
+      'buildPricingOption: `fixed` and `floor` are mutually exclusive (CPM/etc. is either fixed-price or auction).'
+    );
   }
   const currency = input.currency ?? 'USD';
-  const idHint = input.fixed != null ? `fixed_${input.fixed}` : input.floor != null ? `floor_${input.floor}` : 'default';
+  const idHint =
+    input.fixed != null ? `fixed_${input.fixed}` : input.floor != null ? `floor_${input.floor}` : 'default';
   const opt = {
     pricing_option_id: input.id ?? `${input.model}_${idHint}`,
     pricing_model: input.model,
@@ -273,7 +284,15 @@ export interface BuildPackageInput {
   /** Buyer-supplied client-side reference (echoed from the request). */
   buyer_ref?: string;
   /** AdCP package status. Defaults to `'pending_creatives'` (just-created buys). */
-  status?: 'draft' | 'pending_creatives' | 'pending_start' | 'active' | 'paused' | 'completed' | 'canceled' | 'rejected';
+  status?:
+    | 'draft'
+    | 'pending_creatives'
+    | 'pending_start'
+    | 'active'
+    | 'paused'
+    | 'completed'
+    | 'canceled'
+    | 'rejected';
   /** product_id this package was bound to. */
   product_id?: string;
   /** pricing_option_id selected for this package. */

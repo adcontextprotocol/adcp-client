@@ -129,11 +129,12 @@ export class CreativeRejectedError extends AdcpError {
 
 export class BudgetTooLowError extends AdcpError {
   constructor(opts: CommonOpts & { floor?: number; currency?: string } = {}) {
-    const floorStr = opts.floor != null && opts.currency != null
-      ? `Floor is ${opts.floor} ${opts.currency}.`
-      : opts.floor != null
-        ? `Floor is ${opts.floor}.`
-        : 'Budget below required floor.';
+    const floorStr =
+      opts.floor != null && opts.currency != null
+        ? `Floor is ${opts.floor} ${opts.currency}.`
+        : opts.floor != null
+          ? `Floor is ${opts.floor}.`
+          : 'Budget below required floor.';
     super('BUDGET_TOO_LOW', {
       recovery: 'correctable',
       message: opts.message ?? floorStr,
@@ -263,7 +264,8 @@ export class ServiceUnavailableError extends AdcpError {
     super('SERVICE_UNAVAILABLE', {
       recovery: 'transient',
       message: opts.message ?? 'Service temporarily unavailable.',
-      retry_after: opts.retryAfterSeconds != null ? Math.max(1, Math.min(3600, Math.floor(opts.retryAfterSeconds))) : 60,
+      retry_after:
+        opts.retryAfterSeconds != null ? Math.max(1, Math.min(3600, Math.floor(opts.retryAfterSeconds))) : 60,
       ...(opts.suggestion !== undefined && { suggestion: opts.suggestion }),
       ...(opts.details !== undefined && { details: opts.details }),
     });

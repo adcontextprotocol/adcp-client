@@ -32,11 +32,12 @@ const CTX_METADATA_KEY = 'ctx_metadata' as const;
  * (the runtime walk is deliberately not recursive everywhere — see
  * the docstring).
  */
-export type WireShape<T> = T extends ReadonlyArray<infer U>
-  ? ReadonlyArray<WireShape<U>>
-  : T extends object
-    ? { [K in keyof T as K extends 'ctx_metadata' ? never : K]: WireShape<T[K]> }
-    : T;
+export type WireShape<T> =
+  T extends ReadonlyArray<infer U>
+    ? ReadonlyArray<WireShape<U>>
+    : T extends object
+      ? { [K in keyof T as K extends 'ctx_metadata' ? never : K]: WireShape<T[K]> }
+      : T;
 
 /**
  * Runtime strip. Walks known carrier shapes in the response and

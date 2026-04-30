@@ -42,10 +42,7 @@ import type { CtxMetadataStore, ResourceKind, CtxMetadataRef } from '../../ctx-m
  * the accessor methods reject — no-account tools cannot use ctx_metadata
  * (cross-tenant collision risk via missing scope).
  */
-function buildCtxMetadataAccessor(
-  store: CtxMetadataStore,
-  accountId: string
-): CtxMetadataAccessor {
+function buildCtxMetadataAccessor(store: CtxMetadataStore, accountId: string): CtxMetadataAccessor {
   return {
     get(kind: ResourceKind, id: string) {
       return store.get(accountId, kind, id);

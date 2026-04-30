@@ -1,11 +1,7 @@
 const { describe, it } = require('node:test');
 const assert = require('node:assert/strict');
 
-const {
-  createAdcpServerFromPlatform,
-  createCtxMetadataStore,
-  memoryCtxMetadataStore,
-} = require('../dist/lib/server');
+const { createAdcpServerFromPlatform, createCtxMetadataStore, memoryCtxMetadataStore } = require('../dist/lib/server');
 
 const SPECIALISMS = ['sales-non-guaranteed'];
 

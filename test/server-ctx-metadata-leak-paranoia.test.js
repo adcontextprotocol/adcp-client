@@ -44,83 +44,99 @@ function makeLeakHostilePlatform(ctxMetadata) {
         ctx_metadata: { internal: 'should not leak via metadata either' },
         authInfo: {},
       }),
-      upsert: async (refs) => refs.map((r) => ({
-        account_id: r.account_id ?? 'acct_x',
-        name: 'X',
-        status: 'active',
-        operator: 'mypub',
-        ctx_metadata: { LEAK_CANARY_account: 'must_not_appear_on_wire' },
-      })),
-      list: async () => ({
-        items: [{
-          id: 'pub_main',
-          name: 'Pub',
+      upsert: async refs =>
+        refs.map(r => ({
+          account_id: r.account_id ?? 'acct_x',
+          name: 'X',
           status: 'active',
           operator: 'mypub',
-          ctx_metadata: { internal: 'no leak' },
-          authInfo: {},
-        }],
+          ctx_metadata: { LEAK_CANARY_account: 'must_not_appear_on_wire' },
+        })),
+      list: async () => ({
+        items: [
+          {
+            id: 'pub_main',
+            name: 'Pub',
+            status: 'active',
+            operator: 'mypub',
+            ctx_metadata: { internal: 'no leak' },
+            authInfo: {},
+          },
+        ],
         nextCursor: null,
       }),
     },
     sales: {
       getProducts: async () => ({
-        products: [{
-          product_id: 'prod_a',
-          name: 'A',
-          description: 'A',
-          format_ids: [{ id: 'display_300x250', agent_url: 'http://127.0.0.1:0/mcp' }],
-          delivery_type: 'non_guaranteed',
-          publisher_properties: [{ publisher_domain: 'pub.example', selection_type: 'all' }],
-          pricing_options: [{ pricing_option_id: 'po1', pricing_model: 'cpm', currency: 'USD' }],
-          reporting_capabilities: { available_metrics: ['impressions'] },
-          ctx_metadata: { LEAK_CANARY_product: 'must_not_appear_on_wire' },
-        }],
+        products: [
+          {
+            product_id: 'prod_a',
+            name: 'A',
+            description: 'A',
+            format_ids: [{ id: 'display_300x250', agent_url: 'http://127.0.0.1:0/mcp' }],
+            delivery_type: 'non_guaranteed',
+            publisher_properties: [{ publisher_domain: 'pub.example', selection_type: 'all' }],
+            pricing_options: [{ pricing_option_id: 'po1', pricing_model: 'cpm', currency: 'USD' }],
+            reporting_capabilities: { available_metrics: ['impressions'] },
+            ctx_metadata: { LEAK_CANARY_product: 'must_not_appear_on_wire' },
+          },
+        ],
       }),
       createMediaBuy: async () => ({
         media_buy_id: 'mb_1',
         status: 'pending_creatives',
         ctx_metadata: { LEAK_CANARY_media_buy: 'must_not_appear_on_wire' },
-        packages: [{
-          package_id: 'pkg_1',
-          status: 'pending_creatives',
-          ctx_metadata: { LEAK_CANARY_package: 'must_not_appear_on_wire' },
-        }],
+        packages: [
+          {
+            package_id: 'pkg_1',
+            status: 'pending_creatives',
+            ctx_metadata: { LEAK_CANARY_package: 'must_not_appear_on_wire' },
+          },
+        ],
       }),
       updateMediaBuy: async () => ({
         media_buy_id: 'mb_1',
         status: 'active',
         ctx_metadata: { LEAK_CANARY_update_buy: 'must_not_appear_on_wire' },
-        packages: [{
-          package_id: 'pkg_1',
-          status: 'active',
-          ctx_metadata: { LEAK_CANARY_update_pkg: 'must_not_appear_on_wire' },
-        }],
-      }),
-      getMediaBuyDelivery: async () => ({
-        deliveries: [{
-          media_buy_id: 'mb_1',
-          ctx_metadata: { LEAK_CANARY_delivery: 'must_not_appear_on_wire' },
-        }],
-      }),
-      getMediaBuys: async () => ({
-        media_buys: [{
-          media_buy_id: 'mb_1',
-          status: 'active',
-          ctx_metadata: { LEAK_CANARY_get_media_buys: 'must_not_appear_on_wire' },
-          packages: [{
+        packages: [
+          {
             package_id: 'pkg_1',
             status: 'active',
-            ctx_metadata: { LEAK_CANARY_nested_pkg: 'must_not_appear_on_wire' },
-          }],
-        }],
+            ctx_metadata: { LEAK_CANARY_update_pkg: 'must_not_appear_on_wire' },
+          },
+        ],
       }),
-      syncCreatives: async (creatives) => creatives.map((c) => ({
-        creative_id: c.creative_id ?? 'cr_1',
-        action: 'created',
-        status: 'approved',
-        ctx_metadata: { LEAK_CANARY_creative: 'must_not_appear_on_wire' },
-      })),
+      getMediaBuyDelivery: async () => ({
+        deliveries: [
+          {
+            media_buy_id: 'mb_1',
+            ctx_metadata: { LEAK_CANARY_delivery: 'must_not_appear_on_wire' },
+          },
+        ],
+      }),
+      getMediaBuys: async () => ({
+        media_buys: [
+          {
+            media_buy_id: 'mb_1',
+            status: 'active',
+            ctx_metadata: { LEAK_CANARY_get_media_buys: 'must_not_appear_on_wire' },
+            packages: [
+              {
+                package_id: 'pkg_1',
+                status: 'active',
+                ctx_metadata: { LEAK_CANARY_nested_pkg: 'must_not_appear_on_wire' },
+              },
+            ],
+          },
+        ],
+      }),
+      syncCreatives: async creatives =>
+        creatives.map(c => ({
+          creative_id: c.creative_id ?? 'cr_1',
+          action: 'created',
+          status: 'approved',
+          ctx_metadata: { LEAK_CANARY_creative: 'must_not_appear_on_wire' },
+        })),
     },
   };
 }
@@ -132,11 +148,7 @@ function assertNoLeak(payload, where) {
     false,
     `LEAK detected in ${where}: payload contained LEAK_CANARY string`
   );
-  assert.equal(
-    hasCtxMetadata(payload),
-    false,
-    `LEAK detected in ${where}: hasCtxMetadata returned true`
-  );
+  assert.equal(hasCtxMetadata(payload), false, `LEAK detected in ${where}: hasCtxMetadata returned true`);
   // Defensive: regex for raw 'ctx_metadata' string anywhere in the JSON
   assert.equal(
     /["']ctx_metadata["']\s*:/.test(serialized),
@@ -149,7 +161,10 @@ describe('ctx_metadata leak paranoia — every wire response is clean', () => {
   it('get_products', async () => {
     const ctxMetadata = createCtxMetadataStore({ backend: memoryCtxMetadataStore({ sweepIntervalMs: 0 }) });
     const server = createAdcpServerFromPlatform(makeLeakHostilePlatform(ctxMetadata), {
-      name: 'leak', version: '1.0.0', ctxMetadata, validation: { requests: 'off', responses: 'off' },
+      name: 'leak',
+      version: '1.0.0',
+      ctxMetadata,
+      validation: { requests: 'off', responses: 'off' },
     });
     const resp = await server.dispatchTestRequest({
       method: 'tools/call',
@@ -161,7 +176,10 @@ describe('ctx_metadata leak paranoia — every wire response is clean', () => {
   it('create_media_buy', async () => {
     const ctxMetadata = createCtxMetadataStore({ backend: memoryCtxMetadataStore({ sweepIntervalMs: 0 }) });
     const server = createAdcpServerFromPlatform(makeLeakHostilePlatform(ctxMetadata), {
-      name: 'leak', version: '1.0.0', ctxMetadata, validation: { requests: 'off', responses: 'off' },
+      name: 'leak',
+      version: '1.0.0',
+      ctxMetadata,
+      validation: { requests: 'off', responses: 'off' },
     });
     const resp = await server.dispatchTestRequest({
       method: 'tools/call',
@@ -183,7 +201,10 @@ describe('ctx_metadata leak paranoia — every wire response is clean', () => {
   it('update_media_buy', async () => {
     const ctxMetadata = createCtxMetadataStore({ backend: memoryCtxMetadataStore({ sweepIntervalMs: 0 }) });
     const server = createAdcpServerFromPlatform(makeLeakHostilePlatform(ctxMetadata), {
-      name: 'leak', version: '1.0.0', ctxMetadata, validation: { requests: 'off', responses: 'off' },
+      name: 'leak',
+      version: '1.0.0',
+      ctxMetadata,
+      validation: { requests: 'off', responses: 'off' },
     });
     const resp = await server.dispatchTestRequest({
       method: 'tools/call',
@@ -202,7 +223,10 @@ describe('ctx_metadata leak paranoia — every wire response is clean', () => {
   it('get_media_buys', async () => {
     const ctxMetadata = createCtxMetadataStore({ backend: memoryCtxMetadataStore({ sweepIntervalMs: 0 }) });
     const server = createAdcpServerFromPlatform(makeLeakHostilePlatform(ctxMetadata), {
-      name: 'leak', version: '1.0.0', ctxMetadata, validation: { requests: 'off', responses: 'off' },
+      name: 'leak',
+      version: '1.0.0',
+      ctxMetadata,
+      validation: { requests: 'off', responses: 'off' },
     });
     const resp = await server.dispatchTestRequest({
       method: 'tools/call',
@@ -214,7 +238,10 @@ describe('ctx_metadata leak paranoia — every wire response is clean', () => {
   it('get_media_buy_delivery', async () => {
     const ctxMetadata = createCtxMetadataStore({ backend: memoryCtxMetadataStore({ sweepIntervalMs: 0 }) });
     const server = createAdcpServerFromPlatform(makeLeakHostilePlatform(ctxMetadata), {
-      name: 'leak', version: '1.0.0', ctxMetadata, validation: { requests: 'off', responses: 'off' },
+      name: 'leak',
+      version: '1.0.0',
+      ctxMetadata,
+      validation: { requests: 'off', responses: 'off' },
     });
     const resp = await server.dispatchTestRequest({
       method: 'tools/call',
@@ -226,18 +253,23 @@ describe('ctx_metadata leak paranoia — every wire response is clean', () => {
   it('sync_creatives', async () => {
     const ctxMetadata = createCtxMetadataStore({ backend: memoryCtxMetadataStore({ sweepIntervalMs: 0 }) });
     const server = createAdcpServerFromPlatform(makeLeakHostilePlatform(ctxMetadata), {
-      name: 'leak', version: '1.0.0', ctxMetadata, validation: { requests: 'off', responses: 'off' },
+      name: 'leak',
+      version: '1.0.0',
+      ctxMetadata,
+      validation: { requests: 'off', responses: 'off' },
     });
     const resp = await server.dispatchTestRequest({
       method: 'tools/call',
       params: {
         name: 'sync_creatives',
         arguments: {
-          creatives: [{
-            creative_id: 'cr_1',
-            format_ids: [{ id: 'display_300x250', agent_url: 'http://127.0.0.1:0/mcp' }],
-            assets: [],
-          }],
+          creatives: [
+            {
+              creative_id: 'cr_1',
+              format_ids: [{ id: 'display_300x250', agent_url: 'http://127.0.0.1:0/mcp' }],
+              assets: [],
+            },
+          ],
           idempotency_key: 'idem_leak_sync_001',
         },
       },
@@ -248,7 +280,10 @@ describe('ctx_metadata leak paranoia — every wire response is clean', () => {
   it('sync_accounts', async () => {
     const ctxMetadata = createCtxMetadataStore({ backend: memoryCtxMetadataStore({ sweepIntervalMs: 0 }) });
     const server = createAdcpServerFromPlatform(makeLeakHostilePlatform(ctxMetadata), {
-      name: 'leak', version: '1.0.0', ctxMetadata, validation: { requests: 'off', responses: 'off' },
+      name: 'leak',
+      version: '1.0.0',
+      ctxMetadata,
+      validation: { requests: 'off', responses: 'off' },
     });
     const resp = await server.dispatchTestRequest({
       method: 'tools/call',
@@ -266,7 +301,10 @@ describe('ctx_metadata leak paranoia — every wire response is clean', () => {
   it('list_accounts', async () => {
     const ctxMetadata = createCtxMetadataStore({ backend: memoryCtxMetadataStore({ sweepIntervalMs: 0 }) });
     const server = createAdcpServerFromPlatform(makeLeakHostilePlatform(ctxMetadata), {
-      name: 'leak', version: '1.0.0', ctxMetadata, validation: { requests: 'off', responses: 'off' },
+      name: 'leak',
+      version: '1.0.0',
+      ctxMetadata,
+      validation: { requests: 'off', responses: 'off' },
     });
     const resp = await server.dispatchTestRequest({
       method: 'tools/call',
@@ -280,7 +318,10 @@ describe('ctx_metadata leak paranoia — every wire response is clean', () => {
     // should replay the cached response. Both must be ctx_metadata-clean.
     const ctxMetadata = createCtxMetadataStore({ backend: memoryCtxMetadataStore({ sweepIntervalMs: 0 }) });
     const server = createAdcpServerFromPlatform(makeLeakHostilePlatform(ctxMetadata), {
-      name: 'leak', version: '1.0.0', ctxMetadata, validation: { requests: 'off', responses: 'off' },
+      name: 'leak',
+      version: '1.0.0',
+      ctxMetadata,
+      validation: { requests: 'off', responses: 'off' },
     });
     const args = {
       buyer_ref: 'br_replay',

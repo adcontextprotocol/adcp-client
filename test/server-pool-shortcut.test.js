@@ -11,7 +11,10 @@ describe('createAdcpServerFromPlatform — pool shortcut', () => {
     assert.match(ddl, /CREATE TABLE/);
     // All three tables present
     const tableMatches = ddl.match(/CREATE TABLE IF NOT EXISTS/g);
-    assert.ok(tableMatches && tableMatches.length >= 3, `expected ≥3 CREATE TABLE statements, got ${tableMatches?.length}`);
+    assert.ok(
+      tableMatches && tableMatches.length >= 3,
+      `expected ≥3 CREATE TABLE statements, got ${tableMatches?.length}`
+    );
   });
 
   it('opts.pool wires idempotency + ctxMetadata + taskRegistry without explicit per-store opts', () => {
@@ -63,7 +66,11 @@ describe('createAdcpServerFromPlatform — pool shortcut', () => {
   });
 
   it('explicit per-store opts win over pool-derived defaults', async () => {
-    const mockPool = { async query() { return { rows: [], rowCount: 0 }; } };
+    const mockPool = {
+      async query() {
+        return { rows: [], rowCount: 0 };
+      },
+    };
     let explicitCtxMetadataAccessed = false;
     const explicitCtxMetadata = {
       async get() {

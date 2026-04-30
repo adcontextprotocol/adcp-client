@@ -54,7 +54,11 @@ describe('schema-validator — enum enrichment', () => {
     if (result.valid) return; // schema may be permissive here
     for (const issue of result.issues) {
       if (issue.keyword !== 'enum') {
-        assert.equal(issue.allowedValues, undefined, `non-enum issue should not have allowedValues: ${JSON.stringify(issue)}`);
+        assert.equal(
+          issue.allowedValues,
+          undefined,
+          `non-enum issue should not have allowedValues: ${JSON.stringify(issue)}`
+        );
       }
     }
   });
