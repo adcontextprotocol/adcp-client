@@ -1150,6 +1150,11 @@ export class SingleAgentClient {
 
     const agent = await this.ensureEndpointDiscovered();
 
+    // Schema-driven pre-send validation runs on the unadapted v3 shape so
+    // wire-format adapters (e.g. adaptGetProductsRequestForV2) don't strip
+    // v3-only fields out from under the v3 bundled schema.
+    this.executor.validateRequest(taskType, normalizedParams);
+
     // Adapt request for v2 servers if needed
     const serverVersion = await this.detectServerVersion();
     const adaptedParams = await this.adaptRequestForServerVersion(taskType, normalizedParams);
@@ -2113,6 +2118,11 @@ export class SingleAgentClient {
       await this.requireSupportedMajor(taskName);
     }
     const agent = await this.ensureEndpointDiscovered();
+
+    // Schema-driven pre-send validation runs on the unadapted v3 shape so
+    // wire-format adapters (e.g. adaptGetProductsRequestForV2) don't strip
+    // v3-only fields out from under the v3 bundled schema.
+    this.executor.validateRequest(taskName, normalizedParams);
 
     // Adapt request for the server's protocol version (e.g. strip v3-only
     // fields like buying_mode when talking to v2 agents).

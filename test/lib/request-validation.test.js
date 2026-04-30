@@ -868,12 +868,10 @@ describe('v3 partial-schema field stripping', () => {
 });
 
 describe('strict request validation against v2 servers', () => {
-  // The v2 adapters strip v3-only required fields (e.g. buying_mode for
-  // get_products, account for sync_creatives). The bundled schemas are v3
-  // only, so AJV strict validation against the adapted shape would falsely
-  // reject those stripped fields. Required-field violations on the unadapted
-  // request are still caught by the Zod parse in SingleAgentClient.validateRequest
-  // before adaptation runs.
+  // Pre-send AJV validation runs in SingleAgentClient on the unadapted v3
+  // shape, before adaptRequestForServerVersion strips v3-only required
+  // fields (buying_mode, account, brand) for the v2 wire. Validating the
+  // adapted shape against the v3 schema would falsely reject those fields.
   test('strict mode does not reject get_products against a v2 agent after buying_mode is stripped', async () => {
     const mockMCPAgent = {
       id: 'v2-agent',
