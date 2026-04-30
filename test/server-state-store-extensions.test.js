@@ -520,3 +520,75 @@ describe('structuredSerialize / structuredDeserialize', () => {
     assert.ok(restored.timestamps.get('opened') instanceof Date);
   });
 });
+
+// ---------------------------------------------------------------------------
+// Default stateStore — module-singleton, shared across factory invocations
+// ---------------------------------------------------------------------------
+
+describe('default stateStore is process-shared (factory pattern fix)', () => {
+  // Regression test for matrix v3 SI session loss: an LLM-built SI agent
+  // wired `serve(() => createAdcpServer({...}))` per the skill, put session
+  // state in `ctx.store.put('session', ...)` on `si_initiate_session`, then
+  // `ctx.store.get('session', ...)` on the next request returned null.
+  //
+  // Root cause: `createAdcpServer({stateStore = new InMemoryStateStore()})`
+  // evaluated the destructuring default per call, minting a fresh in-memory
+  // store every request. Fix: a module-singleton default. This test guards
+  // the singleton — two factory-pattern createAdcpServer calls must share
+  // the default store.
+  it('two factory invocations share the default ctx.store via module-singleton', async () => {
+    const collection = `xreq_${Date.now()}_${Math.floor(Math.random() * 1e9)}`;
+    let putStore;
+    let getStore;
+
+    const a1 = createAdcpServer({
+      name: 'a1',
+      version: '1.0.0',
+      capabilities: { major_versions: [3] },
+      validation: { requests: 'off', responses: 'off' },
+      signals: {
+        getSignals: async (_p, ctx) => {
+          putStore = ctx.store;
+          await ctx.store.put(collection, 'k', { v: 'across' });
+          return { signals: [], errors: [] };
+        },
+      },
+    });
+    const a2 = createAdcpServer({
+      name: 'a2',
+      version: '1.0.0',
+      capabilities: { major_versions: [3] },
+      validation: { requests: 'off', responses: 'off' },
+      signals: {
+        getSignals: async (_p, ctx) => {
+          getStore = ctx.store;
+          return { signals: [], errors: [] };
+        },
+      },
+    });
+
+    await a1.dispatchTestRequest({
+      method: 'tools/call',
+      params: { name: 'get_signals', arguments: {} },
+    });
+    await a2.dispatchTestRequest({
+      method: 'tools/call',
+      params: { name: 'get_signals', arguments: {} },
+    });
+
+    assert.ok(putStore, 'a1 handler ran');
+    assert.ok(getStore, 'a2 handler ran');
+    assert.strictEqual(
+      putStore,
+      getStore,
+      'two factory-pattern createAdcpServer calls must share the default stateStore'
+    );
+
+    const value = await getStore.get(collection, 'k');
+    assert.deepStrictEqual(
+      value,
+      { v: 'across' },
+      'value put through factory-1 must be readable through factory-2 (shared module-singleton)'
+    );
+  });
+});

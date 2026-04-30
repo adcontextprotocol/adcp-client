@@ -271,12 +271,29 @@ async function startAgent(cwd: string, port: number): Promise<ChildProcess> {
 }
 
 async function killPort(port: number): Promise<void> {
+  // Two-stage cleanup. (1) Kill anything `lsof` says is listening — the
+  // direct case. (2) Kill any orphaned `npm exec tsx server.ts` whose cwd
+  // is a stale `adcp-agent-*` workspace, since those routinely hold
+  // harness ports across matrix runs and a parent `pkill` against
+  // `compliance:skill-matrix` doesn't propagate to grandchild tsx
+  // processes. Without (2), the next matrix pair binds an already-held
+  // port → crash at startup → harness's `waitForPort` succeeds against
+  // the OLD agent → grader gets misleading 401/timeout from the wrong
+  // process. We hit this empirically running v2 of the post-ship matrix.
   // `lsof -ti` + kill -9 is the portable-enough approach on macOS + Linux.
   // On Windows this would be different; the harness is macOS/Linux-only.
-  const res = spawnSync('bash', ['-c', `lsof -ti tcp:${port} | xargs -r kill -9`], { stdio: 'ignore' });
-  void res;
+  spawnSync('bash', ['-c', `lsof -ti tcp:${port} | xargs -r kill -9`], { stdio: 'ignore' });
+  // Stage 2: sweep any zombie tsx running an `adcp-agent-*` workspace.
+  // pgrep matches on cmdline; xargs -r is GNU-specific but BSD pgrep on
+  // macOS supports `-f` (full cmdline match). The harness is mac+linux-only
+  // so we accept the BSD/GNU split here.
+  spawnSync(
+    'bash',
+    ['-c', `pgrep -f 'tsx.*adcp-agent-[A-Za-z0-9]+' | xargs kill -9 2>/dev/null || true`],
+    { stdio: 'ignore' }
+  );
   // Brief wait so the kernel reaps the socket before we try to bind.
-  await new Promise(r => setTimeout(r, 300));
+  await new Promise(r => setTimeout(r, 500));
 }
 
 async function waitForPort(host: string, port: number, timeoutMs: number): Promise<void> {

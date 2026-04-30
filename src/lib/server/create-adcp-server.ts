@@ -279,6 +279,33 @@ export interface AdcpLogger {
   error(message: string, data?: Record<string, unknown>): void;
 }
 
+/**
+ * Module-singleton default `InMemoryStateStore`. Adopters who use the
+ * factory pattern `serve(() => createAdcpServer({...}))` get a fresh
+ * `createAdcpServer` invocation per request — without this singleton, the
+ * destructured default `stateStore = new InMemoryStateStore()` would mint
+ * a brand-new in-memory store per request, silently dropping every
+ * `ctx.store.put(...)` between calls. Empirically reproduced in matrix
+ * v3: an LLM-built SI agent that put session state in `ctx.store` on
+ * `si_initiate_session` failed to find it on the next request's
+ * `si_send_message`.
+ *
+ * Sharing one default store across the process is what every other Node
+ * framework's "memory store" already does, and it's what the skills
+ * (creative, SI, etc.) explicitly promise: "framework provides
+ * InMemoryStateStore by default — no need for module-level Maps".
+ *
+ * Multi-tenant adopters and production deployments pass their own store
+ * (`PostgresStateStore`, etc.); the default is for development and
+ * single-tenant agents only.
+ *
+ * Tests that need isolation pass an explicit `stateStore: new
+ * InMemoryStateStore()`. The module-level default does not break
+ * existing test isolation because tests have always opted-in to a fresh
+ * store per case.
+ */
+const DEFAULT_STATE_STORE = new InMemoryStateStore();
+
 const noopLogger: AdcpLogger = {
   debug() {},
   info() {},
@@ -2274,7 +2301,7 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
     resolveAccountFromAuth,
     resolveSessionKey,
     exposeErrorDetails = process.env.NODE_ENV !== 'production',
-    stateStore = new InMemoryStateStore(),
+    stateStore = DEFAULT_STATE_STORE,
     logger = noopLogger,
     capabilities: capConfig,
     idempotency: idempotencyConfig,
