@@ -27,45 +27,58 @@ Every sales-_ specialism (including `sales-social`, `sales-broadcast-tv`, `sales
 
 **Required tools** (tested by the `media_buy_seller` storyboard bundle at `compliance/cache/3.0.0/protocols/media-buy/`):
 
-| Tool                     | Purpose                                                                            | `createAdcpServer` group |
+| Tool                     | Purpose                                                                            | `SalesPlatform` method   |
 | ------------------------ | ---------------------------------------------------------------------------------- | ------------------------ |
 | `get_adcp_capabilities`  | Declare protocols + specialisms + features                                         | auto (framework)         |
-| `sync_accounts`          | Advertiser onboarding, per-tenant account creation                                 | `accounts`               |
-| `list_accounts`          | Account lookup by brand/operator; buyers listing their accounts on your platform   | `accounts`               |
-| `get_products`           | Product catalog discovery from a brief; returns `{ products: [...] }`              | `mediaBuy`               |
-| `list_creative_formats`  | Formats your agent accepts                                                         | `mediaBuy`               |
-| `create_media_buy`       | Accept a campaign with packages, budget, flight dates                              | `mediaBuy`               |
-| `update_media_buy`       | Bid, budget, status, package mutations over the campaign lifecycle                 | `mediaBuy`               |
-| `get_media_buys`         | Read campaigns back with full state (status, budget, packages, targeting overlays) | `mediaBuy`               |
-| `sync_creatives`         | Accept creative assets and return per-asset status                                 | `mediaBuy`               |
-| `list_creatives`         | Read the creative library back with pagination                                     | `mediaBuy`               |
-| `get_media_buy_delivery` | Delivery + spend reporting with `reporting_period`, per-package billing rows       | `mediaBuy`               |
+| `sync_accounts`          | Advertiser onboarding, per-tenant account creation                                 | `accounts.upsert`        |
+| `list_accounts`          | Account lookup by brand/operator; buyers listing their accounts on your platform   | `accounts.list`          |
+| `get_products`           | Product catalog discovery from a brief; returns `{ products: [...] }`              | `sales.getProducts`      |
+| `list_creative_formats`  | Formats your agent accepts                                                         | `sales.listCreativeFormats` |
+| `create_media_buy`       | Accept a campaign with packages, budget, flight dates                              | `sales.createMediaBuy`   |
+| `update_media_buy`       | Bid, budget, status, package mutations over the campaign lifecycle                 | `sales.updateMediaBuy`   |
+| `get_media_buys`         | Read campaigns back with full state (status, budget, packages, targeting overlays) | `sales.getMediaBuys`     |
+| `sync_creatives`         | Accept creative assets and return per-asset status                                 | `sales.syncCreatives`    |
+| `list_creatives`         | Read the creative library back with pagination                                     | `sales.listCreatives`    |
+| `get_media_buy_delivery` | Delivery + spend reporting with `reporting_period`, per-package billing rows       | `sales.getMediaBuyDelivery` |
 
-**Minimum handler skeleton** — every sales-\* seller starts here, then adds specialism-specific behavior on top:
+**Minimum platform skeleton** — every sales-\* seller starts here, then adds specialism-specific behavior on top:
 
 ```ts
-createAdcpServer({
-  name: 'my-seller',
-  version: '1.0.0',
-  stateStore,
-  idempotency: createIdempotencyStore({ backend: memoryBackend() }),
-  resolveSessionKey: ctx => ctx.account?.account_id,
-  accounts: {
-    syncAccounts: async (params, ctx) => { /* … */ },
-    listAccounts: async (params, ctx) => { /* … */ },
-  },
-  mediaBuy: {
+import { createAdcpServerFromPlatform, type DecisioningPlatform, type SalesPlatform, type AccountStore } from '@adcp/sdk/server';
+
+class MySeller implements DecisioningPlatform<{ networkId: string }, MyMeta> {
+  capabilities = {
+    specialisms: ['sales-non-guaranteed'] as const,
+    pricingModels: ['cpm'] as const,
+    channels: ['display'] as const,
+    config: { networkId: 'NET_42' },
+  };
+
+  accounts: AccountStore<MyMeta> = {
+    resolve: async (ref, ctx) => { /* … */ },
+    upsert: async (params, ctx) => { /* … */ },
+    list: async (params, ctx) => { /* … */ },
+  };
+
+  sales: SalesPlatform<MyMeta> = {
     getProducts: async (params, ctx) => { /* … */ },
     listCreativeFormats: async () => ({ formats: [...] }),
     createMediaBuy: async (params, ctx) => { /* … */ },
-    updateMediaBuy: async (params, ctx) => { /* … */ },
+    updateMediaBuy: async (id, patch, ctx) => { /* … */ },
     getMediaBuys: async (params, ctx) => { /* … */ },
-    syncCreatives: async (params, ctx) => { /* … */ },
+    syncCreatives: async (creatives, ctx) => { /* … */ },
     listCreatives: async (params, ctx) => { /* … */ },
-    getMediaBuyDelivery: async (params, ctx) => { /* … */ },
-  },
+    getMediaBuyDelivery: async (filter, ctx) => { /* … */ },
+  };
+}
+
+const server = createAdcpServerFromPlatform(new MySeller(), {
+  name: 'my-seller',
+  version: '1.0.0',
 });
 ```
+
+The `createAdcpServerFromPlatform` path wraps a typed `DecisioningPlatform` with compile-time specialism enforcement (claim `sales-non-guaranteed`, miss a required `sales.*` method, fail compile), ctx_metadata round-trip + auto-hydration, idempotency-principal synthesis, status mappers, and webhook auto-emit. **Reach for the lower-level `createAdcpServer` from `@adcp/sdk/server/legacy/v5` only when you need fine control over individual handlers, are mid-migration from a v5 codebase, or have custom tools the platform interface doesn't yet model.**
 
 If a specialism's storyboard doesn't exercise one of these tools, the tool is **not optional** — the storyboard is just focused elsewhere (e.g. `sales-social` covers audience sync + DPA + events; the media buy flow itself is covered by `sales-non-guaranteed` or `sales-guaranteed` which you also claim). See § [Tools and Required Response Shapes](#tools-and-required-response-shapes) below for the exact response shape each tool must return.
 
@@ -99,7 +112,7 @@ Three requirements apply to **every** production seller, regardless of which spe
 
 ### `idempotency_key` is required on every mutating request
 
-`create_media_buy`, `update_media_buy`, `sync_accounts`, `sync_creatives`, `sync_audiences`, `sync_catalogs`, `sync_event_sources`, `provide_performance_feedback` — every mutating call carries a client-supplied `idempotency_key`. Wire `createIdempotencyStore` into `createAdcpServer({ idempotency })` and the framework handles replay detection, payload-hash conflict (`IDEMPOTENCY_CONFLICT`), expiry (`IDEMPOTENCY_EXPIRED`), and in-flight parallelism. Don't implement this in handler code. See [§ Idempotency](#idempotency) below for the full wire-up.
+`create_media_buy`, `update_media_buy`, `sync_accounts`, `sync_creatives`, `sync_audiences`, `sync_catalogs`, `sync_event_sources`, `provide_performance_feedback` — every mutating call carries a client-supplied `idempotency_key`. Wire `createIdempotencyStore` into `createAdcpServerFromPlatform(platform, { idempotency })` and the framework handles replay detection, payload-hash conflict (`IDEMPOTENCY_CONFLICT`), expiry (`IDEMPOTENCY_EXPIRED`), and in-flight parallelism. Don't implement this in handler code. See [§ Idempotency](#idempotency) below for the full wire-up.
 
 ### Authentication is mandatory
 
@@ -169,7 +182,7 @@ serve(createAgent, {
   publicUrl: 'https://seller.example.com/mcp',
 
   // 1. authenticate runs first. Bad/missing bearer → 401 Bearer challenge.
-  //    serve() populates extra.authInfo, which createAdcpServer surfaces as ctx.authInfo.
+  //    serve() populates extra.authInfo, which the framework surfaces as ctx.authInfo.
   authenticate: verifyBearer({
     jwksUri: 'https://auth.example.com/.well-known/jwks.json',
     issuer: 'https://auth.example.com',
@@ -206,7 +219,7 @@ serve(createAgent, {
     return false; // continue to MCP dispatch
   },
 
-  // 3. MCP transport parses JSON and dispatches to createAdcpServer.
+  // 3. MCP transport parses JSON and dispatches to the framework server.
   // 4. Framework applies the idempotency store per handler — you don't mount it.
 });
 ```
@@ -277,7 +290,7 @@ This means: the `task_id` you return on a `sales-guaranteed` `create_media_buy` 
 
 ## Webhooks (async completion, signed outbound)
 
-Most seller flows need outbound webhooks — `sales-guaranteed` fires on IO completion, `sales-broadcast-tv` fires `window_update` deliveries as C3/C7 data matures, `update_media_buy` fires on bid/budget application. **Don't hand-roll `fetch` with HMAC**. Wire `createAdcpServer({ webhooks: { signerKey } })` and call `ctx.emitWebhook(...)` from any handler — the framework handles RFC 9421 signing, nonce minting, stable `idempotency_key` across retries, 5xx/429 backoff, byte-identical JSON serialization, and the "don't retry on signature failures" terminal behavior.
+Most seller flows need outbound webhooks — `sales-guaranteed` fires on IO completion, `sales-broadcast-tv` fires `window_update` deliveries as C3/C7 data matures, `update_media_buy` fires on bid/budget application. **Don't hand-roll `fetch` with HMAC**. Pass `webhooks: { signerKey }` to `createAdcpServerFromPlatform` and call `ctx.emitWebhook(...)` from any handler — the framework handles RFC 9421 signing, nonce minting, stable `idempotency_key` across retries, 5xx/429 backoff, byte-identical JSON serialization, and the "don't retry on signature failures" terminal behavior.
 
 ```typescript
 import { createAdcpServer, serve } from '@adcp/sdk';
@@ -406,7 +419,7 @@ Non-guaranteed buys are always instant confirmation.
 >
 > **Cross-cutting pitfalls matrix runs keep catching:**
 >
-> - **Declare `capabilities: { specialisms: ['sales-guaranteed'] }` (or your actual specialism) on `createAdcpServer`.** Value is `string[]` of enum ids (not `[{id, version}]`). Agents that don't declare their specialism fail the grader with "No applicable tracks found" even if every tool works — tracks are gated on the specialism claim.
+> - **Declare `capabilities.specialisms: ['sales-guaranteed']` (or your actual specialism) on the platform you pass to `createAdcpServerFromPlatform`.** Value is `string[]` of enum ids (not `[{id, version}]`). Agents that don't declare their specialism fail the grader with "No applicable tracks found" even if every tool works — tracks are gated on the specialism claim.
 > - `get_media_buy_delivery` response requires **top-level `currency: string`** (ISO 4217) — per-row `spend.currency` is NOT enough.
 > - `get_media_buy_delivery /media_buy_deliveries[i]/by_package[j]` rows are strict: each requires `package_id`, `spend` (number), `pricing_model`, `rate` (number), and `currency`. A mock that returns `{package_id, impressions, clicks}` fails validation — include the billing quintet on every package row.
 > - `get_media_buy_delivery /reporting_period/start` and `/end` are ISO 8601 **date-time** strings (`YYYY-MM-DDTHH:MM:SS.sssZ` via `new Date().toISOString()`), not date-only. A mock that returns `'2026-04-21'` fails the format check in GA.
@@ -622,7 +635,7 @@ Top-level `currency` is **required** per `get-media-buy-delivery-response.json`.
 
 ### Context and Ext Passthrough
 
-`createAdcpServer` auto-echoes the request's `context` into every response — **do not set `context` yourself in your handler return values.** The framework injects it post-handler only when the field isn't already present.
+The framework auto-echoes the request's `context` into every response — **do not set `context` yourself in your handler return values.** The framework injects it post-handler only when the field isn't already present.
 
 **Crucial:** `context` is schema-typed as an object. If your handler hand-sets a string or narrative description (e.g., "E2E test run", a scenario label, `campaign_context` from the request body), validation fails with `/context: must be object` and the framework does not overwrite. Leave the field out entirely; the framework handles it.
 
@@ -785,8 +798,9 @@ Key SDK pieces you'll import from `@adcp/sdk`: `CONTROLLER_SCENARIOS`, `enforceM
 
 | SDK piece                                                                 | Usage                                                                          |
 | ------------------------------------------------------------------------- | ------------------------------------------------------------------------------ |
-| `createAdcpServer(config)`                                                | Domain-grouped server — auto-wires schemas, response builders, capabilities    |
-| `serve(() => createAdcpServer(config))`                                   | Start HTTP server on `:3001/mcp`                                               |
+| `createAdcpServerFromPlatform(platform, opts)`                            | Build a server from a typed `DecisioningPlatform` — compile-time specialism enforcement, ctx_metadata round-trip, idempotency-principal synthesis, status mappers, webhook auto-emit |
+| `createAdcpServer(config)` *(legacy)*                                     | v5 handler-bag entry. Mid-migration / escape-hatch only; reach via `@adcp/sdk/server/legacy/v5`                                                                                       |
+| `serve(() => createAdcpServerFromPlatform(platform, opts))`               | Start HTTP server on `:3001/mcp`                                               |
 | `ctx.store`                                                               | State store in every handler — `get`, `put`, `patch`, `delete`, `list`         |
 | `InMemoryStateStore`                                                      | Default state store (dev/testing)                                              |
 | `PostgresStateStore`                                                      | Production state store (shared across instances)                               |
@@ -802,7 +816,7 @@ Key SDK pieces you'll import from `@adcp/sdk`: `CONTROLLER_SCENARIOS`, `enforceM
 | `enforceMapCap(map, key, label, cap?)`                                    | Reject net-new keys once a session Map hits `SESSION_ENTRY_CAP` (1000)         |
 | `expectControllerError(result, code)` / `expectControllerSuccess(result)` | Unit-test assertions — narrow responses to error or success arms               |
 
-Response builders (`productsResponse`, `mediaBuyResponse`, `deliveryResponse`, etc.) are auto-applied by `createAdcpServer` — you return the data, the framework wraps it. You only need to call them directly for tools without a dedicated builder.
+Response builders (`productsResponse`, `mediaBuyResponse`, `deliveryResponse`, etc.) are auto-applied by the framework — you return the data, the framework wraps it. You only need to call them directly for tools without a dedicated builder.
 
 Import everything from `@adcp/sdk`. Types from `@adcp/sdk` with `import type`.
 
@@ -833,7 +847,7 @@ Minimal `tsconfig.json`:
 
 ## Implementation
 
-Use `createAdcpServer` — it auto-wires schemas, response builders, and `get_adcp_capabilities` from the handlers you provide. Handlers receive `(params, ctx)` where `ctx.store` persists state and `ctx.account` is the resolved account.
+Use `createAdcpServerFromPlatform` — it auto-wires schemas, response builders, and `get_adcp_capabilities` from the typed `DecisioningPlatform` you provide. Handlers receive `(params, ctx)` where `ctx.store` persists state, `ctx.account` is the resolved account, and `ctx.ctxMetadata` is the resource-keyed cache (when wired).
 
 **Imports**: most things live at `@adcp/sdk`. The idempotency store helpers (`createIdempotencyStore`, `memoryBackend`, `pgBackend`) live at the narrower `@adcp/sdk/server` subpath. Both are re-exported from the root — either works — but splitting them makes intent obvious.
 
@@ -871,7 +885,7 @@ function createAgent({ taskStore }: ServeContext) {
     // Principal scoping for idempotency. MUST never return undefined — or
     // every mutating request rejects as SERVICE_UNAVAILABLE. A constant is
     // fine for a demo; for multi-tenant production use ctx.account typed
-    // via `createAdcpServer<MyAccount>({...})`.
+    // via the framework constructor's `<MyAccount>` generic — typed once at the call site.
     resolveSessionKey: () => 'default-principal',
 
     // resolveAccount runs BEFORE idempotency / handler dispatch. If it
@@ -1003,7 +1017,7 @@ serve(createAgent);
 
 Key points:
 
-1. Single `.ts` file — all domain handlers in one `createAdcpServer` call
+1. Single `.ts` file — one `DecisioningPlatform` class passed to `createAdcpServerFromPlatform`
 2. `get_adcp_capabilities` is auto-generated from your handlers — don't register it manually (idempotency capability is auto-declared too)
 3. Response builders are auto-applied — just return the data
 4. Use `ctx.store` for state — persists across stateless HTTP requests
@@ -1097,7 +1111,7 @@ serve(() =>
 
 // Called by the human-review UI when a reviewer signs off. Lives outside any
 // request handler, so it takes its own AdcpStateStore — the same instance you
-// passed to createAdcpServer via `stateStore`. No ctx in scope here.
+// passed to the framework via `stateStore` option. No ctx in scope here.
 async function onHumanApproval(store: AdcpStateStore, taskId: string, approver: string, reason: string): Promise<void> {
   const pending = await store.get('pending_reviews', taskId);
   if (!pending) throw new Error(`No pending review with id ${taskId}`);
@@ -1120,9 +1134,9 @@ async function onHumanApproval(store: AdcpStateStore, taskId: string, approver: 
   await store.delete('pending_reviews', taskId);
 
   // Notify the buyer. Two options, pick based on what your server wires up:
-  //   1. If you configured `webhooks` on createAdcpServer and the buyer sent
+  //   1. If you configured `webhooks` on the framework server and the buyer sent
   //      push_notification_config.url, POST the completion event from the
-  //      emitter built at boot (hoisted outside createAdcpServer so it's
+  //      emitter built at boot (hoisted outside the framework constructor so it's
   //      reachable here). See § Guaranteed delivery / IO signing for the
   //      emitter construction.
   //   2. Otherwise the buyer polls — they already have the task_id and will
@@ -1154,7 +1168,7 @@ async function onHumanApproval(store: AdcpStateStore, taskId: string, approver: 
 
 AdCP v3 requires an `idempotency_key` on every mutating request. For sellers, that's `create_media_buy`, `update_media_buy`, `sync_creatives`, and any `sync_*` tools you implement. Idempotency is wired in the Implementation example above — this section explains what the framework does for you and the subtleties to know.
 
-**What the framework handles when you pass `idempotency` to `createAdcpServer`:**
+**What the framework handles when you pass `idempotency` to `createAdcpServerFromPlatform`:**
 
 - Rejects missing or malformed `idempotency_key` with `INVALID_REQUEST`. The spec pattern is `^[A-Za-z0-9_.:-]{16,255}$` — a test key like `"key1"` will be rejected for length, not idempotency logic. **Ordering gotcha**: idempotency runs AFTER `resolveAccount`. If your `resolveAccount` returns null for a valid-shape reference, the buyer gets `ACCOUNT_NOT_FOUND` — NOT the missing-key error they expected — and conformance tests fail with the wrong code. Either handle both AccountReference branches (see Implementation above) or accept dev-mode brand+operator wildcards so compliance graders reach the idempotency layer.
 - Hashes the request payload with RFC 8785 JCS. The emitted error codes and their semantics are in the table at [§ Composing OAuth, signing, and idempotency](#composing-oauth-signing-and-idempotency).
@@ -1351,9 +1365,10 @@ Common failure decoder:
 
 | Mistake                                                    | Fix                                                                                                                                                                                   |
 | ---------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Using `createTaskCapableServer` + `server.tool()`          | Use `createAdcpServer` — handles schemas, response builders, capabilities                                                                                                             |
+| Using `createTaskCapableServer` + `server.tool()`          | Use `createAdcpServerFromPlatform(platform, opts)` — handles schemas, response builders, capabilities, ctx_metadata round-trip, idempotency-principal synthesis                       |
+| Calling `createAdcpServer` directly in new code            | Reach for `createAdcpServerFromPlatform` first; `createAdcpServer` lives at `@adcp/sdk/server/legacy/v5` for mid-migration / escape-hatch use only                                    |
 | Using module-level Maps for state                          | Use `ctx.store` — persists across HTTP requests, swappable for postgres                                                                                                               |
-| Return raw JSON without response builders                  | `createAdcpServer` auto-applies response builders — just return the data                                                                                                              |
+| Return raw JSON without response builders                  | The framework auto-applies response builders — just return the data                                                                                                                  |
 | Missing `brand`/`operator` in sync_accounts response       | Echo them back from the request — they're required                                                                                                                                    |
 | sync_governance returns wrong shape                        | Must include `status: 'synced'` and `governance_agents` array                                                                                                                         |
 | `sandbox: false` on mock data                              | Buyers may treat mock data as real                                                                                                                                                    |
@@ -1399,7 +1414,7 @@ Claim exactly the specialisms your agent actually implements in `capabilities.sp
 
 ## Reference
 
-- `docs/guides/BUILD-AN-AGENT.md` — createAdcpServer patterns, async tools, state persistence
+- `docs/guides/BUILD-AN-AGENT.md` — `createAdcpServerFromPlatform` patterns, async tools, state persistence
 - `docs/llms.txt` — full protocol reference
 - `docs/TYPE-SUMMARY.md` — curated type signatures
 - `storyboards/media_buy_seller.yaml` — full buyer interaction sequence
