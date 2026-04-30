@@ -807,6 +807,35 @@ export function createAdcpServerFromPlatform<P extends DecisioningPlatform<any, 
   // routing is preserved.
   const ctxFor = makeCtxFor(effectiveCtxMetadata);
 
+  // Construction-time warn: when the default `resolveIdempotencyPrincipal`
+  // is used (no explicit hook), the chain falls through:
+  //   ctx.authInfo.clientId → ctx.sessionKey → ctx.account.id → undefined
+  // The `account.id` fallback collapses unauthenticated buyers into one
+  // shared idempotency namespace per account — fine for single-tenant
+  // deployments where every buyer authenticates, dangerous for multi-
+  // tenant hosts serving unauthenticated traffic over a shared
+  // account_id. Gate via the dev-allowlist pattern: warn unless
+  // NODE_ENV ∈ {test, development} OR the operator explicitly acks via
+  // ADCP_DECISIONING_ALLOW_ACCOUNT_ID_PRINCIPAL=1.
+  if (opts.resolveIdempotencyPrincipal === undefined) {
+    const env = process.env.NODE_ENV;
+    const inDevAllowlist = env === 'test' || env === 'development';
+    const acked = process.env.ADCP_DECISIONING_ALLOW_ACCOUNT_ID_PRINCIPAL === '1';
+    if (!inDevAllowlist && !acked) {
+      // eslint-disable-next-line no-console
+      console.warn(
+        `[adcp/decisioning] resolveIdempotencyPrincipal not explicitly wired. ` +
+          `Default falls through: authInfo.clientId → sessionKey → account.id → undefined. ` +
+          `The account.id fallback collapses unauthenticated buyers into one shared idempotency ` +
+          `namespace per account. SAFE for single-tenant deployments where every buyer ` +
+          `authenticates; UNSAFE for multi-tenant hosts serving unauthenticated traffic over a ` +
+          `shared account_id. Wire \`authenticate\` on serve() (verifyApiKey / verifyIntrospection) ` +
+          `OR pass an explicit \`resolveIdempotencyPrincipal\` in opts. ` +
+          `Set ADCP_DECISIONING_ALLOW_ACCOUNT_ID_PRINCIPAL=1 to silence this warning.`
+      );
+    }
+  }
+
   const config: AdcpServerConfig<Account> = {
     ...opts,
     ...(projectedCapabilitiesConfig != null && { capabilities: projectedCapabilitiesConfig }),

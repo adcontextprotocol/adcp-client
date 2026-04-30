@@ -665,6 +665,26 @@ export interface AdcpToolMap {
 
 export type AdcpServerToolName = keyof AdcpToolMap;
 
+/**
+ * Parameter shape passed to `resolveIdempotencyPrincipal`. Wide enough to
+ * carry any wire request (the framework calls every mutating tool through
+ * the same resolver), narrow enough to surface the most-common scoping
+ * fields (`account`, `brand`) without a cast.
+ *
+ * Adopters scoping by `params.account?.account_id` or
+ * `params.brand?.domain` (the public-token-shared-across-tenants pattern)
+ * get autocomplete + type narrowing without `as { account?: ... }`. Tool-
+ * specific scoping (e.g., custom session header on `si_send_message`)
+ * still has the open `Record<string, unknown>` index signature for
+ * everything else.
+ */
+export interface IdempotencyPrincipalParams extends Record<string, unknown> {
+  /** Buyer-supplied account reference. Most mutating tools carry this. */
+  account?: { account_id?: string; brand?: { domain?: string }; sandbox?: boolean; [k: string]: unknown };
+  /** Buyer-supplied brand reference (used by some tools without account). */
+  brand?: { domain?: string; [k: string]: unknown };
+}
+
 // ---------------------------------------------------------------------------
 // Domain handler types
 // ---------------------------------------------------------------------------
@@ -1196,7 +1216,7 @@ export interface AdcpServerConfig<TAccount = unknown> {
    */
   resolveIdempotencyPrincipal?: (
     ctx: HandlerContext<TAccount>,
-    params: Record<string, unknown>,
+    params: IdempotencyPrincipalParams,
     toolName: AdcpServerToolName
   ) => string | undefined;
   instructions?: string;

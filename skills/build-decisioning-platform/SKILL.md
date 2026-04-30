@@ -11,7 +11,48 @@ Implement 6 functions. The framework does the rest.
 
 A `DecisioningPlatform` for the `sales-non-guaranteed` (or `sales-guaranteed`) specialism. Buyers call your AdCP server to discover products, create media buys, push creatives, update buys, and pull delivery reports. You translate those calls to your platform (GAM, FreeWheel, Kevel, your own ad server, whatever).
 
-## The 5 functions
+## Imports cheat sheet
+
+For 95% of sales agents, these are the only `@adcp/sdk/server` imports you need:
+
+```ts
+import {
+  // Server entry + persistence
+  createAdcpServerFromPlatform, getAllAdcpMigrations, serve,
+  // Wire-shape helpers (eliminate 30+ lines of boilerplate per Product)
+  buildProduct, buildPackage, buildPricingOption,
+  // Typed errors — pick from this catalog instead of `throw new AdcpError(...)`
+  PackageNotFoundError, MediaBuyNotFoundError, ProductNotFoundError,
+  BudgetTooLowError, BackwardsTimeRangeError, InvalidStateError,
+  RateLimitedError, UnsupportedFeatureError,
+  // Types
+  type DecisioningPlatform, type SalesPlatform,
+} from '@adcp/sdk/server';
+```
+
+For other agent shapes:
+- **Creative agent (template / generative):** swap `SalesPlatform` for `CreativeBuilderPlatform`
+- **Signals agent:** swap for `SignalsPlatform`
+- **Brand-rights agent:** swap for `BrandRightsPlatform`
+- **Multi-tenant host:** add `createTenantRegistry`
+
+The full export list is in `@adcp/sdk/server`. Many surfaces are marked `@deprecated` (legacy v5 response builders, old MCP task helpers) — your IDE will strikethrough them. Trust the strikethrough.
+
+## When you need...
+
+- HITL flows (operator approval, async creative review) → `advanced/HITL.md`
+- Multi-tenant hosting → `advanced/MULTI-TENANT.md`
+- OAuth / OIDC authentication → `advanced/OAUTH.md`
+- Sandbox / test-mode routing → `advanced/SANDBOX.md`
+- Compliance test scenarios (`comply_test_controller`) → `advanced/COMPLIANCE.md`
+- Campaign governance specialism → `advanced/GOVERNANCE.md`
+- Brand rights specialism → `advanced/BRAND-RIGHTS.md`
+- Replay TTL / idempotency principal tuning → `advanced/IDEMPOTENCY.md`
+- State machine transitions (`pending_creatives` → `active`) → `advanced/STATE-MACHINE.md`
+- Postgres operations / sizing / indices / cleanup → `../../docs/guides/POSTGRES.md`
+- Edge cases / full reference → `advanced/REFERENCE.md`
+
+## The 6 functions
 
 ```ts
 import {
@@ -58,12 +99,21 @@ class MyPlatform implements DecisioningPlatform {
     // 2. Create a buy. Sync path; HITL is `ctx.handoffToTask` (see advanced/HITL.md).
     //    SDK auto-hydrates each pkg.product with the resolved Product (incl. ctx_metadata)
     //    from the prior getProducts call — no separate lookup needed.
+    //
+    //    CONTRACT — `pkg.product` is `undefined` when SDK has no record of that product_id.
+    //    That's NOT authoritative "doesn't exist" — the SDK store is a cache, and your
+    //    publisher's DB might still have it. Decision tree when undefined:
+    //      - Have your own product DB → look up there; throw `ProductNotFoundError(pkg.product_id)`
+    //        only if YOUR DB also returns nothing.
+    //      - Pure-SDK store (no own DB) → throw `ProductNotFoundError(pkg.product_id)` immediately.
+    //      - Either way: never let `undefined` flow downstream silently.
     createMediaBuy: async (req, ctx) => {
       if (new Date(req.start_time) >= new Date(req.end_time)) throw new BackwardsTimeRangeError();
       if (req.total_budget?.amount < 1000) throw new BudgetTooLowError({ floor: 1000, currency: 'USD' });
 
       const lineItems = [];
       for (const pkg of req.packages) {
+        if (!pkg.product) throw new ProductNotFoundError(pkg.product_id);
         // pkg.product is the full Product from getProducts, with adapter-internal config attached:
         const adUnits = pkg.product.ctx_metadata?.gam?.ad_unit_ids ?? [];
         const formats = pkg.product.format_ids;
@@ -114,9 +164,15 @@ class MyPlatform implements DecisioningPlatform {
       return out;
     },
 
-    // 5. List buys this account owns. REQUIRED — every seller needs to support
-    //    reading back what they created. SDK auto-stores returned buys for hydration
-    //    on subsequent updateMediaBuy calls.
+    // 5. List buys this account owns. REQUIRED — non-negotiable. Every seller
+    //    needs to support reading back what they created. SDK auto-stores
+    //    returned buys for hydration on subsequent updateMediaBuy calls.
+    //
+    //    WRITE-ONLY ADOPTERS (proposal-mode push-channel sellers, retail-media
+    //    flows that deliver via webhook): return `{ media_buys: [] }`. Never
+    //    lie — empty array is truthful "no buys to enumerate via this surface."
+    //    Buyers asking for a list get an empty answer. Don't omit the method
+    //    or stub-throw; just return empty.
     getMediaBuys: async (req, ctx) => {
       const buys = await this.platform.listOrders({ accountId: ctx.account.id, status: req.status });
       return {
