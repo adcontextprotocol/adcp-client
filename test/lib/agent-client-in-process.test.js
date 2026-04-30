@@ -10,13 +10,13 @@ const { describe, it, before, after } = require('node:test');
 const assert = require('node:assert');
 
 describe('AgentClient.fromMCPClient — in-process transport', () => {
-  let McpServer, Client, InMemoryTransport, AgentClient, ADCP_MAJOR_VERSION, z;
+  let McpServer, Client, InMemoryTransport, AgentClient, ProtocolClient, ADCP_MAJOR_VERSION, z;
 
   before(() => {
     ({ McpServer } = require('@modelcontextprotocol/sdk/server/mcp.js'));
     ({ Client } = require('@modelcontextprotocol/sdk/client/index.js'));
     ({ InMemoryTransport } = require('@modelcontextprotocol/sdk/inMemory.js'));
-    ({ AgentClient, ADCP_MAJOR_VERSION } = require('../../dist/lib/index.js'));
+    ({ AgentClient, ProtocolClient, ADCP_MAJOR_VERSION } = require('../../dist/lib/index.js'));
     z = require('zod');
   });
 
@@ -133,6 +133,36 @@ describe('AgentClient.fromMCPClient — in-process transport', () => {
       captured.adcp_major_version,
       ADCP_MAJOR_VERSION,
       `adcp_major_version should equal ADCP_MAJOR_VERSION (${ADCP_MAJOR_VERSION})`
+    );
+
+    await mcpClient.close();
+    await server.close();
+  });
+
+  // Regression: #1072 — caller-supplied adcp_major_version must not be
+  // overwritten by the SDK envelope (5.23→5.24 regression).
+  it('caller-supplied adcp_major_version in args wins over SDK envelope (in-process path)', async () => {
+    let captured;
+    const { mcpClient, server } = await createInProcessPair({
+      captureArgs: args => {
+        captured = args;
+      },
+    });
+
+    const agentConfig = {
+      id: 'test',
+      name: 'test',
+      agent_uri: 'in-process',
+      protocol: 'mcp',
+      _inProcessMcpClient: mcpClient,
+    };
+
+    await ProtocolClient.callTool(agentConfig, 'get_products', { adcp_major_version: 99 });
+
+    assert.strictEqual(
+      captured?.adcp_major_version,
+      99,
+      'caller-supplied adcp_major_version: 99 must reach the server (SDK envelope must not overwrite)'
     );
 
     await mcpClient.close();
