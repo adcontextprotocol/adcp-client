@@ -48,7 +48,7 @@ export const VERSION_INFO = {
   library: '5.25.1',
   adcp: '3.0.1',
   compatibleVersions: COMPATIBLE_ADCP_VERSIONS,
-  generatedAt: '2026-04-30T17:09:09.503Z',
+  generatedAt: '2026-04-30T17:37:54.387Z',
 } as const;
 
 /**

@@ -25,7 +25,7 @@ A sponsored intelligence (SI) agent serves conversational sponsored content with
 
 | Specialism   | Status | Delta                                                                                                                                                                                     |
 | ------------ | ------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| _(none yet)_ | —      | SI has no specialisms in AdCP 3.0 — pass the `sponsored-intelligence` protocol baseline. Specialism storyboards for conversational-ad-specific patterns are pending future AdCP releases. |
+| _(none yet)_ | —      | SI has no specialisms in AdCP 3.0 — pass the `sponsored_intelligence` *protocol* baseline (declared via `supported_protocols: ['sponsored_intelligence']`). Specialism storyboards for conversational-ad-specific patterns are pending future AdCP releases. |
 
 ## Before Writing Code
 
@@ -51,7 +51,7 @@ How should the agent respond during a session?
 >
 > **Cross-cutting pitfalls matrix runs keep catching:**
 >
-> - **Declare `capabilities.specialisms: ['sponsored-intelligence'] as const` on the `DecisioningPlatform` you pass to `createAdcpServerFromPlatform`.** Value is `string[]` of enum ids (not `[{id, version}]`). Agents that don't declare their specialism fail the grader with "No applicable tracks found" even if every tool works — tracks are gated on the specialism claim.
+> - **Do NOT declare a `sponsored-intelligence` specialism.** SI is a *protocol* in AdCP 3.0 — declared via `supported_protocols: ['sponsored_intelligence']` on the `get_adcp_capabilities` response. There is no SI specialism in the `AdCPSpecialism` enum yet, so adopters wire SI through the v5 handler-bag path (`createAdcpServer` from `@adcp/sdk/server/legacy/v5`). The v6 `DecisioningPlatform` interface does not yet expose a `sponsoredIntelligence` field. (Tracking: SI specialism + auto-hydration of `req.session` is planned for a later v6.x — adopters today persist sessions explicitly via `ctx.store`.)
 
 **`get_adcp_capabilities`** — register first, empty `{}` schema
 
@@ -121,17 +121,16 @@ The framework auto-echoes the request's `context` into every response — **do n
 
 ## SDK Quick Reference
 
-| SDK piece                                           | Usage                                                                      |
-| --------------------------------------------------- | -------------------------------------------------------------------------- |
-| `createAdcpServerFromPlatform(platform, opts)` | Create server from a typed `DecisioningPlatform` — compile-time specialism enforcement, auto-generated capabilities |
-| `createAdcpServer(config)` *(legacy)*          | v5 handler-bag entry. Mid-migration / escape-hatch only; reach via `@adcp/sdk/server/legacy/v5`                    |
-| `serve(() => createAdcpServerFromPlatform(platform, opts))` | Start HTTP server on `:3001/mcp`                                                            |
-| `ctx.store`                                         | State persistence — `get/put/patch/delete/list` domain objects             |
-| `adcpError(code, { message })`                      | Structured error                                                           |
+| SDK piece                                                            | Usage                                                                                                                                                                                                                                                                                                                                                                          |
+| -------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
+| `createAdcpServer(config)` *(use this for SI)*                       | v5 handler-bag entry. The only path that ships SI dispatch (the `sponsoredIntelligence: { getOffering, initiateSession, sendMessage, terminateSession }` sub-bag). Reach via `@adcp/sdk/server/legacy/v5`. v6 `createAdcpServerFromPlatform` does not yet expose an SI specialism — when it does, this skill will document the migration. |
+| `serve(() => createAdcpServer(config))`                              | Start HTTP server on `:3001/mcp`                                                                                                                                                                                                                                                                                                                                                |
+| `ctx.store`                                                          | State persistence — `get/put/patch/delete/list` domain objects. SI sessions live here today (no auto-hydration yet).                                                                                                                                                                                                                                                            |
+| `adcpError(code, { message })`                                       | Structured error                                                                                                                                                                                                                                                                                                                                                               |
 
 Handlers return raw data objects. The framework auto-wraps responses and auto-generates `get_adcp_capabilities` from registered handlers.
 
-Import: `import { createAdcpServerFromPlatform, serve, adcpError } from '@adcp/sdk/server';`
+Import: `import { createAdcpServer, serve, adcpError } from '@adcp/sdk/server/legacy/v5';`
 
 ## Setup
 
@@ -160,93 +159,29 @@ Minimal `tsconfig.json`:
 
 ## Implementation
 
-1. Single `.ts` file — `class MySi implements DecisioningPlatform` with the `sponsoredIntelligence` typed sub-platform
+1. Single `.ts` file — wire `createAdcpServer` from `@adcp/sdk/server/legacy/v5` with a `sponsoredIntelligence` handler bag
 2. Do not register `get_adcp_capabilities` — the framework generates it from registered handlers
 3. Return raw data objects from handlers — the framework wraps responses automatically
-4. Use `ctx.store` to persist active sessions — track state: active → terminated
-5. Handlers receive `(params, ctx)` — `ctx.store` for state, `ctx.account` for resolved account
+4. Use `ctx.store` to persist active sessions — track state: active → terminated. **Sessions are NOT auto-hydrated yet** (planned for v6.x). Read `req.session_id` and look the session up in `ctx.store` on every `si_send_message`.
+5. Handlers receive `(params, ctx)` — `ctx.store` for state, `ctx.account` (when `resolveAccount` is wired) for resolved account
 
 ```typescript
 import { randomUUID } from 'node:crypto';
 import {
-  createAdcpServerFromPlatform,
+  createAdcpServer,
   serve,
   adcpError,
   createIdempotencyStore,
   memoryBackend,
-  type DecisioningPlatform,
-  type SponsoredIntelligencePlatform,
-  type AccountStore,
-} from '@adcp/sdk/server';
+} from '@adcp/sdk/server/legacy/v5';
 
 const idempotency = createIdempotencyStore({
   backend: memoryBackend(),
   ttlSeconds: 86400,
 });
 
-class MySi implements DecisioningPlatform {
-  capabilities = {
-    specialisms: ['sponsored-intelligence'] as const,
-    config: {},
-  };
-
-  accounts: AccountStore = {
-    resolve: async ref => ({
-      id: 'account_id' in ref ? ref.account_id : 'si_acc_1',
-      operator: 'me',
-      ctx_metadata: {},
-    }),
-    upsert: async () => ({ ok: true, items: [] }),
-    list: async () => ({ items: [], nextCursor: null }),
-  };
-
-  sponsoredIntelligence: SponsoredIntelligencePlatform = {
-    getOffering: async (req, ctx) => ({
-      available: true,
-      offering_token: `tok_${randomUUID()}`,
-      ttl_seconds: 300,
-    }),
-    initiateSession: async (req, ctx) => {
-      // session_id MUST be high-entropy (≥122 bits) per spec — it's the
-      // scope key for conversational isolation. Never use Date.now() or
-      // predictable counters; a guessable session_id lets one buyer
-      // impersonate another's session.
-      const sessionId = `sess_${randomUUID()}`;
-      await ctx.store.put('session', sessionId, { status: 'active' });
-      return {
-        session_id: sessionId,
-        session_status: 'active',
-      };
-    },
-    sendMessage: async (req, ctx) => {
-      const session = await ctx.store.get('session', req.session_id);
-      // Return the error — the framework echoes returned adcpError
-      // responses verbatim. Thrown errors are caught and converted to
-      // SERVICE_UNAVAILABLE, which hides your custom code from the buyer.
-      if (!session) return adcpError('RESOURCE_NOT_FOUND', { message: 'Session not found' });
-      return {
-        session_id: req.session_id,
-        session_status: 'active' as const,
-        response: {
-          content: 'Sponsored content response',
-          content_type: 'text',
-        },
-      };
-    },
-    terminateSession: async (req, ctx) => {
-      await ctx.store.delete('session', req.session_id);
-      return {
-        session_id: req.session_id,
-        terminated: true,
-      };
-    },
-  };
-}
-
-const platform = new MySi();
-
 serve(() =>
-  createAdcpServerFromPlatform(platform, {
+  createAdcpServer({
     name: 'SI Agent',
     version: '1.0.0',
     idempotency,
@@ -254,6 +189,55 @@ serve(() =>
     // framework additionally auto-scopes `si_send_message` by `session_id`,
     // so the same key under two sessions doesn't cross-replay.
     resolveSessionKey: () => 'default-principal',
+    capabilities: {
+      // SI is a *protocol*, not a specialism. Declare it here; the framework
+      // adds it to `get_adcp_capabilities.supported_protocols`.
+      supported_protocols: ['sponsored_intelligence'],
+    },
+    sponsoredIntelligence: {
+      getOffering: async (req, ctx) => ({
+        available: true,
+        offering_token: `tok_${randomUUID()}`,
+        ttl_seconds: 300,
+      }),
+      initiateSession: async (req, ctx) => {
+        // session_id MUST be high-entropy (≥122 bits) per spec — it's the
+        // scope key for conversational isolation. Never use Date.now() or
+        // predictable counters; a guessable session_id lets one buyer
+        // impersonate another's session.
+        const sessionId = `sess_${randomUUID()}`;
+        await ctx.store.put('session', sessionId, { status: 'active' });
+        return {
+          session_id: sessionId,
+          session_status: 'active',
+        };
+      },
+      sendMessage: async (req, ctx) => {
+        // No auto-hydration of sessions yet — read explicitly. (v6.x will
+        // attach `req.session` for free; until then this lookup is your
+        // session-loss guard.)
+        const session = await ctx.store.get('session', req.session_id);
+        // Return the error — the framework echoes returned adcpError
+        // responses verbatim. Thrown errors are caught and converted to
+        // SERVICE_UNAVAILABLE, which hides your custom code from the buyer.
+        if (!session) return adcpError('RESOURCE_NOT_FOUND', { message: 'Session not found' });
+        return {
+          session_id: req.session_id,
+          session_status: 'active' as const,
+          response: {
+            content: 'Sponsored content response',
+            content_type: 'text',
+          },
+        };
+      },
+      terminateSession: async (req, ctx) => {
+        await ctx.store.delete('session', req.session_id);
+        return {
+          session_id: req.session_id,
+          terminated: true,
+        };
+      },
+    },
   })
 );
 ```
@@ -279,8 +263,7 @@ Idempotency is wired in the example above. What the framework handles for you:
 **An AdCP agent that accepts unauthenticated requests is non-compliant** (see `security_baseline` in the universal storyboard bundle). Ask the operator: "API key, OAuth, or both?" — then wire one of these into `serve()`.
 
 ```typescript
-import { serve } from '@adcp/sdk';
-import { verifyApiKey, verifyBearer, anyOf } from '@adcp/sdk/server';
+import { serve, verifyApiKey, verifyBearer, anyOf } from '@adcp/sdk/server/legacy/v5';
 
 // API key — simplest, good for B2B integrations
 serve(createAgent, {

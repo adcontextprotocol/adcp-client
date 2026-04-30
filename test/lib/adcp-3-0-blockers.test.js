@@ -14,7 +14,7 @@ const {
   createIdempotencyStore,
   memoryBackend,
   InMemoryStateStore,
-} = require('../../dist/lib/server/index.js');
+} = require('../../dist/lib/server/legacy/v5/index.js');
 
 const {
   COMPLIANCE_FIXTURES,

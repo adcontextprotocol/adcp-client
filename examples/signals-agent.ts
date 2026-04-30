@@ -16,7 +16,7 @@
  *   npx @adcp/sdk@latest http://localhost:3001/mcp get_signals '{"filters":{"catalog_types":["marketplace"]}}'
  */
 
-import { createAdcpServer, serve } from '@adcp/sdk';
+import { createAdcpServer, serve } from '@adcp/sdk/server/legacy/v5';
 import { createIdempotencyStore, memoryBackend } from '@adcp/sdk/server';
 import type { GetSignalsResponse, ServeContext } from '@adcp/sdk';
 

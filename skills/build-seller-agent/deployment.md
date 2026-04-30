@@ -15,8 +15,9 @@ Companion to [`SKILL.md`](./SKILL.md). Read this only when you need deployment s
 Pass functions for `publicUrl` and `protectedResource`, branch on `ctx.host` in the factory, and turn on `trustForwardedHost` when a proxy terminates TLS:
 
 ```typescript
-import { serve, createAdcpServer, UnknownHostError, hostname } from '@adcp/sdk';
+import { UnknownHostError, hostname } from '@adcp/sdk';
 import { verifyBearer } from '@adcp/sdk/server';
+import { serve, createAdcpServer } from '@adcp/sdk/server/legacy/v5';
 
 // Host → adapter config. Whatever shape suits your deployment (DB, env, static).
 // Cache the CONFIG (not the AdcpServer). serve() still instantiates the
@@ -116,7 +117,8 @@ When your agent is _both_ an OAuth 2.1 AS (issues tokens) and a protected resour
 
 ```typescript
 import express from 'express';
-import { createAdcpServer, createExpressAdapter, verifyBearer, anyOf, verifyApiKey } from '@adcp/sdk/server';
+import { createExpressAdapter, verifyBearer, anyOf, verifyApiKey } from '@adcp/sdk/server';
+import { createAdcpServer } from '@adcp/sdk/server/legacy/v5';
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
 import { mcpAuthRouter } from '@modelcontextprotocol/sdk/server/auth/router.js';
 
@@ -388,7 +390,7 @@ You own: the `mcpAuthRouter` wiring (provider-specific), the per-request `transp
 
 ```typescript
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
-import { createAdcpServer } from '@adcp/sdk/server';
+import { createAdcpServer } from '@adcp/sdk/server/legacy/v5';
 
 const server = createAdcpServer({
   name: 'Local Seller',

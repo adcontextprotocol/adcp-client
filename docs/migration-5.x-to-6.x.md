@@ -23,7 +23,7 @@ feel archaeological if you only see them all at once.
 |---|---|---|---|
 | 1 | `Account.metadata` → `Account.ctx_metadata` | `\.metadata` (in your `accounts.resolve`/`upsert`/`list` returns and any `ctx.account.metadata` reads) → `.ctx_metadata` | Naming consistency with the resource-level `ctx_metadata` substrate. The wire field was renamed pre-GA (5a490534). |
 | 2 | `@adcp/sdk/server/decisioning` → `@adcp/sdk/server` | `from '@adcp/sdk/server/decisioning'` → `from '@adcp/sdk/server'` | Decisioning runtime promoted to the canonical server entry point. The old subpath is no longer published. |
-| 3 | `createAdcpServer` → `createAdcpServerFromPlatform` (or the legacy subpath) | `import { createAdcpServer } from '@adcp/sdk'` → `import { createAdcpServer } from '@adcp/sdk/server/legacy/v5'` for in-flight migrations; new code reaches for `createAdcpServerFromPlatform` from `@adcp/sdk/server` | The v5 handler-bag constructor moved to a stable subpath. The top-level re-export carries a `@deprecated` JSDoc tag for one cycle and may be removed in a future major. See § Step-by-step migration below for the full v5 → v6 rewrite. |
+| 3 | `createAdcpServer` → `createAdcpServerFromPlatform` (or the legacy subpath) | `import { createAdcpServer } from '@adcp/sdk'` (or `'@adcp/sdk/server'`) → `import { createAdcpServer } from '@adcp/sdk/server/legacy/v5'` for in-flight migrations; new code reaches for `createAdcpServerFromPlatform` from `@adcp/sdk/server` | **Hard-removed in v6.0** — the top-level and `@adcp/sdk/server` re-exports are gone. Existing v5 adopters get a runtime `TypeError: createAdcpServer is not a function` until they pin to `@adcp/sdk/server/legacy/v5`. The legacy subpath re-exports the full top-level surface (`export * from '../..'`), so the migration is a single import-line swap. New code should reach for `createAdcpServerFromPlatform` to get compile-time specialism enforcement, capability projection, idempotency, signing, async tasks, and status normalization pre-wired. See § Step-by-step migration below for the full v5 → v6 rewrite. |
 | 4 | `TMeta` → `TCtxMeta` generic param | `<TConfig, TMeta>` → `<TConfig, TCtxMeta>` (purely internal — only matters if you reference the generic by name in your own type aliases) | Type-level rename to align with the `ctx_metadata` field name. No runtime impact; default inference still binds at the call site. |
 | 5 | `getMediaBuys` is now required on `SalesPlatform` | Add `getMediaBuys: async () => ({ media_buys: [] })` if your seller doesn't model persistent media buys (write-only push-channel adopters return an empty array) | Compile-time enforcement that every seller can be enumerated. Previously optional; missing it now fails the typecheck. |
 
@@ -38,8 +38,15 @@ grep -rn '\.metadata' src/ | grep -i 'account\|Account'
 # Move imports to the new server entry.
 sed -i '' "s|from '@adcp/sdk/server/decisioning'|from '@adcp/sdk/server'|g" src/**/*.ts
 
-# In-flight v5 stayers: pin to the legacy subpath.
+# In-flight v5 stayers: pin to the legacy subpath. Cover both old import
+# paths — `@adcp/sdk` (top-level) and `@adcp/sdk/server` (subpath) — both
+# of which lost the export in v6.0.
 sed -i '' "s|import { createAdcpServer } from '@adcp/sdk'|import { createAdcpServer } from '@adcp/sdk/server/legacy/v5'|g" src/**/*.ts
+sed -i '' "s|import { createAdcpServer } from '@adcp/sdk/server'|import { createAdcpServer } from '@adcp/sdk/server/legacy/v5'|g" src/**/*.ts
+# If your import was a multi-name destructure (e.g.
+# `import { createAdcpServer, serve } from '@adcp/sdk/server'`), the legacy
+# subpath re-exports the full top-level surface — split the import or
+# point the whole line at `@adcp/sdk/server/legacy/v5`. Both work.
 
 # Add the getMediaBuys stub to any sales platforms that don't have it.
 # Manual — grep for SalesPlatform implementations and add the no-op.

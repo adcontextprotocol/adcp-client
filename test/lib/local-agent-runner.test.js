@@ -13,7 +13,7 @@ const { test } = require('node:test');
 const assert = require('node:assert');
 const http = require('node:http');
 const { runAgainstLocalAgent } = require('../../dist/lib/testing/index.js');
-const { createAdcpServer } = require('../../dist/lib/server/index.js');
+const { createAdcpServer } = require('../../dist/lib/server/legacy/v5/index.js');
 
 function makeMinimalAgent() {
   // Register one handler so the auto-generated capabilities response has

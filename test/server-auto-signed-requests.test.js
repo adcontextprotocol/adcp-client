@@ -9,7 +9,7 @@ const {
   InMemoryStateStore,
   ADCP_PRE_TRANSPORT,
   ADCP_SIGNED_REQUESTS_STATE,
-} = require('../dist/lib/server/index.js');
+} = require('../dist/lib/server/legacy/v5/index.js');
 const { StaticJwksResolver, InMemoryReplayStore, InMemoryRevocationStore } = require('../dist/lib/signing/server.js');
 const { signRequest } = require('../dist/lib/signing/signer.js');
 

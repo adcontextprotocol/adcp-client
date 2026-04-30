@@ -9,10 +9,15 @@ describe('@adcp/sdk/server/legacy/v5 subpath', () => {
     assert.equal(typeof legacy.createAdcpServer, 'function');
   });
 
-  it('exports the same createAdcpServer reference as @adcp/sdk/server (no fork)', () => {
-    const fromTopLevel = require('../dist/lib/server').createAdcpServer;
+  it('createAdcpServer is no longer exported from @adcp/sdk/server top-level', () => {
+    const topLevel = require('../dist/lib/server');
+    assert.equal(
+      topLevel.createAdcpServer,
+      undefined,
+      'createAdcpServer was removed from top-level — only @adcp/sdk/server/legacy/v5 exports it'
+    );
     const fromSubpath = require('../dist/lib/server/legacy/v5').createAdcpServer;
-    assert.equal(fromTopLevel, fromSubpath, 'subpath re-exports the same function — not a fork');
+    assert.equal(typeof fromSubpath, 'function', 'subpath still exports the v5 constructor');
   });
 
   it('exports the v5-adjacent helpers adopters typically reach for alongside createAdcpServer', () => {

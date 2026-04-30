@@ -1568,6 +1568,29 @@ async function routeIfHandoff<TInner, TWire>(
       return project(inner);
     });
   }
+  // Catch the most common LLM-scaffolded mistake: hand-rolling a
+  // `{status: 'submitted', task_id: '...'}` envelope instead of returning
+  // `ctx.handoffToTask(fn)`. The framework owns the submitted envelope —
+  // adopters either return the sync-success arm or a TaskHandoff marker.
+  // A bare submitted-shape return here would slip past dispatch and fail
+  // response-schema validation downstream with a generic shape error;
+  // pointing at the right SDK primitive up-front saves the debug round-trip.
+  if (
+    result != null &&
+    typeof result === 'object' &&
+    (result as { status?: unknown }).status === 'submitted' &&
+    'task_id' in (result as object)
+  ) {
+    throw new Error(
+      `Specialism handler returned a hand-rolled \`{status: 'submitted', task_id}\` ` +
+        `envelope. The framework owns the submitted envelope — return ` +
+        `\`ctx.handoffToTask(async (taskCtx) => { ... })\` from the handler ` +
+        `and the framework will issue the task_id, persist the handoff, and ` +
+        `wrap the wire envelope. Returning a bare submitted shape skips the ` +
+        `task registry and the buyer ends up polling a task_id the framework ` +
+        `never registered.`
+    );
+  }
   const projected = project(result);
   if (opts.autoEmitCompletion === true && opts.pushNotificationUrl) {
     // Auto-emit completion webhook on sync-success arm — fire-and-forget.
@@ -1947,11 +1970,20 @@ async function autoStoreResources(
   logger: AdcpLogger
 ): Promise<void> {
   if (!store || !accountId || !resources) return;
+  let skippedMissingId = 0;
   for (const r of resources) {
     if (r == null || typeof r !== 'object') continue;
     const obj = r as Record<string, unknown>;
     const id = obj[idField];
-    if (typeof id !== 'string' || id.length === 0) continue;
+    if (typeof id !== 'string' || id.length === 0) {
+      // The id field is wire-required on every resource the framework
+      // auto-stores (e.g. `signal_agent_segment_id` on a signal,
+      // `product_id` on a product). Silently skipping leaves buyers with
+      // no way to reference the resource on a downstream mutating call —
+      // a strong indicator the handler returned a misshaped response.
+      skippedMissingId++;
+      continue;
+    }
     const ctxMeta = obj['ctx_metadata'];
     // Strip ctx_metadata from the resource before storing — round-trip
     // restores it on hydration. Keeping a pristine wire copy in `resource`.
@@ -1967,6 +1999,13 @@ async function autoStoreResources(
       const msg = err instanceof Error ? err.message : String(err);
       logger.warn(`[adcp/decisioning] auto-store ${kind} ${id} failed: ${msg}`);
     }
+  }
+  if (skippedMissingId > 0) {
+    logger.warn(
+      `[adcp/decisioning] auto-store skipped ${skippedMissingId} ${kind} ` +
+        `record(s) missing required '${idField}' — buyers will not be able ` +
+        `to reference these resources on a subsequent mutating call.`
+    );
   }
 }
 

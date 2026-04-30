@@ -11,7 +11,7 @@ import {
   registerTestController,
   TestControllerError,
   DEFAULT_REPORTING_CAPABILITIES,
-} from '@adcp/sdk';
+} from '@adcp/sdk/server/legacy/v5';
 import type { ServeContext, TestControllerStore } from '@adcp/sdk';
 
 // ---------------------------------------------------------------------------

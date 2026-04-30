@@ -12,7 +12,7 @@
  *
  * @example
  * ```typescript
- * import { createAdcpServer, serve } from '@adcp/sdk/server';
+ * import { createAdcpServer, serve } from '@adcp/sdk/server/legacy/v5';
  *
  * serve(() => createAdcpServer({
  *   name: 'My Publisher',
@@ -278,6 +278,40 @@ export interface AdcpLogger {
   warn(message: string, data?: Record<string, unknown>): void;
   error(message: string, data?: Record<string, unknown>): void;
 }
+
+/**
+ * Module-singleton default `InMemoryStateStore`. Adopters who use the
+ * factory pattern `serve(() => createAdcpServer({...}))` get a fresh
+ * `createAdcpServer` invocation per request — without this singleton, the
+ * destructured default `stateStore = new InMemoryStateStore()` would mint
+ * a brand-new in-memory store per request, silently dropping every
+ * `ctx.store.put(...)` between calls. Empirically reproduced in matrix
+ * v3: an LLM-built SI agent that put session state in `ctx.store` on
+ * `si_initiate_session` failed to find it on the next request's
+ * `si_send_message`.
+ *
+ * Sharing one default store across the process is what every other Node
+ * framework's "memory store" already does, and it's what the skills
+ * (creative, SI, etc.) explicitly promise: "framework provides
+ * InMemoryStateStore by default — no need for module-level Maps".
+ *
+ * Multi-tenant adopters and production deployments pass their own store
+ * (`PostgresStateStore`, etc.); the default is for development and
+ * single-tenant agents only.
+ *
+ * Tests that need isolation pass an explicit `stateStore: new
+ * InMemoryStateStore()`. The module-level default does not break
+ * existing test isolation because tests have always opted-in to a fresh
+ * store per case.
+ */
+const DEFAULT_STATE_STORE = new InMemoryStateStore();
+
+/**
+ * One-time guard so the default-store warning fires at most once per
+ * process — adopters using the factory pattern would otherwise see the
+ * line on every request.
+ */
+let defaultStateStoreWarned = false;
 
 const noopLogger: AdcpLogger = {
   debug() {},
@@ -1350,7 +1384,7 @@ export interface AdcpServerConfig<TAccount = unknown> {
    *
    * @example
    * ```ts
-   * import { createAdcpServer, bridgeFromTestControllerStore } from '@adcp/sdk';
+   * import { createAdcpServer, bridgeFromTestControllerStore } from '@adcp/sdk/server/legacy/v5';
    *
    * const seedStore = new Map<string, unknown>();
    * const server = createAdcpServer({
@@ -2274,7 +2308,7 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
     resolveAccountFromAuth,
     resolveSessionKey,
     exposeErrorDetails = process.env.NODE_ENV !== 'production',
-    stateStore = new InMemoryStateStore(),
+    stateStore = DEFAULT_STATE_STORE,
     logger = noopLogger,
     capabilities: capConfig,
     idempotency: idempotencyConfig,
@@ -2287,6 +2321,28 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
     validation: validationConfig,
     testController: testControllerBridge,
   } = config;
+
+  // Multi-tenant footgun warning: the default `stateStore` is a single
+  // module-level `InMemoryStateStore` shared across every `createAdcpServer`
+  // invocation in this process. Single-tenant agents — including everything
+  // the skills demonstrate — get the documented "ctx.store persists across
+  // requests" behavior. Multi-tenant deployments that mint one
+  // `createAdcpServer` per resolved tenant in the factory closure would
+  // silently share state across tenants. v6.0.1 plans to harden this into
+  // a NODE_ENV=production refusal mirroring the task-registry policy
+  // (`buildDefaultTaskRegistry`). Until then: warn once per process so the
+  // awareness is in adopter logs without spamming every request.
+  if (stateStore === DEFAULT_STATE_STORE && !defaultStateStoreWarned) {
+    defaultStateStoreWarned = true;
+    logger.warn(
+      '[adcp/server] createAdcpServer is using the default in-memory state ' +
+        'store (shared module-singleton across all createAdcpServer calls in ' +
+        'this process). Fine for dev + single-tenant agents. Multi-tenant ' +
+        'deployments MUST pass an explicit `stateStore` (PostgresStateStore, ' +
+        'Redis-backed AdcpStateStore, etc.) — the default does NOT partition ' +
+        'state across resolved tenants. v6.0.1 will refuse this in production.'
+    );
+  }
 
   // Resolve `adcpVersion` early — the validator-call closures below capture
   // it by reference and would hit a TDZ ReferenceError if any of them ran

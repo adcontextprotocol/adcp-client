@@ -14,7 +14,7 @@ const {
   verifySignatureAsAuthenticator,
   requireSignatureWhenPresent,
   tagAuthenticatorNeedsRawBody,
-} = require('../dist/lib/server/index.js');
+} = require('../dist/lib/server/legacy/v5/index.js');
 const {
   signRequest,
   InMemoryReplayStore,
@@ -253,7 +253,7 @@ describe('verifySignatureAsAuthenticator', () => {
 // End-to-end through serve() — body buffered before auth
 // ---------------------------------------------------------------------------
 
-const { serve, createAdcpServer } = require('../dist/lib/server/index.js');
+const { serve, createAdcpServer } = require('../dist/lib/server/legacy/v5/index.js');
 
 describe('serve() + anyOf(verifyApiKey, verifySignatureAsAuthenticator)', () => {
   function makeAgent() {

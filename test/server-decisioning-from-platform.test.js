@@ -611,6 +611,30 @@ describe('HITL dual-method dispatch — *Task variants', () => {
     assert.strictEqual(finalSlow.result.media_buy_id, 'mb_hitl_slow');
   });
 
+  it('hand-rolled `{status:"submitted", task_id}` from createMediaBuy is rejected with a clear error pointing at ctx.handoffToTask', async () => {
+    // Guards the most common LLM-scaffolded mistake: returning a bare
+    // submitted-shape envelope instead of `ctx.handoffToTask(fn)`. The
+    // framework owns the submitted envelope; an adopter that hand-rolls
+    // it skips the task registry — the buyer ends up polling a task_id
+    // the framework never registered. Fail loudly at dispatch.
+    const platform = buildHitlPlatform({
+      createMediaBuy: async () => ({ status: 'submitted', task_id: 'tk_hand_rolled_xyz' }),
+    });
+    const server = createAdcpServerFromPlatform(platform, {
+      name: 'guard',
+      version: '0.0.1',
+      validation: { requests: 'off', responses: 'off' },
+    });
+    const result = await dispatchCreate(server);
+    // Errors thrown inside the handler bubble up as the framework's
+    // generic SERVICE_UNAVAILABLE envelope; the message itself lands in
+    // the server log. We assert on the error envelope + that the message
+    // referenced `handoffToTask`.
+    assert.strictEqual(result.isError, true);
+    const text = JSON.stringify(result);
+    assert.match(text, /handoffToTask/, 'error message must point at ctx.handoffToTask');
+  });
+
   it('createMediaBuy handoff throwing AdcpError records terminal failed with structured fields', async () => {
     const platform = buildHitlPlatform({
       createMediaBuy: async (req, ctx) =>
