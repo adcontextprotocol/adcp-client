@@ -1062,6 +1062,22 @@ export interface AdcpCustomToolConfig<
  * hooks. Other emitter-internal knobs (rate limits, transport pool
  * sizing) stay on `WebhookEmitterOptions` for direct emitter callers.
  *
+ * @example In-process JWK signing
+ * ```ts
+ * webhooks: { signerKey: myJwk }
+ * ```
+ *
+ * @example KMS-backed signing via `signerProvider`
+ * ```ts
+ * webhooks: { signerProvider: myKmsProvider, retries: { maxAttempts: 3 } }
+ * ```
+ *
+ * @remarks
+ * Exactly one of `signerKey` or `signerProvider` must be set — providing
+ * both or neither throws `TypeError` at construction time. The key MUST
+ * carry `adcp_use: "webhook-signing"` (a request-signing key is a
+ * conformance violation per adcp#2423 — key purpose discriminator).
+ *
  * @public
  */
 export type WebhooksConfig = Pick<
