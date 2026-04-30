@@ -267,74 +267,73 @@ class MySignals implements DecisioningPlatform {
 
   signals: SignalsPlatform = {
     getSignals: async (params, ctx) => {
-        let results = signals;
-        if (params.signal_spec) {
-          const query = params.signal_spec.toLowerCase();
-          results = results.filter(
-            s => s.name.toLowerCase().includes(query) || s.description.toLowerCase().includes(query)
-          );
-        }
-        if (params.signal_ids) {
-          results = results.filter(s => params.signal_ids!.some(id => id.id === s.signal_id.id));
-        }
-        return { signals: results, sandbox: true };
-      },
+      let results = signals;
+      if (params.signal_spec) {
+        const query = params.signal_spec.toLowerCase();
+        results = results.filter(
+          s => s.name.toLowerCase().includes(query) || s.description.toLowerCase().includes(query)
+        );
+      }
+      if (params.signal_ids) {
+        results = results.filter(s => params.signal_ids!.some(id => id.id === s.signal_id.id));
+      }
+      return { signals: results, sandbox: true };
+    },
 
-      activateSignal: async (params, ctx) => {
-        const signal = signals.find(s => s.signal_agent_segment_id === params.signal_agent_segment_id);
-        // Return the error — the framework echoes returned adcpError
-        // responses verbatim. Thrown errors are caught and converted to
-        // SERVICE_UNAVAILABLE, which hides your custom code from the buyer.
-        if (!signal)
-          return adcpError('SIGNAL_NOT_FOUND', { message: `Unknown segment: ${params.signal_agent_segment_id}` });
+    activateSignal: async (params, ctx) => {
+      const signal = signals.find(s => s.signal_agent_segment_id === params.signal_agent_segment_id);
+      // Return the error — the framework echoes returned adcpError
+      // responses verbatim. Thrown errors are caught and converted to
+      // SERVICE_UNAVAILABLE, which hides your custom code from the buyer.
+      if (!signal)
+        return adcpError('SIGNAL_NOT_FOUND', { message: `Unknown segment: ${params.signal_agent_segment_id}` });
 
-        // Persist activation in state store
-        await ctx.store.put('activations', params.signal_agent_segment_id, {
-          signal_agent_segment_id: params.signal_agent_segment_id,
-          destinations: params.destinations,
-          activated_at: new Date().toISOString(),
-        });
+      // Persist activation in state store
+      await ctx.store.put('activations', params.signal_agent_segment_id, {
+        signal_agent_segment_id: params.signal_agent_segment_id,
+        destinations: params.destinations,
+        activated_at: new Date().toISOString(),
+      });
 
-        // Platform (DSP) activation is ASYNC per spec — return `is_live: false`
-        // with `estimated_activation_duration_minutes`. The buyer polls
-        // (a subsequent `activate_signal` with the same destinations, or a
-        // provider-specific status tool) until `is_live: true`.
-        //
-        // Agent (sales-agent) activation is SYNC — return `is_live: true` with
-        // `activation_key.type: 'key_value'` and a `deployed_at` timestamp.
-        //
-        // Both shapes include `activation_key` so the buyer knows how to
-        // reference the segment when building media buys through the DSP or SA.
-        const deployments = params.destinations.map(dest => {
-          if (dest.type === 'platform') {
-            return {
-              type: 'platform' as const,
-              platform: dest.platform,
-              is_live: false,
-              estimated_activation_duration_minutes: 30,
-              // Return activation_key even while is_live is false — the
-              // buyer needs to know the planned segment_id now so it can
-              // reference it in downstream media buys. `is_live` just
-              // flags whether the DSP has confirmed provisioning;
-              // `activation_key` is the agent's commitment.
-              activation_key: {
-                type: 'segment_id' as const,
-                segment_id: `${dest.platform}_${signal.signal_id.id}`,
-              },
-            };
-          }
+      // Platform (DSP) activation is ASYNC per spec — return `is_live: false`
+      // with `estimated_activation_duration_minutes`. The buyer polls
+      // (a subsequent `activate_signal` with the same destinations, or a
+      // provider-specific status tool) until `is_live: true`.
+      //
+      // Agent (sales-agent) activation is SYNC — return `is_live: true` with
+      // `activation_key.type: 'key_value'` and a `deployed_at` timestamp.
+      //
+      // Both shapes include `activation_key` so the buyer knows how to
+      // reference the segment when building media buys through the DSP or SA.
+      const deployments = params.destinations.map(dest => {
+        if (dest.type === 'platform') {
           return {
-            type: 'agent' as const,
-            agent_url: dest.agent_url,
-            is_live: true,
-            activation_key: { type: 'key_value' as const, key: 'audience', value: signal.signal_id.id },
-            deployed_at: new Date().toISOString(),
+            type: 'platform' as const,
+            platform: dest.platform,
+            is_live: false,
+            estimated_activation_duration_minutes: 30,
+            // Return activation_key even while is_live is false — the
+            // buyer needs to know the planned segment_id now so it can
+            // reference it in downstream media buys. `is_live` just
+            // flags whether the DSP has confirmed provisioning;
+            // `activation_key` is the agent's commitment.
+            activation_key: {
+              type: 'segment_id' as const,
+              segment_id: `${dest.platform}_${signal.signal_id.id}`,
+            },
           };
-        });
-        return { deployments, sandbox: true };
-      },
-    };
-  }
+        }
+        return {
+          type: 'agent' as const,
+          agent_url: dest.agent_url,
+          is_live: true,
+          activation_key: { type: 'key_value' as const, key: 'audience', value: signal.signal_id.id },
+          deployed_at: new Date().toISOString(),
+        };
+      });
+      return { deployments, sandbox: true };
+    },
+  };
 }
 
 const platform = new MySignals();
