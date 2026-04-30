@@ -80,11 +80,7 @@ describe('auto-hydration — update_media_buy', () => {
     assert.ok(observedReq.media_buy, 'req.media_buy hydrated');
     assert.equal(observedReq.media_buy.media_buy_id, 'mb_42');
     assert.equal(observedReq.media_buy.status, 'active');
-    assert.deepEqual(
-      observedReq.media_buy.ctx_metadata,
-      { gam: { order_id: '12345' } },
-      'ctx_metadata round-tripped'
-    );
+    assert.deepEqual(observedReq.media_buy.ctx_metadata, { gam: { order_id: '12345' } }, 'ctx_metadata round-tripped');
   });
 
   it('updateMediaBuy without prior getMediaBuys — req.media_buy is undefined (falls through)', async () => {
@@ -136,10 +132,16 @@ describe('auto-hydration — provide_performance_feedback', () => {
 
     const ctxMetadata = makeStore();
     // Pre-seed creative store via direct setResource (no syncCreatives in this minimal setup)
-    await ctxMetadata.setResource('acct_default', 'creative', 'cr_99', {
-      creative_id: 'cr_99',
-      status: 'approved',
-    }, { dsp_creative_id: 'dsp_555' });
+    await ctxMetadata.setResource(
+      'acct_default',
+      'creative',
+      'cr_99',
+      {
+        creative_id: 'cr_99',
+        status: 'approved',
+      },
+      { dsp_creative_id: 'dsp_555' }
+    );
 
     const server = createAdcpServerFromPlatform(platform, {
       name: 'Test',
@@ -345,9 +347,6 @@ describe('auto-hydration — acquire_rights', () => {
     assert.ok(observedReq, 'acquireRights called');
     assert.ok(observedReq.rights, 'req.rights hydrated');
     assert.equal(observedReq.rights.rights_id, 'rt_001');
-    assert.deepEqual(
-      observedReq.rights.ctx_metadata,
-      { license_type: 'commercial', territory: 'US' }
-    );
+    assert.deepEqual(observedReq.rights.ctx_metadata, { license_type: 'commercial', territory: 'US' });
   });
 });

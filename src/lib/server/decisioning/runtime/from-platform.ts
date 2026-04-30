@@ -2511,15 +2511,7 @@ function buildMediaBuyHandlers<P extends DecisioningPlatform<any, any>>(
         );
         const creativeId = (params as { creative_id?: string }).creative_id;
         if (creativeId) {
-          await hydrateSingleResource(
-            ctxMetadataStore,
-            accountId,
-            'creative',
-            creativeId,
-            'creative',
-            params,
-            logger
-          );
+          await hydrateSingleResource(ctxMetadataStore, accountId, 'creative', creativeId, 'creative', params, logger);
         }
         return projectSync(
           () => sales.providePerformanceFeedback!(params, reqCtx),
