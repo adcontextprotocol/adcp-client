@@ -6,6 +6,7 @@ import type { AgentConfig } from '../types';
 import { ADCP_ENVELOPE_FIELDS } from '../types/adcp';
 import { parseAdcpMajorVersion, type AdcpVersion } from '../version';
 import { resolveAdcpVersion } from '../utils/adcp-version-config';
+import { resolveBundleKey } from '../validation/schema-loader';
 import type {
   GetProductsRequest,
   GetProductsResponse,
@@ -2883,13 +2884,26 @@ export class SingleAgentClient {
     if (capabilities._synthetic) {
       throw new VersionUnsupportedError(taskType, 'synthetic', capabilities.version, this.agent.agent_uri);
     }
-    // `AdcpMajorVersion` is currently `2 | 3` — cast through `number[]` because
-    // the parsed major is a plain number; a future SDK release that supports
-    // major 4 will widen the union.
-    const expectedMajor = parseAdcpMajorVersion(this.resolvedAdcpVersion);
-    const advertisedMajors = capabilities.majorVersions as readonly number[];
-    if (!Number.isFinite(expectedMajor) || !advertisedMajors.includes(expectedMajor)) {
-      throw new VersionUnsupportedError(taskType, 'version', capabilities.version, this.agent.agent_uri);
+    // Prefer release-precision matching when the seller advertises
+    // `supported_versions` (AdCP 3.1+ per spec PR `adcontextprotocol/adcp#3493`).
+    // Fall back to the deprecated integer `major_versions` for legacy 3.0
+    // sellers. Pre-release pins match exactly per spec — `'3.1.0-beta.1'`
+    // matches only against another `'3.1.0-beta.1'`, not `'3.1'`.
+    const supportedVersions = capabilities.supportedVersions;
+    if (supportedVersions !== undefined && supportedVersions.length > 0) {
+      const expectedKey = resolveBundleKey(this.resolvedAdcpVersion);
+      if (!supportedVersions.includes(expectedKey)) {
+        throw new VersionUnsupportedError(taskType, 'version', capabilities.version, this.agent.agent_uri);
+      }
+    } else {
+      // `AdcpMajorVersion` is currently `2 | 3` — cast through `number[]` because
+      // the parsed major is a plain number; a future SDK release that supports
+      // major 4 will widen the union.
+      const expectedMajor = parseAdcpMajorVersion(this.resolvedAdcpVersion);
+      const advertisedMajors = capabilities.majorVersions as readonly number[];
+      if (!Number.isFinite(expectedMajor) || !advertisedMajors.includes(expectedMajor)) {
+        throw new VersionUnsupportedError(taskType, 'version', capabilities.version, this.agent.agent_uri);
+      }
     }
     if (!capabilities.idempotency?.replayTtlSeconds) {
       throw new VersionUnsupportedError(taskType, 'idempotency', capabilities.version, this.agent.agent_uri);

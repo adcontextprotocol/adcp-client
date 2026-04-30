@@ -121,8 +121,29 @@ export interface AdcpCapabilities {
   /** Detected version ('v2' or 'v3') */
   version: 'v2' | 'v3';
 
-  /** Array of supported major versions (e.g., [2] or [2, 3]) */
+  /**
+   * Array of supported major versions (e.g., [2] or [2, 3]).
+   * @deprecated Use {@link supportedVersions} for release-precision negotiation.
+   * Removed in AdCP 4.0 per spec PR `adcontextprotocol/adcp#3493`. Continues
+   * to be emitted alongside the new field through 3.x.
+   */
   majorVersions: AdcpMajorVersion[];
+
+  /**
+   * Array of supported AdCP releases at release precision (`'3.0'`, `'3.1'`,
+   * `'3.1.0-beta.1'`). Stable releases use `MAJOR.MINOR`; pre-releases use
+   * the full pre-release tag. Set when the seller is on AdCP 3.1+ per spec
+   * PR `adcontextprotocol/adcp#3493`. `undefined` on legacy 3.0-only sellers.
+   */
+  supportedVersions?: string[];
+
+  /**
+   * Full semver build of the seller's released AdCP version (e.g. `'3.1.2'`,
+   * `'3.1.0-beta.1+sha.abc'`). Advisory — patch differences within the same
+   * release-precision are non-breaking by spec convention. `undefined` on
+   * legacy 3.0-only sellers.
+   */
+  buildVersion?: string;
 
   /** Supported protocols */
   protocols: AdcpProtocol[];
@@ -360,6 +381,15 @@ export function parseCapabilitiesResponse(response: any): AdcpCapabilities {
   const majorVersions = (response.adcp?.major_versions ?? [2]) as AdcpMajorVersion[];
   const highestVersion = Math.max(...majorVersions) as AdcpMajorVersion;
 
+  // AdCP 3.1+ release-precision capability fields per spec PR
+  // `adcontextprotocol/adcp#3493`. Both fields are optional during the 3.x
+  // SHOULD-emit phase; legacy 3.0 sellers won't carry them.
+  const supportedVersions =
+    Array.isArray(response.adcp?.supported_versions) && response.adcp.supported_versions.length > 0
+      ? (response.adcp.supported_versions as string[])
+      : undefined;
+  const buildVersion = typeof response.adcp?.build_version === 'string' ? response.adcp.build_version : undefined;
+
   // Per AdCP 3.0, `compliance_testing` is declared as a top-level
   // capability block, not as a value in `supported_protocols`. Normalize
   // legacy callers (who grep for `protocols.includes('compliance_testing')`)
@@ -414,6 +444,8 @@ export function parseCapabilitiesResponse(response: any): AdcpCapabilities {
   return {
     version: highestVersion >= 3 ? 'v3' : 'v2',
     majorVersions,
+    supportedVersions,
+    buildVersion,
     protocols,
     features,
     account,
