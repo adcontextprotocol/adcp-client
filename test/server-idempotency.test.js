@@ -727,9 +727,21 @@ describe('createAdcpServer config warnings', () => {
   it("idempotency: 'disabled' allows ADCP_IDEMPOTENCY_DISABLED_ACK=1 escape hatch under any NODE_ENV", () => {
     const warns = [];
     const logger = { debug: () => {}, info: () => {}, warn: msg => warns.push(msg), error: () => {} };
-    withEnv({ NODE_ENV: 'staging', ADCP_IDEMPOTENCY_DISABLED_ACK: '1' }, () => {
-      assert.doesNotThrow(() => buildDisabled({ logger }));
-    });
+    // 6.0.1 added a parallel state-store ack — the in-memory state store
+    // refuses to construct outside test/dev unless ADCP_DECISIONING_ALLOW_INMEMORY_STATE=1.
+    // This test exercises the idempotency-disabled escape hatch under
+    // staging, which means we also need the state-store escape hatch
+    // for the agent to start at all. Both gates are independent footguns.
+    withEnv(
+      {
+        NODE_ENV: 'staging',
+        ADCP_IDEMPOTENCY_DISABLED_ACK: '1',
+        ADCP_DECISIONING_ALLOW_INMEMORY_STATE: '1',
+      },
+      () => {
+        assert.doesNotThrow(() => buildDisabled({ logger }));
+      }
+    );
     assert.ok(warns.some(m => /idempotency: 'disabled' is set/.test(m)));
   });
 

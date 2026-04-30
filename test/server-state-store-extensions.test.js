@@ -664,3 +664,106 @@ describe('default stateStore — multi-tenant footgun warning', () => {
     assert.equal(multiTenantWarnings.length, 0, 'explicit stateStore must not trigger the default-store warning');
   });
 });
+
+describe('default stateStore — production gate (v6.0.1)', () => {
+  // Mirrors `buildDefaultTaskRegistry` policy: outside
+  // {NODE_ENV=test, NODE_ENV=development}, the in-memory default
+  // refuses to mint unless the adopter sets
+  // `ADCP_DECISIONING_ALLOW_INMEMORY_STATE=1` as the ops escape hatch.
+  function withEnv(overrides, fn) {
+    const prev = {};
+    for (const k of Object.keys(overrides)) {
+      prev[k] = process.env[k];
+      if (overrides[k] === undefined) delete process.env[k];
+      else process.env[k] = overrides[k];
+    }
+    try {
+      fn();
+    } finally {
+      for (const k of Object.keys(overrides)) {
+        if (prev[k] === undefined) delete process.env[k];
+        else process.env[k] = prev[k];
+      }
+    }
+  }
+
+  it('NODE_ENV=production + default stateStore → throws with migration message', () => {
+    withEnv({ NODE_ENV: 'production', ADCP_DECISIONING_ALLOW_INMEMORY_STATE: undefined }, () => {
+      assert.throws(
+        () =>
+          createAdcpServer({
+            name: 'p',
+            version: '1.0.0',
+            capabilities: { major_versions: [3] },
+          }),
+        err =>
+          /in-memory state store refused outside.*NODE_ENV=test, NODE_ENV=development/.test(err.message) &&
+          /PostgresStateStore/.test(err.message) &&
+          /ADCP_DECISIONING_ALLOW_INMEMORY_STATE=1/.test(err.message)
+      );
+    });
+  });
+
+  it('NODE_ENV=production + ADCP_DECISIONING_ALLOW_INMEMORY_STATE=1 → allows', () => {
+    withEnv({ NODE_ENV: 'production', ADCP_DECISIONING_ALLOW_INMEMORY_STATE: '1' }, () => {
+      assert.doesNotThrow(() =>
+        createAdcpServer({
+          name: 'p',
+          version: '1.0.0',
+          capabilities: { major_versions: [3] },
+        })
+      );
+    });
+  });
+
+  it('NODE_ENV=production + explicit stateStore → no env check', () => {
+    withEnv({ NODE_ENV: 'production' }, () => {
+      assert.doesNotThrow(() =>
+        createAdcpServer({
+          name: 'p',
+          version: '1.0.0',
+          capabilities: { major_versions: [3] },
+          stateStore: new InMemoryStateStore(),
+        })
+      );
+    });
+  });
+
+  it('NODE_ENV=development + default stateStore → no throw (dev is the safe set)', () => {
+    withEnv({ NODE_ENV: 'development', ADCP_DECISIONING_ALLOW_INMEMORY_STATE: undefined }, () => {
+      assert.doesNotThrow(() =>
+        createAdcpServer({
+          name: 'd',
+          version: '1.0.0',
+          capabilities: { major_versions: [3] },
+        })
+      );
+    });
+  });
+
+  it('NODE_ENV=test + default stateStore → no throw', () => {
+    withEnv({ NODE_ENV: 'test', ADCP_DECISIONING_ALLOW_INMEMORY_STATE: undefined }, () => {
+      assert.doesNotThrow(() =>
+        createAdcpServer({
+          name: 't',
+          version: '1.0.0',
+          capabilities: { major_versions: [3] },
+        })
+      );
+    });
+  });
+
+  it('undefined NODE_ENV + default stateStore → throws (matches task-registry policy strictness)', () => {
+    withEnv({ NODE_ENV: undefined, ADCP_DECISIONING_ALLOW_INMEMORY_STATE: undefined }, () => {
+      assert.throws(
+        () =>
+          createAdcpServer({
+            name: 'u',
+            version: '1.0.0',
+            capabilities: { major_versions: [3] },
+          }),
+        /in-memory state store refused outside/
+      );
+    });
+  });
+});
