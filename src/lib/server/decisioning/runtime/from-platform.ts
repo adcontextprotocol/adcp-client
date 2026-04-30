@@ -702,6 +702,19 @@ export function createAdcpServerFromPlatform<P extends DecisioningPlatform<any, 
   const config: AdcpServerConfig<Account> = {
     ...opts,
     ...(projectedCapabilitiesConfig != null && { capabilities: projectedCapabilitiesConfig }),
+    // v6 default principal resolver: every mutating tool requires an
+    // idempotency principal (the v5 createAdcpServer surface returns
+    // SERVICE_UNAVAILABLE when one isn't wired). v6 platform adopters
+    // who skip the explicit hook get a sensible default — auth client
+    // id when present (multi-tenant: each buyer owns its own
+    // idempotency namespace), else session key, else account id
+    // (single-tenant fallback). Adopters override by passing
+    // resolveIdempotencyPrincipal in opts; the spread above keeps
+    // explicit values winning. Closed by the Emma matrix surfacing
+    // SERVICE_UNAVAILABLE on every v6 mutating call.
+    resolveIdempotencyPrincipal:
+      opts.resolveIdempotencyPrincipal ??
+      (ctx => ctx.authInfo?.clientId ?? ctx.sessionKey ?? ctx.account?.id ?? undefined),
     resolveAccount: async (ref, ctx) => {
       const start = Date.now();
       let resolved = false;

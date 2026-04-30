@@ -2735,3 +2735,73 @@ describe('server.statusChange — per-server bus', () => {
     restoreBus();
   });
 });
+
+describe('createAdcpServerFromPlatform — default resolveIdempotencyPrincipal', () => {
+  // Surfaced by Emma matrix v2: adopters who declare a typed v6 platform
+  // but skip the resolveIdempotencyPrincipal hook hit SERVICE_UNAVAILABLE
+  // on every mutating tool call. v5's createAdcpServer makes this a hard
+  // requirement; v6 platform path now synthesizes a sensible default
+  // (auth.clientId → sessionKey → account.id) so first-30-minutes works.
+  function basePlatform() {
+    return {
+      capabilities: {
+        specialisms: ['sales-non-guaranteed'],
+        creative_agents: [],
+        channels: ['display'],
+        pricingModels: ['cpm'],
+        config: {},
+      },
+      statusMappers: {},
+      accounts: {
+        resolve: async ref => ({
+          id: ref?.account_id ?? 'acc_1',
+          name: 'Default',
+          status: 'active',
+          metadata: {},
+          authInfo: { kind: 'api_key' },
+        }),
+      },
+      sales: {
+        getProducts: async () => ({ products: [] }),
+        createMediaBuy: async () => ({
+          media_buy_id: 'mb_1',
+          status: 'pending_creatives',
+          confirmed_at: '2026-04-30T00:00:00Z',
+          packages: [],
+        }),
+        updateMediaBuy: async () => ({ media_buy_id: 'mb_1', status: 'active' }),
+        syncCreatives: async () => [],
+        getMediaBuyDelivery: async () => ({
+          currency: 'USD',
+          reporting_period: { start: '2026-04-01', end: '2026-04-30' },
+          media_buy_deliveries: [],
+        }),
+      },
+    };
+  }
+
+  it('mutating call succeeds without an explicit resolveIdempotencyPrincipal', async () => {
+    // Pre-fix: this returned SERVICE_UNAVAILABLE with
+    // "Idempotency principal could not be resolved". Now the default
+    // falls back to ctx.account.id so the call goes through.
+    const server = createAdcpServerFromPlatform(basePlatform(), {
+      name: 'h',
+      version: '0.0.1',
+      validation: { requests: 'off', responses: 'off' },
+    });
+    const result = await server.dispatchTestRequest({
+      method: 'tools/call',
+      params: {
+        name: 'create_media_buy',
+        arguments: {
+          account: { account_id: 'acc_1' },
+          promoted_offering: 'x',
+          packages: [],
+          idempotency_key: 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa',
+        },
+      },
+    });
+    assert.notStrictEqual(result.isError, true, JSON.stringify(result.structuredContent));
+    assert.strictEqual(result.structuredContent.media_buy_id, 'mb_1');
+  });
+});
