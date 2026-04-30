@@ -566,7 +566,7 @@ export interface DecisioningAdcpServer extends AdcpServer {
 }
 
 // Use `DecisioningPlatform<any, any>` for the generic constraint. The default
-// `TMeta = Record<string, unknown>` doesn't accept adopter metadata interfaces
+// `TCtxMeta = Record<string, unknown>` doesn't accept adopter metadata interfaces
 // without an index signature (e.g., `interface MyMeta { brand_id: string }`),
 // which is a needless friction point — adopter metadata is opaque to the
 // framework, so we don't need to constrain it here.

@@ -35,8 +35,8 @@ import type { CtxMetadataRef, ResourceKind } from '../ctx-metadata';
 // Unconstrained `TAccount` (no `extends Account`) so adopters with metadata
 // types that don't extend `Record<string, unknown>` (interfaces without index
 // signatures, type aliases pointing to unions, etc.) can still parameterize.
-// The framework only ever passes the resolved `Account<TMeta>` here; constraint
-// is implicit through the generic flow from `DecisioningPlatform<_, TMeta>`.
+// The framework only ever passes the resolved `Account<TCtxMeta>` here; constraint
+// is implicit through the generic flow from `DecisioningPlatform<_, TCtxMeta>`.
 export interface RequestContext<TAccount = Account> {
   /** Resolved account for this request. */
   account: TAccount;

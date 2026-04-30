@@ -58,14 +58,16 @@ import type { AdCPSpecialism } from '../../types/tools.generated';
  *
  * @template TConfig Platform-specific config typed at the call site.
  *                   Example: `class GAM implements DecisioningPlatform<{ networkId: string }>`.
- * @template TMeta   Platform-specific Account.metadata typed at the call site.
+ * @template TCtxMeta Shape of the platform's opaque ctx_metadata blob — typed
+ *                    once and propagated into `ctx.account.ctx_metadata`,
+ *                    `ctx.ctxMetadata.get()`, and every specialism handler.
  */
-export interface DecisioningPlatform<TConfig = unknown, TMeta = Record<string, unknown>> {
+export interface DecisioningPlatform<TConfig = unknown, TCtxMeta = Record<string, unknown>> {
   /** Capability declaration; single source of truth for get_adcp_capabilities. */
   capabilities: DecisioningCapabilities<TConfig>;
 
   /** Account model + tenant resolution. */
-  accounts: AccountStore<TMeta>;
+  accounts: AccountStore<TCtxMeta>;
 
   /**
    * Native-status mappers (account, mediaBuy, creative, plan).
@@ -90,22 +92,22 @@ export interface DecisioningPlatform<TConfig = unknown, TMeta = Record<string, u
    * differences are runtime-only.
    */
   getCapabilitiesFor?(
-    account: Account<TMeta>
+    account: Account<TCtxMeta>
   ): DecisioningCapabilities<TConfig> | Promise<DecisioningCapabilities<TConfig>>;
 
   // Per-specialism sub-interfaces — optional at the type level; required at the
   // call site by RequiredPlatformsFor<S>. v1.0 ships these. Each is parameterized
-  // by `TMeta` so adopters get typed `ctx.account.ctx_metadata` access in their
+  // by `TCtxMeta` so adopters get typed `ctx.account.ctx_metadata` access in their
   // method bodies without casting.
-  sales?: SalesPlatform<TMeta>;
-  creative?: CreativeBuilderPlatform<TMeta> | CreativeAdServerPlatform<TMeta>;
-  audiences?: AudiencePlatform<TMeta>;
-  signals?: SignalsPlatform<TMeta>;
-  campaignGovernance?: CampaignGovernancePlatform<TMeta>;
-  contentStandards?: ContentStandardsPlatform<TMeta>;
-  propertyLists?: PropertyListsPlatform<TMeta>;
-  collectionLists?: CollectionListsPlatform<TMeta>;
-  brandRights?: BrandRightsPlatform<TMeta>;
+  sales?: SalesPlatform<TCtxMeta>;
+  creative?: CreativeBuilderPlatform<TCtxMeta> | CreativeAdServerPlatform<TCtxMeta>;
+  audiences?: AudiencePlatform<TCtxMeta>;
+  signals?: SignalsPlatform<TCtxMeta>;
+  campaignGovernance?: CampaignGovernancePlatform<TCtxMeta>;
+  contentStandards?: ContentStandardsPlatform<TCtxMeta>;
+  propertyLists?: PropertyListsPlatform<TCtxMeta>;
+  collectionLists?: CollectionListsPlatform<TCtxMeta>;
+  brandRights?: BrandRightsPlatform<TCtxMeta>;
 
   // v1.1+ specialisms add: creative-review, plus the 2 brand-rights wire
   // tools awaiting AdcpToolMap landing (`update_rights`, `creative_approval`).
@@ -157,36 +159,36 @@ type SignalSpecialism = 'signal-marketplace' | 'signal-owned';
 // value without shape changes.
 type CampaignGovernanceSpecialism = 'governance-spend-authority' | 'governance-delivery-monitor';
 
-// `TMeta` defaults to `any` so callers that don't pass it explicitly (the
+// `TCtxMeta` defaults to `any` so callers that don't pass it explicitly (the
 // common case — `RequiredPlatformsFor<S>` without a second argument) get a
 // constraint that accepts any adopter metadata shape. The `any` is not a
 // soundness escape — adopters declare metadata inside `DecisioningPlatform<_,
-// TMeta>` directly; this constraint exists only to compile-check that
+// TCtxMeta>` directly; this constraint exists only to compile-check that
 // claimed specialisms have a matching sub-interface field on the platform.
 export type RequiredPlatformsFor<
   S extends AdCPSpecialism,
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  TMeta = any,
+  TCtxMeta = any,
 > = S extends 'creative-template' | 'creative-generative'
-  ? { creative: CreativeBuilderPlatform<TMeta> }
+  ? { creative: CreativeBuilderPlatform<TCtxMeta> }
   : S extends 'creative-ad-server'
-    ? { creative: CreativeAdServerPlatform<TMeta> }
+    ? { creative: CreativeAdServerPlatform<TCtxMeta> }
     : S extends SalesSpecialism
-      ? { sales: SalesPlatform<TMeta> }
+      ? { sales: SalesPlatform<TCtxMeta> }
       : S extends 'audience-sync'
-        ? { audiences: AudiencePlatform<TMeta> }
+        ? { audiences: AudiencePlatform<TCtxMeta> }
         : S extends SignalSpecialism
-          ? { signals: SignalsPlatform<TMeta> }
+          ? { signals: SignalsPlatform<TCtxMeta> }
           : S extends CampaignGovernanceSpecialism
-            ? { campaignGovernance: CampaignGovernancePlatform<TMeta> }
+            ? { campaignGovernance: CampaignGovernancePlatform<TCtxMeta> }
             : S extends 'property-lists'
-              ? { propertyLists: PropertyListsPlatform<TMeta> }
+              ? { propertyLists: PropertyListsPlatform<TCtxMeta> }
               : S extends 'collection-lists'
-                ? { collectionLists: CollectionListsPlatform<TMeta> }
+                ? { collectionLists: CollectionListsPlatform<TCtxMeta> }
                 : S extends 'content-standards'
-                  ? { contentStandards: ContentStandardsPlatform<TMeta> }
+                  ? { contentStandards: ContentStandardsPlatform<TCtxMeta> }
                   : S extends 'brand-rights'
-                    ? { brandRights: BrandRightsPlatform<TMeta> }
+                    ? { brandRights: BrandRightsPlatform<TCtxMeta> }
                     : Record<string, never>;
 
 /**

@@ -15,7 +15,7 @@ import type { Account } from '../account';
 import type { RequestContext } from '../context';
 import type { SyncAudiencesRequest, SyncAudiencesSuccess } from '../../../types/tools.generated';
 
-type Ctx<TMeta> = RequestContext<Account<TMeta>>;
+type Ctx<TCtxMeta> = RequestContext<Account<TCtxMeta>>;
 
 /**
  * The wire schema doesn't export a top-level `Audience` type; the shape lives
@@ -37,7 +37,7 @@ export type SyncAudiencesRow = SyncAudiencesSuccess['audiences'][number];
 
 export type AudienceStatus = NonNullable<SyncAudiencesRow['status']>;
 
-export interface AudiencePlatform<TMeta = Record<string, unknown>> {
+export interface AudiencePlatform<TCtxMeta = Record<string, unknown>> {
   /**
    * Push audiences to the platform. Framework handles batching, idempotency,
    * cross-tenant scoping. Platform handles match-rate computation and
@@ -54,7 +54,7 @@ export interface AudiencePlatform<TMeta = Record<string, unknown>> {
    * Throw `new AdcpError(...)` for buyer-fixable rejection
    * (`AUDIENCE_TOO_SMALL`, etc.).
    */
-  syncAudiences(audiences: Audience[], ctx: Ctx<TMeta>): Promise<SyncAudiencesRow[]>;
+  syncAudiences(audiences: Audience[], ctx: Ctx<TCtxMeta>): Promise<SyncAudiencesRow[]>;
 
   /**
    * Batch-poll current status for one or more audiences. Sync — this is a
@@ -73,5 +73,5 @@ export interface AudiencePlatform<TMeta = Record<string, unknown>> {
    * APIs that natively return per-audience-id arrays — adopters do NOT
    * need to wrap a single-id lookup over an N-call loop.
    */
-  pollAudienceStatuses(audienceIds: readonly string[], ctx: Ctx<TMeta>): Promise<Map<string, AudienceStatus>>;
+  pollAudienceStatuses(audienceIds: readonly string[], ctx: Ctx<TCtxMeta>): Promise<Map<string, AudienceStatus>>;
 }

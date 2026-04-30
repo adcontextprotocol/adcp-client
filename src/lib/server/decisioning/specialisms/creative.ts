@@ -61,7 +61,7 @@ export type BuildCreativeReturn =
   | BuildCreativeMultiSuccess;
 
 type Creative = CreativeAsset;
-type Ctx<TMeta> = RequestContext<Account<TMeta>>;
+type Ctx<TCtxMeta> = RequestContext<Account<TCtxMeta>>;
 
 // Re-export SyncCreativesRow so creative-specialism adopters don't need to
 // reach into the sales module to import the shared row type.
@@ -103,7 +103,7 @@ export type { SyncCreativesRow };
  * (rare in the wild) front each archetype as a separate tenant via
  * `TenantRegistry`.
  */
-export interface CreativeBuilderPlatform<TMeta = Record<string, unknown>> {
+export interface CreativeBuilderPlatform<TCtxMeta = Record<string, unknown>> {
   /**
    * Build the creative. Single method covers template-driven transform
    * (`req.template_id` + asset slots), brief-to-creative generation
@@ -116,7 +116,7 @@ export interface CreativeBuilderPlatform<TMeta = Record<string, unknown>> {
    * `BuildCreativeMultiSuccess` envelope when you need to set
    * `sandbox` / `expires_at` / `preview`.
    */
-  buildCreative(req: BuildCreativeRequest, ctx: Ctx<TMeta>): Promise<BuildCreativeReturn>;
+  buildCreative(req: BuildCreativeRequest, ctx: Ctx<TCtxMeta>): Promise<BuildCreativeReturn>;
 
   /**
    * Preview-only variant — sandbox URL or inline HTML, expires. Always
@@ -125,7 +125,7 @@ export interface CreativeBuilderPlatform<TMeta = Record<string, unknown>> {
    * `UNSUPPORTED_FEATURE` to buyers calling `preview_creative` against
    * a platform that didn't wire this.
    */
-  previewCreative?(req: PreviewCreativeRequest, ctx: Ctx<TMeta>): Promise<PreviewCreativeResponse>;
+  previewCreative?(req: PreviewCreativeRequest, ctx: Ctx<TCtxMeta>): Promise<PreviewCreativeResponse>;
 
   /**
    * Refine a prior generation. `taskId` references a prior submission.
@@ -134,7 +134,7 @@ export interface CreativeBuilderPlatform<TMeta = Record<string, unknown>> {
    * re-calling `buildCreative` with different inputs and don't carry
    * generation state across calls.
    */
-  refineCreative?(taskId: string, refinement: RefinementMessage, ctx: Ctx<TMeta>): Promise<CreativeManifest>;
+  refineCreative?(taskId: string, refinement: RefinementMessage, ctx: Ctx<TCtxMeta>): Promise<CreativeManifest>;
 
   /**
    * Sync review surface. Stateless platforms typically auto-approve;
@@ -142,7 +142,10 @@ export interface CreativeBuilderPlatform<TMeta = Record<string, unknown>> {
    * `ctx.handoffToTask(fn)` to defer to a background task. Unified
    * hybrid shape — return rows OR `ctx.handoffToTask(fn)`.
    */
-  syncCreatives?(creatives: Creative[], ctx: Ctx<TMeta>): Promise<SyncCreativesRow[] | TaskHandoff<SyncCreativesRow[]>>;
+  syncCreatives?(
+    creatives: Creative[],
+    ctx: Ctx<TCtxMeta>
+  ): Promise<SyncCreativesRow[] | TaskHandoff<SyncCreativesRow[]>>;
 }
 
 /**
@@ -154,7 +157,7 @@ export interface CreativeBuilderPlatform<TMeta = Record<string, unknown>> {
  * release while adopters migrate. Will be removed in a future
  * release.
  */
-export type CreativeTemplatePlatform<TMeta = Record<string, unknown>> = CreativeBuilderPlatform<TMeta>;
+export type CreativeTemplatePlatform<TCtxMeta = Record<string, unknown>> = CreativeBuilderPlatform<TCtxMeta>;
 
 /**
  * @deprecated Use `CreativeBuilderPlatform` — the unified interface
@@ -162,7 +165,7 @@ export type CreativeTemplatePlatform<TMeta = Record<string, unknown>> = Creative
  * `CreativeTemplatePlatform` deprecation note. Will be removed in a
  * future release.
  */
-export type CreativeGenerativePlatform<TMeta = Record<string, unknown>> = CreativeBuilderPlatform<TMeta>;
+export type CreativeGenerativePlatform<TCtxMeta = Record<string, unknown>> = CreativeBuilderPlatform<TCtxMeta>;
 
 // ---------------------------------------------------------------------------
 // Shared shapes
