@@ -329,7 +329,11 @@ describe('createAdcpServerFromPlatform — auto-hydration of media_buy for updat
     assert.ok(observedMediaBuy, 'updateMediaBuy should receive hydrated req.media_buy');
     assert.equal(observedMediaBuy.media_buy_id, 'mb_upd_1', 'hydrated media_buy carries media_buy_id');
     assert.equal(observedMediaBuy.status, 'pending_creatives', 'hydrated media_buy carries status');
-    assert.deepEqual(observedMediaBuy.ctx_metadata, { gam_order_id: 'gam_99' }, 'hydrated media_buy carries ctx_metadata');
+    assert.deepEqual(
+      observedMediaBuy.ctx_metadata,
+      { gam_order_id: 'gam_99' },
+      'hydrated media_buy carries ctx_metadata'
+    );
   });
 
   it('updateMediaBuy falls back gracefully when media_buy was never stored', async () => {
@@ -411,7 +415,7 @@ describe('createAdcpServerFromPlatform — auto-hydration of signal for activate
           },
         ],
       }),
-      activateSignalImpl: async (req) => {
+      activateSignalImpl: async req => {
         observedSignal = req.signal;
         return { deployments: [{ platform: 'meta', status: 'pending' }] };
       },
@@ -461,7 +465,7 @@ describe('createAdcpServerFromPlatform — auto-hydration of signal for activate
 
     const platform = makeSignalsPlatform({
       getSignalsImpl: async () => ({ signals: [] }),
-      activateSignalImpl: async (req) => {
+      activateSignalImpl: async req => {
         observedSignal = req.signal;
         return { deployments: [] };
       },
@@ -533,14 +537,18 @@ describe('createAdcpServerFromPlatform — auto-hydration of brand for acquireRi
         names: [{ en_US: 'Acme Outdoor' }],
         ctx_metadata: { internal_brand_code: 'ACM-001' },
       }),
-      acquireRightsImpl: async (req) => {
+      acquireRightsImpl: async req => {
         observedBrand = req.brand;
         return {
           rights_id: 'likeness_commercial_standard',
           status: 'acquired',
           brand_id: 'acme_outdoor',
           terms: { pricing_option_id: 'po1', amount: 2500, currency: 'USD', uses: ['likeness'] },
-          rights_constraint: { rights_id: 'likeness_commercial_standard', rights_agent: { domain: 'acme.example' }, uses: ['likeness'] },
+          rights_constraint: {
+            rights_id: 'likeness_commercial_standard',
+            rights_agent: { domain: 'acme.example' },
+            uses: ['likeness'],
+          },
         };
       },
     });
@@ -575,7 +583,10 @@ describe('createAdcpServerFromPlatform — auto-hydration of brand for acquireRi
           pricing_option_id: 'po1',
           buyer: { domain: 'buyer.example', brand_id: 'acme_outdoor' },
           campaign: { description: 'Summer campaign', uses: ['likeness'] },
-          revocation_webhook: { url: 'https://buyer.example/webhooks/revoke', authentication: { schemes: ['Bearer'], credentials: 'test-creds-32chars-padded-here-xx' } },
+          revocation_webhook: {
+            url: 'https://buyer.example/webhooks/revoke',
+            authentication: { schemes: ['Bearer'], credentials: 'test-creds-32chars-padded-here-xx' },
+          },
           idempotency_key: 'idem_acquire_001',
         },
       },
@@ -584,7 +595,11 @@ describe('createAdcpServerFromPlatform — auto-hydration of brand for acquireRi
     assert.ok(observedBrand, 'acquireRights should receive hydrated req.brand');
     assert.equal(observedBrand.brand_id, 'acme_outdoor', 'hydrated brand carries brand_id');
     assert.ok(observedBrand.house, 'hydrated brand carries house');
-    assert.deepEqual(observedBrand.ctx_metadata, { internal_brand_code: 'ACM-001' }, 'hydrated brand carries ctx_metadata');
+    assert.deepEqual(
+      observedBrand.ctx_metadata,
+      { internal_brand_code: 'ACM-001' },
+      'hydrated brand carries ctx_metadata'
+    );
   });
 
   it('acquireRights falls back gracefully when brand was never seen by getBrandIdentity', async () => {
@@ -596,7 +611,7 @@ describe('createAdcpServerFromPlatform — auto-hydration of brand for acquireRi
         house: { domain: 'other.example', name: 'Other Corp' },
         names: [{ en_US: 'Other' }],
       }),
-      acquireRightsImpl: async (req) => {
+      acquireRightsImpl: async req => {
         observedBrand = req.brand;
         return {
           rights_id: 'r1',
@@ -628,7 +643,10 @@ describe('createAdcpServerFromPlatform — auto-hydration of brand for acquireRi
           pricing_option_id: 'po1',
           buyer: { domain: 'buyer.example', brand_id: 'acme_outdoor' },
           campaign: { description: 'Summer campaign', uses: ['likeness'] },
-          revocation_webhook: { url: 'https://buyer.example/webhooks/revoke', authentication: { schemes: ['Bearer'], credentials: 'test-creds-32chars-padded-here-xx' } },
+          revocation_webhook: {
+            url: 'https://buyer.example/webhooks/revoke',
+            authentication: { schemes: ['Bearer'], credentials: 'test-creds-32chars-padded-here-xx' },
+          },
           idempotency_key: 'idem_acquire_unseen_001',
         },
       },

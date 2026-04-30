@@ -979,10 +979,20 @@ export function createAdcpServerFromPlatform<P extends DecisioningPlatform<any, 
       'eventTracking',
       mergeOpts
     ),
-    signals: mergeHandlers(opts.signals, buildSignalsHandlers(platform, ctxFor, effectiveCtxMetadata, fwLogger), 'signals', mergeOpts),
+    signals: mergeHandlers(
+      opts.signals,
+      buildSignalsHandlers(platform, ctxFor, effectiveCtxMetadata, fwLogger),
+      'signals',
+      mergeOpts
+    ),
     governance: mergeHandlers(opts.governance, buildGovernanceHandlers(platform, ctxFor), 'governance', mergeOpts),
     accounts: mergeHandlers(opts.accounts, buildAccountHandlers(platform, ctxFor), 'accounts', mergeOpts),
-    brandRights: mergeHandlers(opts.brandRights, buildBrandRightsHandlers(platform, ctxFor, effectiveCtxMetadata, fwLogger), 'brandRights', mergeOpts),
+    brandRights: mergeHandlers(
+      opts.brandRights,
+      buildBrandRightsHandlers(platform, ctxFor, effectiveCtxMetadata, fwLogger),
+      'brandRights',
+      mergeOpts
+    ),
     customTools: {
       ...opts.customTools,
       tasks_get: buildTasksGetTool(platform, taskRegistry),
