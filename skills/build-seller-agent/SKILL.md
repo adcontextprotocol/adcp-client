@@ -227,7 +227,7 @@ serve(createAgent, {
 **Principal threading.** `resolveSessionKey(ctx)` receives only `{toolName, params, account}` — no auth info. To compose the OAuth subject into the idempotency key you need `resolveIdempotencyPrincipal`, which receives the full `HandlerContext` including `ctx.authInfo` (populated by `verifyBearer` through MCP's `extra.authInfo`):
 
 ```typescript
-createAdcpServer({
+createAdcpServerFromPlatform(myPlatform, {
   // ...
   // SessionKeyContext has no authInfo — use this for coarse per-account scoping:
   resolveSessionKey: ctx => ctx.account?.id,
@@ -293,7 +293,13 @@ This means: the `task_id` you return on a `sales-guaranteed` `create_media_buy` 
 Most seller flows need outbound webhooks — `sales-guaranteed` fires on IO completion, `sales-broadcast-tv` fires `window_update` deliveries as C3/C7 data matures, `update_media_buy` fires on bid/budget application. **Don't hand-roll `fetch` with HMAC**. Pass `webhooks: { signerKey }` to `createAdcpServerFromPlatform` and call `ctx.emitWebhook(...)` from any handler — the framework handles RFC 9421 signing, nonce minting, stable `idempotency_key` across retries, 5xx/429 backoff, byte-identical JSON serialization, and the "don't retry on signature failures" terminal behavior.
 
 ```typescript
-import { createAdcpServer, serve } from '@adcp/sdk';
+import {
+  createAdcpServerFromPlatform,
+  serve,
+  type DecisioningPlatform,
+  type SalesPlatform,
+  type AccountStore,
+} from '@adcp/sdk/server';
 
 // Dev: generate a signer JWK once at boot. Production: load from KMS/env with a stable `kid`,
 // and publish the public half at your `jwks_uri` so buyers can verify without OOB exchange.
@@ -307,40 +313,66 @@ const signerJwk = {
   key_ops: ['sign'],
 };
 
+class WebhookSeller implements DecisioningPlatform {
+  capabilities = {
+    specialisms: ['sales-guaranteed'] as const,
+    pricingModels: ['cpm'] as const,
+    channels: ['display'] as const,
+    config: {},
+  };
+
+  accounts: AccountStore = {
+    resolve: async ref => ({
+      id: 'account_id' in ref ? ref.account_id : 'default',
+      operator: 'me',
+      ctx_metadata: {},
+    }),
+    upsert: async () => ({ ok: true, items: [] }),
+    list: async () => ({ items: [], nextCursor: null }),
+  };
+
+  sales: SalesPlatform = {
+    getProducts: async () => ({ products: [] }),
+    createMediaBuy: async (req, ctx) => {
+      // sales-guaranteed: IO signing completes async. Emit the final result on completion.
+      const taskId = `task_${randomUUID()}`;
+
+      // Capture ctx.emitWebhook into a local BEFORE scheduling — the handler returns
+      // immediately, but the closure outlives the request; ctx may be recycled.
+      const emit = ctx.emitWebhook!; // non-null: guaranteed populated when webhooks config is set
+
+      queueIoReview(req, async outcome => {
+        await emit({
+          url: (req as { push_notification_config?: { url: string } }).push_notification_config!.url,
+          payload: {
+            task: {
+              task_id: taskId,
+              status: outcome.approved ? 'completed' : 'rejected',
+              result: outcome.approved
+                ? { media_buy_id: outcome.media_buy_id, packages: outcome.packages }
+                : undefined,
+            },
+          },
+          operation_id: `create_media_buy.${taskId}`, // stable across retries — framework reuses same idempotency_key
+        });
+      });
+      return { status: 'submitted', task_id: taskId }; // synchronous response is the task envelope
+    },
+    updateMediaBuy: async (id, patch) => ({ media_buy_id: id, status: 'active' }),
+    getMediaBuys: async () => ({ media_buys: [] }),
+    getMediaBuyDelivery: async () => ({ deliveries: [] }),
+    syncCreatives: async () => [],
+    listCreativeFormats: async () => ({ formats: [] }),
+  };
+}
+
 serve(() =>
-  createAdcpServer({
+  createAdcpServerFromPlatform(new WebhookSeller(), {
     name: 'My Seller',
     version: '1.0.0',
     webhooks: {
       signerKey: { keyid: signerJwk.kid, alg: 'ed25519', privateKey: signerJwk },
       // Optional: retries, idempotencyKeyStore (swap memory → pg for multi-replica)
-    },
-    mediaBuy: {
-      createMediaBuy: async (params, ctx) => {
-        // sales-guaranteed: IO signing completes async. Emit the final result on completion.
-        const taskId = `task_${randomUUID()}`;
-
-        // Capture ctx.emitWebhook into a local BEFORE scheduling — the handler returns
-        // immediately, but the closure outlives the request; ctx may be recycled.
-        const emit = ctx.emitWebhook!; // non-null: guaranteed populated when webhooks config is set
-
-        queueIoReview(params, async outcome => {
-          await emit({
-            url: (params as { push_notification_config?: { url: string } }).push_notification_config!.url,
-            payload: {
-              task: {
-                task_id: taskId,
-                status: outcome.approved ? 'completed' : 'rejected',
-                result: outcome.approved
-                  ? { media_buy_id: outcome.media_buy_id, packages: outcome.packages }
-                  : undefined,
-              },
-            },
-            operation_id: `create_media_buy.${taskId}`, // stable across retries — framework reuses same idempotency_key
-          });
-        });
-        return { status: 'submitted', task_id: taskId }; // synchronous response is the task envelope
-      },
     },
   })
 );
@@ -710,13 +742,13 @@ productRepo.upsert(merged.product_id, merged);
 **2. `bridgeFromTestControllerStore`** — wires your seeded `Map` into `get_products` responses automatically. Sandbox requests see seeded + handler products merged (with seeded winning collisions); production traffic (no sandbox marker, or resolved non-sandbox account) skips the bridge entirely.
 
 ```ts
-import { createAdcpServer } from '@adcp/sdk';
-import { bridgeFromTestControllerStore } from '@adcp/sdk/server';
+import { createAdcpServerFromPlatform, bridgeFromTestControllerStore, DEFAULT_REPORTING_CAPABILITIES } from '@adcp/sdk/server';
 
 const seedStore = new Map<string, unknown>();
 
-const server = createAdcpServer({
-  mediaBuy: { getProducts: handleGetProducts },
+const server = createAdcpServerFromPlatform(myPlatform, {
+  name: 'My Seller',
+  version: '1.0.0',
   testController: bridgeFromTestControllerStore(seedStore, {
     delivery_type: 'guaranteed',
     channels: ['display'],
@@ -854,41 +886,49 @@ Use `createAdcpServerFromPlatform` — it auto-wires schemas, response builders,
 ```typescript
 import { randomUUID } from 'node:crypto';
 import {
-  createAdcpServer,
+  createAdcpServerFromPlatform,
   serve,
   adcpError,
   InMemoryStateStore,
   checkGovernance,
   governanceDeniedError,
-} from '@adcp/sdk';
-import { createIdempotencyStore, memoryBackend } from '@adcp/sdk/server';
+  createIdempotencyStore,
+  memoryBackend,
+  type DecisioningPlatform,
+  type SalesPlatform,
+  type AccountStore,
+} from '@adcp/sdk/server';
 import type { ServeContext } from '@adcp/sdk';
+
+// Publisher-typed metadata blob round-tripped via Account.ctx_metadata.
+// Whatever shape your adapter wants — the SDK doesn't inspect it.
+interface MySellerMeta {
+  governanceUrl?: string;
+  brand?: string;
+  operator?: string;
+  [key: string]: unknown;
+}
 
 const stateStore = new InMemoryStateStore(); // shared across requests
 
-// Idempotency — required for any v3-compliant seller that accepts mutating
-// requests. `createIdempotencyStore` throws if `ttlSeconds` is outside the
-// spec bounds (3600–604800).
+// Idempotency — required for any AdCP-3-compliant seller that accepts
+// mutating requests. `createIdempotencyStore` throws if `ttlSeconds` is
+// outside the spec bounds (3600–604800).
 const idempotency = createIdempotencyStore({
   backend: memoryBackend(), // pgBackend(pool) for production
   ttlSeconds: 86400, // 24 hours
 });
 
-function createAgent({ taskStore }: ServeContext) {
-  return createAdcpServer({
-    name: 'My Seller Agent',
-    version: '1.0.0',
-    taskStore,
-    stateStore,
-    idempotency,
+class MySeller implements DecisioningPlatform<{}, MySellerMeta> {
+  capabilities = {
+    specialisms: ['sales-non-guaranteed'] as const,
+    pricingModels: ['cpm'] as const,
+    channels: ['display'] as const,
+    config: {},
+  };
 
-    // Principal scoping for idempotency. MUST never return undefined — or
-    // every mutating request rejects as SERVICE_UNAVAILABLE. A constant is
-    // fine for a demo; for multi-tenant production use ctx.account typed
-    // via the framework constructor's `<MyAccount>` generic — typed once at the call site.
-    resolveSessionKey: () => 'default-principal',
-
-    // resolveAccount runs BEFORE idempotency / handler dispatch. If it
+  accounts: AccountStore<MySellerMeta> = {
+    // accounts.resolve runs BEFORE idempotency / handler dispatch. If it
     // returns null for a valid-shape reference, every mutating request
     // short-circuits as ACCOUNT_NOT_FOUND — which masks idempotency
     // conformance (missing-key / replay tests fail with the wrong code).
@@ -897,118 +937,157 @@ function createAgent({ taskStore }: ServeContext) {
     //   { brand: { domain }, operator } — the canonical spec shape.
     //     Conformance storyboards use this by default (e.g. brand.domain
     //     "acmeoutdoor.example", operator "pinnacle-agency.example").
-    resolveAccount: async ref => {
-      if ('account_id' in ref) return stateStore.get('accounts', ref.account_id);
+    resolve: async (ref, ctx) => {
+      if ('account_id' in ref) {
+        const acc = await stateStore.get('accounts', ref.account_id);
+        return acc ?? null;
+      }
       if ('brand' in ref && ref.brand?.domain && ref.operator) {
-        // In dev/compliance mode, auto-materialize an account for any
-        // valid brand+operator so conformance tests reach the handler.
-        // In production, replace with a real lookup against your tenant
-        // registry — returning null here for unknown tenants is correct
-        // and will (correctly) surface ACCOUNT_NOT_FOUND to the buyer.
-        return { brand: ref.brand.domain, operator: ref.operator };
+        // Dev/compliance mode: auto-materialize for any valid brand+operator
+        // so conformance tests reach the handler. Production replaces this
+        // with a real lookup against your tenant registry; returning null
+        // for unknown tenants surfaces ACCOUNT_NOT_FOUND correctly.
+        return {
+          id: `${ref.operator}:${ref.brand.domain}`,
+          operator: ref.operator,
+          ctx_metadata: { brand: ref.brand.domain, operator: ref.operator },
+        };
       }
       return null;
     },
+    upsert: async (params, ctx) => {
+      /* sync_accounts impl */
+      return { ok: true, items: [] };
+    },
+    list: async (params, ctx) => ({ items: [], nextCursor: null }),
+  };
 
-    accounts: {
-      syncAccounts: async (params, ctx) => {
-        /* ... */
-      },
+  sales: SalesPlatform<MySellerMeta> = {
+    getProducts: async (req, ctx) => {
+      return { products: PRODUCTS, sandbox: true };
+      // productsResponse() auto-applied by framework
     },
-    mediaBuy: {
-      getProducts: async (params, ctx) => {
-        return { products: PRODUCTS, sandbox: true };
-        // productsResponse() auto-applied by framework
-      },
-      createMediaBuy: async (params, ctx) => {
-        // Governance check for financial commitment
-        if (ctx.account?.governanceUrl) {
-          const gov = await checkGovernance({
-            agentUrl: ctx.account.governanceUrl,
-            planId: params.plan_id ?? 'default',
-            caller: 'https://my-agent.com/mcp',
-            tool: 'create_media_buy',
-            payload: params,
-          });
-          if (!gov.approved) return governanceDeniedError(gov);
-        }
-        // Use randomUUID (not Date.now) so ids are unguessable — a guessable
-        // media_buy_id lets another buyer probe or cancel. Same applies to
-        // any seller-issued id (package_id, creative_id, etc.).
-        // `currency` + `total_budget` are REQUIRED on get_media_buys response rows.
-        // The request carries them under `total_budget: { amount, currency }` (object).
-        // Flatten to top-level fields at create time — storing only `packages[].budget`
-        // and reconstructing later fails schema validation in get_media_buys/update_media_buy.
-        const currency = params.total_budget?.currency ?? 'USD';
-        const totalBudget =
-          params.total_budget?.amount ?? (params.packages ?? []).reduce((a, p) => a + (p.budget ?? 0), 0);
-        const buy = {
-          media_buy_id: `mb_${randomUUID()}`,
-          status: 'pending_creatives' as const,
-          currency,
-          total_budget: totalBudget,
-          packages:
-            params.packages?.map(pkg => ({
-              package_id: `pkg_${randomUUID()}`,
-              product_id: pkg.product_id,
-              pricing_option_id: pkg.pricing_option_id,
-              budget: pkg.budget,
-            })) ?? [],
-        };
-        await ctx.store.put('media_buys', buy.media_buy_id, buy);
-        return buy; // mediaBuyResponse() auto-applied (sets revision, confirmed_at, valid_actions)
-      },
-      updateMediaBuy: async (params, ctx) => {
-        const existing = await ctx.store.get('media_buys', params.media_buy_id);
-        if (!existing) {
-          return adcpError('MEDIA_BUY_NOT_FOUND', {
-            message: `No media buy with id ${params.media_buy_id}`,
-            field: 'media_buy_id',
-          });
-        }
-        // Only merge the fields you want to persist — do NOT spread `params`
-        // wholesale. `params` carries envelope fields (idempotency_key,
-        // context) that have no business in your domain state. Spreading
-        // them pollutes `get_media_buys` responses and breaks dedup.
-        const updated = { ...existing, status: params.active === false ? 'paused' : 'active' };
-        await ctx.store.put('media_buys', params.media_buy_id, updated);
-        return {
-          media_buy_id: params.media_buy_id,
-          status: updated.status as 'paused' | 'active',
-          // `affected_packages` is `Package[]` (per `/schemas/latest/core/package.json`)
-          // — objects with at minimum `package_id`. Don't return bare strings;
-          // the update-media-buy-response oneOf discriminates against them and
-          // the error looks like `/affected_packages/0: must be object`.
-          affected_packages: (existing.packages ?? []).map((p: { package_id: string }) => ({
-            package_id: p.package_id,
-          })),
-        };
-      },
-      getMediaBuys: async (params, ctx) => {
-        const result = await ctx.store.list('media_buys');
-        return { media_buys: result.items };
-      },
-      getMediaBuyDelivery: async (params, ctx) => {
-        /* ... */
-      },
-      listCreativeFormats: async (params, ctx) => {
-        /* ... */
-      },
-      syncCreatives: async (params, ctx) => {
-        return {
-          // Response shape is `creatives: [{ creative_id, action }]` per the
-          // sync_creatives response schema — NOT `synced_creatives`.
-          creatives:
-            params.creatives?.map(c => ({
-              creative_id: c.creative_id ?? `cr_${randomUUID()}`,
-              action: 'created' as const,
-            })) ?? [],
-        };
-      },
+
+    createMediaBuy: async (req, ctx) => {
+      // Governance check for financial commitment. The publisher's
+      // governance URL rides on Account.ctx_metadata so any per-tenant
+      // override is read at request time.
+      const govUrl = ctx.account?.ctx_metadata?.governanceUrl;
+      if (typeof govUrl === 'string') {
+        const gov = await checkGovernance({
+          agentUrl: govUrl,
+          planId: (req as { plan_id?: string }).plan_id ?? 'default',
+          caller: 'https://my-agent.com/mcp',
+          tool: 'create_media_buy',
+          payload: req,
+        });
+        if (!gov.approved) return governanceDeniedError(gov);
+      }
+
+      // Use randomUUID (not Date.now) so ids are unguessable — a guessable
+      // media_buy_id lets another buyer probe or cancel. Same applies to
+      // any seller-issued id (package_id, creative_id, etc.).
+      // `currency` + `total_budget` are REQUIRED on get_media_buys response
+      // rows. The request carries them under `total_budget: { amount, currency }`.
+      // Flatten to top-level fields at create time — storing only
+      // `packages[].budget` and reconstructing later fails schema validation
+      // in get_media_buys/update_media_buy.
+      const totalBudget = req.total_budget;
+      const currency = typeof totalBudget === 'object' && totalBudget ? (totalBudget.currency ?? 'USD') : 'USD';
+      const amount =
+        typeof totalBudget === 'object' && totalBudget
+          ? (totalBudget.amount ?? 0)
+          : typeof totalBudget === 'number'
+            ? totalBudget
+            : 0;
+
+      const buy = {
+        media_buy_id: `mb_${randomUUID()}`,
+        status: 'pending_creatives' as const,
+        currency,
+        total_budget: amount,
+        packages:
+          req.packages?.map(pkg => ({
+            package_id: `pkg_${randomUUID()}`,
+            product_id: pkg.product_id,
+            pricing_option_id: pkg.pricing_option_id,
+            budget: pkg.budget,
+          })) ?? [],
+      };
+      await ctx.store.put('media_buys', buy.media_buy_id, buy);
+      return buy; // mediaBuyResponse() auto-applied (sets revision, confirmed_at, valid_actions)
     },
-    capabilities: {
-      features: { inlineCreativeManagement: false },
+
+    updateMediaBuy: async (mediaBuyId, patch, ctx) => {
+      const existing = await ctx.store.get('media_buys', mediaBuyId);
+      if (!existing) {
+        return adcpError('MEDIA_BUY_NOT_FOUND', {
+          message: `No media buy with id ${mediaBuyId}`,
+          field: 'media_buy_id',
+        });
+      }
+      // Only merge the fields you want to persist — do NOT spread `patch`
+      // wholesale. The patch carries envelope fields (idempotency_key,
+      // context) that have no business in your domain state. Spreading
+      // them pollutes `get_media_buys` responses and breaks dedup.
+      const updated = { ...existing, status: patch.paused === true ? 'paused' : 'active' };
+      await ctx.store.put('media_buys', mediaBuyId, updated);
+      return {
+        media_buy_id: mediaBuyId,
+        status: updated.status as 'paused' | 'active',
+        // `affected_packages` is `Package[]` (per `/schemas/latest/core/package.json`)
+        // — objects with at minimum `package_id`. Don't return bare strings;
+        // the update-media-buy-response oneOf discriminates against them and
+        // the error looks like `/affected_packages/0: must be object`.
+        affected_packages: (existing.packages ?? []).map((p: { package_id: string }) => ({
+          package_id: p.package_id,
+        })),
+      };
     },
+
+    getMediaBuys: async (params, ctx) => {
+      const result = await ctx.store.list('media_buys');
+      return { media_buys: result.items };
+    },
+
+    getMediaBuyDelivery: async (filter, ctx) => {
+      /* ... */
+      return {
+        currency: 'USD',
+        reporting_period: {
+          start: filter.start_date ?? '2026-01-01',
+          end: filter.end_date ?? '2026-01-31',
+        },
+        media_buy_deliveries: [],
+      };
+    },
+
+    listCreativeFormats: async (params, ctx) => ({ formats: [] }),
+
+    // Response is `creatives: [{ creative_id, action }]` per the spec response
+    // schema — NOT `synced_creatives`. v6 takes the creatives array directly;
+    // the framework unpacks the request envelope.
+    syncCreatives: async (creatives, ctx) =>
+      creatives.map(c => ({
+        creative_id: (c as { creative_id?: string }).creative_id ?? `cr_${randomUUID()}`,
+        action: 'created' as const,
+      })),
+  };
+}
+
+const platform = new MySeller();
+
+function createAgent({ taskStore }: ServeContext) {
+  return createAdcpServerFromPlatform(platform, {
+    name: 'My Seller Agent',
+    version: '1.0.0',
+    taskStore,
+    stateStore,
+    idempotency,
+    // Principal scoping for idempotency. MUST never return undefined — or
+    // every mutating request rejects as SERVICE_UNAVAILABLE. A constant is
+    // fine for a demo; for multi-tenant production use `ctx.account.id`.
+    resolveSessionKey: () => 'default-principal',
   });
 }
 
@@ -1046,66 +1125,99 @@ The buyer signals this by setting `plan.human_review_required: true` on the gove
 
 ```typescript
 import {
-  createAdcpServer,
+  createAdcpServerFromPlatform,
   serve,
   adcpError,
   buildHumanOverride,
   checkGovernance,
   governanceDeniedError,
-} from '@adcp/sdk';
-import { taskToolResponse, type AdcpStateStore } from '@adcp/sdk/server';
+  taskToolResponse,
+  type DecisioningPlatform,
+  type SalesPlatform,
+  type AccountStore,
+  type AdcpStateStore,
+} from '@adcp/sdk/server';
 import { randomUUID } from 'node:crypto';
 
+interface RegulatedMeta {
+  governanceUrl?: string;
+  [key: string]: unknown;
+}
+
+class RegulatedPublisher implements DecisioningPlatform<{}, RegulatedMeta> {
+  capabilities = {
+    specialisms: ['sales-guaranteed'] as const,
+    pricingModels: ['cpm'] as const,
+    channels: ['display'] as const,
+    config: {},
+  };
+
+  accounts: AccountStore<RegulatedMeta> = {
+    resolve: async ref => db.findAccount(ref),
+    upsert: async () => ({ ok: true, items: [] }),
+    list: async () => ({ items: [], nextCursor: null }),
+  };
+
+  sales: SalesPlatform<RegulatedMeta> = {
+    getProducts: async () => ({ products: [] }),
+
+    createMediaBuy: async (req, ctx) => {
+      if (!ctx.account) {
+        return adcpError('ACCOUNT_NOT_FOUND', { field: 'account' });
+      }
+      const plan = await ctx.store.get('governance_plans', (req as { plan_id?: string }).plan_id ?? '');
+      if (!plan) return adcpError('PLAN_NOT_FOUND', { field: 'plan_id' });
+
+      // Human-review gate — GDPR Art 22 / EU AI Act Annex III.
+      if (plan.human_review_required === true) {
+        const taskId = `task_${randomUUID()}`;
+        await ctx.store.put('pending_reviews', taskId, {
+          plan_id: (req as { plan_id?: string }).plan_id,
+          params: req,
+          enqueued_at: new Date().toISOString(),
+          account_id: ctx.account.id,
+          // Buyer's webhook target for async completion, if they supplied one.
+          webhook_url: (req as { push_notification_config?: { url: string } }).push_notification_config?.url,
+        });
+        // Route this task_id to your human-review queue (Slack approval,
+        // ops ticket, internal UI — whatever your reviewers use).
+        await humanReviewQueue.enqueue(taskId);
+        // Submitted envelope per CreateMediaBuySubmitted. Do NOT return a
+        // populated MediaBuy here — media_buy_id and packages land on the
+        // completion artifact once a human approves. taskToolResponse bypasses
+        // the default mediaBuyResponse wrap, which would stamp revision /
+        // confirmed_at / valid_actions — fields that don't belong on a task
+        // envelope.
+        return taskToolResponse({ status: 'submitted', task_id: taskId });
+      }
+
+      // Non-regulated path — normal governance check, commit synchronously.
+      const govUrl = ctx.account.ctx_metadata?.governanceUrl;
+      if (typeof govUrl === 'string') {
+        const gov = await checkGovernance({
+          agentUrl: govUrl,
+          planId: (req as { plan_id?: string }).plan_id ?? 'default',
+          caller: 'https://my-publisher.com/mcp',
+          tool: 'create_media_buy',
+          payload: req,
+        });
+        if (!gov.approved) return governanceDeniedError(gov);
+      }
+      return executeBuy(req, ctx.store);
+    },
+
+    updateMediaBuy: async (id, patch) => ({ media_buy_id: id, status: 'active' }),
+    getMediaBuys: async () => ({ media_buys: [] }),
+    getMediaBuyDelivery: async () => ({ deliveries: [] }),
+    syncCreatives: async () => [],
+    listCreativeFormats: async () => ({ formats: [] }),
+  };
+}
+
 serve(() =>
-  createAdcpServer({
+  createAdcpServerFromPlatform(new RegulatedPublisher(), {
     name: 'Regulated Publisher',
     version: '1.0.0',
-    resolveAccount: async ref => db.findAccount(ref),
-    mediaBuy: {
-      createMediaBuy: async (params, ctx) => {
-        if (!ctx.account) {
-          return adcpError('ACCOUNT_NOT_FOUND', { field: 'account' });
-        }
-        const plan = await ctx.store.get('governance_plans', params.plan_id ?? '');
-        if (!plan) return adcpError('PLAN_NOT_FOUND', { field: 'plan_id' });
-
-        // Human-review gate — GDPR Art 22 / EU AI Act Annex III.
-        if (plan.human_review_required === true) {
-          const taskId = `task_${randomUUID()}`;
-          await ctx.store.put('pending_reviews', taskId, {
-            plan_id: params.plan_id,
-            params,
-            enqueued_at: new Date().toISOString(),
-            account_id: ctx.account.id,
-            // Buyer's webhook target for async completion, if they supplied one.
-            webhook_url: params.push_notification_config?.url,
-          });
-          // Route this task_id to your human-review queue (Slack approval,
-          // ops ticket, internal UI — whatever your reviewers use).
-          await humanReviewQueue.enqueue(taskId);
-          // Submitted envelope per CreateMediaBuySubmitted. Do NOT return a
-          // populated MediaBuy here — media_buy_id and packages land on the
-          // completion artifact once a human approves. taskToolResponse bypasses
-          // the default mediaBuyResponse wrap, which would stamp revision /
-          // confirmed_at / valid_actions — fields that don't belong on a task
-          // envelope.
-          return taskToolResponse({ status: 'submitted', task_id: taskId });
-        }
-
-        // Non-regulated path — normal governance check, commit synchronously.
-        if (ctx.account.governanceUrl) {
-          const gov = await checkGovernance({
-            agentUrl: ctx.account.governanceUrl,
-            planId: params.plan_id ?? 'default',
-            caller: 'https://my-publisher.com/mcp',
-            tool: 'create_media_buy',
-            payload: params,
-          });
-          if (!gov.approved) return governanceDeniedError(gov);
-        }
-        return executeBuy(params, ctx.store);
-      },
-    },
   })
 );
 

@@ -2016,7 +2016,20 @@ async function hydratePackagesWithProducts(
     if (entry.value !== null && entry.value !== undefined) {
       hydrated['ctx_metadata'] = entry.value;
     }
-    (pkg as Record<string, unknown>)['product'] = hydrated;
+    Object.defineProperty(hydrated, '__adcp_hydrated__', {
+      value: true,
+      enumerable: false,
+      writable: false,
+      configurable: false,
+    });
+    // Non-enumerable: see hydrateSingleResource for rationale (no leak via
+    // JSON.stringify / spread / Object.entries; direct access works).
+    Object.defineProperty(pkg, 'product', {
+      value: hydrated,
+      enumerable: false,
+      writable: true,
+      configurable: true,
+    });
   }
 }
 
@@ -2027,11 +2040,59 @@ async function hydratePackagesWithProducts(
  * primary resource lives directly on the request body (`update_media_buy`,
  * `provide_performance_feedback`, `activate_signal`, `acquire_rights`).
  * Walks the store for `(kind, id)`, attaches `target[attachField] =
- * { ...resource, ctx_metadata }` when the entry has a wire resource. Misses
- * are silent — publisher falls back to its own DB.
+ * { ...resource, ctx_metadata }` when the entry has a wire resource.
  *
- * Failures are logged + swallowed. Hydration must NEVER break a successful
- * dispatch.
+ * ## Error contract on missing references
+ *
+ * **Misses are silent. The handler runs anyway with `target[attachField]`
+ * undefined.** This is deliberate — the framework cache is a *hint*, not
+ * the source of truth. A miss can mean any of:
+ *
+ *   1. The buyer never called the discovery verb in this session (cold
+ *      start, fresh tenant). Hydration is purely additive context; the
+ *      publisher's own DB is authoritative for whether the id exists.
+ *   2. The cache evicted (TTL, LRU). Same: publisher's DB stays the
+ *      source of truth.
+ *   3. The buyer truly referenced an unknown id. The publisher SHOULD
+ *      reject this — see the handler-side guard pattern below.
+ *
+ * Adopters who want strict existence checks (option 1: framework throws
+ * `PRODUCT_NOT_FOUND` / `MEDIA_BUY_NOT_FOUND` and the handler never runs)
+ * implement that check inside the handler:
+ *
+ * ```ts
+ * updateMediaBuy: async (id, patch, ctx) => {
+ *   // Hydration miss + DB miss = unknown to this seller.
+ *   if (!patch.media_buy && !(await db.findMediaBuy(id))) {
+ *     throw new MediaBuyNotFoundError({ message: `media_buy ${id} not found` });
+ *   }
+ *   // ...
+ * }
+ * ```
+ *
+ * The framework cannot distinguish (1)/(2) from (3) without consulting the
+ * publisher's DB, which is exactly what the handler does. Erroring at the
+ * framework layer would force every adopter to manage cache warmth or
+ * pre-load every media_buy into the cache before serving traffic — wrong
+ * default for a hint-based cache.
+ *
+ * ## Field semantics on the hydrated value
+ *
+ * The attached field is **non-enumerable** so accidental serialization
+ * (`JSON.stringify(req)`, spread `{...req}`, `Object.entries(req)`)
+ * doesn't leak the publisher's `ctx_metadata` blob into request-side audit
+ * sinks. Direct property access (`req.media_buy.ctx_metadata`) still
+ * works; the field is invisible only to enumeration-based serializers.
+ *
+ * Hydrated fields carry a `__adcp_hydrated__: true` non-enumerable marker
+ * so handler authors and middleware can disambiguate "publisher passed it"
+ * from "framework attached it" — the field is **advisory context only**;
+ * the wire contract is defined by the spec request fields, not by what
+ * the SDK happens to attach.
+ *
+ * Store-fetch failures (Postgres unavailable, etc.) are logged + swallowed.
+ * Hydration must NEVER break a successful dispatch — same posture as a
+ * cache miss.
  */
 async function hydrateSingleResource(
   store: CtxMetadataStore | undefined,
@@ -2056,7 +2117,22 @@ async function hydrateSingleResource(
   if (entry.value !== null && entry.value !== undefined) {
     hydrated['ctx_metadata'] = entry.value;
   }
-  (target as Record<string, unknown>)[attachField] = hydrated;
+  Object.defineProperty(hydrated, '__adcp_hydrated__', {
+    value: true,
+    enumerable: false,
+    writable: false,
+    configurable: false,
+  });
+  // Attach as non-enumerable so JSON.stringify(req), spread {...req}, and
+  // Object.entries(req) do NOT carry the publisher's ctx_metadata blob into
+  // log lines, audit sinks, or replay payloads. Direct access (req.foo)
+  // still works.
+  Object.defineProperty(target, attachField, {
+    value: hydrated,
+    enumerable: false,
+    writable: true,
+    configurable: true,
+  });
 }
 
 /**

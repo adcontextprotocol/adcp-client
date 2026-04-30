@@ -949,7 +949,7 @@ describe('TenantRegistry — multi-URL (agentUrls) cutover support', () => {
     assert.strictEqual(fromNew.server, fromOld.server, 'same server instance for both URLs');
   });
 
-  it('JWKS validation uses agentUrls[0] (canonical) — alias hosts are not separately validated', async () => {
+  it('JWKS validation hits every URL in agentUrls — aliases are validated independently', async () => {
     const seenHosts = [];
     const validator = fakeValidator(async ({ agentUrl }) => {
       seenHosts.push(agentUrl);
@@ -968,7 +968,104 @@ describe('TenantRegistry — multi-URL (agentUrls) cutover support', () => {
     });
     await registry.recheck('cutover');
 
-    assert.deepStrictEqual(seenHosts, ['https://canonical.example.com'], 'only canonical URL drives JWKS');
+    assert.deepStrictEqual(
+      seenHosts,
+      ['https://canonical.example.com', 'https://alias-a.example.com', 'https://alias-b.example.com'],
+      'every alias is independently validated — round-1 expert security finding'
+    );
+  });
+
+  it('aliases with stale brand.json mark the whole tenant disabled', async () => {
+    const validator = fakeValidator(async ({ agentUrl }) => {
+      if (agentUrl === 'https://stale-alias.example.com') {
+        return { ok: false, recovery: 'permanent', reason: 'signingKey not in published JWKS' };
+      }
+      return { ok: true };
+    });
+    const registry = createTenantRegistry({
+      jwksValidator: validator,
+      defaultServerOptions: DEFAULT_SERVER_OPTIONS,
+      autoValidate: false,
+    });
+
+    registry.register('partial', {
+      agentUrls: ['https://canonical.example.com', 'https://stale-alias.example.com'],
+      signingKey: SAMPLE_KEY,
+      platform: basePlatform(),
+    });
+    const status = await registry.recheck('partial');
+    assert.strictEqual(status.health, 'disabled', 'any permanent alias failure disables the tenant');
+    assert.match(status.reason, /stale-alias/);
+  });
+
+  it('rejects register-time route collision against an existing tenant', () => {
+    const registry = createTenantRegistry({
+      jwksValidator: fakeValidator(async () => ({ ok: true })),
+      defaultServerOptions: DEFAULT_SERVER_OPTIONS,
+      autoValidate: false,
+    });
+
+    registry.register('first', {
+      agentUrls: ['https://shared.example.com/api'],
+      signingKey: SAMPLE_KEY,
+      platform: basePlatform(),
+    });
+
+    // Same host + same path prefix → collision.
+    assert.throws(
+      () =>
+        registry.register('second', {
+          agentUrls: ['https://shared.example.com/api'],
+          signingKey: SAMPLE_KEY,
+          platform: basePlatform(),
+        }),
+      /route .* collides with tenant 'first'/
+    );
+
+    // Different path prefix on same host → allowed.
+    registry.register('third', {
+      agentUrls: ['https://shared.example.com/other'],
+      signingKey: SAMPLE_KEY,
+      platform: basePlatform(),
+    });
+  });
+
+  it('TenantStatus.agentUrls surfaces the full URL list for multi-URL tenants', async () => {
+    const registry = createTenantRegistry({
+      jwksValidator: fakeValidator(async () => ({ ok: true })),
+      defaultServerOptions: DEFAULT_SERVER_OPTIONS,
+      autoValidate: false,
+    });
+
+    registry.register('multi-status', {
+      agentUrls: ['https://primary.example.com', 'https://secondary.example.com'],
+      signingKey: SAMPLE_KEY,
+      platform: basePlatform(),
+    });
+    await registry.recheck('multi-status');
+
+    const status = registry.getStatus('multi-status');
+    assert.deepStrictEqual(status.agentUrls, ['https://primary.example.com', 'https://secondary.example.com']);
+    assert.strictEqual(status.agentUrl, 'https://primary.example.com', 'canonical still surfaced');
+  });
+
+  it('TenantStatus.agentUrls is a one-element array for single-URL tenants (compat)', async () => {
+    const registry = createTenantRegistry({
+      jwksValidator: fakeValidator(async () => ({ ok: true })),
+      defaultServerOptions: DEFAULT_SERVER_OPTIONS,
+      autoValidate: false,
+    });
+
+    registry.register('single', {
+      agentUrl: 'https://only.example.com',
+      signingKey: SAMPLE_KEY,
+      platform: basePlatform(),
+    });
+    await registry.recheck('single');
+
+    const status = registry.getStatus('single');
+    assert.deepStrictEqual(status.agentUrls, ['https://only.example.com']);
+    assert.strictEqual(status.agentUrl, 'https://only.example.com');
   });
 
   it('TenantStatus.agentUrl reports the canonical URL for multi-URL tenants', async () => {
