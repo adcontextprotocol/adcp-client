@@ -51,7 +51,7 @@ How should the agent respond during a session?
 >
 > **Cross-cutting pitfalls matrix runs keep catching:**
 >
-> - **Declare `capabilities: { specialisms: ['sponsored-intelligence'] }` on `createAdcpServer`.** Value is `string[]` of enum ids (not `[{id, version}]`). Agents that don't declare their specialism fail the grader with "No applicable tracks found" even if every tool works — tracks are gated on the specialism claim.
+> - **Declare `capabilities.specialisms: ['sponsored-intelligence'] as const` on the `DecisioningPlatform` you pass to `createAdcpServerFromPlatform`.** Value is `string[]` of enum ids (not `[{id, version}]`). Agents that don't declare their specialism fail the grader with "No applicable tracks found" even if every tool works — tracks are gated on the specialism claim.
 
 **`get_adcp_capabilities`** — register first, empty `{}` schema
 
@@ -113,7 +113,7 @@ taskToolResponse({
 
 ### Context and Ext Passthrough
 
-`createAdcpServer` auto-echoes the request's `context` into every response — **do not set `context` yourself** on responses for tools whose request-side `context` is the protocol echo object (`core/context.json`).
+The framework auto-echoes the request's `context` into every response — **do not set `context` yourself** on responses for tools whose request-side `context` is the protocol echo object (`core/context.json`).
 
 **SI override.** `si_get_offering` and `si_initiate_session` override `context` on the request as a domain-specific **string** (natural-language intent hint, per spec: _'mens size 14 near Cincinnati'_). The response schema still keeps `context` as the protocol echo object. The framework detects this mismatch and skips the auto-echo for non-object values — your response simply won't carry a `context` field unless you populate it. If you want correlation tracking for SI responses, construct the context object in your handler (e.g., from a buyer-supplied `ext.correlation_id` or your own generator) and return it on the response.
 
@@ -123,14 +123,15 @@ taskToolResponse({
 
 | SDK piece                                           | Usage                                                                      |
 | --------------------------------------------------- | -------------------------------------------------------------------------- |
-| `createAdcpServer({ name, sponsoredIntelligence })` | Create server with domain-grouped handlers and auto-generated capabilities |
-| `serve(() => createAdcpServer(...))`                | Start HTTP server on `:3001/mcp`                                           |
+| `createAdcpServerFromPlatform(platform, opts)` | Create server from a typed `DecisioningPlatform` — compile-time specialism enforcement, auto-generated capabilities |
+| `createAdcpServer(config)` *(legacy)*          | v5 handler-bag entry. Mid-migration / escape-hatch only; reach via `@adcp/sdk/server/legacy/v5`                    |
+| `serve(() => createAdcpServerFromPlatform(platform, opts))` | Start HTTP server on `:3001/mcp`                                                            |
 | `ctx.store`                                         | State persistence — `get/put/patch/delete/list` domain objects             |
 | `adcpError(code, { message })`                      | Structured error                                                           |
 
 Handlers return raw data objects. The framework auto-wraps responses and auto-generates `get_adcp_capabilities` from registered handlers.
 
-Import: `import { createAdcpServer, serve, adcpError } from '@adcp/sdk';`
+Import: `import { createAdcpServerFromPlatform, serve, adcpError } from '@adcp/sdk/server';`
 
 ## Setup
 
@@ -159,7 +160,7 @@ Minimal `tsconfig.json`:
 
 ## Implementation
 
-1. Single `.ts` file — use `createAdcpServer` with the `sponsoredIntelligence` domain group
+1. Single `.ts` file — `class MySi implements DecisioningPlatform` with the `sponsoredIntelligence` typed sub-platform
 2. Do not register `get_adcp_capabilities` — the framework generates it from registered handlers
 3. Return raw data objects from handlers — the framework wraps responses automatically
 4. Use `ctx.store` to persist active sessions — track state: active → terminated
@@ -167,68 +168,92 @@ Minimal `tsconfig.json`:
 
 ```typescript
 import { randomUUID } from 'node:crypto';
-import { createAdcpServer, serve, adcpError } from '@adcp/sdk';
-import { createIdempotencyStore, memoryBackend } from '@adcp/sdk/server';
+import {
+  createAdcpServerFromPlatform,
+  serve,
+  adcpError,
+  createIdempotencyStore,
+  memoryBackend,
+  type DecisioningPlatform,
+  type SponsoredIntelligencePlatform,
+  type AccountStore,
+} from '@adcp/sdk/server';
 
 const idempotency = createIdempotencyStore({
   backend: memoryBackend(),
   ttlSeconds: 86400,
 });
 
+class MySi implements DecisioningPlatform {
+  capabilities = {
+    specialisms: ['sponsored-intelligence'] as const,
+    config: {},
+  };
+
+  accounts: AccountStore = {
+    resolve: async ref => ({
+      id: 'account_id' in ref ? ref.account_id : 'si_acc_1',
+      operator: 'me',
+      ctx_metadata: {},
+    }),
+    upsert: async () => ({ ok: true, items: [] }),
+    list: async () => ({ items: [], nextCursor: null }),
+  };
+
+  sponsoredIntelligence: SponsoredIntelligencePlatform = {
+    getOffering: async (req, ctx) => ({
+      available: true,
+      offering_token: `tok_${randomUUID()}`,
+      ttl_seconds: 300,
+    }),
+    initiateSession: async (req, ctx) => {
+      // session_id MUST be high-entropy (≥122 bits) per spec — it's the
+      // scope key for conversational isolation. Never use Date.now() or
+      // predictable counters; a guessable session_id lets one buyer
+      // impersonate another's session.
+      const sessionId = `sess_${randomUUID()}`;
+      await ctx.store.put('session', sessionId, { status: 'active' });
+      return {
+        session_id: sessionId,
+        session_status: 'active',
+      };
+    },
+    sendMessage: async (req, ctx) => {
+      const session = await ctx.store.get('session', req.session_id);
+      // Return the error — the framework echoes returned adcpError
+      // responses verbatim. Thrown errors are caught and converted to
+      // SERVICE_UNAVAILABLE, which hides your custom code from the buyer.
+      if (!session) return adcpError('RESOURCE_NOT_FOUND', { message: 'Session not found' });
+      return {
+        session_id: req.session_id,
+        session_status: 'active' as const,
+        response: {
+          content: 'Sponsored content response',
+          content_type: 'text',
+        },
+      };
+    },
+    terminateSession: async (req, ctx) => {
+      await ctx.store.delete('session', req.session_id);
+      return {
+        session_id: req.session_id,
+        terminated: true,
+      };
+    },
+  };
+}
+
+const platform = new MySi();
+
 serve(() =>
-  createAdcpServer({
+  createAdcpServerFromPlatform(platform, {
     name: 'SI Agent',
     version: '1.0.0',
     idempotency,
-    // Principal scope for idempotency. MUST never return undefined. A
-    // constant is fine for a demo; for multi-tenant production, type the
-    // account via `createAdcpServer<MyAccount>({...})` and use
-    // `(ctx) => ctx.account?.id`. The framework additionally auto-scopes
-    // `si_send_message` by `session_id`, so the same key under two
-    // sessions doesn't cross-replay.
+    // Principal scope for idempotency. MUST never return undefined. The
+    // framework additionally auto-scopes `si_send_message` by `session_id`,
+    // so the same key under two sessions doesn't cross-replay.
     resolveSessionKey: () => 'default-principal',
-
-    sponsoredIntelligence: {
-      getOffering: async (params, ctx) => ({
-        available: true,
-        offering_token: `tok_${randomUUID()}`,
-        ttl_seconds: 300,
-      }),
-      initiateSession: async (params, ctx) => {
-        // session_id MUST be high-entropy (≥122 bits) per spec — it's the
-        // scope key for conversational isolation. Never use Date.now() or
-        // predictable counters; a guessable session_id lets one buyer
-        // impersonate another's session.
-        const sessionId = `sess_${randomUUID()}`;
-        await ctx.store.put('session', sessionId, { status: 'active' });
-        return {
-          session_id: sessionId,
-          session_status: 'active',
-        };
-      },
-      sendMessage: async (params, ctx) => {
-        const session = await ctx.store.get('session', params.session_id);
-        // Return the error — the framework echoes returned adcpError
-        // responses verbatim. Thrown errors are caught and converted to
-        // SERVICE_UNAVAILABLE, which hides your custom code from the buyer.
-        if (!session) return adcpError('RESOURCE_NOT_FOUND', { message: 'Session not found' });
-        return {
-          session_id: params.session_id,
-          session_status: 'active' as const,
-          response: {
-            content: 'Sponsored content response',
-            content_type: 'text',
-          },
-        };
-      },
-      terminateSession: async (params, ctx) => {
-        await ctx.store.delete('session', params.session_id);
-        return {
-          session_id: params.session_id,
-          terminated: true,
-        };
-      },
-    },
   })
 );
 ```

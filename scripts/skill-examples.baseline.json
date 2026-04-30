@@ -136,31 +136,6 @@
   },
   {
     "source": "skills/build-creative-agent/SKILL.md",
-    "errorCode": "TS2322",
-    "messagePrefix": "Type '(params: { [x: string]: unknown; adcp_major_version?: number | undefined; "
-  },
-  {
-    "source": "skills/build-creative-agent/SKILL.md",
-    "errorCode": "TS2322",
-    "messagePrefix": "Type '(params: { [x: string]: unknown; idempotency_key: string; adcp_major_versi"
-  },
-  {
-    "source": "skills/build-creative-agent/SKILL.md",
-    "errorCode": "TS2322",
-    "messagePrefix": "Type '(params: { [x: string]: unknown; request_type: \"single\" | \"batch\" | \"varia"
-  },
-  {
-    "source": "skills/build-creative-agent/SKILL.md",
-    "errorCode": "TS2339",
-    "messagePrefix": "Property 'id' does not exist on type '{}'."
-  },
-  {
-    "source": "skills/build-creative-agent/SKILL.md",
-    "errorCode": "TS2339",
-    "messagePrefix": "Property 'id' does not exist on type '{}'."
-  },
-  {
-    "source": "skills/build-creative-agent/SKILL.md",
     "errorCode": "TS2339",
     "messagePrefix": "Property 'sandbox' does not exist on type '{}'."
   },
@@ -286,6 +261,11 @@
   },
   {
     "source": "skills/build-generative-seller-agent/SKILL.md",
+    "errorCode": "TS18048",
+    "messagePrefix": "'ref' is possibly 'undefined'."
+  },
+  {
+    "source": "skills/build-generative-seller-agent/SKILL.md",
     "errorCode": "TS2304",
     "messagePrefix": "Cannot find name 'createAgent'."
   },
@@ -325,6 +305,41 @@
     "messagePrefix": "Cannot find name 'PRODUCTS'."
   },
   {
+    "source": "skills/build-generative-seller-agent/SKILL.md",
+    "errorCode": "TS2322",
+    "messagePrefix": "Type '() => Promise<{ items: never[]; nextCursor: null; }>' is not assignable to"
+  },
+  {
+    "source": "skills/build-generative-seller-agent/SKILL.md",
+    "errorCode": "TS2322",
+    "messagePrefix": "Type '() => Promise<{ ok: boolean; items: never[]; }>' is not assignable to type"
+  },
+  {
+    "source": "skills/build-generative-seller-agent/SKILL.md",
+    "errorCode": "TS2322",
+    "messagePrefix": "Type '(req: BuildCreativeRequest, ctx: Ctx<Record<string, unknown>>) => Promise<"
+  },
+  {
+    "source": "skills/build-generative-seller-agent/SKILL.md",
+    "errorCode": "TS2322",
+    "messagePrefix": "Type '(req: PreviewCreativeRequest, ctx: Ctx<Record<string, unknown>>) => Promis"
+  },
+  {
+    "source": "skills/build-generative-seller-agent/SKILL.md",
+    "errorCode": "TS2322",
+    "messagePrefix": "Type 'Promise<{ deliveries: never[]; }>' is not assignable to type 'Promise<GetM"
+  },
+  {
+    "source": "skills/build-generative-seller-agent/SKILL.md",
+    "errorCode": "TS2322",
+    "messagePrefix": "Type 'Promise<{ id: string; operator: string; ctx_metadata: {}; }>' is not assig"
+  },
+  {
+    "source": "skills/build-generative-seller-agent/SKILL.md",
+    "errorCode": "TS2339",
+    "messagePrefix": "Property 'store' does not exist on type 'Ctx<Record<string, unknown>>'."
+  },
+  {
     "source": "skills/build-governance-agent/SKILL.md",
     "errorCode": "TS18004",
     "messagePrefix": "No value exists in scope for the shorthand property 'issuer'. Either declare one"
@@ -336,8 +351,13 @@
   },
   {
     "source": "skills/build-governance-agent/SKILL.md",
+    "errorCode": "TS18048",
+    "messagePrefix": "'ref' is possibly 'undefined'."
+  },
+  {
+    "source": "skills/build-governance-agent/SKILL.md",
     "errorCode": "TS2304",
-    "messagePrefix": "Cannot find name 'createAdcpServer'."
+    "messagePrefix": "Cannot find name 'createAdcpServerFromPlatform'."
   },
   {
     "source": "skills/build-governance-agent/SKILL.md",
@@ -370,6 +390,71 @@
     "messagePrefix": "Cannot find name 'lookupKey'."
   },
   {
+    "source": "skills/build-governance-agent/SKILL.md",
+    "errorCode": "TS2304",
+    "messagePrefix": "Cannot find name 'platform'."
+  },
+  {
+    "source": "skills/build-governance-agent/SKILL.md",
+    "errorCode": "TS2322",
+    "messagePrefix": "Type '() => Promise<{ items: never[]; nextCursor: null; }>' is not assignable to"
+  },
+  {
+    "source": "skills/build-governance-agent/SKILL.md",
+    "errorCode": "TS2322",
+    "messagePrefix": "Type '() => Promise<{ ok: boolean; items: never[]; }>' is not assignable to type"
+  },
+  {
+    "source": "skills/build-governance-agent/SKILL.md",
+    "errorCode": "TS2322",
+    "messagePrefix": "Type 'Promise<{ id: string; operator: string; ctx_metadata: {}; }>' is not assig"
+  },
+  {
+    "source": "skills/build-governance-agent/SKILL.md",
+    "errorCode": "TS2322",
+    "messagePrefix": "Type 'Promise<{ property_lists: never[]; }>' is not assignable to type 'Promise<"
+  },
+  {
+    "source": "skills/build-governance-agent/SKILL.md",
+    "errorCode": "TS2322",
+    "messagePrefix": "Type 'Promise<{}>' is not assignable to type 'Promise<CreatePropertyListResponse"
+  },
+  {
+    "source": "skills/build-governance-agent/SKILL.md",
+    "errorCode": "TS2322",
+    "messagePrefix": "Type 'Promise<{}>' is not assignable to type 'Promise<DeletePropertyListResponse"
+  },
+  {
+    "source": "skills/build-governance-agent/SKILL.md",
+    "errorCode": "TS2322",
+    "messagePrefix": "Type 'Promise<{}>' is not assignable to type 'Promise<UpdatePropertyListResponse"
+  },
+  {
+    "source": "skills/build-governance-agent/SKILL.md",
+    "errorCode": "TS2339",
+    "messagePrefix": "Property 'store' does not exist on type 'Ctx<Record<string, unknown>>'."
+  },
+  {
+    "source": "skills/build-governance-agent/SKILL.md",
+    "errorCode": "TS2339",
+    "messagePrefix": "Property 'store' does not exist on type 'Ctx<Record<string, unknown>>'."
+  },
+  {
+    "source": "skills/build-governance-agent/SKILL.md",
+    "errorCode": "TS2345",
+    "messagePrefix": "Argument of type 'MyGovernance' is not assignable to parameter of type 'Decision"
+  },
+  {
+    "source": "skills/build-governance-agent/SKILL.md",
+    "errorCode": "TS2416",
+    "messagePrefix": "Property 'capabilities' in type 'MyGovernance' is not assignable to the same pro"
+  },
+  {
+    "source": "skills/build-governance-agent/SKILL.md",
+    "errorCode": "TS2739",
+    "messagePrefix": "Type '{ syncPlans: (req: SyncPlansRequest, ctx: Ctx<Record<string, unknown>>) =>"
+  },
+  {
     "source": "skills/build-retail-media-agent/SKILL.md",
     "errorCode": "TS18004",
     "messagePrefix": "No value exists in scope for the shorthand property 'issuer'. Either declare one"
@@ -382,12 +467,17 @@
   {
     "source": "skills/build-retail-media-agent/SKILL.md",
     "errorCode": "TS18048",
-    "messagePrefix": "'params.catalogs' is possibly 'undefined'."
+    "messagePrefix": "'ref' is possibly 'undefined'."
   },
   {
     "source": "skills/build-retail-media-agent/SKILL.md",
     "errorCode": "TS18048",
-    "messagePrefix": "'params.event_sources' is possibly 'undefined'."
+    "messagePrefix": "'req.catalogs' is possibly 'undefined'."
+  },
+  {
+    "source": "skills/build-retail-media-agent/SKILL.md",
+    "errorCode": "TS18048",
+    "messagePrefix": "'req.event_sources' is possibly 'undefined'."
   },
   {
     "source": "skills/build-retail-media-agent/SKILL.md",
@@ -427,7 +517,47 @@
   {
     "source": "skills/build-retail-media-agent/SKILL.md",
     "errorCode": "TS2322",
-    "messagePrefix": "Type '(params: { [x: string]: unknown; idempotency_key: string; account: { [x: s"
+    "messagePrefix": "Type '() => Promise<{ items: never[]; nextCursor: null; }>' is not assignable to"
+  },
+  {
+    "source": "skills/build-retail-media-agent/SKILL.md",
+    "errorCode": "TS2322",
+    "messagePrefix": "Type '() => Promise<{ ok: boolean; items: never[]; }>' is not assignable to type"
+  },
+  {
+    "source": "skills/build-retail-media-agent/SKILL.md",
+    "errorCode": "TS2322",
+    "messagePrefix": "Type '(req: ProvidePerformanceFeedbackRequest, ctx: Ctx<Record<string, unknown>>"
+  },
+  {
+    "source": "skills/build-retail-media-agent/SKILL.md",
+    "errorCode": "TS2322",
+    "messagePrefix": "Type '(req: SyncCatalogsRequest, ctx: Ctx<Record<string, unknown>>) => Promise<{"
+  },
+  {
+    "source": "skills/build-retail-media-agent/SKILL.md",
+    "errorCode": "TS2322",
+    "messagePrefix": "Type 'Promise<{ deliveries: never[]; }>' is not assignable to type 'Promise<GetM"
+  },
+  {
+    "source": "skills/build-retail-media-agent/SKILL.md",
+    "errorCode": "TS2322",
+    "messagePrefix": "Type 'Promise<{ id: string; operator: string; ctx_metadata: {}; }>' is not assig"
+  },
+  {
+    "source": "skills/build-retail-media-agent/SKILL.md",
+    "errorCode": "TS2339",
+    "messagePrefix": "Property 'store' does not exist on type 'Ctx<Record<string, unknown>>'."
+  },
+  {
+    "source": "skills/build-retail-media-agent/SKILL.md",
+    "errorCode": "TS2345",
+    "messagePrefix": "Argument of type 'MyRetailMedia' is not assignable to parameter of type 'Decisio"
+  },
+  {
+    "source": "skills/build-retail-media-agent/SKILL.md",
+    "errorCode": "TS2416",
+    "messagePrefix": "Property 'capabilities' in type 'MyRetailMedia' is not assignable to the same pr"
   },
   {
     "source": "skills/build-seller-agent/deployment.md",
@@ -871,6 +1001,11 @@
   },
   {
     "source": "skills/build-si-agent/SKILL.md",
+    "errorCode": "TS18048",
+    "messagePrefix": "'ref' is possibly 'undefined'."
+  },
+  {
+    "source": "skills/build-si-agent/SKILL.md",
     "errorCode": "TS2304",
     "messagePrefix": "Cannot find name 'createAgent'."
   },
@@ -901,8 +1036,73 @@
   },
   {
     "source": "skills/build-si-agent/SKILL.md",
+    "errorCode": "TS2305",
+    "messagePrefix": "Module '\"@adcp/sdk/server\"' has no exported member 'SponsoredIntelligencePlatfor"
+  },
+  {
+    "source": "skills/build-si-agent/SKILL.md",
     "errorCode": "TS2322",
-    "messagePrefix": "Type '(params: { [x: string]: unknown; idempotency_key: string; session_id: stri"
+    "messagePrefix": "Type '() => Promise<{ items: never[]; nextCursor: null; }>' is not assignable to"
+  },
+  {
+    "source": "skills/build-si-agent/SKILL.md",
+    "errorCode": "TS2322",
+    "messagePrefix": "Type '() => Promise<{ ok: boolean; items: never[]; }>' is not assignable to type"
+  },
+  {
+    "source": "skills/build-si-agent/SKILL.md",
+    "errorCode": "TS2322",
+    "messagePrefix": "Type 'Promise<{ id: string; operator: string; ctx_metadata: {}; }>' is not assig"
+  },
+  {
+    "source": "skills/build-si-agent/SKILL.md",
+    "errorCode": "TS2345",
+    "messagePrefix": "Argument of type 'MySi' is not assignable to parameter of type 'DecisioningPlatf"
+  },
+  {
+    "source": "skills/build-si-agent/SKILL.md",
+    "errorCode": "TS2416",
+    "messagePrefix": "Property 'capabilities' in type 'MySi' is not assignable to the same property in"
+  },
+  {
+    "source": "skills/build-si-agent/SKILL.md",
+    "errorCode": "TS7006",
+    "messagePrefix": "Parameter 'ctx' implicitly has an 'any' type."
+  },
+  {
+    "source": "skills/build-si-agent/SKILL.md",
+    "errorCode": "TS7006",
+    "messagePrefix": "Parameter 'ctx' implicitly has an 'any' type."
+  },
+  {
+    "source": "skills/build-si-agent/SKILL.md",
+    "errorCode": "TS7006",
+    "messagePrefix": "Parameter 'ctx' implicitly has an 'any' type."
+  },
+  {
+    "source": "skills/build-si-agent/SKILL.md",
+    "errorCode": "TS7006",
+    "messagePrefix": "Parameter 'ctx' implicitly has an 'any' type."
+  },
+  {
+    "source": "skills/build-si-agent/SKILL.md",
+    "errorCode": "TS7006",
+    "messagePrefix": "Parameter 'req' implicitly has an 'any' type."
+  },
+  {
+    "source": "skills/build-si-agent/SKILL.md",
+    "errorCode": "TS7006",
+    "messagePrefix": "Parameter 'req' implicitly has an 'any' type."
+  },
+  {
+    "source": "skills/build-si-agent/SKILL.md",
+    "errorCode": "TS7006",
+    "messagePrefix": "Parameter 'req' implicitly has an 'any' type."
+  },
+  {
+    "source": "skills/build-si-agent/SKILL.md",
+    "errorCode": "TS7006",
+    "messagePrefix": "Parameter 'req' implicitly has an 'any' type."
   },
   {
     "source": "skills/build-signals-agent/SKILL.md",
@@ -943,20 +1143,5 @@
     "source": "skills/build-signals-agent/SKILL.md",
     "errorCode": "TS2304",
     "messagePrefix": "Cannot find name 'lookupKey'."
-  },
-  {
-    "source": "skills/build-signals-agent/SKILL.md",
-    "errorCode": "TS7005",
-    "messagePrefix": "Variable 'signals' implicitly has an 'any[]' type."
-  },
-  {
-    "source": "skills/build-signals-agent/SKILL.md",
-    "errorCode": "TS7005",
-    "messagePrefix": "Variable 'signals' implicitly has an 'any[]' type."
-  },
-  {
-    "source": "skills/build-signals-agent/SKILL.md",
-    "errorCode": "TS7034",
-    "messagePrefix": "Variable 'signals' implicitly has type 'any[]' in some locations where its type "
   }
 ]
