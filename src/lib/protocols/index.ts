@@ -121,6 +121,25 @@ function buildVersionEnvelope(
 }
 
 /**
+ * Merge the wire-level version envelope into a caller-supplied args object.
+ * Caller args win: an explicit `adcp_major_version` / `adcp_version` in
+ * `args` (e.g. a conformance harness probing `VERSION_UNSUPPORTED`) passes
+ * through unchanged. The envelope only fills fields the caller didn't set.
+ *
+ * Single chokepoint for all four wire-injection sites so a future refactor
+ * can't silently flip the spread order on one branch and leave the others
+ * intact. Stale dual-field drift is caught at the server boundary by
+ * `createAdcpServer`'s field-disagreement check (spec PR
+ * `adcontextprotocol/adcp#3493`).
+ */
+export function applyVersionEnvelope(
+  args: Record<string, unknown>,
+  envelope: Record<string, unknown>
+): Record<string, unknown> {
+  return { ...envelope, ...args };
+}
+
+/**
  * Options for {@link ProtocolClient.callTool}. All fields are optional.
  *
  * `webhookUrl` / `webhookSecret` / `webhookToken` are for ASYNC TASK STATUS
@@ -193,18 +212,7 @@ export class ProtocolClient {
         // still apply (they run in SingleAgentClient above this call). We skip
         // URL validation, OAuth refresh, and signing — none apply in-process.
         if (agent.protocol === 'mcp' && agent._inProcessMcpClient) {
-          // Envelope first, caller args second — caller wins. Conformance
-          // harnesses and version-negotiation probes need to send explicit
-          // `adcp_major_version` / `adcp_version` values to exercise the
-          // seller's `VERSION_UNSUPPORTED` path; an SDK-side override
-          // makes that probe impossible. Stale-config drift surfaces at
-          // the server boundary: when 3.1+ buyers carry both fields and
-          // the majors disagree, `createAdcpServer` returns
-          // VERSION_UNSUPPORTED. Single-field stale drift on the wire
-          // is the price of conformance probing — it's still detectable
-          // (seller responds with VERSION_UNSUPPORTED) and matches the
-          // pre-5.24 caller-wins contract.
-          const inProcArgs = { ...versionEnvelope, ...args };
+          const inProcArgs = applyVersionEnvelope(args, versionEnvelope);
           return callMCPToolWithClient(agent._inProcessMcpClient, toolName, inProcArgs, debugLogs);
         }
 
@@ -257,14 +265,8 @@ export class ProtocolClient {
         // shape is per-pin: 3.0 pins get the integer `adcp_major_version`
         // alone; 3.1+ pins get both that and the release-precision string
         // `adcp_version` (`'3.1'` / `'3.1.0-beta.1'`) per spec PR
-        // `adcontextprotocol/adcp#3493`. Envelope spread first so an
-        // explicit caller-supplied `adcp_major_version` / `adcp_version`
-        // wins — conformance harnesses depend on this to probe seller
-        // version negotiation (storyboard `unsupported_major_version`
-        // sends `adcp_major_version: 99` to elicit `VERSION_UNSUPPORTED`).
-        // Stale dual-field drift is still caught at the server boundary
-        // by `createAdcpServer`'s field-disagreement check.
-        const argsWithVersion = { ...versionEnvelope, ...args };
+        // `adcontextprotocol/adcp#3493`.
+        const argsWithVersion = applyVersionEnvelope(args, versionEnvelope);
 
         // Build push_notification_config for ASYNC TASK STATUS notifications
         // (NOT for reporting_webhook - that stays in args)
@@ -453,7 +455,14 @@ export const createMCPClient = (
   const versionEnvelope = buildVersionEnvelope(adcpVersion, serverVersion);
   return {
     callTool: (toolName: string, args: Record<string, unknown>, debugLogs?: DebugLogEntry[]) =>
-      callMCPToolWithTasks(agentUrl, toolName, { ...versionEnvelope, ...args }, authToken, debugLogs, headers),
+      callMCPToolWithTasks(
+        agentUrl,
+        toolName,
+        applyVersionEnvelope(args, versionEnvelope),
+        authToken,
+        debugLogs,
+        headers
+      ),
   };
 };
 
@@ -467,6 +476,14 @@ export const createA2AClient = (
   const versionEnvelope = buildVersionEnvelope(adcpVersion, serverVersion);
   return {
     callTool: (toolName: string, parameters: Record<string, unknown>, debugLogs?: DebugLogEntry[]) =>
-      callA2ATool(agentUrl, toolName, { ...versionEnvelope, ...parameters }, authToken, debugLogs, undefined, headers),
+      callA2ATool(
+        agentUrl,
+        toolName,
+        applyVersionEnvelope(parameters, versionEnvelope),
+        authToken,
+        debugLogs,
+        undefined,
+        headers
+      ),
   };
 };

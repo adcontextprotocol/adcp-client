@@ -834,6 +834,7 @@ export {
   createA2AClient,
   closeMCPConnections,
   bundleSupportsAdcpVersionField,
+  applyVersionEnvelope,
 } from './protocols';
 export type { CallToolOptions } from './protocols';
 

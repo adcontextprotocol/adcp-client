@@ -108,3 +108,58 @@ describe('adcp_major_version on requests', () => {
     assert.ok(ADCP_MAJOR_VERSION <= 99, 'maximum is 99');
   });
 });
+
+describe('applyVersionEnvelope — single chokepoint for all 4 wire-injection sites', () => {
+  test('caller args win over envelope (regression: #1072)', () => {
+    const { applyVersionEnvelope } = require('../../dist/lib/index.js');
+    const merged = applyVersionEnvelope({ brief: 'probe', adcp_major_version: 99 }, { adcp_major_version: 3 });
+    assert.strictEqual(merged.adcp_major_version, 99);
+    assert.strictEqual(merged.brief, 'probe');
+  });
+
+  test('envelope fills fields the caller did not set', () => {
+    const { applyVersionEnvelope } = require('../../dist/lib/index.js');
+    const merged = applyVersionEnvelope({ brief: 'normal' }, { adcp_major_version: 3, adcp_version: '3.1' });
+    assert.strictEqual(merged.adcp_major_version, 3);
+    assert.strictEqual(merged.adcp_version, '3.1');
+    assert.strictEqual(merged.brief, 'normal');
+  });
+
+  test('asymmetric override: caller integer + SDK 3.1 string both reach wire', () => {
+    // Protocol-expert ask: a 3.1-pinned buyer that supplies only the
+    // integer (caller-overrides the integer, SDK still adds the string)
+    // produces a dual-field disagreement on the wire — exactly what the
+    // server-side check in createAdcpServer is designed to catch.
+    const { applyVersionEnvelope } = require('../../dist/lib/index.js');
+    const merged = applyVersionEnvelope(
+      { brief: 'probe', adcp_major_version: 99 },
+      { adcp_major_version: 3, adcp_version: '3.1' }
+    );
+    assert.strictEqual(merged.adcp_major_version, 99, 'caller integer wins');
+    assert.strictEqual(merged.adcp_version, '3.1', 'SDK fills string when caller did not');
+  });
+
+  test('caller adcp_version string also wins', () => {
+    const { applyVersionEnvelope } = require('../../dist/lib/index.js');
+    const merged = applyVersionEnvelope({ adcp_version: '99.0' }, { adcp_major_version: 3, adcp_version: '3.1' });
+    assert.strictEqual(merged.adcp_version, '99.0');
+    assert.strictEqual(merged.adcp_major_version, 3, 'envelope still fills the integer the caller did not set');
+  });
+
+  test('empty envelope (v2 servers) leaves args untouched', () => {
+    const { applyVersionEnvelope } = require('../../dist/lib/index.js');
+    const merged = applyVersionEnvelope({ brief: 'v2-call' }, {});
+    assert.deepStrictEqual(merged, { brief: 'v2-call' });
+  });
+});
+
+describe('ADCP_ENVELOPE_FIELDS — strip-path carve-outs', () => {
+  test('adcp_version is preserved by SingleAgentClient strip path', () => {
+    // Defends the same caller-override path against schema stripping by
+    // strict MCP agents that publish per-tool input schemas. Mirrors the
+    // existing adcp_major_version carve-out.
+    const { ADCP_ENVELOPE_FIELDS } = require('../../dist/lib/types/adcp.js');
+    assert.ok(ADCP_ENVELOPE_FIELDS.has('adcp_version'), 'adcp_version must be in ADCP_ENVELOPE_FIELDS');
+    assert.ok(ADCP_ENVELOPE_FIELDS.has('adcp_major_version'), 'adcp_major_version must remain in ADCP_ENVELOPE_FIELDS');
+  });
+});
