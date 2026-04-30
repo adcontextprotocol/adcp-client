@@ -55,6 +55,11 @@
       "require": "./dist/lib/server/index.js",
       "types": "./dist/lib/server/index.d.ts"
     },
+    "./server/legacy/v5": {
+      "import": "./dist/lib/server/legacy/v5/index.js",
+      "require": "./dist/lib/server/legacy/v5/index.js",
+      "types": "./dist/lib/server/legacy/v5/index.d.ts"
+    },
     "./signing": {
       "import": "./dist/lib/signing/index.js",
       "require": "./dist/lib/signing/index.js",

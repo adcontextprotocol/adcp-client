@@ -327,6 +327,12 @@ export type {
 // function shape that matches your agent. The platform path internally
 // builds an `AdcpServerConfig` and calls `createAdcpServer` — they're
 // not adjacent surfaces, they're parent-child layers of the same SDK.
+//
+// **Pin to v5 long-term?** Import from `@adcp/sdk/server/legacy/v5`
+// instead. The subpath is the stable home for the v5 handler-bag
+// constructor; the top-level re-export here may be removed in a
+// future major. New code should not pin against `legacy/v5` either —
+// reach for `createAdcpServerFromPlatform` first.
 export * from './decisioning';
 
 // ---------------------------------------------------------------------------
