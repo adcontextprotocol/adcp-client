@@ -27,18 +27,22 @@ describe('adaptCreateMediaBuyRequestForV2 — buyer_ref (issue #1115)', () => {
     assert.equal(adapted.buyer_ref, IK, 'top-level buyer_ref must equal idempotency_key');
   });
 
-  test('emits per-package buyer_ref with stable index suffix when package has no idempotency_key', () => {
+  test('emits per-package buyer_ref anchored on product_id + pricing_option_id (order-independent)', () => {
     const adapted = adaptCreateMediaBuyRequestForV2(baseRequest());
-    assert.equal(adapted.packages[0].buyer_ref, `${IK}-0`);
-    assert.equal(adapted.packages[1].buyer_ref, `${IK}-1`);
+    assert.equal(adapted.packages[0].buyer_ref, `${IK}-prod-1-po-1`);
+    assert.equal(adapted.packages[1].buyer_ref, `${IK}-prod-2-po-2`);
   });
 
-  test('per-package buyer_ref uses package idempotency_key when present', () => {
-    const req = baseRequest();
-    req.packages[0].idempotency_key = 'pkg-key-aaa';
-    const adapted = adaptCreateMediaBuyRequestForV2(req);
-    assert.equal(adapted.packages[0].buyer_ref, 'pkg-key-aaa');
-    assert.equal(adapted.packages[1].buyer_ref, `${IK}-1`);
+  test('per-package buyer_ref is stable when package order is reversed on replay', () => {
+    const req1 = baseRequest();
+    const req2 = { ...baseRequest(), packages: [...baseRequest().packages].reverse() };
+    const a = adaptCreateMediaBuyRequestForV2(req1);
+    const b = adaptCreateMediaBuyRequestForV2(req2);
+    // Each package must get the same buyer_ref regardless of position
+    const refsByProduct = (pkgs) => Object.fromEntries(
+      pkgs.map(p => [p.product_id, p.buyer_ref])
+    );
+    assert.deepEqual(refsByProduct(a.packages), refsByProduct(b.packages));
   });
 
   test('does not overwrite an explicit per-package buyer_ref', () => {

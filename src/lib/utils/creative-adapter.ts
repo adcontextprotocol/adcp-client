@@ -127,10 +127,13 @@ export function adaptCreateMediaBuyRequestForV2(request: any): any {
         if (adapted.buyer_ref) {
           return adapted;
         }
-        // v2.5 requires per-package buyer_ref; derive from the package's own
-        // idempotency_key when present (from pre-adapted pkg), falling back to
-        // a stable index suffix. Use spread to avoid mutating adapted's object.
-        return { ...adapted, buyer_ref: pkg.idempotency_key || `${idempotency_key}-${i}` };
+        // v2.5 requires per-package buyer_ref. Anchor on product_id +
+        // pricing_option_id — intrinsic, order-independent package identifiers
+        // that remain stable if the caller reconstructs the same packages in a
+        // different array order on replay. Index i is a last-resort fallback.
+        const pkgKey =
+          [pkg.product_id, pkg.pricing_option_id].filter(Boolean).join('-') || String(i);
+        return { ...adapted, buyer_ref: `${idempotency_key}-${pkgKey}` };
       }),
     }),
   };
