@@ -1,5 +1,37 @@
 # Changelog
 
+## 5.25.1
+
+### Patch Changes
+
+- d18ccd6: fix(protocols): caller-supplied `adcp_major_version` / `adcp_version` no longer overridden by SDK pin (#1072)
+
+  **Behavior change for 5.24/5.25 users.** Restores the pre-5.24 caller-wins contract for the wire version envelope. If you pinned `@adcp/sdk` to 5.24 or 5.25 and were relying on the SDK to override stale `adcp_major_version` / `adcp_version` values in your `args` payload, those values now reach the seller verbatim. The 5.25 server-side field-disagreement check in `createAdcpServer` (per spec PR `adcontextprotocol/adcp#3493`) is the correct enforcement boundary for stale-config drift — a 3.1+ buyer carrying both fields with mismatched majors still gets `VERSION_UNSUPPORTED` from a compliant seller.
+
+  **Why.** The 5.24 SDK-overrides-caller behavior made it impossible for conformance harnesses using `ProtocolClient` as buyer transport to probe seller version negotiation. The bundled `compliance/cache/3.0.1/universal/error-compliance.yaml` `unsupported_major_version` step (which sends `adcp_major_version: 99` to elicit `VERSION_UNSUPPORTED`) could not pass — the 99 was rewritten to the SDK pin before leaving the buyer.
+
+  **Changes:**
+  - All four wire-injection sites (in-process MCP, HTTP MCP, A2A, `createMCPClient`, `createA2AClient`) now route through a new `applyVersionEnvelope(args, envelope)` helper. Single chokepoint, single test surface, no future-refactor drift between branches. Helper is exported.
+  - `adcp_version` added to `ADCP_ENVELOPE_FIELDS` so a caller-supplied 3.1+ release-precision string survives `SingleAgentClient`'s per-tool schema-strip path. Mirrors the existing `adcp_major_version` carve-out — and 3.1 sellers MUST accept `adcp_version` at the envelope layer per spec PR #3493, so strict-schema rejections were a seller bug regardless.
+
+  No schema or wire changes — purely a buyer-side fix.
+
+- 54790cf: feat(server): single-field VERSION_UNSUPPORTED check (#1075)
+
+  Closes spec-conformance gap from PR #1073 review. `createAdcpServer`'s field-disagreement check (PR #1067) only fired when both `adcp_version` and `adcp_major_version` were present and the majors disagreed. A buyer sending only `adcp_major_version: 99` (or only `adcp_version: "99.0"`) bypassed the cross-check; the spec contract that "sellers validate against their supported `major_versions` and return VERSION_UNSUPPORTED if unsupported" was silently violated.
+
+  **Server-side changes:**
+  - New file-private helpers `getAdvertisedSupportedMajors` and `buildSupportedVersionsList`. They union the parsed majors from `capConfig.major_versions` (deprecated integer list) and `capConfig.supported_versions` (release-precision strings, AdCP 3.1+ per spec PR `adcontextprotocol/adcp#3493`), falling back to the server pin's major when both lists are absent.
+  - New single-field rejection runs after the existing dual-field check. Resolves the effective major from whichever envelope field the buyer set, then returns `VERSION_UNSUPPORTED` with `details.supported_versions` populated when the major falls outside the seller's advertised window.
+  - The dual-field check now also populates `details.supported_versions` so buyers can downgrade and retry after either kind of disagreement (previously message-only). **Additive behavior change:** buyers using `extractVersionUnsupportedDetails` (PR #1073) will now find `details.supported_versions` populated on dual-field disagreements where it was previously absent. Buyers that special-case `details.supported_versions === undefined` to distinguish dual-field from single-field failures will see a behavior change; the recommended pattern is to inspect the message text instead.
+  - New `AdcpCapabilitiesConfig.supported_versions?: string[]` so 3.1+ sellers can declare release-precision strings the framework consults during the check and echoes in the error envelope.
+
+  **Conformance-runner change (test isolation fix):**
+
+  `runToolFuzz` now overwrites `adcp_major_version` on each generated sample before dispatch (pinned to `ADCP_MAJOR_VERSION` — no hardcoded string, tracks the bundle automatically). These are transport-layer envelope fields the buyer SDK fills automatically via `applyVersionEnvelope` (PR #1073); leaving fast-check's schema-driven values in place would trigger `VERSION_UNSUPPORTED` rejections on most samples (1-99 integer range vs. seller's `[3]` window), masking handler bugs the fuzzer is meant to catch. Pinning at the runner layer (rather than dropping the field from the arbitrary) keeps `schemaToArbitrary` pure and the existing schema-validity threshold tests stable. Version negotiation is exercised separately by storyboards.
+
+  Combined with #1073, fully unblocks the storyboard skip in `adcontextprotocol/adcp#3626` — the framework's own seller fixture now passes the bundled `error_compliance/unsupported_major_version` step.
+
 ## 5.25.0
 
 ### Minor Changes
