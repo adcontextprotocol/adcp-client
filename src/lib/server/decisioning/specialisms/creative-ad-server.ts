@@ -43,9 +43,9 @@ import type {
 import type { SyncCreativesRow } from './sales';
 
 type Creative = CreativeAsset;
-type Ctx<TMeta> = RequestContext<Account<TMeta>>;
+type Ctx<TCtxMeta> = RequestContext<Account<TCtxMeta>>;
 
-export interface CreativeAdServerPlatform<TMeta = Record<string, unknown>> {
+export interface CreativeAdServerPlatform<TCtxMeta = Record<string, unknown>> {
   /**
    * Build / retrieve creative tags. Two invocation modes per the spec:
    *
@@ -68,11 +68,11 @@ export interface CreativeAdServerPlatform<TMeta = Record<string, unknown>> {
    */
   buildCreative(
     req: BuildCreativeRequest,
-    ctx: Ctx<TMeta>
+    ctx: Ctx<TCtxMeta>
   ): Promise<CreativeManifest | CreativeManifest[] | BuildCreativeSuccess | BuildCreativeMultiSuccess>;
 
   /** Preview-only variant — sandbox URL or inline HTML, expires. Always sync. */
-  previewCreative(req: PreviewCreativeRequest, ctx: Ctx<TMeta>): Promise<PreviewCreativeResponse>;
+  previewCreative(req: PreviewCreativeRequest, ctx: Ctx<TCtxMeta>): Promise<PreviewCreativeResponse>;
 
   // sync_creatives: sync OR task — `SyncCreativesResponse` has a Submitted arm.
 
@@ -83,7 +83,7 @@ export interface CreativeAdServerPlatform<TMeta = Record<string, unknown>> {
    * `'updated'` for replacements, `'unchanged'` when matching. Optional
    * `status: 'pending_review'` for sync-arm rows awaiting manual review.
    */
-  syncCreatives?(creatives: Creative[], ctx: Ctx<TMeta>): Promise<SyncCreativesRow[] | TaskHandoff<SyncCreativesRow[]>>;
+  syncCreatives?(creatives: Creative[], ctx: Ctx<TCtxMeta>): Promise<SyncCreativesRow[] | TaskHandoff<SyncCreativesRow[]>>;
 
   /**
    * Read creatives from the library. Filters + pagination. When
@@ -91,7 +91,7 @@ export interface CreativeAdServerPlatform<TMeta = Record<string, unknown>> {
    * graph. When `req.include_pricing`, include vendor pricing options
    * on each creative.
    */
-  listCreatives(req: ListCreativesRequest, ctx: Ctx<TMeta>): Promise<ListCreativesResponse>;
+  listCreatives(req: ListCreativesRequest, ctx: Ctx<TCtxMeta>): Promise<ListCreativesResponse>;
 
   /**
    * Per-creative delivery actuals (impressions, spend, pacing). Sync —
@@ -99,5 +99,5 @@ export interface CreativeAdServerPlatform<TMeta = Record<string, unknown>> {
    * latest cached actuals and emit `delivery_report` status changes
    * via `publishStatusChange` when fresh reports are available.
    */
-  getCreativeDelivery(filter: GetCreativeDeliveryRequest, ctx: Ctx<TMeta>): Promise<GetCreativeDeliveryResponse>;
+  getCreativeDelivery(filter: GetCreativeDeliveryRequest, ctx: Ctx<TCtxMeta>): Promise<GetCreativeDeliveryResponse>;
 }

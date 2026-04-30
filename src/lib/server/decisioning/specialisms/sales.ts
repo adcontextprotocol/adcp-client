@@ -91,7 +91,7 @@ import type {
 } from '../../../types/tools.generated';
 
 type Creative = CreativeAsset;
-type Ctx<TMeta> = RequestContext<Account<TMeta>>;
+type Ctx<TCtxMeta> = RequestContext<Account<TCtxMeta>>;
 
 /**
  * Wire success-row shape for `sync_creatives`. Returning the array of these
@@ -100,7 +100,7 @@ type Ctx<TMeta> = RequestContext<Account<TMeta>>;
  */
 export type SyncCreativesRow = SyncCreativesSuccess['creatives'][number];
 
-export interface SalesPlatform<TMeta = Record<string, unknown>> {
+export interface SalesPlatform<TCtxMeta = Record<string, unknown>> {
   // ── get_products: sync only — by design, not just by spec ─────────
   // get_products is a CATALOG LOOKUP — fast read against the seller's
   // existing inventory. It is NOT the right wire surface for proposal
@@ -124,7 +124,7 @@ export interface SalesPlatform<TMeta = Record<string, unknown>> {
   // workflows declare it via `capabilities` so buyers can route
   // appropriately before the first call.
   /** Sync catalog lookup: filters in, products out. NOT for proposal generation. */
-  getProducts(req: GetProductsRequest, ctx: Ctx<TMeta>): Promise<GetProductsResponse>;
+  getProducts(req: GetProductsRequest, ctx: Ctx<TCtxMeta>): Promise<GetProductsResponse>;
 
   // ── create_media_buy: unified hybrid shape ──────────────────────────
 
@@ -176,7 +176,7 @@ export interface SalesPlatform<TMeta = Record<string, unknown>> {
    */
   createMediaBuy(
     req: CreateMediaBuyRequest,
-    ctx: Ctx<TMeta>
+    ctx: Ctx<TCtxMeta>
   ): Promise<CreateMediaBuySuccess | TaskHandoff<CreateMediaBuySuccess>>;
 
   // ── update_media_buy: sync only (today) ─────────────────────────────
@@ -189,7 +189,7 @@ export interface SalesPlatform<TMeta = Record<string, unknown>> {
   // `publishStatusChange` on `resource_type: 'media_buy'` rather than
   // HITL on this tool.
   /** Sync update. Returns the patched buy. */
-  updateMediaBuy(buyId: string, patch: UpdateMediaBuyRequest, ctx: Ctx<TMeta>): Promise<UpdateMediaBuySuccess>;
+  updateMediaBuy(buyId: string, patch: UpdateMediaBuyRequest, ctx: Ctx<TCtxMeta>): Promise<UpdateMediaBuySuccess>;
 
   // ── sync_creatives: unified hybrid shape ────────────────────────────
 
@@ -217,11 +217,11 @@ export interface SalesPlatform<TMeta = Record<string, unknown>> {
    * }
    * ```
    */
-  syncCreatives?(creatives: Creative[], ctx: Ctx<TMeta>): Promise<SyncCreativesRow[] | TaskHandoff<SyncCreativesRow[]>>;
+  syncCreatives?(creatives: Creative[], ctx: Ctx<TCtxMeta>): Promise<SyncCreativesRow[] | TaskHandoff<SyncCreativesRow[]>>;
 
   // ── get_media_buy_delivery: sync only ───────────────────────────────
 
-  getMediaBuyDelivery(filter: GetMediaBuyDeliveryRequest, ctx: Ctx<TMeta>): Promise<GetMediaBuyDeliveryResponse>;
+  getMediaBuyDelivery(filter: GetMediaBuyDeliveryRequest, ctx: Ctx<TCtxMeta>): Promise<GetMediaBuyDeliveryResponse>;
 
   // ── get_media_buys: sync only — REQUIRED ──────────────────────────────
   // Read tool — buyers fetch a list of their media buys (often filtered by
@@ -237,7 +237,7 @@ export interface SalesPlatform<TMeta = Record<string, unknown>> {
   // Proposal-mode adopters (write-only via push channels) return an empty
   // `media_buys: []` array — that's a valid response.
   /** List media buys this account owns. Filter + pagination per the wire shape. */
-  getMediaBuys(req: GetMediaBuysRequest, ctx: Ctx<TMeta>): Promise<GetMediaBuysResponse>;
+  getMediaBuys(req: GetMediaBuysRequest, ctx: Ctx<TCtxMeta>): Promise<GetMediaBuysResponse>;
 
   // ── provide_performance_feedback: sync only ─────────────────────────
   // Write tool — buyers report aggregate creative-level performance
@@ -252,7 +252,7 @@ export interface SalesPlatform<TMeta = Record<string, unknown>> {
   /** Accept buyer-side performance signals on a media buy / creative. */
   providePerformanceFeedback?(
     req: ProvidePerformanceFeedbackRequest,
-    ctx: Ctx<TMeta>
+    ctx: Ctx<TCtxMeta>
   ): Promise<ProvidePerformanceFeedbackSuccess>;
 
   // ── list_creative_formats: sync only ────────────────────────────────
@@ -263,7 +263,7 @@ export interface SalesPlatform<TMeta = Record<string, unknown>> {
   // Self-hosted sellers (own creative library) implement this directly.
   //
   // ⚠️  NO-ACCOUNT TOOL. See `providePerformanceFeedback` note above.
-  listCreativeFormats?(req: ListCreativeFormatsRequest, ctx: Ctx<TMeta>): Promise<ListCreativeFormatsResponse>;
+  listCreativeFormats?(req: ListCreativeFormatsRequest, ctx: Ctx<TCtxMeta>): Promise<ListCreativeFormatsResponse>;
 
   // ── list_creatives: sync only ───────────────────────────────────────
   // Read tool — buyers query the seller's creative library. Optional
@@ -271,25 +271,25 @@ export interface SalesPlatform<TMeta = Record<string, unknown>> {
   // `creative_agents` declared in capabilities; ad-server-style sales
   // platforms implement directly. Note: also lives on `CreativeAdServerPlatform.listCreatives`
   // for the standalone-creative-agent shape.
-  listCreatives?(req: ListCreativesRequest, ctx: Ctx<TMeta>): Promise<ListCreativesResponse>;
+  listCreatives?(req: ListCreativesRequest, ctx: Ctx<TCtxMeta>): Promise<ListCreativesResponse>;
 
   // ── sync_catalogs: sync only ────────────────────────────────────────
   // Retail-media catalog sync. Buyers push product catalogs (SKUs, ASINs,
   // store-ids) for `sales-catalog-driven` agents (Amazon, Criteo, Citrusad,
   // Walmart Connect, Shopify ad surfaces). Optional — non-retail sales
   // adopters omit. Idempotent on the buyer's `idempotency_key`.
-  syncCatalogs?(req: SyncCatalogsRequest, ctx: Ctx<TMeta>): Promise<SyncCatalogsSuccess>;
+  syncCatalogs?(req: SyncCatalogsRequest, ctx: Ctx<TCtxMeta>): Promise<SyncCatalogsSuccess>;
 
   // ── log_event: sync only ────────────────────────────────────────────
   // Conversion / engagement event logging. Buyers post events tied to
   // a `media_buy_id` for performance attribution. Used by retail-media
   // (post-purchase events) and conversion-tracked sales (Snap pixel,
   // Meta CAPI, LinkedIn conversions API). Optional.
-  logEvent?(req: LogEventRequest, ctx: Ctx<TMeta>): Promise<LogEventSuccess>;
+  logEvent?(req: LogEventRequest, ctx: Ctx<TCtxMeta>): Promise<LogEventSuccess>;
 
   // ── sync_event_sources: sync only ──────────────────────────────────
   // Register conversion event sources (websites, apps, offline pixel
   // IDs) so subsequent `log_event` calls can be attributed correctly.
   // Optional — adopters who don't expose conversion tracking omit.
-  syncEventSources?(req: SyncEventSourcesRequest, ctx: Ctx<TMeta>): Promise<SyncEventSourcesSuccess>;
+  syncEventSources?(req: SyncEventSourcesRequest, ctx: Ctx<TCtxMeta>): Promise<SyncEventSourcesSuccess>;
 }

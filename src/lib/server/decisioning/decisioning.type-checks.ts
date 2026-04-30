@@ -125,7 +125,7 @@ type _ok_sales_no_required_caps =
   Record<string, never> extends RequiredCapabilitiesFor<'sales-non-guaranteed'> ? true : false;
 const _check_sales_no_required_caps: _ok_sales_no_required_caps = true;
 
-// ── Account is generic over TMeta ─────────────────────────────────────
+// ── Account is generic over TCtxMeta ─────────────────────────────────────
 
 interface GAMAccountMeta {
   networkId: string;

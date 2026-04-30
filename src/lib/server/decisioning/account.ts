@@ -2,7 +2,7 @@
  * Account model. Single-level (matches AdCP wire's AccountReference).
  * Platform-internal hierarchies (GAM Network → Advertiser → Order;
  * Spotify Brand → Campaign) are encoded in `metadata`, not in the typed
- * shape. Generic `TMeta` lets platforms type their metadata at the call site.
+ * shape. Generic `TCtxMeta` lets platforms type their metadata at the call site.
  *
  * Tenant isolation is enforced at `accounts.resolve()` returning null for
  * cross-scope references, not via a multi-level type.
@@ -26,7 +26,7 @@ import type { CursorPage, CursorRequest } from './pagination';
  * Account — framework's rich representation. A strict superset of the wire
  * `Account` shape (from `list_accounts` / response envelopes):
  *
- *   - Adds `metadata: TMeta` (platform-internal fields the framework doesn't
+ *   - Adds `metadata: TCtxMeta` (platform-internal fields the framework doesn't
  *     read but adopters use to thread platform-specific data)
  *   - Adds `authInfo: AuthPrincipal` (auth context for the request — MUST NOT
  *     leak to the wire)
@@ -36,7 +36,7 @@ import type { CursorPage, CursorRequest } from './pagination';
  * Framework projects to wire shape via `toWireAccount`: strips `metadata` +
  * `authInfo`, renames `id` → `account_id`. ~10 lines, no `as never` casts.
  */
-export interface Account<TMeta = Record<string, unknown>> {
+export interface Account<TCtxMeta = Record<string, unknown>> {
   /** Your platform's account_id. Maps to wire `Account.account_id`. */
   id: string;
 
@@ -87,7 +87,7 @@ export interface Account<TMeta = Record<string, unknown>> {
    * Put adapter state in `ctx_metadata`; treat it as fresh from your
    * `accounts.resolve()` on every request.
    */
-  ctx_metadata: TMeta;
+  ctx_metadata: TCtxMeta;
 
   /** Caller's authenticated principal. **Stripped before emitting on the wire.** */
   authInfo: AuthPrincipal;
@@ -148,7 +148,7 @@ export interface AuthPrincipal {
   claims?: Record<string, unknown>;
 }
 
-export interface AccountStore<TMeta = Record<string, unknown>> {
+export interface AccountStore<TCtxMeta = Record<string, unknown>> {
   /**
    * How buyers reference accounts on this platform.
    * - `'explicit'` — buyer passes `account_id` inline on every request (Snap,
@@ -201,7 +201,7 @@ export interface AccountStore<TMeta = Record<string, unknown>> {
    *   throw a generic exception. Framework maps to `SERVICE_UNAVAILABLE`
    *   so the buyer can retry.
    */
-  resolve(ref: AccountReference | undefined, ctx?: ResolveContext): Promise<Account<TMeta> | null>;
+  resolve(ref: AccountReference | undefined, ctx?: ResolveContext): Promise<Account<TCtxMeta> | null>;
 
   /**
    * sync_accounts API surface. Framework normalizes the wire request; platform
@@ -219,7 +219,7 @@ export interface AccountStore<TMeta = Record<string, unknown>> {
    *
    * **Optional.** Same rationale as `upsert` — stateless platforms can omit.
    */
-  list?(filter: AccountFilter & CursorRequest): Promise<CursorPage<Account<TMeta>>>;
+  list?(filter: AccountFilter & CursorRequest): Promise<CursorPage<Account<TCtxMeta>>>;
 
   /**
    * report_usage API surface. Operator-billed platforms accept usage rows
@@ -315,7 +315,7 @@ export type AdcpAccountStatus =
 import type { Account as WireAccount } from '../../types/tools.generated';
 
 /**
- * Project a framework `Account<TMeta>` to the wire `Account` shape.
+ * Project a framework `Account<TCtxMeta>` to the wire `Account` shape.
  *
  * Strips `metadata` and `authInfo` (framework-internal); renames `id` →
  * `account_id`; passes through `name`, `status`, `brand`, `operator`,
@@ -323,10 +323,10 @@ import type { Account as WireAccount } from '../../types/tools.generated';
  *
  * Used by the framework when emitting `list_accounts` and other wire
  * responses that include account data. Adopters never call this directly —
- * they return `Account<TMeta>` from `accounts.resolve` / `accounts.list`
+ * they return `Account<TCtxMeta>` from `accounts.resolve` / `accounts.list`
  * and the framework projects.
  */
-export function toWireAccount<TMeta>(account: Account<TMeta>): WireAccount {
+export function toWireAccount<TCtxMeta>(account: Account<TCtxMeta>): WireAccount {
   const wire: WireAccount = {
     account_id: account.id,
     name: account.name,

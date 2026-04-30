@@ -80,10 +80,10 @@ function buildCtxMetadataAccessor(store: CtxMetadataStore, accountId: string): C
   };
 }
 
-export function buildRequestContext<TMeta = Record<string, unknown>>(
-  handlerCtx: HandlerContext<Account<TMeta>>,
+export function buildRequestContext<TCtxMeta = Record<string, unknown>>(
+  handlerCtx: HandlerContext<Account<TCtxMeta>>,
   ctxMetadataStore?: CtxMetadataStore
-): RequestContext<Account<TMeta>> {
+): RequestContext<Account<TCtxMeta>> {
   // `account` may legitimately be undefined for tools whose wire request
   // doesn't carry an `account` field AND whose `resolveAccountFromAuth`
   // returned null (`'explicit'`-mode adopters who don't model the
@@ -102,7 +102,7 @@ export function buildRequestContext<TMeta = Record<string, unknown>>(
   //      specialisms — the tool is unreachable
   //   3. Read `ctx.account` defensively (`as Account | undefined` cast)
   //      and look up by request body when missing
-  const account = handlerCtx.account as Account<TMeta>;
+  const account = handlerCtx.account as Account<TCtxMeta>;
 
   const stubResolver = (name: string) => async (): Promise<never> => {
     throw new Error(
