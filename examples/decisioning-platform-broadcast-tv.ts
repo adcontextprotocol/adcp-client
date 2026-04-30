@@ -274,6 +274,11 @@ export class BroadcastTvSeller implements DecisioningPlatform<BroadcastTvConfig,
         media_buy_deliveries: [],
       };
     },
+
+    // Required on SalesPlatform — write-only adopters return an empty array.
+    // This affiliate doesn't enumerate buys via this surface (push-channel
+    // delivery via webhooks); the empty array is truthful.
+    getMediaBuys: async () => ({ media_buys: [] }),
   };
 
   private preflight(req: CreateMediaBuyRequest): { code: string; recovery: string; message: string; field: string }[] {

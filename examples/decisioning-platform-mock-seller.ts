@@ -298,6 +298,9 @@ export class MockHybridSeller implements DecisioningPlatform<MockSellerConfig, M
 
     syncCreatives: SHARED_SYNC_CREATIVES,
     getMediaBuyDelivery: SHARED_GET_MEDIA_BUY_DELIVERY,
+    // Required on SalesPlatform — empty-array stub (mock seller doesn't
+    // persist buys across runs; getMediaBuys returns nothing).
+    getMediaBuys: async () => ({ media_buys: [] }),
   };
 }
 

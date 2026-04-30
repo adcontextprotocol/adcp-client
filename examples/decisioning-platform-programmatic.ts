@@ -246,5 +246,9 @@ export class ProgrammaticSeller implements DecisioningPlatform<ProgrammaticConfi
       },
       media_buy_deliveries: [],
     }),
+
+    // Required on SalesPlatform — the example doesn't model persistent buys,
+    // so return empty array. Production adopters would query their store.
+    getMediaBuys: async () => ({ media_buys: [] }),
   };
 }
