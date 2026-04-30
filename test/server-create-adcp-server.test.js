@@ -1748,4 +1748,111 @@ describe('createAdcpServer', () => {
       );
     });
   });
+
+  // -------------------------------------------------------------------------
+  // Single-field VERSION_UNSUPPORTED check (#1075)
+  // -------------------------------------------------------------------------
+  // Regression guard for the gap where a buyer sending only adcp_major_version
+  // (or only adcp_version) against a 3.0-pinned seller would bypass the
+  // dual-field disagreement check and reach the handler unvalidated.
+  // Spec MUST per tools.generated.ts:253 — sellers must validate against their
+  // supported major_versions regardless of which version field(s) are present.
+  describe('single-field VERSION_UNSUPPORTED check', () => {
+    function makeServer() {
+      return createAdcpServer({
+        name: 'Test',
+        version: '1.0.0',
+        mediaBuy: { getProducts: async () => ({ products: [] }) },
+      });
+    }
+
+    it('returns VERSION_UNSUPPORTED for adcp_major_version: 99 only (integer, no string field)', async () => {
+      const server = makeServer();
+      const result = await callToolRaw(server, 'get_products', { adcp_major_version: 99 });
+      assert.strictEqual(result.isError, true);
+      const err = result.structuredContent.adcp_error;
+      assert.strictEqual(err.code, 'VERSION_UNSUPPORTED');
+      assert.ok(err.message.includes('request carries major 99'), `unexpected message: ${err.message}`);
+    });
+
+    it('returns VERSION_UNSUPPORTED for adcp_version: "99.0" only (string, no integer field)', async () => {
+      const server = makeServer();
+      const result = await callToolRaw(server, 'get_products', { adcp_version: '99.0' });
+      assert.strictEqual(result.isError, true);
+      const err = result.structuredContent.adcp_error;
+      assert.strictEqual(err.code, 'VERSION_UNSUPPORTED');
+      assert.ok(err.message.includes('request carries major 99'), `unexpected message: ${err.message}`);
+    });
+
+    it('populates supported_versions from server major_versions (default [3] → ["3.0"])', async () => {
+      const server = makeServer();
+      const result = await callToolRaw(server, 'get_products', { adcp_major_version: 99 });
+      const details = result.structuredContent.adcp_error.details;
+      assert.deepStrictEqual(details.supported_versions, ['3.0']);
+    });
+
+    it('echoes requested_version from adcp_version string field when present', async () => {
+      const server = makeServer();
+      const result = await callToolRaw(server, 'get_products', { adcp_version: '99.0' });
+      assert.strictEqual(result.structuredContent.adcp_error.details?.requested_version, '99.0');
+    });
+
+    it('omits requested_version when only adcp_major_version is sent', async () => {
+      const server = makeServer();
+      const result = await callToolRaw(server, 'get_products', { adcp_major_version: 99 });
+      assert.strictEqual(result.structuredContent.adcp_error.details?.requested_version, undefined);
+    });
+
+    it('existing dual-field disagreement check fires first (message contains "majors must agree")', async () => {
+      const server = makeServer();
+      // adcp_version major=3 but adcp_major_version=99 — disagree
+      const result = await callToolRaw(server, 'get_products', {
+        adcp_version: '3.0',
+        adcp_major_version: 99,
+      });
+      assert.strictEqual(result.isError, true);
+      assert.strictEqual(result.structuredContent.adcp_error.code, 'VERSION_UNSUPPORTED');
+      assert.ok(
+        result.structuredContent.adcp_error.message.includes('majors must agree'),
+        `expected "majors must agree" in message; got: ${result.structuredContent.adcp_error.message}`
+      );
+    });
+
+    it('passes through when adcp_major_version matches server major (no error)', async () => {
+      const server = makeServer();
+      const result = await callToolRaw(server, 'get_products', { adcp_major_version: 3 });
+      assert.strictEqual(result.isError, undefined);
+      assert.ok(result.structuredContent?.products);
+    });
+
+    it('passes through for stringified adcp_major_version matching server major ("3" coerced to 3)', async () => {
+      const server = makeServer();
+      const result = await callToolRaw(server, 'get_products', { adcp_major_version: '3' });
+      assert.strictEqual(result.isError, undefined);
+    });
+
+    it('passes through safely for non-finite adcp_major_version (NaN stays undefined)', async () => {
+      const server = makeServer();
+      // "not-a-number" coerces to NaN via parseInt → Number.isFinite(NaN) is false → claimedMajor stays undefined
+      const result = await callToolRaw(server, 'get_products', { adcp_major_version: 'not-a-number' });
+      assert.strictEqual(result.isError, undefined);
+    });
+
+    it('custom major_versions: [3, 4] rejects only truly unsupported major', async () => {
+      const server = createAdcpServer({
+        name: 'Test',
+        version: '1.0.0',
+        mediaBuy: { getProducts: async () => ({ products: [] }) },
+        capabilities: { major_versions: [3, 4] },
+      });
+      // 4 is supported — no error
+      const ok = await callToolRaw(server, 'get_products', { adcp_major_version: 4 });
+      assert.strictEqual(ok.isError, undefined);
+      // 5 is not supported
+      const err = await callToolRaw(server, 'get_products', { adcp_major_version: 5 });
+      assert.strictEqual(err.isError, true);
+      assert.strictEqual(err.structuredContent.adcp_error.code, 'VERSION_UNSUPPORTED');
+      assert.deepStrictEqual(err.structuredContent.adcp_error.details?.supported_versions, ['3.0', '4.0']);
+    });
+  });
 });

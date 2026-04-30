@@ -2405,6 +2405,40 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
           }
         }
 
+        // Single-field (and dual-agreeing) version check against the server's
+        // advertised major_versions. The dual-field disagreement block above
+        // catches mismatched pairs; this catches:
+        //   (a) adcp_major_version only — e.g. a 3.0-era buyer sending 99
+        //   (b) adcp_version only — e.g. a 3.1+ buyer probing with "99.0"
+        //   (c) both fields agreeing on an unsupported major (dual disagreement
+        //       is already caught above, so this block is never reached for
+        //       mismatched pairs)
+        // Spec MUST per `tools.generated.ts:253` — sellers MUST validate
+        // against their supported `major_versions` and return VERSION_UNSUPPORTED.
+        const serverMajorVersions = capConfig?.major_versions ?? [3];
+        let claimedMajor: number | undefined;
+        if (reqAdcpMajor !== undefined && Number.isFinite(reqAdcpMajor)) {
+          claimedMajor = reqAdcpMajor;
+        } else if (typeof reqAdcpVersion === 'string') {
+          const m = parseAdcpMajorVersion(reqAdcpVersion);
+          if (Number.isFinite(m)) claimedMajor = m;
+        }
+        if (claimedMajor !== undefined && !serverMajorVersions.includes(claimedMajor)) {
+          return finalize(
+            adcpError('VERSION_UNSUPPORTED', {
+              message:
+                `Seller supports major version(s) ${serverMajorVersions.join(', ')}; ` +
+                `request carries major ${claimedMajor}.`,
+              details: {
+                supported_versions: serverMajorVersions.map(v => `${v}.0`),
+                // Echo the string field when present; omit for integer-only requests
+                // so buyers can distinguish "unsupported version" from "unknown major".
+                ...(typeof reqAdcpVersion === 'string' && { requested_version: reqAdcpVersion }),
+              },
+            })
+          );
+        }
+
         // --- Request schema validation (opt-in) ---
         // Runs before idempotency so drifted payloads never touch the
         // replay cache. `off` short-circuits without calling AJV.
