@@ -6,8 +6,8 @@ const assert = require('node:assert');
 const { spawn } = require('node:child_process');
 const path = require('node:path');
 
-const { serve,  } = require("../../dist/lib/index.js");
-const { createAdcpServer } = require("../../dist/lib/server/legacy/v5/index.js");
+const { serve } = require('../../dist/lib/index.js');
+const { createAdcpServer } = require('../../dist/lib/server/legacy/v5/index.js');
 
 const CLI = path.resolve(__dirname, '../../bin/adcp.js');
 

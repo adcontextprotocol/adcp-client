@@ -197,11 +197,7 @@ export { structuredSerialize, structuredDeserialize } from './structured-seriali
 // escape-hatch only). Breaking change: v5 adopters see a hard import error
 // and update their import path. The migration is one line; the LLM-output
 // quality win is significant. See `docs/migration-5.x-to-6.x.md`.
-export {
-  requireSessionKey,
-  ADCP_PRE_TRANSPORT,
-  ADCP_SIGNED_REQUESTS_STATE,
-} from './create-adcp-server';
+export { requireSessionKey, ADCP_PRE_TRANSPORT, ADCP_SIGNED_REQUESTS_STATE } from './create-adcp-server';
 export type {
   AdcpServer,
   AdcpServerComplianceApi,

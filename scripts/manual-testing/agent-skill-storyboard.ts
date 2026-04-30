@@ -203,12 +203,7 @@ async function bootstrapWorkspace(dir: string, port: number, sharedNodeModules?:
   if (npm.status !== 0) throw new Error(`npm install failed in ${dir}`);
 }
 
-async function runClaude(
-  prompt: string,
-  cwd: string,
-  timeoutMs: number,
-  transcriptPath?: string
-): Promise<void> {
+async function runClaude(prompt: string, cwd: string, timeoutMs: number, transcriptPath?: string): Promise<void> {
   log(`invoking claude in ${cwd}`);
   const promptPath = join(cwd, '.harness-prompt.md');
   await writeFile(promptPath, prompt, 'utf8');
@@ -299,11 +294,9 @@ async function killPort(port: number): Promise<void> {
   // pgrep matches on cmdline; xargs -r is GNU-specific but BSD pgrep on
   // macOS supports `-f` (full cmdline match). The harness is mac+linux-only
   // so we accept the BSD/GNU split here.
-  spawnSync(
-    'bash',
-    ['-c', `pgrep -f 'tsx.*adcp-agent-[A-Za-z0-9]+' | xargs kill -9 2>/dev/null || true`],
-    { stdio: 'ignore' }
-  );
+  spawnSync('bash', ['-c', `pgrep -f 'tsx.*adcp-agent-[A-Za-z0-9]+' | xargs kill -9 2>/dev/null || true`], {
+    stdio: 'ignore',
+  });
   // Brief wait so the kernel reaps the socket before we try to bind.
   await new Promise(r => setTimeout(r, 500));
 }
