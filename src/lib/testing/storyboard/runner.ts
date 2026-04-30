@@ -460,6 +460,68 @@ function buildCapabilityUnsupportedResult(
 }
 
 /**
+ * Build a minimal StoryboardResult for a storyboard skipped because the agent
+ * does not advertise any of the tools listed in `required_tools`. The result
+ * carries `skip_reason: 'missing_tool'` and `overall_passed: true` so CLI
+ * reports and JUnit consumers render it as a skip, not a failure.
+ *
+ * `missing_tool` (not `not_applicable`) is the correct canonical reason here:
+ * the agent declared a compatible protocol/specialism but lacks the specific
+ * tools this storyboard exercises — distinct from a protocol/version mismatch.
+ */
+function buildRequiredToolsMissingResult(
+  agentUrls: string[],
+  storyboard: Storyboard,
+  detail: string
+): StoryboardResult {
+  return {
+    storyboard_id: storyboard.id,
+    storyboard_title: storyboard.title,
+    agent_url: agentUrls[0]!,
+    overall_passed: true,
+    phases: [
+      {
+        phase_id: 'missing_tool',
+        phase_title: 'Skipped — required tools not advertised',
+        passed: true,
+        duration_ms: 0,
+        steps: [
+          {
+            storyboard_id: storyboard.id,
+            step_id: 'missing_tool',
+            phase_id: 'missing_tool',
+            title: `Skipped — ${detail}`,
+            task: '',
+            passed: true,
+            skipped: true,
+            skip_reason: 'missing_tool' as const,
+            skip: { reason: 'missing_tool' as const, detail },
+            duration_ms: 0,
+            validations: [],
+            context: {},
+            extraction: { path: 'none' },
+          },
+        ],
+      },
+    ],
+    context: {},
+    total_duration_ms: 0,
+    passed_count: 0,
+    failed_count: 0,
+    skipped_count: 1,
+    tested_at: new Date().toISOString(),
+    strict_validation_summary: {
+      observable: false,
+      checked: 0,
+      passed: 0,
+      failed: 0,
+      strict_only_failures: 0,
+      lenient_also_failed: 0,
+    },
+  };
+}
+
+/**
  * Execute a single pass of the storyboard against the supplied replica URLs
  * using round-robin dispatch starting at `dispatchOffset`. Called directly
  * by `runStoryboard` (offset 0) and repeatedly by `runMultiPass` (offsets
@@ -521,6 +583,29 @@ async function executeStoryboardPass(
         if (!options._client) await closeConnections(options.protocol);
         return buildCapabilityUnsupportedResult(agentUrls, storyboard, detail);
       }
+    }
+  }
+
+  // Enforce required_tools pre-flight gate: if the storyboard declares tools
+  // that make it applicable (at least one must be present) and the agent
+  // advertises none of them, skip the whole storyboard instead of producing
+  // misleading per-step failures.
+  //
+  // Gate condition: `options.agentTools` is falsy when the caller set
+  // `options._client` without also supplying `agentTools`. In that case the
+  // gate is a no-op — the caller accepted responsibility for tool compatibility
+  // by reusing an external client. The comply() path always populates
+  // `agentTools` before calling runStoryboard(), so the gate is always active
+  // in the standard runner flow.
+  if (storyboard.required_tools?.length && options.agentTools) {
+    const hasAnyRequired = storyboard.required_tools.some(t => options.agentTools!.includes(t));
+    if (!hasAnyRequired) {
+      if (!options._client) await closeConnections(options.protocol);
+      return buildRequiredToolsMissingResult(
+        agentUrls,
+        storyboard,
+        `agent does not advertise any of [${storyboard.required_tools.join(', ')}]`
+      );
     }
   }
 
@@ -961,10 +1046,10 @@ async function executeStoryboardPass(
   // Overall pass requires (a) no required-phase failures AND (b) at least one
   // required phase actually passed with at least one non-skipped step AND
   // (c) no assertion failures. Without (b) a storyboard where every phase is
-  // marked optional and every required phase's steps are skipped (e.g.
-  // required_tools filtered out everything) would pass vacuously. (c) makes
-  // assertions gating — a run with all validations green but a cross-step
-  // invariant broken is not conformant.
+  // marked optional and every required phase's steps are individually skipped
+  // (e.g. all steps have requires_tool and none matched) would pass vacuously.
+  // (c) makes assertions gating — a run with all validations green but a
+  // cross-step invariant broken is not conformant.
   // When no phases had executable steps the storyboard result is a skip, not a
   // failure. The index-aligned guard below would hit storyboard.phases[0] ===
   // undefined for an empty-phases storyboard and force requiredPhasesPassed to
