@@ -165,6 +165,116 @@
     "messagePrefix": "Property 'sandbox' does not exist on type '{}'."
   },
   {
+    "source": "skills/build-decisioning-creative-template/SKILL.md",
+    "errorCode": "TS2322",
+    "messagePrefix": "Type '(ref: AccountReference) => Promise<{ id: string; name: string; status: \"ac"
+  },
+  {
+    "source": "skills/build-decisioning-platform/advanced/MULTI-TENANT.md",
+    "errorCode": "TS2304",
+    "messagePrefix": "Cannot find name 'extractTenantFromHost'."
+  },
+  {
+    "source": "skills/build-decisioning-platform/advanced/MULTI-TENANT.md",
+    "errorCode": "TS2304",
+    "messagePrefix": "Cannot find name 'loadTenant'."
+  },
+  {
+    "source": "skills/build-decisioning-platform/advanced/MULTI-TENANT.md",
+    "errorCode": "TS2304",
+    "messagePrefix": "Cannot find name 'MyPlatform'."
+  },
+  {
+    "source": "skills/build-decisioning-platform/advanced/MULTI-TENANT.md",
+    "errorCode": "TS2322",
+    "messagePrefix": "Type 'string | undefined' is not assignable to type 'number | undefined'."
+  },
+  {
+    "source": "skills/build-decisioning-platform/advanced/MULTI-TENANT.md",
+    "errorCode": "TS2339",
+    "messagePrefix": "Property 'host' does not exist on type 'TenantRegistry'."
+  },
+  {
+    "source": "skills/build-decisioning-platform/advanced/MULTI-TENANT.md",
+    "errorCode": "TS2353",
+    "messagePrefix": "Object literal may only specify known properties, and 'resolveTenant' does not e"
+  },
+  {
+    "source": "skills/build-decisioning-platform/advanced/MULTI-TENANT.md",
+    "errorCode": "TS7006",
+    "messagePrefix": "Parameter 'req' implicitly has an 'any' type."
+  },
+  {
+    "source": "skills/build-decisioning-platform/advanced/MULTI-TENANT.md",
+    "errorCode": "TS7006",
+    "messagePrefix": "Parameter 'tenantId' implicitly has an 'any' type."
+  },
+  {
+    "source": "skills/build-decisioning-platform/advanced/OAUTH.md",
+    "errorCode": "TS18004",
+    "messagePrefix": "No value exists in scope for the shorthand property 'port'. Either declare one o"
+  },
+  {
+    "source": "skills/build-decisioning-platform/advanced/OAUTH.md",
+    "errorCode": "TS2304",
+    "messagePrefix": "Cannot find name 'server'."
+  },
+  {
+    "source": "skills/build-decisioning-platform/advanced/OAUTH.md",
+    "errorCode": "TS2322",
+    "messagePrefix": "Type 'string | undefined' is not assignable to type 'string'."
+  },
+  {
+    "source": "skills/build-decisioning-platform/advanced/OAUTH.md",
+    "errorCode": "TS2322",
+    "messagePrefix": "Type 'string | undefined' is not assignable to type 'string'."
+  },
+  {
+    "source": "skills/build-decisioning-platform/advanced/OAUTH.md",
+    "errorCode": "TS2322",
+    "messagePrefix": "Type 'string | undefined' is not assignable to type 'string'."
+  },
+  {
+    "source": "skills/build-decisioning-platform/advanced/REFERENCE.md",
+    "errorCode": "TS1360",
+    "messagePrefix": "Type '{ getProducts: (req: GetProductsRequest, ctx: Ctx<Record<string, unknown>>"
+  },
+  {
+    "source": "skills/build-decisioning-platform/advanced/REFERENCE.md",
+    "errorCode": "TS2322",
+    "messagePrefix": "Type 'Promise<{ id: string; name: string; status: \"active\"; metadata: {}; authIn"
+  },
+  {
+    "source": "skills/build-decisioning-platform/advanced/REFERENCE.md",
+    "errorCode": "TS2345",
+    "messagePrefix": "Argument of type '{ capabilities: { specialisms: readonly [\"sales-non-guaranteed"
+  },
+  {
+    "source": "skills/build-decisioning-platform/SKILL.md",
+    "errorCode": "TS1309",
+    "messagePrefix": "The current file is a CommonJS module and cannot use 'await' at the top level."
+  },
+  {
+    "source": "skills/build-decisioning-platform/SKILL.md",
+    "errorCode": "TS2304",
+    "messagePrefix": "Cannot find name 'myAdServer'."
+  },
+  {
+    "source": "skills/build-decisioning-platform/SKILL.md",
+    "errorCode": "TS2304",
+    "messagePrefix": "Cannot find name 'MyPlatform'."
+  },
+  {
+    "source": "skills/build-decisioning-platform/SKILL.md",
+    "errorCode": "TS2322",
+    "messagePrefix": "Type 'string | undefined' is not assignable to type 'number | undefined'."
+  },
+  {
+    "source": "skills/build-decisioning-signal-marketplace/SKILL.md",
+    "errorCode": "TS2322",
+    "messagePrefix": "Type '(ref: AccountReference) => Promise<{ id: string; name: string; status: \"ac"
+  },
+  {
     "source": "skills/build-generative-seller-agent/SKILL.md",
     "errorCode": "TS18004",
     "messagePrefix": "No value exists in scope for the shorthand property 'issuer'. Either declare one"
