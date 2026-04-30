@@ -59,6 +59,9 @@ function buildCtxMetadataAccessor(
     delete(kind: ResourceKind, id: string) {
       return store.delete(accountId, kind, id);
     },
+    account(id: string) {
+      return store.get(accountId, 'account', id);
+    },
     product(id: string) {
       return store.get(accountId, 'product', id);
     },

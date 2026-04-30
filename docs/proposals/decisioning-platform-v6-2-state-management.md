@@ -88,7 +88,7 @@ sales: SalesPlatform = {
 
 Buyers know what to expect from each verb. Publishers split implementations along the natural fault line. SDK auto-hydrates the proposal's brief + history on every refine/finalize call.
 
-**Spec coordination:** the existing `getProducts` stays as a discovery shortcut (calls `getProductsFromCatalog` when the platform claims `sales-non-guaranteed` only, dispatches to `generateProposal` when `sales-proposal-mode`). New wire verbs need an `adcontextprotocol/adcp` issue.
+**No spec change needed.** The wire stays existing — `get_products` still serves both catalog and proposal traffic per the current spec. The SDK provides `getProductsFromCatalog` / `generateProposal` / `refineProposal` / `finalizeProposal` as ergonomic SalesPlatform methods that the framework dispatches to the same `get_products` wire verb (and the existing proposal-mode async path). Adopters claiming `sales-non-guaranteed` only implement `getProductsFromCatalog`; adopters claiming `sales-proposal-mode` implement the proposal trio. Same wire surface, cleaner publisher code.
 
 ### Catalog-as-comply-sandbox
 
@@ -181,6 +181,6 @@ The "5-6 functions, you're done" thesis collapses to "connect your platform API.
 | 2 | `buildProduct` / `buildPricingOption` helpers | ~150 LOC | Low — pure factory functions |
 | 3 | Catalog-as-sandbox auto-derive | ~300 LOC | Medium — touches `comply_test_controller` |
 | 4 | Refine creative auto-state | ~400 LOC | Medium — needs history schema decision |
-| 5 | Proposal flow split (`generate/refine/finalize`) | spec change + ~600 LOC | High — wire surface change |
+| 5 | Proposal flow split (`generate/refine/finalize`) | ~600 LOC | Low — SDK ergonomics over existing wire |
 
-Items 1-3 land in 6.2 without protocol coordination. Item 4 needs internal spec decision. Item 5 needs `adcontextprotocol/adcp` coordination — file as RFC issue first.
+All items are SDK-internal. No `adcontextprotocol/adcp` spec coordination required — the wire stays as existing verbs throughout.

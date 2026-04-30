@@ -36,6 +36,7 @@
  * dispatch (which kinds get hydrated on which request shapes).
  */
 export type ResourceKind =
+  | 'account'
   | 'product'
   | 'media_buy'
   | 'package'
@@ -47,6 +48,7 @@ export type ResourceKind =
   | 'collection_list';
 
 const ALL_RESOURCE_KINDS: readonly ResourceKind[] = [
+  'account',
   'product',
   'media_buy',
   'package',

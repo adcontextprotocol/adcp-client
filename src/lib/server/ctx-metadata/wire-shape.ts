@@ -63,6 +63,8 @@ export function stripCtxMetadata<T>(value: T): WireShape<T> {
  * spec extends the wire-resource surface.
  */
 const CARRIER_KEYS = [
+  'account',
+  'accounts',
   'media_buy',
   'media_buys',
   'package',

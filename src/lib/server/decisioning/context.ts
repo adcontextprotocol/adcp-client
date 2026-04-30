@@ -241,6 +241,10 @@ export interface CtxMetadataAccessor {
   delete(kind: ResourceKind, id: string): Promise<void>;
 
   // Per-kind shorthand readers — purely ergonomic; map to `get(kind, id)`.
+  // Note: ctx.account.ctx_metadata is the canonical reader for the current
+  // request's account — `account(id)` here is for the rare cross-account
+  // lookup case (e.g., listing context for an account other than ctx.account).
+  account(id: string): Promise<unknown | undefined>;
   product(id: string): Promise<unknown | undefined>;
   mediaBuy(id: string): Promise<unknown | undefined>;
   package(id: string): Promise<unknown | undefined>;

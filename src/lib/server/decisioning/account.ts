@@ -79,6 +79,28 @@ export interface Account<TMeta = Record<string, unknown>> {
    */
   metadata: TMeta;
 
+  /**
+   * Adapter-internal opaque blob the SDK round-trips per `(account.id,
+   * 'account', account.id)`. Distinct from `metadata` (publisher-typed
+   * shape) — `ctx_metadata` follows the same SDK round-trip semantics
+   * as products/media_buys/packages: publisher attaches on
+   * `accounts.resolve` / `sync_accounts` returns, SDK persists, future
+   * requests get it auto-hydrated onto `ctx.account.ctx_metadata`,
+   * **stripped before emitting on the wire**.
+   *
+   * Use case: account-level state that doesn't need to live in the
+   * publisher's typed `metadata` (because the SDK is the canonical
+   * cache, not the publisher's DB) — e.g., last-resolved upstream
+   * billing snapshot, OAuth refresh hints, per-account adapter feature
+   * flags.
+   *
+   * For 6.2: when the publisher returns ctx_metadata from
+   * `accounts.resolve`, framework persists. On subsequent calls,
+   * ctx.account.ctx_metadata is hydrated from the store (publisher's
+   * resolve return wins; store fills gaps when publisher omits).
+   */
+  ctx_metadata?: unknown;
+
   /** Caller's authenticated principal. **Stripped before emitting on the wire.** */
   authInfo: AuthPrincipal;
 }
