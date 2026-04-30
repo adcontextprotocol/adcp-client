@@ -67,6 +67,7 @@ import type { Account, ResolvedAuthInfo } from '../account';
 import { AccountNotFoundError, toWireAccount } from '../account';
 import { AdcpError, type AdcpStructuredError } from '../async-outcome';
 import type { CreativeBuilderPlatform } from '../specialisms/creative';
+import type { UpdateMediaBuyPatch } from '../specialisms/sales';
 import type { CreativeAdServerPlatform } from '../specialisms/creative-ad-server';
 import type { Audience } from '../specialisms/audiences';
 import type { RequestContext } from '../context';
@@ -2014,8 +2015,8 @@ async function hydratePackagesWithProducts(
  * handler, look up one resource by its ID and attach the full wire shape
  * (including `ctx_metadata`) to the request under `targetField`.
  *
- * For `updateMediaBuy`: attaches the full MediaBuy object at `req.mediaBuy`
- * keyed by `req.media_buy_id`.
+ * For `updateMediaBuy`: attaches the full MediaBuy object at `patch.mediaBuy`
+ * keyed by `patch.media_buy_id`.
  *
  * Failures are logged + swallowed; the publisher still receives the
  * un-hydrated request and can fall back to its own DB.
@@ -2023,7 +2024,7 @@ async function hydratePackagesWithProducts(
 async function hydrateSingleResource(
   store: CtxMetadataStore | undefined,
   accountId: string | undefined,
-  kind: 'product' | 'media_buy' | 'package' | 'creative' | 'audience' | 'signal',
+  kind: 'product' | 'media_buy',
   id: string | undefined,
   targetField: string,
   req: unknown,
@@ -2361,7 +2362,7 @@ function buildMediaBuyHandlers<P extends DecisioningPlatform<any, any>>(
         });
       }
       // Auto-hydrate: attach the full MediaBuy object (including ctx_metadata)
-      // at params.mediaBuy, keyed by media_buy_id. Publisher reads
+      // at patch.mediaBuy, keyed by media_buy_id. Publisher reads
       // `patch.mediaBuy.ctx_metadata?.gam_order_id` directly — no separate
       // lookup, no boilerplate.
       //
@@ -2385,7 +2386,7 @@ function buildMediaBuyHandlers<P extends DecisioningPlatform<any, any>>(
           const push = extractPushConfig(params, logger, {
             allowPrivateWebhookUrls: pushOpts.allowPrivateWebhookUrls,
           });
-          const result = await sales.updateMediaBuy(media_buy_id, params, reqCtx);
+          const result = await sales.updateMediaBuy(media_buy_id, params as UpdateMediaBuyPatch, reqCtx);
           // F12 sync auto-emit. updateMediaBuy is sync-only on the
           // platform interface (no TaskHandoff arm — spec response
           // doesn't include Submitted), so we don't route through

@@ -168,6 +168,8 @@ class MyPlatform implements DecisioningPlatform {
     //    (6.2 will pre-read state + decompose into atomic verbs; track adcp-client#1071.)
     updateMediaBuy: async (mediaBuyId, patch, _ctx) => {
       const mediaBuy = patch.mediaBuy; // SDK-hydrated full MediaBuy (incl. ctx_metadata)
+      // Pure-SDK path: no own DB, treat cache-miss as not-found.
+      // If you have your own DB, replace the throw with a DB lookup.
       if (!mediaBuy) throw new MediaBuyNotFoundError(mediaBuyId);
 
       for (const pkg of patch.packages ?? []) {

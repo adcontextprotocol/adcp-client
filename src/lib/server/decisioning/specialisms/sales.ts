@@ -100,6 +100,28 @@ type Ctx<TMeta> = RequestContext<Account<TMeta>>;
  */
 export type SyncCreativesRow = SyncCreativesSuccess['creatives'][number];
 
+/**
+ * A single media buy entry as returned by `getMediaBuys`.
+ * The framework persists this shape (including `ctx_metadata`) in the
+ * ctx_metadata store after every `getMediaBuys` call so it can be
+ * re-attached to `updateMediaBuy` requests without a round-trip.
+ */
+export type MediaBuyRecord = GetMediaBuysResponse['media_buys'][number];
+
+/**
+ * The `patch` argument received by `SalesPlatform.updateMediaBuy`.
+ * Extends `UpdateMediaBuyRequest` with an optional SDK-hydrated `mediaBuy`
+ * field populated from a prior `getMediaBuys` / `createMediaBuy` response.
+ *
+ * `mediaBuy` is `undefined` when the SDK has no cached record for the given
+ * `media_buy_id` — this is a **cache miss**, not an authoritative "doesn't
+ * exist". Decision tree:
+ *   - Have your own buy DB → query it when `mediaBuy` is `undefined`.
+ *   - Pure-SDK store (no own DB) → throw `MediaBuyNotFoundError(buyId)`.
+ *   - Either way: never let `undefined` flow downstream silently.
+ */
+export type UpdateMediaBuyPatch = UpdateMediaBuyRequest & { mediaBuy?: MediaBuyRecord };
+
 export interface SalesPlatform<TMeta = Record<string, unknown>> {
   // ── get_products: sync only — by design, not just by spec ─────────
   // get_products is a CATALOG LOOKUP — fast read against the seller's
@@ -188,8 +210,8 @@ export interface SalesPlatform<TMeta = Record<string, unknown>> {
   // re-approval flows surface eventual transitions via
   // `publishStatusChange` on `resource_type: 'media_buy'` rather than
   // HITL on this tool.
-  /** Sync update. Returns the patched buy. */
-  updateMediaBuy(buyId: string, patch: UpdateMediaBuyRequest, ctx: Ctx<TMeta>): Promise<UpdateMediaBuySuccess>;
+  /** Sync update. Returns the patched buy. `patch.mediaBuy` is SDK-hydrated when the store has a record (see `UpdateMediaBuyPatch`). */
+  updateMediaBuy(buyId: string, patch: UpdateMediaBuyPatch, ctx: Ctx<TMeta>): Promise<UpdateMediaBuySuccess>;
 
   // ── sync_creatives: unified hybrid shape ────────────────────────────
 
