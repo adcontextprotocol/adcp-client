@@ -48,7 +48,11 @@ describe('v3 Scenario Exports', () => {
     const { SCENARIO_REQUIREMENTS } = require('../../dist/lib/testing/index.js');
     const reqs = SCENARIO_REQUIREMENTS['schema_compliance'];
     assert.ok(Array.isArray(reqs), 'should have requirements array');
-    assert.strictEqual(reqs.length, 0, 'schema_compliance applies to any agent (branches internally on get_products vs get_signals)');
+    assert.strictEqual(
+      reqs.length,
+      0,
+      'schema_compliance applies to any agent (branches internally on get_products vs get_signals)'
+    );
   });
 
   test('new scenarios are in DEFAULT_SCENARIOS', () => {
