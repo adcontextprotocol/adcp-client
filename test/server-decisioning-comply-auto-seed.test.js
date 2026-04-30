@@ -1,0 +1,277 @@
+// Integration tests for catalog-backed auto-seed: when a platform wires
+// `getProducts` and provides `complyTest` without explicit `seed.product` /
+// `seed_pricing_option` adapters, the framework auto-derives those adapters
+// and wires a `testController` bridge so seeded products appear in
+// `get_products` without any adapter code from the adopter.
+//
+// Acceptance criteria (issue #1091):
+//   - seed_product succeeds for sandbox requests when getProducts is wired
+//   - seed_pricing_option succeeds (merges into the product fixture)
+//   - seeded product is visible in get_products (via bridge) on sandbox requests
+//   - non-sandbox request is rejected by the sandboxGate (FORBIDDEN)
+//   - explicit seed.product adapter takes priority — auto-derive does not override
+//   - auto-seed is NOT applied when opts.testController is already set
+//   - auto-seed is NOT applied when getProducts is not wired
+
+process.env.NODE_ENV = 'test';
+process.env.ADCP_SANDBOX = '1'; // suppress ungated-warning
+
+const { describe, it } = require('node:test');
+const assert = require('node:assert');
+const { createAdcpServerFromPlatform } = require('../dist/lib/server/decisioning/runtime/from-platform');
+
+function basePlatform({ getProducts } = {}) {
+  return {
+    capabilities: {
+      specialisms: ['sales-non-guaranteed'],
+      compliance_testing: {},
+      creative_agents: [],
+      channels: ['display'],
+      pricingModels: ['cpm'],
+      config: {},
+    },
+    statusMappers: {},
+    accounts: {
+      // Propagate sandbox flag from AccountReference so the bridge's belt-and-
+      // suspenders check (ctx.account.sandbox === true) passes for sandbox requests.
+      resolve: async ref => ({
+        id: ref?.account_id ?? 'auto_seed_acc',
+        operator: 'test.example.com',
+        ctx_metadata: {},
+        authInfo: { kind: 'api_key' },
+        ...(ref?.sandbox === true && { sandbox: true }),
+      }),
+    },
+    sales: {
+      getProducts: getProducts ?? (async () => ({ products: [] })),
+      createMediaBuy: async () => ({
+        media_buy_id: 'mb_1',
+        status: 'pending_creatives',
+        confirmed_at: '2026-04-28T00:00:00Z',
+        packages: [],
+      }),
+      updateMediaBuy: async () => ({ media_buy_id: 'mb_1', status: 'active' }),
+      syncCreatives: async () => [],
+      getMediaBuyDelivery: async () => ({
+        currency: 'USD',
+        reporting_period: { start: '2026-04-01', end: '2026-04-30' },
+        media_buy_deliveries: [],
+      }),
+    },
+  };
+}
+
+const SANDBOX_GATE = input => input.account?.sandbox === true;
+const BASE_OPTS = {
+  name: 'auto-seed-host',
+  version: '0.0.1',
+  validation: { requests: 'off', responses: 'off' },
+};
+
+async function callComply(server, args) {
+  return server.dispatchTestRequest({
+    method: 'tools/call',
+    params: { name: 'comply_test_controller', arguments: args },
+  });
+}
+
+async function callGetProducts(server, args) {
+  return server.dispatchTestRequest({
+    method: 'tools/call',
+    params: { name: 'get_products', arguments: args },
+  });
+}
+
+describe('createAdcpServerFromPlatform — catalog-backed auto-seed (issue #1091)', () => {
+  it('seed_product succeeds for a sandbox account when no explicit adapter is wired', async () => {
+    const server = createAdcpServerFromPlatform(basePlatform(), {
+      ...BASE_OPTS,
+      complyTest: { sandboxGate: SANDBOX_GATE },
+    });
+
+    const result = await callComply(server, {
+      scenario: 'seed_product',
+      account: { account_id: 'acc_1', sandbox: true },
+      params: {
+        product_id: 'sports_display_auction',
+        fixture: { delivery_type: 'non_guaranteed', channels: ['display'] },
+      },
+    });
+
+    assert.notStrictEqual(result.isError, true, JSON.stringify(result.structuredContent));
+    assert.strictEqual(result.structuredContent.success, true);
+  });
+
+  it('seeded product is visible in get_products after seed_product', async () => {
+    const server = createAdcpServerFromPlatform(basePlatform(), {
+      ...BASE_OPTS,
+      complyTest: { sandboxGate: SANDBOX_GATE },
+    });
+
+    await callComply(server, {
+      scenario: 'seed_product',
+      account: { account_id: 'acc_1', sandbox: true },
+      params: {
+        product_id: 'sports_display_auction',
+        fixture: {
+          delivery_type: 'non_guaranteed',
+          channels: ['display'],
+          pricing_options: [{ pricing_option_id: 'cpm_1', model: 'cpm', floor: { amount: 5, currency: 'USD' } }],
+        },
+      },
+    });
+
+    const result = await callGetProducts(server, {
+      account: { account_id: 'acc_1', sandbox: true },
+    });
+
+    assert.notStrictEqual(result.isError, true, JSON.stringify(result.structuredContent));
+    const products = result.structuredContent.products;
+    assert.ok(Array.isArray(products), 'products should be an array');
+    const seeded = products.find(p => p.product_id === 'sports_display_auction');
+    assert.ok(seeded, 'seeded product should appear in get_products for sandbox request');
+    assert.strictEqual(seeded.delivery_type, 'non_guaranteed');
+  });
+
+  it('seed_pricing_option auto-derive merges pricing option into the seeded product', async () => {
+    const server = createAdcpServerFromPlatform(basePlatform(), {
+      ...BASE_OPTS,
+      complyTest: { sandboxGate: SANDBOX_GATE },
+    });
+
+    // Seed the parent product first
+    await callComply(server, {
+      scenario: 'seed_product',
+      account: { account_id: 'acc_1', sandbox: true },
+      params: {
+        product_id: 'sports_display_auction',
+        fixture: { delivery_type: 'non_guaranteed', channels: ['display'] },
+      },
+    });
+
+    // Now seed a pricing option on that product
+    const poResult = await callComply(server, {
+      scenario: 'seed_pricing_option',
+      account: { account_id: 'acc_1', sandbox: true },
+      params: {
+        product_id: 'sports_display_auction',
+        pricing_option_id: 'cpm_floor_5',
+        fixture: { model: 'cpm', floor: { amount: 5, currency: 'USD' } },
+      },
+    });
+
+    assert.notStrictEqual(poResult.isError, true, JSON.stringify(poResult.structuredContent));
+    assert.strictEqual(poResult.structuredContent.success, true);
+
+    // Verify the pricing option merged into the product in get_products
+    const gpResult = await callGetProducts(server, {
+      account: { account_id: 'acc_1', sandbox: true },
+    });
+    const products = gpResult.structuredContent.products;
+    const seeded = products.find(p => p.product_id === 'sports_display_auction');
+    assert.ok(seeded, 'seeded product should appear');
+    const po = (seeded.pricing_options ?? []).find(p => p.pricing_option_id === 'cpm_floor_5');
+    assert.ok(po, 'seeded pricing option should be present in the product');
+  });
+
+  it('non-sandbox request is rejected with FORBIDDEN when sandboxGate is wired', async () => {
+    const server = createAdcpServerFromPlatform(basePlatform(), {
+      ...BASE_OPTS,
+      complyTest: { sandboxGate: SANDBOX_GATE },
+    });
+
+    const result = await callComply(server, {
+      scenario: 'seed_product',
+      account: { account_id: 'acc_prod', sandbox: false },
+      params: {
+        product_id: 'some_product',
+        fixture: {},
+      },
+    });
+
+    assert.strictEqual(result.structuredContent?.success, false);
+    assert.strictEqual(result.structuredContent?.error, 'FORBIDDEN');
+  });
+
+  it('explicit seed.product adapter takes priority over auto-derive', async () => {
+    let explicitCalled = false;
+    const server = createAdcpServerFromPlatform(basePlatform(), {
+      ...BASE_OPTS,
+      complyTest: {
+        sandboxGate: SANDBOX_GATE,
+        seed: {
+          product: async params => {
+            explicitCalled = true;
+            // explicit adapter stores nothing — just marks it was called
+          },
+        },
+      },
+    });
+
+    await callComply(server, {
+      scenario: 'seed_product',
+      account: { account_id: 'acc_1', sandbox: true },
+      params: {
+        product_id: 'explicit_product',
+        fixture: { delivery_type: 'non_guaranteed' },
+      },
+    });
+
+    assert.ok(explicitCalled, 'explicit seed.product adapter should be called');
+
+    // The auto-bridge is NOT wired when explicit adapter is present (or at least
+    // the product is not in the auto-seed store, so get_products returns empty)
+    const gpResult = await callGetProducts(server, {
+      account: { account_id: 'acc_1', sandbox: true },
+    });
+    const products = gpResult.structuredContent.products ?? [];
+    const found = products.find(p => p.product_id === 'explicit_product');
+    // Explicit adapters own their storage — the framework's auto-bridge is not wired
+    assert.ok(!found, 'auto-bridge should NOT be wired when explicit seed.product is provided');
+  });
+
+  it('auto-seed is not applied when getProducts is not wired (no sales catalog)', async () => {
+    const platformNoSales = {
+      ...basePlatform(),
+      sales: undefined,
+      capabilities: {
+        ...basePlatform().capabilities,
+        specialisms: [], // no sales specialisms
+      },
+    };
+
+    // Supply complyTest with only a force adapter (no sales); platform has no getProducts
+    let callCount = 0;
+    const server = createAdcpServerFromPlatform(
+      { ...platformNoSales, sales: null },
+      {
+        ...BASE_OPTS,
+        complyTest: {
+          sandboxGate: SANDBOX_GATE,
+          force: {
+            creative_status: async () => {
+              callCount++;
+              return {
+                success: true,
+                transition: 'forced',
+                resource_type: 'creative',
+                resource_id: 'x',
+                previous_state: 'pending_review',
+                current_state: 'approved',
+              };
+            },
+          },
+        },
+      }
+    );
+
+    // seed_product should return UNKNOWN_SCENARIO (no auto-seed, no explicit adapter)
+    const result = await callComply(server, {
+      scenario: 'seed_product',
+      account: { account_id: 'acc_1', sandbox: true },
+      params: { product_id: 'no_catalog_product', fixture: {} },
+    });
+
+    assert.strictEqual(result.structuredContent?.error, 'UNKNOWN_SCENARIO');
+  });
+});

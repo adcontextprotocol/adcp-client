@@ -115,6 +115,7 @@ const DEFAULT_FRAMEWORK_LOGGER: AdcpLogger = {
 };
 import { createInMemoryStatusChangeBus, type StatusChangeBus, type PublishStatusChangeOpts } from '../status-changes';
 import { createComplyController, type ComplyControllerConfig } from '../../../testing/comply-controller';
+import { bridgeFromTestControllerStore } from '../../test-controller-bridge';
 import { normalizeErrors } from '../../normalize-errors';
 
 /**
@@ -849,8 +850,29 @@ export function createAdcpServerFromPlatform<P extends DecisioningPlatform<any, 
     }
   }
 
+  // Auto-seed: when the platform has a `getProducts` catalog and the adopter
+  // wired `complyTest` without ANY explicit seed adapters and without a
+  // `testController` bridge, the framework provides default in-memory seed
+  // adapters so storyboards can call `seed_product` / `seed_pricing_option`
+  // without the adopter writing any adapter code. The bridge makes seeded
+  // products visible in `get_products` responses on sandbox requests.
+  //
+  // The entire auto-seed path is skipped when EITHER `seed.product` OR
+  // `seed_pricing_option` is explicitly wired — mixing explicit and auto-seed
+  // adapters against the same bridge would yield inconsistent `get_products`
+  // responses. In that case the adopter owns the full seed + bridge wiring.
+  const autoSeedStore: Map<string, unknown> | undefined =
+    opts.complyTest != null &&
+    platform.sales?.getProducts != null &&
+    !opts.testController &&
+    !opts.complyTest.seed?.product &&
+    !opts.complyTest.seed?.pricing_option
+      ? new Map<string, unknown>()
+      : undefined;
+
   const config: AdcpServerConfig<Account> = {
     ...opts,
+    ...(autoSeedStore != null && { testController: bridgeFromTestControllerStore(autoSeedStore) }),
     ...(projectedCapabilitiesConfig != null && { capabilities: projectedCapabilitiesConfig }),
     // Pool-derived stores override the spread above when adopters supplied
     // `pool` but no explicit per-store opt. Explicit values still win.
@@ -1020,7 +1042,47 @@ export function createAdcpServerFromPlatform<P extends DecisioningPlatform<any, 
   // or environment-level by guarding the createAdcpServerFromPlatform
   // call site itself).
   if (opts.complyTest != null) {
-    const controller = createComplyController(opts.complyTest);
+    let complyConfig = opts.complyTest;
+
+    if (autoSeedStore != null) {
+      // Inject auto-seed adapters for `seed_product` and `seed_pricing_option`
+      // when the adopter didn't wire explicit ones. Explicit adapters win — the
+      // spread only fills the undefined slots.
+      const explicitSeed = opts.complyTest.seed ?? {};
+      const autoSeed = { ...explicitSeed };
+
+      if (!explicitSeed.product) {
+        autoSeed.product = async params => {
+          autoSeedStore.set(params.product_id, { ...params.fixture, product_id: params.product_id });
+        };
+      }
+
+      if (!explicitSeed.pricing_option) {
+        autoSeed.pricing_option = async params => {
+          const existing = autoSeedStore.get(params.product_id) as Record<string, unknown> | undefined;
+          const pricingOption = { ...params.fixture, pricing_option_id: params.pricing_option_id };
+          const existingOptions = Array.isArray(
+            (existing as { pricing_options?: unknown[] } | undefined)?.pricing_options
+          )
+            ? (existing as { pricing_options: unknown[] }).pricing_options
+            : [];
+          const filtered = existingOptions.filter(
+            (p): p is Record<string, unknown> =>
+              p != null &&
+              typeof p === 'object' &&
+              (p as Record<string, unknown>).pricing_option_id !== params.pricing_option_id
+          );
+          autoSeedStore.set(params.product_id, {
+            ...(existing ?? { product_id: params.product_id }),
+            pricing_options: [...filtered, pricingOption],
+          });
+        };
+      }
+
+      complyConfig = { ...opts.complyTest, seed: autoSeed };
+    }
+
+    const controller = createComplyController(complyConfig);
     controller.register(server);
   }
 
