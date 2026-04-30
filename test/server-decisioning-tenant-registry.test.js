@@ -923,3 +923,156 @@ describe('TenantRegistry — autoValidate footgun guard (F7)', () => {
     assert.strictEqual(hit, undefined, 'no autoValidate warning when explicitly true');
   });
 });
+
+describe('TenantRegistry — multi-URL (agentUrls) cutover support', () => {
+  it('routes traffic from any URL in agentUrls to the same tenant', async () => {
+    const validator = fakeValidator(async () => ({ ok: true }));
+    const registry = createTenantRegistry({
+      jwksValidator: validator,
+      defaultServerOptions: DEFAULT_SERVER_OPTIONS,
+      autoValidate: false,
+    });
+
+    registry.register('cutover_tenant', {
+      agentUrls: ['https://new.example.com', 'https://old.example.com'],
+      signingKey: SAMPLE_KEY,
+      platform: basePlatform(),
+    });
+    await registry.recheck('cutover_tenant');
+
+    const fromNew = registry.resolveByHost('new.example.com');
+    const fromOld = registry.resolveByHost('old.example.com');
+    assert.ok(fromNew, 'resolves on canonical URL');
+    assert.ok(fromOld, 'resolves on alias URL');
+    assert.strictEqual(fromNew.tenantId, 'cutover_tenant');
+    assert.strictEqual(fromOld.tenantId, 'cutover_tenant');
+    assert.strictEqual(fromNew.server, fromOld.server, 'same server instance for both URLs');
+  });
+
+  it('JWKS validation uses agentUrls[0] (canonical) — alias hosts are not separately validated', async () => {
+    const seenHosts = [];
+    const validator = fakeValidator(async ({ agentUrl }) => {
+      seenHosts.push(agentUrl);
+      return { ok: true };
+    });
+    const registry = createTenantRegistry({
+      jwksValidator: validator,
+      defaultServerOptions: DEFAULT_SERVER_OPTIONS,
+      autoValidate: false,
+    });
+
+    registry.register('cutover', {
+      agentUrls: ['https://canonical.example.com', 'https://alias-a.example.com', 'https://alias-b.example.com'],
+      signingKey: SAMPLE_KEY,
+      platform: basePlatform(),
+    });
+    await registry.recheck('cutover');
+
+    assert.deepStrictEqual(seenHosts, ['https://canonical.example.com'], 'only canonical URL drives JWKS');
+  });
+
+  it('TenantStatus.agentUrl reports the canonical URL for multi-URL tenants', async () => {
+    const registry = createTenantRegistry({
+      jwksValidator: fakeValidator(async () => ({ ok: true })),
+      defaultServerOptions: DEFAULT_SERVER_OPTIONS,
+      autoValidate: false,
+    });
+
+    registry.register('multi', {
+      agentUrls: ['https://primary.example.com', 'https://secondary.example.com'],
+      signingKey: SAMPLE_KEY,
+      platform: basePlatform(),
+    });
+    await registry.recheck('multi');
+
+    const status = registry.getStatus('multi');
+    assert.strictEqual(status.agentUrl, 'https://primary.example.com');
+    assert.strictEqual(status.health, 'healthy');
+  });
+
+  it('rejects setting both agentUrl and agentUrls', () => {
+    const registry = createTenantRegistry({
+      jwksValidator: fakeValidator(async () => ({ ok: true })),
+      defaultServerOptions: DEFAULT_SERVER_OPTIONS,
+      autoValidate: false,
+    });
+
+    assert.throws(
+      () =>
+        registry.register('ambiguous', {
+          agentUrl: 'https://one.example.com',
+          agentUrls: ['https://two.example.com'],
+          signingKey: SAMPLE_KEY,
+          platform: basePlatform(),
+        }),
+      /set exactly one of/
+    );
+  });
+
+  it('rejects empty agentUrls array', () => {
+    const registry = createTenantRegistry({
+      jwksValidator: fakeValidator(async () => ({ ok: true })),
+      defaultServerOptions: DEFAULT_SERVER_OPTIONS,
+      autoValidate: false,
+    });
+
+    assert.throws(
+      () =>
+        registry.register('empty', {
+          agentUrls: [],
+          signingKey: SAMPLE_KEY,
+          platform: basePlatform(),
+        }),
+      /must contain at least one URL/
+    );
+  });
+
+  it('rejects neither agentUrl nor agentUrls', () => {
+    const registry = createTenantRegistry({
+      jwksValidator: fakeValidator(async () => ({ ok: true })),
+      defaultServerOptions: DEFAULT_SERVER_OPTIONS,
+      autoValidate: false,
+    });
+
+    assert.throws(
+      () =>
+        registry.register('missing', {
+          signingKey: SAMPLE_KEY,
+          platform: basePlatform(),
+        }),
+      /must provide either/
+    );
+  });
+
+  it('multi-URL tenant with mixed path prefixes — longest-prefix-wins still applies across hosts', async () => {
+    const registry = createTenantRegistry({
+      jwksValidator: fakeValidator(async () => ({ ok: true })),
+      defaultServerOptions: DEFAULT_SERVER_OPTIONS,
+      autoValidate: false,
+    });
+
+    // Tenant A on canonical-host with /sales prefix; Tenant B on alias-host
+    // with /sales-broadcast prefix. A request to alias-host/sales-broadcast/mcp
+    // should resolve to Tenant B (longer matching prefix wins).
+    registry.register('tenant_short', {
+      agentUrls: ['https://canonical.example.com/sales'],
+      signingKey: SAMPLE_KEY,
+      platform: basePlatform(),
+    });
+    registry.register('tenant_long', {
+      agentUrls: ['https://canonical.example.com/sales-broadcast'],
+      signingKey: SAMPLE_KEY,
+      platform: basePlatform(),
+    });
+    await registry.recheck('tenant_short');
+    await registry.recheck('tenant_long');
+
+    const longMatch = registry.resolveByRequest('canonical.example.com', '/sales-broadcast/mcp');
+    assert.ok(longMatch);
+    assert.strictEqual(longMatch.tenantId, 'tenant_long');
+
+    const shortMatch = registry.resolveByRequest('canonical.example.com', '/sales/mcp');
+    assert.ok(shortMatch);
+    assert.strictEqual(shortMatch.tenantId, 'tenant_short');
+  });
+});
