@@ -21,6 +21,7 @@ import {
   createAdcpServerFromPlatform, getAllAdcpMigrations, serve,
   // Wire-shape helpers (eliminate 30+ lines of boilerplate per Product)
   buildProduct, buildPackage, buildPricingOption,
+  DEFAULT_REPORTING_CAPABILITIES,           // safe starter for reporting_capabilities — override per-product as needed
   // Typed errors — pick from this catalog instead of `throw new AdcpError(...)`
   PackageNotFoundError, MediaBuyNotFoundError, ProductNotFoundError,
   BudgetTooLowError, BackwardsTimeRangeError, InvalidStateError,
@@ -58,6 +59,7 @@ The full export list is in `@adcp/sdk/server`. Many surfaces are marked `@deprec
 import {
   createAdcpServerFromPlatform,
   createCtxMetadataStore, memoryCtxMetadataStore,
+  DEFAULT_REPORTING_CAPABILITIES,
   PackageNotFoundError, MediaBuyNotFoundError, ProductNotFoundError,
   BudgetTooLowError, BackwardsTimeRangeError, InvalidStateError,
   type DecisioningPlatform, type SalesPlatform,
@@ -90,6 +92,7 @@ class MyPlatform implements DecisioningPlatform {
           name: p.name,
           format_ids: p.formatIds.map(id => ({ id })),
           delivery_type: 'non_guaranteed',
+          reporting_capabilities: DEFAULT_REPORTING_CAPABILITIES,  // required; override per-product for custom delays/frequencies
           pricing_options: [{ pricing_option_id: `${p.id}-cpm`, model: 'cpm', floor: { amount: p.floor, currency: 'USD' } }],
           ctx_metadata: { gam: { ad_unit_ids: p.adUnitIds } },  // stashed; framework round-trips
         })),

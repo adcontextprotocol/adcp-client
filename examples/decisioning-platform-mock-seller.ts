@@ -41,6 +41,7 @@
 import {
   AdcpError,
   createAdcpServerFromPlatform,
+  DEFAULT_REPORTING_CAPABILITIES,
   type DecisioningPlatform,
   type SalesPlatform,
   type AccountStore,
@@ -162,12 +163,9 @@ const SHARED_GET_PRODUCTS = async (_req: GetProductsRequest): Promise<GetProduct
         },
       ],
       reporting_capabilities: {
+        ...DEFAULT_REPORTING_CAPABILITIES,
         available_reporting_frequencies: ['hourly', 'daily'],
         expected_delay_minutes: 30,
-        timezone: 'UTC',
-        supports_webhooks: false,
-        available_metrics: [],
-        date_range_support: 'date_range',
       },
     },
   ],

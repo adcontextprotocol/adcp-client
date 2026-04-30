@@ -22,12 +22,13 @@
 
 import {
   AdcpError,
+  DEFAULT_REPORTING_CAPABILITIES,
   publishStatusChange,
   type DecisioningPlatform,
   type SalesPlatform,
   type AccountStore,
+  type SyncCreativesRow,
 } from '@adcp/sdk/server';
-import type { SyncCreativesRow } from '@adcp/sdk/server';
 import type {
   GetProductsRequest,
   GetProductsResponse,
@@ -104,14 +105,7 @@ export class ProgrammaticSeller implements DecisioningPlatform<ProgrammaticConfi
           format_ids: [{ id: 'display_300x250', agent_url: 'https://example.com/programmatic-creative-agent/mcp' }],
           delivery_type: 'non_guaranteed',
           publisher_properties: [{ publisher_domain: 'programmatic.example.com', selection_type: 'all' }],
-          reporting_capabilities: {
-            available_reporting_frequencies: ['daily'],
-            expected_delay_minutes: 60,
-            timezone: 'UTC',
-            supports_webhooks: false,
-            available_metrics: [],
-            date_range_support: 'date_range',
-          },
+          reporting_capabilities: { ...DEFAULT_REPORTING_CAPABILITIES, expected_delay_minutes: 60 },
           pricing_options: [
             {
               pricing_option_id: 'cpm_2_50',
@@ -128,14 +122,7 @@ export class ProgrammaticSeller implements DecisioningPlatform<ProgrammaticConfi
           format_ids: [{ id: 'video_15s', agent_url: 'https://example.com/programmatic-creative-agent/mcp' }],
           delivery_type: 'non_guaranteed',
           publisher_properties: [{ publisher_domain: 'programmatic.example.com', selection_type: 'all' }],
-          reporting_capabilities: {
-            available_reporting_frequencies: ['daily'],
-            expected_delay_minutes: 60,
-            timezone: 'UTC',
-            supports_webhooks: false,
-            available_metrics: [],
-            date_range_support: 'date_range',
-          },
+          reporting_capabilities: { ...DEFAULT_REPORTING_CAPABILITIES, expected_delay_minutes: 60 },
           pricing_options: [
             {
               pricing_option_id: 'cpm_18_00',
