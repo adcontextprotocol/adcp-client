@@ -2099,6 +2099,12 @@ function getAdvertisedSupportedMajors(capConfig: AdcpCapabilitiesConfig | undefi
  * 2. Else `capConfig.major_versions` — stringify each integer.
  * 3. Else fall back to the server pin's major as a single-entry list.
  *
+ * Strings are preferred over integers because release-precision strings
+ * round-trip more information; emitting a single-source listing avoids
+ * confusing buyers with both integer and string shapes for the same major.
+ * (`getAdvertisedSupportedMajors` unions both sources for the accepted-set
+ * check, but this function picks one to avoid that ambiguity on the wire.)
+ *
  * Buyer-side parser (`extractVersionUnsupportedDetails`) already filters
  * non-strings, so a `String(N)` fallback round-trips cleanly across 3.0
  * and 3.1 sellers.

@@ -8,6 +8,7 @@ import type {
   SkipReason,
 } from './types';
 import { schemaToArbitrary } from './schemaArbitrary';
+import { ADCP_MAJOR_VERSION } from '../version';
 import { loadRequestSchema } from './schemaLoader';
 import { evaluate, prepareResponseValidator } from './oracle';
 
@@ -82,7 +83,7 @@ export async function runToolFuzz(
     // separately by storyboards (`error_compliance/unsupported_major_version`).
     const probeRequest =
       'adcp_major_version' in request || 'adcp_version' in request
-        ? { ...request, adcp_major_version: 3, adcp_version: '3.0' }
+        ? { ...request, adcp_major_version: ADCP_MAJOR_VERSION }
         : request;
 
     let result;
