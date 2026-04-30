@@ -66,10 +66,16 @@ export interface ContentStandardsPlatform<TCtxMeta = Record<string, unknown>> {
    * and returns the persisted record. Idempotent on the buyer's
    * `idempotency_key`.
    */
-  createContentStandards(req: CreateContentStandardsRequest, ctx: Ctx<TCtxMeta>): Promise<CreateContentStandardsResponse>;
+  createContentStandards(
+    req: CreateContentStandardsRequest,
+    ctx: Ctx<TCtxMeta>
+  ): Promise<CreateContentStandardsResponse>;
 
   /** Update an existing content standard. */
-  updateContentStandards(req: UpdateContentStandardsRequest, ctx: Ctx<TCtxMeta>): Promise<UpdateContentStandardsResponse>;
+  updateContentStandards(
+    req: UpdateContentStandardsRequest,
+    ctx: Ctx<TCtxMeta>
+  ): Promise<UpdateContentStandardsResponse>;
 
   /**
    * Calibrate content against the published standards. Returns the

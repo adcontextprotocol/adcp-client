@@ -142,7 +142,10 @@ export interface CreativeBuilderPlatform<TCtxMeta = Record<string, unknown>> {
    * `ctx.handoffToTask(fn)` to defer to a background task. Unified
    * hybrid shape — return rows OR `ctx.handoffToTask(fn)`.
    */
-  syncCreatives?(creatives: Creative[], ctx: Ctx<TCtxMeta>): Promise<SyncCreativesRow[] | TaskHandoff<SyncCreativesRow[]>>;
+  syncCreatives?(
+    creatives: Creative[],
+    ctx: Ctx<TCtxMeta>
+  ): Promise<SyncCreativesRow[] | TaskHandoff<SyncCreativesRow[]>>;
 }
 
 /**

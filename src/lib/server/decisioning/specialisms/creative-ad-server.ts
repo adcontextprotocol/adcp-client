@@ -83,7 +83,10 @@ export interface CreativeAdServerPlatform<TCtxMeta = Record<string, unknown>> {
    * `'updated'` for replacements, `'unchanged'` when matching. Optional
    * `status: 'pending_review'` for sync-arm rows awaiting manual review.
    */
-  syncCreatives?(creatives: Creative[], ctx: Ctx<TCtxMeta>): Promise<SyncCreativesRow[] | TaskHandoff<SyncCreativesRow[]>>;
+  syncCreatives?(
+    creatives: Creative[],
+    ctx: Ctx<TCtxMeta>
+  ): Promise<SyncCreativesRow[] | TaskHandoff<SyncCreativesRow[]>>;
 
   /**
    * Read creatives from the library. Filters + pagination. When
