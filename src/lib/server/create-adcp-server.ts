@@ -2392,6 +2392,8 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
             : typeof reqAdcpMajorRaw === 'string'
               ? Number.parseInt(reqAdcpMajorRaw, 10)
               : undefined;
+        const serverMajorVersions: number[] = capConfig?.major_versions ?? [3];
+
         if (typeof reqAdcpVersion === 'string' && reqAdcpMajor !== undefined && Number.isFinite(reqAdcpMajor)) {
           const stringMajor = parseAdcpMajorVersion(reqAdcpVersion);
           if (Number.isFinite(stringMajor) && stringMajor !== reqAdcpMajor) {
@@ -2400,6 +2402,41 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
                 message:
                   `Request carries adcp_version="${reqAdcpVersion}" (major ${stringMajor}) and ` +
                   `adcp_major_version=${JSON.stringify(reqAdcpMajorRaw)}; majors must agree.`,
+              })
+            );
+          }
+        }
+
+        // Single-field major version validation per spec PR `adcontextprotocol/adcp#3493`:
+        // a server advertising `major_versions` MUST reject requests whose claimed
+        // major is outside that set, not just dual-field disagreements.
+        // Runs before the `requestValidationMode` gate for the same reason as above.
+        if (reqAdcpMajor !== undefined && Number.isFinite(reqAdcpMajor) && typeof reqAdcpVersion !== 'string') {
+          if (!serverMajorVersions.includes(reqAdcpMajor)) {
+            return finalize(
+              adcpError('VERSION_UNSUPPORTED', {
+                message:
+                  `adcp_major_version=${reqAdcpMajor} is not supported; ` +
+                  `server supports major version(s): [${serverMajorVersions.join(', ')}].`,
+                details: {
+                  supported_versions: serverMajorVersions.map(v => `${v}.0`),
+                },
+              })
+            );
+          }
+        }
+        if (typeof reqAdcpVersion === 'string' && reqAdcpMajor === undefined) {
+          const stringMajor = parseAdcpMajorVersion(reqAdcpVersion);
+          if (Number.isFinite(stringMajor) && !serverMajorVersions.includes(stringMajor)) {
+            return finalize(
+              adcpError('VERSION_UNSUPPORTED', {
+                message:
+                  `adcp_version="${reqAdcpVersion}" (major ${stringMajor}) is not supported; ` +
+                  `server supports major version(s): [${serverMajorVersions.join(', ')}].`,
+                details: {
+                  supported_versions: serverMajorVersions.map(v => `${v}.0`),
+                  requested_version: reqAdcpVersion,
+                },
               })
             );
           }
