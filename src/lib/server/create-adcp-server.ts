@@ -37,8 +37,10 @@
 
 import { z } from 'zod';
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
-import { ADCP_VERSION, type AdcpVersion } from '../version';
+import { parseAdcpMajorVersion, type AdcpVersion } from '../version';
 import { resolveAdcpVersion } from '../utils/adcp-version-config';
+import { resolveBundleKey } from '../validation/schema-loader';
+import { bundleSupportsAdcpVersionField } from '../protocols';
 import type { ToolCallback } from '@modelcontextprotocol/sdk/server/mcp.js';
 import type { ZodRawShapeCompat, AnySchema } from '@modelcontextprotocol/sdk/server/zod-compat.js';
 import type { ToolAnnotations } from '@modelcontextprotocol/sdk/types.js';
@@ -1870,6 +1872,39 @@ function injectContextIntoResponse(response: McpToolResponse, context: unknown):
   }
 }
 
+/**
+ * Inject `adcp_version` into the response body so the seller echoes the
+ * release served per spec PR `adcontextprotocol/adcp#3493`. Mirrors
+ * `injectContextIntoResponse`'s structuredContent + L2-text-fallback dual
+ * write so MCP clients reading either layer see the field. Only injects on
+ * AdCP 3.1+ — 3.0 schemas don't define the field.
+ *
+ * `servedVersion` is the seller's release-precision identifier (output of
+ * `resolveBundleKey(adcpVersion)`). For now it always reflects the seller's
+ * own pin; downshift (3.1 seller serving a 3.0 buyer at 3.0) is a follow-up.
+ */
+function injectVersionIntoResponse(response: McpToolResponse, servedVersion: string | undefined): void {
+  if (!servedVersion) return;
+  const sc = response.structuredContent as Record<string, unknown> | undefined;
+  if (sc && typeof sc === 'object' && !('adcp_version' in sc)) {
+    sc.adcp_version = servedVersion;
+    if (Array.isArray(response.content)) {
+      const first = response.content[0];
+      if (first && first.type === 'text' && typeof first.text === 'string') {
+        try {
+          const parsed = JSON.parse(first.text);
+          if (parsed && typeof parsed === 'object' && !('adcp_version' in parsed)) {
+            parsed.adcp_version = servedVersion;
+            first.text = JSON.stringify(parsed);
+          }
+        } catch {
+          // Text isn't JSON — leave it alone
+        }
+      }
+    }
+  }
+}
+
 // ---------------------------------------------------------------------------
 // Signed-requests preTransport builder
 // ---------------------------------------------------------------------------
@@ -2054,6 +2089,18 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
   // future refactors. Throws `ConfigurationError` on cross-major pins
   // whose schema bundle isn't shipped — see utils/adcp-version-config.ts.
   const adcpVersion = resolveAdcpVersion(configuredAdcpVersion);
+
+  // Pre-resolved release-precision identifier the seller echoes on every
+  // response per AdCP 3.1 spec PR `adcontextprotocol/adcp#3493`. `undefined`
+  // when this seller pins a 3.0 bundle (3.0 schemas don't define the field).
+  // Computed once at construction since the seller's pin is fixed for the
+  // server's lifetime — every dispatch reuses the same value. Downshift
+  // (3.1 seller serving a 3.0 buyer at 3.0) is a follow-up; today this
+  // always reflects the seller's own pin.
+  const servedAdcpVersion = (() => {
+    const bundleKey = resolveBundleKey(adcpVersion);
+    return bundleSupportsAdcpVersionField(bundleKey) ? bundleKey : undefined;
+  })();
 
   // Defaults gated on `process.env.NODE_ENV`:
   //   - Production → both sides `'off'` (zero AJV overhead; trust the
@@ -2314,10 +2361,49 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
         const finalize = (response: McpToolResponse): McpToolResponse => {
           sanitizeAdcpErrorEnvelope(response);
           injectContextIntoResponse(response, params.context);
+          injectVersionIntoResponse(response, servedAdcpVersion);
           return response;
         };
 
         const toolIsMutating = isMutatingTask(toolName);
+
+        // Field-disagreement detection per spec PR `adcontextprotocol/adcp#3493`:
+        // when the request carries both `adcp_version` (string, AdCP 3.1+)
+        // and `adcp_major_version` (integer, deprecated) and the majors
+        // disagree, the server MUST return `VERSION_UNSUPPORTED`. Catches
+        // a buyer that pinned a string but kept a stale integer in their
+        // call-site config — the discrepancy is silent drift otherwise.
+        //
+        // Intentionally runs before the `requestValidationMode === 'off'`
+        // short-circuit below: this is a spec MUST, not opt-in validation.
+        // Production servers run with validation off by default; without
+        // this check, a stale-integer drift on those servers would silently
+        // dispatch to the wrong schema bundle.
+        //
+        // Coerces a stringified `adcp_major_version` (e.g. `"3"` from a
+        // buyer that JSON-stringified a number) before comparing — AJV
+        // strict-mode rejects this in dev, but production-default off-mode
+        // would otherwise let the bypass through.
+        const reqAdcpVersion = (params as { adcp_version?: unknown }).adcp_version;
+        const reqAdcpMajorRaw = (params as { adcp_major_version?: unknown }).adcp_major_version;
+        const reqAdcpMajor =
+          typeof reqAdcpMajorRaw === 'number'
+            ? reqAdcpMajorRaw
+            : typeof reqAdcpMajorRaw === 'string'
+              ? Number.parseInt(reqAdcpMajorRaw, 10)
+              : undefined;
+        if (typeof reqAdcpVersion === 'string' && reqAdcpMajor !== undefined && Number.isFinite(reqAdcpMajor)) {
+          const stringMajor = parseAdcpMajorVersion(reqAdcpVersion);
+          if (Number.isFinite(stringMajor) && stringMajor !== reqAdcpMajor) {
+            return finalize(
+              adcpError('VERSION_UNSUPPORTED', {
+                message:
+                  `Request carries adcp_version="${reqAdcpVersion}" (major ${stringMajor}) and ` +
+                  `adcp_major_version=${JSON.stringify(reqAdcpMajorRaw)}; majors must agree.`,
+              })
+            );
+          }
+        }
 
         // --- Request schema validation (opt-in) ---
         // Runs before idempotency so drifted payloads never touch the

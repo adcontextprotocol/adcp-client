@@ -705,6 +705,8 @@ export {
 // Internal: transport-level extraction (used by SDK internals; prefer result.adcpError instead)
 export { extractAdcpErrorFromMcp, extractAdcpErrorFromTransport } from './utils/error-extraction';
 export type { ExtractedAdcpError } from './utils/error-extraction';
+export { extractVersionUnsupportedDetails } from './utils/error-extraction';
+export type { VersionUnsupportedDetails } from './utils/error-extraction';
 
 // ====== BACKWARDS COMPATIBILITY ======
 // Deprecated types from past protocol migrations
@@ -831,7 +833,9 @@ export {
   createMCPClient,
   createA2AClient,
   closeMCPConnections,
+  bundleSupportsAdcpVersionField,
 } from './protocols';
+export type { CallToolOptions } from './protocols';
 
 // ====== RESPONSE UTILITIES ======
 // Public utilities for working with AdCP responses
