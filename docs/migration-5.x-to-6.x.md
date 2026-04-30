@@ -419,8 +419,9 @@ createAdcpServerFromPlatform(platform, {
   stays inside the SDK's own `node_modules`. Once the SDK is consumed
   via published tarball (`npm install @adcp/sdk@x.y.z`), this
   disappears — link mode is the only setup that triggers it.
-- **`zod` is now a required peer dependency** (`^4.1.0`). The SDK's
-  `ZodSchema` types must resolve to the same `zod` instance the
+- **`zod` is now a required peer dependency** (`^4.1.5` in 6.0.1; was
+  `^4.1.0` in 6.0.0 — bumped to match the codegen tools' floors). The
+  SDK's `ZodSchema` types must resolve to the same `zod` instance the
   consumer uses; otherwise zod 4's `version.minor` literal type tag
   makes nominally-identical schemas incompatible at the type level.
   The npm-tarball install path picks this up automatically (npm 7+
@@ -429,6 +430,12 @@ createAdcpServerFromPlatform(platform, {
   so a single `zod` resolves at the consumer's `node_modules` root.
   Empirically reported by an adopter: 48 type errors and a 4 GB tsc
   OOM with two zod copies (4.1.12 vs 4.3.6 in the linked SDK).
+  - **If you see `Cannot find module 'zod'` at server boot**, your
+    package manager didn't install the peer dep automatically (npm 6,
+    `--legacy-peer-deps`, or pnpm without the auto-install setting).
+    Install explicitly: `npm install zod@^4.1.5` (or `pnpm add zod@^4.1.5`).
+    The SDK can't catch this at runtime — `import { z } from 'zod'`
+    resolves at module load, before any SDK code runs.
 - **zod 4.3.0 `.partial()` regression on `.refine()` schemas.** Zod
   4.3.0 made `.partial()` throw at runtime when the source schema
   carries a `.refine(...)`. SDK 6.0 builds against `zod@4.1.x` to

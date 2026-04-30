@@ -307,13 +307,6 @@ export interface AdcpLogger {
  */
 const DEFAULT_STATE_STORE = new InMemoryStateStore();
 
-/**
- * One-time guard so the default-store warning fires at most once per
- * process — adopters using the factory pattern would otherwise see the
- * line on every request.
- */
-let defaultStateStoreWarned = false;
-
 const noopLogger: AdcpLogger = {
   debug() {},
   info() {},
@@ -2337,28 +2330,6 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
     testController: testControllerBridge,
   } = config;
 
-  // Multi-tenant footgun warning: the default `stateStore` is a single
-  // module-level `InMemoryStateStore` shared across every `createAdcpServer`
-  // invocation in this process. Single-tenant agents — including everything
-  // the skills demonstrate — get the documented "ctx.store persists across
-  // requests" behavior. Multi-tenant deployments that mint one
-  // `createAdcpServer` per resolved tenant in the factory closure would
-  // silently share state across tenants. v6.0.1 plans to harden this into
-  // a NODE_ENV=production refusal mirroring the task-registry policy
-  // (`buildDefaultTaskRegistry`). Until then: warn once per process so the
-  // awareness is in adopter logs without spamming every request.
-  if (stateStore === DEFAULT_STATE_STORE && !defaultStateStoreWarned) {
-    defaultStateStoreWarned = true;
-    logger.warn(
-      '[adcp/server] createAdcpServer is using the default in-memory state ' +
-        'store (shared module-singleton across all createAdcpServer calls in ' +
-        'this process). Fine for dev + single-tenant agents. Multi-tenant ' +
-        'deployments MUST pass an explicit `stateStore` (PostgresStateStore, ' +
-        'Redis-backed AdcpStateStore, etc.) — the default does NOT partition ' +
-        'state across resolved tenants. v6.0.1 will refuse this in production.'
-    );
-  }
-
   // Resolve `adcpVersion` early — the validator-call closures below capture
   // it by reference and would hit a TDZ ReferenceError if any of them ran
   // synchronously during setup. They don't today (`createAdcpServer`
@@ -2437,6 +2408,49 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
       "createAdcpServer: idempotency: 'disabled' is set. Mutating requests will not be replay-checked and " +
         '`get_adcp_capabilities` will declare `idempotency.supported: false`. Use only in non-production test fleets.'
     );
+  }
+
+  // Production gate on the default in-memory `stateStore`. Mirrors
+  // `buildDefaultTaskRegistry` policy in `from-platform.ts` and the
+  // `idempotency: 'disabled'` allowlist above: the module-singleton
+  // default is correct for dev and single-tenant agents, but
+  // multi-tenant production deployments that mint one
+  // `createAdcpServer` per resolved tenant would silently share state
+  // across tenants. Refuse outside `{NODE_ENV=test, NODE_ENV=development}`
+  // unless the adopter sets `ADCP_DECISIONING_ALLOW_INMEMORY_STATE=1` as
+  // an explicit ops escape hatch. v6.0 shipped this as a one-time warn;
+  // 6.0.1 promotes it to a hard refusal so the production footgun closes
+  // before any adopter trips on it.
+  //
+  // Ordered AFTER the idempotency-disabled gate so adopters who hit
+  // both surface the higher-severity error (idempotency-disabled
+  // double-executes mutations on retry; state-store sharing leaks
+  // tenant data — both bad, idempotency goes first because the
+  // recovery is "wire a store" while state-store recovery is "pass
+  // your own").
+  if (stateStore === DEFAULT_STATE_STORE) {
+    const env = process.env.NODE_ENV;
+    const safe = env === 'test' || env === 'development';
+    const ack = process.env.ADCP_DECISIONING_ALLOW_INMEMORY_STATE === '1';
+    if (!safe && !ack) {
+      throw new Error(
+        'createAdcpServer: in-memory state store refused outside ' +
+          '{NODE_ENV=test, NODE_ENV=development}. The default ' +
+          '`InMemoryStateStore` is a process-shared module singleton — ' +
+          'single-tenant agents get the documented `ctx.store` cross-request ' +
+          'persistence, but multi-tenant deployments would silently share ' +
+          'state across resolved tenants. Pick one of:\n' +
+          '  1. (Recommended) Pass `stateStore: new PostgresStateStore({ pool })` ' +
+          'to keep state across restarts AND partition across tenants. See ' +
+          '`@adcp/sdk/server` for the migration helper.\n' +
+          '  2. Pass `stateStore: new InMemoryStateStore()` explicitly if you ' +
+          'accept that state is per-process and shared across all resolved ' +
+          'tenants. Single-tenant agents only.\n' +
+          '  3. ADCP_DECISIONING_ALLOW_INMEMORY_STATE=1 env flag is the ops ' +
+          'escape hatch (same effect as #2 but config-only); prefer #2 in ' +
+          'adopter code so the choice is visible at the call site.'
+      );
+    }
   }
 
   // Enforce lock-step between the `signed-requests` specialism claim and the
