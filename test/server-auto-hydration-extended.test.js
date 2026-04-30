@@ -81,6 +81,31 @@ describe('auto-hydration — update_media_buy', () => {
     assert.equal(observedReq.media_buy.media_buy_id, 'mb_42');
     assert.equal(observedReq.media_buy.status, 'active');
     assert.deepEqual(observedReq.media_buy.ctx_metadata, { gam: { order_id: '12345' } }, 'ctx_metadata round-tripped');
+
+    // Leak prevention: hydrated field is non-enumerable so accidental
+    // serialization (JSON.stringify, spread, Object.entries) does NOT
+    // carry the publisher's ctx_metadata blob into request-side log
+    // sinks. Direct property access (used above) still works.
+    assert.equal(
+      Object.keys(observedReq).includes('media_buy'),
+      false,
+      'hydrated field is non-enumerable — invisible to Object.keys'
+    );
+    assert.equal(
+      JSON.stringify(observedReq).includes('"media_buy"'),
+      false,
+      'hydrated field does not appear in JSON.stringify output'
+    );
+    assert.equal(
+      JSON.stringify(observedReq).includes('order_id'),
+      false,
+      'publisher ctx_metadata does not leak via accidental serialization'
+    );
+    assert.equal(
+      observedReq.media_buy.__adcp_hydrated__,
+      true,
+      'hydrated objects carry __adcp_hydrated__ marker so middleware can disambiguate'
+    );
   });
 
   it('updateMediaBuy without prior getMediaBuys — req.media_buy is undefined (falls through)', async () => {

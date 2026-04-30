@@ -127,7 +127,21 @@ export type TenantHealth = 'pending' | 'healthy' | 'unverified' | 'disabled';
 
 export interface TenantStatus {
   tenantId: string;
+  /**
+   * Canonical URL — the first entry in the tenant's `agentUrls` (or the
+   * single `agentUrl` value). JWKS validates against this URL; ops
+   * dashboards page on this field for the primary identity.
+   */
   agentUrl: string;
+  /**
+   * Full URL list when the tenant was registered with `agentUrls[]`.
+   * Single-URL tenants get a one-element array. Ops dashboards iterate
+   * this field to show every URL serving the tenant; required so admins
+   * can detect stale aliases or accidental host overlap with another
+   * tenant (#1097 follow-up — collision check below errors at register
+   * time, but the operator still wants visibility into what's live).
+   */
+  agentUrls: readonly string[];
   health: TenantHealth;
   /** Reason for unverified/disabled state. */
   reason?: string;
@@ -516,52 +530,75 @@ export function createTenantRegistry(opts: TenantRegistryOptions): TenantRegistr
     if (!entry) {
       throw new Error(`runValidation: tenant '${tenantId}' not registered`);
     }
+    const [canonicalUrl, allUrls] = resolveTenantUrls(entry.config);
+    // Multi-URL tenants validate every URL independently. Aliases share the
+    // signing key; if an alias publishes a brand.json that doesn't include
+    // the key (DNS hijack, operator misconfig, stale mirror), traffic to
+    // that alias would receive responses no buyer can verify. Aggregate
+    // failures: tenant is healthy iff ALL URLs validate; first permanent
+    // failure → disabled; transient-only → pending/unverified per existing
+    // policy. The explicit `jwksUrl` override applies to all URLs (the
+    // documented contract for sub-routed deployments).
+    const perUrlResults: Array<{ url: string; res: JwksValidationResult }> = [];
+    for (const url of allUrls) {
+      let res: JwksValidationResult;
+      try {
+        res = await validator.validate({
+          agentUrl: url,
+          ...(entry.config.jwksUrl !== undefined && { jwksUrl: entry.config.jwksUrl }),
+          signingKey: entry.config.signingKey,
+        });
+      } catch (err) {
+        res = {
+          ok: false,
+          recovery: 'transient',
+          reason: `validator threw on '${url}': ${err instanceof Error ? err.message : String(err)}`,
+        };
+      }
+      perUrlResults.push({ url, res });
+      // First permanent failure short-circuits — no point hitting the rest;
+      // the tenant is going to disabled regardless.
+      if (!res.ok && res.recovery === 'permanent') break;
+    }
+    // Aggregate: pick the worst outcome across the urls we validated.
     let result: JwksValidationResult;
-    const [canonicalUrl] = resolveTenantUrls(entry.config);
-    try {
-      result = await validator.validate({
-        agentUrl: canonicalUrl,
-        ...(entry.config.jwksUrl !== undefined && { jwksUrl: entry.config.jwksUrl }),
-        signingKey: entry.config.signingKey,
-      });
-    } catch (err) {
-      // Validator threw — treat as transient (network glitch, etc.).
-      // Without this catch the tenant would be stuck in `pending`
-      // forever — `runValidation` rejects, `entry.status` never
-      // transitions. Closes Emma's round-1 #16.
+    const firstPermanent = perUrlResults.find(r => !r.res.ok && r.res.recovery === 'permanent');
+    const firstTransient = perUrlResults.find(r => !r.res.ok && r.res.recovery === 'transient');
+    if (firstPermanent) {
+      result = {
+        ok: false,
+        recovery: 'permanent',
+        reason: `${firstPermanent.url}: ${firstPermanent.res.reason}`,
+      };
+    } else if (firstTransient) {
       result = {
         ok: false,
         recovery: 'transient',
-        reason: `validator threw: ${err instanceof Error ? err.message : String(err)}`,
+        reason: `${firstTransient.url}: ${firstTransient.res.reason}`,
       };
+    } else {
+      result = { ok: true };
     }
     const now = new Date().toISOString();
     const wasFirstValidation = entry.status.health === 'pending';
+    const baseStatus = { tenantId, agentUrl: canonicalUrl, agentUrls: allUrls, lastCheckedAt: now };
     let status: TenantStatus;
     if (result.ok) {
-      status = { tenantId, agentUrl: canonicalUrl, health: 'healthy', lastCheckedAt: now };
+      status = { ...baseStatus, health: 'healthy' };
     } else if (result.recovery === 'transient') {
       // Transient failure on FIRST validation → stay `pending` (refuse
       // traffic). Transient failure AFTER first success → `unverified`
       // (graceful degradation — the tenant's known good).
       status = {
-        tenantId,
-        agentUrl: canonicalUrl,
+        ...baseStatus,
         health: wasFirstValidation ? 'pending' : 'unverified',
         reason: result.reason,
-        lastCheckedAt: now,
       };
     } else {
       // Permanent failure → `disabled` regardless of prior state. The
       // signing-key material doesn't match what's published; refusing
       // traffic is the safe default.
-      status = {
-        tenantId,
-        agentUrl: canonicalUrl,
-        health: 'disabled',
-        reason: result.reason,
-        lastCheckedAt: now,
-      };
+      status = { ...baseStatus, health: 'disabled', reason: result.reason };
     }
     entry.status = status;
     return status;
@@ -577,10 +614,30 @@ export function createTenantRegistry(opts: TenantRegistryOptions): TenantRegistr
         throw new Error(`tenant '${tenantId}' already registered; unregister first`);
       }
       const [canonicalUrl, allUrls] = resolveTenantUrls(config as unknown as TenantConfig);
+      const routes = allUrls.map(url => parseHostAndPrefix(url));
+      // Reject overlapping (host, pathPrefix) routes against already-registered
+      // tenants. Without this, two tenants can claim the same alias host
+      // silently — `resolveByRequest` picks the first-inserted (deterministic
+      // per-process via Map insertion order, but cross-process flaky on
+      // restart-order changes). Surface the collision now rather than
+      // discover it in production. Round-1 expert review (security-medium).
+      for (const route of routes) {
+        for (const [otherId, otherEntry] of tenants) {
+          for (const otherRoute of otherEntry.routes) {
+            if (otherRoute.host === route.host && otherRoute.pathPrefix === route.pathPrefix) {
+              throw new Error(
+                `tenant '${tenantId}' route ${route.host}${route.pathPrefix} collides with tenant '${otherId}'; ` +
+                  `register them under distinct hosts or path prefixes`
+              );
+            }
+          }
+        }
+      }
       const server = buildServer(config as unknown as TenantConfig);
       const initialStatus: TenantStatus = {
         tenantId,
         agentUrl: canonicalUrl,
+        agentUrls: allUrls,
         // `pending` (NOT `unverified`) — first validation hasn't run.
         // resolveByHost refuses traffic until validation succeeds at
         // least once. Closes the register-then-serve race window.
@@ -588,7 +645,6 @@ export function createTenantRegistry(opts: TenantRegistryOptions): TenantRegistr
         reason: 'awaiting initial JWKS validation',
         lastCheckedAt: new Date().toISOString(),
       };
-      const routes = allUrls.map(url => parseHostAndPrefix(url));
       const entry: TenantEntry = {
         config: config as unknown as TenantConfig,
         server,

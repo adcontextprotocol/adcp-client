@@ -226,6 +226,8 @@ serve(createAgent, {
 
 **Principal threading.** `resolveSessionKey(ctx)` receives only `{toolName, params, account}` — no auth info. To compose the OAuth subject into the idempotency key you need `resolveIdempotencyPrincipal`, which receives the full `HandlerContext` including `ctx.authInfo` (populated by `verifyBearer` through MCP's `extra.authInfo`):
 
+> **LEGACY (v5)** — example shown with `createAdcpServer`. Both `resolveSessionKey` and `resolveIdempotencyPrincipal` are top-level options on `createAdcpServerFromPlatform(platform, opts)` too; pass them in the same shape. Phase 2 of #1088 will migrate this block. New code passes these to `createAdcpServerFromPlatform`.
+
 ```typescript
 createAdcpServer({
   // ...
@@ -291,6 +293,8 @@ This means: the `task_id` you return on a `sales-guaranteed` `create_media_buy` 
 ## Webhooks (async completion, signed outbound)
 
 Most seller flows need outbound webhooks — `sales-guaranteed` fires on IO completion, `sales-broadcast-tv` fires `window_update` deliveries as C3/C7 data matures, `update_media_buy` fires on bid/budget application. **Don't hand-roll `fetch` with HMAC**. Pass `webhooks: { signerKey }` to `createAdcpServerFromPlatform` and call `ctx.emitWebhook(...)` from any handler — the framework handles RFC 9421 signing, nonce minting, stable `idempotency_key` across retries, 5xx/429 backoff, byte-identical JSON serialization, and the "don't retry on signature failures" terminal behavior.
+
+> **LEGACY (v5)** — example below uses `createAdcpServer`. The `webhooks` option has the same shape on `createAdcpServerFromPlatform(platform, { webhooks: { signerKey, ... } })`; only the constructor name and the platform-vs-handlers shape change. Phase 2 of #1088 will migrate this block. For new code, wrap your handlers in a `DecisioningPlatform` class and pass `webhooks` to `createAdcpServerFromPlatform`.
 
 ```typescript
 import { createAdcpServer, serve } from '@adcp/sdk';
@@ -709,6 +713,8 @@ productRepo.upsert(merged.product_id, merged);
 
 **2. `bridgeFromTestControllerStore`** — wires your seeded `Map` into `get_products` responses automatically. Sandbox requests see seeded + handler products merged (with seeded winning collisions); production traffic (no sandbox marker, or resolved non-sandbox account) skips the bridge entirely.
 
+> **LEGACY (v5)** — example below uses `createAdcpServer`. `testController` is also a top-level option on `createAdcpServerFromPlatform`. Phase 2 of #1088 will migrate this block.
+
 ```ts
 import { createAdcpServer } from '@adcp/sdk';
 import { bridgeFromTestControllerStore } from '@adcp/sdk/server';
@@ -850,6 +856,8 @@ Minimal `tsconfig.json`:
 Use `createAdcpServerFromPlatform` — it auto-wires schemas, response builders, and `get_adcp_capabilities` from the typed `DecisioningPlatform` you provide. Handlers receive `(params, ctx)` where `ctx.store` persists state, `ctx.account` is the resolved account, and `ctx.ctxMetadata` is the resource-keyed cache (when wired).
 
 **Imports**: most things live at `@adcp/sdk`. The idempotency store helpers (`createIdempotencyStore`, `memoryBackend`, `pgBackend`) live at the narrower `@adcp/sdk/server` subpath. Both are re-exported from the root — either works — but splitting them makes intent obvious.
+
+> **LEGACY (v5)** — the worked example below is the v5 handler-bag shape (`createAdcpServer({ accounts, mediaBuy, ... })`). It still compiles via `@adcp/sdk/server/legacy/v5`. **Phase 2 of #1088 will replace this with the v6 `class MySeller implements DecisioningPlatform` shape — refer to the canonical opening example at the top of this skill (lines 44–83) when scaffolding a new agent.** Until phase 2 ships, treat the structure below as illustrative of the handler bodies (governance check, idempotency, `randomUUID`-minted ids, `ctx.store` use) but lift those into a v6 `class MySeller` skeleton rather than copying the constructor call verbatim.
 
 ```typescript
 import { randomUUID } from 'node:crypto';
@@ -1043,6 +1051,8 @@ The buyer signals this by setting `plan.human_review_required: true` on the gove
 4. If `false` — proceed with the normal `checkGovernance()` flow and commit.
 
 ### Worked example
+
+> **LEGACY (v5)** — example uses `createAdcpServer`. The HITL flow (`status: 'submitted'`, `task_id` polling, `buildHumanOverride`) works identically when the agent is built with `createAdcpServerFromPlatform` — only the constructor and the platform-vs-handlers shape differ. Phase 2 of #1088 will migrate this block.
 
 ```typescript
 import {

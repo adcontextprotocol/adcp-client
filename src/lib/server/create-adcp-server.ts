@@ -2249,6 +2249,11 @@ function buildSupportedVersionsList(capConfig: AdcpCapabilitiesConfig | undefine
  * Reach for `createAdcpServer` directly only when you need fine control
  * over individual handlers, are mid-migration from a v5 codebase, or
  * have custom-shaped tools the platform interface doesn't yet model.
+ *
+ * @see {@link createAdcpServerFromPlatform} — the canonical v6 entry.
+ * @see `@adcp/sdk/server/legacy/v5` — the stable subpath for long-term
+ *   v5 pinning. The top-level re-export here may be removed in a
+ *   future major; the subpath is the supported home.
  * See `docs/migration-5.x-to-6.x.md`.
  *
  * Before each handler runs, the framework:

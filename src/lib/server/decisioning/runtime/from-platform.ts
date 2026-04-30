@@ -2016,7 +2016,20 @@ async function hydratePackagesWithProducts(
     if (entry.value !== null && entry.value !== undefined) {
       hydrated['ctx_metadata'] = entry.value;
     }
-    (pkg as Record<string, unknown>)['product'] = hydrated;
+    Object.defineProperty(hydrated, '__adcp_hydrated__', {
+      value: true,
+      enumerable: false,
+      writable: false,
+      configurable: false,
+    });
+    // Non-enumerable: see hydrateSingleResource for rationale (no leak via
+    // JSON.stringify / spread / Object.entries; direct access works).
+    Object.defineProperty(pkg, 'product', {
+      value: hydrated,
+      enumerable: false,
+      writable: true,
+      configurable: true,
+    });
   }
 }
 
@@ -2029,6 +2042,18 @@ async function hydratePackagesWithProducts(
  * Walks the store for `(kind, id)`, attaches `target[attachField] =
  * { ...resource, ctx_metadata }` when the entry has a wire resource. Misses
  * are silent — publisher falls back to its own DB.
+ *
+ * The attached field is **non-enumerable** so accidental serialization
+ * (JSON.stringify on the request body, spread copy, Object.entries log line)
+ * doesn't leak the publisher's `ctx_metadata` blob into request-side audit
+ * sinks. Direct property access (`req.media_buy.ctx_metadata`) still works;
+ * the hydrated field is invisible only to enumeration-based serializers.
+ *
+ * Hydrated fields carry a `__adcp_hydrated__: true` non-enumerable marker
+ * so handler authors and middleware can disambiguate "publisher passed it"
+ * from "framework attached it" — the field is **advisory context only**;
+ * the wire contract is defined by the spec request fields, not by what the
+ * SDK happens to attach.
  *
  * Failures are logged + swallowed. Hydration must NEVER break a successful
  * dispatch.
@@ -2056,7 +2081,22 @@ async function hydrateSingleResource(
   if (entry.value !== null && entry.value !== undefined) {
     hydrated['ctx_metadata'] = entry.value;
   }
-  (target as Record<string, unknown>)[attachField] = hydrated;
+  Object.defineProperty(hydrated, '__adcp_hydrated__', {
+    value: true,
+    enumerable: false,
+    writable: false,
+    configurable: false,
+  });
+  // Attach as non-enumerable so JSON.stringify(req), spread {...req}, and
+  // Object.entries(req) do NOT carry the publisher's ctx_metadata blob into
+  // log lines, audit sinks, or replay payloads. Direct access (req.foo)
+  // still works.
+  Object.defineProperty(target, attachField, {
+    value: hydrated,
+    enumerable: false,
+    writable: true,
+    configurable: true,
+  });
 }
 
 /**
