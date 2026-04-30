@@ -1342,13 +1342,19 @@ async function routeIfHandoff<TInner, TWire>(
   }
   const projected = project(result);
   if (opts.autoEmitCompletion === true && opts.pushNotificationUrl) {
-    // Auto-emit completion webhook on sync-success arm — shares the
-    // SPEC_WEBHOOK_TASK_TYPES gate with the HITL path, so tools outside
-    // the closed wire enum (adopter-only specialism methods, etc.) skip
-    // delivery silently and surface state via publishStatusChange
-    // instead. Failures don't block the sync response: webhook delivery
-    // is best-effort, the buyer already has the result inline.
-    await emitSyncCompletionWebhook(opts, projected);
+    // Auto-emit completion webhook on sync-success arm — fire-and-forget.
+    // Awaiting inline would let an attacker-controlled
+    // `push_notification_config.url` (e.g., a slowloris receiver) hold
+    // the seller's request worker for the full retry budget — minutes-
+    // to-tens-of-minutes per call, by spec-conformant payload. The buyer
+    // already has the result inline; webhook delivery is purely a
+    // notification convenience and shares the SPEC_WEBHOOK_TASK_TYPES
+    // gate with the HITL path. Errors land on the framework logger and
+    // the `onWebhookEmit` observability hook for operator alerting.
+    void emitSyncCompletionWebhook(opts, projected).catch((err: unknown) => {
+      const msg = err instanceof Error ? err.message : String(err);
+      opts.logger.warn(`[adcp/decisioning] sync completion webhook background-error: ${msg}`);
+    });
   }
   return projected;
 }
@@ -1973,7 +1979,33 @@ function buildMediaBuyHandlers<P extends DecisioningPlatform<any, any>>(
         });
       }
       return projectSync(
-        () => sales.updateMediaBuy(media_buy_id, params, reqCtx),
+        async () => {
+          const push = extractPushConfig(params, logger, {
+            allowPrivateWebhookUrls: pushOpts.allowPrivateWebhookUrls,
+          });
+          const result = await sales.updateMediaBuy(media_buy_id, params, reqCtx);
+          // F12 sync auto-emit. updateMediaBuy is sync-only on the
+          // platform interface (no TaskHandoff arm — spec response
+          // doesn't include Submitted), so we don't route through
+          // routeIfHandoff. Fire-and-forget to keep slowloris webhook
+          // receivers from blocking the sync response.
+          if (pushOpts.autoEmitCompletionWebhooks && push.url) {
+            const emitOpts = {
+              tool: 'update_media_buy' as const,
+              accountId: reqCtx.account.id,
+              pushNotificationUrl: push.url,
+              ...(push.token !== undefined && { pushNotificationToken: push.token }),
+              emitWebhook: taskWebhookEmit ?? ctx.emitWebhook,
+              ...(observability && { observability }),
+              logger,
+            };
+            void emitSyncCompletionWebhook(emitOpts, result).catch((err: unknown) => {
+              const msg = err instanceof Error ? err.message : String(err);
+              logger.warn(`[adcp/decisioning] sync completion webhook background-error: ${msg}`);
+            });
+          }
+          return result;
+        },
         r => r
       );
     },
