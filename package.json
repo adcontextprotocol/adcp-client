@@ -197,6 +197,7 @@
     "test:status-report": "node test/utils/final-status-report.js",
     "sync-schemas": "tsx scripts/sync-schemas.ts",
     "sync-schemas:v2.5": "tsx scripts/sync-v2-5-schemas.ts",
+    "sync-schemas:all": "npm run sync-schemas && npm run sync-schemas:v2.5",
     "schema-diff": "tsx scripts/schema-diff.ts",
     "generate-types": "tsx scripts/generate-types.ts && tsx scripts/generate-enum-arrays.ts",
     "generate-registry-types": "tsx scripts/generate-registry-types.ts",
