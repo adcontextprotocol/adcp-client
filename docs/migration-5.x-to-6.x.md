@@ -440,6 +440,70 @@ createAdcpServerFromPlatform(platform, {
   affected schemas. Not an SDK bug — flagging here so adopters
   migrating off 5.x see the symptom in context.
 
+## Auto-hydration error contract
+
+Auto-hydration is on for four mutating verbs in 6.0:
+`createMediaBuy` (per-package `pkg.product`), `updateMediaBuy`
+(`req.media_buy`), `activateSignal` (`req.signal`), and
+`acquireRights` (`req.rights`). The framework looks up each
+referenced id in the `CtxMetadataStore` and attaches the cached
+wire shape (plus `ctx_metadata`) onto the request as a
+non-enumerable field. If you ship `5.x` adapters that did the
+same lookup by hand, you can drop the publisher-side
+existence-check round-trip — but only if you understand the
+contract on a miss.
+
+**Behavior on a miss.** The cache is a *hint*, not source-of-
+truth. When `getEntry(account, kind, id)` returns nothing, the
+framework leaves the attached field undefined and **the handler
+runs anyway**. The publisher's own DB stays authoritative for
+"does this id exist?"
+
+The framework deliberately does NOT throw `PRODUCT_NOT_FOUND` /
+`MEDIA_BUY_NOT_FOUND` on a hydration miss because a miss can mean
+any of:
+
+1. The buyer never called the discovery verb in this session
+   (cold start, fresh tenant). Hydration is purely additive
+   context.
+2. The cache evicted (TTL, LRU). Same: publisher's DB is the
+   source of truth.
+3. The buyer truly referenced an unknown id. The publisher SHOULD
+   reject — this is the existence check that belongs in the
+   handler.
+
+The framework cannot distinguish (1)/(2) from (3) without
+consulting the publisher's DB, which is exactly what the handler
+does. Erroring at the framework layer would force every adopter
+to manage cache warmth or pre-load every resource into the cache
+before serving traffic — wrong default for a hint cache.
+
+**Handler-side existence check pattern:**
+
+```ts
+updateMediaBuy: async (id, patch, ctx) => {
+  // patch.media_buy is set by hydration on hit, undefined on miss.
+  // Fall through to the publisher's DB on miss.
+  const buy = patch.media_buy ?? (await db.findMediaBuy(id));
+  if (!buy) {
+    throw new MediaBuyNotFoundError({ message: `media_buy ${id} not found` });
+  }
+  // ... apply patch ...
+}
+```
+
+**The `__adcp_hydrated__` marker.** Hydrated fields carry a
+non-enumerable `__adcp_hydrated__: true` so handler authors and
+middleware can disambiguate "publisher passed it" from "framework
+attached it." The hydrated field is **advisory context only**;
+the wire contract is defined by the spec's request fields, not by
+what the SDK happens to attach.
+
+**Store-fetch failures** (Postgres unavailable, transient network)
+are logged and swallowed. Hydration must NEVER break a successful
+dispatch — same posture as a cache miss. The handler still runs;
+your DB-side existence check still gates the operation.
+
 ## What's deferred to v6.1+
 
 - Native MCP `tasks/get` method dispatch (we ship `tasks_get` snake-case

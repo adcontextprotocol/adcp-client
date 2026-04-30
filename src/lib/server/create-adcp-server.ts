@@ -248,6 +248,7 @@ import type {
   ReportUsageResponse,
   PreviewCreativeResponse,
   AccountReference,
+  BrandReference,
   ListContentStandardsResponse,
   GetContentStandardsResponse,
   CreateContentStandardsResponse,
@@ -703,20 +704,34 @@ export type AdcpServerToolName = keyof AdcpToolMap;
  * Parameter shape passed to `resolveIdempotencyPrincipal`. Wide enough to
  * carry any wire request (the framework calls every mutating tool through
  * the same resolver), narrow enough to surface the most-common scoping
- * fields (`account`, `brand`) without a cast.
+ * fields (`account`, `brand`) using the canonical wire types.
  *
- * Adopters scoping by `params.account?.account_id` or
- * `params.brand?.domain` (the public-token-shared-across-tenants pattern)
- * get autocomplete + type narrowing without `as { account?: ... }`. Tool-
- * specific scoping (e.g., custom session header on `si_send_message`)
+ * `account` and `brand` resolve to the same `AccountReference` /
+ * `BrandReference` types the rest of the SDK uses. The
+ * `account: AccountReference` discriminated union forces adopters scoping
+ * by tenant to narrow before reading variant-specific fields:
+ *
+ * ```ts
+ * resolveIdempotencyPrincipal: (ctx, params) => {
+ *   if (params.account && 'account_id' in params.account) {
+ *     return params.account.account_id; // narrowed to {account_id: string}
+ *   }
+ *   if (params.account?.brand?.domain) {
+ *     return `${params.account.brand.domain}:${params.account.operator}`;
+ *   }
+ *   return ctx.account?.id ?? 'anon';
+ * }
+ * ```
+ *
+ * Tool-specific scoping (e.g., custom session header on `si_send_message`)
  * still has the open `Record<string, unknown>` index signature for
  * everything else.
  */
 export interface IdempotencyPrincipalParams extends Record<string, unknown> {
   /** Buyer-supplied account reference. Most mutating tools carry this. */
-  account?: { account_id?: string; brand?: { domain?: string }; sandbox?: boolean; [k: string]: unknown };
+  account?: AccountReference;
   /** Buyer-supplied brand reference (used by some tools without account). */
-  brand?: { domain?: string; [k: string]: unknown };
+  brand?: BrandReference;
 }
 
 // ---------------------------------------------------------------------------
