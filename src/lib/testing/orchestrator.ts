@@ -36,8 +36,10 @@ export const SCENARIO_REQUIREMENTS: Partial<Record<TestScenario, string[]>> = {
   // Requires get_products
   pricing_edge_cases: ['get_products'],
   pricing_models: ['get_products'],
-  error_handling: ['get_products'],
-  validation: ['get_products'],
+  // error_handling and validation use per-tool conditional guards internally;
+  // no top-level discovery tool required to run them.
+  error_handling: [],
+  validation: [],
   behavior_analysis: ['get_products'],
   response_consistency: ['get_products'],
 
@@ -75,8 +77,9 @@ export const SCENARIO_REQUIREMENTS: Partial<Record<TestScenario, string[]>> = {
   terminal_state_enforcement: ['get_products', 'create_media_buy', 'update_media_buy'],
   package_lifecycle: ['get_products', 'create_media_buy', 'update_media_buy'],
 
-  // Schema compliance (requires product discovery)
-  schema_compliance: ['get_products'],
+  // Schema compliance — applies to any agent with a primary discovery tool.
+  // Internally branches on get_products vs get_signals; always applicable.
+  schema_compliance: [],
 
   // Error compliance (requires create_media_buy to provoke errors)
   error_codes: ['create_media_buy'],
