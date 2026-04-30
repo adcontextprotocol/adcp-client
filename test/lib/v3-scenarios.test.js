@@ -44,11 +44,11 @@ describe('v3 Scenario Exports', () => {
     assert.ok(reqs.includes('si_terminate_session'), 'should require si_terminate_session');
   });
 
-  test('schema_compliance requires get_products', () => {
+  test('schema_compliance is protocol-wide (no tool prerequisite)', () => {
     const { SCENARIO_REQUIREMENTS } = require('../../dist/lib/testing/index.js');
     const reqs = SCENARIO_REQUIREMENTS['schema_compliance'];
     assert.ok(Array.isArray(reqs), 'should have requirements array');
-    assert.ok(reqs.includes('get_products'), 'should require get_products');
+    assert.strictEqual(reqs.length, 0, 'schema_compliance applies to any agent (branches internally on get_products vs get_signals)');
   });
 
   test('new scenarios are in DEFAULT_SCENARIOS', () => {
@@ -94,18 +94,21 @@ describe('getApplicableScenarios with v3 scenarios', () => {
     assert.ok(!applicable.includes('si_handoff'), 'should not include si_handoff without si_terminate_session');
   });
 
-  test('schema_compliance is included when get_products is present', () => {
+  test('schema_compliance is included for product-discovery agents', () => {
     const { getApplicableScenarios } = require('../../dist/lib/testing/index.js');
     const tools = ['get_products', 'create_media_buy'];
     const applicable = getApplicableScenarios(tools);
     assert.ok(applicable.includes('schema_compliance'), 'should include schema_compliance');
   });
 
-  test('schema_compliance is excluded when get_products is missing', () => {
+  test('schema_compliance is included for signals-only agents (protocol-wide)', () => {
     const { getApplicableScenarios } = require('../../dist/lib/testing/index.js');
-    const tools = ['build_creative', 'list_creative_formats'];
+    const tools = ['get_signals', 'activate_signal'];
     const applicable = getApplicableScenarios(tools);
-    assert.ok(!applicable.includes('schema_compliance'), 'should not include schema_compliance without get_products');
+    assert.ok(
+      applicable.includes('schema_compliance'),
+      'schema_compliance applies to any agent — scenario branches internally on get_products vs get_signals'
+    );
   });
 });
 
@@ -176,13 +179,14 @@ describe('schema_compliance channel validation logic', () => {
     assert.ok(!src.includes('"video"') && !src.includes("'video'"), '"video" should not be in v3 channel set');
   });
 
-  test('schema_compliance step fails for invalid channel values in product response', async () => {
-    // Verify the detection logic by reading testSchemaCompliance and confirming the
-    // orchestrator routes it to get_products first, then validates channels.
-    // The scenario is already covered by SCENARIO_REQUIREMENTS requiring get_products.
-    const { SCENARIO_REQUIREMENTS } = require('../../dist/lib/testing/index.js');
-    const reqs = SCENARIO_REQUIREMENTS['schema_compliance'];
-    assert.ok(reqs.includes('get_products'), 'schema_compliance must have get_products as a prerequisite');
+  test('schema_compliance branches on discovery tool', () => {
+    // The compiled scenario must contain both discovery branches so it
+    // applies to product-discovery and signals-only agents alike.
+    const fs = require('node:fs');
+    const path = require('node:path');
+    const src = fs.readFileSync(path.join(__dirname, '../../dist/lib/testing/scenarios/schema-compliance.js'), 'utf8');
+    assert.ok(src.includes('get_products'), 'schema-compliance should have a get_products branch');
+    assert.ok(src.includes('get_signals'), 'schema-compliance should have a get_signals branch');
   });
 });
 
