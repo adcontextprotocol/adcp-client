@@ -735,6 +735,8 @@ export interface BrandRightsHandlers<TAccount = unknown> {
 // Capabilities config
 // ---------------------------------------------------------------------------
 
+const DEFAULT_MAJOR_VERSIONS: number[] = [3];
+
 export interface AdcpCapabilitiesConfig {
   major_versions?: number[];
   features?: Partial<MediaBuyFeatures>;
@@ -2413,9 +2415,9 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
         //   (c) both fields agreeing on an unsupported major (dual disagreement
         //       is already caught above, so this block is never reached for
         //       mismatched pairs)
-        // Spec MUST per `tools.generated.ts:253` — sellers MUST validate
+        // Spec MUST per spec PR `adcontextprotocol/adcp#3493` — sellers MUST validate
         // against their supported `major_versions` and return VERSION_UNSUPPORTED.
-        const serverMajorVersions = capConfig?.major_versions ?? [3];
+        const serverMajorVersions = capConfig?.major_versions ?? DEFAULT_MAJOR_VERSIONS;
         let claimedMajor: number | undefined;
         if (reqAdcpMajor !== undefined && Number.isFinite(reqAdcpMajor)) {
           claimedMajor = reqAdcpMajor;
@@ -3082,7 +3084,7 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
 
   const capabilitiesData: GetAdCPCapabilitiesResponse = {
     adcp: {
-      major_versions: capConfig?.major_versions ?? [3],
+      major_versions: capConfig?.major_versions ?? DEFAULT_MAJOR_VERSIONS,
       idempotency: idempotencyCapability,
     },
     supported_protocols: protocols as GetAdCPCapabilitiesResponse['supported_protocols'],

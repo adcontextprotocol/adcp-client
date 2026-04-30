@@ -1803,6 +1803,20 @@ describe('createAdcpServer', () => {
       assert.strictEqual(result.structuredContent.adcp_error.details?.requested_version, undefined);
     });
 
+    it('returns VERSION_UNSUPPORTED when both fields agree on an unsupported major', async () => {
+      const server = makeServer();
+      // Both agree on major 99 — dual-field disagreement check passes (no mismatch),
+      // but the supported-versions check catches the unsupported major.
+      const result = await callToolRaw(server, 'get_products', {
+        adcp_version: '99.0',
+        adcp_major_version: 99,
+      });
+      assert.strictEqual(result.isError, true);
+      assert.strictEqual(result.structuredContent.adcp_error.code, 'VERSION_UNSUPPORTED');
+      assert.ok(result.structuredContent.adcp_error.message.includes('request carries major 99'));
+      assert.strictEqual(result.structuredContent.adcp_error.details?.requested_version, '99.0');
+    });
+
     it('existing dual-field disagreement check fires first (message contains "majors must agree")', async () => {
       const server = makeServer();
       // adcp_version major=3 but adcp_major_version=99 — disagree
