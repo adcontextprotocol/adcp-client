@@ -1059,6 +1059,53 @@ describe('strict request validation against v2 servers', () => {
     assert.ok(Array.isArray(call.args.creatives) && call.args.creatives.length === 1, 'creatives are preserved');
   });
 
+  test('strict mode still rejects malformed v3 input from the migrated SingleAgentClient seam', async () => {
+    // Regression guard for the call-site move: the inline AJV pass inside
+    // TaskExecutor.executeTask is gone, replaced by SingleAgentClient.executeTask
+    // calling executor.validateRequest before the v2 adapter runs. Confirm a
+    // malformed v3 request (create_media_buy missing required end_time) still
+    // throws — not just "didn't accept it cleanly", we want the
+    // `Request validation failed` channel to fire.
+    const mockMCPAgent = {
+      id: 'v3-agent-negative',
+      name: 'V3 Agent',
+      agent_uri: 'https://agents.example.com/mcp',
+      protocol: 'mcp',
+    };
+
+    const client = new AdCPClient([mockMCPAgent], {
+      validation: { requests: 'strict' },
+    });
+    const agent = client.agent(mockMCPAgent.id);
+    const inner = agent.client;
+    inner.discoveredEndpoint = mockMCPAgent.agent_uri;
+    inner.cachedCapabilities = {
+      version: 'v3',
+      majorVersions: [3],
+      protocols: ['media_buy'],
+      features: {
+        inlineCreativeManagement: false,
+        conversionTracking: false,
+        audienceTargeting: false,
+        propertyListFiltering: false,
+        contentStandards: false,
+      },
+      extensions: [],
+      _synthetic: false,
+    };
+
+    await assert.rejects(
+      agent.createMediaBuy({
+        account: { account_id: 'acct-1' },
+        brand: { domain: 'example.com' },
+        start_time: 'asap',
+        // Missing `end_time` — required by the v3 schema. Must reject.
+      }),
+      err => /Request validation failed|Validation failed for field/.test(err.message ?? ''),
+      'malformed v3 input must still throw from the migrated validate seam'
+    );
+  });
+
   test('strict mode preserves v3 fields and reaches the protocol layer for a v3 agent', async () => {
     const mockMCPAgent = {
       id: 'v3-agent',
