@@ -189,8 +189,15 @@ export type { PostgresStateStoreOptions } from './postgres-state-store';
 
 export { structuredSerialize, structuredDeserialize } from './structured-serialize';
 
+// `createAdcpServer` is NOT re-exported from `@adcp/sdk/server` anymore —
+// LLMs scaffolding from skills consistently latched onto it as the canonical
+// entry point despite the @deprecated JSDoc. Removing the top-level export
+// forces new code to either reach for `createAdcpServerFromPlatform` (the v6
+// canonical) or import from `@adcp/sdk/server/legacy/v5` (mid-migration /
+// escape-hatch only). Breaking change: v5 adopters see a hard import error
+// and update their import path. The migration is one line; the LLM-output
+// quality win is significant. See `docs/migration-5.x-to-6.x.md`.
 export {
-  createAdcpServer,
   requireSessionKey,
   ADCP_PRE_TRANSPORT,
   ADCP_SIGNED_REQUESTS_STATE,

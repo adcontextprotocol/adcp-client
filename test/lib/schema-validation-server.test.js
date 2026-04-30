@@ -4,7 +4,8 @@
 const { test, describe } = require('node:test');
 const assert = require('node:assert');
 
-const { createAdcpServer, InMemoryStateStore } = require('../../dist/lib/index.js');
+const { InMemoryStateStore } = require("../../dist/lib/index.js");
+const { createAdcpServer } = require("../../dist/lib/server/legacy/v5/index.js");
 
 async function callTool(server, toolName, params) {
   const raw = await server.dispatchTestRequest({

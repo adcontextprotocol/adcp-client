@@ -5,7 +5,8 @@ const { test, describe, after } = require('node:test');
 const assert = require('node:assert');
 
 const { seedFixtures, runConformance } = require('../../dist/lib/conformance/index.js');
-const { serve, createAdcpServer, adcpError } = require('../../dist/lib/index.js');
+const { serve, adcpError } = require("../../dist/lib/index.js");
+const { createAdcpServer } = require("../../dist/lib/server/legacy/v5/index.js");
 
 function waitForListening(server) {
   return new Promise(resolve => {

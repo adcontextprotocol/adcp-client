@@ -27,7 +27,7 @@ before(() => {
   // imports this at runtime; the module must resolve `createAdcpServer`
   // from the built dist so a test run doesn't require users to install a
   // compile step.
-  const distPath = path.resolve(__dirname, '../../dist/lib/server/index.js');
+  const distPath = path.resolve(__dirname, '../../dist/lib/server/legacy/v5/index.js');
   writeFileSync(
     agentModulePath,
     `const { createAdcpServer } = require(${JSON.stringify(distPath)});

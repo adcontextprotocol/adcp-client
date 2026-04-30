@@ -8,7 +8,7 @@ const {
   createCtxMetadataStore,
   memoryCtxMetadataStore,
   hasCtxMetadata,
-} = require('../dist/lib/server');
+} = require('../dist/lib/server/legacy/v5');
 
 /**
  * Leak paranoia — comprehensive negative test.
