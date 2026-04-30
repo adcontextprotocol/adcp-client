@@ -2404,13 +2404,16 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
             );
           }
         }
+        // Shared server major-versions list for both single-field checks below.
+        const serverMajorVersions = capConfig?.major_versions ?? [3];
         // Single-field major-version check per spec: "sellers validate against their
         // supported major_versions and return VERSION_UNSUPPORTED if unsupported."
         // The dual-field check above only fires on disagreement between the two fields.
         // A buyer sending only adcp_major_version (integer) bypasses it — handle that here.
         // Also catches dual-field requests where both fields agree on an unsupported major.
+        // `requested_version` echoes the raw integer-as-string (e.g. "99") because the
+        // buyer sent no adcp_version string; the major integer IS their version claim.
         if (reqAdcpMajor !== undefined && Number.isFinite(reqAdcpMajor)) {
-          const serverMajorVersions = capConfig?.major_versions ?? [3];
           if (!serverMajorVersions.includes(reqAdcpMajor)) {
             return finalize(
               adcpError('VERSION_UNSUPPORTED', {
@@ -2425,13 +2428,13 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
             );
           }
         }
-        // String-only single-field check: adcp_version present but no adcp_major_version.
-        // The integer check above handles any request where the integer field is present.
+        // String-only single-field check: adcp_version present but no parseable integer field.
+        // Guard is `!Number.isFinite(reqAdcpMajor)` (covers both undefined and NaN from a
+        // non-numeric adcp_major_version string) so non-numeric coercion results don't leak.
         // This branch covers 3.1+ buyers that omit the deprecated integer entirely.
-        if (typeof reqAdcpVersion === 'string' && reqAdcpMajor === undefined) {
+        if (typeof reqAdcpVersion === 'string' && !Number.isFinite(reqAdcpMajor)) {
           const versionMajor = parseAdcpMajorVersion(reqAdcpVersion);
           if (Number.isFinite(versionMajor)) {
-            const serverMajorVersions = capConfig?.major_versions ?? [3];
             if (!serverMajorVersions.includes(versionMajor)) {
               return finalize(
                 adcpError('VERSION_UNSUPPORTED', {
