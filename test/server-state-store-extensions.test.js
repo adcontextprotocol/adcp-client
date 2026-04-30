@@ -630,9 +630,7 @@ describe('default stateStore — multi-tenant footgun warning', () => {
       logger: captureLogger,
     });
 
-    const multiTenantWarnings = seen.filter(s =>
-      s.includes('multi-tenant') || s.includes('Multi-tenant')
-    );
+    const multiTenantWarnings = seen.filter(s => s.includes('multi-tenant') || s.includes('Multi-tenant'));
     // The warning may have already fired in an earlier test in this
     // process (the guard is module-level). What we assert is "no MORE
     // than one in this test", which means: either it fired now (1) or
@@ -662,9 +660,7 @@ describe('default stateStore — multi-tenant footgun warning', () => {
       logger: captureLogger,
     });
 
-    const multiTenantWarnings = seen.filter(s =>
-      s.includes('multi-tenant') || s.includes('Multi-tenant')
-    );
+    const multiTenantWarnings = seen.filter(s => s.includes('multi-tenant') || s.includes('Multi-tenant'));
     assert.equal(multiTenantWarnings.length, 0, 'explicit stateStore must not trigger the default-store warning');
   });
 });
