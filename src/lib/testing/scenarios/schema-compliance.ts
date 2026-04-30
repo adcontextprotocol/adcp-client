@@ -11,7 +11,12 @@
  */
 
 import type { Product } from '../../types/core.generated';
-import type { GetProductsResponse, GetSignalsResponse, ListCreativeFormatsResponse, Format } from '../../types/tools.generated';
+import type {
+  GetProductsResponse,
+  GetSignalsResponse,
+  ListCreativeFormatsResponse,
+  Format,
+} from '../../types/tools.generated';
 import type { TestOptions, TestStepResult, AgentProfile, TaskResult } from '../types';
 import { getOrCreateClient, runStep, getOrDiscoverProfile, validateResponseSchema } from '../client';
 
