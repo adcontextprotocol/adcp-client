@@ -81,6 +81,7 @@ import { adcpError, type AdcpErrorResponse } from '../../errors';
 import { validatePlatform, PlatformConfigError } from './validate-platform';
 import type { AdcpLogger } from '../../create-adcp-server';
 import { buildRequestContext, buildHandoffContext } from './to-context';
+import type { CtxMetadataStore } from '../../ctx-metadata';
 import { isTaskHandoff, _extractTaskFn, type TaskHandoff } from '../async-outcome';
 import { z } from 'zod';
 import { createInMemoryTaskRegistry, type TaskRegistry, type TaskRecord, type TaskStatus } from './task-registry';
@@ -339,6 +340,44 @@ export interface CreateAdcpServerFromPlatformOptions extends Omit<
    * @public
    */
   complyTest?: ComplyControllerConfig;
+
+  /**
+   * Ctx-metadata store. Wire to enable the v6.1 `ctx_metadata` round-trip
+   * cache: publishers attach opaque platform-specific blobs to any returned
+   * resource (`{ product_id, ctx_metadata: { gam: {...} } }`); the framework
+   * persists by `(account.id, kind, id)` and threads back into
+   * `ctx.ctxMetadata` on subsequent calls referencing the same ID.
+   *
+   * Memory backend (`memoryCtxMetadataStore()`) for dev / single-process.
+   * Postgres (`pgCtxMetadataStore(pool)`) for cluster — silent ctx_metadata
+   * loss after rolling restart on memory backend produces "package not
+   * found" errors that look like publisher bugs and run for weeks.
+   *
+   * @example
+   * ```ts
+   * import { Pool } from 'pg';
+   * import {
+   *   createAdcpServerFromPlatform,
+   *   createCtxMetadataStore,
+   *   pgCtxMetadataStore,
+   *   getCtxMetadataMigration,
+   * } from '@adcp/sdk/server';
+   *
+   * const pool = new Pool({ connectionString: process.env.DATABASE_URL });
+   * await pool.query(getCtxMetadataMigration());
+   *
+   * const ctxMetadata = createCtxMetadataStore({ backend: pgCtxMetadataStore(pool) });
+   *
+   * createAdcpServerFromPlatform(myPlatform, {
+   *   name: 'My Adapter',
+   *   version: '1.0.0',
+   *   ctxMetadata,
+   * });
+   * ```
+   *
+   * @see docs/proposals/decisioning-platform-v6-1-ctx-metadata.md
+   */
+  ctxMetadata?: CtxMetadataStore;
 
   /**
    * Allow `push_notification_config.url` to point at loopback / private-IP
@@ -699,6 +738,12 @@ export function createAdcpServerFromPlatform<P extends DecisioningPlatform<any, 
         }
       : undefined;
 
+  // Per-server `ctxFor` closure; threads `opts.ctxMetadata` (when wired) into
+  // `buildRequestContext` so handlers see `ctx.ctxMetadata` as an account-
+  // scoped accessor. Multi-tenant hosts (TenantRegistry) get one closure per
+  // server, so per-tenant store routing is preserved.
+  const ctxFor = makeCtxFor(opts.ctxMetadata);
+
   const config: AdcpServerConfig<Account> = {
     ...opts,
     ...(projectedCapabilitiesConfig != null && { capabilities: projectedCapabilitiesConfig }),
@@ -802,7 +847,7 @@ export function createAdcpServerFromPlatform<P extends DecisioningPlatform<any, 
       buildMediaBuyHandlers(platform, taskRegistry, taskWebhookEmit, observability, fwLogger, {
         allowPrivateWebhookUrls: opts.allowPrivateWebhookUrls === true,
         autoEmitCompletionWebhooks: opts.autoEmitCompletionWebhooks !== false,
-      }),
+      }, ctxFor),
       'mediaBuy',
       mergeOpts
     ),
@@ -811,15 +856,15 @@ export function createAdcpServerFromPlatform<P extends DecisioningPlatform<any, 
       buildCreativeHandlers(platform, taskRegistry, taskWebhookEmit, observability, fwLogger, {
         allowPrivateWebhookUrls: opts.allowPrivateWebhookUrls === true,
         autoEmitCompletionWebhooks: opts.autoEmitCompletionWebhooks !== false,
-      }),
+      }, ctxFor),
       'creative',
       mergeOpts
     ),
-    eventTracking: mergeHandlers(opts.eventTracking, buildEventTrackingHandlers(platform), 'eventTracking', mergeOpts),
-    signals: mergeHandlers(opts.signals, buildSignalsHandlers(platform), 'signals', mergeOpts),
-    governance: mergeHandlers(opts.governance, buildGovernanceHandlers(platform), 'governance', mergeOpts),
-    accounts: mergeHandlers(opts.accounts, buildAccountHandlers(platform), 'accounts', mergeOpts),
-    brandRights: mergeHandlers(opts.brandRights, buildBrandRightsHandlers(platform), 'brandRights', mergeOpts),
+    eventTracking: mergeHandlers(opts.eventTracking, buildEventTrackingHandlers(platform, ctxFor), 'eventTracking', mergeOpts),
+    signals: mergeHandlers(opts.signals, buildSignalsHandlers(platform, ctxFor), 'signals', mergeOpts),
+    governance: mergeHandlers(opts.governance, buildGovernanceHandlers(platform, ctxFor), 'governance', mergeOpts),
+    accounts: mergeHandlers(opts.accounts, buildAccountHandlers(platform, ctxFor), 'accounts', mergeOpts),
+    brandRights: mergeHandlers(opts.brandRights, buildBrandRightsHandlers(platform, ctxFor), 'brandRights', mergeOpts),
     customTools: {
       ...opts.customTools,
       tasks_get: buildTasksGetTool(platform, taskRegistry),
@@ -1707,8 +1752,16 @@ function bucketWebhookError(msg: string): string {
 // Specialism → handler-map adapters
 // ---------------------------------------------------------------------------
 
-function ctxFor(handlerCtx: HandlerContext<Account>): RequestContext<Account> {
-  return buildRequestContext(handlerCtx);
+/**
+ * Per-server `ctxFor` builder. `createAdcpServerFromPlatform` constructs
+ * one closure per server (capturing `opts.ctxMetadata` if wired) and
+ * threads it into each handler-builder. Handler bodies invoke `ctxFor(ctx)`
+ * at request time to derive the per-call `RequestContext`.
+ */
+type CtxForFn = (handlerCtx: HandlerContext<Account>) => RequestContext<Account>;
+
+function makeCtxFor(ctxMetadataStore?: CtxMetadataStore): CtxForFn {
+  return handlerCtx => buildRequestContext(handlerCtx, ctxMetadataStore);
 }
 
 /**
@@ -1943,7 +1996,8 @@ function buildMediaBuyHandlers<P extends DecisioningPlatform<any, any>>(
   taskWebhookEmit: NonNullable<HandlerContext<Account>['emitWebhook']> | undefined,
   observability: DecisioningObservabilityHooks | undefined,
   logger: AdcpLogger,
-  pushOpts: { allowPrivateWebhookUrls: boolean; autoEmitCompletionWebhooks: boolean }
+  pushOpts: { allowPrivateWebhookUrls: boolean; autoEmitCompletionWebhooks: boolean },
+  ctxFor: CtxForFn
 ): MediaBuyHandlers<Account> | undefined {
   const sales = platform.sales;
   if (!sales) return undefined;
@@ -2149,7 +2203,8 @@ function buildCreativeHandlers<P extends DecisioningPlatform<any, any>>(
   taskWebhookEmit: NonNullable<HandlerContext<Account>['emitWebhook']> | undefined,
   observability: DecisioningObservabilityHooks | undefined,
   logger: AdcpLogger,
-  pushOpts: { allowPrivateWebhookUrls: boolean; autoEmitCompletionWebhooks: boolean }
+  pushOpts: { allowPrivateWebhookUrls: boolean; autoEmitCompletionWebhooks: boolean },
+  ctxFor: CtxForFn
 ): CreativeHandlers<Account> | undefined {
   const creative = platform.creative;
   if (!creative) return undefined;
@@ -2244,7 +2299,8 @@ function buildCreativeHandlers<P extends DecisioningPlatform<any, any>>(
 }
 
 function buildEventTrackingHandlers<P extends DecisioningPlatform<any, any>>(
-  platform: P
+  platform: P,
+  ctxFor: CtxForFn
 ): EventTrackingHandlers<Account> | undefined {
   const audiences = platform.audiences;
   const sales = platform.sales;
@@ -2302,7 +2358,8 @@ function buildEventTrackingHandlers<P extends DecisioningPlatform<any, any>>(
 }
 
 function buildSignalsHandlers<P extends DecisioningPlatform<any, any>>(
-  platform: P
+  platform: P,
+  ctxFor: CtxForFn
 ): SignalsHandlers<Account> | undefined {
   const signals = platform.signals;
   if (!signals) return undefined;
@@ -2325,7 +2382,8 @@ function buildSignalsHandlers<P extends DecisioningPlatform<any, any>>(
 }
 
 function buildBrandRightsHandlers<P extends DecisioningPlatform<any, any>>(
-  platform: P
+  platform: P,
+  ctxFor: CtxForFn
 ): BrandRightsHandlers<Account> | undefined {
   const br = platform.brandRights;
   if (!br) return undefined;
@@ -2360,7 +2418,8 @@ function buildBrandRightsHandlers<P extends DecisioningPlatform<any, any>>(
 }
 
 function buildGovernanceHandlers<P extends DecisioningPlatform<any, any>>(
-  platform: P
+  platform: P,
+  ctxFor: CtxForFn
 ): GovernanceHandlers<Account> | undefined {
   const cg = platform.campaignGovernance;
   const pl = platform.propertyLists;
@@ -2543,7 +2602,7 @@ function buildGovernanceHandlers<P extends DecisioningPlatform<any, any>>(
   return handlers;
 }
 
-function buildAccountHandlers<P extends DecisioningPlatform<any, any>>(platform: P): AccountHandlers<Account> {
+function buildAccountHandlers<P extends DecisioningPlatform<any, any>>(platform: P, ctxFor: CtxForFn): AccountHandlers<Account> {
   const accounts = platform.accounts;
 
   // Only emit framework-derived handlers for methods the platform actually

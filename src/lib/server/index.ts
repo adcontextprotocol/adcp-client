@@ -328,3 +328,41 @@ export type {
 // builds an `AdcpServerConfig` and calls `createAdcpServer` — they're
 // not adjacent surfaces, they're parent-child layers of the same SDK.
 export * from './decisioning';
+
+// ---------------------------------------------------------------------------
+// Ctx-metadata store — opaque-blob round-trip for adapter-internal state
+// ---------------------------------------------------------------------------
+//
+// Publishers attach platform-specific opaque blobs to any returned resource
+// (product, media_buy, package, creative, audience, signal, rights_grant);
+// the framework persists by `(account_id, kind, id)`, strips from buyer-
+// facing wire payloads, threads back into the publisher's request context
+// on subsequent calls referencing the same resource ID. See
+// `docs/proposals/decisioning-platform-v6-1-ctx-metadata.md`.
+export {
+  createCtxMetadataStore,
+  memoryCtxMetadataStore,
+  pgCtxMetadataStore,
+  getCtxMetadataMigration,
+  cleanupExpiredCtxMetadata,
+  CTX_METADATA_MIGRATION,
+  CtxMetadataValidationError,
+  ADCP_INTERNAL_TAG,
+  DEFAULT_MAX_VALUE_BYTES,
+  MAX_TTL_SECONDS,
+  stripCtxMetadata,
+  hasCtxMetadata,
+  ctxMetadataResultKey,
+  scopeCtxMetadataKey,
+} from './ctx-metadata';
+export type {
+  CtxMetadataStore,
+  CtxMetadataStoreConfig,
+  CtxMetadataBackend,
+  CtxMetadataEntry,
+  CtxMetadataRef,
+  ResourceKind as CtxMetadataResourceKind,
+  MemoryCtxMetadataStoreOptions,
+  PgCtxMetadataBackendOptions,
+  WireShape,
+} from './ctx-metadata';

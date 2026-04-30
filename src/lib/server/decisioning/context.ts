@@ -30,6 +30,7 @@ import type {
   CollectionList,
 } from '../../types/tools.generated';
 import type { TaskHandoff, TaskHandoffContext } from './async-outcome';
+import type { CtxMetadataRef, ResourceKind } from '../ctx-metadata';
 
 // Unconstrained `TAccount` (no `extends Account`) so adopters with metadata
 // types that don't extend `Record<string, unknown>` (interfaces without index
@@ -45,6 +46,47 @@ export interface RequestContext<TAccount = Account> {
 
   /** Async framework-mediated resolvers. */
   resolve: ResourceResolver;
+
+  /**
+   * Ctx-metadata accessor — opaque-blob round-trip cache for adapter-internal
+   * state (GAM `ad_unit_ids` per product, `gam_order_id` per media buy, etc.).
+   *
+   * **Present only when `createAdcpServerFromPlatform({ ctxMetadata })` was
+   * wired with a `CtxMetadataStore`.** Adopters who don't wire a store see
+   * `undefined` here — branch defensively.
+   *
+   * The accessor is account-scoped automatically (uses `ctx.account.id` as
+   * the tenant boundary). Pass `kind + id`, get an opaque blob the publisher
+   * stashed during a prior call's response. Returns `undefined` on miss —
+   * fall through to your own DB.
+   *
+   * @example Read a product's ctx_metadata in createMediaBuy
+   * ```ts
+   * createMediaBuy: async (req, ctx) => {
+   *   for (const pkg of req.packages) {
+   *     const meta = await ctx.ctxMetadata?.product(pkg.product_id);
+   *     if (meta?.gam?.ad_unit_ids) {
+   *       await this.gam.createLineItem(pkg, meta.gam.ad_unit_ids);
+   *     }
+   *   }
+   * }
+   * ```
+   *
+   * @example Persist platform IDs from createMediaBuy
+   * ```ts
+   * createMediaBuy: async (req, ctx) => {
+   *   const order = await this.gam.createOrder(req);
+   *   await ctx.ctxMetadata?.set('media_buy', order.id, { gam_order_id: order.id });
+   *   for (const li of order.lineItems) {
+   *     await ctx.ctxMetadata?.set('package', li.id, { gam_line_item_id: li.id });
+   *   }
+   *   return { media_buy_id: order.id, status: 'pending_creatives', packages: ... };
+   * }
+   * ```
+   *
+   * @public
+   */
+  ctxMetadata?: CtxMetadataAccessor;
 
   /**
    * Hand off the call to a background task. Returns a `TaskHandoff<T>`
@@ -172,3 +214,37 @@ export interface Proposal {
  * framework will validate consistency. Don't unwrap or modify.
  */
 export type GovernanceContextJWS = string;
+
+// ---------------------------------------------------------------------------
+// Ctx-metadata accessor (6.1)
+// ---------------------------------------------------------------------------
+
+/**
+ * Account-scoped ctx-metadata accessor. The framework binds this to the
+ * resolved `ctx.account.id` per request — adopters never pass account.
+ *
+ * Generic `get`/`set`/`bulkGet` carry a `ResourceKind` discriminator;
+ * per-kind shorthand methods (`product(id)`, `mediaBuy(id)`, etc.) map to
+ * `get(kind, id)` for ergonomic call sites.
+ */
+export interface CtxMetadataAccessor {
+  /** Look up by kind + id. Returns `undefined` on miss. */
+  get(kind: ResourceKind, id: string): Promise<unknown | undefined>;
+  /** Bulk lookup. Result Map keyed by `${kind}:${id}`. Misses absent from Map. */
+  bulkGet(refs: readonly CtxMetadataRef[]): Promise<ReadonlyMap<string, unknown>>;
+  /**
+   * Persist a blob under (account, kind, id). Throws `CTX_METADATA_TOO_LARGE`
+   * if serialized size exceeds the configured cap (16KB default).
+   */
+  set(kind: ResourceKind, id: string, value: unknown, ttlSeconds?: number): Promise<void>;
+  /** Delete a single entry. */
+  delete(kind: ResourceKind, id: string): Promise<void>;
+
+  // Per-kind shorthand readers — purely ergonomic; map to `get(kind, id)`.
+  product(id: string): Promise<unknown | undefined>;
+  mediaBuy(id: string): Promise<unknown | undefined>;
+  package(id: string): Promise<unknown | undefined>;
+  creative(id: string): Promise<unknown | undefined>;
+  audience(id: string): Promise<unknown | undefined>;
+  signal(id: string): Promise<unknown | undefined>;
+}

@@ -122,6 +122,50 @@ What the framework wires automatically when you call `createAdcpServerFromPlatfo
 2. `throw new AdcpError(code, opts)` for buyer-facing structured rejection.
 3. For HITL on tools whose wire response defines a `Submitted` arm (`create_media_buy`, `sync_creatives`): return `ctx.handoffToTask(fn)` from inside the same method. The framework allocates `task_id`, returns the spec-defined `Submitted` envelope to the buyer, and runs `fn` in the background. Hybrid sellers branch per call.
 
+## Persisting platform IDs (`ctx.ctxMetadata`)
+
+The framework provides a per-account opaque-blob cache for adapter-internal state that AdCP's wire schema doesn't model — GAM `ad_unit_ids` per product, GAM `order_id` per media_buy, line item ID per package, etc. Don't re-derive on every call; stash it once, read it on subsequent calls.
+
+```ts
+// Wire a store at construction:
+import { createCtxMetadataStore, memoryCtxMetadataStore, pgCtxMetadataStore, getCtxMetadataMigration } from '@adcp/sdk/server';
+
+await pool.query(getCtxMetadataMigration());                                  // Postgres only
+const ctxMetadata = createCtxMetadataStore({ backend: pgCtxMetadataStore(pool) });
+
+createAdcpServerFromPlatform(myPlatform, { name: '...', version: '...', ctxMetadata });
+
+// Stash on the way out (any returned resource — product, media_buy, package, creative):
+getProducts: async (req, ctx) => {
+  const products = await this.gam.products.search(req.brief);
+  for (const p of products) {
+    await ctx.ctxMetadata?.set('product', p.id, { gam: { ad_unit_ids: p.adUnitIds } });
+  }
+  return { products: products.map(toAdcpProduct) };
+},
+
+// Read on the way in (subsequent call referencing the same ID):
+createMediaBuy: async (req, ctx) => {
+  for (const pkg of req.packages) {
+    const meta = await ctx.ctxMetadata?.product(pkg.product_id);
+    if (meta?.gam?.ad_unit_ids) {
+      await this.gam.lineItems.create(pkg, meta.gam.ad_unit_ids);
+    }
+  }
+  // ...
+}
+```
+
+**Common mistake:** don't re-fetch GAM ad-unit IDs on every `create_media_buy`. Attach them on `get_products` and read from `ctx.ctxMetadata.product(id)`.
+
+**Memory backend in production:** the SDK warns at boot when `NODE_ENV=production` and you've wired `memoryCtxMetadataStore()` — silent ctx_metadata loss after rolling restart can run for weeks producing "package not found" errors. Use `pgCtxMetadataStore(pool)` for cluster.
+
+**Account scoping is automatic.** `ctx.ctxMetadata` binds to `ctx.account.id` per request — you never pass the account. No-account tools (`provide_performance_feedback`, `list_creative_formats`) get `ctx.ctxMetadata = undefined`.
+
+**Same primitive across all specialisms** — sales (`product` / `media_buy` / `package`), creative-builder (refine workflow: stash on `build_creative`, read on `refine_creative`), audiences, signals, brand-rights.
+
+See [`docs/proposals/decisioning-platform-v6-1-ctx-metadata.md`](../../docs/proposals/decisioning-platform-v6-1-ctx-metadata.md) for the full design.
+
 ## Two async patterns
 
 ### 1. Sync happy path

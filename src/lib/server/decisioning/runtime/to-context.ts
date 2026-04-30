@@ -29,12 +29,60 @@
 
 import type { HandlerContext } from '../../create-adcp-server';
 import type { Account } from '../account';
-import type { RequestContext } from '../context';
+import type { RequestContext, CtxMetadataAccessor } from '../context';
 import type { TaskRegistry } from './task-registry';
 import { _createTaskHandoff, type TaskHandoffContext, type TaskHandoff } from '../async-outcome';
+import type { CtxMetadataStore, ResourceKind, CtxMetadataRef } from '../../ctx-metadata';
+
+/**
+ * Build an account-scoped CtxMetadataAccessor for a single request.
+ *
+ * Account scope comes from `ctx.account.id` — accessor methods don't take
+ * an account param. When `account.id` is null/undefined (no-account tools),
+ * the accessor methods reject — no-account tools cannot use ctx_metadata
+ * (cross-tenant collision risk via missing scope).
+ */
+function buildCtxMetadataAccessor(
+  store: CtxMetadataStore,
+  accountId: string
+): CtxMetadataAccessor {
+  return {
+    get(kind: ResourceKind, id: string) {
+      return store.get(accountId, kind, id);
+    },
+    bulkGet(refs: readonly CtxMetadataRef[]) {
+      return store.bulkGet(accountId, refs);
+    },
+    set(kind: ResourceKind, id: string, value: unknown, ttlSeconds?: number) {
+      return store.set(accountId, kind, id, value, ttlSeconds);
+    },
+    delete(kind: ResourceKind, id: string) {
+      return store.delete(accountId, kind, id);
+    },
+    product(id: string) {
+      return store.get(accountId, 'product', id);
+    },
+    mediaBuy(id: string) {
+      return store.get(accountId, 'media_buy', id);
+    },
+    package(id: string) {
+      return store.get(accountId, 'package', id);
+    },
+    creative(id: string) {
+      return store.get(accountId, 'creative', id);
+    },
+    audience(id: string) {
+      return store.get(accountId, 'audience', id);
+    },
+    signal(id: string) {
+      return store.get(accountId, 'signal', id);
+    },
+  };
+}
 
 export function buildRequestContext<TMeta = Record<string, unknown>>(
-  handlerCtx: HandlerContext<Account<TMeta>>
+  handlerCtx: HandlerContext<Account<TMeta>>,
+  ctxMetadataStore?: CtxMetadataStore
 ): RequestContext<Account<TMeta>> {
   // `account` may legitimately be undefined for tools whose wire request
   // doesn't carry an `account` field AND whose `resolveAccountFromAuth`
@@ -64,6 +112,15 @@ export function buildRequestContext<TMeta = Record<string, unknown>>(
     );
   };
 
+  // Bind ctx-metadata accessor when store wired AND account scope present.
+  // No-account tools (provide_performance_feedback, list_creative_formats)
+  // get `ctx.ctxMetadata = undefined` even when the store is wired — cannot
+  // use ctx_metadata without an account boundary (cross-tenant risk).
+  const ctxMetadata =
+    ctxMetadataStore != null && account != null && (account.id ?? '') !== ''
+      ? buildCtxMetadataAccessor(ctxMetadataStore, account.id)
+      : undefined;
+
   return {
     account,
     state: {
@@ -77,6 +134,7 @@ export function buildRequestContext<TMeta = Record<string, unknown>>(
       collectionList: stubResolver('collectionList'),
       creativeFormat: stubResolver('creativeFormat'),
     },
+    ctxMetadata,
     handoffToTask<TResult>(fn: (taskCtx: TaskHandoffContext) => Promise<TResult>): TaskHandoff<TResult> {
       return _createTaskHandoff(fn);
     },
