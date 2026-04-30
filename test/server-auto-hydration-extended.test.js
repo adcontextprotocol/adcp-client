@@ -147,11 +147,7 @@ describe('auto-hydration — update_media_buy', () => {
     assert.equal(observedReq.media_buy, undefined, 'CONTRACT: req.media_buy is undefined on miss');
     // Response should be whatever the handler returned — NOT a framework
     // not-found error. Adopters opt into strict checks in their handler.
-    assert.equal(
-      resp.isError,
-      undefined,
-      'CONTRACT: framework does not synthesize an error on hydration miss'
-    );
+    assert.equal(resp.isError, undefined, 'CONTRACT: framework does not synthesize an error on hydration miss');
   });
 });
 
