@@ -131,6 +131,8 @@ function buildVersionEnvelope(
  * intact. Stale dual-field drift is caught at the server boundary by
  * `createAdcpServer`'s field-disagreement check (spec PR
  * `adcontextprotocol/adcp#3493`).
+ *
+ * @internal
  */
 export function applyVersionEnvelope(
   args: Record<string, unknown>,
