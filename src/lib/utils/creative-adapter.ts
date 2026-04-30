@@ -115,9 +115,22 @@ export function adaptCreateMediaBuyRequestForV2(request: any): any {
 
   return {
     ...rest,
+    // v2.5 requires buyer_ref at the top level; idempotency_key carries the
+    // same semantics (client-controlled unique reference, stable on replay).
+    buyer_ref: idempotency_key,
     ...(brand && !brand_manifest && { brand }),
     ...(brand_manifest !== undefined && { brand_manifest }),
-    ...(rest.packages && { packages: rest.packages.map(adaptPackageRequestForV2) }),
+    ...(rest.packages && {
+      packages: rest.packages.map((pkg: any, i: number) => {
+        const adapted = adaptPackageRequestForV2(pkg);
+        // v2.5 requires per-package buyer_ref; derive from the package's own
+        // idempotency_key when present, falling back to a stable index suffix.
+        if (!adapted.buyer_ref) {
+          adapted.buyer_ref = pkg.idempotency_key || `${idempotency_key}-${i}`;
+        }
+        return adapted;
+      }),
+    }),
   };
 }
 
