@@ -2010,6 +2010,44 @@ async function hydratePackagesWithProducts(
 }
 
 /**
+ * Single-resource hydration helper. Before invoking a publisher's mutating
+ * handler, look up one resource by its ID and attach the full wire shape
+ * (including `ctx_metadata`) to the request under `targetField`.
+ *
+ * For `updateMediaBuy`: attaches the full MediaBuy object at `req.mediaBuy`
+ * keyed by `req.media_buy_id`.
+ *
+ * Failures are logged + swallowed; the publisher still receives the
+ * un-hydrated request and can fall back to its own DB.
+ */
+async function hydrateSingleResource(
+  store: CtxMetadataStore | undefined,
+  accountId: string | undefined,
+  kind: 'product' | 'media_buy' | 'package' | 'creative' | 'audience' | 'signal',
+  id: string | undefined,
+  targetField: string,
+  req: unknown,
+  logger: AdcpLogger
+): Promise<void> {
+  if (!store || !accountId || !id) return;
+  let entries: ReadonlyMap<string, { value: unknown; resource?: unknown }>;
+  try {
+    entries = await store.bulkGetEntries(accountId, [{ kind, id }]);
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    logger.warn(`[adcp/decisioning] auto-hydrate single ${kind} ${id} failed: ${msg}`);
+    return;
+  }
+  const entry = entries.get(`${kind}:${id}`);
+  if (!entry?.resource || typeof entry.resource !== 'object') return;
+  const hydrated: Record<string, unknown> = { ...(entry.resource as Record<string, unknown>) };
+  if (entry.value !== null && entry.value !== undefined) {
+    hydrated['ctx_metadata'] = entry.value;
+  }
+  (req as Record<string, unknown>)[targetField] = hydrated;
+}
+
+/**
  * Extract the buyer's push-notification webhook config from a request body
  * and validate the URL + token against SSRF / replay primitives.
  *
@@ -2322,6 +2360,26 @@ function buildMediaBuyHandlers<P extends DecisioningPlatform<any, any>>(
           recovery: 'correctable',
         });
       }
+      // Auto-hydrate: attach the full MediaBuy object (including ctx_metadata)
+      // at params.mediaBuy, keyed by media_buy_id. Publisher reads
+      // `patch.mediaBuy.ctx_metadata?.gam_order_id` directly — no separate
+      // lookup, no boilerplate.
+      //
+      // CONTRACT — `patch.mediaBuy` is `undefined` when the SDK has no record
+      // of that media_buy_id. That's NOT authoritative "doesn't exist" — the
+      // SDK store is a cache. Decision tree when undefined:
+      //   - Have your own buy DB → look up there.
+      //   - Pure-SDK store (no own DB) → throw MediaBuyNotFoundError immediately.
+      //   - Either way: never let `undefined` flow downstream silently.
+      await hydrateSingleResource(
+        ctxMetadataStore,
+        reqCtx.account?.id,
+        'media_buy',
+        media_buy_id,
+        'mediaBuy',
+        params,
+        logger
+      );
       return projectSync(
         async () => {
           const push = extractPushConfig(params, logger, {

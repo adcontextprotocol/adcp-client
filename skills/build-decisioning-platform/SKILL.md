@@ -18,19 +18,30 @@ For 95% of sales agents, these are the only `@adcp/sdk/server` imports you need:
 ```ts
 import {
   // Server entry + persistence
-  createAdcpServerFromPlatform, getAllAdcpMigrations, serve,
+  createAdcpServerFromPlatform,
+  getAllAdcpMigrations,
+  serve,
   // Wire-shape helpers (eliminate 30+ lines of boilerplate per Product)
-  buildProduct, buildPackage, buildPricingOption,
+  buildProduct,
+  buildPackage,
+  buildPricingOption,
   // Typed errors — pick from this catalog instead of `throw new AdcpError(...)`
-  PackageNotFoundError, MediaBuyNotFoundError, ProductNotFoundError,
-  BudgetTooLowError, BackwardsTimeRangeError, InvalidStateError,
-  RateLimitedError, UnsupportedFeatureError,
+  PackageNotFoundError,
+  MediaBuyNotFoundError,
+  ProductNotFoundError,
+  BudgetTooLowError,
+  BackwardsTimeRangeError,
+  InvalidStateError,
+  RateLimitedError,
+  UnsupportedFeatureError,
   // Types
-  type DecisioningPlatform, type SalesPlatform,
+  type DecisioningPlatform,
+  type SalesPlatform,
 } from '@adcp/sdk/server';
 ```
 
 For other agent shapes:
+
 - **Creative agent (template / generative):** swap `SalesPlatform` for `CreativeBuilderPlatform`
 - **Signals agent:** swap for `SignalsPlatform`
 - **Brand-rights agent:** swap for `BrandRightsPlatform`
@@ -57,10 +68,16 @@ The full export list is in `@adcp/sdk/server`. Many surfaces are marked `@deprec
 ```ts
 import {
   createAdcpServerFromPlatform,
-  createCtxMetadataStore, memoryCtxMetadataStore,
-  PackageNotFoundError, MediaBuyNotFoundError, ProductNotFoundError,
-  BudgetTooLowError, BackwardsTimeRangeError, InvalidStateError,
-  type DecisioningPlatform, type SalesPlatform,
+  createCtxMetadataStore,
+  memoryCtxMetadataStore,
+  PackageNotFoundError,
+  MediaBuyNotFoundError,
+  ProductNotFoundError,
+  BudgetTooLowError,
+  BackwardsTimeRangeError,
+  InvalidStateError,
+  type DecisioningPlatform,
+  type SalesPlatform,
 } from '@adcp/sdk/server';
 
 class MyPlatform implements DecisioningPlatform {
@@ -68,13 +85,13 @@ class MyPlatform implements DecisioningPlatform {
     adcp_version: '3.0.0',
     specialisms: ['sales-non-guaranteed'] as const,
     pricingModels: ['cpm'] as const,
-    channels: ['display', 'video'] as const,                  // strict literal-union — TS catches typos
+    channels: ['display', 'video'] as const, // strict literal-union — TS catches typos
     formats: [{ format_id: 'display_300x250' }],
     idempotency: { replay_ttl_seconds: 86400 },
   };
 
   accounts = {
-    resolution: 'derived' as const,                            // single tenant; framework returns the same Account every call
+    resolution: 'derived' as const, // single tenant; framework returns the same Account every call
     resolve: async () => ({ id: 'pub_main', operator: 'mypub', ctx_metadata: {} }),
     upsert: async () => ({ ok: true, items: [] }),
     list: async () => ({ items: [], nextCursor: null }),
@@ -90,8 +107,10 @@ class MyPlatform implements DecisioningPlatform {
           name: p.name,
           format_ids: p.formatIds.map(id => ({ id })),
           delivery_type: 'non_guaranteed',
-          pricing_options: [{ pricing_option_id: `${p.id}-cpm`, model: 'cpm', floor: { amount: p.floor, currency: 'USD' } }],
-          ctx_metadata: { gam: { ad_unit_ids: p.adUnitIds } },  // stashed; framework round-trips
+          pricing_options: [
+            { pricing_option_id: `${p.id}-cpm`, model: 'cpm', floor: { amount: p.floor, currency: 'USD' } },
+          ],
+          ctx_metadata: { gam: { ad_unit_ids: p.adUnitIds } }, // stashed; framework round-trips
         })),
       };
     },
@@ -124,8 +143,8 @@ class MyPlatform implements DecisioningPlatform {
       // Stash your platform's IDs so subsequent updateMediaBuy can hydrate them too.
       return {
         media_buy_id: order.id,
-        status: 'pending_creatives',                           // creative state machine — see advanced/STATE-MACHINE.md
-        ctx_metadata: { gam_order_id: order.gamOrderId },     // SDK persists; subsequent updateMediaBuy gets req.ctx_metadata.gam_order_id
+        status: 'pending_creatives', // creative state machine — see advanced/STATE-MACHINE.md
+        ctx_metadata: { gam_order_id: order.gamOrderId }, // SDK persists; subsequent updateMediaBuy gets req.ctx_metadata.gam_order_id
         packages: order.lineItems.map(li => ({
           package_id: li.id,
           status: 'pending_creatives',
@@ -135,21 +154,28 @@ class MyPlatform implements DecisioningPlatform {
       };
     },
 
-    // 3. Update a buy. SDK auto-hydrates the resolved MediaBuy (and its packages,
-    //    each with ctx_metadata) at req.mediaBuy when present in the store from a
-    //    prior createMediaBuy / getMediaBuys call. Falls back gracefully if absent
-    //    (publisher uses their own DB).
+    // 3. Update a buy. SDK auto-hydrates the full MediaBuy object (wire fields +
+    //    ctx_metadata for both the buy and each package) at patch.mediaBuy, keyed
+    //    by media_buy_id, from a prior createMediaBuy / getMediaBuys call.
+    //    Falls back gracefully if absent (publisher uses their own DB).
+    //
+    //    CONTRACT — patch.mediaBuy is `undefined` when the SDK has no record of
+    //    that media_buy_id. That's NOT authoritative "doesn't exist" — the SDK
+    //    store is a cache. Decision tree when undefined:
+    //      - Have your own buy DB → look up there.
+    //      - Pure-SDK store (no own DB) → throw MediaBuyNotFoundError immediately.
+    //      - Either way: never let `undefined` flow downstream silently.
     //    (6.2 will pre-read state + decompose into atomic verbs; track adcp-client#1071.)
-    updateMediaBuy: async (mediaBuyId, patch, ctx) => {
-      const orderMeta = await ctx.ctxMetadata?.mediaBuy(mediaBuyId);
-      if (!orderMeta) throw new MediaBuyNotFoundError(mediaBuyId);
+    updateMediaBuy: async (mediaBuyId, patch, _ctx) => {
+      const mediaBuy = patch.mediaBuy; // SDK-hydrated full MediaBuy (incl. ctx_metadata)
+      if (!mediaBuy) throw new MediaBuyNotFoundError(mediaBuyId);
 
       for (const pkg of patch.packages ?? []) {
-        const pkgMeta = await ctx.ctxMetadata?.package(pkg.package_id);
+        const pkgMeta = mediaBuy.packages?.find(p => p.package_id === pkg.package_id);
         if (!pkgMeta) throw new PackageNotFoundError(pkg.package_id);
-        await this.platform.updateLineItem(pkgMeta.gam_line_item_id, pkg);
+        await this.platform.updateLineItem(pkgMeta.ctx_metadata?.gam_line_item_id, pkg);
       }
-      const order = await this.platform.getOrder(orderMeta.gam_order_id);
+      const order = await this.platform.getOrder(mediaBuy.ctx_metadata?.gam_order_id);
       return this.toMediaBuy(order);
     },
 
@@ -180,14 +206,14 @@ class MyPlatform implements DecisioningPlatform {
           media_buy_id: buy.id,
           status: this.statusMappers.mediaBuy(buy.nativeStatus),
           buyer_ref: buy.buyerRef,
-          total_budget: { amount: buy.budgetAmount, currency: buy.currency },  // REQUIRED on the wire shape
+          total_budget: { amount: buy.budgetAmount, currency: buy.currency }, // REQUIRED on the wire shape
           start_time: buy.startTime,
           end_time: buy.endTime,
           packages: buy.lineItems.map(li => ({
             package_id: li.id,
             status: this.statusMappers.mediaBuy(li.nativeStatus),
             buyer_ref: li.buyerRef,
-            ctx_metadata: { gam_line_item_id: li.gamLineItemId },               // round-trip publisher state
+            ctx_metadata: { gam_line_item_id: li.gamLineItemId }, // round-trip publisher state
           })),
           ctx_metadata: { gam_order_id: buy.gamOrderId },
         })),
@@ -208,25 +234,25 @@ That's the agent. Five functions. The framework wires the wire protocol around i
 
 ```ts
 import {
-  PackageNotFoundError,        // wrong package_id on update
-  MediaBuyNotFoundError,       // wrong media_buy_id
-  ProductNotFoundError,        // wrong product_id on create
-  ProductUnavailableError,     // product exists but sold out
-  CreativeNotFoundError,       // wrong creative_id
-  CreativeRejectedError,       // brand-safety failed, etc.
-  BudgetTooLowError,           // under floor (correctable — buyer raises)
-  BudgetExhaustedError,        // pacing burst hit cap
-  IdempotencyConflictError,    // same key, different payload
-  InvalidRequestError,         // generic field-level bad input
-  InvalidStateError,           // illegal transition (paused → archived violations)
-  BackwardsTimeRangeError,     // start_time >= end_time
-  AuthRequiredError,           // need auth, then retry
-  PermissionDeniedError,       // auth present, lacks scope
-  RateLimitedError,            // throttled (clamps retry_after to [1, 3600])
-  UnsupportedFeatureError,     // tool unimplemented
-  ComplianceUnsatisfiedError,  // brand-safety attestation missing
-  GovernanceDeniedError,       // spending authority revoked
-  PolicyViolationError,        // categorical content rejection
+  PackageNotFoundError, // wrong package_id on update
+  MediaBuyNotFoundError, // wrong media_buy_id
+  ProductNotFoundError, // wrong product_id on create
+  ProductUnavailableError, // product exists but sold out
+  CreativeNotFoundError, // wrong creative_id
+  CreativeRejectedError, // brand-safety failed, etc.
+  BudgetTooLowError, // under floor (correctable — buyer raises)
+  BudgetExhaustedError, // pacing burst hit cap
+  IdempotencyConflictError, // same key, different payload
+  InvalidRequestError, // generic field-level bad input
+  InvalidStateError, // illegal transition (paused → archived violations)
+  BackwardsTimeRangeError, // start_time >= end_time
+  AuthRequiredError, // need auth, then retry
+  PermissionDeniedError, // auth present, lacks scope
+  RateLimitedError, // throttled (clamps retry_after to [1, 3600])
+  UnsupportedFeatureError, // tool unimplemented
+  ComplianceUnsatisfiedError, // brand-safety attestation missing
+  GovernanceDeniedError, // spending authority revoked
+  PolicyViolationError, // categorical content rejection
 } from '@adcp/sdk/server';
 ```
 
@@ -258,20 +284,16 @@ const meta = await ctx.ctxMetadata?.product(productId);
 
 ```ts
 import { Pool } from 'pg';
-import {
-  createAdcpServerFromPlatform,
-  getAllAdcpMigrations,
-  serve,
-} from '@adcp/sdk/server';
+import { createAdcpServerFromPlatform, getAllAdcpMigrations, serve } from '@adcp/sdk/server';
 
 const pool = new Pool({ connectionString: process.env.DATABASE_URL });
-await pool.query(getAllAdcpMigrations());                                 // one DDL call, all 3 tables
+await pool.query(getAllAdcpMigrations()); // one DDL call, all 3 tables
 
 const platform = new MyPlatform(myAdServer);
 const server = createAdcpServerFromPlatform(platform, {
   name: 'My Sales Agent',
   version: '1.0.0',
-  pool,                                                                    // wires idempotency + ctxMetadata + taskRegistry
+  pool, // wires idempotency + ctxMetadata + taskRegistry
 });
 
 serve(() => server, { port: process.env.PORT });

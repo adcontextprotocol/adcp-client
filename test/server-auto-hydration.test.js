@@ -195,6 +195,151 @@ describe('createAdcpServerFromPlatform — auto-hydration of products', () => {
     );
   });
 
+  it('updateMediaBuy receives patch.mediaBuy hydrated from prior getMediaBuys', async () => {
+    let observedPatch;
+
+    const platform = makePlatform({
+      getProductsImpl: async () => ({ products: [] }),
+      createMediaBuyImpl: async () => ({ media_buy_id: 'mb_1', status: 'active', packages: [] }),
+      getMediaBuysImpl: async () => ({
+        media_buys: [
+          {
+            media_buy_id: 'mb_hydrate',
+            status: 'active',
+            packages: [{ package_id: 'pkg_1', status: 'active', ctx_metadata: { gam_line_item_id: 'li_7' } }],
+            ctx_metadata: { gam_order_id: 'gam_42' },
+          },
+        ],
+      }),
+    });
+    platform.sales.updateMediaBuy = async (mediaBuyId, patch, _ctx) => {
+      observedPatch = patch;
+      return { media_buy_id: mediaBuyId, status: 'active', packages: [] };
+    };
+
+    const ctxMetadata = createCtxMetadataStore({
+      backend: memoryCtxMetadataStore({ sweepIntervalMs: 0 }),
+    });
+
+    const server = createAdcpServerFromPlatform(platform, {
+      name: 'Test',
+      version: '1.0.0',
+      ctxMetadata,
+      validation: { requests: 'off', responses: 'off' },
+    });
+
+    // Step 1: getMediaBuys — SDK auto-stores MediaBuy wire shape + ctx_metadata
+    await server.dispatchTestRequest({
+      method: 'tools/call',
+      params: { name: 'get_media_buys', arguments: {} },
+    });
+
+    // Step 2: updateMediaBuy referencing mb_hydrate — SDK auto-hydrates patch.mediaBuy
+    await server.dispatchTestRequest({
+      method: 'tools/call',
+      params: {
+        name: 'update_media_buy',
+        arguments: {
+          media_buy_id: 'mb_hydrate',
+          idempotency_key: 'idem_update_hydrate_001',
+        },
+      },
+    });
+
+    assert.ok(observedPatch, 'updateMediaBuy should have been invoked');
+    assert.equal(observedPatch.media_buy_id, 'mb_hydrate', 'wire media_buy_id preserved');
+    assert.ok(observedPatch.mediaBuy, 'patch.mediaBuy should be hydrated by SDK');
+    assert.equal(observedPatch.mediaBuy.media_buy_id, 'mb_hydrate', 'hydrated mediaBuy carries media_buy_id');
+    assert.equal(observedPatch.mediaBuy.status, 'active', 'hydrated mediaBuy carries wire status');
+    assert.deepEqual(
+      observedPatch.mediaBuy.ctx_metadata,
+      { gam_order_id: 'gam_42' },
+      'hydrated mediaBuy carries ctx_metadata blob'
+    );
+    assert.ok(Array.isArray(observedPatch.mediaBuy.packages), 'hydrated mediaBuy carries packages array');
+    assert.equal(
+      observedPatch.mediaBuy.packages[0].ctx_metadata?.gam_line_item_id,
+      'li_7',
+      'package ctx_metadata round-trips'
+    );
+  });
+
+  it('updateMediaBuy does not hydrate when ctxMetadata store is not wired', async () => {
+    let observedPatch;
+    const platform = makePlatform({
+      getProductsImpl: async () => ({ products: [] }),
+      createMediaBuyImpl: async () => ({ media_buy_id: 'mb_1', status: 'active', packages: [] }),
+      getMediaBuysImpl: async () => ({
+        media_buys: [{ media_buy_id: 'mb_hydrate', status: 'active', ctx_metadata: { x: 1 } }],
+      }),
+    });
+    platform.sales.updateMediaBuy = async (mediaBuyId, patch, _ctx) => {
+      observedPatch = patch;
+      return { media_buy_id: mediaBuyId, status: 'active', packages: [] };
+    };
+
+    const server = createAdcpServerFromPlatform(platform, {
+      name: 'Test',
+      version: '1.0.0',
+      validation: { requests: 'off', responses: 'off' },
+    });
+
+    await server.dispatchTestRequest({
+      method: 'tools/call',
+      params: { name: 'get_media_buys', arguments: {} },
+    });
+    await server.dispatchTestRequest({
+      method: 'tools/call',
+      params: {
+        name: 'update_media_buy',
+        arguments: { media_buy_id: 'mb_hydrate', idempotency_key: 'idem_update_no_store_001' },
+      },
+    });
+
+    assert.ok(observedPatch);
+    assert.equal(observedPatch.media_buy_id, 'mb_hydrate');
+    assert.equal(observedPatch.mediaBuy, undefined, 'no hydration when no store');
+  });
+
+  it('updateMediaBuy falls back gracefully when media_buy was never seen', async () => {
+    let observedPatch;
+    const platform = makePlatform({
+      getProductsImpl: async () => ({ products: [] }),
+      createMediaBuyImpl: async () => ({ media_buy_id: 'mb_1', status: 'active', packages: [] }),
+    });
+    platform.sales.updateMediaBuy = async (mediaBuyId, patch, _ctx) => {
+      observedPatch = patch;
+      return { media_buy_id: mediaBuyId, status: 'active', packages: [] };
+    };
+
+    const ctxMetadata = createCtxMetadataStore({
+      backend: memoryCtxMetadataStore({ sweepIntervalMs: 0 }),
+    });
+
+    const server = createAdcpServerFromPlatform(platform, {
+      name: 'Test',
+      version: '1.0.0',
+      ctxMetadata,
+      validation: { requests: 'off', responses: 'off' },
+    });
+
+    await server.dispatchTestRequest({
+      method: 'tools/call',
+      params: {
+        name: 'update_media_buy',
+        arguments: { media_buy_id: 'mb_unknown', idempotency_key: 'idem_update_unseen_001' },
+      },
+    });
+
+    assert.ok(observedPatch);
+    assert.equal(observedPatch.media_buy_id, 'mb_unknown');
+    assert.equal(
+      observedPatch.mediaBuy,
+      undefined,
+      'no hydration for unseen media_buy — publisher falls back to its own DB'
+    );
+  });
+
   it('auto-stores media buys returned from getMediaBuys', async () => {
     let storeWasCalledWith;
     const platform = makePlatform({
