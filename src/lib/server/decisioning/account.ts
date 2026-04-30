@@ -76,30 +76,16 @@ export interface Account<TMeta = Record<string, unknown>> {
    * before emitting on the wire**. GAM puts `{ networkId, advertiserId }`;
    * Spotify puts `{ brandId, businessId }`; Criteo puts `{ customerId }`.
    * Each platform's choice.
+   *
+   * **This is the universal place for adapter state on accounts.** Account
+   * is special among DecisioningPlatform resources: `accounts.resolve()` is
+   * called per-request, so the publisher is the canonical source of truth
+   * for account state on every call. There's no `ctx_metadata` round-trip
+   * cache for Account (unlike Product / MediaBuy / Package / Creative,
+   * where the SDK bridges between `getProducts` and `createMediaBuy` /
+   * subsequent calls). Put adapter state in `metadata`.
    */
   metadata: TMeta;
-
-  /**
-   * Adapter-internal opaque blob the SDK round-trips per `(account.id,
-   * 'account', account.id)`. Distinct from `metadata` (publisher-typed
-   * shape) — `ctx_metadata` follows the same SDK round-trip semantics
-   * as products/media_buys/packages: publisher attaches on
-   * `accounts.resolve` / `sync_accounts` returns, SDK persists, future
-   * requests get it auto-hydrated onto `ctx.account.ctx_metadata`,
-   * **stripped before emitting on the wire**.
-   *
-   * Use case: account-level state that doesn't need to live in the
-   * publisher's typed `metadata` (because the SDK is the canonical
-   * cache, not the publisher's DB) — e.g., last-resolved upstream
-   * billing snapshot, OAuth refresh hints, per-account adapter feature
-   * flags.
-   *
-   * For 6.2: when the publisher returns ctx_metadata from
-   * `accounts.resolve`, framework persists. On subsequent calls,
-   * ctx.account.ctx_metadata is hydrated from the store (publisher's
-   * resolve return wins; store fills gaps when publisher omits).
-   */
-  ctx_metadata?: unknown;
 
   /** Caller's authenticated principal. **Stripped before emitting on the wire.** */
   authInfo: AuthPrincipal;

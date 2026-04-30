@@ -2135,14 +2135,24 @@ function buildSignedRequestsPreTransport(
 /**
  * Create an AdCP-compliant MCP server from domain-grouped handler functions.
  *
- * **Most NEW adopters should use `createAdcpServerFromPlatform` from
- * `@adcp/sdk/server/decisioning` instead** — it wraps this function with
- * compile-time specialism enforcement (`RequiredPlatformsFor<S>`),
- * capability projection, async tasks, status normalization, multi-tenant
- * routing, and webhook auto-emit. Reach for `createAdcpServer` directly
- * when you need fine control over individual handlers, are mid-migration
- * from a v5 codebase, or have custom-shaped tools the platform
- * interface doesn't yet model. See `docs/migration-5.x-to-6.x.md`.
+ * @deprecated New adopters should use `createAdcpServerFromPlatform` from
+ * `@adcp/sdk/server` instead. This v5 handler-bag entry point is kept for
+ * legacy / mid-migration code; LLM-generated platforms scaffolding from
+ * any of the v6 skills should NEVER call this. The v6 path
+ * (`createAdcpServerFromPlatform`) wraps this function with: typed
+ * specialism interfaces (`SalesPlatform`, `CreativeBuilderPlatform`, etc.),
+ * compile-time capability enforcement (`RequiredPlatformsFor<S>`), the
+ * `ctx_metadata` round-trip cache for adapter-internal state,
+ * auto-hydration of `req.packages[i].product` on createMediaBuy,
+ * default `resolveIdempotencyPrincipal` synthesis, capability projection,
+ * async-task envelopes, status normalization via `StatusMappers`,
+ * multi-tenant routing via `TenantRegistry`, and webhook auto-emit on
+ * sync responses with `push_notification_config.url`.
+ *
+ * Reach for `createAdcpServer` directly only when you need fine control
+ * over individual handlers, are mid-migration from a v5 codebase, or
+ * have custom-shaped tools the platform interface doesn't yet model.
+ * See `docs/migration-5.x-to-6.x.md`.
  *
  * Before each handler runs, the framework:
  * 1. Validates the request against the tool's Zod schema (MCP SDK)

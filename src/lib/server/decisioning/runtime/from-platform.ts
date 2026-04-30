@@ -771,9 +771,6 @@ export function createAdcpServerFromPlatform<P extends DecisioningPlatform<any, 
         });
         resolved = account != null;
         resolvedAccountId = account?.id;
-        if (account != null) {
-          await applyAccountCtxMetadata(opts.ctxMetadata, account, fwLogger);
-        }
         return account;
       } catch (err) {
         if (err instanceof AccountNotFoundError) return null;
@@ -821,9 +818,6 @@ export function createAdcpServerFromPlatform<P extends DecisioningPlatform<any, 
         });
         resolved = account != null;
         resolvedAccountId = account?.id;
-        if (account != null) {
-          await applyAccountCtxMetadata(opts.ctxMetadata, account, fwLogger);
-        }
         return account;
       } catch (err) {
         if (err instanceof AccountNotFoundError) return null;
@@ -869,7 +863,7 @@ export function createAdcpServerFromPlatform<P extends DecisioningPlatform<any, 
     eventTracking: mergeHandlers(opts.eventTracking, buildEventTrackingHandlers(platform, ctxFor), 'eventTracking', mergeOpts),
     signals: mergeHandlers(opts.signals, buildSignalsHandlers(platform, ctxFor), 'signals', mergeOpts),
     governance: mergeHandlers(opts.governance, buildGovernanceHandlers(platform, ctxFor), 'governance', mergeOpts),
-    accounts: mergeHandlers(opts.accounts, buildAccountHandlers(platform, ctxFor, opts.ctxMetadata, fwLogger), 'accounts', mergeOpts),
+    accounts: mergeHandlers(opts.accounts, buildAccountHandlers(platform, ctxFor), 'accounts', mergeOpts),
     brandRights: mergeHandlers(opts.brandRights, buildBrandRightsHandlers(platform, ctxFor), 'brandRights', mergeOpts),
     customTools: {
       ...opts.customTools,
@@ -1813,53 +1807,6 @@ async function autoStoreResources(
 }
 
 /**
- * Account ctx_metadata round-trip. Called after `accounts.resolve()` returns
- * a non-null Account:
- *
- *   1. If the publisher attached `ctx_metadata` on the resolved Account,
- *      persist it (publisher's value wins).
- *   2. Otherwise, look up the store by `(account.id, 'account', account.id)`
- *      and hydrate `account.ctx_metadata` from the prior persisted value
- *      (fills the gap when the publisher's `resolve()` didn't return it).
- *
- * Mutates `account` in place — adds `ctx_metadata` to the resolved object
- * so handlers downstream see `ctx.account.ctx_metadata` regardless of
- * whether the publisher returned it on this call.
- *
- * Failures are logged + swallowed — auto-hydration must NEVER abort a
- * successful resolve.
- */
-async function applyAccountCtxMetadata(
-  store: CtxMetadataStore | undefined,
-  account: Account,
-  logger: AdcpLogger
-): Promise<void> {
-  if (!store || !account?.id) return;
-  try {
-    const publisherCtxMetadata = (account as Account & { ctx_metadata?: unknown }).ctx_metadata;
-    if (publisherCtxMetadata !== undefined && publisherCtxMetadata !== null) {
-      // Publisher attached ctx_metadata on this resolve — persist + keep on account.
-      // Build a wire-clean resource (account shape minus ctx_metadata + authInfo).
-      const wireAccount: Record<string, unknown> = {};
-      for (const [k, v] of Object.entries(account)) {
-        if (k === 'ctx_metadata' || k === 'authInfo') continue;
-        wireAccount[k] = v;
-      }
-      await store.setResource(account.id, 'account', account.id, wireAccount, publisherCtxMetadata);
-      return;
-    }
-    // Publisher didn't return ctx_metadata — hydrate from store if available.
-    const stored = await store.get(account.id, 'account', account.id);
-    if (stored !== undefined) {
-      (account as Account & { ctx_metadata?: unknown }).ctx_metadata = stored;
-    }
-  } catch (err) {
-    const msg = err instanceof Error ? err.message : String(err);
-    logger.warn(`[adcp/decisioning] account ctx_metadata round-trip failed: ${msg}`);
-  }
-}
-
-/**
  * Auto-hydrate helper. Before invoking a publisher's mutating handler,
  * walk the request's resource references and attach the full wire
  * resource (including `ctx_metadata`) to each. Mutates the request in
@@ -2794,9 +2741,7 @@ function buildGovernanceHandlers<P extends DecisioningPlatform<any, any>>(
 
 function buildAccountHandlers<P extends DecisioningPlatform<any, any>>(
   platform: P,
-  ctxFor: CtxForFn,
-  ctxMetadataStore: CtxMetadataStore | undefined,
-  logger: AdcpLogger
+  ctxFor: CtxForFn
 ): AccountHandlers<Account> {
   const accounts = platform.accounts;
 
@@ -2813,33 +2758,10 @@ function buildAccountHandlers<P extends DecisioningPlatform<any, any>>(
   const handlers: AccountHandlers<Account> = {};
 
   if (accounts.upsert) {
-    handlers.syncAccounts = async (params, ctx) => {
+    handlers.syncAccounts = async (params, _ctx) => {
       const refs = (params.accounts ?? []) as AccountReference[];
       return projectSync(
-        async () => {
-          const rows = await accounts.upsert!(refs);
-          // Auto-store: persist each row's ctx_metadata + wire shape so
-          // subsequent ctx.account hydration on this account_id picks it up.
-          // Each row has its own account_id — scope-key includes that account_id.
-          if (ctxMetadataStore) {
-            for (const row of rows ?? []) {
-              if (row == null || typeof row !== 'object') continue;
-              const obj = row as unknown as Record<string, unknown>;
-              const accountId = obj['account_id'] ?? obj['id'];
-              if (typeof accountId !== 'string' || accountId.length === 0) continue;
-              const ctxMeta = obj['ctx_metadata'];
-              const { ctx_metadata: _stripped, ...wireAccount } = obj;
-              void _stripped;
-              try {
-                await ctxMetadataStore.setResource(accountId, 'account', accountId, wireAccount, ctxMeta);
-              } catch (err) {
-                const msg = err instanceof Error ? err.message : String(err);
-                logger.warn(`[adcp/decisioning] auto-store sync_accounts row ${accountId} failed: ${msg}`);
-              }
-            }
-          }
-          return rows;
-        },
+        () => accounts.upsert!(refs),
         rows => ({ accounts: rows })
       );
     };

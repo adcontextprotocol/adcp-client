@@ -225,3 +225,14 @@ export {
 // All opt-in convenience; nothing in the framework calls these internally.
 export { batchPoll, validationError, upstreamError } from './helpers';
 export type { RequestShape } from './helpers';
+
+// Wire-shape assembly helpers — emit correct Product / PricingOption /
+// package shapes from intent-shaped input. Reduces 30+ lines of wire
+// boilerplate per resource. Used in slim skill examples so LLMs scaffold
+// correct shapes from first attempt.
+export { buildProduct, buildPricingOption, buildPackage } from './assembly-helpers';
+export type {
+  BuildProductInput,
+  BuildPricingOptionInput,
+  BuildPackageInput,
+} from './assembly-helpers';
