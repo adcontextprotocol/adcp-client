@@ -108,10 +108,16 @@ describe('auto-hydration — update_media_buy', () => {
     );
   });
 
-  it('updateMediaBuy without prior getMediaBuys — req.media_buy is undefined (falls through)', async () => {
+  it('error contract: hydration miss → handler runs un-hydrated, NOT a framework-thrown NOT_FOUND', async () => {
+    // Pins the documented contract: the framework cache is a hint, not the
+    // source of truth. A miss means "publisher's DB decides whether the id
+    // exists" — NOT "framework rejects with PRODUCT_NOT_FOUND / MEDIA_BUY_NOT_FOUND".
+    // Adopters who want strict existence checks implement them in the handler.
+    let handlerCalled = false;
     let observedReq;
     const platform = makeBasePlatform({
       updateMediaBuy: async (id, params, ctx) => {
+        handlerCalled = true;
         observedReq = params;
         return { media_buy_id: id, status: 'paused', packages: [] };
       },
@@ -125,7 +131,7 @@ describe('auto-hydration — update_media_buy', () => {
       validation: { requests: 'off', responses: 'off' },
     });
 
-    await server.dispatchTestRequest({
+    const resp = await server.dispatchTestRequest({
       method: 'tools/call',
       params: {
         name: 'update_media_buy',
@@ -137,8 +143,15 @@ describe('auto-hydration — update_media_buy', () => {
       },
     });
 
-    assert.ok(observedReq);
-    assert.equal(observedReq.media_buy, undefined, 'no hydration for unseen id');
+    assert.equal(handlerCalled, true, 'CONTRACT: hydration miss does NOT block the handler');
+    assert.equal(observedReq.media_buy, undefined, 'CONTRACT: req.media_buy is undefined on miss');
+    // Response should be whatever the handler returned — NOT a framework
+    // not-found error. Adopters opt into strict checks in their handler.
+    assert.equal(
+      resp.isError,
+      undefined,
+      'CONTRACT: framework does not synthesize an error on hydration miss'
+    );
   });
 });
 
