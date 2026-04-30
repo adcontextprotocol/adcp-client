@@ -8,6 +8,7 @@
  */
 export const ADCP_ENVELOPE_FIELDS = new Set([
   'adcp_major_version', // Protocol version negotiation — preserved so version probes reach the seller
+  'adcp_version', // AdCP 3.1+ release-precision version string (spec PR #3493) — preserved alongside the integer
   'context', // Opaque pass-through for correlation and workflow state
   'ext', // Vendor-namespaced extensions
   'governance_context', // Governance approval token

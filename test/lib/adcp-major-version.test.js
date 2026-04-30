@@ -20,27 +20,84 @@ describe('adcp_major_version on requests', () => {
     assert.strictEqual(ADCP_MAJOR_VERSION, 3);
   });
 
-  test('ProtocolClient injects adcp_major_version into MCP args', async () => {
-    const { ADCP_MAJOR_VERSION } = require('../../dist/lib/version.js');
+  test('ProtocolClient injects adcp_major_version when caller does not set it', async () => {
+    const { McpServer } = require('@modelcontextprotocol/sdk/server/mcp.js');
+    const { Client } = require('@modelcontextprotocol/sdk/client/index.js');
+    const { InMemoryTransport } = require('@modelcontextprotocol/sdk/inMemory.js');
+    const { ProtocolClient, ADCP_MAJOR_VERSION } = require('../../dist/lib/index.js');
+    const z = require('zod');
 
-    // Verify the injection logic: adcp_major_version is prepended so caller
-    // args take precedence if they explicitly set it.
-    const callerArgs = { advertiser_id: 'adv-123' };
-    const argsWithVersion = { adcp_major_version: ADCP_MAJOR_VERSION, ...callerArgs };
+    let captured;
+    const server = new McpServer({ name: 'inject-test', version: '1.0.0' });
+    server.registerTool(
+      'get_products',
+      { inputSchema: { brief: z.string().optional(), adcp_major_version: z.number().optional() } },
+      async args => {
+        captured = args;
+        return {
+          content: [{ type: 'text', text: '{}' }],
+          structuredContent: { success: true, products: [] },
+        };
+      }
+    );
+    const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
+    await server.connect(serverTransport);
+    const mcpClient = new Client({ name: 'test-client', version: '1.0.0' });
+    await mcpClient.connect(clientTransport);
 
-    assert.strictEqual(argsWithVersion.adcp_major_version, 3);
-    assert.strictEqual(argsWithVersion.advertiser_id, 'adv-123');
+    await ProtocolClient.callTool(
+      { id: 'inject-test', protocol: 'mcp', agent_uri: 'in-process://x', _inProcessMcpClient: mcpClient },
+      'get_products',
+      { brief: 'test' }
+    );
+
+    assert.strictEqual(captured.adcp_major_version, ADCP_MAJOR_VERSION);
+
+    await mcpClient.close();
+    await server.close();
   });
 
-  test('caller-provided adcp_major_version overrides the default', () => {
-    const { ADCP_MAJOR_VERSION } = require('../../dist/lib/version.js');
+  test('caller-provided adcp_major_version overrides the SDK pin (regression: #1072)', async () => {
+    // Conformance harnesses send adcp_major_version: 99 to probe seller
+    // VERSION_UNSUPPORTED. The SDK must not rewrite that value.
+    const { McpServer } = require('@modelcontextprotocol/sdk/server/mcp.js');
+    const { Client } = require('@modelcontextprotocol/sdk/client/index.js');
+    const { InMemoryTransport } = require('@modelcontextprotocol/sdk/inMemory.js');
+    const { ProtocolClient } = require('../../dist/lib/index.js');
+    const z = require('zod');
 
-    // If a caller explicitly passes adcp_major_version, their value wins
-    // because we spread ADCP_MAJOR_VERSION first, then ...args
-    const callerArgs = { adcp_major_version: 2, advertiser_id: 'adv-123' };
-    const argsWithVersion = { adcp_major_version: ADCP_MAJOR_VERSION, ...callerArgs };
+    let captured;
+    const server = new McpServer({ name: 'override-test', version: '1.0.0' });
+    server.registerTool(
+      'get_products',
+      { inputSchema: { brief: z.string().optional(), adcp_major_version: z.number().optional() } },
+      async args => {
+        captured = args;
+        return {
+          content: [{ type: 'text', text: '{}' }],
+          structuredContent: { success: true, products: [] },
+        };
+      }
+    );
+    const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
+    await server.connect(serverTransport);
+    const mcpClient = new Client({ name: 'test-client', version: '1.0.0' });
+    await mcpClient.connect(clientTransport);
 
-    assert.strictEqual(argsWithVersion.adcp_major_version, 2);
+    await ProtocolClient.callTool(
+      { id: 'override-test', protocol: 'mcp', agent_uri: 'in-process://x', _inProcessMcpClient: mcpClient },
+      'get_products',
+      { brief: 'probe', adcp_major_version: 99 }
+    );
+
+    assert.strictEqual(
+      captured.adcp_major_version,
+      99,
+      'caller-supplied adcp_major_version must reach the seller for version-negotiation probes'
+    );
+
+    await mcpClient.close();
+    await server.close();
   });
 
   test('adcp_major_version is an integer between 1 and 99 per schema', () => {
