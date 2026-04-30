@@ -257,3 +257,74 @@ export function extractAdcpErrorInfo(data: any): AdcpErrorInfo | undefined {
 export function extractCorrelationId(data: any): string | undefined {
   return data?.context?.correlation_id || undefined;
 }
+
+/**
+ * Structured details accompanying a `VERSION_UNSUPPORTED` AdCP error per spec
+ * `error-details/version-unsupported.json` (AdCP 3.1, spec PR
+ * `adcontextprotocol/adcp#3493`). Buyers read these from the error envelope
+ * to decide whether to downgrade their pin and retry rather than failing
+ * outright.
+ */
+export interface VersionUnsupportedDetails {
+  /**
+   * Release-precision versions the seller does support (e.g. `['3.0', '3.1']`).
+   * Buyers can negotiate down to a member of this set.
+   */
+  supported_versions?: string[];
+  /** The specific `adcp_version` value the buyer asked for, echoed back. */
+  requested_version?: string;
+  /** Seller's full semver build, advisory. */
+  build_version?: string;
+}
+
+/**
+ * Extract structured `VERSION_UNSUPPORTED` details from an AdCP error
+ * envelope. Returns `undefined` when the error has no `data` block or the
+ * block doesn't match the spec shape — callers should treat absence as
+ * "seller didn't tell me what they support" and fall back to a fixed retry
+ * strategy.
+ *
+ * Accepts either a raw `error.data` object or the full unwrapped response
+ * — looks for `data` / `details` / `adcp_error.data` / `adcp_error.details`
+ * variants since SDKs sometimes nest the structured payload differently.
+ */
+export function extractVersionUnsupportedDetails(input: unknown): VersionUnsupportedDetails | undefined {
+  if (!input || typeof input !== 'object') return undefined;
+  const candidate = (() => {
+    const obj = input as Record<string, unknown>;
+    if (typeof obj.supported_versions !== 'undefined' || typeof obj.requested_version !== 'undefined') return obj;
+    if (obj.data && typeof obj.data === 'object') return obj.data as Record<string, unknown>;
+    if (obj.details && typeof obj.details === 'object') return obj.details as Record<string, unknown>;
+    if (obj.adcp_error && typeof obj.adcp_error === 'object') {
+      const ae = obj.adcp_error as Record<string, unknown>;
+      if (ae.data && typeof ae.data === 'object') return ae.data as Record<string, unknown>;
+      if (ae.details && typeof ae.details === 'object') return ae.details as Record<string, unknown>;
+    }
+    // Plural-errors envelope from `extractAdcpErrorInfo` and AdCP's legacy
+    // `{ errors: [...] }` shape — read details off the first error entry.
+    if (Array.isArray(obj.errors) && obj.errors.length > 0) {
+      const first = obj.errors[0] as Record<string, unknown> | null | undefined;
+      if (first && typeof first === 'object') {
+        if (first.data && typeof first.data === 'object') return first.data as Record<string, unknown>;
+        if (first.details && typeof first.details === 'object') return first.details as Record<string, unknown>;
+      }
+    }
+    return undefined;
+  })();
+  if (!candidate) return undefined;
+
+  const out: VersionUnsupportedDetails = {};
+  if (Array.isArray(candidate.supported_versions)) {
+    const versions = candidate.supported_versions.filter((v: unknown): v is string => typeof v === 'string');
+    if (versions.length > 0) out.supported_versions = versions;
+  }
+  if (typeof candidate.requested_version === 'string') {
+    out.requested_version = candidate.requested_version;
+  }
+  if (typeof candidate.build_version === 'string') {
+    out.build_version = candidate.build_version;
+  }
+  // Return undefined when the envelope was structurally present but empty —
+  // matches "seller didn't actually populate the spec'd fields" semantics.
+  return Object.keys(out).length > 0 ? out : undefined;
+}

@@ -588,11 +588,20 @@ export class AgentClient {
   }
 
   /**
-   * Assert that the seller's capabilities report AdCP v3. Throws
-   * `VersionUnsupportedError` otherwise. Set `ADCP_ALLOW_V2=1` to bypass.
+   * Assert that the seller's capabilities corroborate this client's pinned
+   * AdCP major (per `getAdcpVersion()`). Throws `VersionUnsupportedError`
+   * otherwise. Set `ADCP_ALLOW_V2=1` to bypass.
+   */
+  async requireSupportedMajor(taskType: string = 'request'): Promise<void> {
+    return this.client.requireSupportedMajor(taskType);
+  }
+
+  /**
+   * Deprecated alias for {@link requireSupportedMajor}.
+   * @deprecated Use `requireSupportedMajor()` instead.
    */
   async requireV3(taskType: string = 'request'): Promise<void> {
-    return this.client.requireV3(taskType);
+    return this.client.requireSupportedMajor(taskType);
   }
 
   /**
