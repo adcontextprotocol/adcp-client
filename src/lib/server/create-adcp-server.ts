@@ -37,7 +37,7 @@
 
 import { z } from 'zod';
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
-import { ADCP_VERSION, parseAdcpMajorVersion, type AdcpVersion } from '../version';
+import { parseAdcpMajorVersion, type AdcpVersion } from '../version';
 import { resolveAdcpVersion } from '../utils/adcp-version-config';
 import { resolveBundleKey } from '../validation/schema-loader';
 import { bundleSupportsAdcpVersionField } from '../protocols';
