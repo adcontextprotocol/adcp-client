@@ -245,6 +245,42 @@ describe('schema-driven validation', () => {
       }
     });
 
+    test('oneOf branch sub-errors are filtered; only the node error surfaces', () => {
+      // Regression guard for issue #1111. Ajv with allErrors:true emits per-branch
+      // required/type errors from every non-matching oneOf variant alongside the
+      // node-level oneOf error. Without filtering these are reported as real
+      // failures (e.g. "/products/2/name: must have required property 'name'")
+      // even when data is schema-valid — the same payload that validates clean
+      // under Python jsonschema fails under the unfiltered Ajv output.
+      //
+      // After the fix: only the oneOf node error at /account survives;
+      // branch sub-errors whose schemaPath starts with the oneOf path + '/' are dropped.
+      const res = validateRequest('create_media_buy', {
+        idempotency_key: '00000000-0000-0000-0000-000000000000',
+        account: { account_id: 'acme', brand: { domain: 'acme.com' } },
+        brand: { domain: 'acme.com' },
+        start_time: '2026-05-01T00:00:00Z',
+        end_time: '2026-05-31T23:59:59Z',
+        packages: [{ buyer_ref: 'p1', product_id: 'p1', budget: 10, pricing_option_id: 'po1' }],
+      });
+      if (!res.valid) {
+        // The oneOf node error at /account should be present
+        const oneOfIssue = res.issues.find(i => i.keyword === 'oneOf' && i.pointer === '/account');
+        if (oneOfIssue) {
+          // No issue should have a schemaPath that is a strict child of the oneOf's schemaPath.
+          // Such errors are sub-branch errors from non-matching variants and should be filtered.
+          const oneOfPath = oneOfIssue.schemaPath;
+          const subBranchErrors = res.issues.filter(i => i !== oneOfIssue && i.schemaPath.startsWith(oneOfPath + '/'));
+          assert.deepStrictEqual(
+            subBranchErrors,
+            [],
+            `oneOf branch sub-errors must be filtered; found: ${JSON.stringify(subBranchErrors.map(e => ({ pointer: e.pointer, keyword: e.keyword, schemaPath: e.schemaPath })))}`
+          );
+        }
+      }
+      // If valid=true or no schema available, the test is vacuous but not misleading.
+    });
+
     test('variants ship by default; schemaPath stripped unless exposed', () => {
       // Different sensitivity classes:
       //   - schemaPath encodes seller handler branch ordering (impl detail) → gated

@@ -95,6 +95,34 @@ export interface ValidationOutcome {
 
 const OK: ValidationOutcome = Object.freeze({ valid: true, issues: [], variant: 'skipped' });
 
+/**
+ * Drop sub-branch errors emitted by Ajv's `allErrors:true` mode when a
+ * `oneOf` keyword fails. Ajv validates ALL branches and collects every
+ * sub-error; when no branch matches the `oneOf` node error itself is the
+ * actionable signal — per-branch `required`/`type` errors from non-matching
+ * variants are noise that masks the real failure message.
+ *
+ * Filter rule: an error is a sub-branch error when its `schemaPath` is a
+ * strict descendant of a failing `oneOf` node's `schemaPath` (i.e., the
+ * `oneOf` node error exists in the same error list at a shorter path). The
+ * `oneOf` node errors themselves are always kept; `anyOf` sub-errors are
+ * intentionally NOT filtered because `anyOf` allows partial matches and
+ * its sub-errors carry useful disambiguation signal.
+ */
+function filterOneOfSubErrors(errors: ErrorObject[]): ErrorObject[] {
+  const oneOfPaths = new Set<string>();
+  for (const err of errors) {
+    if (err.keyword === 'oneOf') oneOfPaths.add(err.schemaPath);
+  }
+  if (oneOfPaths.size === 0) return errors;
+  return errors.filter(err => {
+    for (const p of oneOfPaths) {
+      if (err.schemaPath.startsWith(p + '/')) return false;
+    }
+    return true;
+  });
+}
+
 function formatIssue(err: ErrorObject): ValidationIssue {
   const instancePath = err.instancePath || '';
   const missingProperty =
@@ -188,7 +216,9 @@ export function validateRequest(toolName: string, payload: unknown, version?: st
   const rootSchema = (validator as { schema?: unknown }).schema;
   return {
     valid: false,
-    issues: (validator.errors ?? []).map(formatIssue).map(i => enrichWithVariants(i, rootSchema)),
+    issues: filterOneOfSubErrors(validator.errors ?? [])
+      .map(formatIssue)
+      .map(i => enrichWithVariants(i, rootSchema)),
     variant: 'request',
   };
 }
@@ -234,7 +264,9 @@ export function validateResponse(toolName: string, payload: unknown, version?: s
   const rootSchema = (effective as { schema?: unknown }).schema;
   return {
     valid: false,
-    issues: (effective.errors ?? []).map(formatIssue).map(i => enrichWithVariants(i, rootSchema)),
+    issues: filterOneOfSubErrors(effective.errors ?? [])
+      .map(formatIssue)
+      .map(i => enrichWithVariants(i, rootSchema)),
     variant: usedVariant,
     ...fallbackFields,
   };
