@@ -30,6 +30,7 @@
  */
 
 import { spawn, spawnSync, type ChildProcess } from 'node:child_process';
+import { createWriteStream } from 'node:fs';
 import { mkdtemp, readFile, writeFile, rm, stat, chmod, symlink } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
@@ -47,6 +48,13 @@ interface Args {
    * install across many pairs — the template's node_modules is valid for
    * every harness run since the deps are fixed (@adcp/sdk + tsx). */
   sharedNodeModules?: string;
+  /** When set, capture Claude's full stream-json transcript (thinking,
+   * tool calls, partial messages) to this path. Used for diagnostic
+   * reruns when a pair times out or fails — lets us read what the LLM
+   * was producing when the wall hit. Switches the `claude` invocation
+   * to `--output-format stream-json --verbose` and tees stdout to the
+   * file (also still inherits to terminal so live watchers see it). */
+  transcriptPath?: string;
 }
 
 const REPO_ROOT = resolve(__dirname, '..', '..');
@@ -62,6 +70,7 @@ function parseArgs(argv: string[]): Args {
     else if (a === '--timeout-ms') out.timeoutMs = Number(argv[++i]);
     else if (a === '--keep') out.keep = true;
     else if (a === '--shared-node-modules') out.sharedNodeModules = argv[++i];
+    else if (a === '--transcript') out.transcriptPath = resolve(argv[++i]);
     else if (a === '--help' || a === '-h') {
       printUsage();
       process.exit(0);
@@ -83,7 +92,8 @@ function printUsage(): void {
   [--work-dir <path>] \\
   [--timeout-ms 600000] \\
   [--keep] \\
-  [--shared-node-modules <path>]`
+  [--shared-node-modules <path>] \\
+  [--transcript <path>]`
   );
 }
 
@@ -190,17 +200,47 @@ async function bootstrapWorkspace(dir: string, port: number, sharedNodeModules?:
   if (npm.status !== 0) throw new Error(`npm install failed in ${dir}`);
 }
 
-async function runClaude(prompt: string, cwd: string, timeoutMs: number): Promise<void> {
+async function runClaude(
+  prompt: string,
+  cwd: string,
+  timeoutMs: number,
+  transcriptPath?: string
+): Promise<void> {
   log(`invoking claude in ${cwd}`);
   const promptPath = join(cwd, '.harness-prompt.md');
   await writeFile(promptPath, prompt, 'utf8');
   await new Promise<void>((resolveFn, reject) => {
     // `--dangerously-skip-permissions` is required for unattended runs —
     // the alternative is the harness pausing on every tool call.
-    const p = spawn('claude', ['-p', `Follow the instructions in ${promptPath}.`, '--dangerously-skip-permissions'], {
-      cwd,
-      stdio: ['ignore', 'inherit', 'inherit'],
-    });
+    //
+    // Transcript mode: when `transcriptPath` is set, switch to
+    // `--output-format stream-json --verbose --include-partial-messages`
+    // and tee Claude's stdout (one JSON event per line) to the file
+    // while still inheriting to the terminal so a live watcher can
+    // follow along. Used for diagnostic reruns of pairs that timed out
+    // in the matrix — lets us read what the LLM was producing when the
+    // wall hit.
+    const args = [
+      '-p',
+      `Follow the instructions in ${promptPath}.`,
+      '--dangerously-skip-permissions',
+      ...(transcriptPath ? ['--output-format', 'stream-json', '--verbose', '--include-partial-messages'] : []),
+    ];
+    const stdio: ('ignore' | 'inherit' | 'pipe')[] = transcriptPath
+      ? ['ignore', 'pipe', 'inherit']
+      : ['ignore', 'inherit', 'inherit'];
+    const p = spawn('claude', args, { cwd, stdio });
+    if (transcriptPath && p.stdout) {
+      // Tee: write each chunk to the transcript file AND to the parent
+      // stdout so the terminal still shows progress live. Append-mode so
+      // a single transcriptPath can capture multiple invocations.
+      const file = createWriteStream(transcriptPath, { flags: 'a' });
+      p.stdout.on('data', chunk => {
+        file.write(chunk);
+        process.stdout.write(chunk);
+      });
+      p.on('exit', () => file.end());
+    }
     const t = setTimeout(() => {
       p.kill('SIGTERM');
       reject(new Error(`claude timed out after ${timeoutMs}ms`));
@@ -322,7 +362,12 @@ async function main(): Promise<void> {
   let agent: ChildProcess | undefined;
   try {
     await bootstrapWorkspace(workDir, args.port, args.sharedNodeModules);
-    await runClaude(buildPrompt(skillContent, args.storyboard, args.port, skillDir), workDir, args.timeoutMs);
+    await runClaude(
+      buildPrompt(skillContent, args.storyboard, args.port, skillDir),
+      workDir,
+      args.timeoutMs,
+      args.transcriptPath
+    );
 
     log(`starting agent`);
     agent = await startAgent(workDir, args.port);
