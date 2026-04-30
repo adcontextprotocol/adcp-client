@@ -219,7 +219,9 @@ Every AdCP request may include a `context` field. The framework echoes it back o
 | `serve(() => createAdcpServer(...))`         | Start HTTP server on `:3001/mcp`                             |
 | `adcpError(code, { message })`               | Structured error (BRAND_NOT_FOUND, RIGHTS_UNAVAILABLE, etc.) |
 
-Import: `import { createAdcpServer, serve, adcpError } from '@adcp/sdk';`
+Import: `import { createAdcpServer, serve, adcpError } from '@adcp/sdk/server/legacy/v5';`
+
+> **v6 specialism status.** `brandRights` is wired via the v5 `createAdcpServer` handler bag today. A v6 `BrandRightsPlatform` interface ships at `src/lib/server/decisioning/specialisms/brand-rights.ts` but the dispatcher path through `createAdcpServerFromPlatform` is not yet documented for adopters — pin to the legacy subpath until that lands.
 
 ## Setup
 
@@ -255,8 +257,13 @@ Single `.ts` file, one `createAdcpServer` call with a `brandRights` domain group
 Creative-approval webhooks are implemented as a regular outbound HTTP call — outside the MCP server, after you accept `acquire_rights`.
 
 ```typescript
-import { createAdcpServer, serve, adcpError } from '@adcp/sdk';
-import { createIdempotencyStore, memoryBackend } from '@adcp/sdk/server';
+import {
+  createAdcpServer,
+  serve,
+  adcpError,
+  createIdempotencyStore,
+  memoryBackend,
+} from '@adcp/sdk/server/legacy/v5';
 
 // Idempotency — required for v3. `acquire_rights` is mutating (issues
 // credentials + may trigger billing); `get_brand_identity` and

@@ -11,7 +11,7 @@
  *
  * @example
  * ```typescript
- * import { createAdcpServer, InMemoryStateStore } from '@adcp/sdk/server';
+ * import { createAdcpServer, InMemoryStateStore } from '@adcp/sdk/server/legacy/v5';
  *
  * const store = new InMemoryStateStore();
  *

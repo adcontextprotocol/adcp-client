@@ -12,7 +12,7 @@
  *
  * @example
  * ```typescript
- * import { createAdcpServer, serve } from '@adcp/sdk/server';
+ * import { createAdcpServer, serve } from '@adcp/sdk/server/legacy/v5';
  *
  * serve(() => createAdcpServer({
  *   name: 'My Publisher',
@@ -1350,7 +1350,7 @@ export interface AdcpServerConfig<TAccount = unknown> {
    *
    * @example
    * ```ts
-   * import { createAdcpServer, bridgeFromTestControllerStore } from '@adcp/sdk';
+   * import { createAdcpServer, bridgeFromTestControllerStore } from '@adcp/sdk/server/legacy/v5';
    *
    * const seedStore = new Map<string, unknown>();
    * const server = createAdcpServer({

@@ -29,7 +29,7 @@
  *
  * ```ts
  * import express from 'express';
- * import { createAdcpServer, createExpressAdapter } from '@adcp/sdk/server';
+ * import { createAdcpServer, createExpressAdapter } from '@adcp/sdk/server/legacy/v5';
  *
  * const agent = createAdcpServer({ ...handlers });
  * const adapter = createExpressAdapter({

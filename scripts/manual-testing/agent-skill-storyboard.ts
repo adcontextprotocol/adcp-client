@@ -115,22 +115,25 @@ ${skill}
 The current working directory already has a \`package.json\` with \`@adcp/sdk\` installed via \`npm install\`. Do NOT touch package.json or run npm install — deps are ready.
 
 1. Write \`server.ts\` that:
-   - Uses \`createAdcpServer\` from \`@adcp/sdk/server\`.
+   - Builds an AdCP server using whichever entry point the skill above prescribes. The two valid choices in v6.0:
+     * **\`createAdcpServerFromPlatform\` from \`@adcp/sdk/server\`** — the v6 typed-platform path. Preferred when the skill shows a \`class implements DecisioningPlatform\` example.
+     * **\`createAdcpServer\` from \`@adcp/sdk/server/legacy/v5\`** — the v5 escape hatch (handler-bag config). Use this when the skill explicitly imports from \`@adcp/sdk/server/legacy/v5\` (SI agent, brand-rights, etc.) or when no v6 specialism exists for the surface you're building.
+     * Do NOT import \`createAdcpServer\` from \`@adcp/sdk\` or \`@adcp/sdk/server\` — it was removed from those paths in v6.0.
    - Implements handlers minimally sufficient to pass \`${storyboardId}\`.
-   - If the storyboard grades outbound webhooks, generate an Ed25519 keypair at startup and pass \`webhooks: { signerKey }\` to \`createAdcpServer\`. Call \`ctx.emitWebhook\` on completion.
+   - If the storyboard grades outbound webhooks, generate an Ed25519 keypair at startup and pass \`webhooks: { signerKey }\` through to the constructor. Call \`ctx.emitWebhook\` on completion.
    - Binds MCP over HTTP on port **${port}** exactly (the harness connects to \`http://127.0.0.1:${port}/mcp\`).
-   - Uses \`serve()\` from \`@adcp/sdk/server\` and wires authentication with the harness key below.
+   - Uses \`serve()\` and wires authentication with the harness key below.
 
-**Authentication (non-negotiable, overrides any conflicting guidance from the skill above).** The harness grader authenticates with a static API key. Wire it exactly like this:
+**Authentication (non-negotiable, overrides any conflicting guidance from the skill above).** The harness grader authenticates with a static API key. The auth wiring is identical for v5 and v6 paths — pick the matching import path:
 
 \`\`\`ts
-import { serve, createAdcpServer, verifyApiKey, type ServeContext } from '@adcp/sdk/server';
+// v6 path (createAdcpServerFromPlatform):
+import { serve, verifyApiKey } from '@adcp/sdk/server';
 
-function createAgent(_ctx: ServeContext) {
-  return createAdcpServer({ /* your handlers here */ });
-}
+// v5 escape hatch (createAdcpServer):
+// import { serve, verifyApiKey } from '@adcp/sdk/server/legacy/v5';
 
-serve(createAgent, {
+serve(() => /* createAdcpServerFromPlatform(platform, opts) OR createAdcpServer(config) */, {
   authenticate: verifyApiKey({
     keys: { 'sk_harness_do_not_use_in_prod': { principal: 'compliance-runner' } },
   }),
