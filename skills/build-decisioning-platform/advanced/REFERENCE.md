@@ -1,0 +1,991 @@
+---
+name: build-decisioning-platform
+description: Use when building an AdCP seller, creative, or audience agent against the v6.0 DecisioningPlatform shape. One interface, four async patterns, no AsyncOutcome ceremony — just `Promise<T>` and `throw AdcpError`.
+---
+
+# Build a Decisioning Platform (v6.0)
+
+> **Status: GA.** v6.0 ships under `@adcp/sdk/server` —
+> `createAdcpServerFromPlatform` + `DecisioningPlatform`. The lower-level
+> `createAdcpServer({ mediaBuy: { ... } })` API remains fully supported
+> as the substrate this framework calls into; reach for it when you need
+> fine control over individual handlers or have custom-shaped tools the
+> platform interface doesn't yet model. The handler-bag skill is at
+> `skills/build-seller-agent/`.
+
+## Overview
+
+A `DecisioningPlatform` is a single TypeScript class implementing per-specialism interfaces:
+
+- `sales: SalesPlatform` — `sales-non-guaranteed`, `sales-guaranteed`, retail-media, etc.
+- `creative: CreativeBuilderPlatform | CreativeAdServerPlatform` — Builder covers both `creative-template` and `creative-generative` specialisms (one merged interface; both specialism IDs map to it). AdServer adds `listCreatives` + `getCreativeDelivery`.
+- `audiences: AudiencePlatform`
+- `signals: SignalsPlatform` — `signal-marketplace`, `signal-owned`
+- `brandRights: BrandRightsPlatform` — brand identity + rights licensing
+- `campaignGovernance`, `propertyLists`, `collectionLists`, `contentStandards` — governance surfaces
+
+The framework owns wire mapping, account resolution, idempotency, signing, async tasks, status normalization, and lifecycle state. You write the business decisions.
+
+## The canonical adopter shape
+
+Minimal copy-paste-runnable example. Single tenant, one product, sync `create_media_buy`. Substitute your real lookups inside the bodies.
+
+```ts
+import { AdcpError, createAdcpServerFromPlatform, type SalesPlatform, type AccountStore } from '@adcp/sdk/server';
+
+// Don't annotate `platform: DecisioningPlatform` — let TS infer the
+// `specialisms: ['sales-non-guaranteed']` literal so RequiredPlatformsFor
+// narrows the constraint to "must provide sales: SalesPlatform".
+const platform = {
+  capabilities: {
+    specialisms: ['sales-non-guaranteed'] as const,
+    creative_agents: [{ agent_url: 'https://creative.example.com/mcp' }],
+    channels: ['display'] as const,
+    pricingModels: ['cpm'] as const,
+    config: {},
+  },
+
+  // Single-tenant: one synthetic account; framework still routes everything
+  // through resolve(). See § "accounts.resolve() is mandatory".
+  accounts: {
+    resolution: 'derived',
+    resolve: async () => ({
+      id: 'tenant_singleton',
+      name: 'My Ad Network',
+      status: 'active',
+      metadata: {},
+      authInfo: { kind: 'api_key' },
+    }),
+  } satisfies AccountStore,
+
+  sales: {
+    getProducts: async (req, ctx) => ({
+      products: [
+        {
+          product_id: 'p_homepage',
+          name: 'Homepage display',
+          description: 'Above-the-fold homepage display, IAB display 300x250',
+          delivery_type: 'non_guaranteed',
+          format_ids: [{ id: 'display_300x250', agent_url: 'https://creative.example.com/mcp' }],
+          publisher_properties: [{ publisher_domain: 'publisher.example.com', selection_type: 'all' }],
+          pricing_options: [{ pricing_option_id: 'cpm_5', pricing_model: 'cpm', rate: 5, currency: 'USD' }],
+          reporting_capabilities: {
+            available_reporting_frequencies: ['hourly', 'daily'],
+            expected_delay_minutes: 30,
+            timezone: 'UTC',
+            supports_webhooks: false,
+            available_metrics: [],
+            date_range_support: 'date_range',
+          },
+        },
+      ],
+    }),
+    createMediaBuy: async (req, ctx) => ({
+      media_buy_id: `mb_${Date.now()}`,
+      status: 'pending_creatives',
+      confirmed_at: new Date().toISOString(),
+      packages: [],
+    }),
+    updateMediaBuy: async (mediaBuyId, patch, ctx) => ({
+      media_buy_id: mediaBuyId,
+      status: patch.paused === true ? 'paused' : 'active',
+    }),
+    syncCreatives: async (creatives, ctx) => creatives.map(c => ({ creative_id: c.creative_id, action: 'created' })),
+    getMediaBuyDelivery: async (filter, ctx) => ({
+      currency: 'USD',
+      reporting_period: { start: filter.start_date ?? '2026-04-01', end: filter.end_date ?? '2026-04-30' },
+      media_buy_deliveries: [],
+    }),
+  } satisfies SalesPlatform,
+};
+
+const server = createAdcpServerFromPlatform(platform, {
+  name: 'My Ad Network',
+  version: '1.0.0',
+  // Plus standard createAdcpServer options: idempotency, signedRequests,
+  // webhooks, validation, etc.
+});
+
+// Then mount with `serve(server)` for MCP, or createExpressAdapter for A2A.
+```
+
+What the framework wires automatically when you call `createAdcpServerFromPlatform`:
+
+- All the AdCP wire tools your declared specialisms support (e.g., `get_products`, `create_media_buy`).
+- A `tasks_get` polling tool — buyers call it with `{ task_id, account }` to poll HITL task lifecycle. You don't write this; it's there as soon as you wire any `*Task` HITL method. See "The buyer gets terminal state two ways" below for the full lifecycle shape.
+- Idempotency-key replay protection on every mutating tool.
+- RFC 9421 webhook signing on terminal-task push notifications (when `serve({ webhooks })` is wired).
+
+**Three rules**:
+
+1. Methods return `Promise<T>` directly — no `ok()` / `submitted()` / `rejected()` wrappers.
+2. `throw new AdcpError(code, opts)` for buyer-facing structured rejection.
+3. For HITL on tools whose wire response defines a `Submitted` arm (`create_media_buy`, `sync_creatives`): return `ctx.handoffToTask(fn)` from inside the same method. The framework allocates `task_id`, returns the spec-defined `Submitted` envelope to the buyer, and runs `fn` in the background. Hybrid sellers branch per call.
+
+## Persisting platform IDs (`ctx.ctxMetadata`)
+
+The framework provides a per-account opaque-blob cache for adapter-internal state that AdCP's wire schema doesn't model — GAM `ad_unit_ids` per product, GAM `order_id` per media_buy, line item ID per package, etc. Don't re-derive on every call; stash it once, read it on subsequent calls.
+
+```ts
+// Wire a store at construction:
+import { createCtxMetadataStore, memoryCtxMetadataStore, pgCtxMetadataStore, getCtxMetadataMigration } from '@adcp/sdk/server';
+
+await pool.query(getCtxMetadataMigration());                                  // Postgres only
+const ctxMetadata = createCtxMetadataStore({ backend: pgCtxMetadataStore(pool) });
+
+createAdcpServerFromPlatform(myPlatform, { name: '...', version: '...', ctxMetadata });
+
+// Stash on the way out (any returned resource — product, media_buy, package, creative):
+getProducts: async (req, ctx) => {
+  const products = await this.gam.products.search(req.brief);
+  for (const p of products) {
+    await ctx.ctxMetadata?.set('product', p.id, { gam: { ad_unit_ids: p.adUnitIds } });
+  }
+  return { products: products.map(toAdcpProduct) };
+},
+
+// Read on the way in (subsequent call referencing the same ID):
+createMediaBuy: async (req, ctx) => {
+  for (const pkg of req.packages) {
+    const meta = await ctx.ctxMetadata?.product(pkg.product_id);
+    if (meta?.gam?.ad_unit_ids) {
+      await this.gam.lineItems.create(pkg, meta.gam.ad_unit_ids);
+    }
+  }
+  // ...
+}
+```
+
+**Common mistake:** don't re-fetch GAM ad-unit IDs on every `create_media_buy`. Attach them on `get_products` and read from `ctx.ctxMetadata.product(id)`.
+
+**Memory backend in production:** the SDK warns at boot when `NODE_ENV=production` and you've wired `memoryCtxMetadataStore()` — silent ctx_metadata loss after rolling restart can run for weeks producing "package not found" errors. Use `pgCtxMetadataStore(pool)` for cluster.
+
+**Account scoping is automatic.** `ctx.ctxMetadata` binds to `ctx.account.id` per request — you never pass the account. No-account tools (`provide_performance_feedback`, `list_creative_formats`) get `ctx.ctxMetadata = undefined`.
+
+**Same primitive across all specialisms** — sales (`product` / `media_buy` / `package`), creative-builder (refine workflow: stash on `build_creative`, read on `refine_creative`), audiences, signals, brand-rights.
+
+See [`docs/proposals/decisioning-platform-v6-1-ctx-metadata.md`](../../docs/proposals/decisioning-platform-v6-1-ctx-metadata.md) for the full design.
+
+## Two async patterns
+
+### 1. Sync happy path
+
+The 80% case. Plain async function:
+
+```ts
+createMediaBuy: async (req, ctx) => {
+  const buy = await this.platform.createOrder(req);
+  return this.toMediaBuy(buy);
+};
+```
+
+### 2. Structured rejection — `throw AdcpError`
+
+```ts
+createMediaBuy: async (req, ctx) => {
+  // total_budget is `number | { amount?: number; currency?: string }`
+  // depending on buyer shape; discriminate before access.
+  const budget = typeof req.total_budget === 'number' ? req.total_budget : (req.total_budget?.amount ?? 0);
+  if (budget < FLOOR_BUDGET) {
+    throw new AdcpError('BUDGET_TOO_LOW', {
+      recovery: 'correctable',
+      message: `Floor is $${FLOOR_BUDGET}`,
+      field: 'total_budget',
+      suggestion: `Raise total_budget to at least ${FLOOR_BUDGET}`,
+    });
+  }
+  return /* ... your createMediaBuy success body ... */;
+};
+```
+
+`AdcpError` carries `code`, `recovery`, optional `field` / `suggestion` / `retry_after` / `details`. The framework projects these onto the wire `adcp_error` envelope.
+
+**Multi-error pre-flight** (Prebid pattern): one throw, all errors in `details.errors`:
+
+```ts
+const errors = this.preflight(req); // returns AdcpStructuredError[]
+if (errors.length > 0) {
+  throw new AdcpError('INVALID_REQUEST', {
+    recovery: 'correctable',
+    message: errors[0].message,
+    field: errors[0].field,
+    details: { errors },
+  });
+}
+```
+
+### 3. HITL — return `ctx.handoffToTask(fn)`
+
+For tools whose wire response defines a `Submitted` arm (today: `create_media_buy`, `sync_creatives`), adopters with human-in-the-loop workflows return `ctx.handoffToTask(fn)` from inside the same method. The framework allocates `task_id`, returns the spec-defined `Submitted` envelope to the buyer immediately, then runs `fn` in the background. `fn`'s return value becomes the task's terminal artifact; `throw new AdcpError(...)` becomes the terminal error. `fn` receives a `TaskHandoffContext` with `id` (framework-issued task id), `update(progress)`, and `heartbeat()`.
+
+```ts
+sales: SalesPlatform<MyMeta> = {
+  // ... other methods ...
+  createMediaBuy: (req, ctx) =>
+    ctx.handoffToTask(async taskCtx => {
+      // Persist the task_id on your side first, before waiting on a human:
+      await this.queueForReview({ taskId: taskCtx.id, request: req });
+
+      // Optional: push a status message visible to the buyer's polling.
+      await taskCtx.update({ message: 'Awaiting trafficker review...' });
+
+      // Then await the operator. Hours-to-days are fine — buyer received
+      // the submitted envelope already and polls / receives webhook.
+      const decision = await this.waitForOperatorApproval(req);
+
+      if (decision.denied) {
+        throw new AdcpError('GOVERNANCE_DENIED', {
+          recovery: 'terminal',
+          message: decision.reason,
+        });
+      }
+
+      // Return → task transitions to `completed` with this as `result`
+      return {
+        media_buy_id: decision.media_buy_id,
+        status: 'pending_creatives',
+        confirmed_at: new Date().toISOString(),
+        packages: [],
+      };
+    }),
+};
+```
+
+> **`TaskHandoff` is a framework contract — never inspect or unwrap it.** `ctx.handoffToTask(fn)` returns an opaque marker. Do not `instanceof`-check it, read `._taskFn`, or call it yourself. Return it from your method and the dispatcher handles allocation, background execution, and terminal-state writes. Any code that reaches inside the marker bypasses lifecycle accounting and will break silently.
+
+**The buyer gets terminal state two ways:**
+
+1. **Webhook push** — buyer included `push_notification_config: { url, token }` in the original request. Framework signs (RFC 9421) + delivers to that URL with the spec's `mcp-webhook-payload.json` envelope on terminal state. URL is validated server-side: rejects RFC 1918, loopback, link-local, CGNAT, IPv6 unique-local, alternate IPv4 forms, and IPv4-mapped IPv6 before delivery (SSRF guard). Bad URLs FAIL FAST with `INVALID_REQUEST` at the request boundary — buyers see their config error immediately, not as silent webhook drops.
+2. **Polling** — framework auto-registers a `tasks_get` custom tool. Buyers call it with `{ task_id, account }` and receive the spec-flat lifecycle shape (`task_id`, `task_type`, `status`, `created_at`, `updated_at`, `completed_at` on terminal, `result` on completed, top-level `error: { code, message, details? }` on failed). Tenant-scoped — passes `account` through `accounts.resolve(ref, ctx)` and refuses cross-tenant probes with `REFERENCE_NOT_FOUND`. You don't write this tool; it's wired in by the framework. Programmatic access for ops / cron code is via `server.getTaskState(taskId, accountId)`.
+
+**Sync-only tools that need long-running completion** use `publishStatusChange(...)` for lifecycle updates instead of HITL. The per-tool wire response schemas don't include `Submitted` arms for `update_media_buy`, `build_creative`, `sync_catalogs`, or `get_products` (a spec inconsistency tracked as [adcp#3392](https://github.com/adcontextprotocol/adcp/issues/3392) — the Submitted schemas exist but aren't rolled into each tool's response `oneOf`). Until the spec consolidates, long-running work on those tools publishes status changes (`media_buy` → `active` → `completed`) on the event bus and buyers subscribe. When adcp#3392 lands, the SDK will widen the unified shape to `update_media_buy`, `build_creative`, and `sync_catalogs` — but NOT to `get_products` (see "Proposal generation" below).
+
+### Proposal generation is NOT `get_products`
+
+`get_products` is a fast catalog lookup. Proposal generation (brief-to-pitch creative workflows that produce new products tailored to the buyer's request) is a different verb. Custom-curation sellers, broadcast-TV proposal-mode systems, generative ad-network pitches — all should expose proposal generation through a separate wire surface, NOT by promoting `get_products` to HITL.
+
+Filed upstream as [adcp#3407](https://github.com/adcontextprotocol/adcp/issues/3407) advocating a `request_proposal` tool with explicit Submitted-only semantics. Until that lands, proposal-mode adopters surface the eventual proposal via `publishStatusChange` on `resource_type: 'proposal'`; buyers subscribe and receive the brief-derived products as they're generated.
+
+The unified hybrid shape (`Success | TaskHandoff`) is right when ONE verb has variable timing (`create_media_buy`: programmatic remnant sync, guaranteed inventory HITL). It's the wrong shape for `get_products` because catalog lookup and proposal generation are TWO verbs being squished into one tool name. Don't reach for `ctx.handoffToTask` on `getProducts` even when adcp#3392 makes it wire-legal.
+
+## Hybrid sellers (programmatic + guaranteed in one tenant)
+
+A real publisher commonly sells both **programmatic remnant** (sync, instant `media_buy_id`) and **guaranteed/sponsorship** (HITL, trafficker review) through the same `create_media_buy` tool. The unified shape handles this natively — branch in your method body on whatever signal determines the path (product type, buyer pre-approval, amount thresholds, etc.):
+
+```ts
+sales: SalesPlatform = {
+  createMediaBuy: async (req, ctx) => {
+    // Fast path: programmatic remnant, pre-approved buyer, low-risk amount.
+    // Returns Success directly — buyer gets media_buy_id on the immediate response.
+    if (this.isProgrammatic(req)) {
+      return await this.commitSync(req);
+    }
+    // Slow path: guaranteed inventory, trafficker review needed.
+    // Returns TaskHandoff — buyer gets { status: 'submitted', task_id }.
+    return ctx.handoffToTask(async taskCtx => {
+      await taskCtx.update({ message: 'Awaiting trafficker review' });
+      return await this.waitForTrafficker(req, taskCtx.id);
+    });
+  },
+};
+```
+
+Buyers pattern-match on the wire response shape. Predictable per request (deterministic given the products selected), dynamic per call. No latency tax on the 99% programmatic fast path; no awkward wire workarounds for the HITL slow path.
+
+## Per-creative review (partial-batch)
+
+`syncCreatives` returns per-creative `status`. Mix freely on the sync arm:
+
+```ts
+syncCreatives: async (creatives, ctx) => {
+  return creatives.map(c => ({
+    creative_id: c.creative_id,
+    action: 'created',
+    status: this.requiresManualReview(c) ? 'pending_review' : 'approved',
+  }));
+};
+```
+
+When the ENTIRE batch needs background review (Innovid, broadcast TV — 4-72h SLA), return `ctx.handoffToTask(fn)` and the framework projects the spec's `Submitted` envelope:
+
+```ts
+syncCreatives: async (creatives, ctx) => {
+  if (creatives.some(c => this.needsBatchReview(c))) {
+    return ctx.handoffToTask(async taskCtx => {
+      await taskCtx.update({ message: 'S&P review pending' });
+      return await this.reviewAndPersist(creatives);
+    });
+  }
+  // Sync arm — return rows directly.
+  return creatives.map(c => ({ creative_id: c.creative_id, action: 'created', status: 'approved' }));
+};
+```
+
+## Buyer-driven approval as separate methods
+
+Don't smush approval into `createMediaBuy` as a side-effect when the buyer can drive the workflow explicitly. AdCP has dedicated specialisms:
+
+- `acquire_rights` — brand-rights specialism (`brand: BrandRightsPlatform`)
+- `check_governance` — governance specialism (`governance: GovernancePlatform`, v1.1)
+- `get_products` → `proposal_id` round-trips → `create_media_buy` commits
+
+The buyer calls approval explicitly; `createMediaBuy` runs after the approval and is fast.
+
+The escape hatch — `ctx.runAsync` + `ctx.startTask` — exists for the genuinely-opaque case where the buyer has no callable surface (GAM trafficker review where the operator's queue is internal).
+
+## Error code vocabulary
+
+`AdcpError`'s `code` field is `ErrorCode | (string & {})`. The 45 standard codes mirror `schemas/cache/3.0.0/enums/error-code.json`. Autocomplete works on the standard set; platform-specific codes are accepted (the `(string & {})` escape hatch).
+
+**Misspellings warn at runtime.** `'BUDGET_TO_LOW'` (typo) compiles fine but the framework warns once per unknown code at construction. Set `ADCP_DECISIONING_ALLOW_CUSTOM_CODES=1` to silence the warn for platforms that intentionally mint vendor-specific codes (e.g., `'GAM_INTERNAL_QUOTA_EXCEEDED'`). Verify against the `ErrorCode` union before shipping.
+
+Common codes:
+
+- **Buyer-fixable** (`recovery: 'correctable'`): `INVALID_REQUEST`, `BUDGET_TOO_LOW`, `POLICY_VIOLATION`, `CREATIVE_REJECTED`, `MEDIA_BUY_NOT_FOUND`, `INVALID_STATE`, `REQUOTE_REQUIRED`
+- **Transient** (`recovery: 'transient'`, retry with backoff): `RATE_LIMITED` (always include `retry_after`), `SERVICE_UNAVAILABLE`
+- **Terminal** (`recovery: 'terminal'`, requires human action): `GOVERNANCE_DENIED`, `ACCOUNT_SUSPENDED`, `PERMISSION_DENIED`, `UNSUPPORTED_FEATURE`
+
+Generic thrown errors (`Error`, `TypeError`) become `SERVICE_UNAVAILABLE` at the framework boundary.
+
+### Sanitizing error details with `pickSafeDetails`
+
+`AdcpError`'s optional `details` field is freeform — adopters often want to surface upstream-platform error context (request IDs, HTTP statuses, vendor codes). Raw upstream error objects almost always carry credentials, PII, or internal stack traces that MUST NOT cross the wire boundary.
+
+`pickSafeDetails(input, allowlist, opts?)` is an explicit-allowlist sanitizer at `@adcp/sdk/server`. Only allowlisted keys survive; default caps at depth 2 + 2 KB serialized.
+
+```ts
+import { pickSafeDetails } from '@adcp/sdk/server';
+
+try {
+  await gamClient.createOrder(req);
+} catch (upstreamErr) {
+  throw new AdcpError('UPSTREAM_REJECTED', {
+    recovery: 'transient',
+    message: 'Ad server rejected the order',
+    // Allowlist: only safe upstream fields cross the wire.
+    details: pickSafeDetails(upstreamErr, ['http_status', 'request_id', 'gam_error_code']),
+  });
+}
+```
+
+What gets dropped silently: any key not in the allowlist (no warning — the design assumes the allowlist is the contract); functions / Symbols / Date / RegExp / class instances; nested objects beyond `maxDepth`; results exceeding `maxSizeBytes`. Returns `undefined` (not `{}`) when nothing survives, so the spread into `details: ...` is a no-op rather than emitting an empty block.
+
+### Wire-shape normalizer for `errors[]`
+
+The wire spec for tools that surface partial-batch failures (`sync_creatives`, `sync_audiences`, `sync_accounts`, `report_usage`) requires `errors: Error[]` with the canonical `{ code, message, recovery? ... }` shape. Adopters often have errors in ad-hoc shapes — bare strings, native `Error` instances, vendor-specific objects. The framework applies `normalizeErrors` automatically at the `sync_creatives` projection seam (sales + creative dispatch); for adopter code that constructs `errors[]` directly (in custom handlers, or in tools where the framework doesn't auto-normalize yet), the helper is exported at `@adcp/sdk/server`:
+
+```ts
+import { normalizeErrors } from '@adcp/sdk/server';
+
+return creatives.map(c => ({
+  creative_id: c.id,
+  action: c.passed ? 'created' : 'failed',
+  // Adopter passes whatever shape they have — strings, Error
+  // instances, partial wire objects. normalizeErrors coerces.
+  errors: normalizeErrors(c.upstreamErrors),
+}));
+```
+
+Coercion rules (per-entry):
+
+- `string` → `{ code: 'GENERIC_ERROR', message: <input>, recovery: 'terminal' }`
+- `Error` instance → `{ code: 'GENERIC_ERROR', message: err.message, recovery: 'terminal' }`
+- Object with `code` + `message` → wire shape (vendor-specific keys dropped — use `details` for those)
+- `null` / `undefined` → `{ code: 'GENERIC_ERROR', message: 'Unknown error', recovery: 'terminal' }`
+
+`normalizeErrors` does NOT sanitize `details`; pair with `pickSafeDetails` on the adopter side before constructing the row.
+
+## Account resolution
+
+`accounts.resolve(ref, ctx?)` is the single tenant boundary. Three resolution modes:
+
+| `resolution`           | When to pick                                                                                                                                                         | What `resolve` receives                                          |
+| ---------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------- |
+| `'explicit'` (default) | Multi-tenant; buyer passes `account_id` on every request (Snap, Meta, GAM via Network/Company id).                                                                   | `ref = { account_id }` (or `{ brand, operator }`) on every call. |
+| `'implicit'`           | Buyer pre-syncs accounts via `sync_accounts`; subsequent calls resolved by `ctx.authInfo` lookup against pre-synced linkage (LinkedIn, some retail-media operators). | `ref` may be undefined; use `ctx.authInfo.clientId` to look up.  |
+| `'derived'`            | Single-tenant; one logical advertiser per agent process. Auth principal alone identifies the tenant.                                                                 | `ref` typically undefined; return the singleton regardless.      |
+
+**If you have one tenant, declare `resolution: 'derived'`.** The default is `'explicit'`. A single-tenant agent that omits `resolution` falls into `'explicit'` mode where tools whose buyer omits the `account` field (`provide_performance_feedback`, `list_creative_formats`, `report_usage`, `tasks_get` without explicit account) silently fail with `ACCOUNT_NOT_FOUND` because the framework expects the buyer to pass an account on those tools too.
+
+```ts
+// Multi-tenant
+accounts: {
+  resolution: 'explicit',
+  resolve: async (ref, ctx) => {
+    if (ref?.account_id) return await this.db.findById(ref.account_id);
+    if (ref?.brand) return await this.db.findByBrand(ref.brand.domain, ref.operator);
+    // ref undefined: tool without `account` field on wire — auth-derived path.
+    if (ctx?.authInfo?.clientId) return await this.db.findByClient(ctx.authInfo.clientId);
+    return null; // → ACCOUNT_NOT_FOUND
+  },
+} satisfies AccountStore;
+```
+
+**Use `ctx.authInfo` to authorize, not just lookup.** Don't naively `findById(ref.account_id)` — that lets an attacker passing `{ account: { account_id: 'tenant_B' } }` get tenant B's account back from a flat lookup. Cross-check that the resolved tenant is reachable from the principal in `ctx.authInfo` (e.g., the OAuth client has been granted access to that tenant). The framework wires `ctx.authInfo` automatically from `serve({ authenticate })`.
+
+### Explicit-mode adopters MUST handle `ref === undefined`
+
+The framework calls `accounts.resolve(undefined, { authInfo, toolName })` for every request whose wire schema lacks an `account` field — this is universal across `'explicit'`, `'implicit'`, and `'derived'` modes. The wire tools that hit this path:
+
+- `list_creative_formats` (universal — every buyer expects it)
+- `provide_performance_feedback`
+- `report_usage`
+- `tasks_get` when called without `account` (single-tenant case)
+- `get_account_financials` (account is implicit from auth)
+
+If your `'explicit'`-mode resolver only handles `ref?.account_id` and falls through on `undefined`, those tools get `ctx.account === undefined` and the framework returns `ACCOUNT_NOT_FOUND`. The fix is the `if (ctx?.authInfo?.clientId)` branch in the example above. Your tenants are reachable from the OAuth client / API-key principal — that's how multi-tenant SaaS auth works — so this is a code-path you already have at the auth layer; just thread it into `resolve()`.
+
+Throwing `AccountNotFoundError` only from `resolve()` — never from specialism methods — gets the spec's fixed `ACCOUNT_NOT_FOUND` envelope. Generic throws from inside `resolve()` map to `SERVICE_UNAVAILABLE`.
+
+### `accounts.resolve()` is mandatory — even for "no tenant" agents
+
+The framework calls `accounts.resolve()` on every request before dispatching to a specialism method. Single-tenant agents that historically skipped account resolution (no per-buyer scoping; the agent serves one logical advertiser) MUST still implement `resolve()` — declare `resolution: 'derived'` and return a single synthetic `Account` regardless of the input ref:
+
+```ts
+accounts: AccountStore<MyMeta> = {
+  resolution: 'derived', // single-tenant; auth principal alone identifies the tenant
+  resolve: async () => ({
+    id: 'singleton',
+    name: 'My Agent',
+    status: 'active',
+    metadata: {
+      /* whatever your handlers want to read off ctx.account.metadata */
+    },
+    authInfo: { kind: 'api_key' },
+  }),
+};
+```
+
+Why this is non-negotiable: the resolved account is the framework's tenant boundary for idempotency keys, status-change scoping (`account_id` on every event), workflow steps, and per-tenant capability overrides via `getCapabilitiesFor(account)`. A platform without an `account` per request can't participate in any of those. Adopters migrating from a pre-v6 codebase where `accounts.resolve()` was skipped (training-agent's posture today) need to add this wrapper as part of the migration — it's ~10 lines and unblocks the rest of the framework's invariants.
+
+### Sandbox: `AccountReference.sandbox === true`
+
+There is no separate "dry-run" mode in v6. When the buyer sends `account.sandbox === true`, the framework calls `accounts.resolve()` with the same flag set; your resolver routes to a sandbox account, and the platform reads/writes go through your sandbox backend by reading `account.metadata`:
+
+```ts
+resolve: async (ref) => {
+  if (ref.sandbox === true) {
+    return { id: 'sandbox_acc', metadata: { backend: 'sandbox' }, ... };
+  }
+  return { id: 'prod_acc', metadata: { backend: 'production' }, ... };
+}
+```
+
+Tool-specific `dry_run` flags on `sync_catalogs` and `sync_creatives` are wire fields the platform receives and honors locally — they're NOT a framework-level mode.
+
+## OAuth provider wiring
+
+OAuth verifiers live on `serve()`, not on the platform. The platform only sees the resolved `authInfo` via `ctx.account.authInfo` after `serve({ authenticate })` produces it:
+
+<!-- skill-example-skip: documentation-pattern, references undeclared `server`, `parseBearerToken`, `myOAuthProvider` -->
+
+```ts
+import { serve } from '@adcp/sdk/server';
+
+serve(() => server, {
+  publicUrl: 'https://my-agent.example.com',
+  authenticate: async ({ headers }) => {
+    const token = parseBearerToken(headers.authorization);
+    const principal = await myOAuthProvider.verify(token); // SnapOAuthProvider, your verifier, etc.
+    if (!principal) return null; // 401
+    return {
+      token,
+      clientId: principal.client_id,
+      scopes: principal.scopes,
+      extra: { sub: principal.sub /* whatever */ },
+    };
+  },
+});
+```
+
+The platform's `accounts.resolve()` receives this as `extra.authInfo` on the second arg context (when `serve({ authenticate })` is wired). Use it to translate the OAuth principal into your tenant model:
+
+```ts
+accounts: {
+  resolve: async (ref, { authInfo }) => {
+    const platformAccountId = await myUpstream.findAccountByOAuthClient(authInfo?.clientId, ref);
+    return { id: platformAccountId, ... };
+  },
+};
+```
+
+Same pattern for stdio + http transports — `authenticate` runs at the transport boundary, the platform sees the resolved principal. There's no `auth?: AuthProvider` field on `DecisioningPlatform`; that boundary is intentionally on the surrounding `serve()` opts.
+
+## Production task storage
+
+The framework's default in-memory `TaskRegistry` is gated by `NODE_ENV` — refuses to construct outside `{test, development}` unless `ADCP_DECISIONING_ALLOW_INMEMORY_TASKS=1` is explicitly set. Every HITL-eligible production deployment needs a durable task registry so task state survives process restarts and load-balancer failover.
+
+Ship `createPostgresTaskRegistry({ pool, tableName? })`:
+
+```ts
+import { Pool } from 'pg';
+import {
+  createAdcpServerFromPlatform,
+  createPostgresTaskRegistry,
+  getDecisioningTaskRegistryMigration,
+} from '@adcp/sdk/server';
+
+const pool = new Pool({ connectionString: process.env.DATABASE_URL });
+
+// Once at boot — idempotent CREATE TABLE IF NOT EXISTS, safe to re-run
+await pool.query(getDecisioningTaskRegistryMigration());
+
+const server = createAdcpServerFromPlatform(platform, {
+  name: 'My Ad Network',
+  version: '1.0.0',
+  taskRegistry: createPostgresTaskRegistry({ pool }),
+});
+```
+
+Cross-instance reads work — process A allocates the task, process B reads the lifecycle for `tasks_get`. Terminal-state idempotency is enforced via SQL `WHERE status = 'submitted'` so concurrent webhook deliveries can't race to overwrite each other. Background-completion tracking (`_registerBackground`) is process-local — promises don't serialize, so production HITL flows that span process boundaries drive completion via webhook → an explicit `complete()` / `fail()` from the receiving process.
+
+Custom backend? Implement the `TaskRegistry` interface (8 methods) for Redis / DynamoDB / Spanner / etc. — the framework awaits each call so all 4 mutators (`create`, `complete`, `fail`, `getTask`) can be storage-backed.
+
+**Adopter `*Task` return size cap.** Postgres-backed registries cap `result` / `error` JSONB rows at 4MB. Returns over the cap surface via `onTaskTransition` with `errorCode: 'REGISTRY_WRITE_FAILED'` and skip webhook delivery (registry state is inconsistent, so the framework refuses to push). Offload large payloads to blob storage and return references in the result body instead. The cap protects the DB write path only — adopter code that serializes `result` for logs/metrics MUST impose its own bound.
+
+## Multi-tenant hosting (TenantRegistry)
+
+Running multiple tenants from one process — different sellers, or multiple variants of the same agent under different specialisms? `TenantRegistry` is the framework primitive. Each tenant gets its own `DecisioningPlatform`, its own signing key, its own per-tenant capability declaration, and its own `'pending' → 'healthy' → 'unverified' → 'disabled'` lifecycle.
+
+```ts
+import { createTenantRegistry } from '@adcp/sdk/server';
+
+const registry = createTenantRegistry({
+  defaultServerOptions: { name: 'Multi-Tenant', version: '1.0.0' /* shared opts */ },
+});
+
+// Subdomain routing — one tenant per subdomain
+registry.register('snap', {
+  agentUrl: 'https://snap.example.com',
+  signingKey: { keyId: 'snap-key-1', publicJwk: snapPub, privateJwk: snapPriv },
+  platform: snapPlatform,
+});
+
+// Path routing — multiple tenants under one host
+registry.register('sales', {
+  agentUrl: 'https://training.example.com/sales',
+  signingKey: { keyId: 'sales-key-1', publicJwk: salesPub, privateJwk: salesPriv },
+  platform: salesPlatform,
+});
+registry.register('creative', {
+  agentUrl: 'https://training.example.com/creative',
+  signingKey: { keyId: 'creative-key-1', publicJwk: creativePub, privateJwk: creativePriv },
+  platform: creativePlatform,
+});
+
+// Express handler dispatches via host + path
+app.use((req, res, next) => {
+  const resolved = registry.resolveByRequest(req.headers.host ?? '', req.path);
+  if (!resolved) return res.status(503).set('Retry-After', '5').end();
+  // Mount the resolved tenant's MCP+A2A endpoints
+  return resolved.server.handle(req, res, next);
+});
+```
+
+**Subdomain vs. path routing.** `resolveByRequest(host, pathname)` matches both. Subdomain tenants (`https://sales.training.example.com`) have implicit `/` prefix — match any pathname. Path tenants (`https://training.example.com/sales`) match longest-prefix. Mix freely; SDK supports both shapes from the same `TenantRegistry`.
+
+**Pending state — JWKS validation gate.** New tenants land in `'pending'` until first JWKS validation succeeds. `resolveByRequest` REFUSES traffic for pending tenants — host transport responds 503 + Retry-After. Closes the register-then-serve race window where a tenant registered with a wrong signing key would have served signed-but-unverifiable responses for ~60s. Use `register({ awaitFirstValidation: true })` to block registration on the synchronous validation outcome — useful for deploy scripts that gate on health.
+
+**Admin-API auth.** `register()` is the privileged surface. Hosts wiring HTTP/RPC endpoints in front of `register` MUST gate them with operator-level auth — anyone who can call `register` can introduce a tenant that signs outbound webhooks. Framework doesn't ship admin-HTTP scaffolding because the right auth shape varies by deployment.
+
+**Shared infrastructure across tenants.** Idempotency stores, task registries, and status-change buses can be shared (one Postgres for all tenants). The framework's account scoping prevents cross-tenant reads. When sharing a task registry, prefix account ids per-tenant (`tenantA:acme`) to prevent collisions if two tenants both use the literal account id `acme`.
+
+## Capability projections (`audience_targeting` / `conversion_tracking` / `content_standards`)
+
+Three discovery blocks live under `get_adcp_capabilities.media_buy.*` in the wire spec. Adopters declare them on `platform.capabilities` and the framework projects them onto `get_adcp_capabilities` automatically (no custom `get_adcp_capabilities` tool needed — the framework refuses one anyway).
+
+```ts
+class MyPlatform implements DecisioningPlatform {
+  capabilities = {
+    specialisms: ['sales-non-guaranteed', 'audience-sync'] as const,
+    creative_agents: [{ agent_url: 'https://creative.example.com/mcp' }],
+    channels: ['display', 'olv'] as const,
+    pricingModels: ['cpm'] as const,
+    config: {},
+
+    // Audience-matching capability — required for audience-sync adopters
+    audience_targeting: {
+      supported_identifier_types: ['hashed_email', 'hashed_phone'],
+      supported_uid_types: [
+        /* UID2, RampID, MAID, etc. */
+      ],
+      minimum_audience_size: 100,
+      matching_latency_hours: { min: 1, max: 24 },
+    },
+
+    // Conversion-tracking capability — required if adopter accepts events
+    conversion_tracking: {
+      multi_source_event_dedup: true,
+      supported_event_types: ['purchase', 'add_to_cart', 'lead'],
+      supported_action_sources: ['website', 'app'],
+      attribution_windows: [{ event_type: 'purchase', post_click: [{ interval: 7, unit: 'days' }] }],
+    },
+
+    // Content-standards capability — required if adopter claims
+    // 'content-standards' specialism
+    content_standards: {
+      supports_local_evaluation: true,
+      supported_channels: ['display', 'olv'],
+      supports_webhook_delivery: false,
+    },
+  };
+}
+```
+
+Each block is independently optional. Wire shape lives at `core/get-adcp-capabilities-response.json#media_buy.{audience_targeting,conversion_tracking,content_standards}` — declare what your platform actually supports, omit blocks you don't.
+
+## Brand rights (`brand-rights` specialism)
+
+The `brand-rights` specialism covers identity discovery + licensing for branded inventory — IP holders (sports leagues, movie studios), CTV brand-rights desks, and brand-licensing marketplaces. v6.0 ships first-class platform support for the 3 wire tools that have framework dispatch infrastructure:
+
+```ts
+import type {
+  DecisioningPlatform,
+  BrandRightsPlatform,
+  AccountStore,
+  GetBrandIdentitySuccess,
+  AcquireRightsAcquired,
+  AcquireRightsPendingApproval,
+  AcquireRightsRejected,
+} from '@adcp/sdk/server';
+
+class MyBrandRightsAgent implements DecisioningPlatform {
+  capabilities = {
+    specialisms: ['brand-rights'] as const,
+    creative_agents: [],
+    channels: ['display'] as const,
+    pricingModels: ['cpm'] as const,
+    config: {},
+  };
+
+  statusMappers = {};
+  accounts: AccountStore = {
+    /* ... */
+  };
+
+  brandRights: BrandRightsPlatform = {
+    // Sync — read brand identity record
+    getBrandIdentity: async (req, ctx): Promise<GetBrandIdentitySuccess> => ({
+      brand_id: 'brand_acme_42',
+      house: { domain: 'acme-corp.example.com', name: 'Acme Corp' },
+      names: [{ en_US: 'Acme', en_GB: 'ACME Co.' }],
+      industries: ['retail'],
+      keller_type: 'master',
+    }),
+
+    // Sync — list rights matching the query. Wire field is `rights:` (NOT
+    // `offerings:`); each entry is a RightsOffering with pricing_options.
+    getRights: async (req, ctx) => ({
+      rights: [
+        {
+          rights_id: 'rights_endorsement_us',
+          brand_id: 'brand_acme_42',
+          name: 'Acme endorsement, US',
+          available_uses: ['endorsement'],
+          countries: ['US'],
+          pricing_options: [
+            {
+              pricing_option_id: 'po_flat_100k',
+              model: 'flat_rate',
+              price: 100000,
+              currency: 'USD',
+              uses: ['endorsement'],
+              period: 'one_time',
+            },
+          ],
+        },
+      ],
+    }),
+
+    // Three wire-spec arms — return whichever matches the request.
+    acquireRights: async (req, ctx) => {
+      if (canClearImmediately(req)) {
+        const acquired: AcquireRightsAcquired = {
+          rights_id: req.rights_id,
+          status: 'acquired',
+          brand_id: 'brand_acme_42',
+          terms: {
+            pricing_option_id: req.pricing_option_id,
+            amount: 100000,
+            currency: 'USD',
+            uses: ['endorsement'],
+            period: 'one_time',
+            start_date: '2026-05-01',
+            end_date: '2026-12-31',
+          },
+          generation_credentials: [
+            // Per-LLM-provider scoped keys for rights-cleared content gen
+            // { provider: 'midjourney', rights_key: '...', uses: ['endorsement'] },
+          ],
+          rights_constraint: {
+            rights_id: req.rights_id,
+            rights_agent: { url: 'https://my-rights-agent.example.com/mcp', id: 'my-rights-agent' },
+            uses: ['endorsement'],
+            countries: ['US'],
+            valid_from: '2026-05-01T00:00:00Z',
+            valid_until: '2026-12-31T23:59:59Z',
+          },
+        };
+        return acquired;
+      }
+      if (requiresHumanReview(req)) {
+        const pending: AcquireRightsPendingApproval = {
+          rights_id: req.rights_id,
+          status: 'pending_approval',
+          brand_id: 'brand_acme_42',
+          detail: 'Awaiting rights-holder counter-signature',
+          estimated_response_time: '48h',
+        };
+        return pending;
+      }
+      const rejected: AcquireRightsRejected = {
+        rights_id: req.rights_id,
+        status: 'rejected',
+        brand_id: 'brand_acme_42',
+        reason: 'Rights unavailable in requested jurisdiction',
+        suggestions: ['Try US-only deployment'],
+      };
+      return rejected;
+    },
+  };
+}
+```
+
+**Capability declaration is required.** Set `capabilities.brand: {}` (empty block opts in) to declare brand-protocol support — the framework auto-derives `rights: true` from the `BrandRightsPlatform` impl, and adopters declare `right_types`, `available_uses`, `generation_providers`, `description` for richer discovery:
+
+```ts
+capabilities = {
+  specialisms: ['brand-rights'] as const,
+  // ...
+  brand: {
+    right_types: ['talent', 'brand_ip'],
+    available_uses: ['endorsement', 'likeness'],
+    generation_providers: ['midjourney', 'elevenlabs'],
+    description: 'Acme Brand-Rights Agent',
+  },
+};
+```
+
+`RequiredCapabilitiesFor<'brand-rights'>` enforces this at compile-time — claiming `brand-rights` without `capabilities.brand` is a TypeScript error at the `createAdcpServerFromPlatform` call site.
+
+**No discovery/search verb in v6.0.** `getBrandIdentity` resolves a `brand_id` into the identity record; it is NOT a search/discovery surface. Real IP desks often need search ("does this league hold rights to this player?") before identity resolves. Until upstream ships `search_brands` ([adcp#3480](https://github.com/adcontextprotocol/adcp/issues/3480)), the workaround is to use `getRights({ query, uses })` for free-text discovery and project unique `brand_id` values out of the result rows — adopters then call `getBrandIdentity({ brand_id })` per unique brand to fetch full identity records.
+
+**`acquire_rights` async delivery is webhook-only, not polling.** Unlike `create_media_buy` / `sync_creatives` which use `ctx.handoffToTask(fn)` for HITL, `acquire_rights` has its own three wire-spec arms (`Acquired` / `PendingApproval` / `Rejected`). When you return `PendingApproval`, the buyer's `push_notification_config.url` receives the eventual `Acquired` or `Rejected` outcome — the spec does NOT define a polling tool for this surface. Don't reach for `tasks_get` here.
+
+**Two surfaces still on the merge seam (deferred to v6.1):** `update_rights` and `creative_approval` are spec-published but not yet in `AdcpToolMap`, so they don't have framework dispatch infrastructure. Wire them via `opts.brandRights.{updateRights,creativeApproval}` until v6.1:
+
+```ts
+createAdcpServerFromPlatform(myBrandRightsAgent, {
+  name: 'my-rights-agent',
+  version: '1.0.0',
+  // 3 wire tools auto-wire from platform.brandRights;
+  // 2 stay on the merge seam until they land in AdcpToolMap (v6.1):
+  brandRights: {
+    updateRights: async (params, ctx) => ({
+      /* UpdateRightsSuccess */
+    }),
+    // creative_approval is a webhook receiver, not an MCP tool — wire as
+    // a separate HTTP endpoint outside this seam until the spec settles.
+  },
+});
+```
+
+## Compliance testing (`comply_test_controller`)
+
+Conformance harnesses (the AdCP storyboard suite, in particular) drive seller-side state-machine tests via the wire-spec `comply_test_controller` tool. The framework registers it for you when you supply `complyTest` adapters on `createAdcpServerFromPlatform`.
+
+```ts
+import { createAdcpServerFromPlatform } from '@adcp/sdk/server';
+
+const server = createAdcpServerFromPlatform(myPlatform, {
+  name: 'my-seller',
+  version: '1.0.0',
+  complyTest: {
+    // Per-request gate. Return true to allow; anything else (including
+    // throws) denies with FORBIDDEN. Production agents typically gate
+    // registration itself on `process.env.ADCP_SANDBOX === '1'` rather
+    // than relying on this — the helper logs a loud warning if registered
+    // ungated AND without an env flag.
+    sandboxGate: input => input.auth?.sandbox === true,
+
+    // Seed adapters — pre-populate fixtures the storyboard references by
+    // stable ID. Re-seeding the same id+fixture is idempotent; divergent
+    // fixture for the same id rejects with INVALID_PARAMS.
+    seed: {
+      product: async params => productRepo.upsert(params.product_id, params.fixture),
+      creative: async params => creativeRepo.upsert(params.creative_id, params.fixture),
+      // pricing_option, plan, media_buy similarly
+    },
+
+    // Force adapters — state transitions. Throw
+    // TestControllerError('INVALID_TRANSITION', ...) when the state
+    // machine disallows the transition (production state machine should
+    // be the source of truth; the controller doesn't enforce its own).
+    force: {
+      creative_status: async params =>
+        creativeRepo.transition(params.creative_id, params.status, params.rejection_reason),
+      media_buy_status: async params => buyRepo.transition(params.media_buy_id, params.status, params.rejection_reason),
+      // account_status, session_status similarly
+    },
+
+    // Simulate adapters — synthetic delivery / budget data, no real
+    // upstream side effects. Storyboard validates the shape downstream
+    // tools return when fed the simulated state.
+    simulate: {
+      delivery: async params => deliverySim.run(params),
+      budget_spend: async params => budgetSim.spendTo(params.spend_percentage, params),
+    },
+  },
+});
+```
+
+**Capability declaration is required.** Set `capabilities.compliance_testing = {}` on your platform — the framework projects the discovery block to `get_adcp_capabilities` so harnesses know which scenarios you support. The framework auto-derives `scenarios` from which adapters you supplied; explicit `compliance_testing.scenarios = [...]` is optional (use it to advertise a narrower or wider list than auto-derivation).
+
+```ts
+class MyPlatform implements DecisioningPlatform {
+  capabilities = {
+    specialisms: ['sales-non-guaranteed'] as const,
+    // ...
+    compliance_testing: {}, // empty block declares support; framework derives scenarios
+  };
+}
+```
+
+The framework throws `PlatformConfigError` at construction if:
+
+- `capabilities.compliance_testing` is declared but `complyTest` is omitted (capability without implementation), OR
+- `complyTest` is supplied but `capabilities.compliance_testing` is undeclared (implementation without discovery field).
+
+**Sandbox-only.** The spec says `comply_test_controller` MUST NOT be exposed in production. Three guard layers:
+
+1. **Gate registration**: only call `createAdcpServerFromPlatform({ ..., complyTest })` when `process.env.ADCP_SANDBOX === '1'` or your equivalent sandbox flag is set. Production builds never register the tool at all.
+2. **Per-request gate**: `complyTest.sandboxGate(input)` runs on every request; return `false` to deny with `FORBIDDEN`.
+3. **Transport-layer isolation**: production deployments often expose the sandbox endpoint on a separate URL with separate auth.
+
+The helper warns once per construction if it's registered without a `sandboxGate` AND without `ADCP_SANDBOX=1` / `ADCP_COMPLY_CONTROLLER_UNGATED=1` to silence the warning in setups where transport isolation handles it.
+
+## Custom webhook emitter
+
+Default behavior: when the host wires `webhooks` on `serve()`, the framework binds the per-request `ctx.emitWebhook` to a signed RFC 9421 path. You don't need a custom emitter unless you want a different retry policy, a different signing key for task webhooks vs. status-change webhooks, or a fake for tests.
+
+```ts
+createAdcpServerFromPlatform(platform, {
+  name: 'My Ad Network',
+  version: '1.0.0',
+  taskWebhookEmitter: {
+    emit: async ({ url, payload, operation_id }) => {
+      // Your custom delivery — must sign per RFC 9421 if you claim
+      // signed-requests. Or delegate to ctx.emitWebhook (use the default
+      // path) if you only need to wrap with logging.
+      return await mySigningEmitter.deliver(url, payload, operation_id);
+    },
+    // Required acknowledgment when your emitter does NOT sign:
+    // unsigned: true,  // for dev/test fakes
+  },
+});
+```
+
+**Signing posture is your responsibility.** If your platform claims `signed-requests` and you wire a custom emitter without `unsigned: true`, the framework warns at construction (in non-test envs) — buyers who verify signatures will reject your unsigned webhooks. Either delegate to the framework's signing pipeline or set `unsigned: true` to acknowledge dev/test usage. Set `ADCP_DECISIONING_ALLOW_UNSIGNED_TEST_EMITTER=1` to silence the warn for staging environments where signing isn't yet wired.
+
+### DNS rebinding — production hardening
+
+The framework's URL validator (`validatePushNotificationUrl`) rejects RFC 1918, loopback, link-local, CGNAT, IPv6 ULA, and IPv4-mapped IPv6 addresses against the LITERAL hostname in the URL. This catches the common case but does NOT defeat DNS rebinding: a buyer registers `https://rebind.attacker.com/`, validation passes (literal host isn't in any private range), then the A-record TTL flips to `169.254.169.254` between validate and fetch — the metadata service receives the signed payload.
+
+Two production-grade mitigations:
+
+1. **Egress proxy with allowlist** (deployment-side, simplest). Pin all outbound webhook traffic through a forward proxy that only allows explicitly listed destinations. Standard hosting practice; framework doesn't need to know.
+2. **Pin-and-bind custom fetch** (SDK-side). Wire a custom `fetch` on `createWebhookEmitter({ webhooks })` that resolves DNS at request time, re-validates the resolved IP against the SSRF rules, and opens the TCP/TLS connection to that specific IP with the original `Host:` header preserved. Tracking issue [adcp-client#1038](https://github.com/adcontextprotocol/adcp-client/issues/1038) — v6.1 ships this as the default.
+
+Until v6.1, adopters running in security-sensitive environments (handling buyer-supplied URLs from untrusted principals) MUST do one of the above. The SDK's literal-hostname check is correctness, not security-against-rebinding.
+
+## Migrating from v5.x handler-style — the merge seam
+
+If you have a v5.x agent built on `createAdcpServer({ mediaBuy: { ... } })`, you don't need to rewrite all of it before adopting v6.0. `createAdcpServerFromPlatform` accepts the v5 handler-style domains (`mediaBuy`, `creative`, `accounts`, `eventTracking`, `signals`, `governance`, `brandRights`, `sponsoredIntelligence`) as `opts` alongside the v6 platform interface. Platform-derived handlers WIN per-key; adopter handlers fill gaps for tools the platform doesn't yet model. Migrate one specialism at a time.
+
+**`mergeSeam: 'strict'` is the recommended default during migration.** Set it from the first commit of your migration PR and keep it on through GA — `'strict'` throws `PlatformConfigError` at construction time when the v6 platform interface and your v5 leftover handlers collide, so you find shadowed overrides in CI rather than as silent runtime UNSUPPORTED_FEATURE responses. The default is `'warn'` only for back-compat with adopters who upgraded mid-flight; `'strict'` is the right posture for new deployments. Adopters who deferred this almost always wished they hadn't — by the time a collision shows up in production logs, the affected request has already failed in some confusing way.
+
+The seam logs a warning when an adopter handler is shadowed by a platform-derived one — the failure mode where v6.x adds a tool to a specialism interface and your prior merge-seam override silently stops running on next deploy. Pick a `mergeSeam` mode based on your environment:
+
+| Mode               | When to pick                                                                                                                                                  |
+| ------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `'warn'` (default) | Local dev, mid-migration. Logs every collision at construction.                                                                                               |
+| `'log-once'`       | Multi-tenant host running N constructions per process / hot-reload dev. Logs the first time each `(domain, keys)` collision is seen, then suppresses repeats. |
+| `'strict'`         | CI / new deployments. Throws `PlatformConfigError` so the build fails before silent regression ships.                                                         |
+| `'silent'`         | Intentional override — you've audited the collision and the platform-derived handler is correct; suppress the noise.                                          |
+
+CI vs. local-dev side-by-side:
+
+```ts
+// CI / new deployments — fail the build on silent migration regression.
+createAdcpServerFromPlatform(platform, {
+  name: 'My Ad Network',
+  version: '1.0.0',
+  mergeSeam: 'strict',
+  mediaBuy: { listCreativeFormats, providePerformanceFeedback /* ... */ },
+});
+
+// Local dev / hot-reload — see every collision in the log, never crash.
+createAdcpServerFromPlatform(platform, {
+  name: 'My Ad Network',
+  version: '1.0.0',
+  mergeSeam: process.env.NODE_ENV === 'production' ? 'log-once' : 'warn',
+  mediaBuy: { listCreativeFormats, providePerformanceFeedback /* ... */ },
+});
+```
+
+## Observability hooks
+
+Wire any telemetry backend (DataDog / Prometheus / OpenTelemetry / structured logger) via the framework's `observability` hooks:
+
+```ts
+const server = createAdcpServerFromPlatform(platform, {
+  name: 'My Ad Network',
+  version: '1.0.0',
+  observability: {
+    onAccountResolve: ({ tool, durationMs, resolved, fromAuth }) => {
+      // accountId is also present when resolved=true; pre-bucket if you forward it
+      // (high tenant counts will explode metric tag cardinality).
+      metrics.histogram('adcp.account_resolve.ms', durationMs, { tool, fromAuth, resolved: String(resolved) });
+    },
+    onTaskCreate: ({ tool, accountId, durationMs }) => {
+      metrics.histogram('adcp.task.create.ms', durationMs, { tool });
+    },
+    onTaskTransition: ({ tool, status, durationMs, errorCode }) => {
+      // errorCode is bucketed (ErrorCode enum + framework-synthetic
+      // 'REGISTRY_WRITE_FAILED'). Safe to use as a metric tag.
+      metrics.histogram('adcp.task.duration_ms', durationMs, { tool, status, errorCode: errorCode ?? 'none' });
+    },
+    onWebhookEmit: ({ tool, status, success, durationMs, errorCode }) => {
+      // errorCode is bucketed (TIMEOUT/CONNECTION_REFUSED/HTTP_4XX/HTTP_5XX/
+      // SIGNATURE_FAILURE/UNKNOWN). Don't tag on errorMessages — free-text.
+      metrics.histogram('adcp.webhook.duration_ms', durationMs, {
+        tool,
+        status,
+        success: String(success),
+        errorCode: errorCode ?? 'none',
+      });
+    },
+    onStatusChangePublish: ({ resourceType }) => {
+      metrics.increment('adcp.status_change', { resourceType });
+    },
+  },
+});
+```
+
+Hooks are throw-safe — adopter callback exceptions are caught and logged via the framework logger; they never break dispatch. Per-tool dispatch latency hooks (`onDispatchStart` / `onDispatchEnd`) land in v6.1 with the per-handler instrumentation pass; an opt-in `@adcp/sdk/telemetry/otel` peer-dep adapter ships with AdCP-aligned span / metric names.
+
+## Reference
+
+- Worked example: [`examples/decisioning-platform-mock-seller.ts`](../../examples/decisioning-platform-mock-seller.ts)
+- Integration tests: [`test/server-decisioning-mock-seller.test.js`](../../test/server-decisioning-mock-seller.test.js)
+- Design doc: [`docs/proposals/decisioning-platform-v1.md`](../../docs/proposals/decisioning-platform-v1.md)
+- MCP+A2A serving: [`docs/proposals/mcp-a2a-unified-serving.md`](../../docs/proposals/mcp-a2a-unified-serving.md)
+- Migration sketches: `docs/proposals/decisioning-platform-{training-agent,gam,scope3,prebid}-migration.md`
+
+## What's not in v6.0 alpha
+
+- Public `./server` export — `./server/decisioning` is preview-only; subject to change before v6.0 GA
+- Native MCP `tasks/get` method dispatch (we ship `tasks_get` snake-case as a tool today; native method dispatch via the MCP SDK's `registerToolTask` lands in v6.1, supporting both surfaces)
+- `ctx.runAsync` `maxAutoAwaitMs` cap with AbortSignal cancellation
+- `getCapabilitiesFor(account)` per-tenant runtime
+- `taskRegistry.transition()` for adopter-emitted intermediate states (`working`, `input-required`, `auth-required`) — v6.0 framework writes only `submitted`/`completed`/`failed`; the Postgres registry CHECK widens in v6.1

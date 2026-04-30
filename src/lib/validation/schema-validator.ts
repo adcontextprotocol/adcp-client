@@ -59,6 +59,19 @@ export interface ValidationIssue {
    * (adcp-client#919).
    */
   variants?: ValidationIssueVariant[];
+  /**
+   * Closed enum values the payload MUST match for `keyword: 'enum'`
+   * issues. AdCP wire schemas use enum heavily for status fields,
+   * channels, pricing models, delivery types, etc. Without this list
+   * on the wire envelope, both LLM-generated platforms and humans
+   * have to fetch the schema just to discover the allowed values —
+   * the most common self-correction failure surfaced by the Emma matrix.
+   *
+   * Absent on non-enum keywords. Always projected (not gated behind
+   * `exposeSchemaPath`) — these are PUBLIC spec values, not internal
+   * branch detail.
+   */
+  allowedValues?: readonly unknown[];
 }
 
 export interface ValidationOutcome {
@@ -90,11 +103,30 @@ function formatIssue(err: ErrorObject): ValidationIssue {
     typeof (err.params as { missingProperty?: string }).missingProperty === 'string'
       ? `/${(err.params as { missingProperty: string }).missingProperty}`
       : '';
+
+  // Enrich enum errors with the allowed values from AJV's params + replace
+  // the opaque "must be equal to one of the allowed values" message with
+  // the actual list. Without this, LLM-generated platforms can't self-
+  // correct (Emma matrix v17, 2026-04-30): the validation cascade from
+  // a single bad enum value swallows ~30 storyboard steps because no
+  // self-correction signal is available without fetching the schema.
+  const isEnum =
+    err.keyword === 'enum' &&
+    err.params != null &&
+    Array.isArray((err.params as { allowedValues?: unknown[] }).allowedValues);
+  const allowedValues = isEnum
+    ? ((err.params as { allowedValues: readonly unknown[] }).allowedValues)
+    : undefined;
+  const message = isEnum
+    ? `must be one of: ${allowedValues!.map(v => JSON.stringify(v)).join(', ')}`
+    : err.message ?? 'validation failed';
+
   return {
     pointer: `${instancePath}${missingProperty}` || '/',
-    message: err.message ?? 'validation failed',
+    message,
     keyword: err.keyword,
     schemaPath: err.schemaPath,
+    ...(allowedValues !== undefined && { allowedValues }),
   };
 }
 

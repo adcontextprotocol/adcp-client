@@ -22,6 +22,33 @@
 // `*Task` method in the background.
 export { type AdcpStructuredError, type ErrorCode, AdcpError } from './async-outcome';
 
+// Typed `AdcpError` subclasses — adopter convenience for the highest-traffic
+// error codes. Each class encodes the canonical code/recovery/field shape.
+// LLM-generated platforms get autocomplete on the import; humans skim the
+// list to find the right class. See `errors-typed.ts`.
+export {
+  PackageNotFoundError,
+  MediaBuyNotFoundError,
+  ProductNotFoundError,
+  CreativeNotFoundError,
+  ProductUnavailableError,
+  CreativeRejectedError,
+  BudgetTooLowError,
+  BudgetExhaustedError,
+  IdempotencyConflictError,
+  InvalidRequestError,
+  InvalidStateError,
+  BackwardsTimeRangeError,
+  AuthRequiredError,
+  PermissionDeniedError,
+  RateLimitedError,
+  ServiceUnavailableError,
+  UnsupportedFeatureError,
+  ComplianceUnsatisfiedError,
+  GovernanceDeniedError,
+  PolicyViolationError,
+} from './errors-typed';
+
 // Cursor pagination
 export type { CursorPage, CursorRequest } from './pagination';
 
