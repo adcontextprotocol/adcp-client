@@ -264,21 +264,25 @@ describe('schema-driven validation', () => {
         packages: [{ buyer_ref: 'p1', product_id: 'p1', budget: 10, pricing_option_id: 'po1' }],
       });
       if (!res.valid) {
-        // The oneOf node error at /account should be present
+        // The oneOf node error at /account must be present — it is the actionable signal.
         const oneOfIssue = res.issues.find(i => i.keyword === 'oneOf' && i.pointer === '/account');
-        if (oneOfIssue) {
-          // No issue should have a schemaPath that is a strict child of the oneOf's schemaPath.
-          // Such errors are sub-branch errors from non-matching variants and should be filtered.
-          const oneOfPath = oneOfIssue.schemaPath;
-          const subBranchErrors = res.issues.filter(i => i !== oneOfIssue && i.schemaPath.startsWith(oneOfPath + '/'));
-          assert.deepStrictEqual(
-            subBranchErrors,
-            [],
-            `oneOf branch sub-errors must be filtered; found: ${JSON.stringify(subBranchErrors.map(e => ({ pointer: e.pointer, keyword: e.keyword, schemaPath: e.schemaPath })))}`
-          );
-        }
+        assert.ok(
+          oneOfIssue,
+          `oneOf node error at /account must survive filtering; issues: ${JSON.stringify(res.issues.map(i => i.pointer))}`
+        );
+        // No issue should have a schemaPath that is a strict child of the oneOf's schemaPath.
+        // Such errors are sub-branch errors from non-matching variants and should be filtered.
+        const oneOfPath = oneOfIssue.schemaPath;
+        const subBranchErrors = res.issues.filter(
+          i => i.keyword !== 'oneOf' && i.schemaPath.startsWith(oneOfPath + '/')
+        );
+        assert.deepStrictEqual(
+          subBranchErrors,
+          [],
+          `oneOf branch sub-errors must be filtered; found: ${JSON.stringify(subBranchErrors.map(e => ({ pointer: e.pointer, keyword: e.keyword, schemaPath: e.schemaPath })))}`
+        );
       }
-      // If valid=true or no schema available, the test is vacuous but not misleading.
+      // If valid=true or no schema available (schemas not synced), the test is vacuous but not misleading.
     });
 
     test('variants ship by default; schemaPath stripped unless exposed', () => {

@@ -116,6 +116,7 @@ function filterOneOfSubErrors(errors: ErrorObject[]): ErrorObject[] {
   }
   if (oneOfPaths.size === 0) return errors;
   return errors.filter(err => {
+    if (err.keyword === 'oneOf') return true; // always keep oneOf node errors, including nested ones
     for (const p of oneOfPaths) {
       if (err.schemaPath.startsWith(p + '/')) return false;
     }
