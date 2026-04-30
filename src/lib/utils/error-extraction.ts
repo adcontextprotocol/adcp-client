@@ -300,6 +300,15 @@ export function extractVersionUnsupportedDetails(input: unknown): VersionUnsuppo
       if (ae.data && typeof ae.data === 'object') return ae.data as Record<string, unknown>;
       if (ae.details && typeof ae.details === 'object') return ae.details as Record<string, unknown>;
     }
+    // Plural-errors envelope from `extractAdcpErrorInfo` and AdCP's legacy
+    // `{ errors: [...] }` shape — read details off the first error entry.
+    if (Array.isArray(obj.errors) && obj.errors.length > 0) {
+      const first = obj.errors[0] as Record<string, unknown> | null | undefined;
+      if (first && typeof first === 'object') {
+        if (first.data && typeof first.data === 'object') return first.data as Record<string, unknown>;
+        if (first.details && typeof first.details === 'object') return first.details as Record<string, unknown>;
+      }
+    }
     return undefined;
   })();
   if (!candidate) return undefined;

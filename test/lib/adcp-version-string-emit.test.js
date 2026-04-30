@@ -89,6 +89,29 @@ describe('extractVersionUnsupportedDetails', () => {
     assert.deepStrictEqual(out, { supported_versions: ['3.0', '3.1'] });
   });
 
+  test('parses plural-errors envelope (errors[0].data)', () => {
+    const out = extractVersionUnsupportedDetails({
+      errors: [
+        {
+          code: 'VERSION_UNSUPPORTED',
+          message: 'unsupported',
+          data: { supported_versions: ['3.0'], requested_version: '4.0' },
+        },
+      ],
+    });
+    assert.deepStrictEqual(out, {
+      supported_versions: ['3.0'],
+      requested_version: '4.0',
+    });
+  });
+
+  test('parses plural-errors envelope (errors[0].details fallback)', () => {
+    const out = extractVersionUnsupportedDetails({
+      errors: [{ code: 'VERSION_UNSUPPORTED', details: { supported_versions: ['3.1'] } }],
+    });
+    assert.deepStrictEqual(out, { supported_versions: ['3.1'] });
+  });
+
   test('returns undefined for empty / missing details', () => {
     assert.strictEqual(extractVersionUnsupportedDetails(undefined), undefined);
     assert.strictEqual(extractVersionUnsupportedDetails(null), undefined);

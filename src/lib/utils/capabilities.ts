@@ -383,11 +383,14 @@ export function parseCapabilitiesResponse(response: any): AdcpCapabilities {
 
   // AdCP 3.1+ release-precision capability fields per spec PR
   // `adcontextprotocol/adcp#3493`. Both fields are optional during the 3.x
-  // SHOULD-emit phase; legacy 3.0 sellers won't carry them.
-  const supportedVersions =
-    Array.isArray(response.adcp?.supported_versions) && response.adcp.supported_versions.length > 0
-      ? (response.adcp.supported_versions as string[])
-      : undefined;
+  // SHOULD-emit phase; legacy 3.0 sellers won't carry them. Filter
+  // `supported_versions` to strings — a misbehaving seller emitting
+  // `['3.0', 42, null]` shouldn't poison the typed array. Match the
+  // filtering that `extractVersionUnsupportedDetails` already does so the
+  // two seller-input surfaces have the same safety contract.
+  const supportedVersions = Array.isArray(response.adcp?.supported_versions)
+    ? (response.adcp.supported_versions as unknown[]).filter((v): v is string => typeof v === 'string')
+    : undefined;
   const buildVersion = typeof response.adcp?.build_version === 'string' ? response.adcp.build_version : undefined;
 
   // Per AdCP 3.0, `compliance_testing` is declared as a top-level

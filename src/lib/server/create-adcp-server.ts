@@ -2373,16 +2373,33 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
         // disagree, the server MUST return `VERSION_UNSUPPORTED`. Catches
         // a buyer that pinned a string but kept a stale integer in their
         // call-site config — the discrepancy is silent drift otherwise.
+        //
+        // Intentionally runs before the `requestValidationMode === 'off'`
+        // short-circuit below: this is a spec MUST, not opt-in validation.
+        // Production servers run with validation off by default; without
+        // this check, a stale-integer drift on those servers would silently
+        // dispatch to the wrong schema bundle.
+        //
+        // Coerces a stringified `adcp_major_version` (e.g. `"3"` from a
+        // buyer that JSON-stringified a number) before comparing — AJV
+        // strict-mode rejects this in dev, but production-default off-mode
+        // would otherwise let the bypass through.
         const reqAdcpVersion = (params as { adcp_version?: unknown }).adcp_version;
-        const reqAdcpMajor = (params as { adcp_major_version?: unknown }).adcp_major_version;
-        if (typeof reqAdcpVersion === 'string' && typeof reqAdcpMajor === 'number') {
+        const reqAdcpMajorRaw = (params as { adcp_major_version?: unknown }).adcp_major_version;
+        const reqAdcpMajor =
+          typeof reqAdcpMajorRaw === 'number'
+            ? reqAdcpMajorRaw
+            : typeof reqAdcpMajorRaw === 'string'
+              ? Number.parseInt(reqAdcpMajorRaw, 10)
+              : undefined;
+        if (typeof reqAdcpVersion === 'string' && reqAdcpMajor !== undefined && Number.isFinite(reqAdcpMajor)) {
           const stringMajor = parseAdcpMajorVersion(reqAdcpVersion);
           if (Number.isFinite(stringMajor) && stringMajor !== reqAdcpMajor) {
             return finalize(
               adcpError('VERSION_UNSUPPORTED', {
                 message:
                   `Request carries adcp_version="${reqAdcpVersion}" (major ${stringMajor}) and ` +
-                  `adcp_major_version=${reqAdcpMajor}; majors must agree.`,
+                  `adcp_major_version=${JSON.stringify(reqAdcpMajorRaw)}; majors must agree.`,
               })
             );
           }

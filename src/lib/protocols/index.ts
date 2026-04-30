@@ -191,7 +191,15 @@ export class ProtocolClient {
         // still apply (they run in SingleAgentClient above this call). We skip
         // URL validation, OAuth refresh, and signing — none apply in-process.
         if (agent.protocol === 'mcp' && agent._inProcessMcpClient) {
-          const inProcArgs = { ...versionEnvelope, ...args };
+          // Spread `args` first, envelope second — the SDK's per-instance
+          // pin is authoritative for the wire envelope. A caller that
+          // accidentally passed `adcp_major_version` or `adcp_version` in
+          // `args` (stale config, hand-rolled call site) gets their value
+          // overridden by the version envelope. Without this, a stale
+          // integer in caller args would silently contradict the pin and
+          // the server's field-disagreement check (single-field override)
+          // wouldn't catch it.
+          const inProcArgs = { ...args, ...versionEnvelope };
           return callMCPToolWithClient(agent._inProcessMcpClient, toolName, inProcArgs, debugLogs);
         }
 
@@ -244,8 +252,9 @@ export class ProtocolClient {
         // shape is per-pin: 3.0 pins get the integer `adcp_major_version`
         // alone; 3.1+ pins get both that and the release-precision string
         // `adcp_version` (`'3.1'` / `'3.1.0-beta.1'`) per spec PR
-        // `adcontextprotocol/adcp#3493`.
-        const argsWithVersion = { ...versionEnvelope, ...args };
+        // `adcontextprotocol/adcp#3493`. Envelope spread last so the SDK pin
+        // overrides any stale caller-supplied version key in `args`.
+        const argsWithVersion = { ...args, ...versionEnvelope };
 
         // Build push_notification_config for ASYNC TASK STATUS notifications
         // (NOT for reporting_webhook - that stays in args)
@@ -434,7 +443,7 @@ export const createMCPClient = (
   const versionEnvelope = buildVersionEnvelope(adcpVersion, serverVersion);
   return {
     callTool: (toolName: string, args: Record<string, unknown>, debugLogs?: DebugLogEntry[]) =>
-      callMCPToolWithTasks(agentUrl, toolName, { ...versionEnvelope, ...args }, authToken, debugLogs, headers),
+      callMCPToolWithTasks(agentUrl, toolName, { ...args, ...versionEnvelope }, authToken, debugLogs, headers),
   };
 };
 
@@ -448,6 +457,6 @@ export const createA2AClient = (
   const versionEnvelope = buildVersionEnvelope(adcpVersion, serverVersion);
   return {
     callTool: (toolName: string, parameters: Record<string, unknown>, debugLogs?: DebugLogEntry[]) =>
-      callA2ATool(agentUrl, toolName, { ...versionEnvelope, ...parameters }, authToken, debugLogs, undefined, headers),
+      callA2ATool(agentUrl, toolName, { ...parameters, ...versionEnvelope }, authToken, debugLogs, undefined, headers),
   };
 };
