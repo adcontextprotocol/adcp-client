@@ -205,6 +205,7 @@ export type {
 } from './adcp-server';
 export type {
   AdcpServerConfig,
+  WebhooksConfig,
   AdcpToolMap,
   AdcpServerToolName,
   AdcpCapabilitiesConfig,

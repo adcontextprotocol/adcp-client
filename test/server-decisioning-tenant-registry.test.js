@@ -795,6 +795,78 @@ describe('TenantRegistry — default JWKS validator (fetch-based)', () => {
   });
 });
 
+describe('TenantRegistry — direct lookup by tenantId (training-agent feedback)', () => {
+  it('get(tenantId) returns the entry without URL parsing', async () => {
+    const validator = fakeValidator(async () => ({ ok: true }));
+    const registry = createTenantRegistry({
+      jwksValidator: validator,
+      defaultServerOptions: DEFAULT_SERVER_OPTIONS,
+      autoValidate: false,
+    });
+    registry.register('alpha', {
+      agentUrl: 'https://shared.example.com/api/training-agent/sales',
+      signingKey: SAMPLE_KEY,
+      platform: basePlatform(),
+    });
+    await registry.recheck('alpha');
+
+    const entry = registry.get('alpha');
+    assert.ok(entry, 'get() returns entry for healthy tenant');
+    assert.strictEqual(entry.tenantId, 'alpha');
+    assert.ok(entry.config);
+    assert.ok(entry.server, 'entry carries the AdcpServer instance');
+    // Same shape as resolveByRequest:
+    const viaResolve = registry.resolveByRequest('shared.example.com', '/api/training-agent/sales');
+    assert.ok(viaResolve);
+    assert.strictEqual(viaResolve.tenantId, entry.tenantId);
+  });
+
+  it('get(tenantId) returns null for unknown tenant', () => {
+    const registry = createTenantRegistry({
+      jwksValidator: fakeValidator(async () => ({ ok: true })),
+      defaultServerOptions: DEFAULT_SERVER_OPTIONS,
+      autoValidate: false,
+    });
+    assert.strictEqual(registry.get('does-not-exist'), null);
+  });
+
+  it('get(tenantId) returns null for pending tenant (refuses traffic until first validation)', () => {
+    const validator = fakeValidator(async () => ({ ok: true }));
+    const registry = createTenantRegistry({
+      jwksValidator: validator,
+      defaultServerOptions: DEFAULT_SERVER_OPTIONS,
+      autoValidate: false,
+    });
+    registry.register('not-yet-validated', {
+      agentUrl: 'https://x.example.com',
+      signingKey: SAMPLE_KEY,
+      platform: basePlatform(),
+    });
+    // Haven't called recheck — tenant is in 'pending'.
+    assert.strictEqual(registry.get('not-yet-validated'), null, 'pending tenant refused');
+  });
+
+  it('get(tenantId) returns the entry for unverified (post-healthy transient failure)', async () => {
+    let validateImpl = async () => ({ ok: true });
+    const validator = { validate: (...args) => validateImpl(...args) };
+    const registry = createTenantRegistry({
+      jwksValidator: validator,
+      defaultServerOptions: DEFAULT_SERVER_OPTIONS,
+      autoValidate: false,
+    });
+    registry.register('seasoned', {
+      agentUrl: 'https://seasoned.example.com',
+      signingKey: SAMPLE_KEY,
+      platform: basePlatform(),
+    });
+    await registry.recheck('seasoned'); // healthy
+    validateImpl = async () => ({ ok: false, recovery: 'transient', reason: 'flaky' });
+    await registry.recheck('seasoned'); // unverified
+    const entry = registry.get('seasoned');
+    assert.ok(entry, 'unverified tenant still resolves (graceful degradation)');
+  });
+});
+
 describe('TenantRegistry — autoValidate footgun guard (F7)', () => {
   it('emits a one-shot console.warn at construction when autoValidate: false', () => {
     const warnings = [];

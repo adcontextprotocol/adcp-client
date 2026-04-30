@@ -220,6 +220,20 @@ export interface TenantRegistry {
     host: string,
     pathname: string
   ): { tenantId: string; config: TenantConfig; server: DecisioningAdcpServer } | null;
+  /**
+   * Direct tenant lookup by `tenantId`. Use this when your route layer
+   * has already resolved the tenant from session / path / header and
+   * needs the registry's `{ config, server }` entry without re-running
+   * URL parsing. Same `pending` / `disabled` health gate as the
+   * `resolveByXxx` helpers — returns `null` when the tenant isn't
+   * accepting traffic so callers don't have to re-check status.
+   *
+   * Adopters who decouple tenant lookup from URL routing (e.g., bind
+   * tenantId at their own Express middleware before calling into the
+   * registry) should prefer this over `resolveByRequest(host, '/<id>/mcp')`
+   * tricks.
+   */
+  get(tenantId: string): { tenantId: string; config: TenantConfig; server: DecisioningAdcpServer } | null;
   getStatus(tenantId: string): TenantStatus | null;
   list(): readonly TenantStatus[];
   /**
@@ -605,6 +619,16 @@ export function createTenantRegistry(opts: TenantRegistryOptions): TenantRegistr
       }
       if (best === null) return null;
       return { tenantId: best.tenantId, config: best.entry.config, server: best.entry.server };
+    },
+
+    get(tenantId: string): { tenantId: string; config: TenantConfig; server: DecisioningAdcpServer } | null {
+      const entry = tenants.get(tenantId);
+      if (!entry) return null;
+      // Same health gate as resolveByRequest — pending tenants haven't
+      // been validated yet, disabled tenants permanently failed.
+      // unverified (post-healthy transient failure) resolves normally.
+      if (entry.status.health === 'pending' || entry.status.health === 'disabled') return null;
+      return { tenantId, config: entry.config, server: entry.server };
     },
 
     getStatus(tenantId: string): TenantStatus | null {

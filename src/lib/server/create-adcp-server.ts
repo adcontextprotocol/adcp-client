@@ -1015,6 +1015,37 @@ export interface AdcpCustomToolConfig<
 // Server config
 // ---------------------------------------------------------------------------
 
+/**
+ * Public shape for the `webhooks` option on {@link AdcpServerConfig}.
+ * Concrete name + export so adopters can write `webhooks: WebhooksConfig`
+ * without reaching for a `Pick<WebhookEmitterOptions, ...>` reproduction
+ * (and without falling back to `as any` when they typed it loosely).
+ *
+ * Subset of {@link WebhookEmitterOptions} the framework lifts to the
+ * server config: signing key/provider, retry policy, idempotency-key
+ * store, fetch override, user-agent + tag, and the per-emit observability
+ * hooks. Other emitter-internal knobs (rate limits, transport pool
+ * sizing) stay on `WebhookEmitterOptions` for direct emitter callers.
+ *
+ * @public
+ */
+export type WebhooksConfig = Pick<
+  WebhookEmitterOptions,
+  | 'signerKey'
+  | 'signerProvider'
+  | 'retries'
+  | 'idempotencyKeyStore'
+  | 'generateIdempotencyKey'
+  | 'fetch'
+  | 'userAgent'
+  | 'tag'
+> & {
+  /** Observability: emitter-wide onAttempt hook. */
+  onAttempt?: WebhookEmitterOptions['onAttempt'];
+  /** Observability: emitter-wide onAttemptResult hook. */
+  onAttemptResult?: WebhookEmitterOptions['onAttemptResult'];
+};
+
 export interface AdcpServerConfig<TAccount = unknown> {
   name: string;
   version: string;
@@ -1182,22 +1213,7 @@ export interface AdcpServerConfig<TAccount = unknown> {
    * their JWKS at the `jwks_uri` on brand.json's `agents[]` entry reuse the
    * same key across every buyer they deliver to.
    */
-  webhooks?: Pick<
-    WebhookEmitterOptions,
-    | 'signerKey'
-    | 'signerProvider'
-    | 'retries'
-    | 'idempotencyKeyStore'
-    | 'generateIdempotencyKey'
-    | 'fetch'
-    | 'userAgent'
-    | 'tag'
-  > & {
-    /** Observability: emitter-wide onAttempt hook. */
-    onAttempt?: WebhookEmitterOptions['onAttempt'];
-    /** Observability: emitter-wide onAttemptResult hook. */
-    onAttemptResult?: WebhookEmitterOptions['onAttemptResult'];
-  };
+  webhooks?: WebhooksConfig;
   /**
    * Auto-wire the RFC 9421 request-signature verifier onto the HTTP transport.
    * When set together with `capabilities.specialisms` containing

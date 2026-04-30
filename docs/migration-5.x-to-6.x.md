@@ -288,6 +288,28 @@ createAdcpServerFromPlatform(platform, {
   `fn`'s return value becomes the terminal artifact.
 - **Postgres registry caps `result` / `error` JSON at 4MB** — return
   per-resource references for large payloads, not the full body.
+- **Default JWKS validator is host-root (RFC 5785).** `TenantConfig`'s
+  `agentUrl` and `brand.json` are decoupled by spec convention —
+  `new URL('/.well-known/brand.json', agentUrl)` always resolves to
+  the host root. Multi-tenant deployments serving each tenant under a
+  different path prefix (`https://shared.example.com/api/agent-a`,
+  `/api/agent-b`) where each prefix has its own brand identity must
+  set `TenantConfig.jwksUrl` to override:
+  ```ts
+  registry.register('agent-a', {
+    agentUrl: 'https://shared.example.com/api/agent-a',
+    jwksUrl: 'https://shared.example.com/api/agent-a/.well-known/brand.json',
+    signingKey: ...,
+    platform: ...,
+  });
+  ```
+  Standard one-brand-per-host deployments don't need the override.
+- **`TenantRegistry.get(tenantId)` for direct lookup.** When your route
+  layer binds tenantId before calling into the registry (path-routed
+  multi-tenant deployments), `get(tenantId)` returns
+  `{ tenantId, config, server } | null` without URL parsing. Use this
+  instead of `resolveByRequest(canonicalHost, '/<id>/mcp')` tricks.
+  Same `pending` / `disabled` health gate as the resolveByXxx helpers.
 - **`autoEmitCompletionWebhooks` is on by default (v6.0).** Sync-success
   arms of `create_media_buy` / `update_media_buy` / `sync_creatives`
   auto-fire a completion webhook when the buyer supplied

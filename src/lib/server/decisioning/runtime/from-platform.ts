@@ -1215,11 +1215,17 @@ function buildDefaultTaskRegistry(): TaskRegistry {
   if (!safe && !ack) {
     throw new Error(
       'createAdcpServerFromPlatform: in-memory task registry refused outside ' +
-        '{NODE_ENV=test, NODE_ENV=development}. Pass `taskRegistry` explicitly ' +
-        '(e.g., `createPostgresTaskRegistry({ pool })` — see ' +
-        '`@adcp/sdk/server/decisioning`), OR set ' +
-        'ADCP_DECISIONING_ALLOW_INMEMORY_TASKS=1 if you accept that ' +
-        'in-flight tasks are lost on process restart.'
+        '{NODE_ENV=test, NODE_ENV=development}. Production deployments need a ' +
+        'durable task registry — pick one of:\n' +
+        '  1. (Recommended) Pass `taskRegistry: createPostgresTaskRegistry({ pool })` ' +
+        'to keep HITL tasks across restarts. See `@adcp/sdk/server/decisioning` ' +
+        'for `getDecisioningTaskRegistryMigration()` — run it once against your DB.\n' +
+        '  2. Pass `taskRegistry: createInMemoryTaskRegistry()` explicitly if you ' +
+        'accept that in-flight tasks are lost on process restart. The explicit ' +
+        'pass-in is the contract — saying "yes I want in-memory in production" ' +
+        'in code is the right shape.\n' +
+        '  3. ADCP_DECISIONING_ALLOW_INMEMORY_TASKS=1 env flag is the ops escape ' +
+        'hatch (same effect as #2 but config-only); prefer #2 in adopter code.'
     );
   }
   return createInMemoryTaskRegistry();
