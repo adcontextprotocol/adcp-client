@@ -140,3 +140,4 @@ IMPLEMENTATION_PLAN.md
 
 # Snapshot artifacts created by sync-schemas replaceTree
 skills/*.previous/
+pnpm-lock.yaml
