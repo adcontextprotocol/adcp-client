@@ -1045,10 +1045,7 @@ describe('TenantRegistry — multi-URL (agentUrls) cutover support', () => {
     await registry.recheck('multi-status');
 
     const status = registry.getStatus('multi-status');
-    assert.deepStrictEqual(status.agentUrls, [
-      'https://primary.example.com',
-      'https://secondary.example.com',
-    ]);
+    assert.deepStrictEqual(status.agentUrls, ['https://primary.example.com', 'https://secondary.example.com']);
     assert.strictEqual(status.agentUrl, 'https://primary.example.com', 'canonical still surfaced');
   });
 
