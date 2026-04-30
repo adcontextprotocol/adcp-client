@@ -203,6 +203,7 @@ Returns `{ signals: [{ signal_agent_segment_id, match_rate, pricing, ... }] }`. 
 ## Transport notes
 
 - **MCP**: `tools/call` with `{ name: 'tool_name', arguments: {...} }`. Returns `{ content, structuredContent, isError? }`. Read `structuredContent` for the typed response.
+  - **Use the official `@modelcontextprotocol/sdk` client.** The Streamable HTTP transport requires `Accept: application/json, text/event-stream` on every request — a raw `fetch()` with only `Accept: application/json` gets an unhelpful `406 Not Acceptable` from the server before any AdCP framing runs. The official client sets the header correctly; reach for it instead of rolling your own HTTP plumbing.
 - **A2A**: `message/send` with a `DataPart` of shape `{ skill: 'tool_name', input: {...} }` (the legacy key `parameters` is also accepted). Returns an A2A `Task`; the typed response is at `task.artifacts[0].parts[0].data`.
 
 Both transports share: idempotency, error shape, schema enforcement, and handler semantics. If a call works on one, the equivalent call works on the other.
@@ -230,6 +231,7 @@ Quick lookup before reading the full envelope. Match what you see in `adcp_error
 | `keyword: 'enum'` at `/destinations/*/type`                     | Made-up destination type                                              | Use `'platform'` (with `platform`) or `'agent'` (with `agent_url`).           |
 | Response carries `status: 'submitted'` and `task_id`            | Async — work is queued, NOT done                                      | Poll via `tasks/get` (A2A) or the MCP async task extension using `task_id`.   |
 | `recovery: 'transient'` (rate limit, 5xx, timeout)              | Server-side, retry-safe                                               | Retry with the **same** `idempotency_key`.                                    |
+| `406 Not Acceptable` before any AdCP framing                    | Hand-rolled HTTP without `Accept: text/event-stream` (MCP transport)  | Use `@modelcontextprotocol/sdk` client; it sets the right Accept header.       |
 | `recovery: 'correctable'`                                       | Buyer-side fix                                                        | Read `issues[]`, patch the pointers, resend. Most cases close in one attempt. |
 | `recovery: 'terminal'` (account suspended, payment required, …) | Requires human action                                                 | Don't retry. Surface to the user.                                             |
 | HTTP 401 with `WWW-Authenticate` header                         | Missing or expired credential                                         | Add `Authorization` per the agent's auth spec; re-auth if applicable.         |

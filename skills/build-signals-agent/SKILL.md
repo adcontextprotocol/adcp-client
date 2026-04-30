@@ -230,9 +230,16 @@ import {
   type SignalsPlatform,
   type AccountStore,
 } from '@adcp/sdk/server';
+import type { GetSignalsResponse } from '@adcp/sdk';
 
-const signals = [
-  /* your signal objects */
+// Type the catalog explicitly. Each entry MUST include `signal_agent_segment_id`
+// — it's the key buyers pass to `activate_signal` and the field the framework
+// uses to auto-store the signal for hydration on the activate call. If you
+// omit it, `tsc` flags every entry; the response validator rejects the
+// `get_signals` reply at runtime in dev/test (strict mode default).
+type Signal = GetSignalsResponse['signals'][number];
+const signals: Signal[] = [
+  /* your signal objects — `signal_agent_segment_id` is required on each */
 ];
 
 // Idempotency — required for v3 compliance. `activate_signal` is mutating;
