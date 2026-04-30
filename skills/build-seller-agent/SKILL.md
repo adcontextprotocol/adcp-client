@@ -1197,7 +1197,7 @@ The quick-start uses `memoryBackend()` + `InMemoryStateStore` — both reset on 
 
 ```ts
 const store = createIdempotencyStore({ backend: pgBackend(pool), ttlSeconds: 86400 });
-pool.on('error', (err) => console.error('pg pool error', err)); // prevent crash on idle-client errors
+pool.on('error', err => console.error('pg pool error', err)); // prevent crash on idle-client errors
 serve(createAgent, {
   readinessCheck: () => store.probe(), // throws with a descriptive error if pool/table is broken
 });

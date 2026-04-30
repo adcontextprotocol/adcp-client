@@ -177,7 +177,7 @@ Some schemas also define an `ext` field for vendor-namespaced extensions. If you
 | `activateSignalResponse(data)`                        | Auto-applied response builder (don't call manually)                            |
 | `adcpError(code, { message })`                        | Structured error (`SIGNAL_NOT_FOUND`, `INVALID_DESTINATION`)                   |
 | `createIdempotencyStore({ backend, ttlSeconds })`     | Required on every mutating tool — pass via `createAdcpServer({ idempotency })` |
-| `memoryBackend()` / `pgBackend(pool)`                 | Idempotency backends (from `@adcp/sdk/server`)                              |
+| `memoryBackend()` / `pgBackend(pool)`                 | Idempotency backends (from `@adcp/sdk/server`)                                 |
 | `type Signal = GetSignalsResponse['signals'][number]` | Type for a single signal object                                                |
 
 Import: `import { createAdcpServer, serve, adcpError } from '@adcp/sdk';`
@@ -335,7 +335,7 @@ Scoping is per-principal via `resolveSessionKey` (override with `resolveIdempote
 
 ```ts
 const store = createIdempotencyStore({ backend: pgBackend(pool), ttlSeconds: 86400 });
-pool.on('error', (err) => console.error('pg pool error', err)); // prevent crash on idle-client errors
+pool.on('error', err => console.error('pg pool error', err)); // prevent crash on idle-client errors
 serve(createAgent, {
   readinessCheck: () => store.probe(), // throws with a descriptive error if pool/table is broken
 });

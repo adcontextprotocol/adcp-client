@@ -26,8 +26,8 @@ import {
   type DecisioningPlatform,
   type SalesPlatform,
   type AccountStore,
-} from '@adcp/sdk/server/decisioning';
-import type { SyncCreativesRow } from '@adcp/sdk/server/decisioning';
+} from '@adcp/sdk/server';
+import type { SyncCreativesRow } from '@adcp/sdk/server';
 import type {
   GetProductsRequest,
   GetProductsResponse,

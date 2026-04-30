@@ -19,6 +19,7 @@ Both share the same `SignalsPlatform` interface. Pick the specialism that matche
 - SDK package: `@adcp/sdk` v5.18+ with the `decisioning` preview surface
 
 **Wrong skill if:**
+
 - User wants v5.x handler-style API → `skills/build-signals-agent/`
 - User wants creative transforms → `skills/build-decisioning-creative-template/`
 - User wants to sell media inventory → `skills/build-seller-agent/`
@@ -42,7 +43,7 @@ import {
   type DecisioningPlatform,
   type SignalsPlatform,
   type AccountStore,
-} from '@adcp/sdk/server/decisioning';
+} from '@adcp/sdk/server';
 import type {
   GetSignalsRequest,
   GetSignalsResponse,
@@ -97,9 +98,7 @@ class DataMatrixPlatform implements DecisioningPlatform<DataMatrixConfig, DataMa
             data_provider: 'DataMatrix',
             coverage_percentage: 18.5,
             deployments: [],
-            pricing_options: [
-              { pricing_option_id: 'po_cpm_4', model: 'cpm', cpm: 4.0, currency: 'USD' },
-            ],
+            pricing_options: [{ pricing_option_id: 'po_cpm_4', model: 'cpm', cpm: 4.0, currency: 'USD' }],
           },
         ],
       };
@@ -164,16 +163,16 @@ Buyers subscribe via the resource-update channel to track activation progress.
 
 Common codes for signals:
 
-| Code | When |
-|---|---|
-| `'SIGNAL_NOT_FOUND'` | unknown `signal_agent_segment_id` |
-| `'POLICY_VIOLATION'` | buyer lacks rights to activate this data |
-| `'INVALID_REQUEST'` | missing destinations, unrecognized destination shape, missing pricing_option_id when required |
-| `'AUDIENCE_TOO_SMALL'` | activated audience falls below match-rate floor |
-| `'RATE_LIMITED'` | upstream identity-graph throttled |
+| Code                   | When                                                                                          |
+| ---------------------- | --------------------------------------------------------------------------------------------- |
+| `'SIGNAL_NOT_FOUND'`   | unknown `signal_agent_segment_id`                                                             |
+| `'POLICY_VIOLATION'`   | buyer lacks rights to activate this data                                                      |
+| `'INVALID_REQUEST'`    | missing destinations, unrecognized destination shape, missing pricing_option_id when required |
+| `'AUDIENCE_TOO_SMALL'` | activated audience falls below match-rate floor                                               |
+| `'RATE_LIMITED'`       | upstream identity-graph throttled                                                             |
 
 ```ts
-activateSignal: async (req) => {
+activateSignal: async req => {
   if (!signalCatalog.has(req.signal_agent_segment_id)) {
     throw new AdcpError('SIGNAL_NOT_FOUND', {
       recovery: 'terminal',
@@ -182,7 +181,7 @@ activateSignal: async (req) => {
     });
   }
   // ... happy path
-}
+};
 ```
 
 ## Idempotency — the framework dedupes; you thread the key downstream
@@ -193,18 +192,20 @@ Same pattern as creative-template — see [`build-decisioning-creative-template/
 
 ```ts
 capabilities = {
-  specialisms: ['signal-marketplace'] as const,    // or 'signal-owned'
-  creative_agents: [],                              // not used by signals
-  channels: [] as const,                            // not used by signals
-  pricingModels: ['cpm'] as const,                  // signals are typically CPM uplift
-  config: { /* your platform-specific config */ } satisfies YourConfig,
+  specialisms: ['signal-marketplace'] as const, // or 'signal-owned'
+  creative_agents: [], // not used by signals
+  channels: [] as const, // not used by signals
+  pricingModels: ['cpm'] as const, // signals are typically CPM uplift
+  config: {
+    /* your platform-specific config */
+  } satisfies YourConfig,
 };
 ```
 
 ## Testing your platform
 
 ```ts
-import { createAdcpServerFromPlatform } from '@adcp/sdk/server/decisioning';
+import { createAdcpServerFromPlatform } from '@adcp/sdk/server';
 
 const platform = new DataMatrixPlatform();
 const server = createAdcpServerFromPlatform(platform, {
@@ -228,7 +229,7 @@ console.log(result.structuredContent);
 
 ## What NOT to do
 
-❌ **Don't import from `@adcp/sdk/server` for the platform shape.** Use `@adcp/sdk/server/decisioning` for v6.0.
+❌ **Don't import from `@adcp/sdk/server` for the platform shape.** Use `@adcp/sdk/server` for v6.0.
 
 ❌ **Don't try to make activateSignal HITL.** The wire response has no `Submitted` arm. Sync ack + `publishStatusChange` is the correct pattern.
 
@@ -239,7 +240,7 @@ console.log(result.structuredContent);
 ## Reference: imports cheat sheet
 
 ```ts
-// From @adcp/sdk/server/decisioning
+// From @adcp/sdk/server
 import {
   AdcpError,
   AccountNotFoundError,
@@ -252,7 +253,7 @@ import {
   type RequestContext,
   type ErrorCode,
   type AdcpStructuredError,
-} from '@adcp/sdk/server/decisioning';
+} from '@adcp/sdk/server';
 
 // From @adcp/sdk/types — wire schemas (auto-generated)
 import type {

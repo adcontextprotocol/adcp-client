@@ -1,6 +1,6 @@
 # Migrating from `@adcp/sdk` 5.x to 6.0
 
-> **Status: GA.** v6.0 ships under `@adcp/sdk/server/decisioning` —
+> **Status: GA.** v6.0 ships under `@adcp/sdk/server` —
 > `createAdcpServerFromPlatform` + `DecisioningPlatform`. The v5.x
 > handler-style API (`createAdcpServer({ mediaBuy: { ... } })`) is the
 > substrate the v6 framework calls into and remains fully supported;
@@ -53,7 +53,7 @@ handlers WIN per-key**; adopter handlers fill gaps for tools the v6
 platform doesn't yet model. Migrate one specialism at a time.
 
 ```ts
-import { createAdcpServerFromPlatform } from '@adcp/sdk/server/decisioning';
+import { createAdcpServerFromPlatform } from '@adcp/sdk/server';
 
 createAdcpServerFromPlatform(myPlatform, {
   name: 'My Ad Network', version: '1.0.0',
@@ -222,7 +222,7 @@ In-memory task registry refuses to construct outside `NODE_ENV=test/development`
 (production safety). For HITL-eligible production deployments:
 
 ```ts
-import { createPostgresTaskRegistry, getDecisioningTaskRegistryMigration } from '@adcp/sdk/server/decisioning';
+import { createPostgresTaskRegistry, getDecisioningTaskRegistryMigration } from '@adcp/sdk/server';
 
 await pool.query(getDecisioningTaskRegistryMigration());
 

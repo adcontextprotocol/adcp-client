@@ -33,7 +33,7 @@ import {
   type SalesPlatform,
   type AccountStore,
   type SyncCreativesRow,
-} from '@adcp/sdk/server/decisioning';
+} from '@adcp/sdk/server';
 import type {
   GetProductsRequest,
   GetProductsResponse,

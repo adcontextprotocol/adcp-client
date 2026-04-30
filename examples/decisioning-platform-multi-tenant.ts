@@ -18,7 +18,7 @@ import {
   type TenantRegistry,
   type TenantSigningKey,
   type DecisioningAdcpServer,
-} from '@adcp/sdk/server/decisioning';
+} from '@adcp/sdk/server';
 import { BroadcastTvSeller } from './decisioning-platform-broadcast-tv';
 import { ProgrammaticSeller } from './decisioning-platform-programmatic';
 

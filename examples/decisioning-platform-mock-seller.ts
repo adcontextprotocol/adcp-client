@@ -46,7 +46,7 @@ import {
   type AccountStore,
   type AdcpStructuredError,
   type SyncCreativesRow,
-} from '@adcp/sdk/server/decisioning';
+} from '@adcp/sdk/server';
 import type {
   GetProductsRequest,
   GetProductsResponse,

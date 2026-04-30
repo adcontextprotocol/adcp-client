@@ -2,7 +2,6 @@
 
 Companion to [`../SKILL.md`](../SKILL.md). The SKILL.md baseline applies; this file covers only the deltas for `audience-sync`.
 
-
 Storyboard: `audience_sync`. Track is `audiences` — separate from the core seller lifecycle, but lives in this skill because identifier sync and account discovery sit next to media-buying.
 
 Required tools: `sync_audiences` and `list_accounts`. `sync_audiences` is overloaded — it handles three cases through its request payload:
@@ -60,4 +59,3 @@ createAdcpServer({
 **Identifier rules:** each `add` entry is a single-identifier object (`{hashed_email}` OR `{hashed_phone}`, not both). Values are SHA-256 of lowercased, trimmed input. Salting/normalization is out-of-band between buyer and platform — document your expected input format.
 
 **Platform types:** destinations span `['dsp', 'retail_media', 'social', 'audio', 'pmax']`. Each has its own `activation_key` shape — see `skills/build-signals-agent/SKILL.md` for activation patterns, which are shared across signals and audience sync.
-

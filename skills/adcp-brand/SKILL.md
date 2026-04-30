@@ -13,20 +13,22 @@ This skill enables you to execute the AdCP Brand Protocol with brand agents. The
 
 The Brand Protocol provides 4 standardized tasks:
 
-| Task | Purpose | Response Time |
-|------|---------|---------------|
-| `get_brand_identity` | Get brand identity and guidelines | ~1-3s |
-| `get_rights` | Search licensable rights | ~1-5s |
-| `acquire_rights` | Acquire rights for a campaign | ~1-10s |
-| `update_rights` | Modify an existing grant | ~1-5s |
+| Task                 | Purpose                           | Response Time |
+| -------------------- | --------------------------------- | ------------- |
+| `get_brand_identity` | Get brand identity and guidelines | ~1-3s         |
+| `get_rights`         | Search licensable rights          | ~1-5s         |
+| `acquire_rights`     | Acquire rights for a campaign     | ~1-10s        |
+| `update_rights`      | Modify an existing grant          | ~1-5s         |
 
 ## Typical Workflow
 
 ### Brand Identity Lookup
+
 1. **Get identity**: `get_brand_identity` with brand domain and optional field filter
 2. **Use data**: Apply colors, logos, tone, guidelines to creative generation
 
 ### Rights Licensing
+
 1. **Search rights**: `get_rights` with natural language query and use types
 2. **Review options**: Evaluate matches by pricing, availability, compatibility
 3. **Acquire**: `acquire_rights` with selected pricing option and campaign details
@@ -41,6 +43,7 @@ The Brand Protocol provides 4 standardized tasks:
 Get brand identity data from a brand agent.
 
 **Request:**
+
 ```json
 {
   "brand_id": "athlete-jane-doe",
@@ -51,12 +54,14 @@ Get brand identity data from a brand agent.
 ```
 
 **Key fields:**
+
 - `brand_id` (string, required): Brand identifier within the agent's roster
 - `fields` (array, optional): Sections to include — `description`, `industry`, `keller_type`, `logos`, `colors`, `fonts`, `visual_guidelines`, `tone`, `tagline`, `voice_synthesis`, `assets`, `rights`. Omit for all.
 - `use_case` (string, optional): Intended use — `endorsement`, `voice_synthesis`, `likeness`, `creative_production`, `media_planning`
 - `authorized` (boolean, optional): Sandbox only — simulate authorized access to see protected fields. Real agents use OAuth. Default false.
 
 **Response contains:**
+
 - `brand`: Brand identity object with requested fields
 - Public fields (always available): `description`, `industry`, `logos` (public subset)
 - Protected fields (require authorization): `colors`, `fonts`, `tone`, `voice_synthesis`, `visual_guidelines`, full `assets`
@@ -68,6 +73,7 @@ Get brand identity data from a brand agent.
 Search for licensable rights (talent, IP, content) from a brand agent.
 
 **Request:**
+
 ```json
 {
   "query": "Dutch athlete for restaurant brand in Amsterdam, budget 400 EUR/month",
@@ -81,6 +87,7 @@ Search for licensable rights (talent, IP, content) from a brand agent.
 ```
 
 **Key fields:**
+
 - `query` (string, required): Natural language description of desired rights
 - `uses` (array, required): Rights uses — `likeness`, `voice`, `name`, `endorsement`
 - `buyer_brand` (object, optional): Buyer brand for compatibility filtering — `{ domain, brand_id }`
@@ -89,6 +96,7 @@ Search for licensable rights (talent, IP, content) from a brand agent.
 - `include_excluded` (boolean, optional): Include filtered-out results with reasons. Default false.
 
 **Response contains:**
+
 - `rights`: Array of matching rights offerings with:
   - `rights_id`: Use in `acquire_rights`
   - `brand_id`, `name`, `description`: Who/what the rights cover
@@ -104,6 +112,7 @@ Search for licensable rights (talent, IP, content) from a brand agent.
 Acquire rights from a brand agent for a campaign.
 
 **Request:**
+
 ```json
 {
   "rights_id": "rights_jane_doe_endorsement",
@@ -123,6 +132,7 @@ Acquire rights from a brand agent for a campaign.
 ```
 
 **Key fields:**
+
 - `rights_id` (string, required): From `get_rights` response
 - `pricing_option_id` (string, required): Selected pricing option
 - `buyer` (object, required): Buyer brand identity — `{ domain, brand_id }`
@@ -134,6 +144,7 @@ Acquire rights from a brand agent for a campaign.
   - `start_date`, `end_date` (string, optional): Campaign dates (YYYY-MM-DD)
 
 **Response contains:**
+
 - `status`: `acquired`, `pending_approval`, or `rejected`
 - `rights_grant_id`: Grant identifier (if acquired)
 - `generation_credentials`: Credentials for AI generation (voice synthesis, likeness, etc.)
@@ -146,6 +157,7 @@ Acquire rights from a brand agent for a campaign.
 Update an existing rights grant — extend dates, adjust impression caps, or pause/resume.
 
 **Request:**
+
 ```json
 {
   "rights_id": "grant_abc123",
@@ -156,6 +168,7 @@ Update an existing rights grant — extend dates, adjust impression caps, or pau
 ```
 
 **Key fields:**
+
 - `rights_id` (string, required): Rights grant identifier from `acquire_rights`
 - `end_date` (string, optional): New end date (must be >= current end date)
 - `impression_cap` (number, optional): New impression cap (must be >= current)
@@ -168,6 +181,7 @@ Update an existing rights grant — extend dates, adjust impression caps, or pau
 ### Public vs Protected Fields
 
 Brand agents distinguish between public and protected data:
+
 - **Public**: Available without authorization — basic description, industry, public logos
 - **Protected**: Requires OAuth or authorized flag — colors, fonts, tone, voice synthesis credentials, full asset library
 
@@ -181,6 +195,7 @@ Brand agents distinguish between public and protected data:
 ### Rights Clearance
 
 `acquire_rights` checks:
+
 1. Brand/category compatibility (no competitor conflicts)
 2. Geographic availability
 3. Temporal availability

@@ -309,3 +309,22 @@ export type {
   ResolvedCollection,
   ResolveListOptions,
 } from './targeting-helpers';
+
+// ---------------------------------------------------------------------------
+// Platform-shaped server entry point (recommended for new agents)
+// ---------------------------------------------------------------------------
+//
+// `createAdcpServerFromPlatform` wraps `createAdcpServer` (the lower-level
+// handler-bag entry above) with compile-time specialism enforcement
+// (`RequiredPlatformsFor<S>`), capability projection, idempotency wiring,
+// async tasks, status normalization, multi-tenant routing, and webhook
+// auto-emit. Adopters declare a typed `DecisioningPlatform` per-specialism
+// and the framework wires the rest. See `docs/migration-5.x-to-6.x.md`
+// and `skills/build-decisioning-platform/` for the full walkthrough.
+//
+// Both `createAdcpServer` and `createAdcpServerFromPlatform` live on the
+// same import path so adopters discover them as siblings; pick the
+// function shape that matches your agent. The platform path internally
+// builds an `AdcpServerConfig` and calls `createAdcpServer` — they're
+// not adjacent surfaces, they're parent-child layers of the same SDK.
+export * from './decisioning';

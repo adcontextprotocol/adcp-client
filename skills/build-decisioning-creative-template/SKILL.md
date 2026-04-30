@@ -51,7 +51,7 @@ import {
   type DecisioningPlatform,
   type AccountStore,
   type CreativeBuilderPlatform,
-} from '@adcp/sdk/server/decisioning';
+} from '@adcp/sdk/server';
 import type {
   BuildCreativeRequest,
   CreativeManifest,
@@ -287,7 +287,7 @@ The asset types are generated from the spec; full list at `src/lib/types/tools.g
 Most platform methods do the same null-check + discriminator-check + extract pattern over and over. The SDK ships two helpers that collapse it:
 
 ```ts
-import { getAsset, requireAsset } from '@adcp/sdk/server/decisioning';
+import { getAsset, requireAsset } from '@adcp/sdk/server';
 
 // Soft form — returns undefined if missing or wrong asset_type
 const optionalVoice = getAsset(req.creative_manifest, 'voice', 'text');
@@ -342,7 +342,7 @@ new AdcpError(code: ErrorCode | string, options: {
 })
 ```
 
-Common codes for creative-template: `INVALID_REQUEST`, `UNSUPPORTED_FEATURE`, `VALIDATION_ERROR`, `RATE_LIMITED`, `SERVICE_UNAVAILABLE`, `CREATIVE_REJECTED`. The full vocabulary is in `@adcp/sdk/server/decisioning`'s `ErrorCode` type — return any spec code OR your own platform-specific string (agents fall back to `recovery` classification on unknowns).
+Common codes for creative-template: `INVALID_REQUEST`, `UNSUPPORTED_FEATURE`, `VALIDATION_ERROR`, `RATE_LIMITED`, `SERVICE_UNAVAILABLE`, `CREATIVE_REJECTED`. The full vocabulary is in `@adcp/sdk/server`'s `ErrorCode` type — return any spec code OR your own platform-specific string (agents fall back to `recovery` classification on unknowns).
 
 ## Idempotency — the framework dedupes; you thread the key downstream
 
@@ -376,7 +376,7 @@ type AccountReference =
   | { agency_buyer: { brand_domain: string }; advertiser: { brand_domain: string }; sandbox?: boolean };
 ```
 
-Throw `AccountNotFoundError` (importable from `@adcp/sdk/server/decisioning`) when you can't resolve — the framework projects to the wire `ACCOUNT_NOT_FOUND` envelope.
+Throw `AccountNotFoundError` (importable from `@adcp/sdk/server`) when you can't resolve — the framework projects to the wire `ACCOUNT_NOT_FOUND` envelope.
 
 `sandbox: true` — the buyer is asking you to validate against your platform without actually transacting. Route reads/writes to your sandbox backend if you have one; otherwise just return realistic-shaped responses without persisting.
 
@@ -454,7 +454,7 @@ The fastest test loop: instantiate your platform, build a server, and dispatch a
 
 ```ts
 import { AudioStackPlatform } from './platform';
-import { createAdcpServerFromPlatform } from '@adcp/sdk/server/decisioning';
+import { createAdcpServerFromPlatform } from '@adcp/sdk/server';
 
 const platform = new AudioStackPlatform();
 const server = createAdcpServerFromPlatform(platform, {
@@ -486,7 +486,7 @@ For HITL platforms, `server.awaitTask(taskId)` settles the background promise; `
 
 ## What NOT to do
 
-❌ **Don't import from `@adcp/sdk/server` for the platform shape.** That's the v5.x handler-style API. Use `@adcp/sdk/server/decisioning` for v6.0.
+❌ **Don't import from `@adcp/sdk/server` for the platform shape.** That's the v5.x handler-style API. Use `@adcp/sdk/server` for v6.0.
 
 ❌ **Don't use `ctx.runAsync(...)` or `ctx.startTask(...)`.** Those were in earlier preview drops; they're gone in v2.1. The async story is dual-method (`xxx` vs `xxxTask`), period.
 
@@ -505,7 +505,7 @@ For HITL platforms, `server.awaitTask(taskId)` settles the background promise; `
 ## Reference: imports cheat sheet
 
 ```ts
-// From @adcp/sdk/server/decisioning
+// From @adcp/sdk/server
 import {
   AdcpError,
   AccountNotFoundError,
@@ -521,7 +521,7 @@ import {
   type RequestContext,
   type ErrorCode,
   type AdcpStructuredError,
-} from '@adcp/sdk/server/decisioning';
+} from '@adcp/sdk/server';
 
 // From @adcp/sdk/types — wire schemas (auto-generated)
 import type {

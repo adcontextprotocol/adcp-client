@@ -1,7 +1,7 @@
 ---
 name: call-adcp-agent
 description: Wire-level invariants for any AdCP buyer call — idempotency_key replay semantics, account `oneOf` variants, async `status:'submitted'`+`task_id` polling, error recovery from `adcp_error.issues[]`. Load before any per-protocol task skill (adcp-media-buy, adcp-creative, adcp-signals, adcp-governance, adcp-si, adcp-brand) when calling an AdCP agent as a buyer.
-adcp_version: "3.x"
+adcp_version: '3.x'
 type: cross-cutting
 ---
 
@@ -24,7 +24,7 @@ Walk these in order on first contact:
 
 1. **Agent card** (A2A) or **`tools/list`** (MCP): returns tool NAMES. AdCP MCP servers no longer publish per-tool parameter schemas in `tools/list` — everything shows `{type: 'object', properties: {}}`. Don't try to infer shape from here.
 2. **`get_adcp_capabilities`**: returns supported protocols (`media_buy`, `signals`, `creative`, …), AdCP major versions, feature flags. Tells you WHICH tools this agent supports, not how to call them.
-3. **`get_schema(tool_name)`** *(when the agent exposes it — pending standardization in [#3057](https://github.com/adcontextprotocol/adcp/issues/3057), not yet universal)*: returns the JSON Schema for a tool's request/response. Preferred over reading bundled schemas when available.
+3. **`get_schema(tool_name)`** _(when the agent exposes it — pending standardization in [#3057](https://github.com/adcontextprotocol/adcp/issues/3057), not yet universal)_: returns the JSON Schema for a tool's request/response. Preferred over reading bundled schemas when available.
 4. **Bundled schemas** (offline, authoritative): every SDK ships the AdCP JSON Schemas locally. Path differs by SDK — spec repo source uses `dist/schemas/<version>/bundled/`, `@adcp/client` puts them at `schemas/cache/<version>/bundled/` after `npm run sync-schemas`, Python and Go SDKs use their own conventions. **Don't hardcode a path** — let the SDK's loader find them, or ask the developer. Each schema is `<protocol>/<tool>-{request,response}.json` once you locate the bundle. The canonical source for every SDK is `https://adcontextprotocol.org/protocol/<version>.tgz`.
 
 ## Non-obvious rules every buyer must follow
@@ -105,7 +105,7 @@ Every validation failure produces:
         "keyword": "oneOf",
         "message": "must match exactly one schema in oneOf",
         "variants": [
-          { "index": 0, "required": ["account_id"],        "properties": ["account_id"] },
+          { "index": 0, "required": ["account_id"], "properties": ["account_id"] },
           { "index": 1, "required": ["brand", "operator"], "properties": ["brand", "operator", "sandbox"] }
         ]
       },
@@ -194,9 +194,7 @@ Returns `{ signals: [{ signal_agent_segment_id, match_rate, pricing, ... }] }`. 
 {
   "idempotency_key": "<uuid>",
   "signal_agent_segment_id": "sig_premium_ctv_sports",
-  "destinations": [
-    { "type": "platform", "platform": "the-trade-desk" }
-  ]
+  "destinations": [{ "type": "platform", "platform": "the-trade-desk" }]
 }
 ```
 
@@ -222,19 +220,19 @@ Both transports share: idempotency, error shape, schema enforcement, and handler
 
 Quick lookup before reading the full envelope. Match what you see in `adcp_error.issues[*]`, apply the fix:
 
-| Symptom | What it means | Fix |
-|---|---|---|
-| `keyword: 'oneOf'` with `variants[]` | Discriminated union — you sent fields from multiple variants, or none | Pick ONE variant from `variants[]`. Send only its `required` fields. |
-| 2-3 `additionalProperties` errors at the same pointer | You merged `oneOf` variants ({account_id, brand, operator, …}) | Drop to one variant. Don't keep "extra" fields "for completeness". |
-| `keyword: 'required'`, `pointer: '/idempotency_key'` | Mutating tool, no UUID | Generate fresh UUID per logical operation. Reuse it on retries. |
-| `keyword: 'type'` or `additionalProperties` at `/budget` | Sent `{amount, currency}` | `budget` is a number. Currency is implied by `pricing_option_id`. |
-| `additionalProperties` at `/format_id` (string passed) | Sent `"format_id": "video_..."` | `format_id` is `{agent_url, id}` — always an object. |
-| `keyword: 'enum'` at `/destinations/*/type` | Made-up destination type | Use `'platform'` (with `platform`) or `'agent'` (with `agent_url`). |
-| Response carries `status: 'submitted'` and `task_id` | Async — work is queued, NOT done | Poll via `tasks/get` (A2A) or the MCP async task extension using `task_id`. |
-| `recovery: 'transient'` (rate limit, 5xx, timeout) | Server-side, retry-safe | Retry with the **same** `idempotency_key`. |
-| `recovery: 'correctable'` | Buyer-side fix | Read `issues[]`, patch the pointers, resend. Most cases close in one attempt. |
-| `recovery: 'terminal'` (account suspended, payment required, …) | Requires human action | Don't retry. Surface to the user. |
-| HTTP 401 with `WWW-Authenticate` header | Missing or expired credential | Add `Authorization` per the agent's auth spec; re-auth if applicable. |
+| Symptom                                                         | What it means                                                         | Fix                                                                           |
+| --------------------------------------------------------------- | --------------------------------------------------------------------- | ----------------------------------------------------------------------------- |
+| `keyword: 'oneOf'` with `variants[]`                            | Discriminated union — you sent fields from multiple variants, or none | Pick ONE variant from `variants[]`. Send only its `required` fields.          |
+| 2-3 `additionalProperties` errors at the same pointer           | You merged `oneOf` variants ({account_id, brand, operator, …})        | Drop to one variant. Don't keep "extra" fields "for completeness".            |
+| `keyword: 'required'`, `pointer: '/idempotency_key'`            | Mutating tool, no UUID                                                | Generate fresh UUID per logical operation. Reuse it on retries.               |
+| `keyword: 'type'` or `additionalProperties` at `/budget`        | Sent `{amount, currency}`                                             | `budget` is a number. Currency is implied by `pricing_option_id`.             |
+| `additionalProperties` at `/format_id` (string passed)          | Sent `"format_id": "video_..."`                                       | `format_id` is `{agent_url, id}` — always an object.                          |
+| `keyword: 'enum'` at `/destinations/*/type`                     | Made-up destination type                                              | Use `'platform'` (with `platform`) or `'agent'` (with `agent_url`).           |
+| Response carries `status: 'submitted'` and `task_id`            | Async — work is queued, NOT done                                      | Poll via `tasks/get` (A2A) or the MCP async task extension using `task_id`.   |
+| `recovery: 'transient'` (rate limit, 5xx, timeout)              | Server-side, retry-safe                                               | Retry with the **same** `idempotency_key`.                                    |
+| `recovery: 'correctable'`                                       | Buyer-side fix                                                        | Read `issues[]`, patch the pointers, resend. Most cases close in one attempt. |
+| `recovery: 'terminal'` (account suspended, payment required, …) | Requires human action                                                 | Don't retry. Surface to the user.                                             |
+| HTTP 401 with `WWW-Authenticate` header                         | Missing or expired credential                                         | Add `Authorization` per the agent's auth spec; re-auth if applicable.         |
 
 If your symptom isn't here, fall through to the next section.
 

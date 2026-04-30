@@ -16,7 +16,7 @@ AdCP is an open protocol for AI agents to buy, manage, and optimize advertising 
 
 ```typescript
 import { serve } from '@adcp/sdk';
-import { createAdcpServerFromPlatform } from '@adcp/sdk/server/decisioning';
+import { createAdcpServerFromPlatform } from '@adcp/sdk/server';
 
 const platform = {
   capabilities: {

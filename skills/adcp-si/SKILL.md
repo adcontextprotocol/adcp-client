@@ -13,12 +13,12 @@ This skill enables you to execute the AdCP SI Protocol with brand agents. SI ena
 
 The SI Protocol provides 4 standardized tasks for managing conversational sessions:
 
-| Task | Purpose | Response Time |
-|------|---------|---------------|
-| `si_initiate_session` | Start a brand conversation | ~2-5s |
-| `si_send_message` | Send a message in an active session | ~1-5s |
-| `si_get_offering` | Preview offerings before starting | ~1-3s |
-| `si_terminate_session` | End a session | ~1s |
+| Task                   | Purpose                             | Response Time |
+| ---------------------- | ----------------------------------- | ------------- |
+| `si_initiate_session`  | Start a brand conversation          | ~2-5s         |
+| `si_send_message`      | Send a message in an active session | ~1-5s         |
+| `si_get_offering`      | Preview offerings before starting   | ~1-3s         |
+| `si_terminate_session` | End a session                       | ~1s           |
 
 ## Typical Workflow
 
@@ -36,6 +36,7 @@ The SI Protocol provides 4 standardized tasks for managing conversational sessio
 Start a conversational session with a brand agent.
 
 **Request:**
+
 ```json
 {
   "intent": "I'm interested in your winter jacket collection",
@@ -54,6 +55,7 @@ Start a conversational session with a brand agent.
 ```
 
 **Key fields:**
+
 - `intent` (string, required): Natural language description of user intent — the conversation handoff from host to brand agent
 - `identity` (object, required): User identity with consent status
   - `consent_granted` (boolean, required): Whether user consented to share identity
@@ -69,6 +71,7 @@ Start a conversational session with a brand agent.
 - `context` (object, optional): Opaque correlation data (e.g., `{"trace_id": "abc-123"}`) echoed unchanged in the response — never parsed by the brand agent
 
 **Response contains:**
+
 - `session_id`: Use in subsequent `si_send_message` and `si_terminate_session` calls
 - `greeting`: Brand agent's initial message
 - `suggested_actions`: Optional UI elements (buttons, quick replies)
@@ -80,6 +83,7 @@ Start a conversational session with a brand agent.
 Send a message within an active SI session.
 
 **Text message:**
+
 ```json
 {
   "session_id": "sess_abc123",
@@ -88,6 +92,7 @@ Send a message within an active SI session.
 ```
 
 **Action response (button click, form submit):**
+
 ```json
 {
   "session_id": "sess_abc123",
@@ -103,11 +108,13 @@ Send a message within an active SI session.
 ```
 
 **Key fields:**
+
 - `session_id` (string, required): Session ID from `si_initiate_session`
 - `message` (string, conditional): User's text message. Required unless `action_response` is provided.
 - `action_response` (object, conditional): Response to a UI action — `action`, `element_id`, `payload`. Required unless `message` is provided.
 
 **Response contains:**
+
 - `message`: Brand agent's response text
 - `suggested_actions`: Optional UI elements for next interaction
 - `components`: Optional rich UI components (product cards, carousels, forms)
@@ -119,6 +126,7 @@ Send a message within an active SI session.
 Get offering details and availability before initiating a session. Allows showing rich previews before asking for user consent.
 
 **Request:**
+
 ```json
 {
   "offering_id": "winter-collection-2025",
@@ -129,6 +137,7 @@ Get offering details and availability before initiating a session. Allows showin
 ```
 
 **Key fields:**
+
 - `offering_id` (string, required): Offering identifier from the catalog
 - `intent` (string, optional): Natural language description of user intent for personalized results (no PII)
 - `include_products` (boolean, optional): Include matching products
@@ -136,6 +145,7 @@ Get offering details and availability before initiating a session. Allows showin
 - `context` (object, optional): Opaque correlation data echoed unchanged in the response — never parsed by the brand agent
 
 **Response contains:**
+
 - `offering`: Offering details (name, description, availability)
 - `products`: Matching products if `include_products` is true
 - `offering_token`: Pass to `si_initiate_session` for session continuity
@@ -147,6 +157,7 @@ Get offering details and availability before initiating a session. Allows showin
 End an SI session.
 
 **Request:**
+
 ```json
 {
   "session_id": "sess_abc123",
@@ -155,12 +166,14 @@ End an SI session.
 ```
 
 **Key fields:**
+
 - `session_id` (string, required): Session ID to terminate
 - `reason` (string, required): Why the session is ending — `handoff_transaction`, `handoff_complete`, `user_exit`, `session_timeout`, `host_terminated`
 - `termination_context` (object, optional): Conversation summary, transaction intent, and cause for the termination
 - `context` (object, optional): Opaque correlation data echoed unchanged in the response — never parsed by the brand agent
 
 **Reason values:**
+
 - `handoff_transaction`: User is being redirected to complete a transaction
 - `handoff_complete`: Transaction completed within the session
 - `user_exit`: User chose to leave
@@ -174,6 +187,7 @@ End an SI session.
 ### Consent Model
 
 SI sessions require explicit user consent before sharing PII:
+
 - `consent_granted: false` + `anonymous_session_id`: Anonymous session
 - `consent_granted: true` + `user` object: Personalized session with identity
 
@@ -188,6 +202,7 @@ Sessions are stateful. The brand agent maintains context across messages within 
 ### Placements
 
 Where the SI session was triggered:
+
 - `chatgpt_search`: Within ChatGPT search results
 - `publisher_article`: On a publisher's article page
 - `social_feed`: In a social media feed

@@ -2,7 +2,6 @@
 
 Companion to [`../SKILL.md`](../SKILL.md). The SKILL.md baseline applies; this file covers only the deltas for `sales-non-guaranteed`.
 
-
 Storyboard: `media_buy_non_guaranteed`. The specialism hinges on `bid_price` and `update_media_buy`, neither of which the baseline example shows.
 
 Packages on `create_media_buy` carry `bid_price`. Validate it against the product's `floor_price`:
@@ -36,4 +35,3 @@ updateMediaBuy: async (params, ctx) => {
 ```
 
 `valid_actions` on an active non-guaranteed buy should include `pause`, `update_bid`, `get_delivery`. The framework auto-populates this when `createMediaBuy`/`updateMediaBuy` return with `status: 'active'`.
-

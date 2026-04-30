@@ -2,7 +2,6 @@
 
 Companion to [`../SKILL.md`](../SKILL.md). The SKILL.md baseline applies; this file covers only the deltas for `sales-proposal-mode`.
 
-
 Storyboard: `media_buy_proposal_mode`. The acceptance path inverts the baseline — buyer sends `proposal_id` + `total_budget`, no `packages`.
 
 `get_products` returns a `proposals[]` array alongside products:
@@ -48,4 +47,3 @@ createMediaBuy: async (params, ctx) => {
   // ... fall through to baseline packages path
 },
 ```
-

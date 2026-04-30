@@ -5,7 +5,7 @@ description: Use when building an AdCP seller, creative, or audience agent again
 
 # Build a Decisioning Platform (v6.0)
 
-> **Status: GA.** v6.0 ships under `@adcp/sdk/server/decisioning` —
+> **Status: GA.** v6.0 ships under `@adcp/sdk/server` —
 > `createAdcpServerFromPlatform` + `DecisioningPlatform`. The lower-level
 > `createAdcpServer({ mediaBuy: { ... } })` API remains fully supported
 > as the substrate this framework calls into; reach for it when you need
@@ -31,12 +31,7 @@ The framework owns wire mapping, account resolution, idempotency, signing, async
 Minimal copy-paste-runnable example. Single tenant, one product, sync `create_media_buy`. Substitute your real lookups inside the bodies.
 
 ```ts
-import {
-  AdcpError,
-  createAdcpServerFromPlatform,
-  type SalesPlatform,
-  type AccountStore,
-} from '@adcp/sdk/server/decisioning';
+import { AdcpError, createAdcpServerFromPlatform, type SalesPlatform, type AccountStore } from '@adcp/sdk/server';
 
 // Don't annotate `platform: DecisioningPlatform` — let TS infer the
 // `specialisms: ['sales-non-guaranteed']` literal so RequiredPlatformsFor
@@ -484,7 +479,7 @@ import {
   createAdcpServerFromPlatform,
   createPostgresTaskRegistry,
   getDecisioningTaskRegistryMigration,
-} from '@adcp/sdk/server/decisioning';
+} from '@adcp/sdk/server';
 
 const pool = new Pool({ connectionString: process.env.DATABASE_URL });
 
@@ -509,7 +504,7 @@ Custom backend? Implement the `TaskRegistry` interface (8 methods) for Redis / D
 Running multiple tenants from one process — different sellers, or multiple variants of the same agent under different specialisms? `TenantRegistry` is the framework primitive. Each tenant gets its own `DecisioningPlatform`, its own signing key, its own per-tenant capability declaration, and its own `'pending' → 'healthy' → 'unverified' → 'disabled'` lifecycle.
 
 ```ts
-import { createTenantRegistry } from '@adcp/sdk/server/decisioning';
+import { createTenantRegistry } from '@adcp/sdk/server';
 
 const registry = createTenantRegistry({
   defaultServerOptions: { name: 'Multi-Tenant', version: '1.0.0' /* shared opts */ },
@@ -608,7 +603,7 @@ import type {
   AcquireRightsAcquired,
   AcquireRightsPendingApproval,
   AcquireRightsRejected,
-} from '@adcp/sdk/server/decisioning';
+} from '@adcp/sdk/server';
 
 class MyBrandRightsAgent implements DecisioningPlatform {
   capabilities = {
@@ -756,7 +751,7 @@ createAdcpServerFromPlatform(myBrandRightsAgent, {
 Conformance harnesses (the AdCP storyboard suite, in particular) drive seller-side state-machine tests via the wire-spec `comply_test_controller` tool. The framework registers it for you when you supply `complyTest` adapters on `createAdcpServerFromPlatform`.
 
 ```ts
-import { createAdcpServerFromPlatform } from '@adcp/sdk/server/decisioning';
+import { createAdcpServerFromPlatform } from '@adcp/sdk/server';
 
 const server = createAdcpServerFromPlatform(myPlatform, {
   name: 'my-seller',

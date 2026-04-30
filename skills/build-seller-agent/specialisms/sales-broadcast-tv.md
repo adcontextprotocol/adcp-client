@@ -2,7 +2,6 @@
 
 Companion to [`../SKILL.md`](../SKILL.md). The SKILL.md baseline applies; this file covers only the deltas for `sales-broadcast-tv`.
 
-
 Storyboard: `media_buy_broadcast_seller`. Broadcast has four protocol surfaces not used in digital.
 
 **Pricing** — unit-based (cost per spot). Until a `pricing_model: 'unit'` lands, express as CPM with a very high `fixed_price` that represents the cost per thousand spots equivalent, or use a custom pricing option ID and clarify in `description`.
@@ -68,4 +67,3 @@ Don't declare `measurement_windows: ['live', 'c3', 'c7']` — the Zod schema rej
 **Measurement windows on delivery** — each delivery row tags `measurement_window: 'live' | 'c3' | 'c7'`, `is_final: boolean`, and `supersedes_window` (for window upgrades). Live ratings mature in 24h, C3 in ~4d, C7 in ~8d. Final reconciliation lands ~15d after last air date.
 
 **Emit window_update webhooks** via `ctx.emitWebhook` (see [§ Webhooks](#webhooks-async-completion-signed-outbound) above). Use `operation_id: \`window_update.${media_buy_id}.${stage}\`` so C3 → C7 supersession retries share a stable idempotency_key.
-
