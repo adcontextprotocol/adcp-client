@@ -64,6 +64,17 @@ describe('createAdcpServer single-field VERSION_UNSUPPORTED', () => {
     assert.notEqual(err?.code, 'VERSION_UNSUPPORTED', 'supported major should not trigger VERSION_UNSUPPORTED');
   });
 
+  it('rejects dual-field request when both agree on an unsupported major', async () => {
+    const server = makeServer();
+    const result = await dispatch(server, { adcp_version: '99.0', adcp_major_version: 99 });
+    assert.ok(result.isError, 'agreeing dual-field unsupported major should be an error');
+    const err = result.structuredContent?.adcp_error;
+    assert.ok(err, 'structured adcp_error must be present');
+    assert.equal(err.code, 'VERSION_UNSUPPORTED');
+    const details = extractVersionUnsupportedDetails(err);
+    assert.ok(Array.isArray(details?.supported_versions), 'should populate supported_versions');
+  });
+
   it('existing dual-field disagreement still returns VERSION_UNSUPPORTED', async () => {
     const server = makeServer();
     // adcp_version major (3) disagrees with adcp_major_version (99)

@@ -2407,11 +2407,17 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
           }
         }
 
-        // Single-field major version validation per spec PR `adcontextprotocol/adcp#3493`:
+        // Major version range check per spec PR `adcontextprotocol/adcp#3493`:
         // a server advertising `major_versions` MUST reject requests whose claimed
-        // major is outside that set, not just dual-field disagreements.
+        // major is outside that set — whether via adcp_major_version alone, adcp_version
+        // alone, or both fields agreeing on an unsupported major. The dual-field
+        // disagreement check above already handles the case where the two fields
+        // disagree; this block handles the rest.
         // Runs before the `requestValidationMode` gate for the same reason as above.
-        if (reqAdcpMajor !== undefined && Number.isFinite(reqAdcpMajor) && typeof reqAdcpVersion !== 'string') {
+        // Note: a malformed adcp_major_version string (e.g. "not-a-number") produces
+        // reqAdcpMajor=NaN, which Number.isFinite rejects, so malformed integers
+        // fall through to schema validation (a pre-existing behavior).
+        if (reqAdcpMajor !== undefined && Number.isFinite(reqAdcpMajor)) {
           if (!serverMajorVersions.includes(reqAdcpMajor)) {
             return finalize(
               adcpError('VERSION_UNSUPPORTED', {
