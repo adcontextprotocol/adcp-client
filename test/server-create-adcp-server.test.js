@@ -1780,14 +1780,22 @@ describe('#1075 single-field version-unsupported check', () => {
   it('rejects single-field adcp_major_version: 99 with VERSION_UNSUPPORTED', async () => {
     const server = make3xServer();
     const result = await dispatch(server, { adcp_major_version: 99 });
-    assert.strictEqual(result.adcp_error?.code, 'VERSION_UNSUPPORTED', `expected VERSION_UNSUPPORTED, got: ${JSON.stringify(result)}`);
+    assert.strictEqual(
+      result.adcp_error?.code,
+      'VERSION_UNSUPPORTED',
+      `expected VERSION_UNSUPPORTED, got: ${JSON.stringify(result)}`
+    );
     assert.deepStrictEqual(result.adcp_error?.details?.supported_versions, ['3']);
   });
 
   it('rejects single-field adcp_version: "99.0" (no integer) with VERSION_UNSUPPORTED', async () => {
     const server = make3xServer();
     const result = await dispatch(server, { adcp_version: '99.0' });
-    assert.strictEqual(result.adcp_error?.code, 'VERSION_UNSUPPORTED', `expected VERSION_UNSUPPORTED, got: ${JSON.stringify(result)}`);
+    assert.strictEqual(
+      result.adcp_error?.code,
+      'VERSION_UNSUPPORTED',
+      `expected VERSION_UNSUPPORTED, got: ${JSON.stringify(result)}`
+    );
     assert.deepStrictEqual(result.adcp_error?.details?.supported_versions, ['3']);
   });
 
@@ -1812,13 +1820,21 @@ describe('#1075 single-field version-unsupported check', () => {
   it('rejects stringified adcp_major_version: "99" (coerced)', async () => {
     const server = make3xServer();
     const result = await dispatch(server, { adcp_major_version: '99' });
-    assert.strictEqual(result.adcp_error?.code, 'VERSION_UNSUPPORTED', `expected VERSION_UNSUPPORTED, got: ${JSON.stringify(result)}`);
+    assert.strictEqual(
+      result.adcp_error?.code,
+      'VERSION_UNSUPPORTED',
+      `expected VERSION_UNSUPPORTED, got: ${JSON.stringify(result)}`
+    );
   });
 
   it('existing dual-field disagreement still rejects (adcp_major_version: 99, adcp_version: "3.0")', async () => {
     const server = make3xServer();
     const result = await dispatch(server, { adcp_major_version: 99, adcp_version: '3.0' });
-    assert.strictEqual(result.adcp_error?.code, 'VERSION_UNSUPPORTED', `expected VERSION_UNSUPPORTED, got: ${JSON.stringify(result)}`);
+    assert.strictEqual(
+      result.adcp_error?.code,
+      'VERSION_UNSUPPORTED',
+      `expected VERSION_UNSUPPORTED, got: ${JSON.stringify(result)}`
+    );
   });
 
   it('server with major_versions: [2, 3] accepts adcp_major_version: 2', async () => {
