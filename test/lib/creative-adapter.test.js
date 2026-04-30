@@ -29,8 +29,23 @@ describe('adaptCreateMediaBuyRequestForV2 — buyer_ref (issue #1115)', () => {
 
   test('emits per-package buyer_ref anchored on product_id + pricing_option_id (order-independent)', () => {
     const adapted = adaptCreateMediaBuyRequestForV2(baseRequest());
-    assert.equal(adapted.packages[0].buyer_ref, `${IK}-prod-1-po-1`);
-    assert.equal(adapted.packages[1].buyer_ref, `${IK}-prod-2-po-2`);
+    assert.equal(adapted.packages[0].buyer_ref, `${IK}~prod-1~po-1`);
+    assert.equal(adapted.packages[1].buyer_ref, `${IK}~prod-2~po-2`);
+  });
+
+  test('separator ~ prevents collision when IDs contain hyphens', () => {
+    // 'a-b' + 'c' and 'a' + 'b-c' must produce different buyer_refs
+    const req = {
+      ...baseRequest(),
+      packages: [
+        { product_id: 'a-b', pricing_option_id: 'c', budget: 100 },
+        { product_id: 'a', pricing_option_id: 'b-c', budget: 100 },
+      ],
+    };
+    const adapted = adaptCreateMediaBuyRequestForV2(req);
+    assert.notEqual(adapted.packages[0].buyer_ref, adapted.packages[1].buyer_ref);
+    assert.equal(adapted.packages[0].buyer_ref, `${IK}~a-b~c`);
+    assert.equal(adapted.packages[1].buyer_ref, `${IK}~a~b-c`);
   });
 
   test('per-package buyer_ref is stable when package order is reversed on replay', () => {

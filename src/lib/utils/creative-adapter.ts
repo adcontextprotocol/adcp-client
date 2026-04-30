@@ -129,11 +129,13 @@ export function adaptCreateMediaBuyRequestForV2(request: any): any {
         }
         // v2.5 requires per-package buyer_ref. Anchor on product_id +
         // pricing_option_id — intrinsic, order-independent package identifiers
-        // that remain stable if the caller reconstructs the same packages in a
-        // different array order on replay. Index i is a last-resort fallback.
+        // stable across replays regardless of array position. Use '~' as field
+        // delimiter because AdCP IDs are alphanumeric+hyphen only; '~' cannot
+        // appear in either ID, so the boundary is unambiguous (no collisions).
+        // Index i is the last-resort fallback for packages missing both fields.
         const pkgKey =
-          [pkg.product_id, pkg.pricing_option_id].filter(Boolean).join('-') || String(i);
-        return { ...adapted, buyer_ref: `${idempotency_key}-${pkgKey}` };
+          [pkg.product_id, pkg.pricing_option_id].filter(Boolean).join('~') || String(i);
+        return { ...adapted, buyer_ref: `${idempotency_key}~${pkgKey}` };
       }),
     }),
   };
