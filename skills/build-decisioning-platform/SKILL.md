@@ -135,13 +135,23 @@ class MyPlatform implements DecisioningPlatform {
       };
     },
 
-    // 3. Update a buy. SDK auto-hydrates the resolved MediaBuy (and its packages,
-    //    each with ctx_metadata) at req.mediaBuy when present in the store from a
-    //    prior createMediaBuy / getMediaBuys call. Falls back gracefully if absent
-    //    (publisher uses their own DB).
+    // 3. Update a buy. SDK auto-hydrates the resolved MediaBuy (including
+    //    ctx_metadata) at patch.media_buy when present in the store from a
+    //    prior createMediaBuy (sync) or getMediaBuys call. Falls back gracefully
+    //    if absent (publisher uses their own DB).
+    //
+    //    CONTRACT — `patch.media_buy` is `undefined` when the SDK has no stored
+    //    record for that media_buy_id (no prior createMediaBuy/getMediaBuys on
+    //    this instance, or HITL path where the final shape isn't known until the
+    //    background task completes). That is NOT authoritative "doesn't exist".
+    //    Fall back to your own DB when undefined:
+    //
+    //      const existing = patch.media_buy ?? await this.platform.getOrder(mediaBuyId);
+    //      if (!existing) throw new MediaBuyNotFoundError(mediaBuyId);
+    //
     //    (6.2 will pre-read state + decompose into atomic verbs; track adcp-client#1071.)
     updateMediaBuy: async (mediaBuyId, patch, ctx) => {
-      const orderMeta = await ctx.ctxMetadata?.mediaBuy(mediaBuyId);
+      const orderMeta = patch.media_buy?.ctx_metadata ?? await ctx.ctxMetadata?.mediaBuy(mediaBuyId);
       if (!orderMeta) throw new MediaBuyNotFoundError(mediaBuyId);
 
       for (const pkg of patch.packages ?? []) {
@@ -253,6 +263,35 @@ const meta = await ctx.ctxMetadata?.product(productId);
 **Memory backend:** fine for dev; use Postgres in cluster — silent loss after rolling restart produces "package not found" errors that look like publisher bugs and run for weeks.
 
 **Account scoping is automatic.** `ctx.ctxMetadata` binds to `ctx.account.id` per request. No-account tools (`provide_performance_feedback`, `list_creative_formats`) get `ctx.ctxMetadata = undefined` — branch defensively.
+
+## SDK auto-hydration contract
+
+When `ctxMetadata` is wired, the framework automatically attaches full resource objects (with `ctx_metadata`) to mutating requests before your handler fires. You read the object directly — no extra lookup.
+
+| Read call | Stored resource | Hydrated field on mutating call |
+|---|---|---|
+| `getProducts` | `product` (by `product_id`) | `pkg.product` on each `createMediaBuy` package |
+| `createMediaBuy` (sync) or `getMediaBuys` | `media_buy` (by `media_buy_id`) | `patch.media_buy` on `updateMediaBuy` |
+| `getSignals` | `signal` (by `signal_agent_segment_id`) | `req.signal` on `activateSignal` |
+| `getBrandIdentity` | `brand` (by `brand_id`) | `req.brand` on `acquireRights` (via `buyer.brand_id`) |
+
+**The `undefined` contract applies to all four.** When the SDK has no stored record (no prior read call on this instance, HITL path, or different instance in a cluster without Postgres), the hydrated field is `undefined`. That is **not** authoritative evidence the resource doesn't exist — fall back to your own DB:
+
+```ts
+// updateMediaBuy — patch.media_buy may be undefined in HITL / multi-instance deployments
+const existing = patch.media_buy ?? await this.platform.getOrder(mediaBuyId);
+if (!existing) throw new MediaBuyNotFoundError(mediaBuyId);
+const gamOrderId = existing.ctx_metadata?.gam_order_id;
+
+// activateSignal — req.signal may be undefined if getSignals wasn't called first
+const signal = req.signal ?? await this.catalog.findBySegmentId(req.signal_agent_segment_id);
+if (!signal) throw new AdcpError('SIGNAL_NOT_FOUND', { message: `Unknown segment: ${req.signal_agent_segment_id}` });
+
+// acquireRights — req.brand may be undefined if getBrandIdentity wasn't called first
+const brand = req.brand ?? await this.catalog.findBrand(req.buyer?.brand_id);
+```
+
+**`provide_performance_feedback` is not hydrated.** The wire spec does not include an `account` field on this tool, so the ctx-metadata store (which is scoped per account) cannot be used. Read `ctx.ctxMetadata` from a prior call result or your own DB.
 
 ## Run it
 

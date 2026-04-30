@@ -83,6 +83,7 @@ import type { AdcpLogger } from '../../create-adcp-server';
 import { buildRequestContext, buildHandoffContext } from './to-context';
 import {
   type CtxMetadataStore,
+  type ResourceKind,
   createCtxMetadataStore,
   pgCtxMetadataStore,
   getCtxMetadataMigration,
@@ -978,10 +979,10 @@ export function createAdcpServerFromPlatform<P extends DecisioningPlatform<any, 
       'eventTracking',
       mergeOpts
     ),
-    signals: mergeHandlers(opts.signals, buildSignalsHandlers(platform, ctxFor), 'signals', mergeOpts),
+    signals: mergeHandlers(opts.signals, buildSignalsHandlers(platform, ctxFor, effectiveCtxMetadata, fwLogger), 'signals', mergeOpts),
     governance: mergeHandlers(opts.governance, buildGovernanceHandlers(platform, ctxFor), 'governance', mergeOpts),
     accounts: mergeHandlers(opts.accounts, buildAccountHandlers(platform, ctxFor), 'accounts', mergeOpts),
-    brandRights: mergeHandlers(opts.brandRights, buildBrandRightsHandlers(platform, ctxFor), 'brandRights', mergeOpts),
+    brandRights: mergeHandlers(opts.brandRights, buildBrandRightsHandlers(platform, ctxFor, effectiveCtxMetadata, fwLogger), 'brandRights', mergeOpts),
     customTools: {
       ...opts.customTools,
       tasks_get: buildTasksGetTool(platform, taskRegistry),
@@ -1930,7 +1931,7 @@ function makeCtxFor(ctxMetadataStore?: CtxMetadataStore): CtxForFn {
 async function autoStoreResources(
   store: CtxMetadataStore | undefined,
   accountId: string | undefined,
-  kind: 'product' | 'media_buy' | 'package' | 'creative' | 'audience' | 'signal',
+  kind: ResourceKind,
   resources: readonly unknown[] | undefined,
   idField: string,
   logger: AdcpLogger
@@ -2007,6 +2008,42 @@ async function hydratePackagesWithProducts(
     }
     (pkg as Record<string, unknown>)['product'] = hydrated;
   }
+}
+
+/**
+ * Auto-hydrate a single resource on a request object. Before invoking a
+ * publisher's mutating handler, look up the resource by id in the ctx-metadata
+ * store and attach the full wire shape (including `ctx_metadata`) at
+ * `req[targetField]`. Mutates the request in place.
+ *
+ * Failures are logged + swallowed; the publisher still receives the
+ * un-hydrated request and can fall back to its own DB.
+ */
+async function hydrateRequestResource(
+  store: CtxMetadataStore | undefined,
+  accountId: string | undefined,
+  kind: ResourceKind,
+  id: string | undefined,
+  req: unknown,
+  targetField: string,
+  logger: AdcpLogger
+): Promise<void> {
+  if (!store || !accountId || !id) return;
+  let entries: ReadonlyMap<string, { value: unknown; resource?: unknown }>;
+  try {
+    entries = await store.bulkGetEntries(accountId, [{ kind, id }]);
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    logger.warn(`[adcp/decisioning] auto-hydrate bulkGet failed: ${msg}`);
+    return;
+  }
+  const entry = entries.get(`${kind}:${id}`);
+  if (!entry?.resource || typeof entry.resource !== 'object') return;
+  const hydrated: Record<string, unknown> = { ...(entry.resource as Record<string, unknown>) };
+  if (entry.value !== null && entry.value !== undefined) {
+    hydrated['ctx_metadata'] = entry.value;
+  }
+  (req as Record<string, unknown>)[targetField] = hydrated;
 }
 
 /**
@@ -2288,6 +2325,21 @@ function buildMediaBuyHandlers<P extends DecisioningPlatform<any, any>>(
         async () => {
           const push = extractPushConfig(params, logger, { allowPrivateWebhookUrls: pushOpts.allowPrivateWebhookUrls });
           const result = await sales.createMediaBuy(params, reqCtx);
+          // Auto-store the created media_buy on the sync arm so a subsequent
+          // updateMediaBuy can hydrate it without needing a getMediaBuys call
+          // first. HITL path skipped intentionally: the final media_buy shape
+          // isn't known until the background task completes (getMediaBuys will
+          // capture it after the buyer polls / receives the webhook).
+          if (!isTaskHandoff(result)) {
+            await autoStoreResources(
+              ctxMetadataStore,
+              reqCtx.account?.id,
+              'media_buy',
+              [result],
+              'media_buy_id',
+              logger
+            );
+          }
           return routeIfHandoff(
             taskRegistry,
             {
@@ -2322,6 +2374,19 @@ function buildMediaBuyHandlers<P extends DecisioningPlatform<any, any>>(
           recovery: 'correctable',
         });
       }
+      // Auto-hydrate: attach the full MediaBuy (including ctx_metadata) at
+      // req.media_buy from the store populated by createMediaBuy / getMediaBuys.
+      // Publisher reads req.media_buy.ctx_metadata?.gam_order_id directly.
+      // Falls back gracefully when the SDK has no record — publisher uses its own DB.
+      await hydrateRequestResource(
+        ctxMetadataStore,
+        reqCtx.account?.id,
+        'media_buy',
+        media_buy_id,
+        params,
+        'media_buy',
+        logger
+      );
       return projectSync(
         async () => {
           const push = extractPushConfig(params, logger, {
@@ -2649,7 +2714,9 @@ function buildEventTrackingHandlers<P extends DecisioningPlatform<any, any>>(
 
 function buildSignalsHandlers<P extends DecisioningPlatform<any, any>>(
   platform: P,
-  ctxFor: CtxForFn
+  ctxFor: CtxForFn,
+  ctxMetadataStore: CtxMetadataStore | undefined,
+  logger: AdcpLogger
 ): SignalsHandlers<Account> | undefined {
   const signals = platform.signals;
   if (!signals) return undefined;
@@ -2657,12 +2724,36 @@ function buildSignalsHandlers<P extends DecisioningPlatform<any, any>>(
     getSignals: async (params, ctx) => {
       const reqCtx = ctxFor(ctx);
       return projectSync(
-        () => signals.getSignals(params, reqCtx),
+        async () => {
+          const result = await signals.getSignals(params, reqCtx);
+          // Auto-store signals so activateSignal can hydrate req.signal.
+          await autoStoreResources(
+            ctxMetadataStore,
+            reqCtx.account?.id,
+            'signal',
+            (result as { signals?: readonly unknown[] })?.signals,
+            'signal_agent_segment_id',
+            logger
+          );
+          return result;
+        },
         r => r
       );
     },
     activateSignal: async (params, ctx) => {
       const reqCtx = ctxFor(ctx);
+      // Auto-hydrate: attach the full Signal (including ctx_metadata) at
+      // req.signal from the store populated by getSignals. Publisher reads
+      // req.signal.ctx_metadata directly. Falls back gracefully when absent.
+      await hydrateRequestResource(
+        ctxMetadataStore,
+        reqCtx.account?.id,
+        'signal',
+        (params as { signal_agent_segment_id?: string }).signal_agent_segment_id,
+        params,
+        'signal',
+        logger
+      );
       return projectSync(
         () => signals.activateSignal(params, reqCtx),
         r => r
@@ -2673,7 +2764,9 @@ function buildSignalsHandlers<P extends DecisioningPlatform<any, any>>(
 
 function buildBrandRightsHandlers<P extends DecisioningPlatform<any, any>>(
   platform: P,
-  ctxFor: CtxForFn
+  ctxFor: CtxForFn,
+  ctxMetadataStore: CtxMetadataStore | undefined,
+  logger: AdcpLogger
 ): BrandRightsHandlers<Account> | undefined {
   const br = platform.brandRights;
   if (!br) return undefined;
@@ -2681,7 +2774,19 @@ function buildBrandRightsHandlers<P extends DecisioningPlatform<any, any>>(
     getBrandIdentity: async (params, ctx) => {
       const reqCtx = ctxFor(ctx);
       return projectSync(
-        () => br.getBrandIdentity(params, reqCtx),
+        async () => {
+          const result = await br.getBrandIdentity(params, reqCtx);
+          // Auto-store brand identity so acquireRights can hydrate req.brand.
+          await autoStoreResources(
+            ctxMetadataStore,
+            reqCtx.account?.id,
+            'brand',
+            [result].filter(Boolean),
+            'brand_id',
+            logger
+          );
+          return result;
+        },
         r => r
       );
     },
@@ -2699,6 +2804,19 @@ function buildBrandRightsHandlers<P extends DecisioningPlatform<any, any>>(
     // (the spec doesn't define a polling tool for `acquire_rights`).
     acquireRights: async (params, ctx) => {
       const reqCtx = ctxFor(ctx);
+      // Auto-hydrate: attach the full BrandIdentity (including ctx_metadata)
+      // at req.brand from the store populated by getBrandIdentity. Publisher
+      // reads req.brand.ctx_metadata directly. Falls back gracefully when absent.
+      const buyerBrandId = (params as { buyer?: { brand_id?: string } }).buyer?.brand_id;
+      await hydrateRequestResource(
+        ctxMetadataStore,
+        reqCtx.account?.id,
+        'brand',
+        buyerBrandId,
+        params,
+        'brand',
+        logger
+      );
       return projectSync(
         () => br.acquireRights(params, reqCtx),
         r => r

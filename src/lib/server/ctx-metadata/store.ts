@@ -43,6 +43,7 @@ export type ResourceKind =
   | 'creative'
   | 'audience'
   | 'signal'
+  | 'brand'
   | 'rights_grant'
   | 'property_list'
   | 'collection_list';
@@ -55,6 +56,7 @@ const ALL_RESOURCE_KINDS: readonly ResourceKind[] = [
   'creative',
   'audience',
   'signal',
+  'brand',
   'rights_grant',
   'property_list',
   'collection_list',
