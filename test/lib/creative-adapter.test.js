@@ -48,6 +48,12 @@ describe('adaptCreateMediaBuyRequestForV2 — buyer_ref (issue #1115)', () => {
     assert.equal(adapted.packages[0].buyer_ref, 'explicit-buyer-ref');
   });
 
+  test('does not overwrite a top-level buyer_ref supplied by the caller', () => {
+    const req = { ...baseRequest(), buyer_ref: 'caller-supplied-ref' };
+    const adapted = adaptCreateMediaBuyRequestForV2(req);
+    assert.equal(adapted.buyer_ref, 'caller-supplied-ref');
+  });
+
   test('buyer_ref is stable across replays (same idempotency_key → same buyer_ref)', () => {
     const a = adaptCreateMediaBuyRequestForV2(baseRequest());
     const b = adaptCreateMediaBuyRequestForV2(baseRequest());
