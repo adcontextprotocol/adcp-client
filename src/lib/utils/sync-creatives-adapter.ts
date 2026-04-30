@@ -66,15 +66,26 @@ function adaptCreativeForV2(creative: any): any {
   }
 
   // Manifest: { role: AssetInstance, … }
-  // isManifestShape guarantees at least one entry with asset_type, so entries is non-empty
+  // isManifestShape guarantees at least one entry with asset_type, but the first
+  // entry may be a non-asset role (e.g. metadata). Pick the first entry whose
+  // value actually carries asset_type so the forwarded payload is always valid.
   const entries = Object.entries(assets as Record<string, unknown>);
-  const [primaryRole, primaryAsset] = entries[0]!;
+  const primary = entries.find(
+    ([, v]) => typeof v === 'object' && v !== null && 'asset_type' in v
+  );
 
-  if (entries.length > 1) {
-    const allRoles = entries.map(([r]) => r);
+  if (!primary) {
+    // All roles are malformed — pass through verbatim, let the server reject
+    return { ...base, assets };
+  }
+
+  const [primaryRole, primaryAsset] = primary;
+  const assetRoles = entries.map(([r]) => r);
+
+  if (assetRoles.length > 1) {
     console.warn(
       `[AdCP] sync_creatives: creative "${base.creative_id}" has multiple asset roles ` +
-        `(${allRoles.join(', ')}); only "${primaryRole}" will be sent to v2 server. ` +
+        `(${assetRoles.join(', ')}); only "${primaryRole}" will be sent to v2 server. ` +
         `Upgrade to a v3 server to preserve all roles.`
     );
   }

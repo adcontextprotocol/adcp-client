@@ -69,6 +69,18 @@ describe('adaptSyncCreativesRequestForV2 — status → approved mapping', () =>
     assert.strictEqual(result.creatives[0].approved, undefined);
   });
 
+  // Non-binary v3 statuses have no v2 equivalent — both status and approved are omitted
+  for (const s of ['pending_review', 'processing', 'archived']) {
+    test(`status "${s}" omits approved (no v2 equivalent)`, () => {
+      const result = adaptSyncCreativesRequestForV2({
+        ...BASE_REQUEST,
+        creatives: [{ creative_id: 'cre-1', status: s }],
+      });
+      assert.strictEqual(result.creatives[0].approved, undefined);
+      assert.strictEqual(result.creatives[0].status, undefined);
+    });
+  }
+
   test('catalogs is stripped', () => {
     const result = adaptSyncCreativesRequestForV2({
       ...BASE_REQUEST,
@@ -176,6 +188,22 @@ describe('adaptSyncCreativesRequestForV2 — manifest flattening (multi-role)', 
     assert.strictEqual(result.creatives.length, 2);
     assert.ok(!Array.isArray(result.creatives[0]), 'elements are not nested arrays');
     assert.ok(!Array.isArray(result.creatives[1]), 'elements are not nested arrays');
+  });
+
+  test('non-asset-first role: primary selection skips to first entry with asset_type', () => {
+    // { thumbnail: {width, height} } has no asset_type — would forward a broken payload
+    // if the adapter picked entries[0] blindly. The fix finds the first asset-bearing entry.
+    const videoAsset = { asset_type: 'video', url: 'https://example.com/v.mp4' };
+    const result = adaptSyncCreativesRequestForV2({
+      ...BASE_REQUEST,
+      creatives: [
+        {
+          creative_id: 'cre-1',
+          assets: { thumbnail: { width: 100, height: 100 }, video: videoAsset },
+        },
+      ],
+    });
+    assert.deepStrictEqual(result.creatives[0].assets, videoAsset, 'first asset_type-bearing role is used');
   });
 });
 
