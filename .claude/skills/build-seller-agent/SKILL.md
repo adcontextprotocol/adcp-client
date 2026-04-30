@@ -391,8 +391,9 @@ server.tool('comply_test_controller', 'Sandbox only.', TOOL_INPUT_SHAPE, async i
 
 | SDK piece                                                                 | Usage                                                                          |
 | ------------------------------------------------------------------------- | ------------------------------------------------------------------------------ |
-| `createAdcpServer(config)`                                                | Domain-grouped server — auto-wires schemas, response builders, capabilities    |
-| `serve(() => createAdcpServer(config))`                                   | Start HTTP server on `:3001/mcp`                                               |
+| `createAdcpServerFromPlatform(platform, opts)`                            | Build a server from a typed `DecisioningPlatform` — compile-time specialism enforcement, ctx_metadata round-trip, idempotency-principal synthesis, status mappers, webhook auto-emit |
+| `createAdcpServer(config)` *(legacy)*                                     | v5 handler-bag entry. Mid-migration / escape-hatch only; reach via `@adcp/sdk/server/legacy/v5`                                                                                       |
+| `serve(() => createAdcpServerFromPlatform(platform, opts))`               | Start HTTP server on `:3001/mcp`                                               |
 | `ctx.store`                                                               | State store in every handler — `get`, `put`, `patch`, `delete`, `list`         |
 | `InMemoryStateStore`                                                      | Default state store (dev/testing)                                              |
 | `PostgresStateStore`                                                      | Production state store (shared across instances)                               |
@@ -408,9 +409,9 @@ server.tool('comply_test_controller', 'Sandbox only.', TOOL_INPUT_SHAPE, async i
 | `enforceMapCap(map, key, label, cap?)`                                    | Reject net-new keys once a session Map hits `SESSION_ENTRY_CAP` (1000)         |
 | `expectControllerError(result, code)` / `expectControllerSuccess(result)` | Unit-test assertions — narrow responses to error or success arms               |
 
-Response builders (`productsResponse`, `mediaBuyResponse`, `deliveryResponse`, etc.) are auto-applied by `createAdcpServer` — you return the data, the framework wraps it. You only need to call them directly for tools without a dedicated builder.
+Response builders (`productsResponse`, `mediaBuyResponse`, `deliveryResponse`, etc.) are auto-applied by the framework — you return the data, the framework wraps it. You only need to call them directly for tools without a dedicated builder.
 
-Import everything from `@adcp/sdk`. Types from `@adcp/sdk` with `import type`.
+Import everything from `@adcp/sdk/server`. Types from `@adcp/sdk/server` with `import type`.
 
 ## Setup
 
@@ -439,7 +440,9 @@ Minimal `tsconfig.json`:
 
 ## Implementation
 
-Use `createAdcpServer` — it auto-wires schemas, response builders, and `get_adcp_capabilities` from the handlers you provide. Handlers receive `(params, ctx)` where `ctx.store` persists state and `ctx.account` is the resolved account.
+Use `createAdcpServerFromPlatform` — it auto-wires schemas, response builders, and `get_adcp_capabilities` from a typed `DecisioningPlatform` class. Handlers receive `(params, ctx)` where `ctx.store` persists state, `ctx.account` is the resolved account, and `ctx.ctxMetadata` is the resource-keyed cache.
+
+> **LEGACY (v5)** — the worked example below is the v5 handler-bag shape (`createAdcpServer({ accounts, mediaBuy })`). It still compiles via `@adcp/sdk/server/legacy/v5`. **For new agents, refer to `skills/build-seller-agent/SKILL.md` lines 44–85 (the canonical v6 example) or `examples/decisioning-platform-programmatic.ts` for the typed `DecisioningPlatform` class shape.** Lift the handler bodies (governance check, randomUUID-minted ids, ctx.store use) into `class MySeller implements DecisioningPlatform<{}, MyMeta>` with `accounts`/`sales` fields, then `createAdcpServerFromPlatform(new MySeller(), { name, version, idempotency })`.
 
 **Imports**: most things live at `@adcp/sdk`. The idempotency store helpers (`createIdempotencyStore`, `memoryBackend`, `pgBackend`) live at the narrower `@adcp/sdk/server` subpath. Both are re-exported from the root — either works — but splitting them makes intent obvious.
 
@@ -477,7 +480,7 @@ function createAgent({ taskStore }: ServeContext) {
     // Principal scoping for idempotency. MUST never return undefined — or
     // every mutating request rejects as SERVICE_UNAVAILABLE. A constant is
     // fine for a demo; for multi-tenant production use ctx.account typed
-    // via `createAdcpServer<MyAccount>({...})`.
+    // via the framework constructor's `<MyAccount>` generic.
     resolveSessionKey: () => 'default-principal',
 
     resolveAccount: async ref => {
@@ -577,7 +580,7 @@ serve(createAgent);
 
 Key points:
 
-1. Single `.ts` file — all domain handlers in one `createAdcpServer` call
+1. Single `.ts` file — one `DecisioningPlatform` class passed to `createAdcpServerFromPlatform`
 2. `get_adcp_capabilities` is auto-generated from your handlers — don't register it manually (idempotency capability is auto-declared too)
 3. Response builders are auto-applied — just return the data
 4. Use `ctx.store` for state — persists across stateless HTTP requests
@@ -589,7 +592,7 @@ Key points:
 
 AdCP v3 requires an `idempotency_key` on every mutating request. For sellers, that's `create_media_buy`, `update_media_buy`, `sync_creatives`, and any `sync_*` tools you implement. Idempotency is wired in the Implementation example above — this section explains what the framework does for you and the subtleties to know.
 
-**What the framework handles when you pass `idempotency` to `createAdcpServer`:**
+**What the framework handles when you pass `idempotency` to `createAdcpServerFromPlatform`:**
 
 - Rejects missing or malformed `idempotency_key` with `INVALID_REQUEST`. The spec pattern is `^[A-Za-z0-9_.:-]{16,255}$` — a test key like `"key1"` will be rejected for length, not idempotency logic.
 - Hashes the request payload with RFC 8785 JCS; returns `IDEMPOTENCY_CONFLICT` on same-key-different-payload. The error body carries only `code` + `message` — no payload hash, no field pointer, no leaked cached content.
@@ -609,6 +612,8 @@ AdCP v3 requires an `idempotency_key` on every mutating request. For sellers, th
 ## Going to Production
 
 The quick-start uses `memoryBackend()` for idempotency and `InMemoryStateStore` for state — both reset on process restart and don't scale across replicas. Production swaps three pieces:
+
+> **LEGACY (v5)** — example below uses `createAdcpServer`. The Postgres wiring (`pgBackend`, `PostgresStateStore`, `PostgresTaskStore`) is identical for v6 — pass them to `createAdcpServerFromPlatform(platform, { stateStore, taskStore, idempotency })` instead. For new agents, see the v6 worked example in `skills/build-decisioning-platform/SKILL.md` § Production wiring, or use the `pool` shortcut: `createAdcpServerFromPlatform(platform, { pool })` auto-wires all three from a single `pg.Pool`.
 
 ```typescript
 import { Pool } from 'pg';
@@ -713,9 +718,10 @@ When storyboard output shows failures, fix each one:
 
 | Mistake                                                    | Fix                                                                                                                                                                              |
 | ---------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Using `createTaskCapableServer` + `server.tool()`          | Use `createAdcpServer` — handles schemas, response builders, capabilities                                                                                                        |
+| Using `createTaskCapableServer` + `server.tool()`          | Use `createAdcpServerFromPlatform(platform, opts)` — handles schemas, response builders, capabilities, ctx_metadata                                                              |
+| Calling `createAdcpServer` directly in new code            | Reach for `createAdcpServerFromPlatform` first; `createAdcpServer` lives at `@adcp/sdk/server/legacy/v5` for mid-migration / escape-hatch use only                              |
 | Using module-level Maps for state                          | Use `ctx.store` — persists across HTTP requests, swappable for postgres                                                                                                          |
-| Return raw JSON without response builders                  | `createAdcpServer` auto-applies response builders — just return the data                                                                                                         |
+| Return raw JSON without response builders                  | The framework auto-applies response builders — just return the data                                                                                                              |
 | Missing `brand`/`operator` in sync_accounts response       | Echo them back from the request — they're required                                                                                                                               |
 | sync_governance returns wrong shape                        | Must include `status: 'synced'` and `governance_agents` array                                                                                                                    |
 | `sandbox: false` on mock data                              | Buyers may treat mock data as real                                                                                                                                               |
@@ -728,7 +734,7 @@ When storyboard output shows failures, fix each one:
 
 ## Reference
 
-- `docs/guides/BUILD-AN-AGENT.md` — createAdcpServer patterns, async tools, state persistence
+- `docs/guides/BUILD-AN-AGENT.md` — `createAdcpServerFromPlatform` patterns, async tools, state persistence
 - `docs/llms.txt` — full protocol reference
 - `docs/TYPE-SUMMARY.md` — curated type signatures
 - `storyboards/media_buy_seller.yaml` — full buyer interaction sequence
