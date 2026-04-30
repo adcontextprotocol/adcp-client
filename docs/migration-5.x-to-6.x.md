@@ -12,6 +12,44 @@
 > migrators move one specialism at a time without rewriting the whole
 > agent.
 
+## tl;dr — five breaking changes to search-replace
+
+If you've been on the field for 2-3 weeks and skipping rounds, these
+are the cumulative breaking changes you face on `npm update @adcp/sdk`.
+Each is mechanical; the full list is what makes the major-version bump
+feel archaeological if you only see them all at once.
+
+| # | What | Search → Replace | Why |
+|---|---|---|---|
+| 1 | `Account.metadata` → `Account.ctx_metadata` | `\.metadata` (in your `accounts.resolve`/`upsert`/`list` returns and any `ctx.account.metadata` reads) → `.ctx_metadata` | Naming consistency with the resource-level `ctx_metadata` substrate. The wire field was renamed pre-GA (5a490534). |
+| 2 | `@adcp/sdk/server/decisioning` → `@adcp/sdk/server` | `from '@adcp/sdk/server/decisioning'` → `from '@adcp/sdk/server'` | Decisioning runtime promoted to the canonical server entry point. The old subpath is no longer published. |
+| 3 | `createAdcpServer` → `createAdcpServerFromPlatform` (or the legacy subpath) | `import { createAdcpServer } from '@adcp/sdk'` → `import { createAdcpServer } from '@adcp/sdk/server/legacy/v5'` for in-flight migrations; new code reaches for `createAdcpServerFromPlatform` from `@adcp/sdk/server` | The v5 handler-bag constructor moved to a stable subpath. The top-level re-export carries a `@deprecated` JSDoc tag for one cycle and may be removed in a future major. See § Step-by-step migration below for the full v5 → v6 rewrite. |
+| 4 | `TMeta` → `TCtxMeta` generic param | `<TConfig, TMeta>` → `<TConfig, TCtxMeta>` (purely internal — only matters if you reference the generic by name in your own type aliases) | Type-level rename to align with the `ctx_metadata` field name. No runtime impact; default inference still binds at the call site. |
+| 5 | `getMediaBuys` is now required on `SalesPlatform` | Add `getMediaBuys: async () => ({ media_buys: [] })` if your seller doesn't model persistent media buys (write-only push-channel adopters return an empty array) | Compile-time enforcement that every seller can be enumerated. Previously optional; missing it now fails the typecheck. |
+
+### One-shot search-replace for greenfield 5.x → 6.0
+
+```sh
+# Rename Account.metadata → Account.ctx_metadata in your handler bodies.
+# Verify each hit by hand — only Account references should change; do NOT
+# blindly rewrite every `.metadata` (e.g., `package.metadata` is unrelated).
+grep -rn '\.metadata' src/ | grep -i 'account\|Account'
+
+# Move imports to the new server entry.
+sed -i '' "s|from '@adcp/sdk/server/decisioning'|from '@adcp/sdk/server'|g" src/**/*.ts
+
+# In-flight v5 stayers: pin to the legacy subpath.
+sed -i '' "s|import { createAdcpServer } from '@adcp/sdk'|import { createAdcpServer } from '@adcp/sdk/server/legacy/v5'|g" src/**/*.ts
+
+# Add the getMediaBuys stub to any sales platforms that don't have it.
+# Manual — grep for SalesPlatform implementations and add the no-op.
+grep -rn 'sales:' src/ --include='*.ts' | grep -v 'getMediaBuys'
+```
+
+Adopters who already split per-call rounds (rounds 11–14 readers) have
+applied each of these in isolation; this section is for adopters who
+skipped to GA and need the cumulative view.
+
 ## Why migrate?
 
 v6.0 collapses the v5 handler-bag (per-domain `mediaBuy` / `creative` /
@@ -234,6 +272,38 @@ createAdcpServerFromPlatform(platform, {
 
 ## Common gotchas
 
+- **Auto-hydration is a hint, not a source-of-truth check.** When
+  `update_media_buy { media_buy_id: 'mb_unknown' }` arrives, the
+  framework looks up `mb_unknown` in the ctx_metadata cache and:
+  1. Hit → attaches `req.media_buy` with the wire shape + `ctx_metadata`.
+  2. Miss → leaves `req.media_buy` undefined and **runs the handler
+     anyway**.
+
+  The framework does NOT throw `MEDIA_BUY_NOT_FOUND` / `PRODUCT_NOT_FOUND`
+  / `SIGNAL_NOT_FOUND` / `RIGHTS_NOT_FOUND` on a miss — that would force
+  every adopter to pre-warm the cache before serving traffic, which is
+  the wrong default for a hint-based cache. Causes of a miss:
+
+  1. Buyer hasn't called the discovery verb in this session (cold start,
+     fresh tenant, post-restart). Hydration is purely additive context.
+  2. Cache evicted (TTL, LRU). Same.
+  3. Buyer truly referenced an unknown id. The publisher's DB is the
+     source of truth and SHOULD reject in the handler.
+
+  Adopters who want strict existence checks implement them in the
+  handler:
+
+  ```ts
+  updateMediaBuy: async (id, patch, ctx) => {
+    if (!patch.media_buy && !(await db.findMediaBuy(id))) {
+      throw new MediaBuyNotFoundError({ message: `media_buy ${id} not found` });
+    }
+    // ...
+  }
+  ```
+
+  Same pattern for `req.signal` (activate_signal), `req.rights`
+  (acquire_rights), `req.creative` (provide_performance_feedback).
 - **`accounts.resolve()` is mandatory.** Even single-tenant agents must
   declare `resolution: 'derived'` and return a synthetic singleton. The
   framework calls `resolve()` on every request.
