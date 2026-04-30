@@ -1749,3 +1749,89 @@ describe('createAdcpServer', () => {
     });
   });
 });
+
+// ---------------------------------------------------------------------------
+// #1075 — single-field VERSION_UNSUPPORTED check
+// ---------------------------------------------------------------------------
+
+describe('#1075 single-field version-unsupported check', () => {
+  // Helper: create a minimal 3.0-pinned server with get_products registered,
+  // validation off so sparse response fixtures don't trigger VALIDATION_ERROR.
+  function make3xServer(capOverrides = {}) {
+    return _createAdcpServer({
+      name: 'Test',
+      version: '1.0.0',
+      validation: { requests: 'off', responses: 'off' },
+      capabilities: { major_versions: [3], ...capOverrides },
+      mediaBuy: {
+        getProducts: async () => ({ products: [] }),
+      },
+    });
+  }
+
+  async function dispatch(server, args) {
+    const raw = await server.dispatchTestRequest({
+      method: 'tools/call',
+      params: { name: 'get_products', arguments: args },
+    });
+    return raw.structuredContent;
+  }
+
+  it('rejects single-field adcp_major_version: 99 with VERSION_UNSUPPORTED', async () => {
+    const server = make3xServer();
+    const result = await dispatch(server, { adcp_major_version: 99 });
+    assert.strictEqual(result.adcp_error?.code, 'VERSION_UNSUPPORTED', `expected VERSION_UNSUPPORTED, got: ${JSON.stringify(result)}`);
+    assert.deepStrictEqual(result.adcp_error?.details?.supported_versions, ['3']);
+  });
+
+  it('rejects single-field adcp_version: "99.0" (no integer) with VERSION_UNSUPPORTED', async () => {
+    const server = make3xServer();
+    const result = await dispatch(server, { adcp_version: '99.0' });
+    assert.strictEqual(result.adcp_error?.code, 'VERSION_UNSUPPORTED', `expected VERSION_UNSUPPORTED, got: ${JSON.stringify(result)}`);
+    assert.deepStrictEqual(result.adcp_error?.details?.supported_versions, ['3']);
+  });
+
+  it('passes single-field adcp_major_version: 3 (supported)', async () => {
+    const server = make3xServer();
+    const result = await dispatch(server, { adcp_major_version: 3 });
+    assert.ok(!result.adcp_error, `expected no error, got: ${JSON.stringify(result.adcp_error)}`);
+  });
+
+  it('passes single-field adcp_version: "3.0" (supported, no integer)', async () => {
+    const server = make3xServer();
+    const result = await dispatch(server, { adcp_version: '3.0' });
+    assert.ok(!result.adcp_error, `expected no error, got: ${JSON.stringify(result.adcp_error)}`);
+  });
+
+  it('passes requests with no version fields (legacy path)', async () => {
+    const server = make3xServer();
+    const result = await dispatch(server, { brief: 'coffee' });
+    assert.ok(!result.adcp_error, `expected no error, got: ${JSON.stringify(result.adcp_error)}`);
+  });
+
+  it('rejects stringified adcp_major_version: "99" (coerced)', async () => {
+    const server = make3xServer();
+    const result = await dispatch(server, { adcp_major_version: '99' });
+    assert.strictEqual(result.adcp_error?.code, 'VERSION_UNSUPPORTED', `expected VERSION_UNSUPPORTED, got: ${JSON.stringify(result)}`);
+  });
+
+  it('existing dual-field disagreement still rejects (adcp_major_version: 99, adcp_version: "3.0")', async () => {
+    const server = make3xServer();
+    const result = await dispatch(server, { adcp_major_version: 99, adcp_version: '3.0' });
+    assert.strictEqual(result.adcp_error?.code, 'VERSION_UNSUPPORTED', `expected VERSION_UNSUPPORTED, got: ${JSON.stringify(result)}`);
+  });
+
+  it('server with major_versions: [2, 3] accepts adcp_major_version: 2', async () => {
+    const server = make3xServer({ major_versions: [2, 3] });
+    const result = await dispatch(server, { adcp_major_version: 2 });
+    assert.ok(!result.adcp_error, `expected no error, got: ${JSON.stringify(result.adcp_error)}`);
+  });
+
+  it('supported_versions detail is populated from server pin', async () => {
+    const server = make3xServer({ major_versions: [3] });
+    const result = await dispatch(server, { adcp_major_version: 99 });
+    assert.ok(Array.isArray(result.adcp_error?.details?.supported_versions));
+    assert.deepStrictEqual(result.adcp_error.details.supported_versions, ['3']);
+    assert.strictEqual(result.adcp_error.details.requested_version, '99');
+  });
+});

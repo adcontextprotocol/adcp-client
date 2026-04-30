@@ -2404,6 +2404,49 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
             );
           }
         }
+        // Single-field major-version check per spec: "sellers validate against their
+        // supported major_versions and return VERSION_UNSUPPORTED if unsupported."
+        // The dual-field check above only fires on disagreement between the two fields.
+        // A buyer sending only adcp_major_version (integer) bypasses it — handle that here.
+        // Also catches dual-field requests where both fields agree on an unsupported major.
+        if (reqAdcpMajor !== undefined && Number.isFinite(reqAdcpMajor)) {
+          const serverMajorVersions = capConfig?.major_versions ?? [3];
+          if (!serverMajorVersions.includes(reqAdcpMajor)) {
+            return finalize(
+              adcpError('VERSION_UNSUPPORTED', {
+                message:
+                  `adcp_major_version=${JSON.stringify(reqAdcpMajorRaw)} is not supported; ` +
+                  `seller supports major versions: [${serverMajorVersions.join(', ')}].`,
+                details: {
+                  supported_versions: serverMajorVersions.map(String),
+                  requested_version: String(reqAdcpMajorRaw),
+                },
+              })
+            );
+          }
+        }
+        // String-only single-field check: adcp_version present but no adcp_major_version.
+        // The integer check above handles any request where the integer field is present.
+        // This branch covers 3.1+ buyers that omit the deprecated integer entirely.
+        if (typeof reqAdcpVersion === 'string' && reqAdcpMajor === undefined) {
+          const versionMajor = parseAdcpMajorVersion(reqAdcpVersion);
+          if (Number.isFinite(versionMajor)) {
+            const serverMajorVersions = capConfig?.major_versions ?? [3];
+            if (!serverMajorVersions.includes(versionMajor)) {
+              return finalize(
+                adcpError('VERSION_UNSUPPORTED', {
+                  message:
+                    `adcp_version="${reqAdcpVersion}" (major ${versionMajor}) is not supported; ` +
+                    `seller supports major versions: [${serverMajorVersions.join(', ')}].`,
+                  details: {
+                    supported_versions: serverMajorVersions.map(String),
+                    requested_version: reqAdcpVersion,
+                  },
+                })
+              );
+            }
+          }
+        }
 
         // --- Request schema validation (opt-in) ---
         // Runs before idempotency so drifted payloads never touch the
