@@ -265,7 +265,19 @@ async function startAgent(cwd: string, port: number): Promise<ChildProcess> {
   // the prompt. Kill anything listening on the target port before we start
   // ours — otherwise bash start.sh crashes EADDRINUSE.
   await killPort(port);
-  const child = spawn('bash', [startSh], { cwd, stdio: ['ignore', 'inherit', 'inherit'] });
+  // `NODE_ENV=development` is mandatory for v6 agents — `createAdcpServerFromPlatform`
+  // refuses to mint a default in-memory task registry outside `{test,development}`
+  // (see `from-platform.ts:buildDefaultTaskRegistry`). Without this, every v6
+  // agent crashes at boot with a TaskRegistry error, `serve()` returns 500
+  // from the factory-throw branch, and the grader maps the non-200 to
+  // `auth_required` — empirically flagged by matrix v2/v3 where the SI agent
+  // (v5 path, no TaskRegistry) passed but every v6 agent reported as auth.
+  // `validation: 'strict'` for both sides also matches the harness's intent.
+  const child = spawn('bash', [startSh], {
+    cwd,
+    stdio: ['ignore', 'inherit', 'inherit'],
+    env: { ...process.env, NODE_ENV: 'development' },
+  });
   child.on('error', err => log(`[agent] spawn error: ${err.message}`));
   return child;
 }
