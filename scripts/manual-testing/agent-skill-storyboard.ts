@@ -139,7 +139,7 @@ The harness grader sends \`Authorization: Bearer sk_harness_do_not_use_in_prod\`
 
 3. **Do NOT run server.ts, start.sh, or npm start yourself — not even to verify.** The harness will run start.sh after you exit and binds port ${port}; if you leave a process running on that port, the harness fails with EADDRINUSE. Trust the SDK — if it compiles, the harness will exercise it. Your only job is to write the files and exit.
 
-4. Typecheck with \`npx tsc --noEmit server.ts\` (optional) to catch compile errors. Do NOT run the server. Exit cleanly when the files are written.
+4. **Typecheck is REQUIRED.** Before exiting, run \`npx tsc --noEmit server.ts\` and fix every error. The SDK's wire types are strict — \`format_ids[].agent_url\`, \`channels[]\` enum members, \`pricing_options[].model\` discriminator, etc. are all enforced. If your code passes tsc but fails the storyboard's response_schema check at runtime, that means you used \`as any\` / \`as unknown\` to bypass tsc — drop those casts and let the typechecker guide you to the right shape. Do NOT run the server itself. Exit cleanly when both files are written AND tsc passes.
 
 ## Constraints
 
@@ -323,6 +323,33 @@ async function main(): Promise<void> {
   try {
     await bootstrapWorkspace(workDir, args.port, args.sharedNodeModules);
     await runClaude(buildPrompt(skillContent, args.storyboard, args.port, skillDir), workDir, args.timeoutMs);
+
+    // Enforce v6's compile-time-detection promise. The SDK's wire types
+    // are strict (`format_ids[].agent_url` required, `MediaChannel`
+    // enum, `pricing_options[].model` discriminator, etc.) so adopters
+    // who accept the typechecker's guidance can't ship schema-invalid
+    // responses. Real adopters running `tsc --noEmit` in CI catch
+    // these. The matrix harness was previously running `tsx` which
+    // transpiles but never typechecks — Claude could produce JS-
+    // shaped code that ran but failed runtime schema validation.
+    // Closing the gate here turns a doc/runtime gap into a build-time
+    // signal: if Claude can't write tsc-passing v6 code, the skill
+    // needs more guidance.
+    log(`typechecking server.ts`);
+    const tsc = spawnSync('npx', ['tsc', '--noEmit', '--skipLibCheck', 'server.ts'], {
+      cwd: workDir,
+      stdio: ['ignore', 'pipe', 'pipe'],
+      encoding: 'utf8',
+    });
+    if (tsc.status !== 0) {
+      const tail = ((tsc.stdout || '') + (tsc.stderr || '')).split('\n').slice(-30).join('\n');
+      throw new Error(
+        `tsc --noEmit failed for ${workDir}/server.ts (exit ${tsc.status}). ` +
+          `v6 wire types are strict — schema-invalid code is now a typecheck error, ` +
+          `not a runtime grade fail. Last 30 lines of tsc output:\n${tail}`
+      );
+    }
+    log(`tsc passed`);
 
     log(`starting agent`);
     agent = await startAgent(workDir, args.port);
