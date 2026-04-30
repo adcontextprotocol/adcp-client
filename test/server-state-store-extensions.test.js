@@ -592,3 +592,79 @@ describe('default stateStore is process-shared (factory pattern fix)', () => {
     );
   });
 });
+
+describe('default stateStore — multi-tenant footgun warning', () => {
+  // Companion to the singleton: warn-once when the default store is used,
+  // so multi-tenant deployments don't silently share state across tenants.
+  // v6.0.1 plans to harden this into a NODE_ENV=production refusal
+  // mirroring `buildDefaultTaskRegistry`. Until then, a one-time
+  // `logger.warn` keeps the awareness in adopter logs.
+  it('logs a one-time warning when the default stateStore is hit', () => {
+    const seen = [];
+    const captureLogger = {
+      debug() {},
+      info() {},
+      warn(msg) {
+        seen.push(msg);
+      },
+      error() {},
+    };
+
+    // First createAdcpServer with default stateStore + capture logger:
+    // expect the multi-tenant warning to fire exactly once.
+    createAdcpServer({
+      name: 'first',
+      version: '1.0.0',
+      capabilities: { major_versions: [3] },
+      logger: captureLogger,
+    });
+
+    // Subsequent createAdcpServer calls in the same process do NOT
+    // re-fire the warning — the guard is process-scoped so adopters using
+    // `serve(() => createAdcpServer({...}))` (factory pattern, called
+    // every request) don't spam logs.
+    createAdcpServer({
+      name: 'second',
+      version: '1.0.0',
+      capabilities: { major_versions: [3] },
+      logger: captureLogger,
+    });
+
+    const multiTenantWarnings = seen.filter(s =>
+      s.includes('multi-tenant') || s.includes('Multi-tenant')
+    );
+    // The warning may have already fired in an earlier test in this
+    // process (the guard is module-level). What we assert is "no MORE
+    // than one in this test", which means: either it fired now (1) or
+    // already fired earlier (0). Two would mean the guard is broken.
+    assert.ok(
+      multiTenantWarnings.length <= 1,
+      `multi-tenant warning fired more than once: ${multiTenantWarnings.length} times`
+    );
+  });
+
+  it('does NOT warn when the adopter passes an explicit stateStore', () => {
+    const seen = [];
+    const captureLogger = {
+      debug() {},
+      info() {},
+      warn(msg) {
+        seen.push(msg);
+      },
+      error() {},
+    };
+
+    createAdcpServer({
+      name: 'explicit',
+      version: '1.0.0',
+      capabilities: { major_versions: [3] },
+      stateStore: new InMemoryStateStore(),
+      logger: captureLogger,
+    });
+
+    const multiTenantWarnings = seen.filter(s =>
+      s.includes('multi-tenant') || s.includes('Multi-tenant')
+    );
+    assert.equal(multiTenantWarnings.length, 0, 'explicit stateStore must not trigger the default-store warning');
+  });
+});

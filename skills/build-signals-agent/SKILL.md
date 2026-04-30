@@ -223,7 +223,7 @@ Minimal `tsconfig.json`:
 import {
   createAdcpServerFromPlatform,
   serve,
-  adcpError,
+  AdcpError,
   createIdempotencyStore,
   memoryBackend,
   type DecisioningPlatform,
@@ -242,6 +242,12 @@ const signals: Signal[] = [
   /* your signal objects — `signal_agent_segment_id` is required on each */
 ];
 
+// Publisher-internal storage for activations. Persist to your real DB in
+// production; this Map is for the worked example. Note: a module-level Map
+// is fine for single-tenant agents but leaks across tenants in a
+// multi-tenant deployment — partition by `account.id` if you front many.
+const activations = new Map<string, { destinations: unknown[]; activated_at: string }>();
+
 // Idempotency — required for v3 compliance. `activate_signal` is mutating;
 // `get_signals` is read-only and exempt from key validation.
 const idempotency = createIdempotencyStore({
@@ -255,18 +261,20 @@ class MySignals implements DecisioningPlatform {
     config: {},
   };
 
+  // Single-tenant agent: AccountStore.resolve returns the same synthetic
+  // account every request. `upsert` and `list` are optional — omit them on
+  // stateless platforms (the framework returns `UNSUPPORTED_FEATURE` to
+  // buyers calling `sync_accounts` / `list_accounts`).
   accounts: AccountStore = {
-    resolve: async ref => ({
-      id: 'account_id' in ref ? ref.account_id : 'sg_acc_1',
+    resolve: async () => ({
+      id: 'sg_acc_1',
       operator: 'me',
       ctx_metadata: {},
     }),
-    upsert: async () => ({ ok: true, items: [] }),
-    list: async () => ({ items: [], nextCursor: null }),
   };
 
   signals: SignalsPlatform = {
-    getSignals: async (params, ctx) => {
+    getSignals: async params => {
       let results = signals;
       if (params.signal_spec) {
         const query = params.signal_spec.toLowerCase();
@@ -280,17 +288,23 @@ class MySignals implements DecisioningPlatform {
       return { signals: results, sandbox: true };
     },
 
-    activateSignal: async (params, ctx) => {
+    activateSignal: async params => {
       const signal = signals.find(s => s.signal_agent_segment_id === params.signal_agent_segment_id);
-      // Return the error — the framework echoes returned adcpError
-      // responses verbatim. Thrown errors are caught and converted to
-      // SERVICE_UNAVAILABLE, which hides your custom code from the buyer.
-      if (!signal)
-        return adcpError('SIGNAL_NOT_FOUND', { message: `Unknown segment: ${params.signal_agent_segment_id}` });
+      // Throw `AdcpError` for buyer-fixable rejection. The framework
+      // catches the throw, projects to the spec's error envelope, and
+      // returns it to the buyer. Returning `adcpError(...)` from the
+      // success arm doesn't typecheck — `activateSignal` is declared
+      // `Promise<ActivateSignalSuccess>`, error is the throw path.
+      if (!signal) {
+        throw new AdcpError('SIGNAL_NOT_FOUND', {
+          recovery: 'correctable',
+          message: `Unknown segment: ${params.signal_agent_segment_id}`,
+        });
+      }
 
-      // Persist activation in state store
-      await ctx.store.put('activations', params.signal_agent_segment_id, {
-        signal_agent_segment_id: params.signal_agent_segment_id,
+      // Persist activation. Single-tenant: module-level Map is fine.
+      // Multi-tenant: partition by ctx.account.id (passed as 2nd arg).
+      activations.set(params.signal_agent_segment_id, {
         destinations: params.destinations,
         activated_at: new Date().toISOString(),
       });

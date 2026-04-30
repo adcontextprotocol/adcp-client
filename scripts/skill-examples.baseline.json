@@ -991,11 +991,6 @@
   },
   {
     "source": "skills/build-signals-agent/SKILL.md",
-    "errorCode": "TS18048",
-    "messagePrefix": "'ref' is possibly 'undefined'."
-  },
-  {
-    "source": "skills/build-signals-agent/SKILL.md",
     "errorCode": "TS2304",
     "messagePrefix": "Cannot find name 'createAgent'."
   },
@@ -1027,27 +1022,7 @@
   {
     "source": "skills/build-signals-agent/SKILL.md",
     "errorCode": "TS2322",
-    "messagePrefix": "Type '() => Promise<{ items: never[]; nextCursor: null; }>' is not assignable to"
-  },
-  {
-    "source": "skills/build-signals-agent/SKILL.md",
-    "errorCode": "TS2322",
-    "messagePrefix": "Type '() => Promise<{ ok: boolean; items: never[]; }>' is not assignable to type"
-  },
-  {
-    "source": "skills/build-signals-agent/SKILL.md",
-    "errorCode": "TS2322",
-    "messagePrefix": "Type '(params: ActivateSignalRequest, ctx: Ctx<Record<string, unknown>>) => Prom"
-  },
-  {
-    "source": "skills/build-signals-agent/SKILL.md",
-    "errorCode": "TS2322",
     "messagePrefix": "Type 'Promise<{ id: string; operator: string; ctx_metadata: {}; }>' is not assig"
-  },
-  {
-    "source": "skills/build-signals-agent/SKILL.md",
-    "errorCode": "TS2339",
-    "messagePrefix": "Property 'store' does not exist on type 'Ctx<Record<string, unknown>>'."
   },
   {
     "source": "skills/build-signals-agent/SKILL.md",
