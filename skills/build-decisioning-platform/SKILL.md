@@ -201,32 +201,36 @@ const meta = await ctx.ctxMetadata?.product(productId);
 ## Run it
 
 ```ts
-import { serve } from '@adcp/sdk/server';
 import { Pool } from 'pg';
+import {
+  createAdcpServerFromPlatform,
+  getAllAdcpMigrations,
+  serve,
+} from '@adcp/sdk/server';
 
 const pool = new Pool({ connectionString: process.env.DATABASE_URL });
-await pool.query(getCtxMetadataMigration());
+await pool.query(getAllAdcpMigrations());                                 // one DDL call, all 3 tables
 
-const ctxMetadata = createCtxMetadataStore({ backend: pgCtxMetadataStore(pool) });
 const platform = new MyPlatform(myAdServer);
-
 const server = createAdcpServerFromPlatform(platform, {
   name: 'My Sales Agent',
   version: '1.0.0',
-  ctxMetadata,
-  // optional — see advanced/IDEMPOTENCY.md, advanced/HITL.md, advanced/MULTI-TENANT.md
+  pool,                                                                    // wires idempotency + ctxMetadata + taskRegistry
 });
 
 serve(() => server, { port: process.env.PORT });
 ```
+
+That's the whole bootstrap. **One pool, one migration, three persistence concerns wired by the framework.**
+
+For dev / single-process: omit `pool` entirely. Framework defaults to in-memory backends. Don't ship that to production — silent state loss after rolling restart produces "package not found" errors that look like publisher bugs and run for weeks.
 
 ## Operator checklist
 
 Things you set up once at deploy time:
 
 - [ ] `DATABASE_URL` env var pointing at your Postgres instance
-- [ ] Run `getCtxMetadataMigration()` once per database (idempotent — safe to re-run)
-- [ ] Run `getIdempotencyMigration()` and `getDecisioningTaskRegistryMigration()` once per database (same)
+- [ ] Run `getAllAdcpMigrations()` once per database (idempotent — safe to re-run)
 - [ ] OAuth provider config — see `advanced/OAUTH.md` if buyers authenticate via OIDC
 - [ ] `ADCP_VERSION` env (default `3.0.0`) if pinning a specific spec version
 

@@ -164,6 +164,7 @@ export type {
 // new shape. Subject to change before 6.0 GA.
 export {
   createAdcpServerFromPlatform,
+  getAllAdcpMigrations,
   type CreateAdcpServerFromPlatformOptions,
   type DecisioningAdcpServer,
   type DecisioningObservabilityHooks,

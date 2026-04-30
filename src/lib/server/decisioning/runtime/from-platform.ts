@@ -81,7 +81,11 @@ import { adcpError, type AdcpErrorResponse } from '../../errors';
 import { validatePlatform, PlatformConfigError } from './validate-platform';
 import type { AdcpLogger } from '../../create-adcp-server';
 import { buildRequestContext, buildHandoffContext } from './to-context';
-import type { CtxMetadataStore } from '../../ctx-metadata';
+import { type CtxMetadataStore, createCtxMetadataStore, pgCtxMetadataStore, getCtxMetadataMigration, stripCtxMetadata } from '../../ctx-metadata';
+import { createIdempotencyStore, type IdempotencyStore } from '../../idempotency';
+import { pgBackend, getIdempotencyMigration } from '../../idempotency/backends/pg';
+import { createPostgresTaskRegistry, getDecisioningTaskRegistryMigration } from './postgres-task-registry';
+import type { PgQueryable } from '../../postgres-task-store';
 import { isTaskHandoff, _extractTaskFn, type TaskHandoff } from '../async-outcome';
 import { z } from 'zod';
 import { createInMemoryTaskRegistry, type TaskRegistry, type TaskRecord, type TaskStatus } from './task-registry';
@@ -340,6 +344,42 @@ export interface CreateAdcpServerFromPlatformOptions extends Omit<
    * @public
    */
   complyTest?: ComplyControllerConfig;
+
+  /**
+   * Single-pool shortcut: pass a `pg.Pool` (or any `PgQueryable`) and the
+   * framework wires `idempotency` + `ctxMetadata` + `taskRegistry`
+   * internally with sensible defaults. One connection, three concerns.
+   *
+   * Adopters who pass any of `idempotency` / `ctxMetadata` / `taskRegistry`
+   * explicitly keep override priority — the explicit values win, and the
+   * pool fills only the unset ones.
+   *
+   * Run `getAllAdcpMigrations()` once per database to create the three
+   * required tables (idempotency cache, ctx-metadata cache, task registry).
+   *
+   * @example
+   * ```ts
+   * import { Pool } from 'pg';
+   * import {
+   *   createAdcpServerFromPlatform,
+   *   getAllAdcpMigrations,
+   * } from '@adcp/sdk/server';
+   *
+   * const pool = new Pool({ connectionString: process.env.DATABASE_URL });
+   * await pool.query(getAllAdcpMigrations());
+   *
+   * const server = createAdcpServerFromPlatform(myPlatform, {
+   *   name: 'my-agent',
+   *   version: '1.0.0',
+   *   pool,                                // wires all three persistence stores
+   * });
+   * ```
+   *
+   * **Memory-only deployment:** omit `pool` entirely. Framework defaults to
+   * in-memory backends for all three (fine for dev / single-process; not
+   * suitable for cluster).
+   */
+  pool?: PgQueryable;
 
   /**
    * Ctx-metadata store. Wire to enable the v6.1 `ctx_metadata` round-trip
@@ -621,7 +661,29 @@ export function createAdcpServerFromPlatform<P extends DecisioningPlatform<any, 
     }
   }
 
-  const taskRegistry = opts.taskRegistry ?? buildDefaultTaskRegistry();
+  // Pool shortcut: when `opts.pool` is wired and a specific store/registry
+  // is NOT explicitly set, derive that store from pool with sensible
+  // defaults. Explicit per-store opts always win — this is "fill the gaps,"
+  // not "override what the adopter passed."
+  const pooledIdempotency: IdempotencyStore | undefined =
+    opts.pool && opts.idempotency === undefined
+      ? createIdempotencyStore({ backend: pgBackend(opts.pool) })
+      : undefined;
+  const pooledCtxMetadata: CtxMetadataStore | undefined =
+    opts.pool && opts.ctxMetadata === undefined
+      ? createCtxMetadataStore({ backend: pgCtxMetadataStore(opts.pool) })
+      : undefined;
+  const pooledTaskRegistry: TaskRegistry | undefined =
+    opts.pool && opts.taskRegistry === undefined
+      ? createPostgresTaskRegistry({ pool: opts.pool })
+      : undefined;
+
+  // Effective resolved values. Explicit > pooled > default.
+  const effectiveIdempotency: IdempotencyStore | 'disabled' | undefined =
+    opts.idempotency ?? pooledIdempotency;
+  const effectiveCtxMetadata: CtxMetadataStore | undefined =
+    opts.ctxMetadata ?? pooledCtxMetadata;
+  const taskRegistry = opts.taskRegistry ?? pooledTaskRegistry ?? buildDefaultTaskRegistry();
   const baseBus = opts.statusChangeBus ?? createInMemoryStatusChangeBus();
   const taskWebhookEmit = opts.taskWebhookEmitter?.emit;
 
@@ -738,15 +800,19 @@ export function createAdcpServerFromPlatform<P extends DecisioningPlatform<any, 
         }
       : undefined;
 
-  // Per-server `ctxFor` closure; threads `opts.ctxMetadata` (when wired) into
-  // `buildRequestContext` so handlers see `ctx.ctxMetadata` as an account-
-  // scoped accessor. Multi-tenant hosts (TenantRegistry) get one closure per
-  // server, so per-tenant store routing is preserved.
-  const ctxFor = makeCtxFor(opts.ctxMetadata);
+  // Per-server `ctxFor` closure; threads the effective ctx-metadata store
+  // (explicit > pooled > none) into `buildRequestContext` so handlers see
+  // `ctx.ctxMetadata` as an account-scoped accessor. Multi-tenant hosts
+  // (TenantRegistry) get one closure per server, so per-tenant store
+  // routing is preserved.
+  const ctxFor = makeCtxFor(effectiveCtxMetadata);
 
   const config: AdcpServerConfig<Account> = {
     ...opts,
     ...(projectedCapabilitiesConfig != null && { capabilities: projectedCapabilitiesConfig }),
+    // Pool-derived stores override the spread above when adopters supplied
+    // `pool` but no explicit per-store opt. Explicit values still win.
+    ...(effectiveIdempotency !== undefined && { idempotency: effectiveIdempotency }),
     // v6 default principal resolver: every mutating tool requires an
     // idempotency principal (the v5 createAdcpServer surface returns
     // SERVICE_UNAVAILABLE when one isn't wired). v6 platform adopters
@@ -847,7 +913,7 @@ export function createAdcpServerFromPlatform<P extends DecisioningPlatform<any, 
       buildMediaBuyHandlers(platform, taskRegistry, taskWebhookEmit, observability, fwLogger, {
         allowPrivateWebhookUrls: opts.allowPrivateWebhookUrls === true,
         autoEmitCompletionWebhooks: opts.autoEmitCompletionWebhooks !== false,
-      }, ctxFor, opts.ctxMetadata),
+      }, ctxFor, effectiveCtxMetadata),
       'mediaBuy',
       mergeOpts
     ),
@@ -1266,6 +1332,37 @@ function wrapBusWithObservability(bus: StatusChangeBus, observability: Decisioni
  * `=== 'production'` (production may unset NODE_ENV entirely); always
  * allowlist the safe modes.
  */
+/**
+ * Combined DDL for all framework persistence tables: idempotency cache,
+ * ctx-metadata cache, and decisioning task registry. Run once per database
+ * during deployment / boot. Idempotent — safe to re-run.
+ *
+ * Use with the `pool` shortcut on `createAdcpServerFromPlatform`:
+ *
+ * ```ts
+ * const pool = new Pool({ connectionString: process.env.DATABASE_URL });
+ * await pool.query(getAllAdcpMigrations());
+ *
+ * createAdcpServerFromPlatform(myPlatform, {
+ *   name: '...', version: '...',
+ *   pool,
+ * });
+ * ```
+ *
+ * Adopters who don't use the `pool` shortcut should call the per-store
+ * migration helpers (`getIdempotencyMigration`, `getCtxMetadataMigration`,
+ * `getDecisioningTaskRegistryMigration`) only for the stores they wire.
+ *
+ * @public
+ */
+export function getAllAdcpMigrations(): string {
+  return [
+    getIdempotencyMigration(),
+    getCtxMetadataMigration(),
+    getDecisioningTaskRegistryMigration(),
+  ].join('\n\n');
+}
+
 function buildDefaultTaskRegistry(): TaskRegistry {
   const env = process.env.NODE_ENV;
   const safe = env === 'test' || env === 'development';
@@ -1309,7 +1406,16 @@ async function projectSync<TResult, TWire>(
 ): Promise<TWire | AdcpErrorResponse> {
   try {
     const result = await fn();
-    return mapResult(result);
+    const wire = mapResult(result);
+    // Single-chokepoint runtime strip: ctx_metadata MUST NEVER cross to the
+    // buyer. Defense-in-depth (compile-time WireShape<T> + runtime walk).
+    // Mutates `wire` in place — every handler builds a fresh response per
+    // call so mutation is safe. Runs BEFORE the framework wraps in envelope
+    // / caches in idempotency, so cached replays stay clean too.
+    if (wire != null && typeof wire === 'object') {
+      stripCtxMetadata(wire as Record<string, unknown>);
+    }
+    return wire;
   } catch (err) {
     if (err instanceof AdcpError) {
       return adcpError(err.code, {
