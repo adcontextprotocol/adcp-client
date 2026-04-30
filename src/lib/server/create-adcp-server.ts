@@ -155,6 +155,11 @@ import type {
   GetPropertyListRequestSchema,
   ListPropertyListsRequestSchema,
   DeletePropertyListRequestSchema,
+  CreateCollectionListRequestSchema,
+  UpdateCollectionListRequestSchema,
+  GetCollectionListRequestSchema,
+  ListCollectionListsRequestSchema,
+  DeleteCollectionListRequestSchema,
   ListContentStandardsRequestSchema,
   GetContentStandardsRequestSchema,
   CreateContentStandardsRequestSchema,
@@ -212,6 +217,11 @@ import type {
   GetPropertyListResponse,
   ListPropertyListsResponse,
   DeletePropertyListResponse,
+  CreateCollectionListResponse,
+  UpdateCollectionListResponse,
+  GetCollectionListResponse,
+  ListCollectionListsResponse,
+  DeleteCollectionListResponse,
   SyncPlansResponse,
   CheckGovernanceResponse,
   ReportPlanOutcomeResponse,
@@ -530,6 +540,31 @@ export interface AdcpToolMap {
     result: DeletePropertyListResponse;
     response: DeletePropertyListResponse;
   };
+  create_collection_list: {
+    params: z.input<typeof CreateCollectionListRequestSchema>;
+    result: CreateCollectionListResponse;
+    response: CreateCollectionListResponse;
+  };
+  update_collection_list: {
+    params: z.input<typeof UpdateCollectionListRequestSchema>;
+    result: UpdateCollectionListResponse;
+    response: UpdateCollectionListResponse;
+  };
+  get_collection_list: {
+    params: z.input<typeof GetCollectionListRequestSchema>;
+    result: GetCollectionListResponse;
+    response: GetCollectionListResponse;
+  };
+  list_collection_lists: {
+    params: z.input<typeof ListCollectionListsRequestSchema>;
+    result: ListCollectionListsResponse;
+    response: ListCollectionListsResponse;
+  };
+  delete_collection_list: {
+    params: z.input<typeof DeleteCollectionListRequestSchema>;
+    result: DeleteCollectionListResponse;
+    response: DeleteCollectionListResponse;
+  };
   list_content_standards: {
     params: z.input<typeof ListContentStandardsRequestSchema>;
     result: ListContentStandardsResponse;
@@ -630,6 +665,26 @@ export interface AdcpToolMap {
 
 export type AdcpServerToolName = keyof AdcpToolMap;
 
+/**
+ * Parameter shape passed to `resolveIdempotencyPrincipal`. Wide enough to
+ * carry any wire request (the framework calls every mutating tool through
+ * the same resolver), narrow enough to surface the most-common scoping
+ * fields (`account`, `brand`) without a cast.
+ *
+ * Adopters scoping by `params.account?.account_id` or
+ * `params.brand?.domain` (the public-token-shared-across-tenants pattern)
+ * get autocomplete + type narrowing without `as { account?: ... }`. Tool-
+ * specific scoping (e.g., custom session header on `si_send_message`)
+ * still has the open `Record<string, unknown>` index signature for
+ * everything else.
+ */
+export interface IdempotencyPrincipalParams extends Record<string, unknown> {
+  /** Buyer-supplied account reference. Most mutating tools carry this. */
+  account?: { account_id?: string; brand?: { domain?: string }; sandbox?: boolean; [k: string]: unknown };
+  /** Buyer-supplied brand reference (used by some tools without account). */
+  brand?: { domain?: string; [k: string]: unknown };
+}
+
 // ---------------------------------------------------------------------------
 // Domain handler types
 // ---------------------------------------------------------------------------
@@ -689,6 +744,11 @@ export interface GovernanceHandlers<TAccount = unknown> {
   getPropertyList?: DomainHandler<'get_property_list', TAccount>;
   listPropertyLists?: DomainHandler<'list_property_lists', TAccount>;
   deletePropertyList?: DomainHandler<'delete_property_list', TAccount>;
+  createCollectionList?: DomainHandler<'create_collection_list', TAccount>;
+  updateCollectionList?: DomainHandler<'update_collection_list', TAccount>;
+  getCollectionList?: DomainHandler<'get_collection_list', TAccount>;
+  listCollectionLists?: DomainHandler<'list_collection_lists', TAccount>;
+  deleteCollectionList?: DomainHandler<'delete_collection_list', TAccount>;
   listContentStandards?: DomainHandler<'list_content_standards', TAccount>;
   getContentStandards?: DomainHandler<'get_content_standards', TAccount>;
   createContentStandards?: DomainHandler<'create_content_standards', TAccount>;
@@ -990,6 +1050,37 @@ export interface AdcpCustomToolConfig<
 // Server config
 // ---------------------------------------------------------------------------
 
+/**
+ * Public shape for the `webhooks` option on {@link AdcpServerConfig}.
+ * Concrete name + export so adopters can write `webhooks: WebhooksConfig`
+ * without reaching for a `Pick<WebhookEmitterOptions, ...>` reproduction
+ * (and without falling back to `as any` when they typed it loosely).
+ *
+ * Subset of {@link WebhookEmitterOptions} the framework lifts to the
+ * server config: signing key/provider, retry policy, idempotency-key
+ * store, fetch override, user-agent + tag, and the per-emit observability
+ * hooks. Other emitter-internal knobs (rate limits, transport pool
+ * sizing) stay on `WebhookEmitterOptions` for direct emitter callers.
+ *
+ * @public
+ */
+export type WebhooksConfig = Pick<
+  WebhookEmitterOptions,
+  | 'signerKey'
+  | 'signerProvider'
+  | 'retries'
+  | 'idempotencyKeyStore'
+  | 'generateIdempotencyKey'
+  | 'fetch'
+  | 'userAgent'
+  | 'tag'
+> & {
+  /** Observability: emitter-wide onAttempt hook. */
+  onAttempt?: WebhookEmitterOptions['onAttempt'];
+  /** Observability: emitter-wide onAttemptResult hook. */
+  onAttemptResult?: WebhookEmitterOptions['onAttemptResult'];
+};
+
 export interface AdcpServerConfig<TAccount = unknown> {
   name: string;
   version: string;
@@ -1033,6 +1124,23 @@ export interface AdcpServerConfig<TAccount = unknown> {
    * principal across requests.
    */
   resolveAccount?: (ref: AccountReference, ctx: ResolveAccountContext) => Promise<TAccount | null>;
+
+  /**
+   * Resolve an account when the wire request doesn't carry one.
+   *
+   * For tools whose request schema lacks an `account` field
+   * (`provide_performance_feedback`, `list_creative_formats`, the
+   * `tasks/get` polling path, etc.), the framework can't extract a wire
+   * ref. When this resolver is configured, the framework calls it with the
+   * caller's `authInfo` instead so single-tenant agents (`resolution: 'derived'`)
+   * and principal-keyed agents (`resolution: 'implicit'`) still get a
+   * tenant-scoped `ctx.account`.
+   *
+   * Returns `null` when no account can be derived. The handler then runs
+   * with `ctx.account` undefined — appropriate for tools that legitimately
+   * don't need tenant scoping (publisher-wide format catalogs).
+   */
+  resolveAccountFromAuth?: (ctx: ResolveAccountContext) => Promise<TAccount | null>;
 
   /**
    * Derive a session-scoping key from the request. Populates `ctx.sessionKey`
@@ -1121,7 +1229,7 @@ export interface AdcpServerConfig<TAccount = unknown> {
    */
   resolveIdempotencyPrincipal?: (
     ctx: HandlerContext<TAccount>,
-    params: Record<string, unknown>,
+    params: IdempotencyPrincipalParams,
     toolName: AdcpServerToolName
   ) => string | undefined;
   instructions?: string;
@@ -1140,22 +1248,7 @@ export interface AdcpServerConfig<TAccount = unknown> {
    * their JWKS at the `jwks_uri` on brand.json's `agents[]` entry reuse the
    * same key across every buyer they deliver to.
    */
-  webhooks?: Pick<
-    WebhookEmitterOptions,
-    | 'signerKey'
-    | 'signerProvider'
-    | 'retries'
-    | 'idempotencyKeyStore'
-    | 'generateIdempotencyKey'
-    | 'fetch'
-    | 'userAgent'
-    | 'tag'
-  > & {
-    /** Observability: emitter-wide onAttempt hook. */
-    onAttempt?: WebhookEmitterOptions['onAttempt'];
-    /** Observability: emitter-wide onAttemptResult hook. */
-    onAttemptResult?: WebhookEmitterOptions['onAttemptResult'];
-  };
+  webhooks?: WebhooksConfig;
   /**
    * Auto-wire the RFC 9421 request-signature verifier onto the HTTP transport.
    * When set together with `capabilities.specialisms` containing
@@ -1551,6 +1644,13 @@ const TOOL_META: Record<string, ToolMeta> = {
   list_property_lists: { wrap: null, annotations: RO },
   delete_property_list: { wrap: null, annotations: DEST },
 
+  // Governance - Collection Lists
+  create_collection_list: { wrap: null, annotations: MUT },
+  update_collection_list: { wrap: null, annotations: MUT },
+  get_collection_list: { wrap: null, annotations: RO },
+  list_collection_lists: { wrap: null, annotations: RO },
+  delete_collection_list: { wrap: null, annotations: DEST },
+
   // Governance - Content Standards
   list_content_standards: { wrap: null, annotations: RO },
   get_content_standards: { wrap: null, annotations: RO },
@@ -1624,6 +1724,11 @@ const GOVERNANCE_ENTRIES: HandlerEntry[] = [
   { handlerKey: 'getPropertyList', toolName: 'get_property_list' },
   { handlerKey: 'listPropertyLists', toolName: 'list_property_lists' },
   { handlerKey: 'deletePropertyList', toolName: 'delete_property_list' },
+  { handlerKey: 'createCollectionList', toolName: 'create_collection_list' },
+  { handlerKey: 'updateCollectionList', toolName: 'update_collection_list' },
+  { handlerKey: 'getCollectionList', toolName: 'get_collection_list' },
+  { handlerKey: 'listCollectionLists', toolName: 'list_collection_lists' },
+  { handlerKey: 'deleteCollectionList', toolName: 'delete_collection_list' },
   { handlerKey: 'listContentStandards', toolName: 'list_content_standards' },
   { handlerKey: 'getContentStandards', toolName: 'get_content_standards' },
   { handlerKey: 'createContentStandards', toolName: 'create_content_standards' },
@@ -2127,6 +2232,25 @@ function buildSupportedVersionsList(capConfig: AdcpCapabilitiesConfig | undefine
 /**
  * Create an AdCP-compliant MCP server from domain-grouped handler functions.
  *
+ * @deprecated New adopters should use `createAdcpServerFromPlatform` from
+ * `@adcp/sdk/server` instead. This v5 handler-bag entry point is kept for
+ * legacy / mid-migration code; LLM-generated platforms scaffolding from
+ * any of the v6 skills should NEVER call this. The v6 path
+ * (`createAdcpServerFromPlatform`) wraps this function with: typed
+ * specialism interfaces (`SalesPlatform`, `CreativeBuilderPlatform`, etc.),
+ * compile-time capability enforcement (`RequiredPlatformsFor<S>`), the
+ * `ctx_metadata` round-trip cache for adapter-internal state,
+ * auto-hydration of `req.packages[i].product` on createMediaBuy,
+ * default `resolveIdempotencyPrincipal` synthesis, capability projection,
+ * async-task envelopes, status normalization via `StatusMappers`,
+ * multi-tenant routing via `TenantRegistry`, and webhook auto-emit on
+ * sync responses with `push_notification_config.url`.
+ *
+ * Reach for `createAdcpServer` directly only when you need fine control
+ * over individual handlers, are mid-migration from a v5 codebase, or
+ * have custom-shaped tools the platform interface doesn't yet model.
+ * See `docs/migration-5.x-to-6.x.md`.
+ *
  * Before each handler runs, the framework:
  * 1. Validates the request against the tool's Zod schema (MCP SDK)
  * 2. Resolves the account (if the tool has an `account` field and `resolveAccount` is configured)
@@ -2142,6 +2266,7 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
     version,
     adcpVersion: configuredAdcpVersion,
     resolveAccount,
+    resolveAccountFromAuth,
     resolveSessionKey,
     exposeErrorDetails = process.env.NODE_ENV !== 'production',
     stateStore = new InMemoryStateStore(),
@@ -2587,6 +2712,29 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
           } catch (err) {
             const reason = err instanceof Error ? err.message : String(err);
             logger.error('Account resolution failed', { tool: toolName, error: reason });
+            return finalize(
+              adcpError('SERVICE_UNAVAILABLE', {
+                message: 'Account resolution failed',
+                ...(exposeErrorDetails && { details: { reason } }),
+              })
+            );
+          }
+        } else if ((!hasAccount || params.account == null) && resolveAccountFromAuth) {
+          // Auth-derived path for tools whose wire schema lacks an `account`
+          // field (provide_performance_feedback, list_creative_formats, the
+          // `tasks/get` polling path). Single-tenant agents return their
+          // singleton; principal-keyed agents look up by authInfo. A `null`
+          // return is allowed — handler sees ctx.account undefined and
+          // either tolerates it (publisher-wide reads) or throws AdcpError.
+          try {
+            const account = await resolveAccountFromAuth({
+              toolName: toolName as AdcpServerToolName,
+              authInfo: ctx.authInfo,
+            });
+            if (account != null) ctx.account = account;
+          } catch (err) {
+            const reason = err instanceof Error ? err.message : String(err);
+            logger.error('Auth-derived account resolution failed', { tool: toolName, error: reason });
             return finalize(
               adcpError('SERVICE_UNAVAILABLE', {
                 message: 'Account resolution failed',

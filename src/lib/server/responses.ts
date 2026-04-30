@@ -1,6 +1,15 @@
 /**
  * Typed response builders for AdCP MCP servers.
  *
+ * @deprecated For new code, use `createAdcpServerFromPlatform` from
+ * `@adcp/sdk/server` instead — it constructs wire responses internally
+ * from your typed `DecisioningPlatform` return values, so adopters don't
+ * touch these builders. The functions below remain exported for v5
+ * adopters wiring raw MCP tool handlers (mid-migration), and for adopters
+ * shaping bespoke tools the platform interface doesn't yet model. For new
+ * v6 adopters, ignore this whole module — the framework handles wire
+ * shaping.
+ *
  * Each function takes typed data (compile-time checked against AdCP schemas)
  * and returns an MCP-compatible tool response with `content` (text summary)
  * + `structuredContent` (typed payload).
@@ -113,6 +122,7 @@ function assertNoTopLevelSetup(data: unknown, builder: string): void {
  * `supported_protocols` lists AdCP domain protocols (media_buy, signals, governance, etc.),
  * NOT transport protocols (mcp, a2a).
  */
+/** @deprecated v6: `createAdcpServerFromPlatform` constructs wire responses from typed platform returns. Direct use is for v5 raw-handler adopters mid-migration only. */
 export function capabilitiesResponse(data: GetAdCPCapabilitiesResponse, summary?: string): McpToolResponse {
   return {
     content: [{ type: 'text', text: summary ?? 'Agent capabilities retrieved' }],
@@ -123,6 +133,7 @@ export function capabilitiesResponse(data: GetAdCPCapabilitiesResponse, summary?
 /**
  * Build a get_products response.
  */
+/** @deprecated v6: `createAdcpServerFromPlatform` constructs wire responses from typed platform returns. Direct use is for v5 raw-handler adopters mid-migration only. */
 export function productsResponse(data: GetProductsResponse, summary?: string): McpToolResponse {
   return {
     content: [{ type: 'text', text: summary ?? `Found ${data.products.length} products` }],
@@ -139,6 +150,7 @@ export function productsResponse(data: GetProductsResponse, summary?: string): M
  * - `valid_actions` populated from status via `validActionsForStatus()` when
  *   `status` is provided but `valid_actions` is not
  */
+/** @deprecated v6: `createAdcpServerFromPlatform` constructs wire responses from typed platform returns. Direct use is for v5 raw-handler adopters mid-migration only. */
 export function mediaBuyResponse(data: CreateMediaBuySuccess, summary?: string): McpToolResponse {
   assertNoTopLevelSetup(data, 'mediaBuyResponse');
   const withDefaults = { ...data };
@@ -160,6 +172,7 @@ export function mediaBuyResponse(data: CreateMediaBuySuccess, summary?: string):
 /**
  * Build a get_media_buy_delivery response.
  */
+/** @deprecated v6: `createAdcpServerFromPlatform` constructs wire responses from typed platform returns. Direct use is for v5 raw-handler adopters mid-migration only. */
 export function deliveryResponse(data: GetMediaBuyDeliveryResponse, summary?: string): McpToolResponse {
   return {
     content: [
@@ -177,6 +190,7 @@ export function deliveryResponse(data: GetMediaBuyDeliveryResponse, summary?: st
 /**
  * Build a list_accounts response.
  */
+/** @deprecated v6: `createAdcpServerFromPlatform` constructs wire responses from typed platform returns. Direct use is for v5 raw-handler adopters mid-migration only. */
 export function listAccountsResponse(data: ListAccountsResponse, summary?: string): McpToolResponse {
   return {
     content: [{ type: 'text', text: summary ?? `Found ${data.accounts.length} accounts` }],
@@ -187,6 +201,7 @@ export function listAccountsResponse(data: ListAccountsResponse, summary?: strin
 /**
  * Build a list_creative_formats response.
  */
+/** @deprecated v6: `createAdcpServerFromPlatform` constructs wire responses from typed platform returns. Direct use is for v5 raw-handler adopters mid-migration only. */
 export function listCreativeFormatsResponse(data: ListCreativeFormatsResponse, summary?: string): McpToolResponse {
   return {
     content: [{ type: 'text', text: summary ?? `Found ${data.formats.length} creative formats` }],
@@ -200,6 +215,7 @@ export function listCreativeFormatsResponse(data: ListCreativeFormatsResponse, s
  * When `status` is provided but `valid_actions` is not, auto-populates
  * `valid_actions` from `validActionsForStatus()`.
  */
+/** @deprecated v6: `createAdcpServerFromPlatform` constructs wire responses from typed platform returns. Direct use is for v5 raw-handler adopters mid-migration only. */
 export function updateMediaBuyResponse(data: UpdateMediaBuySuccess, summary?: string): McpToolResponse {
   assertNoTopLevelSetup(data, 'updateMediaBuyResponse');
   const withDefaults = { ...data };
@@ -215,6 +231,7 @@ export function updateMediaBuyResponse(data: UpdateMediaBuySuccess, summary?: st
 /**
  * Build a get_media_buys response.
  */
+/** @deprecated v6: `createAdcpServerFromPlatform` constructs wire responses from typed platform returns. Direct use is for v5 raw-handler adopters mid-migration only. */
 export function getMediaBuysResponse(data: GetMediaBuysResponse, summary?: string): McpToolResponse {
   if (Array.isArray(data.media_buys)) {
     for (const buy of data.media_buys) {
@@ -235,6 +252,7 @@ export function getMediaBuysResponse(data: GetMediaBuysResponse, summary?: strin
 /**
  * Build a successful provide_performance_feedback response.
  */
+/** @deprecated v6: `createAdcpServerFromPlatform` constructs wire responses from typed platform returns. Direct use is for v5 raw-handler adopters mid-migration only. */
 export function performanceFeedbackResponse(
   data: ProvidePerformanceFeedbackSuccess,
   summary?: string
@@ -248,6 +266,7 @@ export function performanceFeedbackResponse(
 /**
  * Build a successful build_creative response (single format).
  */
+/** @deprecated v6: `createAdcpServerFromPlatform` constructs wire responses from typed platform returns. Direct use is for v5 raw-handler adopters mid-migration only. */
 export function buildCreativeResponse(data: BuildCreativeSuccess, summary?: string): McpToolResponse {
   // Optional-chain the default summary — handler responses that drop
   // `format_id` still reach the wire-level schema validator (which names
@@ -263,6 +282,7 @@ export function buildCreativeResponse(data: BuildCreativeSuccess, summary?: stri
 /**
  * Build a successful build_creative response (multi-format).
  */
+/** @deprecated v6: `createAdcpServerFromPlatform` constructs wire responses from typed platform returns. Direct use is for v5 raw-handler adopters mid-migration only. */
 export function buildCreativeMultiResponse(data: BuildCreativeMultiSuccess, summary?: string): McpToolResponse {
   const count = data.creative_manifests?.length ?? 0;
   return {
@@ -274,6 +294,7 @@ export function buildCreativeMultiResponse(data: BuildCreativeMultiSuccess, summ
 /**
  * Build a preview_creative response.
  */
+/** @deprecated v6: `createAdcpServerFromPlatform` constructs wire responses from typed platform returns. Direct use is for v5 raw-handler adopters mid-migration only. */
 export function previewCreativeResponse(
   data: PreviewCreativeSingleResponse | PreviewCreativeBatchResponse | PreviewCreativeVariantResponse,
   summary?: string
@@ -299,6 +320,7 @@ export function previewCreativeResponse(
 /**
  * Build a get_creative_delivery response.
  */
+/** @deprecated v6: `createAdcpServerFromPlatform` constructs wire responses from typed platform returns. Direct use is for v5 raw-handler adopters mid-migration only. */
 export function creativeDeliveryResponse(data: GetCreativeDeliveryResponse, summary?: string): McpToolResponse {
   return {
     content: [{ type: 'text', text: summary ?? `Creative delivery data for ${data.currency} report` }],
@@ -309,6 +331,7 @@ export function creativeDeliveryResponse(data: GetCreativeDeliveryResponse, summ
 /**
  * Build a list_creatives response.
  */
+/** @deprecated v6: `createAdcpServerFromPlatform` constructs wire responses from typed platform returns. Direct use is for v5 raw-handler adopters mid-migration only. */
 export function listCreativesResponse(data: ListCreativesResponse, summary?: string): McpToolResponse {
   return {
     content: [
@@ -328,6 +351,7 @@ export function listCreativesResponse(data: ListCreativesResponse, summary?: str
  * handlers can't accidentally emit a bare array at the top level (which the
  * storyboard runner flags as shape drift).
  */
+/** @deprecated v6: `createAdcpServerFromPlatform` constructs wire responses from typed platform returns. Direct use is for v5 raw-handler adopters mid-migration only. */
 export function listPropertyListsResponse(data: ListPropertyListsResponse, summary?: string): McpToolResponse {
   return {
     content: [
@@ -345,6 +369,7 @@ export function listPropertyListsResponse(data: ListPropertyListsResponse, summa
  * `listPropertyListsResponse` — same `lists` wrapper shape; parallel
  * governance surface for program-level collections.
  */
+/** @deprecated v6: `createAdcpServerFromPlatform` constructs wire responses from typed platform returns. Direct use is for v5 raw-handler adopters mid-migration only. */
 export function listCollectionListsResponse(data: ListCollectionListsResponse, summary?: string): McpToolResponse {
   return {
     content: [
@@ -369,6 +394,7 @@ export function listCollectionListsResponse(data: ListCollectionListsResponse, s
  * `standards` is absent. Mirrors `acquireRightsResponse`'s success-first
  * discrimination pattern a few screens down.
  */
+/** @deprecated v6: `createAdcpServerFromPlatform` constructs wire responses from typed platform returns. Direct use is for v5 raw-handler adopters mid-migration only. */
 export function listContentStandardsResponse(data: ListContentStandardsResponse, summary?: string): McpToolResponse {
   const defaultSummary =
     'standards' in data
@@ -385,6 +411,7 @@ export function listContentStandardsResponse(data: ListContentStandardsResponse,
  * the required `plans` key — handlers that return a bare array trip the
  * storyboard runner's shape-drift hint.
  */
+/** @deprecated v6: `createAdcpServerFromPlatform` constructs wire responses from typed platform returns. Direct use is for v5 raw-handler adopters mid-migration only. */
 export function getPlanAuditLogsResponse(data: GetPlanAuditLogsResponse, summary?: string): McpToolResponse {
   return {
     content: [
@@ -400,6 +427,7 @@ export function getPlanAuditLogsResponse(data: GetPlanAuditLogsResponse, summary
 /**
  * Build a successful sync_creatives response.
  */
+/** @deprecated v6: `createAdcpServerFromPlatform` constructs wire responses from typed platform returns. Direct use is for v5 raw-handler adopters mid-migration only. */
 export function syncCreativesResponse(data: SyncCreativesSuccess, summary?: string): McpToolResponse {
   return {
     content: [
@@ -415,6 +443,7 @@ export function syncCreativesResponse(data: SyncCreativesSuccess, summary?: stri
 /**
  * Build a get_signals response.
  */
+/** @deprecated v6: `createAdcpServerFromPlatform` constructs wire responses from typed platform returns. Direct use is for v5 raw-handler adopters mid-migration only. */
 export function getSignalsResponse(data: GetSignalsResponse, summary?: string): McpToolResponse {
   return {
     content: [
@@ -427,6 +456,7 @@ export function getSignalsResponse(data: GetSignalsResponse, summary?: string): 
 /**
  * Build a successful activate_signal response.
  */
+/** @deprecated v6: `createAdcpServerFromPlatform` constructs wire responses from typed platform returns. Direct use is for v5 raw-handler adopters mid-migration only. */
 export function activateSignalResponse(data: ActivateSignalSuccess, summary?: string): McpToolResponse {
   return {
     content: [
@@ -470,6 +500,7 @@ export function activateSignalResponse(data: ActivateSignalSuccess, summary?: st
  * );
  * ```
  */
+/** @deprecated v6: `createAdcpServerFromPlatform` constructs wire responses from typed platform returns. Direct use is for v5 raw-handler adopters mid-migration only. */
 export function cancelMediaBuyResponse(input: CancelMediaBuyInput, summary?: string): McpToolResponse {
   const cancellation: Record<string, unknown> = {
     canceled_at: input.canceled_at ?? new Date().toISOString(),
@@ -510,6 +541,7 @@ export function cancelMediaBuyResponse(input: CancelMediaBuyInput, summary?: str
  * `createAdcpServer({ validation: { responses: 'strict' } })` until it
  * becomes the default.
  */
+/** @deprecated v6: `createAdcpServerFromPlatform` constructs wire responses from typed platform returns. Direct use is for v5 raw-handler adopters mid-migration only. */
 export function acquireRightsResponse(data: AcquireRightsResponse, summary?: string): McpToolResponse {
   const defaultSummary =
     'errors' in data
@@ -531,11 +563,13 @@ export function acquireRightsResponse(data: AcquireRightsResponse, summary?: str
  * because a coding agent typing `acquireRightsAcqu…` gets the required-fields
  * shape directly without reading a 4-variant union.
  */
+/** @deprecated v6: `createAdcpServerFromPlatform` constructs wire responses from typed platform returns. Direct use is for v5 raw-handler adopters mid-migration only. */
 export function acquireRightsAcquired(data: Omit<AcquireRightsAcquired, 'status'>, summary?: string): McpToolResponse {
   return acquireRightsResponse({ ...data, status: 'acquired' } as AcquireRightsAcquired, summary);
 }
 
 /** Per-variant constructor for the `pending_approval` branch. */
+/** @deprecated v6: `createAdcpServerFromPlatform` constructs wire responses from typed platform returns. Direct use is for v5 raw-handler adopters mid-migration only. */
 export function acquireRightsPendingApproval(
   data: Omit<AcquireRightsPendingApproval, 'status'>,
   summary?: string
@@ -544,6 +578,7 @@ export function acquireRightsPendingApproval(
 }
 
 /** Per-variant constructor for the `rejected` branch. */
+/** @deprecated v6: `createAdcpServerFromPlatform` constructs wire responses from typed platform returns. Direct use is for v5 raw-handler adopters mid-migration only. */
 export function acquireRightsRejected(data: Omit<AcquireRightsRejected, 'status'>, summary?: string): McpToolResponse {
   return acquireRightsResponse({ ...data, status: 'rejected' } as AcquireRightsRejected, summary);
 }
@@ -552,6 +587,7 @@ export function acquireRightsRejected(data: Omit<AcquireRightsRejected, 'status'
  * Build a `sync_accounts` response. Thin envelope wrapper accepting the full
  * `SyncAccountsResponse` union; error payloads pass through.
  */
+/** @deprecated v6: `createAdcpServerFromPlatform` constructs wire responses from typed platform returns. Direct use is for v5 raw-handler adopters mid-migration only. */
 export function syncAccountsResponse(data: SyncAccountsResponse, summary?: string): McpToolResponse {
   const defaultSummary =
     'errors' in data
@@ -567,6 +603,7 @@ export function syncAccountsResponse(data: SyncAccountsResponse, summary?: strin
  * Build a sync_governance response. The spec permits two top-level shapes
  * (success / error); the type union enforces discrimination on `status`.
  */
+/** @deprecated v6: `createAdcpServerFromPlatform` constructs wire responses from typed platform returns. Direct use is for v5 raw-handler adopters mid-migration only. */
 export function syncGovernanceResponse(data: SyncGovernanceResponse, summary?: string): McpToolResponse {
   return {
     content: [{ type: 'text', text: summary ?? 'Governance registration synced' }],
@@ -590,6 +627,7 @@ export function syncGovernanceResponse(data: SyncGovernanceResponse, summary?: s
  * reportUsage: async (params) => reportUsageResponse.acceptAll(params)
  * ```
  */
+/** @deprecated v6: `createAdcpServerFromPlatform` constructs wire responses from typed platform returns. Direct use is for v5 raw-handler adopters mid-migration only. */
 export function reportUsageResponse(data: ReportUsageResponse, summary?: string): McpToolResponse {
   return {
     content: [

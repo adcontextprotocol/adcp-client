@@ -501,27 +501,40 @@ function generateLlmsTxt(
   ln();
   ln(`- **Client** (calling existing agents): Continue reading — the Quick Start below is for you.`);
   ln(
-    `- **Server** (implementing an agent that others call): Read \`docs/guides/BUILD-AN-AGENT.md\` instead. Minimal example:`
+    `- **Server** (implementing an agent that others call): Read \`docs/guides/BUILD-AN-AGENT.md\` and \`docs/migration-5.x-to-6.x.md\`. v6 recommended path:`
   );
   ln();
   ln('```typescript');
-  ln(`import { createTaskCapableServer, taskToolResponse, serve, GetSignalsRequestSchema } from '@adcp/sdk';`);
+  ln(`import { serve } from '@adcp/sdk';`);
+  ln(`import { createAdcpServerFromPlatform } from '@adcp/sdk/server';`);
   ln();
-  ln(`function createAgent({ taskStore }) {`);
-  ln(`  const server = createTaskCapableServer('My Agent', '1.0.0', { taskStore });`);
-  ln(`  server.registerTool(`);
-  ln(`    'get_signals',`);
-  ln(`    { description: 'Discover segments.', inputSchema: GetSignalsRequestSchema.shape },`);
-  ln(`    async (args) => taskToolResponse({ signals: [...], sandbox: true }, 'Found segments')`);
-  ln(`  );`);
-  ln(`  return server;`);
-  ln(`}`);
+  ln(`const platform = {`);
+  ln(`  capabilities: {`);
+  ln(`    specialisms: ['signal-marketplace'] as const,`);
+  ln(`    creative_agents: [], channels: [], pricingModels: ['cpm'] as const, config: {},`);
+  ln(`  },`);
+  ln(`  statusMappers: {},`);
+  ln(`  accounts: {`);
+  ln(`    resolve: async () => ({ id: 'acc_1', ctx_metadata: {}, authInfo: { kind: 'api_key' } }),`);
+  ln(`  },`);
+  ln(`  signals: {`);
+  ln(`    getSignals: async (req, ctx) => ({ signals: [/* ... */], sandbox: true }),`);
+  ln(`    activateSignal: async (req, ctx) => ({ /* ... */ }),`);
+  ln(`  },`);
+  ln(`};`);
   ln();
-  ln(`serve(createAgent); // http://localhost:3001/mcp`);
+  ln(`serve(() => createAdcpServerFromPlatform(platform, {`);
+  ln(`  name: 'My Signals Agent',`);
+  ln(`  version: '1.0.0',`);
+  ln(`})); // http://localhost:3001/mcp`);
   ln('```');
   ln();
   ln(
-    `Low-level server (bypassing \`createAdcpServer\`)? Use \`wrapEnvelope(inner, { replayed, context, operationId })\` from \`@adcp/sdk/server\` to attach protocol envelope fields with the per-error-code allowlist applied (IDEMPOTENCY_CONFLICT drops \`replayed\`).`
+    `Compile-time enforcement: \`RequiredPlatformsFor<S>\` catches missing specialism methods. Capability projection auto-derives \`get_adcp_capabilities\` blocks (\`audience_targeting\`, \`conversion_tracking\`, \`compliance_testing.scenarios\`, etc.). Idempotency, RFC 9421 signing, async tasks, status normalization, and sync-completion webhook auto-emit are framework-owned.`
+  );
+  ln();
+  ln(
+    `Lower-level option: \`createAdcpServer({ signals: { getSignals: ... } })\` from \`@adcp/sdk\` — handler-bag API. Still fully supported, the substrate the platform path calls into. Use when you need fine control over individual handlers, mid-migration from a v5 codebase, or custom-shaped tools the platform interface doesn't yet model. \`wrapEnvelope(inner, { replayed, context, operationId })\` from \`@adcp/sdk/server\` attaches protocol envelope fields with the per-error-code allowlist (IDEMPOTENCY_CONFLICT drops \`replayed\`).`
   );
   ln();
 

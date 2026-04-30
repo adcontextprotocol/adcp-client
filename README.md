@@ -275,7 +275,49 @@ handlers: {
 
 ### Platform Implementors
 
-Building a server that receives AdCP tool calls? Import request types for handler signatures and Zod schemas for validation:
+Building a server that receives AdCP tool calls? **v6 (recommended for new agents):** declare a typed `DecisioningPlatform` per-specialism and let the framework wire idempotency, signing, capability projection, async tasks, status normalization, and lifecycle state.
+
+```typescript
+import { serve } from '@adcp/sdk';
+import { createAdcpServerFromPlatform, type DecisioningPlatform } from '@adcp/sdk/server/decisioning';
+
+const platform = {
+  capabilities: {
+    specialisms: ['sales-non-guaranteed'] as const,
+    creative_agents: [],
+    channels: ['display'] as const,
+    pricingModels: ['cpm'] as const,
+    config: {},
+  },
+  statusMappers: {},
+  accounts: {
+    resolve: async (ref, ctx) => db.findAccount(ref, ctx),
+  },
+  sales: {
+    getProducts: async (req, ctx) => ({ products: catalog.search(req) }),
+    createMediaBuy: async (req, ctx) => ({
+      media_buy_id: 'mb_1',
+      status: 'pending_creatives',
+      confirmed_at: new Date().toISOString(),
+      packages: [],
+    }),
+    updateMediaBuy: async (id, req, ctx) => ({ media_buy_id: id, status: 'active' }),
+    syncCreatives: async (creatives, ctx) =>
+      creatives.map(c => ({ creative_id: c.creative_id, action: 'created' as const, status: 'approved' })),
+    getMediaBuyDelivery: async (req, ctx) => ({
+      currency: 'USD',
+      reporting_period: { start: '...', end: '...' },
+      media_buy_deliveries: [],
+    }),
+  },
+} satisfies DecisioningPlatform;
+
+serve(() => createAdcpServerFromPlatform(platform, { name: 'My Publisher', version: '1.0.0' }));
+```
+
+`RequiredPlatformsFor<S>` enforces specialism claims at compile time — claim `'sales-non-guaranteed'` and the typechecker requires `sales: SalesPlatform`. `creative-template` and `creative-generative` claims both map to `CreativeBuilderPlatform`; `creative-ad-server` is its own archetype with `listCreatives` + `getCreativeDelivery`.
+
+**v5 lower-level API** (still fully supported as the substrate the v6 path calls into):
 
 ```typescript
 import { CreateMediaBuyRequest, CreateMediaBuyResponse, CreateMediaBuyRequestSchema } from '@adcp/sdk';
@@ -286,7 +328,7 @@ function handleCreateMediaBuy(rawParams: unknown): CreateMediaBuyResponse {
 }
 ```
 
-Note: `PackageRequest` (creation-shaped, required fields) differs from `Package` (response-shaped). See the [type catalog](docs/ZOD-SCHEMAS.md#type-catalog) for all request types and their required fields.
+Migration path from 5.x → 6.x: see [`docs/migration-5.x-to-6.x.md`](docs/migration-5.x-to-6.x.md). Note: `PackageRequest` (creation-shaped, required fields) differs from `Package` (response-shaped). See the [type catalog](docs/ZOD-SCHEMAS.md#type-catalog) for all request types and their required fields.
 
 ## Multi-Agent Operations
 
@@ -405,11 +447,7 @@ await signingFetch('https://seller.example.com/mcp', {
 **Verify inbound signatures (seller):**
 
 ```typescript
-import {
-  createExpressVerifier,
-  StaticJwksResolver,
-  InMemoryReplayStore,
-} from '@adcp/sdk/signing';
+import { createExpressVerifier, StaticJwksResolver, InMemoryReplayStore } from '@adcp/sdk/signing';
 
 app.post(
   '/mcp',

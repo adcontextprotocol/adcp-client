@@ -102,14 +102,14 @@ What happens when a creative is synced:
 
 **Handler bindings — read the Contract column entry before writing each return:**
 
-| Tool                    | Handler                        | Contract (field list)                                                 | Gotchas                                                                                                                                                                                            |
-| ----------------------- | ------------------------------ | --------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `get_adcp_capabilities` | auto-generated                 | n/a                                                                   | Do not register manually.                                                                                                                                                                          |
-| `list_creative_formats` | `creative.listCreativeFormats` | [`#list_creative_formats`](../../docs/llms.txt#list_creative_formats) | Each `renders[]` entry MUST have `role` + exactly one of `dimensions` (object) OR `parameters_from_format_id: true`. `{width, height}` shorthand fails — wrap in `dimensions`.                     |
-| `sync_creatives`        | `creative.syncCreatives`       | [`#sync_creatives`](../../docs/llms.txt#sync_creatives)               | Echo `creative_id`; `action` ∈ `created \| updated \| unchanged \| failed \| deleted`.                                                                                                             |
-| `list_creatives`        | `creative.listCreatives`       | [`#list_creatives`](../../docs/llms.txt#list_creatives)               | Honor `args.filters?.format_ids` when present. `created_date` + `updated_date` on each row are required ISO timestamps.                                                                            |
+| Tool                    | Handler                        | Contract (field list)                                                 | Gotchas                                                                                                                                                                                                                              |
+| ----------------------- | ------------------------------ | --------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `get_adcp_capabilities` | auto-generated                 | n/a                                                                   | Do not register manually.                                                                                                                                                                                                            |
+| `list_creative_formats` | `creative.listCreativeFormats` | [`#list_creative_formats`](../../docs/llms.txt#list_creative_formats) | Each `renders[]` entry MUST have `role` + exactly one of `dimensions` (object) OR `parameters_from_format_id: true`. `{width, height}` shorthand fails — wrap in `dimensions`.                                                       |
+| `sync_creatives`        | `creative.syncCreatives`       | [`#sync_creatives`](../../docs/llms.txt#sync_creatives)               | Echo `creative_id`; `action` ∈ `created \| updated \| unchanged \| failed \| deleted`.                                                                                                                                               |
+| `list_creatives`        | `creative.listCreatives`       | [`#list_creatives`](../../docs/llms.txt#list_creatives)               | Honor `args.filters?.format_ids` when present. `created_date` + `updated_date` on each row are required ISO timestamps.                                                                                                              |
 | `preview_creative`      | `creative.previewCreative`     | [`#preview_creative`](../../docs/llms.txt#preview_creative)           | `renders[].output_format` is a discriminator — use `urlRender({...})`, `htmlRender({...})`, or `bothRender({...})` so the discriminator is injected and the required `preview_url`/`preview_html` field is enforced at compile time. |
-| `build_creative`        | `creative.buildCreative`       | [`#build_creative`](../../docs/llms.txt#build_creative)               | Check `args.target_format_id` → library lookup; fall back to `args.creative_id`. Response requires `creative_manifest.format_id` + `creative_manifest.assets`.                                     |
+| `build_creative`        | `creative.buildCreative`       | [`#build_creative`](../../docs/llms.txt#build_creative)               | Check `args.target_format_id` → library lookup; fall back to `args.creative_id`. Response requires `creative_manifest.format_id` + `creative_manifest.assets`.                                                                       |
 
 Asset values use type-specific shapes, not a generic `asset_type` discriminator:
 
@@ -129,20 +129,20 @@ Some schemas also define an `ext` field for vendor-namespaced extensions. If you
 
 ## SDK Quick Reference
 
-| SDK piece                                                           | Usage                                                                     |
-| ------------------------------------------------------------------- | ------------------------------------------------------------------------- |
-| `createAdcpServer(config)`                                          | Create server with domain-grouped handlers and auto-capabilities          |
-| `serve(() => createAdcpServer(config))`                             | Start HTTP server on `:3001/mcp`                                          |
-| `creative: { listCreativeFormats, syncCreatives, ... }`             | Domain group — register handlers by name                                  |
-| `ctx.store.put(collection, id, data)`                               | Persist state (creative library) across requests                          |
-| `ctx.store.get(collection, id)`                                     | Retrieve persisted state                                                  |
-| `ctx.store.list(collection)`                                        | List all items in a collection (for `list_creatives`)                     |
-| `listCreativeFormatsResponse(data)`                                 | Auto-applied response builder (don't call manually)                       |
-| `syncCreativesResponse(data)`                                       | Auto-applied response builder (don't call manually)                       |
-| `listCreativesResponse(data)`                                       | Auto-applied response builder (don't call manually)                       |
-| `buildCreativeResponse(data)`                                       | Auto-applied response builder (don't call manually)                       |
-| `previewCreativeResponse(data)`                                     | Auto-applied response builder (don't call manually)                       |
-| `adcpError(code, { message })`                                      | Structured error                                                          |
+| SDK piece                                               | Usage                                                            |
+| ------------------------------------------------------- | ---------------------------------------------------------------- |
+| `createAdcpServer(config)`                              | Create server with domain-grouped handlers and auto-capabilities |
+| `serve(() => createAdcpServer(config))`                 | Start HTTP server on `:3001/mcp`                                 |
+| `creative: { listCreativeFormats, syncCreatives, ... }` | Domain group — register handlers by name                         |
+| `ctx.store.put(collection, id, data)`                   | Persist state (creative library) across requests                 |
+| `ctx.store.get(collection, id)`                         | Retrieve persisted state                                         |
+| `ctx.store.list(collection)`                            | List all items in a collection (for `list_creatives`)            |
+| `listCreativeFormatsResponse(data)`                     | Auto-applied response builder (don't call manually)              |
+| `syncCreativesResponse(data)`                           | Auto-applied response builder (don't call manually)              |
+| `listCreativesResponse(data)`                           | Auto-applied response builder (don't call manually)              |
+| `buildCreativeResponse(data)`                           | Auto-applied response builder (don't call manually)              |
+| `previewCreativeResponse(data)`                         | Auto-applied response builder (don't call manually)              |
+| `adcpError(code, { message })`                          | Structured error                                                 |
 
 Import: `import { createAdcpServer, serve, adcpError } from '@adcp/sdk';`
 
@@ -218,7 +218,8 @@ const idempotency = createIdempotencyStore({
   ttlSeconds: 86400, // 24 hours (spec bounds: 1h–7d)
 });
 
-serve(() => createAdcpServer({
+serve(() =>
+  createAdcpServer({
     name: 'My Creative Agent',
     version: '1.0.0',
     idempotency,
@@ -288,7 +289,7 @@ serve(() => createAdcpServer({
         };
       },
 
-      previewCreative: async (params) => {
+      previewCreative: async params => {
         return {
           response_type: 'single',
           previews: [
@@ -309,7 +310,8 @@ serve(() => createAdcpServer({
         };
       },
     },
-  }));
+  })
+);
 ```
 
 ### Key implementation detail: creative library
@@ -513,7 +515,7 @@ Common failure decoder:
 | ---------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------- |
 | Using `createTaskCapableServer` + `server.tool()`                      | Use `createAdcpServer` with `creative` domain group                                                                                 |
 | Manually registering `get_adcp_capabilities`                           | Auto-generated by `createAdcpServer` from registered handlers                                                                       |
-| Calling `server.registerTool('preview_creative', ...)`                 | `AdcpServer` does not expose `registerTool` — put `previewCreative` in the `creative:` domain group like the other handlers        |
+| Calling `server.registerTool('preview_creative', ...)`                 | `AdcpServer` does not expose `registerTool` — put `previewCreative` in the `creative:` domain group like the other handlers         |
 | Using module-level Maps for state                                      | Use `ctx.store.put/get/list` — framework provides `InMemoryStateStore` by default                                                   |
 | Calling response builders manually in domain handlers                  | Handlers return raw data — response builders are auto-applied across the `creative:` group, including `preview_creative`            |
 | `list_creatives` ignores format filter                                 | Check `args.filters?.format_ids` and filter results                                                                                 |

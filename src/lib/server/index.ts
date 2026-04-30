@@ -1,6 +1,12 @@
 export { adcpError } from './errors';
 export type { AdcpErrorOptions, AdcpErrorPayload, AdcpErrorResponse } from './errors';
 
+export { normalizeError, normalizeErrors } from './normalize-errors';
+export type { NormalizedError } from './normalize-errors';
+
+export { pickSafeDetails } from './pick-safe-details';
+export type { PickSafeDetailsOptions } from './pick-safe-details';
+
 export { wrapEnvelope } from './wrap-envelope';
 export type { WrapEnvelopeOptions } from './wrap-envelope';
 
@@ -199,6 +205,7 @@ export type {
 } from './adcp-server';
 export type {
   AdcpServerConfig,
+  WebhooksConfig,
   AdcpToolMap,
   AdcpServerToolName,
   AdcpCapabilitiesConfig,
@@ -302,3 +309,60 @@ export type {
   ResolvedCollection,
   ResolveListOptions,
 } from './targeting-helpers';
+
+// ---------------------------------------------------------------------------
+// Platform-shaped server entry point (recommended for new agents)
+// ---------------------------------------------------------------------------
+//
+// `createAdcpServerFromPlatform` wraps `createAdcpServer` (the lower-level
+// handler-bag entry above) with compile-time specialism enforcement
+// (`RequiredPlatformsFor<S>`), capability projection, idempotency wiring,
+// async tasks, status normalization, multi-tenant routing, and webhook
+// auto-emit. Adopters declare a typed `DecisioningPlatform` per-specialism
+// and the framework wires the rest. See `docs/migration-5.x-to-6.x.md`
+// and `skills/build-decisioning-platform/` for the full walkthrough.
+//
+// Both `createAdcpServer` and `createAdcpServerFromPlatform` live on the
+// same import path so adopters discover them as siblings; pick the
+// function shape that matches your agent. The platform path internally
+// builds an `AdcpServerConfig` and calls `createAdcpServer` — they're
+// not adjacent surfaces, they're parent-child layers of the same SDK.
+export * from './decisioning';
+
+// ---------------------------------------------------------------------------
+// Ctx-metadata store — opaque-blob round-trip for adapter-internal state
+// ---------------------------------------------------------------------------
+//
+// Publishers attach platform-specific opaque blobs to any returned resource
+// (product, media_buy, package, creative, audience, signal, rights_grant);
+// the framework persists by `(account_id, kind, id)`, strips from buyer-
+// facing wire payloads, threads back into the publisher's request context
+// on subsequent calls referencing the same resource ID. See
+// `docs/proposals/decisioning-platform-v6-1-ctx-metadata.md`.
+export {
+  createCtxMetadataStore,
+  memoryCtxMetadataStore,
+  pgCtxMetadataStore,
+  getCtxMetadataMigration,
+  cleanupExpiredCtxMetadata,
+  CTX_METADATA_MIGRATION,
+  CtxMetadataValidationError,
+  ADCP_INTERNAL_TAG,
+  DEFAULT_MAX_VALUE_BYTES,
+  MAX_TTL_SECONDS,
+  stripCtxMetadata,
+  hasCtxMetadata,
+  ctxMetadataResultKey,
+  scopeCtxMetadataKey,
+} from './ctx-metadata';
+export type {
+  CtxMetadataStore,
+  CtxMetadataStoreConfig,
+  CtxMetadataBackend,
+  CtxMetadataEntry,
+  CtxMetadataRef,
+  ResourceKind as CtxMetadataResourceKind,
+  MemoryCtxMetadataStoreOptions,
+  PgCtxMetadataBackendOptions,
+  WireShape,
+} from './ctx-metadata';

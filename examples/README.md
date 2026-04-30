@@ -54,7 +54,9 @@ ADCP_AGENTS_CONFIG='[{"id":"test-agent","name":"Test Agent","agent_uri":"https:/
 ```typescript
 import { ADCPMultiAgentClient, type AgentConfig } from '@adcp/sdk';
 
-const agents: AgentConfig[] = [/* your agents */];
+const agents: AgentConfig[] = [
+  /* your agents */
+];
 const client = new ADCPMultiAgentClient(agents);
 
 // Single agent operation

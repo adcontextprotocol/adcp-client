@@ -89,6 +89,7 @@ export {
   summarizeStrictValidation,
   listStrictOnlyFailures,
   resolveCapabilityPath,
+  buildDiscoveryFailedResult,
 } from './runner';
 
 // Parser (single-file load for spec evolution / targeted testing)

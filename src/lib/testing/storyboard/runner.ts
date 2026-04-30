@@ -82,7 +82,7 @@ import type {
   ValidationResult,
 } from './types';
 import { DETAILED_SKIP_TO_CANONICAL } from './types';
-import type { AgentProfile, TaskResult } from '../types';
+import type { AgentProfile, TaskResult, TestStepResult } from '../types';
 import {
   type AssertionContext,
   type AssertionSpec,
@@ -146,6 +146,18 @@ export function resolveCapabilityPath(raw: unknown, dottedPath: string): unknown
 
 function buildSkip(reason: RunnerSkipReason, detail?: string): { reason: RunnerSkipReason; detail: string } {
   return { reason, detail: detail ?? SKIP_DETAILS[reason] };
+}
+
+/**
+ * True for skip reasons that imply the step's state never materialized —
+ * the runner treats these as equivalent to a failed stateful step for
+ * cascade-skip purposes. Benign skips (peer branch took, OAuth wasn't
+ * advertised, controller seeding cascaded — all handled elsewhere) don't
+ * appear here. Accepts both the canonical `RunnerSkipReason` and the
+ * detailed variant so callers don't need to narrow before checking.
+ */
+function isMissingStateSkipReason(reason: RunnerSkipReason | RunnerDetailedSkipReason | undefined): boolean {
+  return reason === 'missing_tool' || reason === 'missing_test_controller' || reason === 'not_applicable';
 }
 
 /**
@@ -460,6 +472,68 @@ function buildCapabilityUnsupportedResult(
 }
 
 /**
+ * Build a hard-failure StoryboardResult for when agent capability
+ * discovery (`get_agent_info` / MCP `tools/list`) failed. Surfacing
+ * discovery errors as a hard storyboard failure prevents the silent
+ * "X/X clean, 100% skipped" failure mode where transport / auth
+ * misconfiguration produced an empty `agentTools: []` and every step
+ * skipped with `missing_tool`.
+ *
+ * @public — exported for direct testing of the failure-result shape;
+ * called from `runStoryboard` when discovery throws.
+ */
+export function buildDiscoveryFailedResult(
+  agentUrls: string[],
+  storyboard: Storyboard,
+  discoveryStep: TestStepResult
+): StoryboardResult {
+  const detail = discoveryStep.error ?? 'Discovery failed (no agent tools advertised).';
+  const syntheticStep: StoryboardStepResult = {
+    storyboard_id: storyboard.id,
+    step_id: 'discovery_failed',
+    phase_id: 'discovery_failed',
+    title: 'Storyboard failed: agent capability discovery did not succeed',
+    task: '',
+    passed: false,
+    skipped: false,
+    duration_ms: discoveryStep.duration_ms,
+    validations: [],
+    context: {},
+    error: `Discovery failure: ${detail}. The runner refuses to proceed with empty agentTools — that mode produces silent "all clean" reports when the underlying transport / auth / network policy is broken. Fix the discovery error before re-running.`,
+    extraction: { path: 'none' },
+  };
+  return {
+    storyboard_id: storyboard.id,
+    storyboard_title: storyboard.title,
+    agent_url: agentUrls[0]!,
+    overall_passed: false,
+    phases: [
+      {
+        phase_id: 'discovery_failed',
+        phase_title: 'Discovery failed',
+        passed: false,
+        steps: [syntheticStep],
+        duration_ms: discoveryStep.duration_ms,
+      },
+    ],
+    context: {},
+    total_duration_ms: discoveryStep.duration_ms,
+    passed_count: 0,
+    failed_count: 1,
+    skipped_count: 0,
+    tested_at: new Date().toISOString(),
+    strict_validation_summary: {
+      observable: false,
+      checked: 0,
+      passed: 0,
+      failed: 0,
+      strict_only_failures: 0,
+      lenient_also_failed: 0,
+    },
+  };
+}
+
+/**
  * Build a minimal StoryboardResult for a storyboard skipped because the agent
  * does not advertise any of the tools listed in `required_tools`. The result
  * carries `skip_reason: 'missing_tool'` and `overall_passed: true` so CLI
@@ -549,10 +623,24 @@ async function executeStoryboardPass(
   let profile: AgentProfile | undefined;
   if (!options._client) {
     const discovered = await getOrDiscoverProfile(clients[0]!, options);
+    // Discovery failure must surface as a HARD STORYBOARD FAILURE, not a
+    // silent empty `agentTools: []` that lets every step skip with
+    // `missing_tool`. The latter mode produces "X/X clean" summaries with
+    // 100% skipped — invisible CI failure when transport setup is broken
+    // (auth misconfig, MCP transport-fallback bugs, network policy, etc.).
+    // See: https://github.com/adcontextprotocol/adcp-client/issues/...
+    if (discovered.step.passed === false) {
+      if (!options._client) await closeConnections(options.protocol);
+      return buildDiscoveryFailedResult(agentUrls, storyboard, discovered.step);
+    }
     profile = discovered.profile;
-    // Populate agentTools from discovered profile if not already set
+    // Populate agentTools and _profile from discovered profile if not already set.
+    // _profile is threaded into executeStep so capability-based skip gates
+    // (e.g. account-mode branching) can read raw_capabilities at step time.
     if (!options.agentTools && profile?.tools) {
-      options = { ...options, agentTools: profile.tools };
+      options = { ...options, agentTools: profile.tools, _profile: profile };
+    } else if (profile && !options._profile) {
+      options = { ...options, _profile: profile };
     }
   } else {
     profile = options._profile;
@@ -626,6 +714,14 @@ async function executeStoryboardPass(
   let passedCount = 0;
   let failedCount = 0;
   let skippedCount = 0;
+  // Stateful-cascade flags live at storyboard scope, NOT phase scope —
+  // cross-phase storyboards (e.g. signal_marketplace/governance_denied:
+  // setup in phases 1-2, consumption in phase 3) need the cascade to
+  // survive phase boundaries. Once a stateful step in any phase failed
+  // or skipped to materialize state, every downstream stateful step
+  // stays cascade-skipped regardless of which phase it lives in.
+  let statefulFailed = false;
+  let statefulSkipTrigger: { stepId: string; reason: RunnerSkipReason | RunnerDetailedSkipReason } | null = null;
   // Step results whose failures the main loop added to failedCount. The
   // branch-set post-pass decrements only for entries that were actually
   // counted, so an optional phase that hit `presenceDetected` (a PRM 2xx
@@ -777,7 +873,10 @@ async function executeStoryboardPass(
     const phaseStart = Date.now();
     const stepResults: StoryboardStepResult[] = [];
     let phasePassed = true;
-    let statefulFailed = false;
+    // `statefulFailed` and `statefulSkipTrigger` live at storyboard
+    // scope (declared above the phase loop) so the cascade survives
+    // cross-phase setup → assertion patterns. See declaration site for
+    // the rationale (signal_marketplace/governance_denied story).
     // PRM presence-probe state (adcp-client#677). `phaseAbsent` flips when
     // /.well-known/oauth-protected-resource returns 404 — subsequent steps
     // in this phase cascade-skip instead of failing their http_status:200
@@ -867,9 +966,15 @@ async function executeStoryboardPass(
         continue;
       }
 
-      // Skip remaining steps if a stateful dependency failed
+      // Skip remaining steps if a stateful dependency failed (or
+      // skipped for a missing-state reason). The detail message
+      // distinguishes the two so adopters reading the cascade know
+      // whether to look at a real failure or a structural mismatch
+      // (storyboard step requires a tool the agent doesn't advertise).
       if (statefulFailed && step.stateful) {
-        const detail = 'Skipped: prior stateful step failed.';
+        const detail = statefulSkipTrigger
+          ? `Skipped: prior stateful step "${statefulSkipTrigger.stepId}" skipped (${statefulSkipTrigger.reason}); state never materialized.`
+          : 'Skipped: prior stateful step failed.';
         stepResults.push({
           storyboard_id: storyboard.id,
           step_id: step.id,
@@ -976,6 +1081,26 @@ async function executeStoryboardPass(
       if (result.skipped) {
         skippedCount++;
         context = result.context;
+        // Cascade-skip extension: a stateful step that SKIPS for a
+        // missing-state reason (`missing_tool`, `missing_test_controller`,
+        // `not_applicable`) is morally equivalent to a stateful step that
+        // failed — the state downstream steps depend on never
+        // materialized. Without this trip, a follow-up stateful step
+        // runs against absent state and surfaces a misleading
+        // assertion failure. Skips that imply state DID materialize via
+        // another path (`peer_branch_taken`, `controller_seeding_failed`
+        // — already handled by phase-level cascade, `oauth_not_advertised`
+        // — phase-absent path) deliberately don't trip the flag.
+        if (step.stateful && isMissingStateSkipReason(result.skip_reason)) {
+          statefulFailed = true;
+          // Record provenance for the cascade detail message. First trip
+          // wins — subsequent triggers don't overwrite, since the cascade
+          // text references the originating diagnostic (the leftmost
+          // missing-state stateful step in the phase).
+          if (statefulSkipTrigger === null) {
+            statefulSkipTrigger = { stepId: step.id, reason: result.skip_reason ?? 'missing_tool' };
+          }
+        }
       } else if (result.passed) {
         context = result.context;
         passedCount++;
@@ -991,7 +1116,15 @@ async function executeStoryboardPass(
           failedCount++;
           countedAsFailed.add(result);
         }
-        if (step.stateful) statefulFailed = true;
+        if (step.stateful) {
+          statefulFailed = true;
+          // Real failure takes precedence over a prior skip-trigger in
+          // the cascade detail message — failures are the worse
+          // diagnostic, so downstream cascade-skipped steps should
+          // reference the failure rather than the earlier benign-ish
+          // missing-state skip.
+          statefulSkipTrigger = null;
+        }
         // In multi-instance mode, annotate the failure with the cross-instance
         // attribution block so CI readers pattern-match it as a deployment bug.
         if (isMultiInstance) {
@@ -1329,11 +1462,16 @@ export async function runStoryboardStep(
 
   // Discover agent profile for standalone step execution. Captured so the
   // executeStep call below can thread `library_version` through to
-  // shape-drift hint detection (issue #850).
+  // shape-drift hint detection (issue #850). Also threads _profile into
+  // options so capability-based skip gates in executeStep (e.g. account-mode
+  // branching) can read raw_capabilities, mirroring executeStoryboardPass.
   let profile: AgentProfile | undefined;
   if (!options._client) {
     const discovered = await getOrDiscoverProfile(client, options);
     profile = discovered.profile;
+    if (profile && !options._profile) {
+      options = { ...options, _profile: profile };
+    }
   } else {
     profile = options._profile;
   }
@@ -1506,6 +1644,46 @@ async function executeStep(
       next,
       extraction: { path: 'none' },
     };
+  }
+
+  // Account-mode capability gate: sync_accounts is exclusive to implicit mode
+  // (require_operator_auth: false). When the seller declared explicit mode
+  // (require_operator_auth: true), sync_accounts does not apply — grade
+  // not_applicable rather than missing_tool so adopters can distinguish
+  // "your capability declaration says this path isn't yours" from "you forgot
+  // to implement a required tool."
+  //
+  // list_accounts is NOT gated here: it appears in audience_sync and other
+  // storyboard flows regardless of account mode, so it is always applicable.
+  //
+  // Requires _profile threaded from the discovery block in
+  // executeStoryboardPass or runStoryboardStep.
+  if (effectiveStep.task === 'sync_accounts') {
+    const rawCaps = options._profile?.raw_capabilities;
+    if (rawCaps !== undefined) {
+      const requireOperatorAuth = resolveCapabilityPath(rawCaps, 'account.require_operator_auth');
+      if (requireOperatorAuth === true) {
+        const detail =
+          `Agent declared explicit account mode (require_operator_auth: true); ` +
+          `sync_accounts is not applicable — list_accounts is the correct tool for this account shape.`;
+        const next = getNextStepPreview(step.id, allSteps, context, runState.runnerVars);
+        return {
+          step_id: step.id,
+          phase_id: phaseId,
+          title: step.title,
+          task: step.task,
+          passed: true,
+          skipped: true,
+          skip_reason: 'not_applicable',
+          skip: buildSkip('not_applicable', detail),
+          duration_ms: 0,
+          validations: [],
+          context,
+          next,
+          extraction: { path: 'none' },
+        };
+      }
+    }
   }
 
   // Skip if agent doesn't implement the tool this step calls.

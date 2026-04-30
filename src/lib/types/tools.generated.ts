@@ -7497,6 +7497,14 @@ export interface SyncCatalogsRequest {
  * Response from catalog sync operation. Returns either per-catalog results (best-effort processing) OR operation-level errors (complete failure). Platforms may approve, reject, or flag individual items within each catalog (similar to Google Merchant Center product review).
  */
 export type SyncCatalogsResponse = SyncCatalogsSuccess | SyncCatalogsError;
+/**
+ * Action taken for this catalog
+ */
+export type CatalogAction = 'created' | 'updated' | 'unchanged' | 'failed' | 'deleted';
+/**
+ * Item review status
+ */
+export type CatalogItemStatus = 'approved' | 'pending' | 'rejected' | 'warning';
 
 /**
  * Success response - sync operation processed catalogs (may include per-catalog failures)
@@ -7510,7 +7518,65 @@ export interface SyncCatalogsSuccess {
    * Results for each catalog processed. Items with action='failed' indicate per-catalog validation/processing failures, not operation-level failures.
    */
   catalogs: {
-    [k: string]: unknown | undefined;
+    /**
+     * Catalog ID from the request
+     */
+    catalog_id: string;
+    action: CatalogAction;
+    /**
+     * Platform-specific ID assigned to the catalog
+     */
+    platform_id?: string;
+    /**
+     * Total number of items in the catalog after sync. Required when action is 'created', 'updated', or 'unchanged'. Omitted on 'failed' and 'deleted'.
+     */
+    item_count?: number;
+    /**
+     * Number of items approved by the platform. Populated when the platform performs item-level review.
+     */
+    items_approved?: number;
+    /**
+     * Number of items pending platform review. Common for product catalogs where items must pass content policy checks.
+     */
+    items_pending?: number;
+    /**
+     * Number of items rejected by the platform. Check item_issues for rejection reasons.
+     */
+    items_rejected?: number;
+    /**
+     * Per-item issues reported by the platform (rejections, warnings). Only present when the platform performs item-level review.
+     */
+    item_issues?: {
+      /**
+       * ID of the catalog item with an issue
+       */
+      item_id: string;
+      status: CatalogItemStatus;
+      /**
+       * Reasons for rejection or warning
+       */
+      reasons?: string[];
+    }[];
+    /**
+     * ISO 8601 timestamp of when the most recent sync was accepted by the platform
+     */
+    last_synced_at?: string;
+    /**
+     * ISO 8601 timestamp of when the platform will next fetch the feed URL. Only present for URL-based catalogs with update_frequency.
+     */
+    next_fetch_at?: string;
+    /**
+     * Field names that were modified (only present when action='updated')
+     */
+    changes?: string[];
+    /**
+     * Validation or processing errors (only present when action='failed')
+     */
+    errors?: Error[];
+    /**
+     * Non-fatal warnings about this catalog
+     */
+    warnings?: string[];
   }[];
   /**
    * When true, this response contains simulated data from sandbox mode.
@@ -7530,6 +7596,7 @@ export interface SyncCatalogsError {
   context?: ContextObject;
   ext?: ExtensionObject;
 }
+
 
 // build_creative parameters
 /**
@@ -8082,9 +8149,7 @@ export interface BuildCreativeError {
 /**
  * Request to generate previews of creative manifests. Uses request_type to select single, batch, or variant mode.
  */
-export type PreviewCreativeRequest = {
-  [k: string]: unknown | undefined;
-} & {
+export interface PreviewCreativeRequest {
   /**
    * The AdCP major version the buyer's payloads conform to. Sellers validate against their supported major_versions and return VERSION_UNSUPPORTED if unsupported. When omitted, the seller assumes its highest supported version.
    */
@@ -8170,7 +8235,7 @@ export type PreviewCreativeRequest = {
   creative_id?: string;
   context?: ContextObject;
   ext?: ExtensionObject;
-};
+}
 
 // preview_creative response
 /**
@@ -8487,11 +8552,17 @@ export interface Identifier {
 
 // list_creatives parameters
 /**
+ * Field to sort by
+ */
+export type CreativeSortField = 'created_date' | 'updated_date' | 'name' | 'status' | 'assignment_count';
+/**
+ * Sort direction
+ */
+export type SortDirection = 'asc' | 'desc';
+/**
  * Request parameters for querying creative assets from a creative library with filtering, sorting, and pagination. Implemented by any agent that hosts a creative library — creative agents (ad servers, creative platforms) and sales agents that manage creatives.
  */
-export type ListCreativesRequest = {
-  [k: string]: unknown | undefined;
-} & {
+export interface ListCreativesRequest {
   /**
    * The AdCP major version the buyer's payloads conform to. Sellers validate against their supported major_versions and return VERSION_UNSUPPORTED if unsupported. When omitted, the seller assumes its highest supported version.
    */
@@ -8546,15 +8617,7 @@ export type ListCreativesRequest = {
   )[];
   context?: ContextObject;
   ext?: ExtensionObject;
-};
-/**
- * Field to sort by
- */
-export type CreativeSortField = 'created_date' | 'updated_date' | 'name' | 'status' | 'assignment_count';
-/**
- * Sort direction
- */
-export type SortDirection = 'asc' | 'desc';
+}
 /**
  * Filter criteria for querying creatives from a creative library. By default, archived creatives are excluded from results. To include archived creatives, explicitly filter by status='archived' or include 'archived' in the statuses array.
  */
@@ -8951,7 +9014,10 @@ export interface SyncCreativesRequest {
  * Response from creative sync operation. Exactly one of three shapes: (1) synchronous success — per-creative results in the creatives array (best-effort processing with per-item status/failures); (2) terminal failure — errors array with no creatives processed; (3) submitted task envelope — status 'submitted' with task_id when the whole operation is queued (batch ingestion, async review that must settle before per-item results can be issued). The submitted branch MAY carry advisory errors for non-blocking warnings; terminal failures belong in the error branch. Final per-item results land on the task completion artifact, not this envelope. These three shapes are mutually exclusive — a response has exactly one.
  */
 export type SyncCreativesResponse = SyncCreativesSuccess | SyncCreativesError | SyncCreativesSubmitted;
-
+/**
+ * Action taken for this creative during this sync operation (lifecycle operation, not approval state).
+ */
+export type CreativeAction = 'created' | 'updated' | 'unchanged' | 'failed' | 'deleted';
 /**
  * Success response - sync operation processed creatives (may include per-item failures)
  */
@@ -8964,7 +9030,53 @@ export interface SyncCreativesSuccess {
    * Results for each creative processed. Items with action='failed' indicate per-item validation/processing failures, not operation-level failures.
    */
   creatives: {
-    [k: string]: unknown | undefined;
+    /**
+     * Creative ID from the request
+     */
+    creative_id: string;
+    account?: Account;
+    action: CreativeAction;
+    status?: CreativeStatus;
+    /**
+     * Platform-specific ID assigned to the creative
+     */
+    platform_id?: string;
+    /**
+     * Field names that were modified (only present when action='updated')
+     */
+    changes?: string[];
+    /**
+     * Validation or processing errors (only present when action='failed')
+     */
+    errors?: Error[];
+    /**
+     * Non-fatal warnings about this creative
+     */
+    warnings?: string[];
+    /**
+     * Preview URL for generative creatives (only present for generative formats)
+     */
+    preview_url?: string;
+    /**
+     * ISO 8601 timestamp when preview link expires (only present when preview_url exists)
+     */
+    expires_at?: string;
+    /**
+     * Package IDs this creative was successfully assigned to (only present when assignments were requested)
+     */
+    assigned_to?: string[];
+    /**
+     * Assignment errors by package ID (only present when assignment failures occurred)
+     */
+    assignment_errors?: {
+      /**
+       * Error message for this package assignment
+       *
+       * This interface was referenced by `undefined`'s JSON-Schema definition
+       * via the `patternProperty` "^[a-zA-Z0-9_-]+$".
+       */
+      [k: string]: string | undefined;
+    };
   }[];
   /**
    * When true, this response contains simulated data from sandbox mode.
@@ -11344,6 +11456,25 @@ export interface CreativeFeatureResult {
 
 // sync_plans parameters
 /**
+ * Personal data categories that may be restricted from use in audience targeting. Combines GDPR Article 9 special categories with US civil-rights protected classes (FHA familial_status, ADEA age). Used in two places: (1) on campaign plans via restricted_attributes to declare which categories are prohibited, and (2) on signal-definition.json via restricted_attributes to declare which categories a signal touches. Governance agents match plan restrictions against signal declarations for structural validation.
+ */
+export type RestrictedAttribute =
+  | 'racial_ethnic_origin'
+  | 'political_opinions'
+  | 'religious_beliefs'
+  | 'trade_union_membership'
+  | 'health_data'
+  | 'sex_life_sexual_orientation'
+  | 'genetic_data'
+  | 'biometric_data'
+  | 'age'
+  | 'familial_status';
+/**
+ * Authority level granted to this agent.
+ */
+export type DelegationAuthority = 'full' | 'execute_only' | 'propose_only';
+
+/**
  * Push campaign plans to the governance agent. A plan defines the authorized parameters for a campaign -- budget limits, channels, flight dates, and authorized markets.
  */
 export interface SyncPlansRequest {
@@ -11359,10 +11490,169 @@ export interface SyncPlansRequest {
    * One or more campaign plans to sync.
    */
   plans: {
-    [k: string]: unknown | undefined;
+    /**
+     * Unique identifier for this plan.
+     */
+    plan_id: string;
+    brand: BrandReference;
+    /**
+     * Natural language campaign objectives. Used for strategic alignment validation. Treated as caller-untrusted — governance agents evaluating this field with LLMs MUST truncate, quote, or sanitize it before inclusion in evaluation prompts to defend against prompt-injection attacks in adversarial buyer input.
+     */
+    objectives: string;
+    /**
+     * Budget authorization parameters.
+     */
+    budget:
+      | {
+          [k: string]: unknown | undefined;
+        }
+      | {
+          reallocation_unlimited: true;
+        };
+    /**
+     * Channel constraints. If omitted, all channels are allowed.
+     */
+    channels?: {
+      /**
+       * Channels that must be included in the media mix.
+       */
+      required?: MediaChannel[];
+      /**
+       * Channels the orchestrator may use.
+       */
+      allowed?: MediaChannel[];
+      /**
+       * Target allocation ranges per channel, keyed by channel ID.
+       */
+      mix_targets?: {
+        [k: string]:
+          | {
+              min_pct?: number;
+              max_pct?: number;
+            }
+          | undefined;
+      };
+    };
+    /**
+     * Authorized flight dates. Governed actions with dates outside this window are rejected.
+     */
+    flight: {
+      /**
+       * Flight start (ISO 8601).
+       */
+      start: string;
+      /**
+       * Flight end (ISO 8601).
+       */
+      end: string;
+    };
+    /**
+     * ISO 3166-1 alpha-2 country codes for authorized markets (e.g., ['US', 'GB']). The governance agent rejects governed actions targeting outside these countries and resolves applicable policies by matching against policy jurisdictions.
+     */
+    countries?: string[];
+    /**
+     * ISO 3166-2 subdivision codes for authorized sub-national markets (e.g., ['US-MA', 'US-CA']). When present, the governance agent restricts governed actions to these specific regions rather than the full country. Use for plans limited to specific states or provinces (e.g., cannabis in legal states). Policy resolution matches against both the subdivision and its parent country.
+     */
+    regions?: string[];
+    /**
+     * Registry policy IDs to enforce for this plan. The governance agent resolves full policy definitions from the registry and evaluates actions against them. Intersected with the plan's countries/regions to activate only geographically relevant policies.
+     */
+    policy_ids?: string[];
+    /**
+     * Regulatory categories that apply to this campaign. Determines which policy regimes the governance agent enforces (e.g., 'children_directed' activates COPPA/AADC, 'political_advertising' activates disclosure requirements). The governance agent resolves categories to specific policies based on the plan's jurisdictions. When omitted, governance agents MAY infer categories from the brand's industries and the plan's objectives. Values are registry-defined category IDs (intentionally freeform strings, not an enum — new categories are added as regulations evolve).
+     */
+    policy_categories?: string[];
+    audience?: AudienceConstraints;
+    /**
+     * Personal data categories that must not be used for targeting in this campaign. Applies horizontally across all audience criteria. Used for EU DSA Article 26 compliance (prohibits targeting on GDPR Article 9 special categories) and similar regulations. The governance agent flags any audience targeting that references these attributes.
+     */
+    restricted_attributes?: RestrictedAttribute[];
+    /**
+     * Additional restricted attributes not covered by the restricted-attribute enum. Freeform strings for jurisdiction-specific or brand-specific restrictions beyond GDPR Article 9 categories (e.g., 'financial_status', 'immigration_status'). Governance agents use semantic matching for these.
+     */
+    restricted_attributes_custom?: string[];
+    /**
+     * Minimum audience segment size. Prevents micro-targeting by ensuring segments meet a k-anonymity threshold. Applies to the estimated combined (intersection) audience when multiple criteria are used, not just individual criterion sizes. The governance agent validates this by querying signal catalog metadata or seller-reported segment sizes. When segment size data is unavailable, the governance agent SHOULD produce a finding with reduced confidence rather than silently passing.
+     */
+    min_audience_size?: number;
+    /**
+     * When true, the governance agent MUST escalate any action on this plan for human review before execution — regardless of budget. Required by regulations that prohibit solely automated decisions affecting data subjects (GDPR Art 22, EU AI Act Annex III): credit, insurance pricing, recruitment, housing allocation. Governance agents MUST set this to true automatically when any resolved policy or policy_category has requires_human_review: true. Distinct from budget.reallocation_threshold, which only governs budget reallocation autonomy — human_review_required covers decisions affecting individuals (targeting, creative, delivery).
+     */
+    human_review_required?: boolean;
+    /**
+     * Bespoke policies specific to this campaign, using the same shape as registry entries. Each policy has a policy_id, enforcement (must|should), and natural-language policy text. Governance findings reference policy_id to identify which policy triggered. For quick authoring, omit version/name/category — servers default them.
+     */
+    custom_policies?: PolicyEntry[];
+    /**
+     * List of approved seller agent URLs. null means any seller.
+     */
+    approved_sellers?: string[] | null;
+    /**
+     * Agents authorized to execute against this plan. Each delegation scopes an agent's authority by budget, markets, and expiration. The governance agent validates that the requesting agent matches a delegation before approving actions.
+     */
+    delegations?: {
+      /**
+       * URL of the delegated agent.
+       */
+      agent_url: string;
+      authority: DelegationAuthority;
+      /**
+       * Maximum budget this agent can commit. When omitted, the agent can commit up to the plan's total budget.
+       */
+      budget_limit?: {
+        amount: number;
+        currency: string;
+      };
+      /**
+       * ISO 3166-1/3166-2 codes this agent is authorized for. When omitted, the agent can operate in all plan markets.
+       */
+      markets?: string[];
+      /**
+       * When this delegation expires. After expiration, the governance agent denies actions from this agent.
+       */
+      expires_at?: string;
+    }[];
+    /**
+     * Portfolio-level governance constraints. When present, this plan acts as a portfolio plan that governs member plans. Portfolio plans define cross-brand constraints that no individual brand plan can override.
+     */
+    portfolio?: {
+      /**
+       * Plan IDs governed by this portfolio plan. The governance agent validates member plan actions against portfolio constraints.
+       */
+      member_plan_ids: string[];
+      /**
+       * Maximum aggregate budget across all member plans.
+       */
+      total_budget_cap?: {
+        amount: number;
+        currency: string;
+      };
+      /**
+       * Registry policy IDs enforced across all member plans, regardless of individual brand configuration.
+       */
+      shared_policy_ids?: string[];
+      /**
+       * Bespoke exclusion policies applied across all member plans, using the same shape as registry entries. Authored typically as enforcement: must policies with exclusion language in the policy text (e.g., 'No advertising on properties owned by competitor holding companies').
+       */
+      shared_exclusions?: PolicyEntry[];
+    };
+    ext?: ExtensionObject;
   }[];
   context?: ContextObject;
   ext?: ExtensionObject;
+}
+/**
+ * Audience targeting constraints. Defines who the campaign should reach (include) and must not reach (exclude). The governance agent evaluates seller targeting against these constraints.
+ */
+export interface AudienceConstraints {
+  /**
+   * Desired audience criteria. The seller's targeting should align with these. Each criterion is evaluated independently — the combined targeting should satisfy at least one inclusion criterion.
+   */
+  include?: AudienceSelector[];
+  /**
+   * Excluded audience criteria. The seller's targeting must not overlap with these. Exclusions take precedence over inclusions. Used for protected groups, vulnerable communities, regulatory restrictions, or brand safety.
+   */
+  exclude?: AudienceSelector[];
 }
 
 // sync_plans response
@@ -12017,9 +12307,7 @@ export interface CheckGovernanceRequest {
 /**
  * Governance agent's response to a check request. Returns whether the action is approved under the governance plan.
  */
-export type CheckGovernanceResponse = {
-  [k: string]: unknown | undefined;
-} & {
+export interface CheckGovernanceResponse {
   /**
    * Unique identifier for this governance check record. Use in report_plan_outcome to link outcomes to the check that authorized them.
    */
@@ -12111,7 +12399,7 @@ export type CheckGovernanceResponse = {
   governance_context?: string;
   context?: ContextObject;
   ext?: ExtensionObject;
-};
+}
 
 // si_get_offering parameters
 /**
@@ -12457,29 +12745,6 @@ export interface SICapabilities {
 
 // si_initiate_session response
 /**
- * Standard visual component that brand returns and host renders
- */
-export type SIUIElement = {
-  [k: string]: unknown | undefined;
-} & {
-  /**
-   * Component type
-   */
-  type:
-    | 'text'
-    | 'link'
-    | 'image'
-    | 'product_card'
-    | 'carousel'
-    | 'action_button'
-    | 'app_handoff'
-    | 'integration_actions';
-  /**
-   * Component-specific data
-   */
-  data?: {};
-};
-/**
  * Current session lifecycle state. Returned in initiation, message, and termination responses.
  */
 export type SISessionStatus = 'active' | 'pending_handoff' | 'complete' | 'terminated';
@@ -12517,6 +12782,27 @@ export interface SIInitiateSessionResponse {
   errors?: Error[];
   context?: ContextObject;
   ext?: ExtensionObject;
+}
+/**
+ * Standard visual component that brand returns and host renders
+ */
+export interface SIUIElement {
+  /**
+   * Component type
+   */
+  type:
+    | 'text'
+    | 'link'
+    | 'image'
+    | 'product_card'
+    | 'carousel'
+    | 'action_button'
+    | 'app_handoff'
+    | 'integration_actions';
+  /**
+   * Component-specific data
+   */
+  data?: {};
 }
 
 // si_send_message parameters
@@ -13995,11 +14281,37 @@ export interface GetAccountFinancialsError {
 
 // comply_test_controller parameters
 /**
+ * Completion payload to record against the task. Used by force_task_completion. Validates against the async-response-data union — for create_media_buy this is a CreateMediaBuyResponse with media_buy_id and packages. The seller MUST deliver this verbatim to the buyer's push_notification_config.url (the canonical 3.0 path for completion payload delivery), with all caller-supplied fields preserved (sellers MAY augment with seller-controlled fields like created_at or dsp_* IDs but MUST NOT overwrite caller-supplied values). A typed projection on the polling response is tracked for 3.1 (#3123). Sellers MUST emit INVALID_PARAMS if the payload does not validate against the response branch for the task's original method, and MAY reject payloads exceeding 256 KB with INVALID_PARAMS.
+ */
+export type AdCPAsyncResponseData =
+  | GetProductsResponse
+  | GetProductsAsyncWorking
+  | GetProductsAsyncInputRequired
+  | GetProductsAsyncSubmitted
+  | CreateMediaBuyResponse
+  | CreateMediaBuyAsyncWorking
+  | CreateMediaBuyAsyncInputRequired
+  | CreateMediaBuyAsyncSubmitted
+  | UpdateMediaBuyResponse
+  | UpdateMediaBuyAsyncWorking
+  | UpdateMediaBuyAsyncInputRequired
+  | UpdateMediaBuyAsyncSubmitted
+  | BuildCreativeResponse
+  | BuildCreativeAsyncWorking
+  | BuildCreativeAsyncInputRequired
+  | BuildCreativeAsyncSubmitted
+  | SyncCreativesResponse
+  | SyncCreativesAsyncWorking
+  | SyncCreativesAsyncInputRequired
+  | SyncCreativesAsyncSubmitted
+  | SyncCatalogsResponse
+  | SyncCatalogsAsyncWorking
+  | SyncCatalogsAsyncInputRequired
+  | SyncCatalogsAsyncSubmitted;
+/**
  * Request payload for the comply_test_controller tool. Triggers seller-side state transitions for compliance testing. Sandbox only — sellers MUST NOT expose this tool in production. Naturally idempotent: the `scenario` enum is either a lookup (`list_scenarios`) or a state-forcing operation whose target state is carried in the payload (`force_*_status`, `simulate_*`), so replays converge to the same observable state without needing an idempotency_key. The compliance harness drives this tool deterministically and does not rely on the seller's at-most-once replay cache.
  */
-export type ComplyTestControllerRequest = {
-  [k: string]: unknown | undefined;
-} & {
+export interface ComplyTestControllerRequest {
   /**
    * Test scenario to execute. 'list_scenarios' discovers supported scenarios. 'force_*' and 'simulate_*' trigger state transitions. 'seed_*' scenarios pre-populate fixtures (product, pricing option, creative, plan, media buy, creative format) so storyboards can reference them by stable ID without the implementer having to guess which IDs the conformance suite expects.
    */
@@ -14110,35 +14422,7 @@ export type ComplyTestControllerRequest = {
   };
   context?: ContextObject;
   ext?: ExtensionObject;
-};
-/**
- * Completion payload to record against the task. Used by force_task_completion. Validates against the async-response-data union — for create_media_buy this is a CreateMediaBuyResponse with media_buy_id and packages. The seller MUST deliver this verbatim to the buyer's push_notification_config.url (the canonical 3.0 path for completion payload delivery), with all caller-supplied fields preserved (sellers MAY augment with seller-controlled fields like created_at or dsp_* IDs but MUST NOT overwrite caller-supplied values). A typed projection on the polling response is tracked for 3.1 (#3123). Sellers MUST emit INVALID_PARAMS if the payload does not validate against the response branch for the task's original method, and MAY reject payloads exceeding 256 KB with INVALID_PARAMS.
- */
-export type AdCPAsyncResponseData =
-  | GetProductsResponse
-  | GetProductsAsyncWorking
-  | GetProductsAsyncInputRequired
-  | GetProductsAsyncSubmitted
-  | CreateMediaBuyResponse
-  | CreateMediaBuyAsyncWorking
-  | CreateMediaBuyAsyncInputRequired
-  | CreateMediaBuyAsyncSubmitted
-  | UpdateMediaBuyResponse
-  | UpdateMediaBuyAsyncWorking
-  | UpdateMediaBuyAsyncInputRequired
-  | UpdateMediaBuyAsyncSubmitted
-  | BuildCreativeResponse
-  | BuildCreativeAsyncWorking
-  | BuildCreativeAsyncInputRequired
-  | BuildCreativeAsyncSubmitted
-  | SyncCreativesResponse
-  | SyncCreativesAsyncWorking
-  | SyncCreativesAsyncInputRequired
-  | SyncCreativesAsyncSubmitted
-  | SyncCatalogsResponse
-  | SyncCatalogsAsyncWorking
-  | SyncCatalogsAsyncInputRequired
-  | SyncCatalogsAsyncSubmitted;
+}
 /**
  * Progress data for working get_products
  */

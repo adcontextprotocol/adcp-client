@@ -35,6 +35,89 @@ import type { FormatReferenceStructuredObject } from './core.generated';
  */
 export type FormatID = FormatReferenceStructuredObject;
 
+// Re-export wire request/response types adopters need when building a
+// DecisioningPlatform. Source of truth is `tools.generated.ts`; this
+// curated subset is the public surface so adopters never reach into
+// generated files. Add new entries as new specialism platforms land.
+export type {
+  // Account model
+  AccountReference,
+  // Creative
+  BuildCreativeRequest,
+  CreativeManifest,
+  PreviewCreativeRequest,
+  PreviewCreativeResponse,
+  CreativeAsset,
+  CreativeQuality,
+  // Sales — media buy
+  GetProductsRequest,
+  GetProductsResponse,
+  CreateMediaBuyRequest,
+  CreateMediaBuySuccess,
+  UpdateMediaBuyRequest,
+  UpdateMediaBuySuccess,
+  GetMediaBuysResponse,
+  GetMediaBuyDeliveryRequest,
+  GetMediaBuyDeliveryResponse,
+  // Pricing models (discriminated union across pricing types)
+  PricingOption,
+  CPMPricingOption,
+  CPCPricingOption,
+  CPVPricingOption,
+  // Media-channel + status enums adopters need when implementing a platform
+  MediaChannel,
+  AudienceStatus,
+  MediaBuyStatus,
+  CreativeStatus,
+  // Publisher property selection (for product publisher_properties[])
+  PublisherPropertySelector,
+  // Reporting capability shape (per-product)
+  ReportingCapabilities,
+  // Audiences
+  SyncAudiencesRequest,
+  SyncAudiencesResponse,
+  // Signals
+  GetSignalsRequest,
+  GetSignalsResponse,
+  ActivateSignalRequest,
+  ActivateSignalResponse,
+  ActivateSignalSuccess,
+  SignalID,
+  SignalValueType,
+  SignalCatalogType,
+  Destination,
+  Deployment,
+  ActivationKey,
+  VendorPricingOption,
+  // Capability declaration
+  AdCPSpecialism,
+  // Property lists — full CRUD surface for governance adopters
+  PropertyList,
+  CreatePropertyListRequest,
+  CreatePropertyListResponse,
+  UpdatePropertyListRequest,
+  UpdatePropertyListResponse,
+  GetPropertyListRequest,
+  GetPropertyListResponse,
+  ListPropertyListsRequest,
+  ListPropertyListsResponse,
+  DeletePropertyListRequest,
+  DeletePropertyListResponse,
+  // Collection lists — full CRUD surface for governance adopters
+  CollectionList,
+  CreateCollectionListRequest,
+  CreateCollectionListResponse,
+  UpdateCollectionListRequest,
+  UpdateCollectionListResponse,
+  GetCollectionListRequest,
+  GetCollectionListResponse,
+  ListCollectionListsRequest,
+  ListCollectionListsResponse,
+  DeleteCollectionListRequest,
+  DeleteCollectionListResponse,
+  Format,
+} from './tools.generated';
+
 // Strict format asset slot types (hand-authored — the codegen drops the
 // discriminated per-asset-type branches of Format.assets[]).
 export * from './format-asset-slots';

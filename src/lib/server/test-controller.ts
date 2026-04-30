@@ -927,16 +927,19 @@ export function toMcpResponse(data: ComplyTestControllerResponse): McpToolRespon
  *
  * Matches `ComplyTestControllerRequest` from the generated schema: `scenario`
  * (required), `params` (scenario-specific), and the universal `context` / `ext`
- * envelope fields. No top-level `account` — AdCP routes account context
- * through `context` on this tool.
+ * envelope fields. No top-level `account` or `brand` — AdCP routes account
+ * and brand context through `context` on this tool.
  *
  * **Extending for vendor fields.** Custom wrappers that route sandbox gating
- * or tenant scoping on top-level fields can extend the shape locally:
+ * or tenant scoping on top-level fields can extend the shape locally.
+ * Both `account` and `brand` are commonly added — storyboard fixtures and
+ * v5-shaped wrappers often send them alongside `params`:
  *
  * ```ts
  * const MY_SHAPE = {
  *   ...TOOL_INPUT_SHAPE,
  *   account: z.object({ sandbox: z.boolean() }).passthrough().optional(),
+ *   brand: z.object({ domain: z.string() }).passthrough().optional(),
  * };
  * server.registerTool(
  *   'comply_test_controller',
@@ -947,6 +950,10 @@ export function toMcpResponse(data: ComplyTestControllerResponse): McpToolRespon
  *   }
  * );
  * ```
+ *
+ * Adopters routing through `createAdcpServerFromPlatform({ complyTest })`
+ * pass the same fields via `complyTest.inputSchema` (see
+ * `ComplyControllerConfig.inputSchema` in `@adcp/sdk/testing`).
  *
  * This keeps the default registration protocol-compliant while giving
  * wrapper authors a documented extension point.
