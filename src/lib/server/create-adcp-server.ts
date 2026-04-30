@@ -737,6 +737,19 @@ export interface BrandRightsHandlers<TAccount = unknown> {
 
 export interface AdcpCapabilitiesConfig {
   major_versions?: number[];
+  /**
+   * Release-precision versions this seller supports (AdCP 3.1+ per spec PR
+   * `adcontextprotocol/adcp#3493`). Each entry parses to a major via
+   * `parseAdcpMajorVersion` — the union of these majors and `major_versions`
+   * defines the seller's accepted set for the wire-level
+   * `adcp_major_version` / `adcp_version` claim a buyer may carry.
+   *
+   * 3.0-pinned sellers can ignore this field. 3.1+ sellers should declare
+   * here the same release-precision strings they emit in `adcp_version` on
+   * responses, so buyers receiving `VERSION_UNSUPPORTED` can read the
+   * supported set off the error envelope and downgrade their pin.
+   */
+  supported_versions?: string[];
   features?: Partial<MediaBuyFeatures>;
   account?: Partial<AccountCapabilities>;
   creative?: Partial<CreativeCapabilities>;
@@ -2044,6 +2057,70 @@ function buildSignedRequestsPreTransport(
 }
 
 // ---------------------------------------------------------------------------
+// Version-claim validation helpers
+// ---------------------------------------------------------------------------
+
+/**
+ * Compute the set of `adcp_major_version` integers this seller accepts on
+ * inbound requests. Used by the single-field VERSION_UNSUPPORTED check
+ * (issue #1075) to reject buyer claims outside the seller's advertised
+ * window.
+ *
+ * Sources, in priority order:
+ * 1. `capConfig.major_versions` — deprecated integer list (AdCP <3.1).
+ * 2. `capConfig.supported_versions` — release-precision strings (AdCP 3.1+
+ *    per spec PR `adcontextprotocol/adcp#3493`); each entry's parsed major
+ *    is added to the set.
+ * 3. Fallback to the major of `serverPin` so a seller that omits both lists
+ *    still rejects out-of-window claims rather than silently dispatching.
+ */
+function getAdvertisedSupportedMajors(capConfig: AdcpCapabilitiesConfig | undefined, serverPin: string): Set<number> {
+  const out = new Set<number>();
+  for (const m of capConfig?.major_versions ?? []) {
+    if (Number.isFinite(m)) out.add(m);
+  }
+  for (const v of capConfig?.supported_versions ?? []) {
+    const m = parseAdcpMajorVersion(v);
+    if (Number.isFinite(m)) out.add(m);
+  }
+  if (out.size === 0) {
+    const pinMajor = parseAdcpMajorVersion(serverPin);
+    if (Number.isFinite(pinMajor)) out.add(pinMajor);
+  }
+  return out;
+}
+
+/**
+ * Build the `supported_versions` string array shipped on the
+ * `VERSION_UNSUPPORTED` error envelope so buyers can downgrade their pin
+ * and retry. Mirrors `getAdvertisedSupportedMajors` precedence:
+ *
+ * 1. `capConfig.supported_versions` — emit verbatim (release-precision strings).
+ * 2. Else `capConfig.major_versions` — stringify each integer.
+ * 3. Else fall back to the server pin's major as a single-entry list.
+ *
+ * Strings are preferred over integers because release-precision strings
+ * round-trip more information; emitting a single-source listing avoids
+ * confusing buyers with both integer and string shapes for the same major.
+ * (`getAdvertisedSupportedMajors` unions both sources for the accepted-set
+ * check, but this function picks one to avoid that ambiguity on the wire.)
+ *
+ * Buyer-side parser (`extractVersionUnsupportedDetails`) already filters
+ * non-strings, so a `String(N)` fallback round-trips cleanly across 3.0
+ * and 3.1 sellers.
+ */
+function buildSupportedVersionsList(capConfig: AdcpCapabilitiesConfig | undefined, serverPin: string): string[] {
+  if (capConfig?.supported_versions?.length) {
+    return [...capConfig.supported_versions];
+  }
+  if (capConfig?.major_versions?.length) {
+    return capConfig.major_versions.filter(m => Number.isFinite(m)).map(m => String(m));
+  }
+  const pinMajor = parseAdcpMajorVersion(serverPin);
+  return Number.isFinite(pinMajor) ? [String(pinMajor)] : [];
+}
+
+// ---------------------------------------------------------------------------
 // createAdcpServer
 // ---------------------------------------------------------------------------
 
@@ -2400,6 +2477,46 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
                 message:
                   `Request carries adcp_version="${reqAdcpVersion}" (major ${stringMajor}) and ` +
                   `adcp_major_version=${JSON.stringify(reqAdcpMajorRaw)}; majors must agree.`,
+                details: { supported_versions: buildSupportedVersionsList(capConfig, adcpVersion) },
+              })
+            );
+          }
+        }
+
+        // Single-field rejection (issue #1075). The dual-field check above
+        // catches drift between `adcp_version` and `adcp_major_version` when
+        // both are present. A buyer that sends only one field — typically a
+        // conformance harness probing the seller's `VERSION_UNSUPPORTED`
+        // path — bypasses that check; the seller would otherwise dispatch
+        // against its server-pinned bundle and the buyer's claim would
+        // silently no-op. Resolve the effective major from whichever field
+        // the buyer set, then reject if it falls outside the seller's
+        // advertised window.
+        //
+        // The advertised window is the union of `major_versions` and parsed
+        // majors from `supported_versions` (3.1+ release-precision strings),
+        // with a fallback to the server pin's major when both lists are
+        // absent — see `getAdvertisedSupportedMajors`. Same precedence
+        // governs the `supported_versions` echo in the error envelope so
+        // buyers can downgrade and retry.
+        const effectiveReqMajor =
+          reqAdcpMajor !== undefined && Number.isFinite(reqAdcpMajor)
+            ? reqAdcpMajor
+            : typeof reqAdcpVersion === 'string'
+              ? parseAdcpMajorVersion(reqAdcpVersion)
+              : undefined;
+        if (effectiveReqMajor !== undefined && Number.isFinite(effectiveReqMajor)) {
+          const supportedMajors = getAdvertisedSupportedMajors(capConfig, adcpVersion);
+          if (!supportedMajors.has(effectiveReqMajor)) {
+            const claimed =
+              typeof reqAdcpVersion === 'string'
+                ? `adcp_version="${reqAdcpVersion}"`
+                : `adcp_major_version=${JSON.stringify(reqAdcpMajorRaw)}`;
+            const supportedList = [...supportedMajors].sort((a, b) => a - b).join(', ');
+            return finalize(
+              adcpError('VERSION_UNSUPPORTED', {
+                message: `Request claims ${claimed} (major ${effectiveReqMajor}); this seller supports major ${supportedList}.`,
+                details: { supported_versions: buildSupportedVersionsList(capConfig, adcpVersion) },
               })
             );
           }
