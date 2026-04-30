@@ -72,9 +72,22 @@ export async function runToolFuzz(
       stats.runs++;
     }
 
+    // Pin transport-envelope fields the buyer SDK manages itself.
+    // `applyVersionEnvelope` (PR #1073) auto-fills these on outbound
+    // requests, but the schema-driven arbitrary may overwrite them with
+    // out-of-window integers (1-99 per schema bounds). `createAdcpServer`'s
+    // single-field VERSION_UNSUPPORTED check (#1075) would then reject
+    // every probe before the handler runs, masking handler bugs the
+    // fuzzer is meant to catch. Version negotiation is exercised
+    // separately by storyboards (`error_compliance/unsupported_major_version`).
+    const probeRequest =
+      'adcp_major_version' in request || 'adcp_version' in request
+        ? { ...request, adcp_major_version: 3, adcp_version: '3.0' }
+        : request;
+
     let result;
     try {
-      result = await agent.executeTask(tool, request);
+      result = await agent.executeTask(tool, probeRequest);
     } catch (err) {
       const message = (err as Error)?.message ?? String(err);
       // SDK throws FeatureUnsupportedError when the agent's declared
