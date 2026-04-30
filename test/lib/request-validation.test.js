@@ -972,8 +972,8 @@ describe('strict request validation against v2 servers', () => {
         agent.createMediaBuy({
           account: { account_id: 'acct-1' },
           brand: { domain: 'example.com' },
-          packages: [],
-          start_time: 'immediate',
+          packages: [{ product_id: 'prod-1', budget: 1000, pricing_option_id: 'po-1' }],
+          start_time: 'asap',
           end_time: '2027-12-31T23:59:59Z',
         }),
         err => err.message?.includes('Validation failed for field')
