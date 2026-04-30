@@ -12,6 +12,31 @@ We'll build a **signals agent** that serves audience segments via the `get_signa
 - `@adcp/sdk` installed (`npm install @adcp/sdk`)
 - `@modelcontextprotocol/sdk` (installed as a dependency of `@adcp/sdk`)
 
+## Two paths
+
+`@adcp/sdk` exposes two server entry points. Pick based on the agent
+shape:
+
+- **`createAdcpServerFromPlatform`** — recommended for new agents. You
+  declare a typed `DecisioningPlatform` (per-specialism interfaces:
+  `SalesPlatform`, `CreativeBuilderPlatform`, `AudiencePlatform`,
+  `SignalsPlatform`, etc.) and the framework wires capability
+  projection, idempotency, RFC 9421 signing, async tasks, status
+  normalization, lifecycle state, multi-tenant routing, and webhook
+  auto-emit on sync mutations. Compile-time enforcement via
+  `RequiredPlatformsFor<S>` catches missing methods before runtime.
+- **`createAdcpServer`** — the lower-level handler-bag API. Still
+  fully supported (it's the substrate `createAdcpServerFromPlatform`
+  calls into) and the right choice when you want fine control over
+  individual handlers, mid-migration from a v5 codebase, or
+  custom-shaped tools the platform interface doesn't yet model.
+
+The Quick Start below uses `createAdcpServer` for a single-tool signals
+agent because that's the smallest possible shape. For multi-specialism
+production agents (sales + creative + governance + brand-rights, etc.)
+read `docs/migration-5.x-to-6.x.md` for the platform path — and the
+`skills/build-decisioning-platform/` skill for a fuller walkthrough.
+
 ## Quick Start
 
 A minimal signals agent using `createAdcpServer`:

@@ -2084,6 +2084,15 @@ function buildSignedRequestsPreTransport(
 /**
  * Create an AdCP-compliant MCP server from domain-grouped handler functions.
  *
+ * **Most NEW adopters should use `createAdcpServerFromPlatform` from
+ * `@adcp/sdk/server/decisioning` instead** — it wraps this function with
+ * compile-time specialism enforcement (`RequiredPlatformsFor<S>`),
+ * capability projection, async tasks, status normalization, multi-tenant
+ * routing, and webhook auto-emit. Reach for `createAdcpServer` directly
+ * when you need fine control over individual handlers, are mid-migration
+ * from a v5 codebase, or have custom-shaped tools the platform
+ * interface doesn't yet model. See `docs/migration-5.x-to-6.x.md`.
+ *
  * Before each handler runs, the framework:
  * 1. Validates the request against the tool's Zod schema (MCP SDK)
  * 2. Resolves the account (if the tool has an `account` field and `resolveAccount` is configured)

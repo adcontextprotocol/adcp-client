@@ -1,27 +1,28 @@
 ---
 name: build-decisioning-creative-template
-description: Build an AdCP v6.0 (preview) creative-template decisioning platform — a stateless creative transform service (TTS, watermarking, format conversion, template fill). Use ONLY when the user explicitly wants the v6.0 DecisioningPlatform shape; for v5.x handler-style creative agents, use `build-creative-agent` instead.
+description: Build an AdCP v6.0 creative-template decisioning platform — a stateless creative transform service (TTS, watermarking, format conversion, template fill). Use when the user wants the v6.0 DecisioningPlatform shape; for the lower-level handler-bag API, use `build-creative-agent` instead.
 ---
 
-# Build a Creative-Template Decisioning Platform (v6.0 preview)
+# Build a Creative-Template Decisioning Platform (v6.0)
 
 You're building a **stateless creative transform** service that fits the AdCP `creative-template` specialism: take an input creative manifest + format spec, produce an output creative manifest. No library, no review queue, no persisting state. Examples: TTS audio synthesis, image watermarking, video format conversion, template-based ad generation.
 
 ## When this skill applies
 
-- User wants a creative-template service on the **v6.0 DecisioningPlatform** surface (preview, pre-GA)
-- Specialism: `creative-template` (stateless transform; not `creative-ad-server` which is stateful, not `creative-generative` which is brief-driven)
-- SDK package: `@adcp/sdk` v5.18+ with the `decisioning` preview surface
+- User wants a creative-template service on the **v6.0 DecisioningPlatform** surface
+- Specialism: `creative-template` (stateless transform; not `creative-ad-server` which is stateful, not `creative-generative` which is brief-driven — though `creative-template` and `creative-generative` share the same `CreativeBuilderPlatform` interface; pick the specialism ID that matches your behavior)
+- SDK package: `@adcp/sdk` 6.0+
 
 **Wrong skill if:**
-- User wants v5.x handler-style API → `skills/build-creative-agent/`
+
+- User wants the lower-level handler-bag API → `skills/build-creative-agent/`
 - User wants stateful creative library/ad-server → `skills/build-creative-agent/` § creative-ad-server
-- User wants brief-to-creative generation → `skills/build-creative-agent/` § creative-generative
+- User wants brief-to-creative generation → same skill as this one (Builder covers both); declare `'creative-generative'` instead of `'creative-template'`
 - User wants to sell media inventory → `skills/build-seller-agent/`
 
 ## The whole shape (read this first)
 
-A v6.0 creative-template platform is a **single class** implementing `DecisioningPlatform` with a `creative` field of type `CreativeTemplatePlatform`. The framework dispatches each tool call to the right method.
+A v6.0 creative-template platform is a **single class** implementing `DecisioningPlatform` with a `creative` field of type `CreativeBuilderPlatform`. The framework dispatches each tool call to the right method. (`CreativeTemplatePlatform` and `CreativeGenerativePlatform` are deprecated aliases of `CreativeBuilderPlatform` for source compat.)
 
 ### Key fact: `CreativeManifest.assets` is a **keyed map**, not an array
 
@@ -49,7 +50,7 @@ import {
   requireAsset,
   type DecisioningPlatform,
   type AccountStore,
-  type CreativeTemplatePlatform,
+  type CreativeBuilderPlatform,
 } from '@adcp/sdk/server/decisioning';
 import type {
   BuildCreativeRequest,
@@ -91,8 +92,8 @@ class WatermarkPlatform implements DecisioningPlatform<WatermarkConfig, Watermar
       const id = 'account_id' in ref ? ref.account_id : 'wm_acc_default';
       return {
         id,
-        name: 'Watermark default',     // required by wire Account
-        status: 'active',              // required by wire Account
+        name: 'Watermark default', // required by wire Account
+        status: 'active', // required by wire Account
         operator: 'watermark.example.com',
         metadata: { brand_id: 'brand_default' },
         authInfo: { kind: 'api_key' },
@@ -101,7 +102,7 @@ class WatermarkPlatform implements DecisioningPlatform<WatermarkConfig, Watermar
     // upsert / list omitted — stateless platform doesn't manage accounts.
   };
 
-  creative: CreativeTemplatePlatform<WatermarkMeta> = {
+  creative: CreativeBuilderPlatform<WatermarkMeta> = {
     /** Sync transform — fast operation, return result immediately. */
     buildCreative: async (req: BuildCreativeRequest): Promise<CreativeManifest> => {
       // requireAsset throws AdcpError with field path if missing/wrong type.
@@ -224,22 +225,22 @@ return {
 
 ## The interface you implement
 
-`CreativeTemplatePlatform` has 5 method slots. **For each method-pair you implement EXACTLY ONE — sync OR `*Task`** — `validatePlatform()` will throw at construction if you provide both.
+`CreativeBuilderPlatform` has 5 method slots. **For each method-pair you implement EXACTLY ONE — sync OR `*Task`** — `validatePlatform()` will throw at construction if you provide both.
 
-| Slot | Sync variant | HITL `*Task` variant | Required? |
-|---|---|---|---|
-| build creative | `buildCreative(req, ctx)` | `buildCreativeTask(taskId, req, ctx)` | One required |
-| preview creative | `previewCreative(req, ctx)` | — (always sync) | Required |
-| sync creatives | `syncCreatives(creatives, ctx)` | `syncCreativesTask(taskId, creatives, ctx)` | One required |
+| Slot             | Sync variant                    | HITL `*Task` variant                        | Required?    |
+| ---------------- | ------------------------------- | ------------------------------------------- | ------------ |
+| build creative   | `buildCreative(req, ctx)`       | `buildCreativeTask(taskId, req, ctx)`       | One required |
+| preview creative | `previewCreative(req, ctx)`     | — (always sync)                             | Required     |
+| sync creatives   | `syncCreatives(creatives, ctx)` | `syncCreativesTask(taskId, creatives, ctx)` | One required |
 
 ### Sync vs `*Task` — pick by latency, not by preference
 
-| Your operation typically takes... | Pick |
-|---|---|
-| Under ~5 seconds (image manipulation, simple template fill) | **Sync** (`buildCreative`) |
-| 10-60 seconds (TTS, audio mixing, video transcode) | **Sync** is fine — buyer awaits in the request |
-| 1-30 minutes (heavy generation, multi-pass rendering) | **HITL** (`buildCreativeTask`) — buyer immediately gets a `submitted` envelope with `task_id` |
-| Unknown / variable | Pick sync; switch to `*Task` only if observed latency > 30s |
+| Your operation typically takes...                           | Pick                                                                                          |
+| ----------------------------------------------------------- | --------------------------------------------------------------------------------------------- |
+| Under ~5 seconds (image manipulation, simple template fill) | **Sync** (`buildCreative`)                                                                    |
+| 10-60 seconds (TTS, audio mixing, video transcode)          | **Sync** is fine — buyer awaits in the request                                                |
+| 1-30 minutes (heavy generation, multi-pass rendering)       | **HITL** (`buildCreativeTask`) — buyer immediately gets a `submitted` envelope with `task_id` |
+| Unknown / variable                                          | Pick sync; switch to `*Task` only if observed latency > 30s                                   |
 
 **Critical**: when you pick HITL (`*Task`), the buyer cannot poll task status over the wire today (`tasks/get` integration is post-6.0-rc.1). The framework records terminal state in its task registry, but exposing it to the buyer is preview-incomplete. Default to sync unless your operation truly cannot be awaited.
 
@@ -261,7 +262,7 @@ if (asset?.asset_type === 'audio') {
 
 **Field names matter** — `TextAsset.content` (not `.text`), `ImageAsset.url`, `AudioAsset.url`, `VideoAsset.url`, `HTMLAsset.content`, `URLAsset.url`. Use IntelliSense after the discriminator narrows; don't guess.
 
-Likewise when *returning* a manifest, type the asset value to its concrete shape and TypeScript will validate it against the manifest's union:
+Likewise when _returning_ a manifest, type the asset value to its concrete shape and TypeScript will validate it against the manifest's union:
 
 ```ts
 const audio: AudioAsset = {
@@ -308,7 +309,7 @@ Both helpers preserve the discriminator narrowing — `script.content` types cor
 Every method either returns its success type OR throws `AdcpError` for structured rejection. Generic thrown errors map to `SERVICE_UNAVAILABLE` with `recovery: 'transient'`.
 
 ```ts
-buildCreative: async (req) => {
+buildCreative: async req => {
   if (!req.format_id?.id?.startsWith('image_')) {
     throw new AdcpError('UNSUPPORTED_FEATURE', {
       recovery: 'terminal',
@@ -325,10 +326,11 @@ buildCreative: async (req) => {
     });
   }
   // ... happy path
-}
+};
 ```
 
 `AdcpError` constructor:
+
 ```ts
 new AdcpError(code: ErrorCode | string, options: {
   recovery: 'transient' | 'correctable' | 'terminal';   // REQUIRED
@@ -349,7 +351,7 @@ The framework consumes `idempotency_key` on every mutating request before dispat
 What you SHOULD do: pass `req.idempotency_key` to your upstream API's idempotency parameter when you call into GAM / Snap / Meta / your internal services. That makes the dedupe story end-to-end — if the AdCP layer dedupes a request, your upstream platform won't double-charge a CPM either.
 
 ```ts
-buildCreative: async (req) => {
+buildCreative: async req => {
   // Framework already deduped for the (idempotency_key, account) pair.
   // Thread the same key into the upstream call so YOUR platform's API
   // also dedupes if the same key arrives twice (defensive).
@@ -381,6 +383,7 @@ Throw `AccountNotFoundError` (importable from `@adcp/sdk/server/decisioning`) wh
 ## Serving the agent
 
 <!-- skill-example-skip: continuation of the watermark example above; re-uses identifiers defined there -->
+
 ```ts
 import { serve } from '@adcp/sdk/server';
 
@@ -398,6 +401,7 @@ serve(() => server, {
 ```
 
 `createAdcpServerFromPlatform`:
+
 - Calls `validatePlatform()` — throws if you advertise a specialism but don't implement it, or define both halves of a method-pair
 - Wraps each method with `AdcpError`-catch + `submitted`-envelope projection for HITL
 - Returns a `DecisioningAdcpServer` (extends `AdcpServer`) with `getTaskState(taskId)` + `awaitTask(taskId)` for HITL inspection
@@ -408,15 +412,17 @@ serve(() => server, {
 
 ```ts
 capabilities = {
-  specialisms: ['creative-template'] as const,    // single literal in the const tuple
-  creative_agents: [],                             // not used by template platforms
+  specialisms: ['creative-template'] as const, // single literal in the const tuple
+  creative_agents: [], // not used by template platforms
   channels: ['display', 'video', 'audio'] as const,
   pricingModels: ['cpm'] as const,
-  config: { /* your platform-specific config */ } satisfies YourConfig,
+  config: {
+    /* your platform-specific config */
+  } satisfies YourConfig,
 };
 ```
 
-The `as const` is load-bearing — it preserves the literal types so `RequiredPlatformsFor<S>` can compile-check that you provide `creative: CreativeTemplatePlatform`.
+The `as const` is load-bearing — it preserves the literal types so `RequiredPlatformsFor<S>` can compile-check that you provide `creative: CreativeBuilderPlatform`.
 
 ## Scaffolding — minimum viable project
 
@@ -431,6 +437,7 @@ my-creative-template-agent/
 ```
 
 `package.json`:
+
 ```json
 {
   "name": "my-creative-template-agent",
@@ -509,7 +516,7 @@ import {
   type DecisioningPlatform,
   type AccountStore,
   type Account,
-  type CreativeTemplatePlatform,
+  type CreativeBuilderPlatform,
   type CreativeReviewResult,
   type RequestContext,
   type ErrorCode,
@@ -541,7 +548,7 @@ import { serve } from '@adcp/sdk/server';
 ## When you're stuck
 
 - `validatePlatform()` threw at construction → check the diagnostic; usually you advertised a specialism without implementing the matching field, or defined both sync and `*Task` for the same pair.
-- TS compiler complains about `RequiredPlatformsFor<S>` constraint → you claimed `creative-template` but your `creative:` field doesn't match `CreativeTemplatePlatform`. Re-check the method signatures.
+- TS compiler complains about `RequiredPlatformsFor<S>` constraint → you claimed `creative-template` but your `creative:` field doesn't match `CreativeBuilderPlatform`. Re-check the method signatures.
 - Wire request doesn't reach your method → check the framework's `validation: 'strict'` config; the request may be failing schema validation before dispatch. Set `validation: { requests: 'off' }` temporarily to diagnose.
 
 For fuller protocol context (request/response shapes, AdCP error vocabulary): read `docs/llms.txt`. For the v6.0 design rationale: `docs/proposals/decisioning-platform-v2-hitl-split.md`.

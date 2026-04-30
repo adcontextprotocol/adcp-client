@@ -1,9 +1,16 @@
-# Migrating from `@adcp/client` 5.x to 6.0 (preview)
+# Migrating from `@adcp/sdk` 5.x to 6.0
 
-> **Status: Preview.** v6.0 ships behind `@adcp/client/server/decisioning`.
-> The legacy v5.x handler-style API (`createAdcpServer({ mediaBuy: { ... } })`)
-> remains the production path until v6.0 GA. The `mergeSeam` mode lets you
-> migrate one specialism at a time without rewriting your whole agent.
+> **Status: GA.** v6.0 ships under `@adcp/sdk/server/decisioning` —
+> `createAdcpServerFromPlatform` + `DecisioningPlatform`. The v5.x
+> handler-style API (`createAdcpServer({ mediaBuy: { ... } })`) is the
+> substrate the v6 framework calls into and remains fully supported;
+> adopters who want finer control over individual handlers can keep
+> using it. NEW agents should reach for `createAdcpServerFromPlatform`
+> first — it's where compile-time specialism enforcement, capability
+> projection, idempotency, signing, async tasks, and status
+> normalization come pre-wired. The `mergeSeam` mode lets in-flight
+> migrators move one specialism at a time without rewriting the whole
+> agent.
 
 ## Why migrate?
 
@@ -46,7 +53,7 @@ handlers WIN per-key**; adopter handlers fill gaps for tools the v6
 platform doesn't yet model. Migrate one specialism at a time.
 
 ```ts
-import { createAdcpServerFromPlatform } from '@adcp/client/server/decisioning';
+import { createAdcpServerFromPlatform } from '@adcp/sdk/server/decisioning';
 
 createAdcpServerFromPlatform(myPlatform, {
   name: 'My Ad Network', version: '1.0.0',
@@ -87,7 +94,7 @@ v6 specialisms:
 | `mediaBuy.{getProducts, createMediaBuy, updateMediaBuy, syncCreatives, getMediaBuyDelivery}` | `sales-non-guaranteed` / `sales-guaranteed` / `sales-broadcast-tv` / etc. | `sales: SalesPlatform` |
 | `mediaBuy.{getMediaBuys, listCreativeFormats, listCreatives, providePerformanceFeedback}` | (same `sales-*`) | `sales: SalesPlatform` (optional methods) |
 | `mediaBuy.{syncCatalogs, logEvent, syncEventSources}` | `sales-catalog-driven` | `sales: SalesPlatform` (retail-media optional methods) |
-| `creative.{buildCreative, previewCreative, syncCreatives}` | `creative-template` / `creative-generative` / `creative-ad-server` | `creative: CreativeXxxPlatform` |
+| `creative.{buildCreative, previewCreative, syncCreatives}` | `creative-template` / `creative-generative` / `creative-ad-server` | `creative: CreativeBuilderPlatform` (template+generative) or `CreativeAdServerPlatform` |
 | `eventTracking.syncAudiences` | `audience-sync` | `audiences: AudiencePlatform` |
 | `signals.{getSignals, activateSignal}` | `signal-marketplace` / `signal-owned` | `signals: SignalsPlatform` |
 | `governance.{checkGovernance, syncPlans, reportPlanOutcome, getPlanAuditLogs}` | `governance-spend-authority` / `governance-delivery-monitor` | `campaignGovernance: CampaignGovernancePlatform` |
@@ -215,7 +222,7 @@ In-memory task registry refuses to construct outside `NODE_ENV=test/development`
 (production safety). For HITL-eligible production deployments:
 
 ```ts
-import { createPostgresTaskRegistry, getDecisioningTaskRegistryMigration } from '@adcp/client/server/decisioning';
+import { createPostgresTaskRegistry, getDecisioningTaskRegistryMigration } from '@adcp/sdk/server/decisioning';
 
 await pool.query(getDecisioningTaskRegistryMigration());
 
@@ -281,6 +288,29 @@ createAdcpServerFromPlatform(platform, {
   `fn`'s return value becomes the terminal artifact.
 - **Postgres registry caps `result` / `error` JSON at 4MB** — return
   per-resource references for large payloads, not the full body.
+- **`autoEmitCompletionWebhooks` is on by default (v6.0).** Sync-success
+  arms of `create_media_buy` / `update_media_buy` / `sync_creatives`
+  auto-fire a completion webhook when the buyer supplied
+  `push_notification_config.url`. Fire-and-forget — does not block the
+  sync response. Adopters who emit webhooks manually inside their
+  handlers (idempotency duplication concern) pass
+  `autoEmitCompletionWebhooks: false` on `createAdcpServerFromPlatform`
+  to suppress.
+- **`allowPrivateWebhookUrls` for sandbox testing.** The framework
+  rejects loopback / RFC 1918 / link-local destinations on
+  `push_notification_config.url` by default — accepting them in
+  production is a SSRF / cloud-metadata exfiltration path. Sandbox /
+  local-testing flows that bind webhook receivers to `127.0.0.1`
+  pass `allowPrivateWebhookUrls: true`. Construction emits a one-shot
+  footgun warn when this is set in production.
+- **`buildCreative` discriminated return.** Adopters can return
+  `CreativeManifest` (single, no metadata), `CreativeManifest[]`
+  (multi-format, no metadata), or a fully-shaped
+  `BuildCreativeSuccess` / `BuildCreativeMultiSuccess` envelope (with
+  `sandbox` / `expires_at` / `preview`). Route on
+  `req.target_format_ids` (multi) vs `req.target_format_id` (single)
+  and return the matching arm. Returning the wrong arm fails wire
+  schema validation.
 - **`npm link` and `undici` peer drift.** The SDK depends on
   `undici@^6.25.0`. Adopters using `npm link` (or `pnpm link`) to point
   at a locally checked-out SDK during migration may find Node walks up
