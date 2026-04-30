@@ -290,6 +290,17 @@ export class TaskExecutor {
       onActivity?: (activity: Activity) => void | Promise<void>;
       /** Governance configuration for buyer-side campaign governance */
       governance?: GovernanceConfig;
+      /**
+       * AdCP version this executor speaks. Selects which schema bundle
+       * `validateIncomingResponse` / `validateOutgoingRequest` validate
+       * against, and which `adcp_major_version` value goes on the wire.
+       * Defaults to the SDK-pinned `ADCP_VERSION` when omitted.
+       *
+       * Plumbed from `SingleAgentClient.resolvedAdcpVersion` so the
+       * client/agent's `getAdcpVersion()` value is the single source of
+       * truth for both validation and wire-level major.
+       */
+      adcpVersion?: string;
     } = {}
   ) {
     this.responseParser = new ProtocolResponseParser();
@@ -297,7 +308,7 @@ export class TaskExecutor {
       this.conversationStorage = new Map();
     }
     if (config.governance) {
-      this.governanceMiddleware = new GovernanceMiddleware(config.governance, config.onActivity);
+      this.governanceMiddleware = new GovernanceMiddleware(config.governance, config.onActivity, config.adcpVersion);
     }
     const modes = resolveValidationModes(config.validation);
     this.requestValidationMode = modes.requests;
@@ -514,23 +525,26 @@ export class TaskExecutor {
       };
 
       // Pre-send schema check — throws in strict, logs in warn, skips in off.
-      validateOutgoingRequest(taskName, effectiveParams, this.requestValidationMode, debugLogs);
+      validateOutgoingRequest(
+        taskName,
+        effectiveParams,
+        this.requestValidationMode,
+        debugLogs,
+        this.config.adcpVersion
+      );
 
       // Send initial request and get streaming response with webhook URL.
       // Pass the caller's A2A session ids (contextId for conversation binding,
       // taskId for resuming a non-terminal server-side task). The adapter
       // drops these on the wire for MCP (no session concept there).
-      const response = await ProtocolClient.callTool(
-        agent,
-        taskName,
-        effectiveParams,
+      const response = await ProtocolClient.callTool(agent, taskName, effectiveParams, {
         debugLogs,
         webhookUrl,
-        this.config.webhookSecret,
-        undefined,
+        webhookSecret: this.config.webhookSecret,
         serverVersion,
-        { contextId: options.contextId, taskId: options.taskId }
-      );
+        session: { contextId: options.contextId, taskId: options.taskId },
+        adcpVersion: this.config.adcpVersion,
+      });
 
       // Emit protocol_response activity
       const respStatus = this.responseParser.getStatus(response) as string | undefined;
@@ -1269,11 +1283,10 @@ export class TaskExecutor {
       agent,
       'tasks/list',
       {},
-      [],
-      undefined,
-      undefined,
-      undefined,
-      this.lastKnownServerVersion
+      {
+        serverVersion: this.lastKnownServerVersion,
+        adcpVersion: this.config.adcpVersion,
+      }
     )) as Record<string, unknown>;
     return (response.tasks as TaskInfo[]) || [];
   }
@@ -1326,11 +1339,10 @@ export class TaskExecutor {
       agent,
       'tasks/get',
       { task_id: taskId, include_result: true },
-      [],
-      undefined,
-      undefined,
-      undefined,
-      this.lastKnownServerVersion
+      {
+        serverVersion: this.lastKnownServerVersion,
+        adcpVersion: this.config.adcpVersion,
+      }
     )) as Record<string, unknown>;
     // We don't run `extractResponseData` here: that helper's
     // generic AdCP-error-arm detection treats any top-level
@@ -1501,11 +1513,11 @@ export class TaskExecutor {
         contextId,
         input,
       },
-      debugLogs,
-      undefined,
-      undefined,
-      undefined,
-      this.lastKnownServerVersion
+      {
+        debugLogs,
+        serverVersion: this.lastKnownServerVersion,
+        adcpVersion: this.config.adcpVersion,
+      }
     );
 
     // Add response message
@@ -1796,7 +1808,7 @@ export class TaskExecutor {
 
     try {
       const normalizedResponse = this.normalizeResponseForValidation(response, taskName);
-      const outcome = validateIncomingResponse(taskName, normalizedResponse, mode, debugLogs);
+      const outcome = validateIncomingResponse(taskName, normalizedResponse, mode, debugLogs, this.config.adcpVersion);
       if (outcome.valid) return { valid: true, errors: [] };
 
       const errorStrings = outcome.issues.map(i => `${i.pointer}: ${i.message}`);

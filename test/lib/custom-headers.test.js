@@ -225,7 +225,7 @@ test('AgentConfig.headers: ProtocolClient passes agent.headers to callMCPTool', 
   };
 
   try {
-    await ProtocolClient.callTool(agent, 'get_products', {}, debugLogs);
+    await ProtocolClient.callTool(agent, 'get_products', {}, { debugLogs });
   } catch (_err) {
     // Expected: network failure
   }

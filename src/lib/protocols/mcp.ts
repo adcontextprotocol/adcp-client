@@ -69,6 +69,30 @@ function trackStreamableHTTPUrl(url: string): void {
   }
 }
 
+/**
+ * Returns true for loopback and RFC-1918 private addresses where SSE fallback
+ * is counterproductive: these agents are always StreamableHTTP-capable and will
+ * return 405 on the SSE GET probe, masking the real StreamableHTTP failure.
+ * Covers IPv4 loopback/private ranges, IPv6 loopback/link-local, IPv4-mapped
+ * IPv6 (::ffff:x.y.z.w), and unspecified addresses (0.0.0.0 / ::).
+ */
+function isPrivateAddress(url: URL): boolean {
+  // WHATWG URL strips brackets from IPv6 literals; hostname is already bare
+  const host = url.hostname.toLowerCase();
+  if (host === 'localhost' || host === '0.0.0.0' || host === '::' || host === '::1') return true;
+  // Unwrap IPv4-mapped IPv6 (::ffff:x.y.z.w) so the IPv4-range checks below apply to both
+  const bare = host.startsWith('::ffff:') ? host.slice(7) : host;
+  // IPv4 loopback
+  if (/^127\./.test(bare)) return true;
+  // RFC-1918 private ranges
+  if (/^10\./.test(bare)) return true;
+  if (/^192\.168\./.test(bare)) return true;
+  if (/^172\.(1[6-9]|2[0-9]|3[01])\./.test(bare)) return true;
+  // IPv6 link-local (not affected by ::ffff: stripping)
+  if (/^fe80:/i.test(host)) return true;
+  return false;
+}
+
 function connectionCacheKey(agentUrl: string, authToken?: string, signingCacheKey?: string): string {
   const base = authToken
     ? `${agentUrl}::${createHash('sha256').update(authToken).digest('hex').slice(0, 16)}`
@@ -328,9 +352,11 @@ async function connectMCPWithFallbackImpl(
     }
 
     const errorMessage = error instanceof Error ? error.message : String(error);
+    const errorClass = error instanceof Error ? error.constructor.name : typeof error;
+    const httpStatus = error instanceof StreamableHTTPError ? ` [HTTP ${error.code}]` : '';
     debugLogs.push({
       type: 'error',
-      message: `MCP: StreamableHTTP failed for ${label}: ${errorMessage}`,
+      message: `MCP: StreamableHTTP failed for ${label}${httpStatus} (${errorClass}): ${errorMessage}`,
       timestamp: new Date().toISOString(),
       error,
     });
@@ -383,9 +409,21 @@ async function connectMCPWithFallbackImpl(
       throw error;
     }
 
-    // Fall back to SSE
+    // Private/loopback addresses always support StreamableHTTP — SSE would return
+    // 405 on GET /mcp, masking the actual failure and producing a misleading error.
+    // Surface the StreamableHTTP failure directly so operators can diagnose it.
+    if (isPrivateAddress(url)) {
+      debugLogs.push({
+        type: 'warning',
+        message: `MCP: SSE fallback skipped for private/loopback address ${url} — StreamableHTTP failure is the root cause for ${label}`,
+        timestamp: new Date().toISOString(),
+      });
+      throw error;
+    }
+
+    // Fall back to SSE (public addresses only)
     debugLogs.push({
-      type: 'info',
+      type: 'warning',
       message: `MCP: Falling back to SSE transport for ${label}`,
       timestamp: new Date().toISOString(),
     });

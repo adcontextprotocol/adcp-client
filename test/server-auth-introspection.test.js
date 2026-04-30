@@ -1,4 +1,4 @@
-const { describe, it, before, after, beforeEach } = require('node:test');
+const { describe, it, before, after, beforeEach, afterEach } = require('node:test');
 const assert = require('node:assert');
 const http = require('http');
 
@@ -105,7 +105,12 @@ describe('verifyIntrospection — authentication flow', () => {
     });
   });
 
-  after(() => upstream && upstream.server.close());
+  afterEach(async () => {
+    if (upstream?.server) {
+      upstream.server.closeAllConnections?.();
+      await new Promise(r => upstream.server.close(r));
+    }
+  });
 
   it('returns null when no bearer header is present', async () => {
     const auth = verifyIntrospection({ introspectionUrl: upstream.url, clientId: 'c', clientSecret: 's' });
@@ -218,7 +223,10 @@ describe('verifyIntrospection — audience binding', () => {
     });
   });
 
-  after(() => upstream.server.close());
+  after(async () => {
+    upstream.server.closeAllConnections?.();
+    await new Promise(r => upstream.server.close(r));
+  });
 
   it('accepts when aud claim matches the configured audience (string)', async () => {
     audienceResponse = { active: true, sub: 'u', aud: 'https://seller.example.com/mcp' };
@@ -296,7 +304,8 @@ describe('verifyIntrospection — error handling', () => {
         }
       );
     } finally {
-      upstream.server.close();
+      upstream.server.closeAllConnections?.();
+      await new Promise(r => upstream.server.close(r));
     }
   });
 
@@ -312,7 +321,8 @@ describe('verifyIntrospection — error handling', () => {
         err => err instanceof AuthError
       );
     } finally {
-      upstream.server.close();
+      upstream.server.closeAllConnections?.();
+      await new Promise(r => upstream.server.close(r));
     }
   });
 
@@ -328,7 +338,8 @@ describe('verifyIntrospection — error handling', () => {
         err => err instanceof AuthError
       );
     } finally {
-      upstream.server.close();
+      upstream.server.closeAllConnections?.();
+      await new Promise(r => upstream.server.close(r));
     }
   });
 
@@ -374,7 +385,10 @@ describe('verifyIntrospection — cache', () => {
     });
   });
 
-  after(() => upstream.server.close());
+  after(async () => {
+    upstream.server.closeAllConnections?.();
+    await new Promise(r => upstream.server.close(r));
+  });
 
   beforeEach(() => {
     callCount = 0;

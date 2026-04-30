@@ -93,10 +93,21 @@ const prePushHook = `#!/bin/bash
 echo "🔍 Running pre-push validation..."
 
 # Only run essential fast checks locally:
-# 1. TypeScript compilation (catches syntax/type errors)
-# 2. Build (ensures code compiles)
-# 3. Skip schema sync (too slow, CI will catch issues)
-# 4. Skip tests (too slow, CI will catch issues)
+# 1. Format check (prettier, ~1s)
+# 2. TypeScript compilation (catches syntax/type errors)
+# 3. Build (ensures code compiles)
+# 4. Skip schema sync (too slow, CI will catch issues)
+# 5. Skip tests (too slow, CI will catch issues)
+
+echo "🎨 Checking formatting..."
+npm run format:check
+if [ $? -ne 0 ]; then
+  echo ""
+  echo "❌ Prettier formatting drift detected!"
+  echo "🔧 Run: npm run format"
+  echo ""
+  exit 1
+fi
 
 echo "📝 Checking TypeScript types..."
 npm run typecheck
@@ -119,7 +130,7 @@ if [ $? -ne 0 ]; then
   exit 1
 fi
 
-echo "✅ Pre-push validation passed! (~5s)"
+echo "✅ Pre-push validation passed! (~6s)"
 echo "💡 Full validation (tests, schemas) will run in GitHub Actions CI"
 `;
 
@@ -178,7 +189,11 @@ function installHooks() {
   if (fs.existsSync(prePushPath)) {
     const existingContent = fs.readFileSync(prePushPath, 'utf8');
     // Update if it's the old slow version or doesn't have our fast hook
-    if (existingContent.includes('npm run ci:pre-push') || !existingContent.includes('Fast validation')) {
+    if (
+      existingContent.includes('npm run ci:pre-push') ||
+      !existingContent.includes('Fast validation') ||
+      !existingContent.includes('format:check')
+    ) {
       fs.writeFileSync(prePushPath, prePushHook);
       fs.chmodSync(prePushPath, 0o755);
       installed++;
@@ -199,14 +214,14 @@ function installHooks() {
   log('', 'reset');
   log('🪝 Installed hooks:', 'blue');
   log('  • commit-msg - Validates commit message format (conventional commits)', 'reset');
-  log('  • pre-push   - Fast validation: typecheck + build (~5s)', 'reset');
+  log('  • pre-push   - Fast validation: format + typecheck + build (~6s)', 'reset');
   log('', 'reset');
-  log('⚡ What changed: Pre-push now runs FAST checks only (~5s)', 'green');
+  log('⚡ What changed: Pre-push now runs FAST checks only (~6s)', 'green');
   log('   Full tests, schema validation run in GitHub Actions CI', 'reset');
   log('', 'reset');
   log('💡 What this prevents:', 'blue');
   log('  • Commit messages that fail CI commitlint checks', 'reset');
-  log('  • Pushing code with TypeScript errors or build failures', 'reset');
+  log('  • Pushing code with prettier formatting drift, TypeScript errors, or build failures', 'reset');
   log('  • Note: Tests/schemas validated in CI (too slow for local)', 'reset');
 }
 

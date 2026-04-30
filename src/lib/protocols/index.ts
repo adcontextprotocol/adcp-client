@@ -44,38 +44,139 @@ import { is401Error } from '../errors';
 import { isLikelyPrivateUrl } from '../net';
 import { validateAgentUrl } from '../validation';
 import { withSpan } from '../observability/tracing';
-import { ADCP_MAJOR_VERSION } from '../version';
+import { ADCP_MAJOR_VERSION, ADCP_VERSION, parseAdcpMajorVersion } from '../version';
+import { ConfigurationError } from '../errors';
+import { resolveBundleKey } from '../validation/schema-loader';
 import { buildAgentSigningContext, CAPABILITY_OP, ensureCapabilityLoaded } from '../signing/client';
+
+/**
+ * Derive the wire-level `adcp_major_version` integer from a caller-supplied
+ * pin. Returns the SDK default when no pin is provided; throws on a pin
+ * that doesn't parse so misuse surfaces at the factory boundary instead
+ * of silently emitting the SDK's major.
+ *
+ * Throws `ConfigurationError` (not a plain `Error`) so a typo'd pin
+ * surfaces with the same error class as the construction-time gate in
+ * `resolveAdcpVersion` — one shape for all pin-misuse paths.
+ */
+function resolveWireMajor(adcpVersion: string | undefined): number {
+  if (adcpVersion === undefined) return ADCP_MAJOR_VERSION;
+  const parsed = parseAdcpMajorVersion(adcpVersion);
+  if (!Number.isFinite(parsed)) {
+    throw new ConfigurationError(
+      `adcpVersion ${JSON.stringify(adcpVersion)} is not a valid AdCP version. ` +
+        `Expected a semver string (e.g. '3.0.1', '3.1.0-beta.1') or a legacy alias (e.g. 'v3').`,
+      'adcpVersion'
+    );
+  }
+  return parsed;
+}
+
+/**
+ * Returns true when the AdCP release that `bundleKey` identifies declares the
+ * top-level `adcp_version` envelope field. The field landed in AdCP 3.1 per
+ * spec PR `adcontextprotocol/adcp#3493` — 3.0 (any patch / prerelease) does
+ * not carry it; 3.1+ does. Used to gate dual-emit on the wire so a 3.0-pinned
+ * client doesn't emit a field its target schema doesn't define.
+ */
+export function bundleSupportsAdcpVersionField(bundleKey: string): boolean {
+  const major = parseAdcpMajorVersion(bundleKey);
+  if (!Number.isFinite(major)) return false;
+  if (major < 3) return false;
+  if (major > 3) return true;
+  // Major 3 — only 3.1+ has the field. Bundle key shape is normalized by
+  // `resolveBundleKey`: `'3.0'` / `'3.1'` for stable; `'3.0.0-beta.1'` /
+  // `'3.1.0-beta.1'` for prereleases. Match the minor.
+  const minorMatch = bundleKey.match(/^\d+\.(\d+)/);
+  if (!minorMatch) return false;
+  return parseInt(minorMatch[1]!, 10) >= 1;
+}
+
+/**
+ * Build the wire-level version envelope to merge into outgoing request args.
+ *
+ * Per AdCP 3.1 (spec PR `adcontextprotocol/adcp#3493`), 3.1+ requests carry
+ * BOTH the integer `adcp_major_version` (deprecated through 3.x, removed in
+ * 4.0) AND the release-precision string `adcp_version`. 3.0 schemas don't
+ * define the string field, so a 3.0-pinned client emits the integer only —
+ * matches the 3.0 spec exactly.
+ *
+ * Release-precision string follows `resolveBundleKey`: `'3.0'`, `'3.1'`,
+ * `'3.1.0-beta.1'` (prereleases stay verbatim — spec rule: pre-release pins
+ * matched exactly).
+ *
+ * Returns `{}` for v2 callers (predates the major-version field entirely).
+ */
+function buildVersionEnvelope(
+  adcpVersion: string | undefined,
+  serverVersion: 'v2' | 'v3' | undefined
+): Record<string, unknown> {
+  if (serverVersion === 'v2') return {};
+  const wireMajor = resolveWireMajor(adcpVersion);
+  const bundleKey = resolveBundleKey(adcpVersion ?? ADCP_VERSION);
+  if (!bundleSupportsAdcpVersionField(bundleKey)) {
+    return { adcp_major_version: wireMajor };
+  }
+  return { adcp_major_version: wireMajor, adcp_version: bundleKey };
+}
+
+/**
+ * Options for {@link ProtocolClient.callTool}. All fields are optional.
+ *
+ * `webhookUrl` / `webhookSecret` / `webhookToken` are for ASYNC TASK STATUS
+ * notifications (push_notification_config). For reporting webhooks
+ * (reporting_webhook), include them directly in `args` — they stay in skill
+ * parameters and are sent verbatim to the agent.
+ */
+export interface CallToolOptions {
+  /** Debug log array. Mutated in place by the protocol layer. */
+  debugLogs?: DebugLogEntry[];
+  /** URL for async task status notifications. */
+  webhookUrl?: string;
+  /** HMAC-SHA256 secret for push_notification_config authentication. */
+  webhookSecret?: string;
+  /** Bearer token for push_notification_config validation. */
+  webhookToken?: string;
+  /** Pinned protocol generation when the agent advertises both v2 and v3. */
+  serverVersion?: 'v2' | 'v3';
+  /** A2A session continuity (contextId carries conversation, taskId resumes a task). */
+  session?: { contextId?: string; taskId?: string };
+  /**
+   * AdCP version pin from the calling client/server instance. Sets the
+   * wire-level `adcp_major_version` field per-call instead of from the
+   * SDK-pinned `ADCP_MAJOR_VERSION` constant. Default falls back to the
+   * constant so call sites that don't plumb a per-instance version keep
+   * their existing behavior.
+   */
+  adcpVersion?: string;
+}
 
 /**
  * Universal protocol client - automatically routes to the correct protocol implementation
  */
 export class ProtocolClient {
   /**
-   * Call a tool on an agent using the appropriate protocol
+   * Call a tool on an agent using the appropriate protocol.
    *
    * @param agent - Agent configuration
    * @param toolName - Name of the tool/skill to call
    * @param args - Tool arguments (includes reporting_webhook if needed - NOT removed)
-   * @param debugLogs - Debug log array
-   * @param webhookUrl - Optional: URL for async task status notifications (push_notification_config)
-   * @param webhookSecret - Optional: Secret for push_notification_config authentication
-   * @param webhookToken - Optional: Token for push_notification_config validation
-   *
-   * IMPORTANT: webhookUrl/Secret/Token are for ASYNC TASK STATUS (push_notification_config).
-   * For reporting webhooks (reporting_webhook), include them directly in args - they stay in skill parameters.
+   * @param options - Optional call-level configuration. See {@link CallToolOptions}.
    */
   static async callTool(
     agent: AgentConfig,
     toolName: string,
     args: Record<string, unknown>,
-    debugLogs: DebugLogEntry[] = [],
-    webhookUrl?: string,
-    webhookSecret?: string,
-    webhookToken?: string,
-    serverVersion?: 'v2' | 'v3',
-    session?: { contextId?: string; taskId?: string }
+    options: CallToolOptions = {}
   ): Promise<unknown> {
+    const { debugLogs = [], webhookUrl, webhookSecret, webhookToken, serverVersion, session, adcpVersion } = options;
+    // Per-instance version envelope. Throws on unparseable pins via
+    // `resolveWireMajor`; construction-time `resolveAdcpVersion` is the
+    // primary gate but this is the failsafe for callers reaching
+    // `ProtocolClient.callTool` directly (test harnesses, the in-process
+    // MCP path). Returns `{ adcp_major_version }` for 3.0 pins and
+    // `{ adcp_major_version, adcp_version }` for 3.1+ pins.
+    const versionEnvelope = buildVersionEnvelope(adcpVersion, serverVersion);
     return withSpan(
       `adcp.${agent.protocol}.call_tool`,
       {
@@ -90,7 +191,15 @@ export class ProtocolClient {
         // still apply (they run in SingleAgentClient above this call). We skip
         // URL validation, OAuth refresh, and signing — none apply in-process.
         if (agent.protocol === 'mcp' && agent._inProcessMcpClient) {
-          const inProcArgs = serverVersion === 'v2' ? args : { adcp_major_version: ADCP_MAJOR_VERSION, ...args };
+          // Spread `args` first, envelope second — the SDK's per-instance
+          // pin is authoritative for the wire envelope. A caller that
+          // accidentally passed `adcp_major_version` or `adcp_version` in
+          // `args` (stale config, hand-rolled call site) gets their value
+          // overridden by the version envelope. Without this, a stale
+          // integer in caller args would silently contradict the pin and
+          // the server's field-disagreement check (single-field override)
+          // wouldn't catch it.
+          const inProcArgs = { ...args, ...versionEnvelope };
           return callMCPToolWithClient(agent._inProcessMcpClient, toolName, inProcArgs, debugLogs);
         }
 
@@ -129,22 +238,23 @@ export class ProtocolClient {
         const signingContext = buildAgentSigningContext(agent);
         if (signingContext && toolName !== CAPABILITY_OP) {
           await ensureCapabilityLoaded(agent, signingContext, primeArgs =>
-            ProtocolClient.callTool(
-              agent,
-              CAPABILITY_OP,
-              primeArgs,
+            ProtocolClient.callTool(agent, CAPABILITY_OP, primeArgs, {
               debugLogs,
-              undefined,
-              undefined,
-              undefined,
-              serverVersion
-            )
+              serverVersion,
+              adcpVersion,
+            })
           );
         }
 
-        // Declare AdCP major version on every request so sellers can validate compatibility.
-        // Skip for v2 servers — they don't recognise the field and strict-schema agents reject it.
-        const argsWithVersion = serverVersion === 'v2' ? args : { adcp_major_version: ADCP_MAJOR_VERSION, ...args };
+        // Inject the version envelope on every request so sellers can validate
+        // compatibility. Skip for v2 servers — they don't recognise the
+        // version fields and strict-schema agents reject them. The envelope
+        // shape is per-pin: 3.0 pins get the integer `adcp_major_version`
+        // alone; 3.1+ pins get both that and the release-precision string
+        // `adcp_version` (`'3.1'` / `'3.1.0-beta.1'`) per spec PR
+        // `adcontextprotocol/adcp#3493`. Envelope spread last so the SDK pin
+        // overrides any stale caller-supplied version key in `args`.
+        const argsWithVersion = { ...args, ...versionEnvelope };
 
         // Build push_notification_config for ASYNC TASK STATUS notifications
         // (NOT for reporting_webhook - that stays in args)
@@ -324,33 +434,29 @@ export const createMCPClient = (
   agentUrl: string,
   authToken?: string,
   headers?: Record<string, string>,
-  serverVersion?: 'v2' | 'v3'
-) => ({
-  callTool: (toolName: string, args: Record<string, unknown>, debugLogs?: DebugLogEntry[]) =>
-    callMCPToolWithTasks(
-      agentUrl,
-      toolName,
-      serverVersion === 'v2' ? args : { adcp_major_version: ADCP_MAJOR_VERSION, ...args },
-      authToken,
-      debugLogs,
-      headers
-    ),
-});
+  serverVersion?: 'v2' | 'v3',
+  adcpVersion?: string
+) => {
+  // Validate the pin at factory time so a typo surfaces here rather than at
+  // first call. `buildVersionEnvelope` throws via `resolveWireMajor` on bad
+  // input — call it once to surface, then close over the envelope.
+  const versionEnvelope = buildVersionEnvelope(adcpVersion, serverVersion);
+  return {
+    callTool: (toolName: string, args: Record<string, unknown>, debugLogs?: DebugLogEntry[]) =>
+      callMCPToolWithTasks(agentUrl, toolName, { ...args, ...versionEnvelope }, authToken, debugLogs, headers),
+  };
+};
 
 export const createA2AClient = (
   agentUrl: string,
   authToken?: string,
   headers?: Record<string, string>,
-  serverVersion?: 'v2' | 'v3'
-) => ({
-  callTool: (toolName: string, parameters: Record<string, unknown>, debugLogs?: DebugLogEntry[]) =>
-    callA2ATool(
-      agentUrl,
-      toolName,
-      serverVersion === 'v2' ? parameters : { adcp_major_version: ADCP_MAJOR_VERSION, ...parameters },
-      authToken,
-      debugLogs,
-      undefined,
-      headers
-    ),
-});
+  serverVersion?: 'v2' | 'v3',
+  adcpVersion?: string
+) => {
+  const versionEnvelope = buildVersionEnvelope(adcpVersion, serverVersion);
+  return {
+    callTool: (toolName: string, parameters: Record<string, unknown>, debugLogs?: DebugLogEntry[]) =>
+      callA2ATool(agentUrl, toolName, { ...parameters, ...versionEnvelope }, authToken, debugLogs, undefined, headers),
+  };
+};

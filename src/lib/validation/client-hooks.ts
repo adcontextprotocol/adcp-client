@@ -63,15 +63,20 @@ function logWarning(debugLogs: DebugLogEntry[] | undefined, taskName: string, ou
  * - `off`: no-op (true).
  * - `warn`: log to debug + continue (true).
  * - `strict`: throw `ValidationError` with JSON Pointer to the first bad field.
+ *
+ * `version` selects which AdCP version's schema bundle to validate against;
+ * defaults to the SDK-pinned `ADCP_VERSION`. Pass the per-instance value from
+ * `getAdcpVersion()` so a client/server validates against its own pinned bundle.
  */
 export function validateOutgoingRequest(
   taskName: string,
   params: unknown,
   mode: ValidationMode,
-  debugLogs?: DebugLogEntry[]
+  debugLogs?: DebugLogEntry[],
+  version?: string
 ): ValidationOutcome | undefined {
   if (mode === 'off') return undefined;
-  const outcome = validateRequest(taskName, params);
+  const outcome = validateRequest(taskName, params, version);
   if (outcome.valid) return outcome;
   if (mode === 'warn') {
     logWarning(debugLogs, taskName, outcome);
@@ -93,10 +98,11 @@ export function validateIncomingResponse(
   taskName: string,
   data: unknown,
   mode: ValidationMode,
-  debugLogs?: DebugLogEntry[]
+  debugLogs?: DebugLogEntry[],
+  version?: string
 ): ValidationOutcome {
   if (mode === 'off') return { valid: true, issues: [], variant: 'sync' };
-  const outcome = validateResponse(taskName, data);
+  const outcome = validateResponse(taskName, data, version);
   if (!outcome.valid && mode === 'warn') {
     logWarning(debugLogs, taskName, outcome);
   }

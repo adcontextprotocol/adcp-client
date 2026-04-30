@@ -120,7 +120,16 @@ export class GovernanceMiddleware {
 
   constructor(
     private governanceConfig: GovernanceConfig,
-    private onActivity?: (activity: Activity) => void | Promise<void>
+    private onActivity?: (activity: Activity) => void | Promise<void>,
+    /**
+     * Buyer's per-instance AdCP version pin. Forwarded to the governance
+     * agent's `ProtocolClient.callTool` so a buyer pinned to e.g.
+     * `'4.0.0-beta.1'` doesn't silently fall back to the SDK default
+     * `ADCP_MAJOR_VERSION` constant when calling the governance agent.
+     * Defaults to `undefined`, which `ProtocolClient.callTool` resolves
+     * to the SDK constant — same shape as a no-pin call.
+     */
+    private adcpVersion?: string
   ) {}
 
   /**
@@ -202,12 +211,10 @@ export class GovernanceMiddleware {
         plan_id: config.planId,
       });
 
-      const response = await ProtocolClient.callTool(
-        config.agent,
-        'check_governance',
-        request as Record<string, any>,
-        debugLogs
-      );
+      const response = await ProtocolClient.callTool(config.agent, 'check_governance', request as Record<string, any>, {
+        debugLogs,
+        adcpVersion: this.adcpVersion,
+      });
 
       // Unwrap protocol response (MCP text content, structuredContent, A2A artifacts)
       const responseData = unwrapProtocolResponse(response);
@@ -325,7 +332,7 @@ export class GovernanceMiddleware {
         config.agent,
         'report_plan_outcome',
         request as Record<string, any>,
-        debugLogs
+        { debugLogs, adcpVersion: this.adcpVersion }
       );
 
       const responseData = unwrapProtocolResponse(response) as unknown as ReportPlanOutcomeResponse;
