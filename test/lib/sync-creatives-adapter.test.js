@@ -1,9 +1,7 @@
 const { test, describe } = require('node:test');
 const assert = require('node:assert');
 
-const {
-  adaptSyncCreativesRequestForV2,
-} = require('../../dist/lib/utils/sync-creatives-adapter.js');
+const { adaptSyncCreativesRequestForV2 } = require('../../dist/lib/utils/sync-creatives-adapter.js');
 
 const BASE_REQUEST = {
   account: { account_id: 'acct-1' },
@@ -165,7 +163,13 @@ describe('adaptSyncCreativesRequestForV2 — manifest flattening (multi-role)', 
       ...BASE_REQUEST,
       creatives: [
         { creative_id: 'cre-a', assets: { video: { asset_type: 'video', url: 'https://example.com/a.mp4' } } },
-        { creative_id: 'cre-b', assets: { image: { asset_type: 'image', url: 'https://example.com/b.png', width: 300, height: 250 }, companion: { asset_type: 'image', url: 'https://example.com/c.png', width: 728, height: 90 } } },
+        {
+          creative_id: 'cre-b',
+          assets: {
+            image: { asset_type: 'image', url: 'https://example.com/b.png', width: 300, height: 250 },
+            companion: { asset_type: 'image', url: 'https://example.com/c.png', width: 728, height: 90 },
+          },
+        },
       ],
     });
     // flatMap must not be accidentally used; output is one-to-one with input
