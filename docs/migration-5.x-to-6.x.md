@@ -419,6 +419,26 @@ createAdcpServerFromPlatform(platform, {
   stays inside the SDK's own `node_modules`. Once the SDK is consumed
   via published tarball (`npm install @adcp/sdk@x.y.z`), this
   disappears — link mode is the only setup that triggers it.
+- **`zod` is now a required peer dependency** (`^4.1.0`). The SDK's
+  `ZodSchema` types must resolve to the same `zod` instance the
+  consumer uses; otherwise zod 4's `version.minor` literal type tag
+  makes nominally-identical schemas incompatible at the type level.
+  The npm-tarball install path picks this up automatically (npm 7+
+  installs peer deps); `npm link` / `pnpm link` consumers must run
+  `pnpm dedupe` (or remove the linked SDK's nested `node_modules/zod`)
+  so a single `zod` resolves at the consumer's `node_modules` root.
+  Empirically reported by an adopter: 48 type errors and a 4 GB tsc
+  OOM with two zod copies (4.1.12 vs 4.3.6 in the linked SDK).
+- **zod 4.3.0 `.partial()` regression on `.refine()` schemas.** Zod
+  4.3.0 made `.partial()` throw at runtime when the source schema
+  carries a `.refine(...)`. SDK 6.0 builds against `zod@4.1.x` to
+  avoid silently bumping consumers into this hazard, but consumers
+  whose own `zod` resolves to 4.3+ will hit the throw on any local
+  schema that combines `.partial()` + `.refine()`. Workaround: split
+  the refine into a follow-up `.superRefine` after the `.partial()`,
+  or pin the consumer-side `zod` to `<4.3.0` until you've audited
+  affected schemas. Not an SDK bug — flagging here so adopters
+  migrating off 5.x see the symptom in context.
 
 ## What's deferred to v6.1+
 
