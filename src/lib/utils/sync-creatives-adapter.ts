@@ -70,9 +70,7 @@ function adaptCreativeForV2(creative: any): any {
   // entry may be a non-asset role (e.g. metadata). Pick the first entry whose
   // value actually carries asset_type so the forwarded payload is always valid.
   const entries = Object.entries(assets as Record<string, unknown>);
-  const primary = entries.find(
-    ([, v]) => typeof v === 'object' && v !== null && 'asset_type' in v
-  );
+  const primary = entries.find(([, v]) => typeof v === 'object' && v !== null && 'asset_type' in v);
 
   if (!primary) {
     // All roles are malformed — pass through verbatim, let the server reject
