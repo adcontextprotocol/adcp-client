@@ -72,20 +72,22 @@ export interface Account<TMeta = Record<string, unknown>> {
   billing?: { invoicedTo: 'agent' | 'operator' | BrandReference };
 
   /**
-   * Platform-specific extension. Framework doesn't read this; **stripped
+   * Adapter-internal opaque state. Framework doesn't read this; **stripped
    * before emitting on the wire**. GAM puts `{ networkId, advertiserId }`;
    * Spotify puts `{ brandId, businessId }`; Criteo puts `{ customerId }`.
    * Each platform's choice.
    *
-   * **This is the universal place for adapter state on accounts.** Account
-   * is special among DecisioningPlatform resources: `accounts.resolve()` is
-   * called per-request, so the publisher is the canonical source of truth
-   * for account state on every call. There's no `ctx_metadata` round-trip
-   * cache for Account (unlike Product / MediaBuy / Package / Creative,
-   * where the SDK bridges between `getProducts` and `createMediaBuy` /
-   * subsequent calls). Put adapter state in `metadata`.
+   * Same field name (`ctx_metadata`) used across every DecisioningPlatform
+   * resource (Product, MediaBuy, Package, Creative, Audience, Signal,
+   * Account) for naming consistency. Account is special operationally:
+   * `accounts.resolve()` is called per-request, so the publisher is the
+   * canonical source of truth and the SDK does NOT round-trip Account
+   * `ctx_metadata` through the cache (unlike Product / MediaBuy / etc.,
+   * where the SDK bridges between `getProducts` and `createMediaBuy`).
+   * Put adapter state in `ctx_metadata`; treat it as fresh from your
+   * `accounts.resolve()` on every request.
    */
-  metadata: TMeta;
+  ctx_metadata: TMeta;
 
   /** Caller's authenticated principal. **Stripped before emitting on the wire.** */
   authInfo: AuthPrincipal;

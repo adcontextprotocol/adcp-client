@@ -108,7 +108,7 @@ export class IdentityGraphProvider implements DecisioningPlatform<IdentityGraphC
         name: `IdentityGraph — ${id}`,
         status: 'active',
         operator: 'identity-graph.example.com',
-        metadata: { graph_id: 'IG-12345' },
+        ctx_metadata: { graph_id: 'IG-12345' },
         authInfo: { kind: 'api_key' },
       };
     },

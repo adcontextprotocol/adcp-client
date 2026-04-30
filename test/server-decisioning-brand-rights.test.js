@@ -93,7 +93,7 @@ function brandRightsPlatform(brOverrides = {}) {
         name: 'Acme Tenant',
         status: 'active',
         operator: 'rights.example.com',
-        metadata: {},
+        ctx_metadata: {},
         authInfo: { kind: 'api_key' },
       }),
     },

@@ -37,7 +37,7 @@ describe('createAdcpServerFromPlatform — pool shortcut', () => {
       },
       accounts: {
         resolution: 'derived',
-        resolve: async () => ({ id: 'pub_main', operator: 'mypub', metadata: {} }),
+        resolve: async () => ({ id: 'pub_main', operator: 'mypub', ctx_metadata: {} }),
         upsert: async () => ({ ok: true, items: [] }),
         list: async () => ({ items: [], nextCursor: null }),
       },
@@ -100,7 +100,7 @@ describe('createAdcpServerFromPlatform — pool shortcut', () => {
       },
       accounts: {
         resolution: 'derived',
-        resolve: async () => ({ id: 'pub_main', operator: 'mypub', metadata: {} }),
+        resolve: async () => ({ id: 'pub_main', operator: 'mypub', ctx_metadata: {} }),
         upsert: async () => ({ ok: true, items: [] }),
         list: async () => ({ items: [], nextCursor: null }),
       },

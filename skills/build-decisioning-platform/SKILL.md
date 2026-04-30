@@ -34,7 +34,7 @@ class MyPlatform implements DecisioningPlatform {
 
   accounts = {
     resolution: 'derived' as const,                            // single tenant; framework returns the same Account every call
-    resolve: async () => ({ id: 'pub_main', operator: 'mypub', metadata: {} }),
+    resolve: async () => ({ id: 'pub_main', operator: 'mypub', ctx_metadata: {} }),
     upsert: async () => ({ ok: true, items: [] }),
     list: async () => ({ items: [], nextCursor: null }),
   };

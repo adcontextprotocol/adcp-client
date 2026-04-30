@@ -42,7 +42,7 @@ function makeBroadcastTvSeller({
       resolve: async ref => ({
         id: ref?.account_id ?? 'broadcast_acc_1',
         operator: 'broadcast.example.com',
-        metadata: { agency_buyer_id: 'agc_42', affiliate_advertiser_id: 'aff_99' },
+        ctx_metadata: { agency_buyer_id: 'agc_42', affiliate_advertiser_id: 'aff_99' },
         authInfo: { kind: 'api_key' },
       }),
       upsert: async () => [],

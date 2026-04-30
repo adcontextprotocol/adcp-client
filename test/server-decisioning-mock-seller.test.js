@@ -37,7 +37,7 @@ function basePlatformShape(salesOverrides) {
       resolve: async ref => ({
         id: ref?.account_id ?? 'mock_acc_1',
         operator: 'mockseller.example.com',
-        metadata: { network_id: 'mock_network', advertiser_id: 'mock_advertiser' },
+        ctx_metadata: { network_id: 'mock_network', advertiser_id: 'mock_advertiser' },
         authInfo: { kind: 'api_key' },
       }),
       upsert: async () => [],

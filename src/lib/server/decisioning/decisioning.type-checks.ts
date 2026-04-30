@@ -133,12 +133,12 @@ interface GAMAccountMeta {
 }
 
 function _account_with_typed_meta(account: Account<GAMAccountMeta>): string {
-  return account.metadata.networkId;
+  return account.ctx_metadata.networkId;
 }
 
 function _account_typed_meta_rejects_wrong_field(account: Account<GAMAccountMeta>): string {
   // @ts-expect-error — `googleAdvertiserId` doesn't exist on GAMAccountMeta.
-  return account.metadata.googleAdvertiserId;
+  return account.ctx_metadata.googleAdvertiserId;
 }
 
 // ── AccountNotFoundError is a class adopters can throw from resolve() ─

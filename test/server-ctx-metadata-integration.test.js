@@ -24,7 +24,7 @@ function buildPlatform({ getProductsImpl, createMediaBuyImpl }) {
       resolve: async () => ({
         id: 'acct_default',
         operator: 'test',
-        metadata: {},
+        ctx_metadata: {},
       }),
       upsert: async () => ({ ok: true, items: [] }),
       list: async () => ({ items: [], nextCursor: null }),

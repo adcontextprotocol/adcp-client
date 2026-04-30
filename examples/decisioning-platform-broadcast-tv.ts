@@ -100,7 +100,7 @@ export class BroadcastTvSeller implements DecisioningPlatform<BroadcastTvConfig,
         name: `Broadcast TV — ${id}`,
         status: 'active',
         operator: 'broadcast.example.com',
-        metadata: { agency_buyer_id: 'agc_42', affiliate_advertiser_id: 'aff_99' },
+        ctx_metadata: { agency_buyer_id: 'agc_42', affiliate_advertiser_id: 'aff_99' },
         authInfo: { kind: 'api_key' },
       };
     },

@@ -36,7 +36,7 @@ function makeProgrammaticSeller({ networkId = 'NET_42', floorCpm = 1.5, creative
       resolve: async ref => ({
         id: ref?.account_id ?? 'prog_acc_1',
         operator: 'programmatic.example.com',
-        metadata: { network_id: config.networkId, advertiser_id: 'adv_42' },
+        ctx_metadata: { network_id: config.networkId, advertiser_id: 'adv_42' },
         authInfo: { kind: 'api_key' },
       }),
       upsert: async () => [],

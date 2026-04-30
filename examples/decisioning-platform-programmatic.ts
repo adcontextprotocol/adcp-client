@@ -87,7 +87,7 @@ export class ProgrammaticSeller implements DecisioningPlatform<ProgrammaticConfi
         name: `Programmatic — ${id}`,
         status: 'active',
         operator: 'programmatic.example.com',
-        metadata: { network_id: this.capabilities.config.networkId, advertiser_id: 'adv_42' },
+        ctx_metadata: { network_id: this.capabilities.config.networkId, advertiser_id: 'adv_42' },
         authInfo: { kind: 'api_key' },
       };
     },

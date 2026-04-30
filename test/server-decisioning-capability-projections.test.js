@@ -24,7 +24,7 @@ function basePlatform(capabilityOverrides = {}) {
       resolve: async ref => ({
         id: ref?.account_id ?? 'cap_acc_1',
         operator: 'caps.example.com',
-        metadata: {},
+        ctx_metadata: {},
         authInfo: { kind: 'api_key' },
       }),
     },

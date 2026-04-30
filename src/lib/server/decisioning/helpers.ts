@@ -31,7 +31,7 @@ import { pickSafeDetails } from '../pick-safe-details';
  *
  * async pollAudienceStatuses(audienceIds, ctx) {
  *   return batchPoll(audienceIds, async (id) =>
- *     this.myPlatform.getAudienceStatus(id, ctx.account.metadata.token)
+ *     this.myPlatform.getAudienceStatus(id, ctx.account.ctx_metadata.token)
  *   );
  * }
  * ```

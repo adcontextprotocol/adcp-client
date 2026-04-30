@@ -28,7 +28,7 @@ function basePlatform({ withComplianceTesting = false } = {}) {
       resolve: async ref => ({
         id: ref?.account_id ?? 'comply_acc_1',
         operator: 'comply.example.com',
-        metadata: {},
+        ctx_metadata: {},
         authInfo: { kind: 'api_key' },
       }),
     },

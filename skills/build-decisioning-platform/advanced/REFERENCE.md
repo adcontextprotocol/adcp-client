@@ -449,7 +449,7 @@ accounts: AccountStore<MyMeta> = {
     name: 'My Agent',
     status: 'active',
     metadata: {
-      /* whatever your handlers want to read off ctx.account.metadata */
+      /* whatever your handlers want to read off ctx.account.ctx_metadata */
     },
     authInfo: { kind: 'api_key' },
   }),
@@ -460,7 +460,7 @@ Why this is non-negotiable: the resolved account is the framework's tenant bound
 
 ### Sandbox: `AccountReference.sandbox === true`
 
-There is no separate "dry-run" mode in v6. When the buyer sends `account.sandbox === true`, the framework calls `accounts.resolve()` with the same flag set; your resolver routes to a sandbox account, and the platform reads/writes go through your sandbox backend by reading `account.metadata`:
+There is no separate "dry-run" mode in v6. When the buyer sends `account.sandbox === true`, the framework calls `accounts.resolve()` with the same flag set; your resolver routes to a sandbox account, and the platform reads/writes go through your sandbox backend by reading `account.ctx_metadata`:
 
 ```ts
 resolve: async (ref) => {

@@ -41,7 +41,7 @@ function makeLeakHostilePlatform(ctxMetadata) {
         name: 'Pub',
         status: 'active',
         operator: 'mypub',
-        metadata: { internal: 'should not leak via metadata either' },
+        ctx_metadata: { internal: 'should not leak via metadata either' },
         authInfo: {},
       }),
       upsert: async (refs) => refs.map((r) => ({
@@ -57,7 +57,7 @@ function makeLeakHostilePlatform(ctxMetadata) {
           name: 'Pub',
           status: 'active',
           operator: 'mypub',
-          metadata: { internal: 'no leak' },
+          ctx_metadata: { internal: 'no leak' },
           authInfo: {},
         }],
         nextCursor: null,

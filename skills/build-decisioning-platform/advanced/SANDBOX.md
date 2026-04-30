@@ -6,15 +6,15 @@ When a buyer sends `account: { id: '...', sandbox: true }`, route the call to yo
 accounts: {
   resolve: async (ref) => {
     if (ref?.sandbox === true) {
-      return { id: ref.id, operator: 'mypub-sandbox', metadata: { env: 'staging' } };
+      return { id: ref.id, operator: 'mypub-sandbox', ctx_metadata: { env: 'staging' } };
     }
-    return { id: ref?.id ?? 'pub_main', operator: 'mypub', metadata: { env: 'production' } };
+    return { id: ref?.id ?? 'pub_main', operator: 'mypub', ctx_metadata: { env: 'production' } };
   },
   ...
 }
 
 createMediaBuy: async (req, ctx) => {
-  const target = ctx.account.metadata.env === 'staging' ? this.gamSandbox : this.gam;
+  const target = ctx.account.ctx_metadata.env === 'staging' ? this.gamSandbox : this.gam;
   return await target.createOrder(req);
 }
 ```

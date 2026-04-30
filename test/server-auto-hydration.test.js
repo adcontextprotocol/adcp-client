@@ -19,7 +19,7 @@ function makePlatform({ getProductsImpl, createMediaBuyImpl, getMediaBuysImpl })
     },
     accounts: {
       resolution: 'derived',
-      resolve: async () => ({ id: 'acct_default', operator: 'test', metadata: {} }),
+      resolve: async () => ({ id: 'acct_default', operator: 'test', ctx_metadata: {} }),
       upsert: async () => ({ ok: true, items: [] }),
       list: async () => ({ items: [], nextCursor: null }),
     },

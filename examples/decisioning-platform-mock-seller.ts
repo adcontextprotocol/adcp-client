@@ -100,7 +100,7 @@ function makeAccounts(): AccountStore<MockSellerMeta> {
         name: 'Mock Account',
         status: 'active',
         operator: 'mockseller.example.com',
-        metadata: { network_id: 'mock_network', advertiser_id: 'mock_advertiser' },
+        ctx_metadata: { network_id: 'mock_network', advertiser_id: 'mock_advertiser' },
         authInfo: { kind: 'api_key' },
       };
     },

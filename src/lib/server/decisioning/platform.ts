@@ -95,7 +95,7 @@ export interface DecisioningPlatform<TConfig = unknown, TMeta = Record<string, u
 
   // Per-specialism sub-interfaces — optional at the type level; required at the
   // call site by RequiredPlatformsFor<S>. v1.0 ships these. Each is parameterized
-  // by `TMeta` so adopters get typed `ctx.account.metadata` access in their
+  // by `TMeta` so adopters get typed `ctx.account.ctx_metadata` access in their
   // method bodies without casting.
   sales?: SalesPlatform<TMeta>;
   creative?: CreativeBuilderPlatform<TMeta> | CreativeAdServerPlatform<TMeta>;
