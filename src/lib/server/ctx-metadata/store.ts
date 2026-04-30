@@ -96,6 +96,20 @@ export const ADCP_INTERNAL_TAG = Symbol.for('adcp.ctx_metadata.internal');
 export interface CtxMetadataEntry {
   /** Opaque publisher-attached value. Untouched by the framework. */
   value: unknown;
+  /**
+   * SDK-attached AdCP wire resource shape (e.g., the full `Product` /
+   * `MediaBuy` / `Creative` object minus `ctx_metadata`). Populated by
+   * the framework's auto-hydration path, not by adopter code.
+   *
+   * Used to reconstruct a hydrated resource on subsequent calls that
+   * reference the same id by string. Buyer sends `product_id: 'p1'`;
+   * SDK looks up the entry, builds `{ ...resource, ctx_metadata: value }`,
+   * attaches as `req.packages[i].product`.
+   *
+   * Adopter code never reads or writes this field — the framework owns
+   * it end-to-end.
+   */
+  resource?: unknown;
   /** Optional unix epoch seconds expiry. Informational; no auto-eviction. */
   expiresAt?: number;
 }
@@ -166,6 +180,61 @@ export interface CtxMetadataStore {
    * `ttlSeconds` is optional and capped at 30 days. No auto-eviction.
    */
   set(accountId: string, kind: ResourceKind, id: string, value: unknown, ttlSeconds?: number): Promise<void>;
+
+  /**
+   * Framework-only: persist the wire resource alongside the publisher's
+   * `ctx_metadata` blob. Called by the dispatch seam after a publisher
+   * returns a resource (Product, MediaBuy, etc.) so subsequent calls
+   * referencing that id by string can hydrate the full object.
+   *
+   * Adopter code does NOT call this — wire resource caching is the
+   * framework's job. Public-but-internal: lives on the interface so
+   * the dispatch layer doesn't need a privileged store handle.
+   *
+   * @internal — adopter code should use `set()`. The framework calls this.
+   */
+  setEntry(accountId: string, kind: ResourceKind, id: string, entry: CtxMetadataEntry): Promise<void>;
+
+  /**
+   * Framework-only: update the wire resource for an existing or new
+   * entry while preserving the publisher's `value` (ctx_metadata blob).
+   * Called by the auto-store path so a publisher's prior
+   * `ctx.ctxMetadata.set('product', id, blob)` is NOT overwritten when
+   * the publisher returns the product without `ctx_metadata` on the
+   * wire shape.
+   *
+   * Update semantics:
+   *   - If entry exists: merge — keep prior `value`, set new `resource`,
+   *     keep prior `expiresAt`.
+   *   - If entry doesn't exist: create with `value: priorValue ?? null`,
+   *     `resource: resource`.
+   *   - If `priorValue` is provided AND the publisher returned ctx_metadata
+   *     on the resource (non-null priorValue param), the new value wins.
+   *
+   * @internal
+   */
+  setResource(
+    accountId: string,
+    kind: ResourceKind,
+    id: string,
+    resource: unknown,
+    publisherCtxMetadata?: unknown
+  ): Promise<void>;
+
+  /**
+   * Framework-only: lookup the full entry (value + resource) by id.
+   * Used by the auto-hydration path to reconstruct hydrated resources.
+   * Adopter code uses `get()` for the value alone.
+   *
+   * @internal
+   */
+  getEntry(accountId: string, kind: ResourceKind, id: string): Promise<CtxMetadataEntry | undefined>;
+
+  /**
+   * Framework-only: bulk variant of `getEntry`.
+   * @internal
+   */
+  bulkGetEntries(accountId: string, refs: readonly CtxMetadataRef[]): Promise<ReadonlyMap<string, CtxMetadataEntry>>;
 
   /** Delete a single entry. Tenant-scoped via `accountId`. */
   delete(accountId: string, kind: ResourceKind, id: string): Promise<void>;
@@ -329,7 +398,102 @@ export function createCtxMetadataStore(config: CtxMetadataStoreConfig): CtxMetad
         );
       }
       const expiresAt = ttlSeconds != null ? Math.floor(Date.now() / 1000) + ttlSeconds : undefined;
-      await backend.put(scopeCtxMetadataKey(accountId, kind, id), { value, expiresAt });
+      // Preserve any prior `resource` from the framework-managed entry —
+      // adopter `set()` only mutates `value`. The dispatch seam writes
+      // resource via `setEntry`.
+      const prior = await backend.get(scopeCtxMetadataKey(accountId, kind, id));
+      const next: CtxMetadataEntry = {
+        value,
+        ...(prior?.resource !== undefined && { resource: prior.resource }),
+        ...(expiresAt !== undefined ? { expiresAt } : prior?.expiresAt !== undefined ? { expiresAt: prior.expiresAt } : {}),
+      };
+      await backend.put(scopeCtxMetadataKey(accountId, kind, id), next);
+    },
+
+    async setEntry(accountId, kind, id, entry) {
+      validateAccountId(accountId);
+      validateResourceKind(kind);
+      validateResourceId(id);
+      // Cap applied to the COMBINED serialization (value + resource) since
+      // both round-trip together. Use the same upstream message so adopters
+      // see the same diagnostic surface.
+      const serialized = JSON.stringify({ value: entry.value, resource: entry.resource });
+      const byteLen = Buffer.byteLength(serialized, 'utf8');
+      if (byteLen > maxValueBytes) {
+        throw new CtxMetadataValidationError(
+          'CTX_METADATA_TOO_LARGE',
+          `ctx_metadata combined blob is ${byteLen} bytes, exceeds the configured cap of ${maxValueBytes} bytes ` +
+            `for ${kind}:${id}. Offload large payloads to your own storage and reference by ID.`
+        );
+      }
+      await backend.put(scopeCtxMetadataKey(accountId, kind, id), entry);
+    },
+
+    async setResource(accountId, kind, id, resource, publisherCtxMetadata) {
+      validateAccountId(accountId);
+      validateResourceKind(kind);
+      validateResourceId(id);
+      const scopedKey = scopeCtxMetadataKey(accountId, kind, id);
+      const prior = await backend.get(scopedKey);
+      // Resolve the value to persist:
+      //   - publisher returned ctx_metadata on the wire shape → use it (overrides prior)
+      //   - publisher omitted ctx_metadata → preserve prior value (don't clobber)
+      //   - no prior, no publisher value → store null
+      const nextValue =
+        publisherCtxMetadata !== undefined && publisherCtxMetadata !== null
+          ? publisherCtxMetadata
+          : (prior?.value ?? null);
+      const nextEntry: CtxMetadataEntry = {
+        value: nextValue,
+        resource,
+        ...(prior?.expiresAt !== undefined && { expiresAt: prior.expiresAt }),
+      };
+      // Apply the same size cap used by setEntry.
+      const serialized = JSON.stringify({ value: nextEntry.value, resource: nextEntry.resource });
+      const byteLen = Buffer.byteLength(serialized, 'utf8');
+      if (byteLen > maxValueBytes) {
+        throw new CtxMetadataValidationError(
+          'CTX_METADATA_TOO_LARGE',
+          `ctx_metadata combined blob is ${byteLen} bytes, exceeds the configured cap of ${maxValueBytes} bytes ` +
+            `for ${kind}:${id}. Offload large payloads to your own storage and reference by ID.`
+        );
+      }
+      await backend.put(scopedKey, nextEntry);
+    },
+
+    async getEntry(accountId, kind, id) {
+      validateAccountId(accountId);
+      validateResourceKind(kind);
+      validateResourceId(id);
+      const entry = await backend.get(scopeCtxMetadataKey(accountId, kind, id));
+      if (!entry) return undefined;
+      if (entry.expiresAt != null && entry.expiresAt < Math.floor(Date.now() / 1000)) {
+        return undefined;
+      }
+      return entry;
+    },
+
+    async bulkGetEntries(accountId, refs) {
+      validateAccountId(accountId);
+      if (refs.length === 0) return new Map();
+      const scopedKeys: string[] = [];
+      const scopedToResultKey = new Map<string, string>();
+      for (const ref of refs) {
+        validateResourceKind(ref.kind);
+        validateResourceId(ref.id);
+        const scoped = scopeCtxMetadataKey(accountId, ref.kind, ref.id);
+        scopedKeys.push(scoped);
+        scopedToResultKey.set(scoped, ctxMetadataResultKey(ref.kind, ref.id));
+      }
+      const entries = await backend.bulkGet(scopedKeys);
+      const result = new Map<string, CtxMetadataEntry>();
+      const nowSeconds = Math.floor(Date.now() / 1000);
+      for (const [scopedKey, entry] of entries) {
+        if (entry.expiresAt != null && entry.expiresAt < nowSeconds) continue;
+        const resultKey = scopedToResultKey.get(scopedKey);
+        if (resultKey != null) result.set(resultKey, entry);
+      }
+      return result;
     },
 
     async delete(accountId, kind, id) {

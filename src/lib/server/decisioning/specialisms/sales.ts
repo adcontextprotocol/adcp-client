@@ -223,14 +223,21 @@ export interface SalesPlatform<TMeta = Record<string, unknown>> {
 
   getMediaBuyDelivery(filter: GetMediaBuyDeliveryRequest, ctx: Ctx<TMeta>): Promise<GetMediaBuyDeliveryResponse>;
 
-  // ── get_media_buys: sync only ───────────────────────────────────────
+  // ── get_media_buys: sync only — REQUIRED ──────────────────────────────
   // Read tool — buyers fetch a list of their media buys (often filtered by
-  // status / time window). Optional because some sales agents are write-only
-  // (proposal-mode adopters who deliver via push channels), but the vast
-  // majority of seller agents implement this. Framework returns
-  // UNSUPPORTED_FEATURE when omitted.
+  // status / time window). Required because:
+  //   1. Every seller needs to support reading back what they created.
+  //   2. Idempotent retries depend on it (replay safe-by-design).
+  //   3. The 6.2 patch-decomposition redesign needs single-id reads;
+  //      `getMediaBuys` is the foundation.
+  //   4. Framework auto-stores returned media buys for hydration on
+  //      subsequent updateMediaBuy calls (see `hydratePackagesWithProducts`
+  //      pattern in `from-platform.ts`).
+  //
+  // Proposal-mode adopters (write-only via push channels) return an empty
+  // `media_buys: []` array — that's a valid response.
   /** List media buys this account owns. Filter + pagination per the wire shape. */
-  getMediaBuys?(req: GetMediaBuysRequest, ctx: Ctx<TMeta>): Promise<GetMediaBuysResponse>;
+  getMediaBuys(req: GetMediaBuysRequest, ctx: Ctx<TMeta>): Promise<GetMediaBuysResponse>;
 
   // ── provide_performance_feedback: sync only ─────────────────────────
   // Write tool — buyers report aggregate creative-level performance

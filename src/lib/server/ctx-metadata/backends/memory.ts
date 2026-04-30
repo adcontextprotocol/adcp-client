@@ -79,6 +79,9 @@ export function memoryCtxMetadataStore(options: MemoryCtxMetadataStoreOptions = 
 function cloneEntry(entry: CtxMetadataEntry): CtxMetadataEntry {
   return {
     value: entry.value == null ? entry.value : structuredClone(entry.value),
-    expiresAt: entry.expiresAt,
+    ...(entry.resource !== undefined && {
+      resource: entry.resource == null ? entry.resource : structuredClone(entry.resource),
+    }),
+    ...(entry.expiresAt !== undefined && { expiresAt: entry.expiresAt }),
   };
 }

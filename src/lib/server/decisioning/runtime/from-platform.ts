@@ -847,7 +847,7 @@ export function createAdcpServerFromPlatform<P extends DecisioningPlatform<any, 
       buildMediaBuyHandlers(platform, taskRegistry, taskWebhookEmit, observability, fwLogger, {
         allowPrivateWebhookUrls: opts.allowPrivateWebhookUrls === true,
         autoEmitCompletionWebhooks: opts.autoEmitCompletionWebhooks !== false,
-      }, ctxFor),
+      }, ctxFor, opts.ctxMetadata),
       'mediaBuy',
       mergeOpts
     ),
@@ -1765,6 +1765,98 @@ function makeCtxFor(ctxMetadataStore?: CtxMetadataStore): CtxForFn {
 }
 
 /**
+ * Auto-store helper. After a publisher returns resources from a discovery
+ * tool (`getProducts`, `getMediaBuys`, etc.), persist each resource's wire
+ * shape (minus `ctx_metadata`) alongside the publisher's `ctx_metadata`
+ * blob. Subsequent calls referencing the same id by string can be hydrated
+ * (publisher sees the full resource as `req.packages[i].product`).
+ *
+ * Failures are logged + swallowed — auto-store must NEVER break a
+ * successful response.
+ */
+async function autoStoreResources(
+  store: CtxMetadataStore | undefined,
+  accountId: string | undefined,
+  kind: 'product' | 'media_buy' | 'package' | 'creative' | 'audience' | 'signal',
+  resources: readonly unknown[] | undefined,
+  idField: string,
+  logger: AdcpLogger
+): Promise<void> {
+  if (!store || !accountId || !resources) return;
+  for (const r of resources) {
+    if (r == null || typeof r !== 'object') continue;
+    const obj = r as Record<string, unknown>;
+    const id = obj[idField];
+    if (typeof id !== 'string' || id.length === 0) continue;
+    const ctxMeta = obj['ctx_metadata'];
+    // Strip ctx_metadata from the resource before storing — round-trip
+    // restores it on hydration. Keeping a pristine wire copy in `resource`.
+    const { ctx_metadata: _stripped, ...wireResource } = obj as Record<string, unknown>;
+    void _stripped;
+    try {
+      // Use `setResource` (not `setEntry`) so a publisher's prior
+      // `ctx.ctxMetadata.set(kind, id, blob)` is preserved when the
+      // publisher returns the resource WITHOUT `ctx_metadata` inline.
+      // Auto-store should never clobber adopter-managed state.
+      await store.setResource(accountId, kind, id, wireResource, ctxMeta);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      logger.warn(`[adcp/decisioning] auto-store ${kind} ${id} failed: ${msg}`);
+    }
+  }
+}
+
+/**
+ * Auto-hydrate helper. Before invoking a publisher's mutating handler,
+ * walk the request's resource references and attach the full wire
+ * resource (including `ctx_metadata`) to each. Mutates the request in
+ * place — adds an extra typed field alongside the original id.
+ *
+ * For `createMediaBuy`: walks `req.packages`, hydrates each with
+ * `pkg.product = { ...resource, ctx_metadata }` keyed by `pkg.product_id`.
+ *
+ * Failures are logged + swallowed; the publisher still receives the
+ * un-hydrated request and can fall back to its own DB.
+ */
+async function hydratePackagesWithProducts(
+  store: CtxMetadataStore | undefined,
+  accountId: string | undefined,
+  packages: unknown[] | undefined,
+  logger: AdcpLogger
+): Promise<void> {
+  if (!store || !accountId || !packages || packages.length === 0) return;
+  const refs: Array<{ kind: 'product'; id: string }> = [];
+  for (const pkg of packages) {
+    if (pkg == null || typeof pkg !== 'object') continue;
+    const productId = (pkg as Record<string, unknown>)['product_id'];
+    if (typeof productId === 'string' && productId.length > 0) {
+      refs.push({ kind: 'product', id: productId });
+    }
+  }
+  if (refs.length === 0) return;
+  let entries: ReadonlyMap<string, { value: unknown; resource?: unknown }>;
+  try {
+    entries = await store.bulkGetEntries(accountId, refs);
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    logger.warn(`[adcp/decisioning] auto-hydrate bulkGet failed: ${msg}`);
+    return;
+  }
+  for (const pkg of packages) {
+    if (pkg == null || typeof pkg !== 'object') continue;
+    const productId = (pkg as Record<string, unknown>)['product_id'];
+    if (typeof productId !== 'string') continue;
+    const entry = entries.get(`product:${productId}`);
+    if (!entry?.resource || typeof entry.resource !== 'object') continue;
+    const hydrated: Record<string, unknown> = { ...(entry.resource as Record<string, unknown>) };
+    if (entry.value !== null && entry.value !== undefined) {
+      hydrated['ctx_metadata'] = entry.value;
+    }
+    (pkg as Record<string, unknown>)['product'] = hydrated;
+  }
+}
+
+/**
  * Extract the buyer's push-notification webhook config from a request body
  * and validate the URL + token against SSRF / replay primitives.
  *
@@ -1997,7 +2089,8 @@ function buildMediaBuyHandlers<P extends DecisioningPlatform<any, any>>(
   observability: DecisioningObservabilityHooks | undefined,
   logger: AdcpLogger,
   pushOpts: { allowPrivateWebhookUrls: boolean; autoEmitCompletionWebhooks: boolean },
-  ctxFor: CtxForFn
+  ctxFor: CtxForFn,
+  ctxMetadataStore: CtxMetadataStore | undefined
 ): MediaBuyHandlers<Account> | undefined {
   const sales = platform.sales;
   if (!sales) return undefined;
@@ -2006,13 +2099,38 @@ function buildMediaBuyHandlers<P extends DecisioningPlatform<any, any>>(
     getProducts: async (params, ctx) => {
       const reqCtx = ctxFor(ctx);
       return projectSync(
-        () => sales.getProducts(params, reqCtx),
+        async () => {
+          const result = await sales.getProducts(params, reqCtx);
+          // Auto-store products: persist each Product's wire shape +
+          // ctx_metadata so subsequent createMediaBuy / updateMediaBuy
+          // calls referencing product_id can hydrate the full Product
+          // automatically (publisher sees `req.packages[i].product`).
+          await autoStoreResources(
+            ctxMetadataStore,
+            reqCtx.account?.id,
+            'product',
+            (result as { products?: readonly unknown[] })?.products,
+            'product_id',
+            logger
+          );
+          return result;
+        },
         r => r
       );
     },
 
     createMediaBuy: async (params, ctx) => {
       const reqCtx = ctxFor(ctx);
+      // Auto-hydrate: walk `params.packages`, attach the full Product object
+      // (including `ctx_metadata`) at `pkg.product`. Publisher reads
+      // `pkg.product.format_ids`, `pkg.product.ctx_metadata?.gam?.ad_unit_ids`
+      // directly — no separate lookup, no boilerplate.
+      await hydratePackagesWithProducts(
+        ctxMetadataStore,
+        reqCtx.account?.id,
+        (params as { packages?: unknown[] })?.packages,
+        logger
+      );
       return projectSync(
         async () => {
           const push = extractPushConfig(params, logger, { allowPrivateWebhookUrls: pushOpts.allowPrivateWebhookUrls });
@@ -2129,11 +2247,30 @@ function buildMediaBuyHandlers<P extends DecisioningPlatform<any, any>>(
     // these specific tools can still pass raw handlers via opts.mediaBuy
     // (merge seam) — the merge runs AFTER buildMediaBuyHandlers, so opts
     // handlers fill in for the methods this platform omits.
+    // `getMediaBuys` is REQUIRED at the type level, but we keep a runtime
+    // guard for the merge-seam migration path: legacy adopters wire it via
+    // `opts.mediaBuy.getMediaBuys` rather than on the platform interface.
+    // Once the migration completes (every adopter implements it natively),
+    // this conditional spreads can collapse — but for now, omitting the
+    // platform-derived handler when absent lets `mergeHandlers` pick up the
+    // adopter's custom handler from `opts.mediaBuy` instead of throwing
+    // `sales.getMediaBuys is not a function`.
     ...(sales.getMediaBuys && {
       getMediaBuys: async (params, ctx) => {
         const reqCtx = ctxFor(ctx);
         return projectSync(
-          () => sales.getMediaBuys!(params, reqCtx),
+          async () => {
+            const result = await sales.getMediaBuys!(params, reqCtx);
+            await autoStoreResources(
+              ctxMetadataStore,
+              reqCtx.account?.id,
+              'media_buy',
+              (result as { media_buys?: readonly unknown[] })?.media_buys,
+              'media_buy_id',
+              logger
+            );
+            return result;
+          },
           r => r
         );
       },

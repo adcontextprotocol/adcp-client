@@ -5,7 +5,7 @@ description: Build an AdCP sales agent (publisher / SSP / retail-media network).
 
 # Build a sales agent
 
-Implement 5 functions. The framework does the rest.
+Implement 6 functions. The framework does the rest.
 
 ## What you're building
 
@@ -56,24 +56,39 @@ class MyPlatform implements DecisioningPlatform {
     },
 
     // 2. Create a buy. Sync path; HITL is `ctx.handoffToTask` (see advanced/HITL.md).
+    //    SDK auto-hydrates each pkg.product with the resolved Product (incl. ctx_metadata)
+    //    from the prior getProducts call — no separate lookup needed.
     createMediaBuy: async (req, ctx) => {
       if (new Date(req.start_time) >= new Date(req.end_time)) throw new BackwardsTimeRangeError();
       if (req.total_budget?.amount < 1000) throw new BudgetTooLowError({ floor: 1000, currency: 'USD' });
 
-      const order = await this.platform.createOrder(req);
-      // Persist your platform's IDs so future calls don't re-derive them.
-      await ctx.ctxMetadata?.set('media_buy', order.id, { gam_order_id: order.gamOrderId });
-      for (const li of order.lineItems) {
-        await ctx.ctxMetadata?.set('package', li.id, { gam_line_item_id: li.gamLineItemId });
+      const lineItems = [];
+      for (const pkg of req.packages) {
+        // pkg.product is the full Product from getProducts, with adapter-internal config attached:
+        const adUnits = pkg.product.ctx_metadata?.gam?.ad_unit_ids ?? [];
+        const formats = pkg.product.format_ids;
+        lineItems.push(await this.platform.createLineItem(pkg, { adUnits, formats }));
       }
+      const order = await this.platform.createOrder(req, lineItems);
+
+      // Stash your platform's IDs so subsequent updateMediaBuy can hydrate them too.
       return {
         media_buy_id: order.id,
         status: 'pending_creatives',                           // creative state machine — see advanced/STATE-MACHINE.md
-        packages: order.lineItems.map(li => ({ package_id: li.id, status: 'pending_creatives', buyer_ref: li.buyerRef })),
+        ctx_metadata: { gam_order_id: order.gamOrderId },     // SDK persists; subsequent updateMediaBuy gets req.ctx_metadata.gam_order_id
+        packages: order.lineItems.map(li => ({
+          package_id: li.id,
+          status: 'pending_creatives',
+          buyer_ref: li.buyerRef,
+          ctx_metadata: { gam_line_item_id: li.gamLineItemId },
+        })),
       };
     },
 
-    // 3. Update a buy. SDK doesn't decompose the patch yet — adopter applies it whole.
+    // 3. Update a buy. SDK auto-hydrates the resolved MediaBuy (and its packages,
+    //    each with ctx_metadata) at req.mediaBuy when present in the store from a
+    //    prior createMediaBuy / getMediaBuys call. Falls back gracefully if absent
+    //    (publisher uses their own DB).
     //    (6.2 will pre-read state + decompose into atomic verbs; track adcp-client#1071.)
     updateMediaBuy: async (mediaBuyId, patch, ctx) => {
       const orderMeta = await ctx.ctxMetadata?.mediaBuy(mediaBuyId);
@@ -99,7 +114,31 @@ class MyPlatform implements DecisioningPlatform {
       return out;
     },
 
-    // 5. Delivery report.
+    // 5. List buys this account owns. REQUIRED — every seller needs to support
+    //    reading back what they created. SDK auto-stores returned buys for hydration
+    //    on subsequent updateMediaBuy calls.
+    getMediaBuys: async (req, ctx) => {
+      const buys = await this.platform.listOrders({ accountId: ctx.account.id, status: req.status });
+      return {
+        media_buys: buys.map(buy => ({
+          media_buy_id: buy.id,
+          status: this.statusMappers.mediaBuy(buy.nativeStatus),
+          buyer_ref: buy.buyerRef,
+          total_budget: { amount: buy.budgetAmount, currency: buy.currency },  // REQUIRED on the wire shape
+          start_time: buy.startTime,
+          end_time: buy.endTime,
+          packages: buy.lineItems.map(li => ({
+            package_id: li.id,
+            status: this.statusMappers.mediaBuy(li.nativeStatus),
+            buyer_ref: li.buyerRef,
+            ctx_metadata: { gam_line_item_id: li.gamLineItemId },               // round-trip publisher state
+          })),
+          ctx_metadata: { gam_order_id: buy.gamOrderId },
+        })),
+      };
+    },
+
+    // 6. Delivery report.
     getMediaBuyDelivery: async (filter, ctx) => ({ deliveries: await this.platform.fetchReports(filter) }),
   };
 
