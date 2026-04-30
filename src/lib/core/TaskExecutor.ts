@@ -525,13 +525,22 @@ export class TaskExecutor {
       };
 
       // Pre-send schema check — throws in strict, logs in warn, skips in off.
-      validateOutgoingRequest(
-        taskName,
-        effectiveParams,
-        this.requestValidationMode,
-        debugLogs,
-        this.config.adcpVersion
-      );
+      // Skip when targeting a v2 server: SingleAgentClient runs the v2 adapters
+      // (e.g. adaptGetProductsRequestForV2) before reaching the executor, and
+      // those strip v3-only required fields like `buying_mode` and `account`.
+      // The bundled schemas are v3, so validating the adapted shape against
+      // them would falsely reject the stripped fields. Required-field shape
+      // bugs on the unadapted request are still caught by the Zod parse in
+      // SingleAgentClient.validateRequest, which runs before adaptation.
+      if (serverVersion !== 'v2') {
+        validateOutgoingRequest(
+          taskName,
+          effectiveParams,
+          this.requestValidationMode,
+          debugLogs,
+          this.config.adcpVersion
+        );
+      }
 
       // Send initial request and get streaming response with webhook URL.
       // Pass the caller's A2A session ids (contextId for conversation binding,

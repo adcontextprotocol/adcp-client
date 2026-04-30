@@ -14,71 +14,63 @@ This skill enables you to execute the AdCP Governance Protocol with governance a
 The Governance Protocol provides 21 standardized tasks across four areas:
 
 ### Property Lists
-
-| Task                   | Purpose                                | Response Time |
-| ---------------------- | -------------------------------------- | ------------- |
-| `create_property_list` | Create include/exclude list            | ~1s           |
-| `update_property_list` | Modify list filters/properties         | ~1s           |
-| `get_property_list`    | Retrieve list with optional resolution | ~1-5s         |
-| `list_property_lists`  | List all accessible lists              | ~1s           |
-| `delete_property_list` | Delete a list                          | ~1s           |
+| Task | Purpose | Response Time |
+|------|---------|---------------|
+| `create_property_list` | Create include/exclude list | ~1s |
+| `update_property_list` | Modify list filters/properties | ~1s |
+| `get_property_list` | Retrieve list with optional resolution | ~1-5s |
+| `list_property_lists` | List all accessible lists | ~1s |
+| `delete_property_list` | Delete a list | ~1s |
 
 ### Collection Lists
-
-| Task                     | Purpose                           | Response Time |
-| ------------------------ | --------------------------------- | ------------- |
-| `create_collection_list` | Create program-level list         | ~1s           |
-| `update_collection_list` | Modify list                       | ~1s           |
-| `get_collection_list`    | Retrieve with optional resolution | ~1-5s         |
-| `list_collection_lists`  | List all accessible lists         | ~1s           |
-| `delete_collection_list` | Delete a list                     | ~1s           |
+| Task | Purpose | Response Time |
+|------|---------|---------------|
+| `create_collection_list` | Create program-level list | ~1s |
+| `update_collection_list` | Modify list | ~1s |
+| `get_collection_list` | Retrieve with optional resolution | ~1-5s |
+| `list_collection_lists` | List all accessible lists | ~1s |
+| `delete_collection_list` | Delete a list | ~1s |
 
 ### Content Standards
-
-| Task                        | Purpose                             | Response Time |
-| --------------------------- | ----------------------------------- | ------------- |
-| `create_content_standards`  | Create brand safety rules           | ~1s           |
-| `get_content_standards`     | Retrieve standards by ID            | ~1s           |
-| `update_content_standards`  | Modify rules                        | ~1s           |
-| `list_content_standards`    | List all accessible standards       | ~1s           |
-| `calibrate_content`         | Test content against standards      | ~5-30s        |
-| `get_media_buy_artifacts`   | Get creatives for compliance review | ~5s           |
-| `validate_content_delivery` | Audit delivery compliance           | ~10-60s       |
+| Task | Purpose | Response Time |
+|------|---------|---------------|
+| `create_content_standards` | Create brand safety rules | ~1s |
+| `get_content_standards` | Retrieve standards by ID | ~1s |
+| `update_content_standards` | Modify rules | ~1s |
+| `list_content_standards` | List all accessible standards | ~1s |
+| `calibrate_content` | Test content against standards | ~5-30s |
+| `get_media_buy_artifacts` | Get creatives for compliance review | ~5s |
+| `validate_content_delivery` | Audit delivery compliance | ~10-60s |
 
 ### Campaign Governance
-
-| Task                  | Purpose                                                           | Response Time |
-| --------------------- | ----------------------------------------------------------------- | ------------- |
-| `sync_plans`          | Push or update a campaign plan with budget authority and policies | ~1s           |
-| `check_governance`    | Validate an action (intent or execution) against the plan         | ~1-5s         |
-| `report_plan_outcome` | Report a completed action so plan budget state advances           | ~1s           |
-| `get_plan_audit_logs` | Retrieve governance state, budget tracking, and audit trail       | ~1-5s         |
+| Task | Purpose | Response Time |
+|------|---------|---------------|
+| `sync_plans` | Push or update a campaign plan with budget authority and policies | ~1s |
+| `check_governance` | Validate an action (intent or execution) against the plan | ~1-5s |
+| `report_plan_outcome` | Report a completed action so plan budget state advances | ~1s |
+| `get_plan_audit_logs` | Retrieve governance state, budget tracking, and audit trail | ~1-5s |
 
 > **Experimental in 3.0.** Campaign governance may change between 3.x releases with at least 6 weeks' notice. Sellers MUST declare `governance.campaign` in `experimental_features` to participate. See [experimental status](/docs/reference/experimental-status).
 
 ## Typical Workflow
 
 ### Property Lists (site-level)
-
 1. **Create list**: `create_property_list` with base properties and filters
 2. **Resolve**: `get_property_list` with `resolve: true` to see matched properties
 3. **Refine**: `update_property_list` to adjust filters
 4. **Apply**: Reference `list_id` in `create_media_buy` targeting
 
 ### Collection Lists (program-level, CTV)
-
 1. **Create list**: `create_collection_list` with distribution IDs or genre filters
 2. **Resolve**: `get_collection_list` with `resolve: true` to see matched programs
 3. **Apply**: Reference in campaign targeting for CTV brand safety
 
 ### Content Standards
-
 1. **Create standards**: `create_content_standards` with rules
 2. **Calibrate**: `calibrate_content` with test samples to validate configuration
 3. **Monitor**: `get_media_buy_artifacts` + `validate_content_delivery` for ongoing compliance
 
 ### Campaign Governance
-
 1. **Sync governance agents** to seller accounts via `sync_governance` (lives in the Accounts protocol)
 2. **Register the plan**: `sync_plans` with budget authority, channel allocation, and resolved policy IDs
 3. **Validate actions**: `check_governance` on intent (pre-discovery) and execution (pre-buy). Returns an opaque `governance_context` token the seller echoes on subsequent checks.
@@ -94,7 +86,6 @@ The Governance Protocol provides 21 standardized tasks across four areas:
 Create a property list for brand safety and inventory targeting.
 
 **Request:**
-
 ```json
 {
   "name": "Premium News Properties",
@@ -117,7 +108,6 @@ Create a property list for brand safety and inventory targeting.
 ```
 
 **Key fields:**
-
 - `name` (string, required): Human-readable name
 - `description` (string, optional): Purpose of the list
 - `base_properties` (array, optional): Property sources — `publisher_tags`, `publisher_ids`, or `identifiers`
@@ -131,7 +121,6 @@ Create a property list for brand safety and inventory targeting.
 Modify an existing property list.
 
 **Request:**
-
 ```json
 {
   "list_id": "pl_abc123",
@@ -143,7 +132,6 @@ Modify an existing property list.
 ```
 
 **Key fields:**
-
 - `list_id` (string, required): Property list identifier
 - `name`, `description` (string, optional): Update metadata
 - `base_properties` (array, optional): Replace property sources
@@ -156,7 +144,6 @@ Modify an existing property list.
 Retrieve a property list with optional resolution.
 
 **Request:**
-
 ```json
 {
   "list_id": "pl_abc123",
@@ -166,7 +153,6 @@ Retrieve a property list with optional resolution.
 ```
 
 **Key fields:**
-
 - `list_id` (string, required): Property list identifier
 - `resolve` (boolean, optional): Resolve filters and return property identifiers (default: false)
 - `max_results` (number, optional): Max properties when resolved
@@ -178,7 +164,6 @@ Retrieve a property list with optional resolution.
 List all property lists accessible to the authenticated principal.
 
 **Request:**
-
 ```json
 {
   "name_contains": "premium"
@@ -186,7 +171,6 @@ List all property lists accessible to the authenticated principal.
 ```
 
 **Key fields:**
-
 - `name_contains` (string, optional): Filter by name substring
 - `max_results` (number, optional): Max results
 
@@ -197,7 +181,6 @@ List all property lists accessible to the authenticated principal.
 Delete a property list.
 
 **Request:**
-
 ```json
 {
   "list_id": "pl_abc123"
@@ -205,7 +188,6 @@ Delete a property list.
 ```
 
 **Key fields:**
-
 - `list_id` (string, required): Property list identifier to delete
 
 ---
@@ -215,7 +197,6 @@ Delete a property list.
 Create a collection list for program-level brand safety (CTV, podcast, streaming).
 
 **Request:**
-
 ```json
 {
   "name": "Family-Safe CTV Programs",
@@ -229,7 +210,9 @@ Create a collection list for program-level brand safety (CTV, podcast, streaming
     }
   ],
   "filters": {
-    "content_ratings_exclude": [{ "system": "us_tv", "rating": "TV-MA" }],
+    "content_ratings_exclude": [
+      { "system": "us_tv", "rating": "TV-MA" }
+    ],
     "kinds": ["series"]
   },
   "brand": {
@@ -239,7 +222,6 @@ Create a collection list for program-level brand safety (CTV, podcast, streaming
 ```
 
 **Key fields:**
-
 - `name` (string, required): Human-readable name
 - `base_collections` (array, optional): Collection sources — `distribution_ids`, `publisher_collections`, or `publisher_genres`
 - `filters` (object, optional): `content_ratings_exclude`, `content_ratings_include`, `genres_exclude`, `genres_include`, `kinds`, `production_quality`
@@ -254,7 +236,6 @@ Create a collection list for program-level brand safety (CTV, podcast, streaming
 Modify an existing collection list.
 
 **Request:**
-
 ```json
 {
   "list_id": "cl_abc123",
@@ -268,7 +249,6 @@ Modify an existing collection list.
 ```
 
 **Key fields:**
-
 - `list_id` (string, required): Collection list identifier
 - `base_collections`, `filters` (optional): Replace configuration
 
@@ -279,7 +259,6 @@ Modify an existing collection list.
 Retrieve a collection list with optional resolution.
 
 **Request:**
-
 ```json
 {
   "list_id": "cl_abc123",
@@ -288,7 +267,6 @@ Retrieve a collection list with optional resolution.
 ```
 
 **Key fields:**
-
 - `list_id` (string, required): Collection list identifier
 - `resolve` (boolean, optional): Resolve and return collection entries
 - `max_results` (number, optional): Max collections when resolved
@@ -300,7 +278,6 @@ Retrieve a collection list with optional resolution.
 List all collection lists accessible to the authenticated principal.
 
 **Request:**
-
 ```json
 {
   "name_contains": "family"
@@ -314,7 +291,6 @@ List all collection lists accessible to the authenticated principal.
 Delete a collection list.
 
 **Request:**
-
 ```json
 {
   "list_id": "cl_abc123"
@@ -328,7 +304,6 @@ Delete a collection list.
 Create content standards (brand safety rules) for campaign compliance.
 
 **Request:**
-
 ```json
 {
   "name": "Automotive Brand Safety",
@@ -345,7 +320,6 @@ Create content standards (brand safety rules) for campaign compliance.
 ```
 
 **Key fields:**
-
 - `name` (string, required): Human-readable name
 - `rules` (array, optional): Content rules — `rule_type`, `action` (allow/block/flag), `value`, `severity`
 - `brand` (object, optional): Brand reference for automatic rule inference
@@ -357,7 +331,6 @@ Create content standards (brand safety rules) for campaign compliance.
 Retrieve content standards by ID.
 
 **Request:**
-
 ```json
 {
   "standards_id": "cs_abc123"
@@ -371,11 +344,12 @@ Retrieve content standards by ID.
 Modify existing content standards.
 
 **Request:**
-
 ```json
 {
   "standards_id": "cs_abc123",
-  "rules": [{ "rule_type": "category", "action": "block", "value": "violence", "severity": "critical" }]
+  "rules": [
+    { "rule_type": "category", "action": "block", "value": "violence", "severity": "critical" }
+  ]
 }
 ```
 
@@ -386,7 +360,6 @@ Modify existing content standards.
 List all content standards accessible to the authenticated principal.
 
 **Request:**
-
 ```json
 {
   "name_contains": "automotive"
@@ -400,7 +373,6 @@ List all content standards accessible to the authenticated principal.
 Test content samples against content standards to validate configuration.
 
 **Request:**
-
 ```json
 {
   "standards_id": "cs_abc123",
@@ -413,7 +385,6 @@ Test content samples against content standards to validate configuration.
 ```
 
 **Key fields:**
-
 - `standards_id` (string, required): Content standards to calibrate against
 - `samples` (array, required): Content samples with `url` and/or `text`, and optional `expected_result`
 
@@ -424,7 +395,6 @@ Test content samples against content standards to validate configuration.
 Get creative artifacts from a media buy for compliance review.
 
 **Request:**
-
 ```json
 {
   "media_buy_id": "mb_abc123",
@@ -433,7 +403,6 @@ Get creative artifacts from a media buy for compliance review.
 ```
 
 **Key fields:**
-
 - `media_buy_id` (string, required): Media buy identifier
 - `sales_agent_url` (string, required): Sales agent that owns the media buy
 
@@ -444,7 +413,6 @@ Get creative artifacts from a media buy for compliance review.
 Validate delivered content against content standards.
 
 **Request:**
-
 ```json
 {
   "standards_id": "cs_abc123",
@@ -458,7 +426,6 @@ Validate delivered content against content standards.
 ```
 
 **Key fields:**
-
 - `standards_id` (string, required): Content standards to validate against
 - `media_buy_id` (string, required): Media buy identifier
 - `sales_agent_url` (string, required): Sales agent URL
@@ -471,20 +438,18 @@ Validate delivered content against content standards.
 Register or update a campaign plan that defines authorized parameters (budget, channels, policies) for an orchestrator's autonomous action.
 
 **Request:**
-
 ```json
 {
   "plan_id": "plan_q1_2026_launch",
   "plan_version": 1,
   "budget": { "authorized": 500000, "currency": "USD" },
-  "channel_allocation": { "olv": 0.55, "display": 0.3, "audio": 0.15 },
+  "channel_allocation": { "olv": 0.55, "display": 0.30, "audio": 0.15 },
   "policies": ["us_coppa", "alcohol_advertising"],
   "human_review_required": false
 }
 ```
 
 **Key fields:**
-
 - `plan_id` (string, required): Stable plan identifier
 - `plan_version` (integer, required): Increment on every modification — checks bind to a version
 - `budget.authorized` (number, required): Total spend authority across all governed actions on this plan
@@ -498,7 +463,6 @@ Register or update a campaign plan that defines authorized parameters (budget, c
 Validate an action against the plan. Called twice in the lifecycle: once on intent (pre-discovery), once on execution (pre-buy). Sellers MUST call execution checks independently using credentials synced via `sync_governance`.
 
 **Request (execution check):**
-
 ```json
 {
   "plan_id": "plan_q1_2026_launch",
@@ -511,7 +475,6 @@ Validate an action against the plan. Called twice in the lifecycle: once on inte
 ```
 
 **Key fields:**
-
 - `purchase_type` (enum, required): `media_buy`, `rights_license`, `signal_activation`, or `creative_services`
 - `governance_context` (string, optional): Echoed on subsequent checks for the same governed action. The agent issues this on the first check and the buyer attaches it to the action envelope.
 - `tool` (string, required): Which AdCP tool is being authorized
@@ -526,7 +489,6 @@ Validate an action against the plan. Called twice in the lifecycle: once on inte
 Report the result of a governed action so plan budget and state advance.
 
 **Request:**
-
 ```json
 {
   "plan_id": "plan_q1_2026_launch",
@@ -537,7 +499,6 @@ Report the result of a governed action so plan budget and state advance.
 ```
 
 **Key fields:**
-
 - `governance_context` (string, required): The token issued on the original check
 - `outcome` (enum, required): `completed`, `cancelled`, `failed`, or `delivery` (for ongoing pacing reports)
 - `committed_budget` (number, required for `completed`): Net budget committed by this action
@@ -549,7 +510,6 @@ Report the result of a governed action so plan budget and state advance.
 Retrieve governance state, budget tracking, and audit trail for one or more plans.
 
 **Request:**
-
 ```json
 {
   "plan_ids": ["plan_q1_2026_launch"],
@@ -559,7 +519,6 @@ Retrieve governance state, budget tracking, and audit trail for one or more plan
 ```
 
 **Key fields:**
-
 - `plan_ids` / `portfolio_plan_ids` / `governance_contexts` (at least one required): Scope the query
 - `include_entries` (boolean, optional): Return the full audit trail. Default `false` returns summary only.
 

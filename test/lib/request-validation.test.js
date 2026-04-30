@@ -866,3 +866,252 @@ describe('v3 partial-schema field stripping', () => {
     );
   });
 });
+
+describe('strict request validation against v2 servers', () => {
+  // The v2 adapters strip v3-only required fields (e.g. buying_mode for
+  // get_products, account for sync_creatives). The bundled schemas are v3
+  // only, so AJV strict validation against the adapted shape would falsely
+  // reject those stripped fields. Required-field violations on the unadapted
+  // request are still caught by the Zod parse in SingleAgentClient.validateRequest
+  // before adaptation runs.
+  test('strict mode does not reject get_products against a v2 agent after buying_mode is stripped', async () => {
+    const mockMCPAgent = {
+      id: 'v2-agent',
+      name: 'V2 Agent',
+      agent_uri: 'https://agents.example.com/mcp',
+      protocol: 'mcp',
+    };
+
+    const client = new AdCPClient([mockMCPAgent], {
+      validation: { requests: 'strict' },
+    });
+    const agent = client.agent(mockMCPAgent.id);
+    const inner = agent.client;
+
+    inner.discoveredEndpoint = mockMCPAgent.agent_uri;
+    inner.cachedCapabilities = {
+      version: 'v2',
+      majorVersions: [2],
+      protocols: ['media_buy'],
+      features: {
+        inlineCreativeManagement: false,
+        conversionTracking: false,
+        audienceTargeting: false,
+        propertyListFiltering: false,
+        contentStandards: false,
+      },
+      extensions: [],
+      _synthetic: false,
+    };
+
+    const capturedCalls = [];
+    const originalCallTool = ProtocolClient.callTool;
+    ProtocolClient.callTool = async (_agentConfig, toolName, args) => {
+      capturedCalls.push({ toolName, args });
+      return { products: [] };
+    };
+
+    try {
+      await assert.doesNotReject(
+        agent.getProducts({
+          buying_mode: 'brief',
+          brief: 'Premium ad placements',
+          brand: { domain: 'example.com' },
+        }),
+        err => err.message?.includes('Validation failed for field')
+      );
+    } finally {
+      ProtocolClient.callTool = originalCallTool;
+    }
+
+    const call = capturedCalls.find(c => c.toolName === 'get_products');
+    assert.ok(call, 'get_products should have reached the protocol layer');
+    assert.strictEqual(call.args.buying_mode, undefined, 'buying_mode is stripped by the v2 adapter');
+    assert.strictEqual(call.args.brief, 'Premium ad placements', 'brief is preserved');
+  });
+
+  test('strict mode does not reject create_media_buy against a v2 agent after brand is rewritten to brand_manifest', async () => {
+    const mockMCPAgent = {
+      id: 'v2-agent-cmb',
+      name: 'V2 Agent',
+      agent_uri: 'https://agents.example.com/mcp',
+      protocol: 'mcp',
+    };
+
+    const client = new AdCPClient([mockMCPAgent], {
+      validation: { requests: 'strict' },
+      // create_media_buy is mutating; allowV2 lets the v2 path proceed.
+      allowV2: true,
+    });
+    const agent = client.agent(mockMCPAgent.id);
+    const inner = agent.client;
+
+    inner.discoveredEndpoint = mockMCPAgent.agent_uri;
+    inner.cachedCapabilities = {
+      version: 'v2',
+      majorVersions: [2],
+      protocols: ['media_buy'],
+      features: {
+        inlineCreativeManagement: false,
+        conversionTracking: false,
+        audienceTargeting: false,
+        propertyListFiltering: false,
+        contentStandards: false,
+      },
+      extensions: [],
+      _synthetic: false,
+    };
+
+    const capturedCalls = [];
+    const originalCallTool = ProtocolClient.callTool;
+    ProtocolClient.callTool = async (_agentConfig, toolName, args) => {
+      capturedCalls.push({ toolName, args });
+      return { media_buy_id: 'mb-1', status: 'completed' };
+    };
+
+    try {
+      await assert.doesNotReject(
+        agent.createMediaBuy({
+          account: { account_id: 'acct-1' },
+          brand: { domain: 'example.com' },
+          packages: [],
+          start_time: 'immediate',
+          end_time: '2027-12-31T23:59:59Z',
+        }),
+        err => err.message?.includes('Validation failed for field')
+      );
+    } finally {
+      ProtocolClient.callTool = originalCallTool;
+    }
+
+    const call = capturedCalls.find(c => c.toolName === 'create_media_buy');
+    assert.ok(call, 'create_media_buy should have reached the protocol layer');
+    assert.strictEqual(call.args.brand, undefined, 'brand is removed by the v2 adapter');
+    assert.strictEqual(call.args.brand_manifest, 'https://example.com', 'brand_manifest is derived from brand.domain');
+  });
+
+  test('strict mode does not reject sync_creatives against a v2 agent after account is stripped', async () => {
+    const mockMCPAgent = {
+      id: 'v2-agent-sc',
+      name: 'V2 Agent',
+      agent_uri: 'https://agents.example.com/mcp',
+      protocol: 'mcp',
+    };
+
+    const client = new AdCPClient([mockMCPAgent], {
+      validation: { requests: 'strict' },
+      allowV2: true,
+    });
+    const agent = client.agent(mockMCPAgent.id);
+    const inner = agent.client;
+
+    inner.discoveredEndpoint = mockMCPAgent.agent_uri;
+    inner.cachedCapabilities = {
+      version: 'v2',
+      majorVersions: [2],
+      protocols: ['creative'],
+      features: {
+        inlineCreativeManagement: false,
+        conversionTracking: false,
+        audienceTargeting: false,
+        propertyListFiltering: false,
+        contentStandards: false,
+      },
+      extensions: [],
+      _synthetic: false,
+    };
+
+    const capturedCalls = [];
+    const originalCallTool = ProtocolClient.callTool;
+    ProtocolClient.callTool = async (_agentConfig, toolName, args) => {
+      capturedCalls.push({ toolName, args });
+      return { results: [] };
+    };
+
+    try {
+      await assert.doesNotReject(
+        agent.syncCreatives({
+          account: { account_id: 'acct-1' },
+          creatives: [
+            {
+              creative_id: 'cre-1',
+              name: 'Test Creative',
+              format_id: { agent_url: 'https://test.example', id: 'format1' },
+              assets: {
+                video: {
+                  asset_type: 'video',
+                  url: 'https://example.com/video.mp4',
+                  width: 1920,
+                  height: 1080,
+                  duration_ms: 30000,
+                },
+              },
+            },
+          ],
+        }),
+        err => err.message?.includes('Validation failed for field')
+      );
+    } finally {
+      ProtocolClient.callTool = originalCallTool;
+    }
+
+    const call = capturedCalls.find(c => c.toolName === 'sync_creatives');
+    assert.ok(call, 'sync_creatives should have reached the protocol layer');
+    assert.strictEqual(call.args.account, undefined, 'account is stripped by the v2 adapter');
+    assert.ok(Array.isArray(call.args.creatives) && call.args.creatives.length === 1, 'creatives are preserved');
+  });
+
+  test('strict mode preserves v3 fields and reaches the protocol layer for a v3 agent', async () => {
+    const mockMCPAgent = {
+      id: 'v3-agent',
+      name: 'V3 Agent',
+      agent_uri: 'https://agents.example.com/mcp',
+      protocol: 'mcp',
+    };
+
+    const client = new AdCPClient([mockMCPAgent], {
+      validation: { requests: 'strict' },
+    });
+    const agent = client.agent(mockMCPAgent.id);
+    const inner = agent.client;
+
+    inner.discoveredEndpoint = mockMCPAgent.agent_uri;
+    inner.cachedCapabilities = {
+      version: 'v3',
+      majorVersions: [3],
+      protocols: ['media_buy'],
+      features: {
+        inlineCreativeManagement: false,
+        conversionTracking: false,
+        audienceTargeting: false,
+        propertyListFiltering: false,
+        contentStandards: false,
+      },
+      extensions: [],
+      _synthetic: false,
+      idempotency: { replayTtlSeconds: 3600 },
+    };
+
+    const capturedCalls = [];
+    const originalCallTool = ProtocolClient.callTool;
+    ProtocolClient.callTool = async (_agentConfig, toolName, args) => {
+      capturedCalls.push({ toolName, args });
+      return { products: [] };
+    };
+
+    try {
+      await agent.getProducts({
+        buying_mode: 'brief',
+        brief: 'Premium ad placements',
+        brand: { domain: 'example.com' },
+      });
+    } finally {
+      ProtocolClient.callTool = originalCallTool;
+    }
+
+    const call = capturedCalls.find(c => c.toolName === 'get_products');
+    assert.ok(call, 'get_products should have reached the protocol layer');
+    assert.strictEqual(call.args.buying_mode, 'brief', 'buying_mode is preserved for v3');
+    assert.deepStrictEqual(call.args.brand, { domain: 'example.com' }, 'brand is preserved for v3');
+  });
+});
