@@ -233,7 +233,10 @@ Quick lookup before reading the full envelope. Match what you see in `adcp_error
 | `keyword: 'enum'` at `/destinations/*/type` | Made-up destination type | Use `'platform'` (with `platform`) or `'agent'` (with `agent_url`). |
 | Response carries `status: 'submitted'` and `task_id` | Async — work is queued, NOT done | Poll via `tasks/get` (A2A) or the MCP async task extension using `task_id`. |
 | `recovery: 'transient'` (rate limit, 5xx, timeout) | Server-side, retry-safe | Retry with the **same** `idempotency_key`. |
+<<<<<<< Updated upstream
 | `406 Not Acceptable` before any AdCP framing | Hand-rolled HTTP without `Accept: text/event-stream` (MCP transport) | Use `@modelcontextprotocol/sdk` client; it sets the right Accept header. |
+=======
+>>>>>>> Stashed changes
 | `recovery: 'correctable'` | Buyer-side fix | Read `issues[]`, patch the pointers, resend. Most cases close in one attempt. |
 | `recovery: 'terminal'` (account suspended, payment required, …) | Requires human action | Don't retry. Surface to the user. |
 | HTTP 401 with `WWW-Authenticate` header | Missing or expired credential | Add `Authorization` per the agent's auth spec; re-auth if applicable. |

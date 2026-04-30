@@ -481,6 +481,12 @@ before serving traffic — wrong default for a hint cache.
 **Handler-side existence check pattern:**
 
 ```ts
+import { MediaBuyNotFoundError } from '@adcp/sdk/server';
+// — or PackageNotFoundError, ProductNotFoundError, CreativeNotFoundError, etc.
+// from `@adcp/sdk/server/decisioning/errors-typed`. Typed classes auto-map
+// to their wire error code with `recovery: 'terminal'` baked in; throw
+// these instead of `new AdcpError(...)` for spec-defined not-found cases.
+
 updateMediaBuy: async (id, patch, ctx) => {
   // patch.media_buy is set by hydration on hit, undefined on miss.
   // Fall through to the publisher's DB on miss.
