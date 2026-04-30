@@ -2817,7 +2817,16 @@ function buildBrandRightsHandlers<P extends DecisioningPlatform<any, any>>(
       // Auto-hydrate: attach the full BrandIdentity (including ctx_metadata)
       // at req.brand from the store populated by getBrandIdentity. Publisher
       // reads req.brand.ctx_metadata directly. Falls back gracefully when absent.
+      //
+      // BrandReference.brand_id is optional on the wire spec — a buyer may send
+      // only `buyer.domain`. When absent, hydration is skipped (req.brand stays
+      // undefined) and the publisher must look up from its own catalog.
       const buyerBrandId = (params as { buyer?: { brand_id?: string } }).buyer?.brand_id;
+      if (!buyerBrandId) {
+        logger.debug?.(
+          '[adcp/decisioning] acquireRights: buyer.brand_id absent — brand hydration skipped; publisher must look up from own catalog'
+        );
+      }
       await hydrateRequestResource(
         ctxMetadataStore,
         reqCtx.account?.id,

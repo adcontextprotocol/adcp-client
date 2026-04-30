@@ -417,7 +417,7 @@ describe('createAdcpServerFromPlatform — auto-hydration of signal for activate
       }),
       activateSignalImpl: async req => {
         observedSignal = req.signal;
-        return { deployments: [{ platform: 'meta', status: 'pending' }] };
+        return { deployments: [{ type: 'platform', platform: 'dsp-example', is_live: false }] };
       },
     });
 
@@ -448,7 +448,7 @@ describe('createAdcpServerFromPlatform — auto-hydration of signal for activate
         name: 'activate_signal',
         arguments: {
           signal_agent_segment_id: 'seg_sports_fans',
-          destinations: [{ platform: 'meta' }],
+          destinations: [{ type: 'platform', platform: 'dsp-example' }],
           idempotency_key: 'idem_activate_001',
         },
       },
@@ -488,7 +488,7 @@ describe('createAdcpServerFromPlatform — auto-hydration of signal for activate
         name: 'activate_signal',
         arguments: {
           signal_agent_segment_id: 'seg_unknown',
-          destinations: [{ platform: 'meta' }],
+          destinations: [{ type: 'platform', platform: 'dsp-example' }],
           idempotency_key: 'idem_activate_unseen_001',
         },
       },
