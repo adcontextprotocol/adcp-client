@@ -13,12 +13,12 @@ This skill enables you to execute the AdCP Creative Protocol with creative agent
 
 The Creative Protocol provides 4 standardized tasks for building and previewing advertising creatives:
 
-| Task                    | Purpose                         | Response Time |
-| ----------------------- | ------------------------------- | ------------- |
-| `list_creative_formats` | View format specifications      | ~1s           |
-| `build_creative`        | Generate or transform creatives | ~30s-5m       |
-| `preview_creative`      | Get visual previews             | ~5s           |
-| `get_creative_delivery` | Variant-level delivery data     | ~5-30s        |
+| Task | Purpose | Response Time |
+|------|---------|---------------|
+| `list_creative_formats` | View format specifications | ~1s |
+| `build_creative` | Generate or transform creatives | ~30s-5m |
+| `preview_creative` | Get visual previews | ~5s |
+| `get_creative_delivery` | Variant-level delivery data | ~5-30s |
 
 ## Typical Workflow
 
@@ -36,7 +36,6 @@ The Creative Protocol provides 4 standardized tasks for building and previewing 
 Discover creative formats and their specifications.
 
 **Request:**
-
 ```json
 {
   "type": "video",
@@ -45,7 +44,6 @@ Discover creative formats and their specifications.
 ```
 
 **Key fields:**
-
 - `format_ids` (array, optional): Request specific format IDs
 - `type` (string, optional): Filter by type: `video`, `display`, `audio`, `dooh`
 - `asset_types` (array, optional): Filter by accepted asset types
@@ -54,7 +52,6 @@ Discover creative formats and their specifications.
 - `name_search` (string, optional): Search formats by name
 
 **Response contains:**
-
 - `formats`: Array of format definitions with `format_id`, `name`, `type`, `assets_required`, `renders`
 - `creative_agents`: Optional array of other creative agents providing additional formats
 
@@ -65,7 +62,6 @@ Discover creative formats and their specifications.
 Generate a creative from scratch or transform an existing creative to a different format.
 
 **Pure Generation (from brief):**
-
 ```json
 {
   "message": "Create a banner promoting our winter sale with a warm, inviting feel",
@@ -80,7 +76,6 @@ Generate a creative from scratch or transform an existing creative to a differen
 ```
 
 **Transformation (resize/reformat):**
-
 ```json
 {
   "message": "Adapt this leaderboard to a 300x250 banner",
@@ -110,13 +105,11 @@ Generate a creative from scratch or transform an existing creative to a differen
 ```
 
 **Key fields:**
-
 - `message` (string, optional): Natural language instructions for generation/transformation
 - `creative_manifest` (object, optional): Source manifest - minimal for generation, complete for transformation
 - `target_format_id` (object, required): Format to generate - `{ agent_url, id }`
 
 **Response contains:**
-
 - `creative_manifest`: Complete manifest ready for `preview_creative` or `sync_creatives`
 
 ---
@@ -126,7 +119,6 @@ Generate a creative from scratch or transform an existing creative to a differen
 Generate visual previews of creative manifests.
 
 **Single preview:**
-
 ```json
 {
   "request_type": "single",
@@ -148,13 +140,10 @@ Generate visual previews of creative manifests.
 ```
 
 **With device variants:**
-
 ```json
 {
   "request_type": "single",
-  "creative_manifest": {
-    /* includes format_id, assets */
-  },
+  "creative_manifest": { /* includes format_id, assets */ },
   "inputs": [
     { "name": "Desktop", "macros": { "DEVICE_TYPE": "desktop" } },
     { "name": "Mobile", "macros": { "DEVICE_TYPE": "mobile" } }
@@ -163,27 +152,17 @@ Generate visual previews of creative manifests.
 ```
 
 **Batch preview (5-10x faster):**
-
 ```json
 {
   "request_type": "batch",
   "requests": [
-    {
-      "creative_manifest": {
-        /* creative 1 */
-      }
-    },
-    {
-      "creative_manifest": {
-        /* creative 2 */
-      }
-    }
+    { "creative_manifest": { /* creative 1 */ } },
+    { "creative_manifest": { /* creative 2 */ } }
   ]
 }
 ```
 
 **Key fields:**
-
 - `request_type` (string, required): `"single"` or `"batch"`
 - `format_id` (object, optional): Format identifier. Defaults to `creative_manifest.format_id` if omitted.
 - `creative_manifest` (object, required): Complete creative manifest
@@ -191,7 +170,6 @@ Generate visual previews of creative manifests.
 - `output_format` (string, optional): `"url"` (default) or `"html"`
 
 **Response contains:**
-
 - `previews`: Array of preview objects with `preview_url` or `preview_html`
 - `expires_at`: When preview URLs expire
 
@@ -202,7 +180,6 @@ Generate visual previews of creative manifests.
 Retrieve variant-level creative delivery data from a creative agent. Returns what was generated, served, and how each variant performed.
 
 **Request:**
-
 ```json
 {
   "media_buy_ids": ["mb_abc123"],
@@ -213,7 +190,6 @@ Retrieve variant-level creative delivery data from a creative agent. Returns wha
 ```
 
 **Key fields:**
-
 - `media_buy_ids` (array, optional): Filter to specific media buys
 - `creative_ids` (array, optional): Filter to specific creatives
 - `start_date`, `end_date` (string, optional): Delivery period (YYYY-MM-DD)
@@ -223,7 +199,6 @@ Retrieve variant-level creative delivery data from a creative agent. Returns wha
 At least one scoping filter (`media_buy_ids` or `creative_ids`) is required.
 
 **Response contains:**
-
 - `creatives`: Array with variant-level delivery data
   - `variant_id`: Unique variant identifier (use in `preview_creative` with `request_type: "variant"`)
   - `generation_context`: What triggered this variant (page topic, device, etc.)
@@ -237,7 +212,6 @@ At least one scoping filter (`media_buy_ids` or `creative_ids`) is required.
 ### Format IDs
 
 All format references use structured objects:
-
 ```json
 {
   "format_id": {
@@ -252,7 +226,6 @@ The `agent_url` specifies the creative agent authoritative for this format.
 ### Creative Manifests
 
 Manifests pair format specifications with actual assets:
-
 ```json
 {
   "format_id": {
@@ -281,7 +254,6 @@ Manifests pair format specifications with actual assets:
 ### Asset Types
 
 Common asset types:
-
 - `image`: Static images (JPEG, PNG, WebP)
 - `video`: Video files (MP4, WebM) or VAST tags
 - `audio`: Audio files (MP3, M4A) or DAAST tags
@@ -293,7 +265,6 @@ Common asset types:
 ### Brand identity
 
 For generative creatives, provide brand context by domain:
-
 ```json
 {
   "brand": {
@@ -320,7 +291,6 @@ Common error patterns:
 - **422 Validation Error**: Manifest doesn't match format requirements
 
 Error responses include:
-
 ```json
 {
   "error": {

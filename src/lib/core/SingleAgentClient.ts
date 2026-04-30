@@ -1150,6 +1150,11 @@ export class SingleAgentClient {
 
     const agent = await this.ensureEndpointDiscovered();
 
+    // Schema-driven pre-send validation runs on the unadapted v3 shape so
+    // wire-format adapters (e.g. adaptGetProductsRequestForV2) don't strip
+    // v3-only fields out from under the v3 bundled schema.
+    this.executor.validateRequest(taskType, normalizedParams);
+
     // Adapt request for v2 servers if needed
     const serverVersion = await this.detectServerVersion();
     const adaptedParams = await this.adaptRequestForServerVersion(taskType, normalizedParams);
@@ -1704,6 +1709,11 @@ export class SingleAgentClient {
     options?: TaskOptions & { agent?: AgentConfig }
   ): Promise<TaskResult<SyncPlansResponse>> {
     const agent = options?.agent ?? this.getGovernanceAgent();
+    // Pre-send schema check on the unadapted shape, mirroring the public-task
+    // executeTask path. Without this call, governance/protocol entry points
+    // that bypass the executeTask seam silently round-trip malformed requests
+    // to the server instead of failing locally.
+    this.executor.validateRequest('sync_plans', params);
     return this.executor.executeTask<SyncPlansResponse>(agent, 'sync_plans', params, inputHandler, options);
   }
 
@@ -1719,6 +1729,7 @@ export class SingleAgentClient {
     options?: TaskOptions & { agent?: AgentConfig }
   ): Promise<TaskResult<GetPlanAuditLogsResponse>> {
     const agent = options?.agent ?? this.getGovernanceAgent();
+    this.executor.validateRequest('get_plan_audit_logs', params);
     return this.executor.executeTask<GetPlanAuditLogsResponse>(
       agent,
       'get_plan_audit_logs',
@@ -1774,6 +1785,7 @@ export class SingleAgentClient {
     options?: TaskOptions
   ): Promise<TaskResult<GetAdCPCapabilitiesResponse>> {
     const agent = await this.ensureEndpointDiscovered();
+    this.executor.validateRequest('get_adcp_capabilities', params);
     return this.executor.executeTask<GetAdCPCapabilitiesResponse>(
       agent,
       'get_adcp_capabilities',
@@ -2113,6 +2125,11 @@ export class SingleAgentClient {
       await this.requireSupportedMajor(taskName);
     }
     const agent = await this.ensureEndpointDiscovered();
+
+    // Schema-driven pre-send validation runs on the unadapted v3 shape so
+    // wire-format adapters (e.g. adaptGetProductsRequestForV2) don't strip
+    // v3-only fields out from under the v3 bundled schema.
+    this.executor.validateRequest(taskName, normalizedParams);
 
     // Adapt request for the server's protocol version (e.g. strip v3-only
     // fields like buying_mode when talking to v2 agents).

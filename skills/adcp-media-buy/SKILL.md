@@ -13,19 +13,19 @@ This skill enables you to execute the AdCP Media Buy Protocol with sales agents.
 
 The Media Buy Protocol provides 11 standardized tasks for managing advertising campaigns:
 
-| Task                           | Purpose                                   | Response Time |
-| ------------------------------ | ----------------------------------------- | ------------- |
-| `get_products`                 | Discover inventory using natural language | ~60s          |
-| `list_authorized_properties`   | See publisher properties                  | ~1s           |
-| `list_creative_formats`        | View creative specifications              | ~1s           |
-| `create_media_buy`             | Create campaigns                          | Minutes-Days  |
-| `update_media_buy`             | Modify campaigns                          | Minutes-Days  |
-| `get_media_buys`               | Retrieve campaign state and status        | ~1-5s         |
-| `sync_creatives`               | Upload creative assets                    | Minutes-Days  |
-| `sync_catalogs`                | Sync product feeds and catalogs           | Minutes-Days  |
-| `list_creatives`               | Query creative library                    | ~1s           |
-| `get_media_buy_delivery`       | Get performance data                      | ~60s          |
-| `provide_performance_feedback` | Share outcomes with publishers            | ~1-5s         |
+| Task | Purpose | Response Time |
+|------|---------|---------------|
+| `get_products` | Discover inventory using natural language | ~60s |
+| `list_authorized_properties` | See publisher properties | ~1s |
+| `list_creative_formats` | View creative specifications | ~1s |
+| `create_media_buy` | Create campaigns | Minutes-Days |
+| `update_media_buy` | Modify campaigns | Minutes-Days |
+| `get_media_buys` | Retrieve campaign state and status | ~1-5s |
+| `sync_creatives` | Upload creative assets | Minutes-Days |
+| `sync_catalogs` | Sync product feeds and catalogs | Minutes-Days |
+| `list_creatives` | Query creative library | ~1s |
+| `get_media_buy_delivery` | Get performance data | ~60s |
+| `provide_performance_feedback` | Share outcomes with publishers | ~1-5s |
 
 ## Typical Workflow
 
@@ -44,7 +44,6 @@ The Media Buy Protocol provides 11 standardized tasks for managing advertising c
 Discover advertising products using natural language briefs.
 
 **Request:**
-
 ```json
 {
   "buying_mode": "brief",
@@ -60,14 +59,12 @@ Discover advertising products using natural language briefs.
 ```
 
 **Key fields:**
-
 - `buying_mode` (string): Required discriminator - `"brief"` or `"wholesale"`
 - `brief` (string): Natural language description of campaign requirements
 - `brand` (object): Brand identity - `{ "domain": "acmecorp.com" }`
 - `filters` (object, optional): Filter by channels, budget, delivery_type
 
 **Response contains:**
-
 - `products`: Array of matching products with `product_id`, `name`, `description`, `pricing_options`
 - Each product includes `format_ids` (supported creative formats) and `targeting` (available targeting)
 
@@ -78,7 +75,6 @@ Discover advertising products using natural language briefs.
 Get the list of publisher properties this agent can sell.
 
 **Request:**
-
 ```json
 {}
 ```
@@ -86,7 +82,6 @@ Get the list of publisher properties this agent can sell.
 No parameters required.
 
 **Response contains:**
-
 - `publisher_domains`: Array of domain strings the agent is authorized to sell
 
 ---
@@ -96,7 +91,6 @@ No parameters required.
 View supported creative specifications.
 
 **Request:**
-
 ```json
 {
   "asset_types": ["video", "image"]
@@ -104,12 +98,10 @@ View supported creative specifications.
 ```
 
 **Key fields:**
-
 - `asset_types` (array, optional): Filter by asset types (image, video, audio, text, html, vast, etc.)
 - `name_search` (string, optional): Case-insensitive partial match on name or description
 
 **Response contains:**
-
 - `formats`: Array of format specifications with dimensions, requirements, and asset schemas
 
 ---
@@ -119,7 +111,6 @@ View supported creative specifications.
 Create an advertising campaign from selected products.
 
 **Request:**
-
 ```json
 {
   "brand": {
@@ -140,7 +131,6 @@ Create an advertising campaign from selected products.
 ```
 
 **Key fields:**
-
 - `brand` (object, required): Brand identity - `{ "domain": "acmecorp.com" }`
 - `packages` (array, required): Products to purchase, each with:
   - `product_id`: From `get_products` response
@@ -153,7 +143,6 @@ Create an advertising campaign from selected products.
 - `end_time` (string, required): ISO 8601 datetime
 
 **Response contains:**
-
 - `media_buy_id`: The created campaign identifier
 - `status`: Current lifecycle state — `pending_creatives` (no creatives assigned yet), `pending_start` (waiting for flight date), or `active` (serving immediately)
 - `packages`: Created packages with their IDs
@@ -165,7 +154,6 @@ Create an advertising campaign from selected products.
 Modify an existing campaign.
 
 **Request:**
-
 ```json
 {
   "media_buy_id": "mb_abc123",
@@ -178,7 +166,6 @@ Modify an existing campaign.
 ```
 
 **Key fields:**
-
 - `media_buy_id` (string, required): The campaign to update
 - `updates` (object): Changes to apply - budget_change, end_time, status, targeting, etc.
 
@@ -189,7 +176,6 @@ Modify an existing campaign.
 Sync product catalogs, store locations, job postings, and other structured feeds to a seller account. Supports inline items or external feed URLs. When called without catalogs, returns existing catalogs (discovery mode).
 
 **Request:**
-
 ```json
 {
   "account": {
@@ -200,14 +186,15 @@ Sync product catalogs, store locations, job postings, and other structured feeds
       "catalog_id": "winter-collection",
       "name": "Winter 2025 Collection",
       "type": "product",
-      "items": [{ "id": "sku-001", "name": "Wool Coat", "price": 299.99, "currency": "USD" }]
+      "items": [
+        { "id": "sku-001", "name": "Wool Coat", "price": 299.99, "currency": "USD" }
+      ]
     }
   ]
 }
 ```
 
 **Key fields:**
-
 - `account` (object, required): Account that owns the catalogs — `{ account_id }`
 - `catalogs` (array, optional): Catalog objects to sync. Omit for discovery mode.
   - `type` (string, required): `offering`, `product`, `inventory`, `store`, `promotion`, `hotel`, `flight`, `job`, `vehicle`, `real_estate`, `education`, `destination`, `app`
@@ -224,7 +211,6 @@ Sync product catalogs, store locations, job postings, and other structured feeds
 Upload and manage creative assets.
 
 **Request:**
-
 ```json
 {
   "creatives": [
@@ -252,7 +238,6 @@ Upload and manage creative assets.
 ```
 
 **Key fields:**
-
 - `creatives` (array, required): Creative assets to sync
   - `creative_id`: Your unique identifier
   - `format_id`: Object with `agent_url` and `id` from format specifications
@@ -268,7 +253,6 @@ Upload and manage creative assets.
 Query the creative library with filtering.
 
 **Request:**
-
 ```json
 {
   "filters": {
@@ -285,7 +269,6 @@ Query the creative library with filtering.
 Retrieve media buy state: status, valid_actions, creative approvals, pending formats, and optional delivery snapshots or revision history.
 
 **Request:**
-
 ```json
 {
   "media_buy_ids": ["mb_abc123"],
@@ -295,7 +278,6 @@ Retrieve media buy state: status, valid_actions, creative approvals, pending for
 ```
 
 **Key fields:**
-
 - `media_buy_ids` (array, optional): Specific media buy IDs to retrieve
 - `account` (object, optional): Filter to a specific account
 - `status_filter` (string or array, optional): Filter by status — `pending_creatives`, `pending_start`, `active`, `paused`, `completed`, `rejected`, `canceled`. Defaults to `["active"]` when no IDs provided.
@@ -303,7 +285,6 @@ Retrieve media buy state: status, valid_actions, creative approvals, pending for
 - `include_history` (integer, optional): Include the last N revision history entries per media buy
 
 **Response contains:**
-
 - `media_buys`: Array with `media_buy_id`, `status`, `valid_actions`, `packages`, creative approval state
 - Optional `snapshot` per package (impressions, spend, pacing)
 - Optional `history` entries (revision, timestamp, actor, action, summary)
@@ -315,7 +296,6 @@ Retrieve media buy state: status, valid_actions, creative approvals, pending for
 Share performance outcomes with publishers to enable data-driven optimization.
 
 **Request:**
-
 ```json
 {
   "media_buy_id": "mb_abc123",
@@ -330,7 +310,6 @@ Share performance outcomes with publishers to enable data-driven optimization.
 ```
 
 **Key fields:**
-
 - `media_buy_id` (string, required): Publisher's media buy identifier
 - `measurement_period` (object, required): Time period with `start` and `end` (ISO 8601)
 - `performance_index` (number, required): Normalized score — 0.0 = no value, 1.0 = expected, >1.0 = above expected
@@ -346,7 +325,6 @@ Share performance outcomes with publishers to enable data-driven optimization.
 Retrieve performance metrics for a campaign.
 
 **Request:**
-
 ```json
 {
   "media_buy_id": "mb_abc123",
@@ -359,7 +337,6 @@ Retrieve performance metrics for a campaign.
 ```
 
 **Response contains:**
-
 - `delivery`: Aggregated metrics (impressions, spend, clicks, etc.)
 - `by_package`: Breakdown by package
 - `timeseries`: Data points over time if granularity specified
@@ -385,7 +362,6 @@ The agent resolves the domain to retrieve the brand's identity (name, colors, gu
 ### Format IDs
 
 Creative format identifiers are structured objects:
-
 ```json
 {
   "format_id": {
@@ -400,7 +376,6 @@ The `agent_url` specifies which creative agent defines the format. Use `https://
 ### Pricing Options
 
 Products include `pricing_options` array. Each option has:
-
 - `pricing_option_id`: Use this in `create_media_buy`
 - `pricing_model`: "cpm", "cpm-auction", "flat-fee", etc.
 - `price`: Base price (for fixed pricing)
@@ -411,7 +386,6 @@ For auction pricing, include `bid_price` in your package.
 ### Asynchronous Operations
 
 Operations like `create_media_buy` and `sync_creatives` may require human approval. The response includes:
-
 - `status: "pending"` - Operation awaiting approval
 - `task_id` - For tracking async progress
 
@@ -429,7 +403,6 @@ Common error patterns:
 - **422 Validation Error**: Schema validation failure - check field types
 
 Error responses include:
-
 ```json
 {
   "errors": [
@@ -449,7 +422,6 @@ Error responses include:
 Use **sandbox mode** for testing without real transactions. Sandbox is account-level — once a request references a sandbox account, the entire request is treated as sandbox with no real platform calls or spend.
 
 Check whether the agent supports sandbox via `get_adcp_capabilities`:
-
 ```json
 {
   "account": {
@@ -459,7 +431,6 @@ Check whether the agent supports sandbox via `get_adcp_capabilities`:
 ```
 
 To enter sandbox mode, set `sandbox: true` on the account reference:
-
 ```json
 {
   "account": {
