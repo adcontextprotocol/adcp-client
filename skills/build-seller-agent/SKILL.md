@@ -41,8 +41,10 @@ Every sales-_ specialism (including `sales-social`, `sales-broadcast-tv`, `sales
 | `list_creatives`         | Read the creative library back with pagination                                     | `sales.listCreatives`    |
 | `get_media_buy_delivery` | Delivery + spend reporting with `reporting_period`, per-package billing rows       | `sales.getMediaBuyDelivery` |
 
-> **`sales_guaranteed` minimum tool surface** — register ALL of these or storyboard scenarios will cascade-skip with `skip_reason: missing_tool`:
-> `get_adcp_capabilities`, `sync_accounts`, `list_accounts`, `get_products`, `list_creative_formats`, `create_media_buy`, `update_media_buy`, `get_media_buys`, `sync_creatives`, `list_creatives`, `get_media_buy_delivery`
+> **`sales-guaranteed` minimum tool surface** — register ALL of these or storyboard scenarios will cascade-skip with `skip_reason: missing_tool`:
+> `get_adcp_capabilities`, `sync_accounts`, `list_accounts`, `get_products`, `list_creative_formats`, `create_media_buy`, `update_media_buy`, `get_media_buys`, `sync_creatives`, `get_media_buy_delivery`
+>
+> (`list_creatives` is optional — only required if the seller hosts its own creative library; creative-agent delegates omit it)
 
 **Minimum platform skeleton** — every sales-\* seller starts here, then adds specialism-specific behavior on top:
 
@@ -529,7 +531,8 @@ Return `adcpError(...)` for all business validation failures. Error-code matrix 
 | --- | --- | --- |
 | `create_media_buy` | `performance_standards` or `measurement_terms` on a package are unacceptable | `adcpError('TERMS_REJECTED', { message: '...' })` |
 | `create_media_buy` | `product_id` on a package not in catalog | `adcpError('PRODUCT_NOT_FOUND', { field: 'packages[N].product_id' })` |
-| `create_media_buy` | reversed dates, budget below floor, schema violation | `adcpError('INVALID_REQUEST', { message: '...' })` |
+| `create_media_buy` | budget below the product's floor price | `adcpError('BUDGET_TOO_LOW', { message: '...' })` |
+| `create_media_buy` | reversed dates, schema violation | `adcpError('INVALID_REQUEST', { message: '...' })` |
 | `update_media_buy` | `media_buy_id` not found | `adcpError('MEDIA_BUY_NOT_FOUND', { field: 'media_buy_id' })` |
 | `update_media_buy` | `package_id` within a valid buy not found | `adcpError('PACKAGE_NOT_FOUND', { field: 'package_id' })` |
 
@@ -1054,7 +1057,7 @@ class MySeller implements DecisioningPlatform<{}, MySellerMeta> {
       ) {
         const startTime = existing.start_time ? new Date(existing.start_time) : null;
         status = startTime && startTime > new Date() ? 'pending_start' : 'active';
-      } else if (status === 'paused') {
+      } else if (patch.paused === false && status === 'paused') {
         status = 'active';
       }
 
@@ -1062,7 +1065,7 @@ class MySeller implements DecisioningPlatform<{}, MySellerMeta> {
       await ctx.store.put('media_buys', mediaBuyId, updated);
       return {
         media_buy_id: mediaBuyId,
-        status: updated.status as 'paused' | 'active' | 'pending_start',
+        status: updated.status as string,
         // `affected_packages` is `Package[]` (per `/schemas/latest/core/package.json`)
         // — objects with at minimum `package_id`. Don't return bare strings;
         // the update-media-buy-response oneOf discriminates against them and
