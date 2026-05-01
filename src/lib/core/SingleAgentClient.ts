@@ -1181,10 +1181,11 @@ export class SingleAgentClient {
 
     // Merge collected drift into the executor's debug_logs so adopters
     // reading result.debug_logs see post-adapter v2.5 warnings alongside
-    // the executor's own logs.
+    // the executor's own logs. On error paths the executor may not surface
+    // result.debug_logs at all — drift collected before the failure is
+    // dropped, matching the executor's own debug-log behavior.
     if (v25DriftLogs.length > 0) {
-      const existing = (result.debug_logs as any[] | undefined) ?? [];
-      (result as { debug_logs?: any[] }).debug_logs = [...existing, ...v25DriftLogs];
+      result.debug_logs = [...(result.debug_logs ?? []), ...v25DriftLogs];
     }
 
     // Normalize response to v3 format
@@ -2173,8 +2174,7 @@ export class SingleAgentClient {
     );
 
     if (v25DriftLogs.length > 0) {
-      const existing = (result.debug_logs as any[] | undefined) ?? [];
-      (result as { debug_logs?: any[] }).debug_logs = [...existing, ...v25DriftLogs];
+      result.debug_logs = [...(result.debug_logs ?? []), ...v25DriftLogs];
     }
 
     // Normalize response to v3 format for consistent API surface
