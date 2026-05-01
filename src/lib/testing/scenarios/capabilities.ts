@@ -94,24 +94,34 @@ export async function testCapabilityDiscovery(
       step.error = result.error || 'get_adcp_capabilities failed';
       steps.push(step);
 
-      // Fall back to synthetic capabilities
+      // Agent advertises get_adcp_capabilities but the call failed — do not downgrade to v2.
+      // A non-success result means a wire-shape error or handler failure, not that the agent
+      // is a v2 agent. Setting adcp_version = 'v2' here causes TaskExecutor to select 'v2.5'
+      // as the validation schema, which cascades into "schema not found" failures on every
+      // subsequent storyboard step. Leave adcp_version unset; downstream graders treat
+      // undefined the same as a discovery failure.
+      // Leave adcp_major_versions unset — undefined disables version gating in checkVersionGate.
+      profile.capabilities_probe_error = result.error || 'get_adcp_capabilities returned non-success';
       const toolInfos = profile.tools.map(name => ({ name }));
       capabilities = buildSyntheticCapabilities(toolInfos);
-      profile.adcp_version = 'v2';
       profile.supported_protocols = capabilities.protocols;
 
       steps.push({
         step: 'Fallback to synthetic capabilities',
-        passed: true,
+        passed: false,
         duration_ms: 0,
-        details: 'get_adcp_capabilities failed, using tool-based detection',
+        details:
+          'get_adcp_capabilities returned non-success; agent tool list used for protocol detection. Check wire shape.',
       });
     } else {
-      // No result at all
+      // No result at all — same reasoning: don't mark as v2, and set capabilities_probe_error
+      // so comply.ts emits the severity-error advisory rather than the misleading "agent does
+      // not implement get_adcp_capabilities" warning.
+      // Leave adcp_major_versions unset — undefined disables version gating in checkVersionGate.
       const toolInfos = profile.tools.map(name => ({ name }));
       capabilities = buildSyntheticCapabilities(toolInfos);
-      profile.adcp_version = 'v2';
       profile.supported_protocols = capabilities.protocols;
+      profile.capabilities_probe_error = 'get_adcp_capabilities returned no data';
       step.passed = false;
       step.error = 'get_adcp_capabilities returned no data';
       steps.push(step);
