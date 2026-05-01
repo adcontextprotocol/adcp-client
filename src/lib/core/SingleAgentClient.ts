@@ -3265,12 +3265,11 @@ export class SingleAgentClient {
 }
 
 /**
- * Factory function to create a single-agent client (internal use)
+ * Factory function to create a single-agent client.
  *
  * @param agent - Agent configuration
  * @param config - Client configuration
  * @returns Configured SingleAgentClient instance
- * @internal
  */
 export function createSingleAgentClient(agent: AgentConfig, config?: SingleAgentClientConfig): SingleAgentClient {
   return new SingleAgentClient(agent, config);

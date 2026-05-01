@@ -176,13 +176,19 @@ export interface AdcpServerComplianceApi {
  * tried to reach for an MCP-SDK method the framework intentionally
  * doesn't expose.
  *
- * The brand is opaque (`never`-valued) and never set at runtime — only
- * the wrapper produced by `createAdcpServer()` carries the type-level
+ * The brand is `never`-typed and never set on the runtime object, so
+ * `Object.getOwnPropertySymbols(server)` won't expose it — only the
+ * wrapper produced by `createAdcpServer()` carries the type-level
  * signature, via the `as AdcpServerInternal` cast in `wrapMcpServer()`.
  *
- * @internal
+ * Must be a real (non-`declare`) const so the d.ts emit retains it. An
+ * `export declare const X: unique symbol` in a `.ts` source file does
+ * not survive emit — the binding gets dropped from the published d.ts
+ * while consumers (the public `AdcpServer` interface) keep referencing
+ * it, which produces `TS2304: Cannot find name 'ADCP_SERVER_BRAND'` on
+ * any adopter `tsc --noEmit` against `@adcp/sdk/server` (issue #1236).
  */
-export declare const ADCP_SERVER_BRAND: unique symbol;
+export const ADCP_SERVER_BRAND: unique symbol = Symbol('ADCP_SERVER_BRAND');
 
 /**
  * Opaque handle returned by `createAdcpServer()`.
