@@ -411,9 +411,30 @@ function runGrader(url: string, storyboardId: string): { passed: boolean; raw: s
     {
       encoding: 'utf8',
       timeout: 120_000,
+      // `stdio: 'ignore'` for stdin closes the subprocess's stdin pipe up
+      // front. Without this, spawnSync's default ('pipe') hands the child an
+      // open, never-written stdin pipe — and certain libraries the CLI loads
+      // do TTY/stdin probing on startup that can stall when stdin is a pipe
+      // with no terminal attached. Direct shell invocation works because the
+      // child gets the parent's TTY; spawnSync without `stdio` does not. The
+      // symptom this prevents: stdout=0b stderr=0b status=null signal=SIGTERM
+      // after the 120s timeout fires (issue #1237).
+      stdio: ['ignore', 'pipe', 'pipe'],
     }
   );
   const raw = (res.stdout ?? '') + (res.stderr ?? '');
+  // Spawn-time signal=SIGTERM with empty stdout means the kernel killed the
+  // child at the 120s deadline before any work landed. Surface this as a
+  // harness-level failure with a copy-pasteable repro so operators don't
+  // mistake it for an agent conformance failure.
+  if (res.signal === 'SIGTERM' && !res.stdout) {
+    log(
+      `grader: subprocess timed out after 120s (storyboard=${storyboardId}). ` +
+        `This is a harness-level kill, not an agent conformance failure. ` +
+        `To debug, run the grader directly: ` +
+        `node bin/adcp.js storyboard run ${url} ${storyboardId} --json --allow-http --auth sk_harness_do_not_use_in_prod --webhook-receiver`
+    );
+  }
   let passed = false;
   try {
     const parsed = JSON.parse(res.stdout);

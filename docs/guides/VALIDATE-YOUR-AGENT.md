@@ -329,6 +329,8 @@ npm run compliance:skill-matrix
 
 Use before merging skill changes. ~60s per pair; matrix runs fan out.
 
+> **Note:** storyboards with webhook steps (e.g. `webhook_emission`) hold the grader subprocess open until the agent emits a webhook. If your agent doesn't emit one, the harness kills the subprocess after 120s and logs `grader: subprocess timed out` — this is a harness-level timeout, not a conformance failure from your agent's response.
+
 ---
 
 ## Reading `💡 Hint:` lines (context-value rejections)
