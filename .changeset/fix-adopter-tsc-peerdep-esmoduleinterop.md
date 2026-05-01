@@ -1,5 +1,5 @@
 ---
-"@adcp/sdk": patch
+"@adcp/sdk": minor
 ---
 
 Fix adopter `tsc --noEmit` failures caused by transitive dep type errors.

@@ -12,6 +12,13 @@
  * @public
  */
 
+import type {
+  AdCPSpecialism,
+  MediaChannel,
+  PricingModel,
+  GetAdCPCapabilitiesResponse,
+} from '../../types/tools.generated';
+
 /** Structural interface compatible with any Zod schema (v3 or v4) — avoids
  * leaking a direct `import type { ZodSchema } from 'zod'` into emitted .d.ts
  * files, which would force adopters to set esModuleInterop due to zod v4's
@@ -20,12 +27,6 @@ interface ConfigSchema<T> {
   parse(data: unknown): T;
   safeParse(data: unknown): { success: boolean; data?: T; error?: unknown };
 }
-import type {
-  AdCPSpecialism,
-  MediaChannel,
-  PricingModel,
-  GetAdCPCapabilitiesResponse,
-} from '../../types/tools.generated';
 
 export interface DecisioningCapabilities<TConfig = unknown> {
   /**
