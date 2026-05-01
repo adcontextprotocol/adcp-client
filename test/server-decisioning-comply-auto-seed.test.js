@@ -332,4 +332,95 @@ describe('createAdcpServerFromPlatform — catalog-backed auto-seed (issue #1091
       "tenant_b must NOT see tenant_a's product (cross-tenant leak)"
     );
   });
+
+  it('resolver mapping: adapter writes under resolved id, not raw account_id (issue #1216)', async () => {
+    // Adopters can wire a resolver that maps `account_id` (request envelope)
+    // to a distinct internal `id` (e.g., for prefixed multi-tenant ids).
+    // The bridge reads `ctx.account?.id` (the resolved id). Without the
+    // symmetric write-side resolution, the adapter would write under the
+    // raw `account_id` and the bridge would fail to find it on read.
+    const platform = basePlatform();
+    platform.accounts.resolve = async ref => ({
+      id: ref?.account_id ? `mapped:${ref.account_id}` : 'mapped:unknown',
+      operator: 'test.example.com',
+      ctx_metadata: {},
+      authInfo: { kind: 'api_key' },
+      ...(ref?.sandbox === true && { sandbox: true }),
+    });
+
+    const server = createAdcpServerFromPlatform(platform, {
+      ...BASE_OPTS,
+      complyTest: { sandboxGate: SANDBOX_GATE },
+    });
+
+    await callComply(server, {
+      scenario: 'seed_product',
+      account: { account_id: 'acc_42', sandbox: true },
+      params: {
+        product_id: 'mapped_product',
+        fixture: { delivery_type: 'non_guaranteed', channels: ['display'] },
+      },
+    });
+
+    const result = await callGetProducts(server, {
+      account: { account_id: 'acc_42', sandbox: true },
+    });
+
+    const products = result.structuredContent.products;
+    const seeded = products.find(p => p.product_id === 'mapped_product');
+    assert.ok(seeded, 'seeded product must appear under the resolved namespace key, not raw account_id');
+    assert.strictEqual(seeded.delivery_type, 'non_guaranteed');
+  });
+
+  it('warn-on-drop: seed_product with no account.account_id logs and drops, no fixture leaks (issue #1216)', async () => {
+    // sandboxGate normally rejects account-less requests; this test pretends
+    // the gate misconfigured (returns true unconditionally) so we hit the
+    // adapter directly with no account ref. The auto-seed must NOT collapse
+    // the missing-account case into a shared namespace — it must drop AND
+    // emit a warn-level log so the misconfiguration is diagnosable.
+    const warnings = [];
+    const platform = basePlatform();
+    const server = createAdcpServerFromPlatform(platform, {
+      ...BASE_OPTS,
+      logger: {
+        debug: () => {},
+        info: () => {},
+        warn: (message, meta) => warnings.push({ message, meta }),
+        error: () => {},
+      },
+      complyTest: {
+        sandboxGate: () => true, // permissive gate (misconfiguration scenario)
+      },
+    });
+
+    const result = await callComply(server, {
+      scenario: 'seed_product',
+      // account omitted — bypasses the normal sandboxGate check via the permissive gate above
+      params: {
+        product_id: 'orphan_product',
+        fixture: { delivery_type: 'non_guaranteed' },
+      },
+    });
+
+    // The seed call itself succeeds (returns SeedSuccess via SeedFixtureCache)
+    // but the auto-seed adapter dropped the write and warned.
+    assert.notStrictEqual(result.isError, true);
+    const droppedWarning = warnings.find(w => w.message.includes('seed_product fired without a resolvable account'));
+    assert.ok(
+      droppedWarning,
+      'expected a warn-level log when seed fires with no account; got: ' + JSON.stringify(warnings)
+    );
+    assert.strictEqual(droppedWarning.meta.product_id, 'orphan_product');
+
+    // Confirm no fixture leaked into a shared namespace: a sandbox account's
+    // get_products must NOT see the orphan.
+    const gpResult = await callGetProducts(server, {
+      account: { account_id: 'any_acc', sandbox: true },
+    });
+    const products = gpResult.structuredContent.products ?? [];
+    assert.ok(
+      !products.some(p => p.product_id === 'orphan_product'),
+      'orphan product must NOT leak into any account namespace'
+    );
+  });
 });

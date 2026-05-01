@@ -1067,15 +1067,50 @@ export function createAdcpServerFromPlatform<P extends DecisioningPlatform<any, 
       // Inject auto-seed adapters for `seed_product` and `seed_pricing_option`
       // when the adopter didn't wire explicit ones. Explicit adapters win — the
       // spread only fills the undefined slots. Each write is keyed by the
-      // request's `account.account_id` so two sandbox accounts can seed the
-      // same `product_id` without colliding.
+      // resolved account `id` so the adapter and bridge read the same
+      // namespace: the bridge uses `ctx.account?.id` (set by the framework's
+      // `resolveAccount` on the `get_products` path), and the adapter must
+      // run `platform.accounts.resolve` itself because the comply-controller
+      // doesn't pre-resolve. If we read raw `account_id` on write but resolved
+      // `id` on read, an adopter whose resolver maps `account_id` → distinct
+      // internal id (e.g., `acc_1` → `tenant_a:acc_1`) gets silent fixture
+      // leakage across namespaces — the bug surfaces as "seed succeeded but
+      // get_products doesn't see it" with no log signal.
       const explicitSeed = opts.complyTest.seed ?? {};
       const autoSeed = { ...explicitSeed };
 
+      const resolveAutoSeedAccountId = async (input: Record<string, unknown>): Promise<string | undefined> => {
+        const ref = input.account;
+        if (ref == null || typeof ref !== 'object') return undefined;
+        try {
+          const resolved = await platform.accounts.resolve(ref as AccountReference, {
+            toolName: 'comply_test_controller',
+          });
+          const id = (resolved as { id?: unknown } | null | undefined)?.id;
+          if (typeof id === 'string' && id.length > 0) return id;
+        } catch (err) {
+          // Don't surface `err.message` — adopter resolvers (especially
+          // OAuth-backed ones) sometimes embed token fragments or account
+          // refs in thrown errors. The error class name is enough triage
+          // signal; the resolver itself owns its own error logging upstream.
+          fwLogger.warn('[adcp/auto-seed] platform.accounts.resolve threw during seed write; dropping fixture', {
+            errorType: err instanceof Error ? err.name : typeof err,
+          });
+        }
+        return undefined;
+      };
+
       if (!explicitSeed.product) {
         autoSeed.product = async (params, ctx) => {
-          const accountId = readAutoSeedAccountId(ctx.input);
-          if (accountId == null) return;
+          const accountId = await resolveAutoSeedAccountId(ctx.input);
+          if (accountId == null) {
+            fwLogger.warn(
+              '[adcp/auto-seed] seed_product fired without a resolvable account; dropping write. ' +
+                'Verify the request carries `account.account_id` and that platform.accounts.resolve handles it.',
+              { product_id: params.product_id }
+            );
+            return;
+          }
           autoSeedStoreFor(autoSeedStore, accountId).set(params.product_id, {
             ...params.fixture,
             product_id: params.product_id,
@@ -1085,8 +1120,15 @@ export function createAdcpServerFromPlatform<P extends DecisioningPlatform<any, 
 
       if (!explicitSeed.pricing_option) {
         autoSeed.pricing_option = async (params, ctx) => {
-          const accountId = readAutoSeedAccountId(ctx.input);
-          if (accountId == null) return;
+          const accountId = await resolveAutoSeedAccountId(ctx.input);
+          if (accountId == null) {
+            fwLogger.warn(
+              '[adcp/auto-seed] seed_pricing_option fired without a resolvable account; dropping write. ' +
+                'Verify the request carries `account.account_id` and that platform.accounts.resolve handles it.',
+              { product_id: params.product_id, pricing_option_id: params.pricing_option_id }
+            );
+            return;
+          }
           const accountStore = autoSeedStoreFor(autoSeedStore, accountId);
           const existing = accountStore.get(params.product_id) as Record<string, unknown> | undefined;
           const pricingOption = { ...params.fixture, pricing_option_id: params.pricing_option_id };
@@ -3397,11 +3439,13 @@ function buildAccountHandlers<P extends DecisioningPlatform<any, any>>(
 // Auto-seed helpers (catalog-backed comply sandbox; issue #1091)
 // ────────────────────────────────────────────────────────────
 
-// Pull the request's account_id from the comply tool input. Sandbox-flagged
-// requests carry it on `input.account.account_id`; non-sandbox traffic is
-// already short-circuited by `complyTest.sandboxGate`, so a missing id here
-// means the adapter fired outside the gated path — drop the write rather
-// than collapse it into a shared namespace.
+// Bridge-side fallback: pull the raw `account.account_id` from a tool input
+// when the framework didn't pre-resolve `ctx.account` (e.g., a custom
+// dispatcher that bypasses `resolveAccount`). The auto-seed bridge prefers
+// `ctx.account?.id` (resolved by the framework on `get_products`); this
+// helper only runs when that's absent. Auto-seed *writes* go through
+// `resolveAutoSeedAccountId` (defined inline in the auto-seed wiring) so
+// the namespace key on write always matches the bridge's resolved-id read.
 function readAutoSeedAccountId(input: Record<string, unknown>): string | undefined {
   const account = input.account;
   if (account == null || typeof account !== 'object') return undefined;
