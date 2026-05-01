@@ -85,11 +85,23 @@ const FIXTURES = {
       idempotency_key: '33333333-3333-3333-3333-333333333333',
     },
     expected_failures: {
-      // adcontextprotocol/adcp-client#1116 — adapter is a thin
-      // prefix-stripper, leaks v3 manifest shape to v2.5's
-      // single-asset-payload oneOf.
+      // adcontextprotocol/adcp-client#1116 — primary manifest-shape leak
+      // closed by #1118 (adapter now flattens role-keyed manifest → single
+      // asset). Residual drift remains: the flattened shape carries
+      // `assets: { asset_type, url, width, height, duration_ms }` directly,
+      // which still doesn't satisfy v2.5's single-asset-payload oneOf
+      // (v2.5 expects a different envelope around the asset payload).
+      // Fixture pinned to the post-#1118 drift signature so a follow-up
+      // adapter fix surfaces as an unexpected pass and prompts the test
+      // to be flipped to "must pass."
       issue: 'adcontextprotocol/adcp-client#1116',
-      pointers: ['/creatives/0/assets/video'],
+      pointers: [
+        '/creatives/0/assets/asset_type',
+        '/creatives/0/assets/url',
+        '/creatives/0/assets/width',
+        '/creatives/0/assets/height',
+        '/creatives/0/assets/duration_ms',
+      ],
     },
   },
 };
