@@ -1,5 +1,54 @@
 # Changelog
 
+## 6.3.0
+
+### Minor Changes
+
+- 89af100: Make `TenantConfig.signingKey` optional + auto-wire it into webhook signing.
+
+  The SDK was stricter than the AdCP 3.x spec: `signed-requests` is a preview specialism and CLAUDE.md § Protocol-Wide Requirements explicitly classifies RFC 9421 HTTP Signatures as "optional but recommended." Adopters were forced to fabricate a `TenantSigningKey` (and stand up a published `/.well-known/brand.json`) before they could even register a tenant — and even then, the field's privateJwk wasn't auto-plumbed into the actual webhook signing pipeline, so adopters had to wire the same key TWICE (once on `TenantConfig.signingKey` for JWKS validation, once on `serverOptions.webhooks.signerKey` for outbound signatures).
+
+  This change does two things:
+
+  **1. `signingKey` is now optional.** When omitted, `runValidation` skips the JWKS roundtrip entirely and the tenant transitions straight from `pending` to `healthy` with `reason: 'unsigned (no signingKey)'`. AdCP 3.x treats request signing as optional, so adopters spiking the SDK before standing up KMS or publishing brand.json can ship without signing material. AdCP 4.0 will flip this back to required.
+
+  **2. When `signingKey` IS set, the registry auto-wires it into outbound webhook signing.** The privateJwk now flows into `serverOptions.webhooks.signerKey` automatically. Set the key once on `TenantConfig`, get JWKS validation + signed webhooks. Strict on `adcp_use`: the JWK MUST carry `adcp_use: "webhook-signing"` per AdCP key-purpose discriminator (adcp#2423). Adopters who wire their own webhook signer on `serverOptions.webhooks` (KMS-backed, distinct keys per tenant, etc.) pass through unaffected — explicit config wins and auto-wiring is skipped.
+
+  Supported JWK shapes for the auto-wire path: Ed25519 (`kty=OKP, crv=Ed25519`) and ECDSA P-256 (`kty=EC, crv=P-256`). RSA / EC P-384 throw with a remediation hint at register time.
+
+  Two helpers ship alongside:
+  - **`createSelfSignedTenantKey({ keyId? })`** — generates an Ed25519 keypair via `jose` and returns a `TenantSigningKey` already tagged with `adcp_use: "webhook-signing"` so it passes the auto-wire assertion out of the box. No env gating; generating a keypair isn't dangerous.
+  - **`createNoopJwksValidator()`** — validator that always returns `{ ok: true }`. Refuses to construct outside `NODE_ENV` ∈ {`'test'`, `'development'`} unless the operator sets `ADCP_NOOP_JWKS_ACK=1`. Mirrors the `idempotency: 'disabled'` allowlist gate — `NODE_ENV` defaults to unset in raw Lambda / custom containers / many K8s deployments, so a `=== 'production'` check would no-op in exactly the environments where a silent skip-validation start is most dangerous. The ack value must be the literal string `'1'`; `'true'` / `'yes'` lookalikes intentionally don't satisfy.
+
+  Migration: existing adopters who pass an Ed25519 / EC P-256 `signingKey` need to add `adcp_use: "webhook-signing"` to both `publicJwk` and `privateJwk`. Adopters with RSA keys must rotate to Ed25519 / EC P-256 (RSA isn't in the AdCP signing-algorithm set) OR wire their webhook signer explicitly on `serverOptions.webhooks` to bypass the auto-wire.
+
+  Migration note added to `docs/migration-5.x-to-6.x.md` § Common gotchas. New describe blocks in `test/server-decisioning-tenant-registry.test.js`: "unsigned tenants" (3.x optional path), "createSelfSignedTenantKey", "createNoopJwksValidator — NODE_ENV allowlist", "webhook-signing auto-wire" (auto-wire happy path + adcp_use enforcement + explicit-override bypass).
+
+- d0e2fe6: Storyboard runner: declared peer substitution + AccountStore: ctx.account threading + refreshToken hook.
+
+  **AccountStore — `AccountToolContext<TCtxMeta>` (#1145 Gap 1).** New strict-superset of `ResolveContext` carrying the resolved `Account<TCtxMeta>`. `getAccountFinancials` now receives `(req, ctx: AccountToolContext<TCtxMeta>)` so adopters fronting an upstream platform can read tokens / upstream IDs from `ctx.account.ctx_metadata` without re-resolving. Resolves the 7-adapter pain point where `getAccountFinancials` was stubbed to `UNSUPPORTED_FEATURE` solely because the v6 surface didn't thread the resolved account through. Breaking change for v6.x adopters who already implemented `getAccountFinancials` — update the second arg type to `AccountToolContext<TCtxMeta>` and read `ctx.account.ctx_metadata` directly. Resolve-step null surfaces `ACCOUNT_NOT_FOUND` (terminal) before the platform method runs.
+
+  **AccountStore — `refreshToken` hook (#1145 Gap 2).** Optional `refreshToken(account, reason: 'auth_required'): Promise<{ token; expiresAt? }>`. When defined and a platform method throws `AdcpError({ code: 'AUTH_REQUIRED' })`, the framework refreshes via this hook, mutates `account.authInfo.token`, and retries the platform method exactly once. In-flight scope only — refreshed tokens are not echoed back to the buyer. Refresh-hook failure surfaces correctable `AUTH_REQUIRED` so the buyer re-links via their UI flow. Resolves UniversalAds' v5-OAuth-provider workaround. Wired into `getAccountFinancials` dispatch; broader call-site wiring (sales / creative / audience methods) is incremental work — adopters can request additional sites as they hit the issue.
+
+  **Storyboard runner — `peer_substitutes_for` (#1144).** Stateful steps can opt into substitute-aware cascade deferral by declaring `peer_substitutes_for: <step_id> | <step_id>[]` on the substitute step. When a stateful step skips with `missing_tool` / `missing_test_controller` AND a peer in the same phase declares it as a substitute, the runner defers the cascade decision to phase end and waives it iff the declared substitute passes. Cascade-detail messages now name the declared substitute that didn't pass when the substitution chain fails, so adopters reading skip reports see the substitution chain rather than a bare `missing_tool` cascade origin. Loader rejects cross-phase references, self-references, and non-stateful targets at parse time.
+
+  This is **contract hygiene + diagnostic improvement** rather than a fix for any specific failing adopter — it tightens the implicit "phase membership = substitutability" rule that the F6 fix relied on, replacing it with explicit declaration so future storyboards with multi-stateful-step phases can't silently rescue non-substitutes. The legacy `not_applicable` any-peer rescue is unchanged for backward compat. Without a `peer_substitutes_for` declaration, missing reasons keep tripping the cascade immediately.
+
+  The companion spec change at `adcontextprotocol/adcp` (storyboard schema field + `sales-social/index.yaml` edit) is required before any storyboard exercises the new path.
+
+- e0b08d2: Adds `'silent'` to `TrackStatus` so the compliance grader can distinguish a track that observed real lifecycle transitions from one that ran with zero observations. Closes #1139, paired with adcontextprotocol/adcp#2834 on the grader-side rendering.
+
+  `status.monotonic` (and other observation-based invariants) today report `passed: true` whether they validated three transitions or none. That collapses two different states behind one icon: real protection vs. wired-but-not-exercised. Tracks like `property-lists`, `collection-lists`, and `content-standards` — where the invariant is wired eagerly but no current phase exercises a lifecycle-bearing resource — render as green checks even though no protection was actually asserted.
+
+  Three changes land together:
+  - `TrackStatus` widens to `'pass' | 'fail' | 'skip' | 'partial' | 'silent'`. A track is silent when every observation-bearing assertion record reports `observation_count: 0` and nothing failed. Skip/fail/partial precedence is preserved — silent only triggers on otherwise-clean runs.
+  - `AssertionResult.observation_count?: number` carries the run-level count from observation-based invariants. `status.monotonic` now defines an `onEnd` hook that emits a single record with `observation_count: history.size`, giving the rollup a deterministic signal whether to demote.
+  - `ComplianceSummary.tracks_silent` and an updated `formatComplianceResults` render silent rows distinctly (`🔇`, "no lifecycle observed") instead of the green check.
+
+  `computeOverallStatus` treats silent tracks as `attempted` (they ran) but never as unambiguously `passing` — a run with any silent track surfaces as `partial`. `computeOverallStatus` tolerates summaries serialized before this release (registry cache, fixtures) by defaulting `tracks_silent` to `0` when absent.
+
+  Why widen the union instead of adding `observable: boolean` on `AssertionResult` (the alternative the triage proposals settled on): a non-breaking optional field lets every grader keep mapping `{ passed: true, observation_count: 0 }` to a green check forever — exactly the bug we're fixing. The widened union forces consumers with exhaustive switches to make a deliberate decision about silent vs. pass, which is the protocol-correct outcome. Spec-side, adcontextprotocol/adcp#2834 can now adopt the same vocabulary verbatim.
+
 ## 6.2.0
 
 ### Minor Changes
