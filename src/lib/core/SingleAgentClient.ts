@@ -2662,20 +2662,24 @@ export class SingleAgentClient {
       // Discover endpoint if needed
       const agent = await this.ensureEndpointDiscovered();
 
-      // Use the shared connectMCP path so both static bearer AND saved OAuth
-      // tokens work. OAuth takes the refresh-capable authProvider branch.
-      const { connectMCP } = await import('../protocols/mcp');
-      const connectOptions: Parameters<typeof connectMCP>[0] = { agentUrl: agent.agent_uri };
+      // Route through connectMCPWithFallback so SSE-only servers work.
+      // Both static bearer and saved OAuth tokens flow through the
+      // fallback-capable path — SSEClientTransport accepts authProvider too.
+      const { connectMCPWithFallback } = await import('../protocols/mcp');
+      const mcpUrl = new URL(agent.agent_uri);
+      let authProvider: Parameters<typeof connectMCPWithFallback>[4] = undefined;
+      let authHeaders: Record<string, string> = {};
+
       if (this.normalizedAgent.oauth_tokens) {
         const { createNonInteractiveOAuthProvider } = await import('../auth/oauth');
-        connectOptions.authProvider = createNonInteractiveOAuthProvider(this.normalizedAgent, {
+        authProvider = createNonInteractiveOAuthProvider(this.normalizedAgent, {
           agentHint: this.normalizedAgent.id,
         });
       } else if (this.normalizedAgent.auth_token) {
-        connectOptions.authToken = this.normalizedAgent.auth_token;
+        authHeaders = createMCPAuthHeaders(this.normalizedAgent.auth_token);
       }
 
-      const { client: mcpClient } = await connectMCP(connectOptions);
+      const mcpClient = await connectMCPWithFallback(mcpUrl, authHeaders, [], 'getAgentInfo', authProvider);
       try {
         const toolsList = await mcpClient.listTools();
 

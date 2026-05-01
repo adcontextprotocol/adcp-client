@@ -291,7 +291,8 @@ export async function connectMCPWithFallback(
   url: URL,
   authHeaders: Record<string, string>,
   debugLogs: DebugLogEntry[] = [],
-  label = 'connection'
+  label = 'connection',
+  authProvider?: OAuthClientProvider
 ): Promise<MCPClient> {
   return withSpan(
     'adcp.mcp.connect',
@@ -300,7 +301,7 @@ export async function connectMCPWithFallback(
       'adcp.connection_label': label,
     },
     async () => {
-      return connectMCPWithFallbackImpl(url, authHeaders, debugLogs, label);
+      return connectMCPWithFallbackImpl(url, authHeaders, debugLogs, label, authProvider);
     }
   );
 }
@@ -309,7 +310,8 @@ async function connectMCPWithFallbackImpl(
   url: URL,
   authHeaders: Record<string, string>,
   debugLogs: DebugLogEntry[] = [],
-  label = 'connection'
+  label = 'connection',
+  authProvider?: OAuthClientProvider
 ): Promise<MCPClient> {
   const signingContext = signingContextStorage.getStore();
   // Wrap order (innermost → outermost): network → size-limit → signing → capture.
@@ -324,10 +326,10 @@ async function connectMCPWithFallbackImpl(
         getCapability: signingContext.getCapability,
       }) as typeof fetch)
     : sizeLimited;
-  const transportOptions: StreamableHTTPClientTransportOptions = {
-    requestInit: { headers: authHeaders },
-    fetch: wrapFetchWithCapture(baseFetch),
-  };
+  const wrappedFetch = wrapFetchWithCapture(baseFetch);
+  const transportOptions: StreamableHTTPClientTransportOptions = authProvider
+    ? { authProvider, fetch: wrappedFetch }
+    : { requestInit: { headers: authHeaders }, fetch: wrappedFetch };
   let failedClient: MCPClient | undefined;
 
   try {
@@ -439,12 +441,20 @@ async function connectMCPWithFallbackImpl(
       timestamp: new Date().toISOString(),
     });
     const client = new MCPClient({ name: 'AdCP-Client', version: '1.0.0' });
-    await client.connect(
-      new SSEClientTransport(url, {
-        requestInit: { headers: authHeaders },
-        fetch: wrapFetchWithCapture(baseFetch),
-      })
-    );
+    const sseOptions = authProvider
+      ? { authProvider, fetch: wrappedFetch }
+      : { requestInit: { headers: authHeaders }, fetch: wrappedFetch };
+    try {
+      await client.connect(new SSEClientTransport(url, sseOptions));
+    } catch (sseError) {
+      debugLogs.push({
+        type: 'error',
+        message: `MCP: SSE fallback also failed for ${label}: ${sseError instanceof Error ? sseError.message : String(sseError)}`,
+        timestamp: new Date().toISOString(),
+        error: sseError,
+      });
+      throw sseError;
+    }
     debugLogs.push({
       type: 'success',
       message: `MCP: Connected via SSE transport for ${label}`,
