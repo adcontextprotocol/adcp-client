@@ -8,6 +8,7 @@ const {
   enforceMapCap,
   toMcpResponse,
   TOOL_INPUT_SHAPE,
+  createSeedFixtureCache,
 } = require('../dist/lib/server/test-controller');
 const { expectControllerError, expectControllerSuccess } = require('../dist/lib/testing/controller-assertions');
 const { z } = require('zod');
@@ -353,6 +354,137 @@ describe('handleTestControllerRequest', () => {
       });
       assert.strictEqual(result.error, 'INVALID_PARAMS');
       assert.match(result.error_detail, /requires params\.format_id/);
+    });
+  });
+
+  // ── Per-account SeedFixtureCache scoping (issue #1215) ────────
+  describe('seed cache scoping by input.account.account_id', () => {
+    it('two accounts can seed the same product_id with divergent fixtures (no INVALID_PARAMS replay)', async () => {
+      const writes = [];
+      const store = {
+        async seedProduct(productId, fixture) {
+          writes.push({ productId, fixture });
+        },
+      };
+      const seedCache = createSeedFixtureCache();
+
+      // Tenant A seeds product 'p1' with delivery_type='guaranteed'
+      const a = await handleTestControllerRequest(
+        store,
+        {
+          scenario: 'seed_product',
+          account: { account_id: 'tenant_a' },
+          params: { product_id: 'p1', fixture: { delivery_type: 'guaranteed' } },
+        },
+        { seedCache }
+      );
+      assert.strictEqual(a.success, true);
+      assert.strictEqual(a.message, 'Fixture seeded');
+
+      // Tenant B seeds the same product 'p1' with delivery_type='non_guaranteed'.
+      // Without per-account scoping this would fail INVALID_PARAMS (divergent fixture).
+      const b = await handleTestControllerRequest(
+        store,
+        {
+          scenario: 'seed_product',
+          account: { account_id: 'tenant_b' },
+          params: { product_id: 'p1', fixture: { delivery_type: 'non_guaranteed' } },
+        },
+        { seedCache }
+      );
+      assert.strictEqual(b.success, true, 'tenant_b should be able to seed p1 with a divergent fixture');
+      assert.strictEqual(b.message, 'Fixture seeded');
+
+      // Both writes flowed to the store.
+      assert.strictEqual(writes.length, 2);
+      assert.deepStrictEqual(
+        writes.map(w => w.fixture.delivery_type),
+        ['guaranteed', 'non_guaranteed']
+      );
+    });
+
+    it('same account replaying same fixture still hits the equivalent-replay path', async () => {
+      const writes = [];
+      const store = {
+        async seedProduct(productId, fixture) {
+          writes.push({ productId, fixture });
+        },
+      };
+      const seedCache = createSeedFixtureCache();
+
+      const first = await handleTestControllerRequest(
+        store,
+        {
+          scenario: 'seed_product',
+          account: { account_id: 'acc_1' },
+          params: { product_id: 'p1', fixture: { x: 1 } },
+        },
+        { seedCache }
+      );
+      assert.strictEqual(first.message, 'Fixture seeded');
+
+      const replay = await handleTestControllerRequest(
+        store,
+        {
+          scenario: 'seed_product',
+          account: { account_id: 'acc_1' },
+          params: { product_id: 'p1', fixture: { x: 1 } },
+        },
+        { seedCache }
+      );
+      assert.strictEqual(replay.success, true);
+      assert.strictEqual(replay.message, 'Fixture re-seeded (equivalent)', 'replay must dedupe within the same account');
+    });
+
+    it('same account replaying with divergent fixture still returns INVALID_PARAMS', async () => {
+      const store = {
+        async seedProduct() {},
+      };
+      const seedCache = createSeedFixtureCache();
+
+      await handleTestControllerRequest(
+        store,
+        {
+          scenario: 'seed_product',
+          account: { account_id: 'acc_1' },
+          params: { product_id: 'p1', fixture: { x: 1 } },
+        },
+        { seedCache }
+      );
+
+      const divergent = await handleTestControllerRequest(
+        store,
+        {
+          scenario: 'seed_product',
+          account: { account_id: 'acc_1' },
+          params: { product_id: 'p1', fixture: { x: 2 } },
+        },
+        { seedCache }
+      );
+      assert.strictEqual(divergent.error, 'INVALID_PARAMS', 'divergent replay within same account must still be rejected');
+    });
+
+    it('legacy behavior preserved: requests without account use unscoped keys', async () => {
+      const store = {
+        async seedProduct() {},
+      };
+      const seedCache = createSeedFixtureCache();
+
+      const first = await handleTestControllerRequest(
+        store,
+        { scenario: 'seed_product', params: { product_id: 'p1', fixture: { x: 1 } } },
+        { seedCache }
+      );
+      assert.strictEqual(first.message, 'Fixture seeded');
+
+      // Same product_id, no account, divergent fixture → INVALID_PARAMS (legacy
+      // path; pins backward compat for adopters who never carried account refs).
+      const divergent = await handleTestControllerRequest(
+        store,
+        { scenario: 'seed_product', params: { product_id: 'p1', fixture: { x: 2 } } },
+        { seedCache }
+      );
+      assert.strictEqual(divergent.error, 'INVALID_PARAMS');
     });
   });
 
