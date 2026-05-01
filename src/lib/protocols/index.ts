@@ -48,6 +48,7 @@ import { ADCP_MAJOR_VERSION, ADCP_VERSION, parseAdcpMajorVersion } from '../vers
 import { ConfigurationError } from '../errors';
 import { resolveBundleKey } from '../validation/schema-loader';
 import { buildAgentSigningContext, CAPABILITY_OP, ensureCapabilityLoaded } from '../signing/client';
+import { withResponseSizeLimit } from './responseSizeLimit';
 
 /**
  * Derive the wire-level `adcp_major_version` integer from a caller-supplied
@@ -142,6 +143,29 @@ export function applyVersionEnvelope(
 }
 
 /**
+ * Transport-level safeguards applied to a call.
+ *
+ * Wired into the SDK's internal fetch chain via AsyncLocalStorage, so the
+ * cap takes effect even when the underlying transport's connection cache
+ * reuses a fetch that was created on an earlier call with different limits.
+ */
+export interface TransportOptions {
+  /**
+   * Maximum response body size (in octets) the SDK will read before aborting
+   * with `ResponseTooLargeError`. When unset, the SDK does not impose a cap —
+   * matches the underlying MCP / A2A transport defaults.
+   *
+   * Set this when crawling untrusted agents (registries, federated discovery
+   * layers, monitoring tools) to prevent a hostile vendor from buffering a
+   * large reply before any application-layer schema validation runs. Counted
+   * across response chunks; pre-cancels when `Content-Length` exceeds the cap.
+   *
+   * Per-call override beats the value set on the client constructor.
+   */
+  maxResponseBytes?: number;
+}
+
+/**
  * Options for {@link ProtocolClient.callTool}. All fields are optional.
  *
  * `webhookUrl` / `webhookSecret` / `webhookToken` are for ASYNC TASK STATUS
@@ -172,6 +196,11 @@ export interface CallToolOptions {
    * that path to probe seller version negotiation.
    */
   adcpVersion?: string;
+  /**
+   * Transport-level safeguards (size caps, etc.). Per-call override of any
+   * matching field on the client constructor's `transport` option.
+   */
+  transport?: TransportOptions;
 }
 
 /**
@@ -192,7 +221,8 @@ export class ProtocolClient {
     args: Record<string, unknown>,
     options: CallToolOptions = {}
   ): Promise<unknown> {
-    const { debugLogs = [], webhookUrl, webhookSecret, webhookToken, serverVersion, session, adcpVersion } = options;
+    const { debugLogs = [], webhookUrl, webhookSecret, webhookToken, serverVersion, session, adcpVersion, transport } =
+      options;
     // Per-instance version envelope. Throws on unparseable pins via
     // `resolveWireMajor`; construction-time `resolveAdcpVersion` is the
     // primary gate but this is the failsafe for callers reaching
@@ -200,15 +230,20 @@ export class ProtocolClient {
     // MCP path). Returns `{ adcp_major_version }` for 3.0 pins and
     // `{ adcp_major_version, adcp_version }` for 3.1+ pins.
     const versionEnvelope = buildVersionEnvelope(adcpVersion, serverVersion);
-    return withSpan(
-      `adcp.${agent.protocol}.call_tool`,
-      {
-        'adcp.agent_id': agent.id,
-        'adcp.protocol': agent.protocol,
-        'adcp.tool': toolName,
-        'http.url': agent.agent_uri,
-      },
-      async () => {
+    // Enter the response-size-limit ALS slot once for this call. The slot is
+    // read by `wrapFetchWithSizeLimit` in both protocol transports, so the
+    // cap applies regardless of which path (MCP / A2A / OAuth refresh) the
+    // call ends up taking. No-op when the cap is unset or non-positive.
+    return withResponseSizeLimit(transport?.maxResponseBytes, () =>
+      withSpan(
+        `adcp.${agent.protocol}.call_tool`,
+        {
+          'adcp.agent_id': agent.id,
+          'adcp.protocol': agent.protocol,
+          'adcp.tool': toolName,
+          'http.url': agent.agent_uri,
+        },
+        async () => {
         // In-process MCP path: pre-connected client, no HTTP transport.
         // Idempotency injection, schema validation, and governance middleware all
         // still apply (they run in SingleAgentClient above this call). We skip
@@ -409,6 +444,7 @@ export class ProtocolClient {
           throw new Error(`Unsupported protocol: ${agent.protocol}`);
         }
       }
+      )
     );
   }
 }
