@@ -1,0 +1,362 @@
+openapi: 3.1.0
+info:
+  title: Cohort Marketplace API
+  version: '2.0.0'
+  description: |
+    HTTP API for a fictional signal/audience marketplace platform. Models a
+    LiveRamp / Lotame / Oracle Data Cloud-shaped upstream that aggregates
+    audience cohorts from multiple data providers and resells them to
+    operator seats.
+
+    This is a fixture for compliance testing — it has no real data and
+    requires the static API key + operator-id pair documented in the boot
+    log. Cohort visibility, pricing, and activation history are all keyed
+    on the X-Operator-Id header.
+
+servers:
+  - url: http://127.0.0.1:{port}/v2
+    variables:
+      port:
+        default: '4500'
+        description: Port the mock-server boots on (override with --port)
+
+components:
+  securitySchemes:
+    bearerApiKey:
+      type: http
+      scheme: bearer
+      description: |
+        Customer-level credential. The same key is shared across all operator
+        seats owned by that customer. Operator scoping happens via the
+        X-Operator-Id header below.
+  parameters:
+    OperatorId:
+      name: X-Operator-Id
+      in: header
+      required: true
+      schema: { type: string }
+      description: |
+        Operator seat identifier. MUST be present on every request. Determines
+        which cohorts are visible, which pricing applies, and which activations
+        the caller can read. Requests with an unknown operator return 403.
+  schemas:
+    Cohort:
+      type: object
+      required:
+        [
+          cohort_id,
+          name,
+          category,
+          member_count,
+          total_universe,
+          freshness_days,
+          activation_status,
+          data_provider_domain,
+          data_provider_id,
+          data_provider_name,
+          pricing,
+          value_type,
+        ]
+      properties:
+        cohort_id:
+          type: string
+          description: Stable upstream identifier. NOT the same as the marketplace agent's signal_agent_segment_id.
+          example: 'up_trident_likely_ev_buyers'
+        name: { type: string }
+        description: { type: string }
+        category:
+          type: string
+          enum: [behavioral, demographic, intent, contextual, retargeting]
+        member_count:
+          type: integer
+          description: |
+            Absolute count of users in the cohort for this operator's seat.
+            Convert to AdCP coverage_percentage by dividing by total_universe.
+        total_universe:
+          type: integer
+          description: Operator's addressable universe (the denominator for coverage %).
+        freshness_days:
+          type: integer
+          description: Days since the cohort was last refreshed. AdCP wants a 0-1 freshness_score; adapter normalizes.
+        activation_status:
+          type: string
+          enum: [active, draft, archived]
+        data_provider_domain:
+          type: string
+          description: Domain of the upstream data provider — flows directly to AdCP signal_id.data_provider_domain.
+          example: 'tridentauto.example'
+        data_provider_id:
+          type: string
+          description: Data-provider-internal ID for this cohort.
+          example: 'likely_ev_buyers'
+        data_provider_name:
+          type: string
+          description: |
+            Human-readable name of the upstream data provider — flows directly
+            to AdCP `signal_id.data_provider` (required by signals response
+            schema). Without this field, adapters have to fabricate the value
+            from the domain, which trains the wrong reflex.
+          example: 'Trident Auto Insights'
+        value_type:
+          type: string
+          enum: [binary, numeric, categorical]
+        range:
+          type: object
+          description: Present when value_type is "numeric".
+          properties:
+            min: { type: number }
+            max: { type: number }
+        categories:
+          type: array
+          description: Present when value_type is "categorical".
+          items: { type: string }
+        pricing:
+          type: array
+          description: Operator-specific rate card. Different operators see different prices on the same cohort.
+          items: { $ref: '#/components/schemas/PricingTier' }
+        metadata:
+          type: object
+          additionalProperties: true
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+
+    PricingTier:
+      type: object
+      required: [pricing_id, model, currency]
+      properties:
+        pricing_id: { type: string, example: 'tier_trident_evb_cpm_op_pinnacle' }
+        model:
+          type: string
+          enum: [cpm]
+          description: AdCP-compatible pricing model. Marketplace mock keeps this simple — CPM only.
+        cpm_amount:
+          type: number
+          description: Cost per mille in `currency`. Required when model=cpm.
+        currency: { type: string, example: 'USD' }
+        minimum_spend:
+          type: number
+          description: Optional floor; operator must commit to at least this spend per activation.
+
+    Destination:
+      type: object
+      required: [destination_id, name, platform_type, integration]
+      properties:
+        destination_id: { type: string, example: 'dest_ttd_main' }
+        name: { type: string }
+        platform_type:
+          type: string
+          enum: [dsp, ssp, social, ctv, retail, agent]
+        integration:
+          type: string
+          enum: [api_push, segment_id, key_value, agent_url]
+          description: |
+            How activation completes. `api_push` pushes segments via API and
+            returns a platform-native segment_id; `segment_id` and `key_value`
+            indicate which activation_key shape AdCP should expect; `agent_url`
+            points at a sales-agent destination.
+        platform_code:
+          type: string
+          description: Vendor code for DSP destinations — e.g. "the-trade-desk", "streamhaus".
+        agent_url:
+          type: string
+          format: uri
+          description: Sales-agent URL for type=agent destinations.
+        expected_match_rate:
+          type: number
+          description: Historical match-rate observed for this operator on this destination, 0-1.
+
+    Activation:
+      type: object
+      required: [activation_id, cohort_id, destination_id, status, created_at]
+      properties:
+        activation_id: { type: string, example: 'act_01J9X...' }
+        cohort_id: { type: string }
+        destination_id: { type: string }
+        pricing_id: { type: string, description: 'Which PricingTier was committed.' }
+        status:
+          type: string
+          enum: [pending, in_progress, active, failed, expired]
+        match_rate:
+          type: number
+          description: Populated when status=active.
+        member_count_matched:
+          type: integer
+          description: Populated when status=active.
+        platform_segment_id:
+          type: string
+          description: Platform-native segment ID for DSP destinations (status=active).
+        agent_activation_key:
+          type: object
+          description: Key/value pair for agent destinations (status=active).
+          additionalProperties: true
+        error:
+          type: object
+          description: Populated when status=failed.
+          properties:
+            code: { type: string }
+            message: { type: string }
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+        expires_at: { type: string, format: date-time }
+
+    ActivationRequest:
+      type: object
+      required: [cohort_id, destination_id, pricing_id]
+      properties:
+        cohort_id: { type: string }
+        destination_id: { type: string }
+        pricing_id: { type: string }
+        duration_days:
+          type: integer
+          description: Optional — defaults to 90 if omitted.
+        client_request_id:
+          type: string
+          description: |
+            Idempotency key. Re-sending the same client_request_id returns the
+            existing activation rather than creating a new one. Adopters should
+            map AdCP idempotency_key → client_request_id.
+
+    Error:
+      type: object
+      required: [code, message]
+      properties:
+        code: { type: string }
+        message: { type: string }
+        request_id: { type: string }
+
+security:
+  - bearerApiKey: []
+
+paths:
+  /cohorts:
+    get:
+      summary: List cohorts visible to {operator}
+      operationId: listCohorts
+      parameters:
+        - $ref: '#/components/parameters/OperatorId'
+        - in: query
+          name: category
+          schema:
+            type: string
+            enum: [behavioral, demographic, intent, contextual, retargeting]
+        - in: query
+          name: data_provider_domain
+          schema: { type: string }
+        - in: query
+          name: q
+          schema: { type: string }
+          description: Free-text search across name + description.
+      responses:
+        '200':
+          description: Cohorts visible to this operator. Empty array if none.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [cohorts]
+                properties:
+                  cohorts:
+                    type: array
+                    items: { $ref: '#/components/schemas/Cohort' }
+        '401': { description: Missing/invalid bearer credential. }
+        '403': { description: Unknown operator. }
+
+  /cohorts/{cohort_id}:
+    get:
+      summary: Fetch cohort detail (with operator-scoped pricing)
+      operationId: getCohort
+      parameters:
+        - $ref: '#/components/parameters/OperatorId'
+        - in: path
+          name: cohort_id
+          required: true
+          schema: { type: string }
+      responses:
+        '200':
+          description: Cohort detail.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Cohort' }
+        '401': { description: Missing/invalid bearer credential. }
+        '403': { description: Unknown operator OR cohort visible to other operators only. }
+        '404': { description: Cohort does not exist. }
+
+  /destinations:
+    get:
+      summary: List activation destinations available to {operator}
+      operationId: listDestinations
+      parameters:
+        - $ref: '#/components/parameters/OperatorId'
+      responses:
+        '200':
+          description: Destinations.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [destinations]
+                properties:
+                  destinations:
+                    type: array
+                    items: { $ref: '#/components/schemas/Destination' }
+        '401': { description: Missing/invalid bearer credential. }
+        '403': { description: Unknown operator. }
+
+  /activations:
+    post:
+      summary: Create an activation (push cohort to destination)
+      operationId: createActivation
+      parameters:
+        - $ref: '#/components/parameters/OperatorId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/ActivationRequest' }
+      responses:
+        '201':
+          description: Activation created. status will be `pending` initially for DSP destinations and `active` immediately for agent destinations.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Activation' }
+        '200':
+          description: Idempotent replay — returns the existing activation for this client_request_id.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Activation' }
+        '400':
+          description: Bad request — missing required fields, invalid pricing_id for cohort, etc.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '401': { description: Missing/invalid bearer credential. }
+        '403': { description: Unknown operator OR cohort/destination not visible to this operator. }
+        '404': { description: Cohort or destination does not exist. }
+        '409':
+          description: |
+            Idempotency conflict — `client_request_id` was previously used with
+            a different `(cohort_id, destination_id, pricing_id)` tuple. Use a
+            fresh idempotency key for distinct requests.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+
+  /activations/{activation_id}:
+    get:
+      summary: Fetch activation status
+      operationId: getActivation
+      parameters:
+        - $ref: '#/components/parameters/OperatorId'
+        - in: path
+          name: activation_id
+          required: true
+          schema: { type: string }
+      responses:
+        '200':
+          description: Activation detail.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Activation' }
+        '401': { description: Missing/invalid bearer credential. }
+        '403': { description: Activation belongs to a different operator. }
+        '404': { description: Activation does not exist. }

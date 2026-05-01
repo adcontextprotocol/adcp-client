@@ -36,6 +36,11 @@ import { join, resolve } from 'node:path';
 interface Pair {
   skill: string;
   storyboard: string;
+  /** Optional upstream-platform mock specialism. When set, the harness
+   * boots the corresponding mock-server before handing the workspace to
+   * Claude — Claude wraps the upstream rather than inventing the platform
+   * layer from scratch. Currently supported: `signal-marketplace`. */
+  upstream?: string;
 }
 
 interface Matrix {
@@ -192,6 +197,12 @@ function runOne(pair: Pair, port: number, args: Args, sharedNodeModules?: string
     ];
     if (args.keep) harnessArgs.push('--keep');
     if (sharedNodeModules) harnessArgs.push('--shared-node-modules', sharedNodeModules);
+    if (pair.upstream) {
+      // Upstream port lives on the same per-worker port base, offset by 50,
+      // so the agent (port) and the upstream (port + 50) don't collide and
+      // parallel workers stay clear of each other.
+      harnessArgs.push('--upstream', pair.upstream, '--upstream-port', String(port + 50));
+    }
 
     const started = Date.now();
     const stderrChunks: Buffer[] = [];
