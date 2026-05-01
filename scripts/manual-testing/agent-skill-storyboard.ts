@@ -55,6 +55,13 @@ interface Args {
    * to `--output-format stream-json --verbose` and tees stdout to the
    * file (also still inherits to terminal so live watchers see it). */
   transcriptPath?: string;
+  /** When set, boot a mock upstream platform of this specialism flavor
+   * before handing the workspace to Claude. Claude wraps the upstream as
+   * an AdCP agent rather than inventing the platform layer from scratch.
+   * Currently supported: `signal-marketplace`. */
+  upstream?: string;
+  /** Port for the mock upstream server; defaults to `port + 100`. */
+  upstreamPort?: number;
 }
 
 const REPO_ROOT = resolve(__dirname, '..', '..');
@@ -71,6 +78,8 @@ function parseArgs(argv: string[]): Args {
     else if (a === '--keep') out.keep = true;
     else if (a === '--shared-node-modules') out.sharedNodeModules = argv[++i];
     else if (a === '--transcript') out.transcriptPath = resolve(argv[++i]);
+    else if (a === '--upstream') out.upstream = argv[++i];
+    else if (a === '--upstream-port') out.upstreamPort = Number(argv[++i]);
     else if (a === '--help' || a === '-h') {
       printUsage();
       process.exit(0);
@@ -93,12 +102,46 @@ function printUsage(): void {
   [--timeout-ms 600000] \\
   [--keep] \\
   [--shared-node-modules <path>] \\
-  [--transcript <path>]`
+  [--transcript <path>] \\
+  [--upstream <specialism>] \\
+  [--upstream-port 4300]`
   );
 }
 
-function buildPrompt(skill: string, storyboardId: string, port: number, skillAbsDir: string): string {
-  return `You are building a minimal AdCP agent that will be graded by the compliance storyboard \`${storyboardId}\`.
+function buildPrompt(
+  skill: string,
+  storyboardId: string,
+  port: number,
+  skillAbsDir: string,
+  upstream?: { specialism: string; url: string; apiKey: string; openapiPath: string; operatorMapping: Array<{ adcp_operator: string; upstream_operator_id: string }> }
+): string {
+  const upstreamSection = upstream
+    ? `
+
+## The upstream platform you're wrapping
+
+You are NOT inventing a decisioning/signal platform from scratch. The adopter brings an existing upstream platform and you are writing the AdCP wrapper around it.
+
+The upstream platform is running locally as a fixture. Treat it exactly as you would the adopter's real platform — call its HTTP API to fetch state and post mutations.
+
+**Base URL**: ${upstream.url}
+**OpenAPI spec** (read this first): ${upstream.openapiPath}
+
+**Authentication** (every outbound request must carry both):
+- \`Authorization: Bearer ${upstream.apiKey}\` — the customer-level API key
+- \`X-Operator-Id: <upstream operator id>\` — the operator seat. Different operators see different cohorts/destinations and have different rate cards. **Omitting this header returns 403.**
+
+**Operator mapping**: the AdCP request you receive will carry \`account.operator: "<adcp-operator>"\`. You must translate that to the upstream operator id when calling the upstream API:
+
+${upstream.operatorMapping.map(m => `- AdCP \`account.operator: "${m.adcp_operator}"\`  →  upstream \`X-Operator-Id: ${m.upstream_operator_id}\``).join('\n')}
+
+The mapping table above is fixed seed data for this fixture; in production this would be a config file or DB lookup. Hard-code it for the test (a Map literal in your adapter is fine).
+
+If a buyer's \`account.operator\` value isn't in your mapping, return an appropriate AdCP error rather than calling upstream with no/wrong operator.
+`
+    : '';
+
+  return `You are building a minimal AdCP agent that will be graded by the compliance storyboard \`${storyboardId}\`.${upstreamSection}
 
 ## The skill you're following
 
@@ -372,6 +415,46 @@ function log(msg: string): void {
   process.stderr.write(`[harness] ${msg}\n`);
 }
 
+async function bootUpstreamForHarness(
+  specialism: string,
+  port: number
+): Promise<{
+  url: string;
+  apiKey: string;
+  openapiPath: string;
+  operatorMapping: Array<{ adcp_operator: string; upstream_operator_id: string }>;
+  close: () => Promise<void>;
+} | undefined> {
+  // Use the compiled dist/ entry point so the harness doesn't depend on tsx
+  // resolution from a child process. Same path the CLI uses.
+  // eslint-disable-next-line @typescript-eslint/no-var-requires
+  const { bootMockServer } = require(resolve(REPO_ROOT, 'dist/lib/mock-server/index.js')) as {
+    bootMockServer: (opts: { specialism: string; port: number }) => Promise<{
+      url: string;
+      apiKey: string;
+      close: () => Promise<void>;
+    }>;
+  };
+  // eslint-disable-next-line @typescript-eslint/no-var-requires
+  const seed = require(resolve(REPO_ROOT, `dist/lib/mock-server/${specialism}/seed-data.js`)) as {
+    OPERATORS: Array<{ adcp_operator: string; operator_id: string }>;
+  };
+  const handle = await bootMockServer({ specialism, port });
+  const openapiPath = resolve(REPO_ROOT, `src/lib/mock-server/${specialism}/openapi.yaml`);
+  const operatorMapping = seed.OPERATORS.map(op => ({
+    adcp_operator: op.adcp_operator,
+    upstream_operator_id: op.operator_id,
+  }));
+  log(`upstream mock-server (${specialism}) up on ${handle.url}`);
+  return {
+    url: handle.url,
+    apiKey: handle.apiKey,
+    openapiPath,
+    operatorMapping,
+    close: handle.close,
+  };
+}
+
 async function main(): Promise<void> {
   const args = parseArgs(process.argv.slice(2));
   const skillPath = resolve(args.skill);
@@ -383,12 +466,32 @@ async function main(): Promise<void> {
   log(`skill: ${args.skill}`);
   log(`storyboard: ${args.storyboard}`);
   log(`port: ${args.port}`);
+  if (args.upstream) log(`upstream: ${args.upstream}`);
 
   let agent: ChildProcess | undefined;
+  let upstream: Awaited<ReturnType<typeof bootUpstreamForHarness>>;
   try {
+    if (args.upstream) {
+      const upstreamPort = args.upstreamPort ?? args.port + 100;
+      upstream = await bootUpstreamForHarness(args.upstream, upstreamPort);
+    }
     await bootstrapWorkspace(workDir, args.port, args.sharedNodeModules);
     await runClaude(
-      buildPrompt(skillContent, args.storyboard, args.port, skillDir),
+      buildPrompt(
+        skillContent,
+        args.storyboard,
+        args.port,
+        skillDir,
+        upstream
+          ? {
+              specialism: args.upstream!,
+              url: upstream.url,
+              apiKey: upstream.apiKey,
+              openapiPath: upstream.openapiPath,
+              operatorMapping: upstream.operatorMapping,
+            }
+          : undefined
+      ),
       workDir,
       args.timeoutMs,
       args.transcriptPath
@@ -411,6 +514,13 @@ async function main(): Promise<void> {
       // Give it 2s to shut down cleanly.
       await new Promise(r => setTimeout(r, 2000));
       if (agent.exitCode === null) agent.kill('SIGKILL');
+    }
+    if (upstream) {
+      try {
+        await upstream.close();
+      } catch (err) {
+        log(`upstream close error: ${(err as Error)?.message ?? err}`);
+      }
     }
     if (!args.keep && !args.workDir) {
       await rm(workDir, { recursive: true, force: true });
