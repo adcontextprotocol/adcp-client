@@ -86,6 +86,7 @@ export type {
   SyncAccountsResultRow,
   AdcpAccountStatus,
   ResolveContext,
+  AccountToolContext,
   ResolvedAuthInfo,
 } from './account';
 
@@ -189,6 +190,8 @@ export {
 export {
   createTenantRegistry,
   createDefaultJwksValidator,
+  createSelfSignedTenantKey,
+  createNoopJwksValidator,
   type TenantRegistry,
   type TenantConfig,
   type TenantSigningKey,

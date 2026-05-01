@@ -7,10 +7,24 @@ const { describe, it } = require('node:test');
 const assert = require('node:assert');
 const { createTenantRegistry, createTenantAdminHandlers, mountTenantAdmin } = require('../dist/lib/server/decisioning');
 
+// Ed25519 + adcp_use=webhook-signing so the registry's auto-wire path
+// accepts it. Values are valid base64url shape but cryptographically
+// meaningless — never used to sign anything in these admin tests.
 const SAMPLE_KEY = {
   keyId: 'k1',
-  publicJwk: { kty: 'RSA', n: 'aaa', e: 'AQAB' },
-  privateJwk: { kty: 'RSA', n: 'aaa', e: 'AQAB', d: 'priv' },
+  publicJwk: {
+    kty: 'OKP',
+    crv: 'Ed25519',
+    x: 'AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA',
+    adcp_use: 'webhook-signing',
+  },
+  privateJwk: {
+    kty: 'OKP',
+    crv: 'Ed25519',
+    x: 'AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA',
+    d: 'BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB',
+    adcp_use: 'webhook-signing',
+  },
 };
 
 const DEFAULT_SERVER_OPTIONS = {

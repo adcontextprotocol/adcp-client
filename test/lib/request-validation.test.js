@@ -1057,6 +1057,12 @@ describe('strict request validation against v2 servers', () => {
     assert.ok(call, 'sync_creatives should have reached the protocol layer');
     assert.strictEqual(call.args.account, undefined, 'account is stripped by the v2 adapter');
     assert.ok(Array.isArray(call.args.creatives) && call.args.creatives.length === 1, 'creatives are preserved');
+    // Manifest must be flattened: v2 expects a single asset payload, not { role: payload }
+    assert.deepStrictEqual(
+      call.args.creatives[0].assets,
+      { asset_type: 'video', url: 'https://example.com/video.mp4', width: 1920, height: 1080, duration_ms: 30000 },
+      'v3 manifest assets are flattened to a single v2 asset payload'
+    );
   });
 
   test('strict mode still rejects malformed v3 input from the migrated SingleAgentClient seam', async () => {

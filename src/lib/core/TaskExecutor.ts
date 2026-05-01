@@ -301,6 +301,11 @@ export class TaskExecutor {
        * truth for both validation and wire-level major.
        */
       adcpVersion?: string;
+      /**
+       * Transport-level safeguards applied to every call this executor
+       * dispatches. Per-call options can override individual fields.
+       */
+      transport?: import('../protocols').TransportOptions;
     } = {}
   ) {
     this.responseParser = new ProtocolResponseParser();
@@ -562,6 +567,7 @@ export class TaskExecutor {
         serverVersion,
         session: { contextId: options.contextId, taskId: options.taskId },
         adcpVersion: this.config.adcpVersion,
+        transport: options.transport ?? this.config.transport,
       });
 
       // Emit protocol_response activity
@@ -1304,6 +1310,7 @@ export class TaskExecutor {
       {
         serverVersion: this.lastKnownServerVersion,
         adcpVersion: this.config.adcpVersion,
+        transport: this.config.transport,
       }
     )) as Record<string, unknown>;
     return (response.tasks as TaskInfo[]) || [];
@@ -1360,6 +1367,7 @@ export class TaskExecutor {
       {
         serverVersion: this.lastKnownServerVersion,
         adcpVersion: this.config.adcpVersion,
+        transport: this.config.transport,
       }
     )) as Record<string, unknown>;
     // We don't run `extractResponseData` here: that helper's
@@ -1535,6 +1543,7 @@ export class TaskExecutor {
         debugLogs,
         serverVersion: this.lastKnownServerVersion,
         adcpVersion: this.config.adcpVersion,
+        transport: this.config.transport,
       }
     );
 
@@ -1826,7 +1835,14 @@ export class TaskExecutor {
 
     try {
       const normalizedResponse = this.normalizeResponseForValidation(response, taskName);
-      const outcome = validateIncomingResponse(taskName, normalizedResponse, mode, debugLogs, this.config.adcpVersion);
+      // Validate against the version the agent actually spoke. Without
+      // this, v2.5 sellers (e.g. Wonderstruck) return valid v2.5-shaped
+      // responses and the SDK rejects them as malformed v3 — surfaces as
+      // `pricing_options must NOT have fewer than 1 items` and similar
+      // shape mismatches that don't exist in v2.5. The v3 → v2 path is
+      // already correctly version-pinned via lastKnownServerVersion.
+      const validationVersion = this.lastKnownServerVersion === 'v2' ? 'v2.5' : this.config.adcpVersion;
+      const outcome = validateIncomingResponse(taskName, normalizedResponse, mode, debugLogs, validationVersion);
       if (outcome.valid) return { valid: true, errors: [] };
 
       const errorStrings = outcome.issues.map(i => `${i.pointer}: ${i.message}`);

@@ -1,6 +1,6 @@
 {
   "name": "@adcp/sdk",
-  "version": "6.1.0",
+  "version": "6.3.0",
   "description": "AdCP SDK — client, server, and compliance harnesses for the AdContext Protocol (MCP + A2A)",
   "workspaces": [
     ".",
@@ -34,6 +34,11 @@
       "import": "./dist/lib/types/index.js",
       "require": "./dist/lib/types/index.js",
       "types": "./dist/lib/types/index.d.ts"
+    },
+    "./types/v2-5": {
+      "import": "./dist/lib/types/v2-5/index.js",
+      "require": "./dist/lib/types/v2-5/index.js",
+      "types": "./dist/lib/types/v2-5/index.d.ts"
     },
     "./testing": {
       "import": "./dist/lib/testing/index.js",
@@ -121,6 +126,9 @@
       "types": [
         "dist/lib/types/index.d.ts"
       ],
+      "types/v2-5": [
+        "dist/lib/types/v2-5/index.d.ts"
+      ],
       "testing": [
         "dist/lib/testing/index.d.ts"
       ],
@@ -200,6 +208,8 @@
     "sync-schemas:all": "npm run sync-schemas && npm run sync-schemas:v2.5",
     "schema-diff": "tsx scripts/schema-diff.ts",
     "generate-types": "tsx scripts/generate-types.ts && tsx scripts/generate-enum-arrays.ts",
+    "generate-types:v2.5": "tsx scripts/generate-v2-5-types.ts",
+    "generate-types:all": "npm run generate-types && npm run generate-types:v2.5",
     "generate-registry-types": "tsx scripts/generate-registry-types.ts",
     "generate-enum-arrays": "tsx scripts/generate-enum-arrays.ts",
     "generate-inline-enum-arrays": "tsx scripts/generate-inline-enum-arrays.ts",
