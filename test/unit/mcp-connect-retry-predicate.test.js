@@ -70,9 +70,9 @@ describe('connectMCPWithFallback: retry predicate (issue #1246)', () => {
     assert.strictEqual(result, 'retry-succeeded');
   });
 
-  test('StreamableHTTPError 400 (session-not-found) still retries', async () => {
-    // Regression guard: StreamableHTTPError was previously the *only* case that
-    // retried. Widening must not remove this behavior.
+  test('Error with code 400 (non-auth HTTP status) still retries', async () => {
+    // Regression guard: code-400 errors (e.g. StreamableHTTPError "Session not found")
+    // were the only previously-retried case. Widening must keep them retried.
     const err = Object.assign(new Error('Session not found'), { code: 400 });
     const result = await runRetryGate(err, async () => {
       /* retry succeeds */
