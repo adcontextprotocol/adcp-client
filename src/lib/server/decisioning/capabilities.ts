@@ -128,9 +128,11 @@ export interface DecisioningCapabilities<TConfig = unknown> {
    * (Criteo, Amazon — operator pays the publisher and bills the brand).
    * `'agent'` = pass-through model (buyer's agent settles directly with the
    * platform). `'advertiser'` = seller invoices the advertiser directly,
-   * bypassing operator settlement (Google Ads direct, Meta direct,
-   * retail-media-adjacent platforms where the brand is the direct contractual
-   * counterparty). Defaults to `['agent']` when omitted.
+   * bypassing operator settlement (advertiser-direct sell-side platforms where
+   * the brand is the direct contractual counterparty). Defaults to `['agent']`
+   * when omitted. To express advertiser-direct billing per account, set
+   * `billing.invoicedTo` to a `BrandReference` (the framework maps any
+   * `BrandReference` to `'advertiser'` on the wire).
    */
   supportedBillings?: ReadonlyArray<'operator' | 'agent' | 'advertiser'>;
 
