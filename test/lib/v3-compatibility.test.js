@@ -2047,11 +2047,15 @@ describe('DeviceType type validation', () => {
 const { STANDARD_ERROR_CODES, isStandardErrorCode, getErrorRecovery } = require('../../dist/lib/types/error-codes.js');
 
 const { ErrorSchema } = require('../../dist/lib/types/schemas.generated.js');
+const { ErrorCodeValues } = require('../../dist/lib/types/enums.generated.js');
 
 describe('Standard Error Codes', () => {
-  test('STANDARD_ERROR_CODES contains exactly 28 codes', () => {
-    const codes = Object.keys(STANDARD_ERROR_CODES);
-    assert.strictEqual(codes.length, 28);
+  test('STANDARD_ERROR_CODES enumerates every code in the spec enum', () => {
+    // Drift guard — was previously hardcoded to 28; now tied to the generated
+    // enum so that adding codes to error-code.json fails this test until they
+    // get description+recovery rows in error-codes.ts. The companion test in
+    // standard-error-codes-drift.test.js is the authoritative drift guard.
+    assert.strictEqual(Object.keys(STANDARD_ERROR_CODES).length, ErrorCodeValues.length);
   });
 
   test('includes the idempotency codes added in AdCP v3 (PR #2315)', () => {
@@ -2075,7 +2079,11 @@ describe('Standard Error Codes', () => {
       .map(([code]) => code);
     assert.ok(transientCodes.includes('RATE_LIMITED'));
     assert.ok(transientCodes.includes('SERVICE_UNAVAILABLE'));
-    assert.ok(transientCodes.includes('PRODUCT_UNAVAILABLE'));
+    // Spec moved CONFLICT to transient (concurrent-modification retry).
+    assert.ok(transientCodes.includes('CONFLICT'));
+    // GOVERNANCE_UNAVAILABLE / CAMPAIGN_SUSPENDED are also transient (added in AdCP 3.0).
+    assert.ok(transientCodes.includes('GOVERNANCE_UNAVAILABLE'));
+    assert.ok(transientCodes.includes('CAMPAIGN_SUSPENDED'));
   });
 
   test('terminal codes require human intervention', () => {
@@ -2084,8 +2092,8 @@ describe('Standard Error Codes', () => {
       .map(([code]) => code);
     assert.ok(terminalCodes.includes('ACCOUNT_SUSPENDED'));
     assert.ok(terminalCodes.includes('ACCOUNT_PAYMENT_REQUIRED'));
+    assert.ok(terminalCodes.includes('ACCOUNT_NOT_FOUND'));
     assert.ok(terminalCodes.includes('BUDGET_EXHAUSTED'));
-    assert.ok(terminalCodes.includes('UNSUPPORTED_FEATURE'));
   });
 
   test('isStandardErrorCode returns true for known codes', () => {
