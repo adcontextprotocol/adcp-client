@@ -72,7 +72,7 @@ function collectObservations(
 
   // Core track observations
   if (track === 'core') {
-    if (!profile.adcp_version || profile.adcp_version === 'v2') {
+    if ((!profile.adcp_version && !profile.capabilities_probe_error) || profile.adcp_version === 'v2') {
       observations.push({
         category: 'best_practice',
         severity: 'suggestion',
