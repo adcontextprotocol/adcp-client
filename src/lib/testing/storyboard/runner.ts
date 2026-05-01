@@ -990,11 +990,39 @@ async function executeStoryboardPass(
       }
 
       // Skip remaining steps if a stateful dependency failed (or
-      // skipped for a missing-state reason). The detail message
-      // distinguishes the two so adopters reading the cascade know
-      // whether to look at a real failure or a structural mismatch
-      // (storyboard step requires a tool the agent doesn't advertise).
+      // skipped for a missing-state reason). Before applying the
+      // cascade reason, check the step's intrinsic skip-eligibility:
+      // if the agent never advertised this step's tool, the correct
+      // reason is `missing_tool` (a benign, passed: true skip) —
+      // not `prerequisite_failed` (a failed skip). This distinguishes
+      // "this agent has a real setup bug" from "this agent doesn't
+      // claim this surface, by design" (adcp-client#1169).
+      //
+      // Uses resolveTaskName so that $test_kit.* steps are checked
+      // against the resolved concrete task name, not the template
+      // string (which would never be in agentTools).
       if (statefulFailed && step.stateful) {
+        const resolvedTask = resolveTaskName(step, options);
+        if (options.agentTools && resolvedTask && !options.agentTools.includes(resolvedTask)) {
+          const toolDetail = `Agent did not advertise tool "${resolvedTask}"; agent tools: [${options.agentTools.join(', ')}].`;
+          stepResults.push({
+            storyboard_id: storyboard.id,
+            step_id: step.id,
+            phase_id: phase.id,
+            title: step.title,
+            task: resolvedTask,
+            passed: true,
+            skipped: true,
+            skip_reason: 'missing_tool',
+            skip: buildSkip('missing_tool', toolDetail),
+            duration_ms: 0,
+            validations: [],
+            context,
+            extraction: { path: 'none' },
+          });
+          skippedCount++;
+          continue;
+        }
         const detail = statefulSkipTrigger
           ? `Skipped: prior stateful step "${statefulSkipTrigger.stepId}" skipped (${statefulSkipTrigger.reason}); state never materialized.`
           : 'Skipped: prior stateful step failed.';
