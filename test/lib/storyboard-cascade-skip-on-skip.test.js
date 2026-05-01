@@ -766,7 +766,11 @@ describe('runStoryboard: capability-aware cascade (adcp-client#1169)', () => {
     assert.ok(!setupStep.passed, 'setup step failed (trips statefulFailed)');
     // Capability-aware cascade: sync_creatives not advertised → missing_tool
     assert.strictEqual(creativeStep.skipped, true, 'creative step skipped');
-    assert.strictEqual(creativeStep.skip_reason, 'missing_tool', 'skip reason is missing_tool (not prerequisite_failed)');
+    assert.strictEqual(
+      creativeStep.skip_reason,
+      'missing_tool',
+      'skip reason is missing_tool (not prerequisite_failed)'
+    );
     assert.strictEqual(creativeStep.passed, true, 'missing_tool skip is a passing skip');
     assert.match(creativeStep.skip.detail ?? '', /sync_creatives/, 'detail names the un-advertised tool');
   });
@@ -859,7 +863,7 @@ describe('runStoryboard: capability-aware cascade (adcp-client#1169)', () => {
             id: 'testkit_step',
             title: 'test-kit resolved step (advertised via task_default)',
             task: '$test_kit.nonexistent.path',
-            task_default: '__test_assert',  // resolves to __test_assert (IS advertised)
+            task_default: '__test_assert', // resolves to __test_assert (IS advertised)
             stateful: true,
             auth: 'none',
             sample_request: {},
@@ -883,7 +887,10 @@ describe('runStoryboard: capability-aware cascade (adcp-client#1169)', () => {
     assert.ok(!setupStep.passed, 'setup failed');
     assert.strictEqual(testkitStep.skipped, true, 'test-kit step cascade-skipped');
     // Resolved task (__test_assert) IS advertised → genuine cascade, not missing_tool.
-    assert.strictEqual(testkitStep.skip_reason, 'prerequisite_failed',
-      '$test_kit.* step with advertised task_default still gets prerequisite_failed');
+    assert.strictEqual(
+      testkitStep.skip_reason,
+      'prerequisite_failed',
+      '$test_kit.* step with advertised task_default still gets prerequisite_failed'
+    );
   });
 });
