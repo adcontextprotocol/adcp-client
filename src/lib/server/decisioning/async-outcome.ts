@@ -136,7 +136,11 @@ export class AdcpError extends Error {
   ) {
     super(options.message);
     this.code = code;
-    this.recovery = options.recovery ?? getErrorRecovery(code) ?? 'correctable';
+    // For non-standard `(string & {})` codes the fallback is `'terminal'`,
+    // matching `adcpError(...)`'s factory behavior in `errors.ts` — buyer
+    // can't pattern-match on an unknown code, so the conservative default
+    // tells them to escalate rather than auto-retry.
+    this.recovery = options.recovery ?? getErrorRecovery(code) ?? 'terminal';
     maybeWarnUnknownErrorCode(code);
     if (options.field !== undefined) this.field = options.field;
     if (options.suggestion !== undefined) this.suggestion = options.suggestion;

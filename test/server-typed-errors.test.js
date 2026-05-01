@@ -264,9 +264,12 @@ describe('AdcpError — recovery defaults from spec when omitted', () => {
     assert.equal(e.recovery, 'correctable');
   });
 
-  it('omitting recovery for a non-standard code falls back to correctable', () => {
+  it('omitting recovery for a non-standard code falls back to terminal', () => {
+    // Matches `adcpError(...)`'s factory default: unknown vendor codes get
+    // `terminal` so the buyer escalates rather than auto-retrying something
+    // we can't classify.
     const e = new AdcpError('GAM_INTERNAL_QUOTA_EXCEEDED', { message: 'vendor code' });
-    assert.equal(e.recovery, 'correctable');
+    assert.equal(e.recovery, 'terminal');
   });
 
   it('explicit recovery still overrides the spec default', () => {
