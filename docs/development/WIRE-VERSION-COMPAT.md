@@ -430,7 +430,7 @@ When a shim hits end-of-support:
 
 1. **Announce in CHANGELOG** — one major-version (or 12 months, whichever longer) before deletion. Tell adopters which SDK version drops it.
 2. **Switch detection to typed rejection.** `detectServerVersion` returns the version, but the dispatch in `adaptRequestForServerVersion` returns a `VERSION_UNSUPPORTED` `ADCPError` instead of routing through the deleted registry. Adopters get a typed error, not a silent no-op.
-3. **Delete the directory.** `src/lib/adapters/legacy/<version>/`, `src/lib/types/<version-dir>/`, `schemas/cache/<version>/`, `scripts/sync-<version>-schemas.ts`, `scripts/generate-<version>-types.ts`, the conformance + registry tests, the smoke harness.
+3. **Delete the directory and prune the dispatch maps.** `src/lib/adapters/legacy/<version>/`, `src/lib/types/<version-dir>/`, `schemas/cache/<version>/`, `scripts/sync-<version>-schemas.ts`, `scripts/generate-<version>-types.ts`, the conformance + registry tests, the smoke harness. Also remove the version's entries from `REGISTRY_BY_VERSION` (step 5) and `SCHEMA_BUNDLE_BY_VERSION` (step 6) — a stale map entry pointing at a deleted registry compiles fine but blows up at runtime.
 4. **Bump the major.** Removing a legacy shim is a breaking change for any adopter still talking to that version. Land it on a major-version bump with a clear migration note pointing at the older SDK pin.
 
 ## Compatibility today
