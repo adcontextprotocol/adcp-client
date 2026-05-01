@@ -108,6 +108,10 @@ function printUsage(): void {
   );
 }
 
+type UpstreamAuth =
+  | { kind: 'static_bearer'; apiKey: string }
+  | { kind: 'oauth_client_credentials'; clientId: string; clientSecret: string; tokenPath: string };
+
 function buildPrompt(
   skill: string,
   storyboardId: string,
@@ -116,7 +120,7 @@ function buildPrompt(
   upstream?: {
     specialism: string;
     url: string;
-    apiKey: string;
+    auth: UpstreamAuth;
     openapiPath: string;
     principalScope: string;
     principalMapping: Array<{
@@ -127,6 +131,11 @@ function buildPrompt(
     }>;
   }
 ): string {
+  const authSection = upstream
+    ? upstream.auth.kind === 'static_bearer'
+      ? `\n- \`Authorization: Bearer ${upstream.auth.apiKey}\` — the customer-level API key`
+      : `\n- **OAuth 2.0 client_credentials grant.** Exchange these credentials at the token endpoint, then attach the issued \`access_token\` as Bearer on every API call. Refresh on 401 using \`grant_type=refresh_token\`.\n  - Token endpoint: \`POST ${upstream.url}${upstream.auth.tokenPath}\`\n  - \`client_id: "${upstream.auth.clientId}"\`\n  - \`client_secret: "${upstream.auth.clientSecret}"\``
+    : '';
   const upstreamSection = upstream
     ? `
 
@@ -139,8 +148,7 @@ The upstream platform is running locally as a fixture. Treat it exactly as you w
 **Base URL**: ${upstream.url}
 **OpenAPI spec** (read this first): ${upstream.openapiPath}
 
-**Authentication**:
-- \`Authorization: Bearer ${upstream.apiKey}\` — the customer-level API key
+**Authentication**:${authSection}
 - Per-tenant scope: ${upstream.principalScope}
 
 **Principal mapping**: the AdCP request you receive will carry an identifier (e.g., \`account.operator\` or \`account.advertiser\`). You must translate that to the upstream tenant identifier when calling the upstream API:
@@ -429,7 +437,7 @@ function log(msg: string): void {
 
 interface UpstreamHandle {
   url: string;
-  apiKey: string;
+  auth: UpstreamAuth;
   openapiPath: string;
   principalScope: string;
   principalMapping: Array<{
@@ -450,7 +458,7 @@ async function bootUpstreamForHarness(specialism: string, port: number): Promise
   // broken instead of just unbuilt.
   let bootMockServer: (opts: { specialism: string; port: number }) => Promise<{
     url: string;
-    apiKey: string;
+    auth: UpstreamAuth;
     principalScope: string;
     principalMapping: UpstreamHandle['principalMapping'];
     close: () => Promise<void>;
@@ -470,7 +478,7 @@ async function bootUpstreamForHarness(specialism: string, port: number): Promise
   log(`upstream mock-server (${specialism}) up on ${handle.url}`);
   return {
     url: handle.url,
-    apiKey: handle.apiKey,
+    auth: handle.auth,
     openapiPath,
     principalScope: handle.principalScope,
     principalMapping: handle.principalMapping,
@@ -509,7 +517,7 @@ async function main(): Promise<void> {
           ? {
               specialism: args.upstream!,
               url: upstream.url,
-              apiKey: upstream.apiKey,
+              auth: upstream.auth,
               openapiPath: upstream.openapiPath,
               principalScope: upstream.principalScope,
               principalMapping: upstream.principalMapping,

@@ -1018,11 +1018,18 @@ ARGUMENTS:
                                             platform with async renders.
                                             Workspace-scoped paths; multi-stage
                                             polling (queued → running → complete).
+                       sales-social         TikTok/Meta-shaped social platform
+                                            with OAuth 2.0 client_credentials,
+                                            sync_audiences (hashed-PII upload),
+                                            and CAPI / Conversion API ingestion.
 
 OPTIONS:
   --port N           Listen port. Default: 4500.
-  --api-key KEY      Override the static bearer credential. Defaults to a
-                     stable test key printed at boot.
+  --api-key KEY      Override the static bearer credential. Only applies to
+                     specialisms with static-bearer auth (signal-marketplace,
+                     creative-template). Ignored for OAuth specialisms
+                     (sales-social) — those issue tokens via the OAuth flow.
+                     Defaults to a stable test key printed at boot.
 
 NOTES:
   These mock servers represent the *upstream* platform an adopter wraps,

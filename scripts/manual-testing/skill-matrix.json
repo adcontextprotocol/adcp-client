@@ -6,6 +6,11 @@
     { "skill": "skills/build-seller-agent/SKILL.md", "storyboard": "idempotency" },
     { "skill": "skills/build-seller-agent/SKILL.md", "storyboard": "webhook_emission" },
     { "skill": "skills/build-seller-agent/SKILL.md", "storyboard": "security_baseline" },
+    {
+      "skill": "skills/build-seller-agent/SKILL.md",
+      "storyboard": "sales_social",
+      "upstream": "sales-social"
+    },
     { "skill": "skills/build-brand-rights-agent/SKILL.md", "storyboard": "brand_rights" },
     { "skill": "skills/build-creative-agent/SKILL.md", "storyboard": "creative_ad_server" },
     {

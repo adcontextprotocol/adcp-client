@@ -1,5 +1,7 @@
 import { bootCreativeTemplate } from './creative-template/server';
 import { DEFAULT_API_KEY as CREATIVE_TEMPLATE_DEFAULT_API_KEY, WORKSPACES } from './creative-template/seed-data';
+import { bootSalesSocial } from './sales-social/server';
+import { ADVERTISERS, OAUTH_CLIENTS } from './sales-social/seed-data';
 import { bootSignalMarketplace } from './signal-marketplace/server';
 import { DEFAULT_API_KEY as SIGNAL_MARKETPLACE_DEFAULT_API_KEY, OPERATORS } from './signal-marketplace/seed-data';
 
@@ -9,9 +11,38 @@ export interface MockServerOptions {
   apiKey?: string;
 }
 
+/**
+ * How an adapter authenticates with the upstream mock. Specialism mocks
+ * advertise one of these so the matrix harness can build the right
+ * adapter-prompt section.
+ */
+export type MockServerAuth =
+  | {
+      kind: 'static_bearer';
+      /** Bearer token attached on every API call. */
+      apiKey: string;
+    }
+  | {
+      kind: 'oauth_client_credentials';
+      /** OAuth `client_id` for the `client_credentials` grant. */
+      clientId: string;
+      /** OAuth `client_secret` paired with `clientId`. */
+      clientSecret: string;
+      /** Path to the OAuth token endpoint relative to the mock URL,
+       * e.g. `/oauth/token`. Adapters POST `grant_type=client_credentials`
+       * with the client_id/secret to receive an access_token, then attach
+       * it as Bearer on subsequent API calls. Token expires after
+       * `expires_in` seconds (mock returns this in the token response);
+       * adapters refresh via the same endpoint with `grant_type=refresh_token`. */
+      tokenPath: string;
+    };
+
 export interface MockServerHandle {
   url: string;
-  apiKey: string;
+  /** Auth shape this mock requires. The matrix harness branches on
+   * `auth.kind` when building the adapter prompt — different shapes
+   * produce different adapter-side wiring. */
+  auth: MockServerAuth;
   close: () => Promise<void>;
   /** Adopter-friendly summary for boot-log printing. */
   summary: () => string;
@@ -52,7 +83,7 @@ export async function bootMockServer(options: MockServerOptions): Promise<MockSe
       const apiKey = options.apiKey ?? SIGNAL_MARKETPLACE_DEFAULT_API_KEY;
       return {
         url,
-        apiKey,
+        auth: { kind: 'static_bearer', apiKey },
         close,
         summary: () => formatSignalMarketplaceSummary(url, apiKey),
         principalScope: 'X-Operator-Id header (required on every request)',
@@ -72,7 +103,7 @@ export async function bootMockServer(options: MockServerOptions): Promise<MockSe
       const apiKey = options.apiKey ?? CREATIVE_TEMPLATE_DEFAULT_API_KEY;
       return {
         url,
-        apiKey,
+        auth: { kind: 'static_bearer', apiKey },
         close,
         summary: () => formatCreativeTemplateSummary(url, apiKey),
         principalScope: 'URL path segment /v3/workspaces/{workspace_id}/...',
@@ -84,9 +115,32 @@ export async function bootMockServer(options: MockServerOptions): Promise<MockSe
         })),
       };
     }
+    case 'sales-social': {
+      const { url, close } = await bootSalesSocial({ port: options.port });
+      const client = OAUTH_CLIENTS[0];
+      if (!client) throw new Error('sales-social: no OAuth clients seeded');
+      return {
+        url,
+        auth: {
+          kind: 'oauth_client_credentials',
+          clientId: client.client_id,
+          clientSecret: client.client_secret,
+          tokenPath: '/oauth/token',
+        },
+        close,
+        summary: () => formatSalesSocialSummary(url, client),
+        principalScope: 'URL path segment /v1.3/advertiser/{advertiser_id}/...',
+        principalMapping: ADVERTISERS.map(adv => ({
+          adcpField: 'account.advertiser',
+          adcpValue: adv.adcp_advertiser,
+          upstreamField: 'path /v1.3/advertiser/{advertiser_id}/',
+          upstreamValue: adv.advertiser_id,
+        })),
+      };
+    }
     default:
       throw new Error(
-        `Unknown mock-server specialism: "${options.specialism}". Supported: signal-marketplace, creative-template.`
+        `Unknown mock-server specialism: "${options.specialism}". Supported: signal-marketplace, creative-template, sales-social.`
       );
   }
 }
@@ -140,5 +194,36 @@ function formatCreativeTemplateSummary(url: string, apiKey: string): string {
     ``,
     `Renders are async: POST returns 202 with status="queued", then progresses`,
     `through "running" → "complete" on subsequent GETs (or "failed" on error).`,
+  ].join('\n');
+}
+
+function formatSalesSocialSummary(url: string, client: { client_id: string; client_secret: string }): string {
+  const advertiserLines = ADVERTISERS.map(
+    adv => `  ${adv.advertiser_id}  →  AdCP account.advertiser: "${adv.adcp_advertiser}"`
+  ).join('\n');
+  return [
+    `Mock social platform (TikTok-flavored) running at ${url}`,
+    ``,
+    `Auth (OAuth 2.0 client_credentials):`,
+    `  Token endpoint:  POST ${url}/oauth/token`,
+    `  client_id:       ${client.client_id}`,
+    `  client_secret:   ${client.client_secret}`,
+    `  Then attach the issued access_token as Authorization: Bearer <token>`,
+    `  Refresh via same endpoint with grant_type=refresh_token (token rotation on use).`,
+    ``,
+    `Advertiser mapping (path-scoped):`,
+    advertiserLines,
+    ``,
+    `OpenAPI spec: src/lib/mock-server/sales-social/openapi.yaml`,
+    `Key routes:`,
+    `  POST   ${url}/oauth/token                                                  (no auth)`,
+    `  GET    ${url}/v1.3/advertiser/{advertiser_id}/info`,
+    `  POST   ${url}/v1.3/advertiser/{advertiser_id}/custom_audience/create`,
+    `  POST   ${url}/v1.3/advertiser/{advertiser_id}/custom_audience/upload      (hashed PII)`,
+    `  POST   ${url}/v1.3/advertiser/{advertiser_id}/catalog/create`,
+    `  POST   ${url}/v1.3/advertiser/{advertiser_id}/catalog/upload`,
+    `  POST   ${url}/v1.3/advertiser/{advertiser_id}/creative/create`,
+    `  POST   ${url}/v1.3/advertiser/{advertiser_id}/pixel/create`,
+    `  POST   ${url}/v1.3/advertiser/{advertiser_id}/event/track                  (CAPI)`,
   ].join('\n');
 }
