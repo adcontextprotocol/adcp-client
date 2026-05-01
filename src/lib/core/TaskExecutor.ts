@@ -3,7 +3,7 @@
 
 import { randomUUID } from 'crypto';
 import type { AgentConfig } from '../types';
-import { ProtocolClient } from '../protocols';
+import { ProtocolClient, type TransportOptions } from '../protocols';
 import { listMCPTasks } from '../protocols/mcp-tasks';
 import { getAuthToken } from '../auth';
 import { is401Error, adcpErrorToTypedError } from '../errors';
@@ -1118,8 +1118,8 @@ export class TaskExecutor {
     const submitted: SubmittedContinuation<T> = {
       taskId: serverTaskId,
       webhookUrl,
-      track: () => this.getTaskStatus(agent, serverTaskId),
-      waitForCompletion: (pollInterval = 60000) => this.pollTaskCompletion<T>(agent, serverTaskId, pollInterval),
+      track: () => this.getTaskStatus(agent, serverTaskId, options.transport),
+      waitForCompletion: (pollInterval = 60000) => this.pollTaskCompletion<T>(agent, serverTaskId, pollInterval, options.transport),
     };
 
     return {
@@ -1332,7 +1332,7 @@ export class TaskExecutor {
     }
   }
 
-  async getTaskStatus(agent: AgentConfig, taskId: string): Promise<TaskInfo> {
+  async getTaskStatus(agent: AgentConfig, taskId: string, transport?: TransportOptions): Promise<TaskInfo> {
     // AdCP `tasks/get` is the cross-protocol work-status interface
     // (`schemas/cache/<v>/bundled/core/tasks-get-{request,response}.json`).
     // Dispatched as a buyer-callable tool over the agent's transport
@@ -1367,7 +1367,7 @@ export class TaskExecutor {
       {
         serverVersion: this.lastKnownServerVersion,
         adcpVersion: this.config.adcpVersion,
-        transport: this.config.transport,
+        transport: transport ?? this.config.transport,
       }
     )) as Record<string, unknown>;
     // We don't run `extractResponseData` here: that helper's
@@ -1382,9 +1382,9 @@ export class TaskExecutor {
     return mapTasksGetResponseToTaskInfo(response);
   }
 
-  async pollTaskCompletion<T>(agent: AgentConfig, taskId: string, pollInterval = 60000): Promise<TaskResult<T>> {
+  async pollTaskCompletion<T>(agent: AgentConfig, taskId: string, pollInterval = 60000, transport?: TransportOptions): Promise<TaskResult<T>> {
     while (true) {
-      const status = await this.getTaskStatus(agent, taskId);
+      const status = await this.getTaskStatus(agent, taskId, transport);
 
       if (status.status === ADCP_STATUS.COMPLETED) {
         const pollSuccess = this.isOperationSuccess(status.result);
@@ -1543,7 +1543,7 @@ export class TaskExecutor {
         debugLogs,
         serverVersion: this.lastKnownServerVersion,
         adcpVersion: this.config.adcpVersion,
-        transport: this.config.transport,
+        transport: options.transport ?? this.config.transport,
       }
     );
 
