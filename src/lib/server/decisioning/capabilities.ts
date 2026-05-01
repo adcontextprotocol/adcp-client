@@ -127,7 +127,8 @@ export interface DecisioningCapabilities<TConfig = unknown> {
    * Billing parties this platform supports. `'operator'` = retail-media model
    * (Criteo, Amazon — operator pays the publisher and bills the brand).
    * `'agent'` = pass-through model (buyer's agent settles directly with the
-   * platform). Defaults to `['agent']` when omitted.
+   * platform). Defaults to `[]` (no billing preference declared) when omitted;
+   * the framework always emits `account.supported_billing` on the wire.
    */
   supportedBillings?: ReadonlyArray<'operator' | 'agent'>;
 

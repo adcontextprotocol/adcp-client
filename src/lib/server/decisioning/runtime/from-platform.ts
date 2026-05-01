@@ -761,10 +761,13 @@ export function createAdcpServerFromPlatform<P extends DecisioningPlatform<any, 
   // their buyers default-route to agent-billed flows.
   const requireOperatorAuth = platform.capabilities.requireOperatorAuth ?? platform.accounts.resolution === 'explicit';
   const supportedBillings = platform.capabilities.supportedBillings;
-  const hasAccountProjection = requireOperatorAuth === true || (supportedBillings?.length ?? 0) > 0;
+  // account.supported_billing is required by the schema whenever the account block is present.
+  // Always project the account block so the field is never silently omitted, matching v5 behavior
+  // (create-adcp-server.ts:3431: supportedBilling ?? []).
+  const hasAccountProjection = true;
   const accountOverrides: Partial<NonNullable<GetAdCPCapabilitiesResponse['account']>> = {
     ...(requireOperatorAuth === true && { require_operator_auth: true }),
-    ...(supportedBillings?.length && { supported_billing: [...supportedBillings] }),
+    supported_billing: supportedBillings != null ? [...supportedBillings] : [],
   };
 
   // Compliance-testing scenarios projection. Adopters who claim the

@@ -239,7 +239,7 @@ describe('Capability projections — declarative capability blocks on Decisionin
     assert.strictEqual(result.structuredContent?.account?.require_operator_auth, true);
   });
 
-  it('accounts.resolution: implicit does NOT project account block (sync_accounts is the correct tool)', async () => {
+  it('accounts.resolution: implicit projects account block with supported_billing:[] but no require_operator_auth', async () => {
     const platform = basePlatform();
     platform.accounts.resolution = 'implicit';
     const server = createAdcpServerFromPlatform(platform, {
@@ -250,9 +250,12 @@ describe('Capability projections — declarative capability blocks on Decisionin
     const result = await dispatchCapabilities(server);
     // Implicit-mode adopters use sync_accounts; require_operator_auth must
     // remain false / unset so the runner does NOT mark sync_accounts as
-    // not_applicable.
-    const requireOperatorAuth = result.structuredContent?.account?.require_operator_auth;
+    // not_applicable. The account block is still projected (supported_billing
+    // is always required by the schema) but without require_operator_auth: true.
+    const account = result.structuredContent?.account;
+    const requireOperatorAuth = account?.require_operator_auth;
     assert.notStrictEqual(requireOperatorAuth, true);
+    assert.deepStrictEqual(account?.supported_billing, []);
   });
 
   it('capabilities.supportedBillings projects onto wire account.supported_billing', async () => {
@@ -298,5 +301,32 @@ describe('Capability projections — declarative capability blocks on Decisionin
     assert.strictEqual(mb?.audience_targeting, undefined);
     assert.strictEqual(mb?.conversion_tracking, undefined);
     assert.strictEqual(mb?.content_standards, undefined);
+  });
+
+  it('minimal config (no supportedBillings, no requireOperatorAuth) emits account.supported_billing: []', async () => {
+    // Regression for #1186: v6 path was silently omitting account.supported_billing when
+    // supportedBillings was undefined. Schema requires the field whenever account is present,
+    // causing get_adcp_capabilities responses to fail validation and cascade into v2-downgrade.
+    const server = createAdcpServerFromPlatform(basePlatform(), {
+      name: 'h',
+      version: '0.0.1',
+      validation: { requests: 'off', responses: 'off' },
+    });
+    const result = await dispatchCapabilities(server);
+    const account = result.structuredContent?.account;
+    assert.ok(account, 'account block must be projected even with minimal config');
+    assert.deepStrictEqual(account.supported_billing, [], 'supported_billing defaults to [] when omitted');
+  });
+
+  it('empty supportedBillings array emits account.supported_billing: []', async () => {
+    const server = createAdcpServerFromPlatform(basePlatform({ supportedBillings: [] }), {
+      name: 'h',
+      version: '0.0.1',
+      validation: { requests: 'off', responses: 'off' },
+    });
+    const result = await dispatchCapabilities(server);
+    const account = result.structuredContent?.account;
+    assert.ok(account, 'account block projected');
+    assert.deepStrictEqual(account.supported_billing, []);
   });
 });
