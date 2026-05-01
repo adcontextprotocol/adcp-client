@@ -1,0 +1,646 @@
+openapi: 3.1.0
+info:
+  title: Social Platform Marketing API
+  version: '1.3.0'
+  description: |
+    HTTP API for a fictional social-platform advertiser API — TikTok Business API
+    flavor (also resembling Meta Marketing API and similar walled-garden ad
+    platforms). Two patterns this fixture stresses that prior matrix-v2 mocks
+    don't cover:
+
+    1. **OAuth 2.0 client_credentials with refresh tokens.** Adapters must
+       exchange `client_id` + `client_secret` for an `access_token` at the
+       OAuth token endpoint, attach the bearer on every API call, and refresh
+       when the token expires. This is genuinely different from the static
+       Bearer pattern signal-marketplace and creative-template use.
+
+    2. **Hashed-PII audience uploads + Conversion API event ingestion.**
+       Audiences are uploaded as SHA-256-hashed lowercase emails/phones (the
+       industry standard for walled-garden activation). Conversion events
+       flow in via the `/event/track` endpoint with hashed user identifiers
+       and event metadata (the "CAPI" pattern Meta + TikTok both use).
+
+    Multi-tenancy via path: `/v1.3/advertiser/{advertiser_id}/...`. Two
+    seeded advertisers with overlapping access. Same boot-time API key /
+    client secret across all tenants (per the standard walled-garden model
+    where one app credential serves multiple seats).
+
+servers:
+  - url: http://127.0.0.1:{port}
+    variables:
+      port:
+        default: '4502'
+        description: Port the mock-server boots on (override with --port)
+
+components:
+  securitySchemes:
+    bearerAccessToken:
+      type: http
+      scheme: bearer
+      description: |
+        OAuth-issued access token. Obtain via POST /oauth/token with
+        client_credentials grant; refresh via POST /oauth/token with
+        refresh_token grant when the token expires (401 from the API).
+
+  schemas:
+    TokenResponse:
+      type: object
+      required: [access_token, refresh_token, token_type, expires_in]
+      properties:
+        access_token: { type: string }
+        refresh_token: { type: string }
+        token_type: { type: string, enum: [bearer], example: 'bearer' }
+        expires_in:
+          type: integer
+          description: Seconds until access_token expires.
+
+    Advertiser:
+      type: object
+      required: [advertiser_id, display_name, currency, timezone, status]
+      properties:
+        advertiser_id: { type: string, example: 'adv_acme_us' }
+        display_name: { type: string }
+        currency: { type: string, example: 'USD' }
+        timezone: { type: string, example: 'America/Los_Angeles' }
+        status: { type: string, enum: [active, suspended, archived] }
+
+    CustomAudience:
+      type: object
+      required: [audience_id, name, source_type, member_count, status, created_at]
+      properties:
+        audience_id: { type: string, example: 'ca_outdoor_enthusiasts' }
+        name: { type: string }
+        description: { type: string }
+        source_type:
+          type: string
+          enum: [customer_file, website_traffic, app_activity, lookalike, engagement]
+          description: |
+            How the audience was sourced. `customer_file` is the most common
+            sync-from-buyer path (hashed-PII upload).
+        member_count:
+          type: integer
+          description: Approximate matched members on the platform side. May lag
+            audience uploads; populated asynchronously after upload settles.
+        status:
+          type: string
+          enum: [building, active, expired, error]
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+
+    AudienceUpload:
+      type: object
+      required: [audience_id, identifier_type, members]
+      properties:
+        audience_id: { type: string }
+        identifier_type:
+          type: string
+          enum: [hashed_email_sha256, hashed_phone_sha256, hashed_email_or_phone_sha256, mobile_advertising_id]
+          description: |
+            What identifier shape the buyer is uploading. Walled gardens reject
+            unhashed PII — adapters that pass through raw email/phone get a
+            400 here.
+        members:
+          type: array
+          description: Identifier values. For hashed types, MUST be SHA-256 hex
+            of the lowercased trimmed identifier — the platform validates the
+            64-char-hex shape and rejects malformed entries.
+          items:
+            type: string
+            pattern: '^[0-9a-f]{64}$|^[A-Za-z0-9-]{20,40}$'
+
+    Catalog:
+      type: object
+      required: [catalog_id, name, vertical, status, item_count]
+      properties:
+        catalog_id: { type: string }
+        name: { type: string }
+        vertical:
+          type: string
+          enum: [retail, travel, automotive, real_estate, hotel]
+        status: { type: string, enum: [active, processing, error] }
+        item_count: { type: integer }
+
+    CatalogItemBatch:
+      type: object
+      required: [catalog_id, items]
+      properties:
+        catalog_id: { type: string }
+        items:
+          type: array
+          minItems: 1
+          maxItems: 5000
+          items:
+            type: object
+            required: [item_id, title, link, image_url, availability, price]
+            properties:
+              item_id: { type: string }
+              title: { type: string }
+              link: { type: string, format: uri }
+              image_url: { type: string, format: uri }
+              availability: { type: string, enum: [in_stock, out_of_stock, preorder] }
+              price: { type: string, example: '49.99 USD' }
+              brand: { type: string }
+              custom_label_0: { type: string }
+
+    CreativePortfolioItem:
+      type: object
+      required: [creative_id, name, format_id, status, created_at]
+      properties:
+        creative_id: { type: string }
+        name: { type: string }
+        format_id: { type: string, enum: [native_feed, story_video, vertical_video, carousel_image] }
+        primary_text: { type: string }
+        cta_label: { type: string }
+        landing_page_url: { type: string, format: uri }
+        media_url: { type: string, format: uri }
+        status: { type: string, enum: [pending_review, approved, rejected, archived] }
+        rejection_reason: { type: string }
+        created_at: { type: string, format: date-time }
+
+    Pixel:
+      type: object
+      required: [pixel_id, name, status, created_at]
+      properties:
+        pixel_id: { type: string }
+        name: { type: string }
+        domain: { type: string }
+        status: { type: string, enum: [active, paused] }
+        events_received_24h:
+          type: integer
+          description: Counter the platform increments as Events API ingests fire.
+        created_at: { type: string, format: date-time }
+
+    EventBatch:
+      type: object
+      required: [pixel_id, events]
+      properties:
+        pixel_id: { type: string }
+        events:
+          type: array
+          minItems: 1
+          maxItems: 1000
+          items:
+            type: object
+            required: [event_name, event_time, user_data]
+            properties:
+              event_name:
+                type: string
+                description: Standard event name (`Purchase`, `AddToCart`, `Lead`,
+                  `CompleteRegistration`, etc.) or a custom name.
+              event_id:
+                type: string
+                description: Buyer-supplied dedup key. Re-sending the same
+                  `event_id` within a 7-day window does not double-count.
+              event_time:
+                type: integer
+                description: Unix timestamp in seconds.
+              user_data:
+                type: object
+                description: At least one hashed identifier required. Walled
+                  gardens reject events with no matchable identifier.
+                properties:
+                  email_sha256: { type: string, pattern: '^[0-9a-f]{64}$' }
+                  phone_sha256: { type: string, pattern: '^[0-9a-f]{64}$' }
+                  external_id_sha256: { type: string, pattern: '^[0-9a-f]{64}$' }
+                  client_ip_address: { type: string }
+                  client_user_agent: { type: string }
+              custom_data:
+                type: object
+                description: Event-specific properties (`value`, `currency`,
+                  `content_ids`, etc.).
+                additionalProperties: true
+
+    Error:
+      type: object
+      required: [code, message]
+      properties:
+        code: { type: string }
+        message: { type: string }
+        request_id: { type: string }
+
+paths:
+  # ────────────────────────────────────────────────────────────
+  # OAuth (no securityScheme — token endpoint is the auth root)
+  # ────────────────────────────────────────────────────────────
+  /oauth/token:
+    post:
+      summary: OAuth 2.0 token endpoint (client_credentials + refresh_token grants)
+      operationId: oauthToken
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/x-www-form-urlencoded:
+            schema:
+              type: object
+              required: [grant_type]
+              properties:
+                grant_type:
+                  type: string
+                  enum: [client_credentials, refresh_token]
+                client_id: { type: string }
+                client_secret: { type: string }
+                refresh_token: { type: string }
+                scope: { type: string }
+      responses:
+        '200':
+          description: Token issued.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/TokenResponse' }
+        '400':
+          description: Invalid grant or missing/wrong client credentials.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+
+  # ────────────────────────────────────────────────────────────
+  # Advertiser
+  # ────────────────────────────────────────────────────────────
+  /v1.3/advertiser/{advertiser_id}/info:
+    get:
+      summary: Fetch advertiser profile
+      operationId: getAdvertiser
+      security: [{ bearerAccessToken: [] }]
+      parameters:
+        - in: path
+          name: advertiser_id
+          required: true
+          schema: { type: string }
+      responses:
+        '200':
+          description: Advertiser profile.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Advertiser' }
+        '401': { description: Missing/expired access token. }
+        '404': { description: Advertiser not found OR not visible to this OAuth client. }
+
+  # ────────────────────────────────────────────────────────────
+  # Custom audiences (sync_audiences mapping target)
+  # ────────────────────────────────────────────────────────────
+  /v1.3/advertiser/{advertiser_id}/custom_audience/list:
+    get:
+      summary: List custom audiences
+      operationId: listCustomAudiences
+      security: [{ bearerAccessToken: [] }]
+      parameters:
+        - in: path
+          name: advertiser_id
+          required: true
+          schema: { type: string }
+      responses:
+        '200':
+          description: Audiences for this advertiser.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [audiences]
+                properties:
+                  audiences:
+                    type: array
+                    items: { $ref: '#/components/schemas/CustomAudience' }
+
+  /v1.3/advertiser/{advertiser_id}/custom_audience/create:
+    post:
+      summary: Create a custom audience shell
+      operationId: createCustomAudience
+      security: [{ bearerAccessToken: [] }]
+      parameters:
+        - in: path
+          name: advertiser_id
+          required: true
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name, source_type]
+              properties:
+                name: { type: string }
+                description: { type: string }
+                source_type:
+                  type: string
+                  enum: [customer_file, website_traffic, app_activity, lookalike, engagement]
+                client_request_id:
+                  type: string
+                  description: Adapter-supplied idempotency key. Re-sending with
+                    the same id returns the existing audience instead of creating
+                    a duplicate.
+      responses:
+        '201':
+          description: Audience created. Status starts as `building` and
+            transitions to `active` once any subsequent /upload/ call lands
+            members.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/CustomAudience' }
+        '200':
+          description: Idempotent replay of the same client_request_id.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/CustomAudience' }
+        '400':
+          description: Bad request (e.g. unknown source_type).
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '409':
+          description: Idempotency conflict on body mismatch.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+
+  /v1.3/advertiser/{advertiser_id}/custom_audience/upload:
+    post:
+      summary: Upload hashed-PII members to an existing audience
+      operationId: uploadCustomAudienceMembers
+      security: [{ bearerAccessToken: [] }]
+      parameters:
+        - in: path
+          name: advertiser_id
+          required: true
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/AudienceUpload' }
+      responses:
+        '202':
+          description: Upload accepted. Match-rate calculation is async; poll
+            /custom_audience/list to see when `member_count` settles.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [audience_id, status, batch_size]
+                properties:
+                  audience_id: { type: string }
+                  status: { type: string, enum: [building, active] }
+                  batch_size: { type: integer }
+        '400':
+          description: |
+            Invalid hash format (not 64-char hex), unknown identifier_type,
+            or attempt to upload raw PII (rejected — walled gardens require
+            client-side hashing).
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '404': { description: Audience not found. }
+
+  # ────────────────────────────────────────────────────────────
+  # Catalogs (sync_catalogs mapping target)
+  # ────────────────────────────────────────────────────────────
+  /v1.3/advertiser/{advertiser_id}/catalog/list:
+    get:
+      summary: List product catalogs
+      operationId: listCatalogs
+      security: [{ bearerAccessToken: [] }]
+      parameters:
+        - in: path
+          name: advertiser_id
+          required: true
+          schema: { type: string }
+      responses:
+        '200':
+          description: Catalogs.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [catalogs]
+                properties:
+                  catalogs:
+                    type: array
+                    items: { $ref: '#/components/schemas/Catalog' }
+
+  /v1.3/advertiser/{advertiser_id}/catalog/create:
+    post:
+      summary: Create a product catalog
+      operationId: createCatalog
+      security: [{ bearerAccessToken: [] }]
+      parameters:
+        - in: path
+          name: advertiser_id
+          required: true
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name, vertical]
+              properties:
+                name: { type: string }
+                vertical:
+                  type: string
+                  enum: [retail, travel, automotive, real_estate, hotel]
+                client_request_id: { type: string }
+      responses:
+        '201':
+          description: Catalog created.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Catalog' }
+        '200':
+          description: Idempotent replay.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Catalog' }
+
+  /v1.3/advertiser/{advertiser_id}/catalog/upload:
+    post:
+      summary: Upload product catalog items
+      operationId: uploadCatalogItems
+      security: [{ bearerAccessToken: [] }]
+      parameters:
+        - in: path
+          name: advertiser_id
+          required: true
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CatalogItemBatch' }
+      responses:
+        '202':
+          description: Upload accepted; processing async.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [catalog_id, batch_size]
+                properties:
+                  catalog_id: { type: string }
+                  batch_size: { type: integer }
+
+  # ────────────────────────────────────────────────────────────
+  # Creatives (sync_creatives mapping target)
+  # ────────────────────────────────────────────────────────────
+  /v1.3/advertiser/{advertiser_id}/creative/list:
+    get:
+      summary: List creatives
+      operationId: listCreatives
+      security: [{ bearerAccessToken: [] }]
+      parameters:
+        - in: path
+          name: advertiser_id
+          required: true
+          schema: { type: string }
+      responses:
+        '200':
+          description: Creatives.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [creatives]
+                properties:
+                  creatives:
+                    type: array
+                    items: { $ref: '#/components/schemas/CreativePortfolioItem' }
+
+  /v1.3/advertiser/{advertiser_id}/creative/create:
+    post:
+      summary: Upload a native creative for review
+      operationId: createCreative
+      security: [{ bearerAccessToken: [] }]
+      parameters:
+        - in: path
+          name: advertiser_id
+          required: true
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name, format_id, primary_text, landing_page_url, media_url]
+              properties:
+                name: { type: string }
+                format_id:
+                  type: string
+                  enum: [native_feed, story_video, vertical_video, carousel_image]
+                primary_text: { type: string }
+                cta_label: { type: string }
+                landing_page_url: { type: string, format: uri }
+                media_url: { type: string, format: uri }
+                client_request_id: { type: string }
+      responses:
+        '201':
+          description: Creative uploaded; status starts as `pending_review`.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/CreativePortfolioItem' }
+        '200':
+          description: Idempotent replay.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/CreativePortfolioItem' }
+
+  # ────────────────────────────────────────────────────────────
+  # Pixels / event sources (sync_event_sources mapping target)
+  # ────────────────────────────────────────────────────────────
+  /v1.3/advertiser/{advertiser_id}/pixel/list:
+    get:
+      summary: List pixels (event sources)
+      operationId: listPixels
+      security: [{ bearerAccessToken: [] }]
+      parameters:
+        - in: path
+          name: advertiser_id
+          required: true
+          schema: { type: string }
+      responses:
+        '200':
+          description: Pixels.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [pixels]
+                properties:
+                  pixels:
+                    type: array
+                    items: { $ref: '#/components/schemas/Pixel' }
+
+  /v1.3/advertiser/{advertiser_id}/pixel/create:
+    post:
+      summary: Create a pixel (event source)
+      operationId: createPixel
+      security: [{ bearerAccessToken: [] }]
+      parameters:
+        - in: path
+          name: advertiser_id
+          required: true
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name]
+              properties:
+                name: { type: string }
+                domain: { type: string }
+                client_request_id: { type: string }
+      responses:
+        '201':
+          description: Pixel created.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Pixel' }
+        '200':
+          description: Idempotent replay.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Pixel' }
+
+  # ────────────────────────────────────────────────────────────
+  # Conversion API / events (log_event mapping target)
+  # ────────────────────────────────────────────────────────────
+  /v1.3/advertiser/{advertiser_id}/event/track:
+    post:
+      summary: Server-to-server conversion event ingestion (CAPI)
+      operationId: trackEvents
+      security: [{ bearerAccessToken: [] }]
+      parameters:
+        - in: path
+          name: advertiser_id
+          required: true
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/EventBatch' }
+      responses:
+        '200':
+          description: Events accepted (counts increment async).
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [pixel_id, events_received, events_dropped]
+                properties:
+                  pixel_id: { type: string }
+                  events_received: { type: integer }
+                  events_dropped:
+                    type: integer
+                    description: Events rejected due to missing matchable identifier
+                      or malformed shape.
+        '400':
+          description: Invalid pixel_id, malformed events, or all events lacked
+            matchable identifiers.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '404': { description: Pixel not found. }
