@@ -89,7 +89,13 @@ async function main(): Promise<void> {
     })
   );
   await probeOne('list_creative_formats', () => agent.listCreativeFormats({}));
-  await probeOne('list_authorized_properties', () => (agent as any).listAuthorizedProperties?.({}));
+  // list_authorized_properties was replaced by getCapabilities() in v3; the SDK
+  // does not expose a high-level method. v2.5 sellers that still serve the
+  // underlying tool need executeTask. Probe via the tool name to keep the v2.5
+  // surface honest.
+  await probeOne('list_authorized_properties (executeTask)', () =>
+    (agent as any).client?.executeTask?.('list_authorized_properties', {})
+  );
   await probeOne('list_creatives (read-only)', () => (agent as any).listCreatives?.({}));
   await probeOne('get_signals', () => (agent as any).getSignals?.({ description: 'test' }));
 
