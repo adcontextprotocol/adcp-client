@@ -24,6 +24,7 @@
 import type {
   AssertionResult,
   Storyboard,
+  StoryboardContext,
   StoryboardInvariants,
   StoryboardRunOptions,
   StoryboardStepResult,
@@ -45,6 +46,24 @@ export interface AssertionContext {
   agentUrl: string;
   options: StoryboardRunOptions;
   state: Record<string, unknown>;
+  /**
+   * Accumulated cross-step context as of the end of the prior step.
+   *
+   * Populated by the runner before each `onStep` call so assertion handlers
+   * can read values extracted or declared via `context_outputs` in earlier
+   * steps. For the first step this reflects the initial context only (from
+   * `StoryboardRunOptions.context`). Not set on `onStart` (no steps have
+   * run yet); on `onEnd` reflects the context after the final step.
+   *
+   * Key names match those used in `context_outputs` entries and
+   * `$context.*` placeholder substitutions throughout the storyboard
+   * definition (Option 2 / context-outputs style — see adcp-client#1140
+   * and adcontextprotocol/adcp#2642).
+   *
+   * Missing keys return `undefined`; assertion implementations decide
+   * how to handle absent context (skip the check, emit a fail, etc.).
+   */
+  storyboardContext?: StoryboardContext;
 }
 
 /**
