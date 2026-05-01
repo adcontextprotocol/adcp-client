@@ -65,7 +65,7 @@ describe('responseSizeLimit — wrapFetchWithSizeLimit', () => {
         assert.ok(err instanceof ResponseTooLargeError, 'expected ResponseTooLargeError');
         assert.strictEqual(err.code, 'RESPONSE_TOO_LARGE');
         assert.strictEqual(err.limit, 1000);
-        assert.strictEqual(err.declaredContentLength, 5000);
+        assert.strictEqual(err.contentLengthHeader, 5000);
         assert.strictEqual(err.bytesRead, 0, 'pre-check reports zero bytes-read on the error');
         return true;
       }
@@ -100,7 +100,7 @@ describe('responseSizeLimit — wrapFetchWithSizeLimit', () => {
         assert.strictEqual(err.code, 'RESPONSE_TOO_LARGE');
         assert.strictEqual(err.limit, 1000);
         assert.ok(err.bytesRead > 1000, `bytesRead ${err.bytesRead} should exceed limit`);
-        assert.strictEqual(err.declaredContentLength, undefined);
+        assert.strictEqual(err.contentLengthHeader, undefined);
         return true;
       }
     );
@@ -420,7 +420,7 @@ describe('responseSizeLimit — ResponseTooLargeError shape', () => {
     assert.strictEqual(err.limit, 1000);
     assert.strictEqual(err.bytesRead, 1500);
     assert.strictEqual(err.url, 'https://example.invalid/');
-    assert.strictEqual(err.declaredContentLength, undefined);
+    assert.strictEqual(err.contentLengthHeader, undefined);
     assert.ok(isADCPError(err));
     // details payload doubles as the wire-error body so logs/tickets
     // surface the cap and observed size without re-parsing the message.
@@ -428,7 +428,7 @@ describe('responseSizeLimit — ResponseTooLargeError shape', () => {
       limit: 1000,
       bytesRead: 1500,
       url: 'https://example.invalid/',
-      declaredContentLength: undefined,
+      contentLengthHeader: undefined,
     });
   });
 
