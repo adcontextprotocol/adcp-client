@@ -367,14 +367,14 @@ async function connectMCPWithFallbackImpl(
       error,
     });
 
-    // Stale/expired session — retry StreamableHTTP with a fresh connection.
-    // 404 = session not found (per MCP spec), 400 = "Session not found" (SDK #1852),
-    // other StreamableHTTPError codes may also indicate session issues.
-    // Always retry StreamableHTTP before falling back to SSE.
-    if (error instanceof StreamableHTTPError) {
+    // Retry StreamableHTTP once on any transient connect failure — network blips,
+    // JSON parse errors on half-buffered responses, and mid-handshake proxy
+    // disconnects all surface as generic Error or McpError, not StreamableHTTPError.
+    // Auth failures are the only class where retry is pointless and wasteful.
+    if (!is401Error(error)) {
       debugLogs.push({
         type: 'info',
-        message: `MCP: Session error (${error.code}) detected, retrying StreamableHTTP for ${label}`,
+        message: `MCP: Transient connect error (${errorClass}) detected, retrying StreamableHTTP for ${label}`,
         timestamp: new Date().toISOString(),
       });
       try {
