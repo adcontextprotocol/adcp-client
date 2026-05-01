@@ -574,18 +574,9 @@ function expectedHitsForSpecialism(specialism: string): string[] {
     case 'signal-marketplace':
       return ['GET /_lookup/operator', 'GET /v2/cohorts', 'POST /v2/activations'];
     case 'creative-template':
-      return [
-        'GET /_lookup/workspace',
-        'GET /v3/workspaces/{ws}/templates',
-        'POST /v3/workspaces/{ws}/renders',
-      ];
+      return ['GET /_lookup/workspace', 'GET /v3/workspaces/{ws}/templates', 'POST /v3/workspaces/{ws}/renders'];
     case 'sales-guaranteed':
-      return [
-        'GET /_lookup/network',
-        'GET /v1/products',
-        'POST /v1/orders',
-        'GET /v1/tasks/{id}',
-      ];
+      return ['GET /_lookup/network', 'GET /v1/products', 'POST /v1/orders', 'GET /v1/tasks/{id}'];
     default:
       // Other specialisms haven't been instrumented yet — no traffic check.
       return [];
