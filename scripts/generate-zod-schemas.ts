@@ -16,16 +16,37 @@ function getLatestCacheDir(): string {
     throw new Error('Schema cache directory not found');
   }
 
-  const versions = readdirSync(SCHEMA_CACHE_DIR)
-    .filter(f => statSync(path.join(SCHEMA_CACHE_DIR, f)).isDirectory())
-    .sort()
-    .reverse();
+  // Restrict to MAJOR.MINOR.PATCH-shaped directories so legacy aliases
+  // (`v2.5`, `v2.6`) and the `latest` symlink don't shadow the real
+  // primary-version cache. `v` > `3` lexically, so naive sort+reverse
+  // would otherwise pick `v2.5` and break Zod generation.
+  const semverDirs = readdirSync(SCHEMA_CACHE_DIR)
+    .filter((f: string) => /^\d+\.\d+\.\d+(?:-[\w.-]+)?$/.test(f))
+    .filter((f: string) => statSync(path.join(SCHEMA_CACHE_DIR, f)).isDirectory())
+    .map((name: string) => {
+      const m = name.match(/^(\d+)\.(\d+)\.(\d+)(?:-(.+))?$/)!;
+      return {
+        name,
+        major: parseInt(m[1]!, 10),
+        minor: parseInt(m[2]!, 10),
+        patch: parseInt(m[3]!, 10),
+        prerelease: m[4] ?? '',
+      };
+    })
+    .sort((a: { major: number; minor: number; patch: number; prerelease: string }, b: typeof a) => {
+      if (a.major !== b.major) return b.major - a.major;
+      if (a.minor !== b.minor) return b.minor - a.minor;
+      if (a.patch !== b.patch) return b.patch - a.patch;
+      if (a.prerelease === '' && b.prerelease !== '') return -1;
+      if (a.prerelease !== '' && b.prerelease === '') return 1;
+      return b.prerelease.localeCompare(a.prerelease);
+    });
 
-  if (versions.length === 0) {
-    throw new Error('No cached schema versions found');
+  if (semverDirs.length === 0) {
+    throw new Error('No semver-shaped schema versions found in cache');
   }
 
-  return path.join(SCHEMA_CACHE_DIR, versions[0]);
+  return path.join(SCHEMA_CACHE_DIR, semverDirs[0]!.name);
 }
 
 // Core AdCP schemas to generate - includes all nested types
