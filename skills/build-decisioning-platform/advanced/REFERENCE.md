@@ -339,9 +339,9 @@ The escape hatch — `ctx.runAsync` + `ctx.startTask` — exists for the genuine
 
 Common codes:
 
-- **Buyer-fixable** (`recovery: 'correctable'`): `INVALID_REQUEST`, `BUDGET_TOO_LOW`, `POLICY_VIOLATION`, `CREATIVE_REJECTED`, `MEDIA_BUY_NOT_FOUND`, `INVALID_STATE`, `REQUOTE_REQUIRED`, `GOVERNANCE_DENIED` *(spec-correctable but treat as operator-escalate in practice — see `skills/call-adcp-agent/SKILL.md`)*
+- **Buyer-fixable** (`recovery: 'correctable'`): `INVALID_REQUEST`, `BUDGET_TOO_LOW`, `POLICY_VIOLATION`, `CREATIVE_REJECTED`, `MEDIA_BUY_NOT_FOUND`, `INVALID_STATE`, `REQUOTE_REQUIRED`, `PERMISSION_DENIED`, `UNSUPPORTED_FEATURE`, `GOVERNANCE_DENIED` *(spec-correctable but treat as operator-escalate in practice — see `skills/call-adcp-agent/SKILL.md`)*
 - **Transient** (`recovery: 'transient'`, retry with backoff): `RATE_LIMITED` (always include `retry_after`), `SERVICE_UNAVAILABLE`
-- **Terminal** (`recovery: 'terminal'`, requires human action): `ACCOUNT_SUSPENDED`, `PERMISSION_DENIED`, `UNSUPPORTED_FEATURE`
+- **Terminal** (`recovery: 'terminal'`, requires human action): `ACCOUNT_SUSPENDED`
 
 Generic thrown errors (`Error`, `TypeError`) become `SERVICE_UNAVAILABLE` at the framework boundary.
 
