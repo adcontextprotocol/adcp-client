@@ -611,6 +611,30 @@ describe('HITL dual-method dispatch — *Task variants', () => {
     assert.strictEqual(finalSlow.result.media_buy_id, 'mb_hitl_slow');
   });
 
+  it('hand-rolled `{status:"submitted", task_id}` from createMediaBuy is rejected with a clear error pointing at ctx.handoffToTask', async () => {
+    // Guards the most common LLM-scaffolded mistake: returning a bare
+    // submitted-shape envelope instead of `ctx.handoffToTask(fn)`. The
+    // framework owns the submitted envelope; an adopter that hand-rolls
+    // it skips the task registry — the buyer ends up polling a task_id
+    // the framework never registered. Fail loudly at dispatch.
+    const platform = buildHitlPlatform({
+      createMediaBuy: async () => ({ status: 'submitted', task_id: 'tk_hand_rolled_xyz' }),
+    });
+    const server = createAdcpServerFromPlatform(platform, {
+      name: 'guard',
+      version: '0.0.1',
+      validation: { requests: 'off', responses: 'off' },
+    });
+    const result = await dispatchCreate(server);
+    // Errors thrown inside the handler bubble up as the framework's
+    // generic SERVICE_UNAVAILABLE envelope; the message itself lands in
+    // the server log. We assert on the error envelope + that the message
+    // referenced `handoffToTask`.
+    assert.strictEqual(result.isError, true);
+    const text = JSON.stringify(result);
+    assert.match(text, /handoffToTask/, 'error message must point at ctx.handoffToTask');
+  });
+
   it('createMediaBuy handoff throwing AdcpError records terminal failed with structured fields', async () => {
     const platform = buildHitlPlatform({
       createMediaBuy: async (req, ctx) =>
@@ -690,20 +714,19 @@ describe('NODE_ENV gate on default in-memory task registry', () => {
   }
 
   function withEnv(env, fn) {
-    const prev = process.env.NODE_ENV;
-    const prevAck = process.env.ADCP_DECISIONING_ALLOW_INMEMORY_TASKS;
-    if (env.NODE_ENV === undefined) delete process.env.NODE_ENV;
-    else process.env.NODE_ENV = env.NODE_ENV;
-    if (env.ADCP_DECISIONING_ALLOW_INMEMORY_TASKS === undefined)
-      delete process.env.ADCP_DECISIONING_ALLOW_INMEMORY_TASKS;
-    else process.env.ADCP_DECISIONING_ALLOW_INMEMORY_TASKS = env.ADCP_DECISIONING_ALLOW_INMEMORY_TASKS;
+    const prev = {};
+    for (const k of Object.keys(env)) {
+      prev[k] = process.env[k];
+      if (env[k] === undefined) delete process.env[k];
+      else process.env[k] = env[k];
+    }
     try {
       fn();
     } finally {
-      if (prev === undefined) delete process.env.NODE_ENV;
-      else process.env.NODE_ENV = prev;
-      if (prevAck === undefined) delete process.env.ADCP_DECISIONING_ALLOW_INMEMORY_TASKS;
-      else process.env.ADCP_DECISIONING_ALLOW_INMEMORY_TASKS = prevAck;
+      for (const k of Object.keys(env)) {
+        if (prev[k] === undefined) delete process.env[k];
+        else process.env[k] = prev[k];
+      }
     }
   }
 
@@ -758,25 +781,42 @@ describe('NODE_ENV gate on default in-memory task registry', () => {
   });
 
   it('NODE_ENV=production WITH ADCP_DECISIONING_ALLOW_INMEMORY_TASKS=1 → allows (with documented data-loss tradeoff)', () => {
-    withEnv({ NODE_ENV: 'production', ADCP_DECISIONING_ALLOW_INMEMORY_TASKS: '1' }, () => {
-      assert.doesNotThrow(() =>
-        createAdcpServerFromPlatform(emptyPlatform(), {
-          name: 't',
-          version: '0',
-          validation: { requests: 'off', responses: 'off' },
-        })
-      );
-    });
+    // The 6.0.1 stateStore gate is parallel to the task-registry gate.
+    // Both have their own ADCP_DECISIONING_ALLOW_INMEMORY_* ack flag. A
+    // production deployment that opts into in-memory tasks AND in-memory
+    // state must set both — they're separate footguns with separate
+    // recoveries.
+    withEnv(
+      {
+        NODE_ENV: 'production',
+        ADCP_DECISIONING_ALLOW_INMEMORY_TASKS: '1',
+        ADCP_DECISIONING_ALLOW_INMEMORY_STATE: '1',
+      },
+      () => {
+        assert.doesNotThrow(() =>
+          createAdcpServerFromPlatform(emptyPlatform(), {
+            name: 't',
+            version: '0',
+            validation: { requests: 'off', responses: 'off' },
+          })
+        );
+      }
+    );
   });
 
   it('explicit taskRegistry provided → no NODE_ENV check', () => {
     const { createInMemoryTaskRegistry } = require('../dist/lib/server/decisioning/runtime/task-registry');
+    const { InMemoryStateStore } = require('../dist/lib/server/state-store');
     withEnv({ NODE_ENV: 'production' }, () => {
       assert.doesNotThrow(() =>
         createAdcpServerFromPlatform(emptyPlatform(), {
           name: 't',
           version: '0',
           taskRegistry: createInMemoryTaskRegistry(),
+          // Explicit stateStore opt-in mirrors the explicit-taskRegistry
+          // pattern this test exercises — both opt-outs have to be
+          // exercised together for the production smoke check.
+          stateStore: new InMemoryStateStore(),
           validation: { requests: 'off', responses: 'off' },
         })
       );
@@ -968,6 +1008,340 @@ describe('AccountStore optional methods (v1.0 gap-fill for rc.1)', () => {
     });
     assert.notStrictEqual(result.isError, true, JSON.stringify(result.structuredContent));
     assert.strictEqual(result.structuredContent.spend.total_spend, 1234.56);
+  });
+
+  it('getAccountFinancials threads resolved Account into ctx.account (#1145)', async () => {
+    // Adopters fronting an upstream platform (Snap, Meta, retail-media)
+    // need the resolved Account on `ctx.account` so they can read tokens
+    // and upstream IDs from `ctx.account.ctx_metadata` without re-resolving.
+    let receivedCtx;
+    const platform = buildPlatform({
+      accounts: {
+        resolve: async () => ({
+          id: 'acc_42',
+          name: 'Acme via Pinnacle',
+          status: 'active',
+          ctx_metadata: { upstreamCustomerId: 'snap_cust_xyz', accessToken: 'secret_token_42' },
+          authInfo: { kind: 'oauth' },
+        }),
+        getAccountFinancials: async (req, ctx) => {
+          receivedCtx = ctx;
+          return {
+            account: { account_id: 'acc_42' },
+            currency: 'USD',
+            period: { start: '2026-04-01', end: '2026-04-30' },
+            timezone: 'America/New_York',
+            spend: { total_spend: 9.99, media_buy_count: 1 },
+          };
+        },
+      },
+    });
+    const server = createAdcpServerFromPlatform(platform, {
+      name: 'gap1',
+      version: '0.0.1',
+      validation: { requests: 'off', responses: 'off' },
+    });
+    const result = await server.dispatchTestRequest({
+      method: 'tools/call',
+      params: { name: 'get_account_financials', arguments: { account: { account_id: 'acc_42' } } },
+    });
+    assert.notStrictEqual(result.isError, true, JSON.stringify(result.structuredContent));
+    assert.ok(receivedCtx, 'getAccountFinancials was invoked');
+    assert.ok(receivedCtx.account, 'ctx.account is populated');
+    assert.strictEqual(receivedCtx.account.id, 'acc_42');
+    assert.strictEqual(
+      receivedCtx.account.ctx_metadata.upstreamCustomerId,
+      'snap_cust_xyz',
+      'adopter reads upstream IDs from ctx.account.ctx_metadata without re-resolving'
+    );
+    assert.strictEqual(receivedCtx.account.ctx_metadata.accessToken, 'secret_token_42');
+  });
+
+  it('getAccountFinancials retries via refreshToken on AUTH_REQUIRED then succeeds (#1145)', async () => {
+    // UA's case: upstream platform token expires mid-call. Adapter
+    // throws AdcpError({ code: 'AUTH_REQUIRED' }), framework calls
+    // refreshToken, mutates account.authInfo.token, retries once.
+    const { AdcpError } = require('../dist/lib/server/decisioning/async-outcome.js');
+    let attempt = 0;
+    let refreshArgs;
+    const platform = buildPlatform({
+      accounts: {
+        resolve: async () => ({
+          id: 'acc_42',
+          name: 'Acme',
+          status: 'active',
+          ctx_metadata: {},
+          authInfo: { kind: 'oauth', token: 'expired_token' },
+        }),
+        getAccountFinancials: async (req, ctx) => {
+          attempt += 1;
+          if (attempt === 1) {
+            assert.strictEqual(ctx.account.authInfo.token, 'expired_token', 'first call sees the stale token');
+            throw new AdcpError('AUTH_REQUIRED', { message: 'token expired upstream', recovery: 'correctable' });
+          }
+          assert.strictEqual(ctx.account.authInfo.token, 'fresh_token', 'retry sees the refreshed token');
+          return {
+            account: { account_id: 'acc_42' },
+            currency: 'USD',
+            period: { start: '2026-04-01', end: '2026-04-30' },
+            timezone: 'America/New_York',
+            spend: { total_spend: 5.5, media_buy_count: 1 },
+          };
+        },
+        refreshToken: async (account, reason) => {
+          refreshArgs = { accountId: account.id, reason };
+          return { token: 'fresh_token' };
+        },
+      },
+    });
+    const server = createAdcpServerFromPlatform(platform, {
+      name: 'gap2',
+      version: '0.0.1',
+      validation: { requests: 'off', responses: 'off' },
+    });
+    const result = await server.dispatchTestRequest({
+      method: 'tools/call',
+      params: { name: 'get_account_financials', arguments: { account: { account_id: 'acc_42' } } },
+    });
+    assert.notStrictEqual(result.isError, true, JSON.stringify(result.structuredContent));
+    assert.strictEqual(attempt, 2, 'platform method ran twice (initial + retry)');
+    assert.deepStrictEqual(refreshArgs, { accountId: 'acc_42', reason: 'auth_required' });
+    assert.strictEqual(result.structuredContent.spend.total_spend, 5.5);
+  });
+
+  it('getAccountFinancials surfaces correctable AUTH_REQUIRED when refreshToken itself throws (#1145)', async () => {
+    // Refresh failure means the upstream authorization is gone — the
+    // account isn't currently authorized. Buyer re-links via their UI;
+    // recovery: 'correctable'. NOT SERVICE_UNAVAILABLE — that would
+    // imply transient retry, but the underlying state won't fix itself.
+    const { AdcpError } = require('../dist/lib/server/decisioning/async-outcome.js');
+    const platform = buildPlatform({
+      accounts: {
+        resolve: async () => ({
+          id: 'acc_42',
+          name: 'Acme',
+          status: 'active',
+          ctx_metadata: {},
+          authInfo: { kind: 'oauth', token: 'expired_token' },
+        }),
+        getAccountFinancials: async () => {
+          throw new AdcpError('AUTH_REQUIRED', { message: 'token expired', recovery: 'correctable' });
+        },
+        refreshToken: async () => {
+          throw new Error('refresh endpoint returned 403');
+        },
+      },
+    });
+    const server = createAdcpServerFromPlatform(platform, {
+      name: 'gap2-fail',
+      version: '0.0.1',
+      validation: { requests: 'off', responses: 'off' },
+    });
+    const result = await server.dispatchTestRequest({
+      method: 'tools/call',
+      params: { name: 'get_account_financials', arguments: { account: { account_id: 'acc_42' } } },
+    });
+    assert.strictEqual(result.isError, true);
+    const error = result.structuredContent.errors?.[0] ?? result.structuredContent;
+    const wire = JSON.stringify(error);
+    assert.match(wire, /AUTH_REQUIRED/);
+    assert.match(wire, /correctable/);
+    // Inner exception text is intentionally NOT echoed on the wire —
+    // see the leak-prevention test below for the security rationale.
+    assert.doesNotMatch(wire, /refresh endpoint returned 403/);
+  });
+
+  it('getAccountFinancials retry that also throws AUTH_REQUIRED bubbles without a third call (#1145)', async () => {
+    // Refresh-then-retry is a single-shot. If the retry also throws
+    // AUTH_REQUIRED (e.g., refreshed token was already invalidated by
+    // a concurrent revoke), the error bubbles directly to the buyer
+    // without a second refresh attempt. Adopters should NOT see the
+    // refresh hook fire twice for one request.
+    const { AdcpError } = require('../dist/lib/server/decisioning/async-outcome.js');
+    let attempt = 0;
+    let refreshCalls = 0;
+    const platform = buildPlatform({
+      accounts: {
+        resolve: async () => ({
+          id: 'acc_x',
+          name: 'Acme',
+          status: 'active',
+          ctx_metadata: {},
+          authInfo: { kind: 'oauth', token: 'tok' },
+        }),
+        getAccountFinancials: async () => {
+          attempt += 1;
+          throw new AdcpError('AUTH_REQUIRED', { message: 'still expired', recovery: 'correctable' });
+        },
+        refreshToken: async () => {
+          refreshCalls += 1;
+          return { token: 'fresh_but_already_invalidated' };
+        },
+      },
+    });
+    const server = createAdcpServerFromPlatform(platform, {
+      name: 'gap2-double',
+      version: '0.0.1',
+      validation: { requests: 'off', responses: 'off' },
+    });
+    const result = await server.dispatchTestRequest({
+      method: 'tools/call',
+      params: { name: 'get_account_financials', arguments: { account: { account_id: 'acc_x' } } },
+    });
+    assert.strictEqual(result.isError, true);
+    assert.strictEqual(attempt, 2, 'platform method ran twice (initial + one retry)');
+    assert.strictEqual(refreshCalls, 1, 'refresh fired exactly once');
+  });
+
+  it('refresh-failure error message does NOT echo upstream exception text on the wire (#1145)', async () => {
+    // Security: refresh-fn exception text routinely embeds refresh-token
+    // prefixes, internal hostnames, and OAuth provider error codes that
+    // shouldn't cross to the buyer. The framework projects a fixed
+    // message; adopters log inner details server-side.
+    const { AdcpError } = require('../dist/lib/server/decisioning/async-outcome.js');
+    const platform = buildPlatform({
+      accounts: {
+        resolve: async () => ({
+          id: 'acc_y',
+          name: 'Acme',
+          status: 'active',
+          ctx_metadata: {},
+          authInfo: { kind: 'oauth', token: 'tok' },
+        }),
+        getAccountFinancials: async () => {
+          throw new AdcpError('AUTH_REQUIRED', { message: 'expired', recovery: 'correctable' });
+        },
+        refreshToken: async () => {
+          // Realistic upstream OAuth-lib-style throw — embeds a
+          // refresh-token-like prefix and an internal hostname.
+          throw new Error('invalid_grant: rt=1//0gAbCdEfG... at idp.internal.corp:8443');
+        },
+      },
+    });
+    const server = createAdcpServerFromPlatform(platform, {
+      name: 'gap2-leak',
+      version: '0.0.1',
+      validation: { requests: 'off', responses: 'off' },
+    });
+    const result = await server.dispatchTestRequest({
+      method: 'tools/call',
+      params: { name: 'get_account_financials', arguments: { account: { account_id: 'acc_y' } } },
+    });
+    assert.strictEqual(result.isError, true);
+    const wire = JSON.stringify(result.structuredContent);
+    assert.match(wire, /AUTH_REQUIRED/);
+    assert.match(wire, /correctable/);
+    assert.doesNotMatch(wire, /invalid_grant/, 'upstream OAuth error code MUST NOT cross to wire');
+    assert.doesNotMatch(wire, /idp\.internal\.corp/, 'internal hostname MUST NOT cross to wire');
+    assert.doesNotMatch(wire, /1\/\/0g/, 'refresh-token prefix MUST NOT cross to wire');
+  });
+
+  it('refreshToken successful refresh writes expiresAt onto account.authInfo (#1145)', async () => {
+    // Adopters reading `ctx.account.authInfo.expiresAt` after a refresh
+    // see the new expiry. The contract anchors proactive-refresh
+    // patterns (not yet wired but the field is reachable today).
+    const { AdcpError } = require('../dist/lib/server/decisioning/async-outcome.js');
+    let lastSeenExpiresAt;
+    const platform = buildPlatform({
+      accounts: {
+        resolve: async () => ({
+          id: 'acc_z',
+          name: 'Acme',
+          status: 'active',
+          ctx_metadata: {},
+          authInfo: { kind: 'oauth', token: 'old' },
+        }),
+        getAccountFinancials: async (req, ctx) => {
+          if (ctx.account.authInfo.token === 'old') {
+            throw new AdcpError('AUTH_REQUIRED', { message: 'expired', recovery: 'correctable' });
+          }
+          lastSeenExpiresAt = ctx.account.authInfo.expiresAt;
+          return {
+            account: { account_id: 'acc_z' },
+            currency: 'USD',
+            period: { start: '2026-04-01', end: '2026-04-30' },
+            timezone: 'America/New_York',
+            spend: { total_spend: 1, media_buy_count: 1 },
+          };
+        },
+        refreshToken: async () => ({ token: 'fresh', expiresAt: 1800000000000 }),
+      },
+    });
+    const server = createAdcpServerFromPlatform(platform, {
+      name: 'gap2-expires',
+      version: '0.0.1',
+      validation: { requests: 'off', responses: 'off' },
+    });
+    const result = await server.dispatchTestRequest({
+      method: 'tools/call',
+      params: { name: 'get_account_financials', arguments: { account: { account_id: 'acc_z' } } },
+    });
+    assert.notStrictEqual(result.isError, true, JSON.stringify(result.structuredContent));
+    assert.strictEqual(lastSeenExpiresAt, 1800000000000, 'expiresAt is reachable on retry call');
+  });
+
+  it('getAccountFinancials does not retry on non-AUTH errors (#1145)', async () => {
+    // Refresh hook is reactive ONLY to AUTH_REQUIRED. INVALID_REQUEST,
+    // PERMISSION_DENIED, etc. flow through unchanged — refresh is a
+    // narrow signal, not a generic retry.
+    const { AdcpError } = require('../dist/lib/server/decisioning/async-outcome.js');
+    let refreshCalled = false;
+    let attempt = 0;
+    const platform = buildPlatform({
+      accounts: {
+        resolve: async () => ({
+          id: 'acc_42',
+          name: 'Acme',
+          status: 'active',
+          ctx_metadata: {},
+          authInfo: { kind: 'oauth', token: 'tok' },
+        }),
+        getAccountFinancials: async () => {
+          attempt += 1;
+          throw new AdcpError('INVALID_REQUEST', { message: 'bad period', recovery: 'correctable' });
+        },
+        refreshToken: async () => {
+          refreshCalled = true;
+          return { token: 'new' };
+        },
+      },
+    });
+    const server = createAdcpServerFromPlatform(platform, {
+      name: 'gap2-nonauth',
+      version: '0.0.1',
+      validation: { requests: 'off', responses: 'off' },
+    });
+    const result = await server.dispatchTestRequest({
+      method: 'tools/call',
+      params: { name: 'get_account_financials', arguments: { account: { account_id: 'acc_42' } } },
+    });
+    assert.strictEqual(result.isError, true);
+    assert.strictEqual(attempt, 1, 'no retry on non-AUTH error');
+    assert.strictEqual(refreshCalled, false, 'refreshToken not called for non-AUTH error');
+  });
+
+  it('getAccountFinancials surfaces ACCOUNT_NOT_FOUND when accounts.resolve returns null', async () => {
+    let getFinancialsCalled = false;
+    const platform = buildPlatform({
+      accounts: {
+        resolve: async () => null,
+        getAccountFinancials: async () => {
+          getFinancialsCalled = true;
+          return {};
+        },
+      },
+    });
+    const server = createAdcpServerFromPlatform(platform, {
+      name: 'gap1-nf',
+      version: '0.0.1',
+      validation: { requests: 'off', responses: 'off' },
+    });
+    const result = await server.dispatchTestRequest({
+      method: 'tools/call',
+      params: { name: 'get_account_financials', arguments: { account: { account_id: 'unknown' } } },
+    });
+    assert.strictEqual(result.isError, true, 'unresolvable account surfaces an error');
+    assert.strictEqual(getFinancialsCalled, false, 'getAccountFinancials does not run on unresolved account');
   });
 
   // Note: when neither the platform nor the merge seam supplies a handler

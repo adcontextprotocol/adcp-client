@@ -253,7 +253,7 @@ const client = new SingleAgentClient(url, {
 });
 
 // Server side — opt-in validation on incoming requests + handler responses
-import { createAdcpServer } from '@adcp/sdk';
+import { createAdcpServer } from '@adcp/sdk/server/legacy/v5';
 
 createAdcpServer({
   validation: {

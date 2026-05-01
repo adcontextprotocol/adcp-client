@@ -24,21 +24,30 @@ const {
   GovernanceDeniedError,
   PolicyViolationError,
 } = require('../dist/lib/server');
+const { getErrorRecovery } = require('../dist/lib/types/error-codes');
 
-describe('Typed AdcpError subclasses — code + recovery shape', () => {
-  it('PackageNotFoundError has correct code, recovery, field', () => {
+// Recovery is no longer hardcoded in typed-error classes — it's inherited
+// from STANDARD_ERROR_CODES via getErrorRecovery(code). These assertions
+// match the AdCP 3.0 spec recovery classifications. The drift guard at the
+// bottom of this suite (`every typed error's recovery matches the spec`)
+// makes hand-maintenance impossible: if the spec changes a recovery value,
+// the typed class auto-updates and the only explicit assertion left is
+// the spec invariant itself.
+
+describe('Typed AdcpError subclasses — code + spec-correct recovery shape', () => {
+  it('PackageNotFoundError', () => {
     const e = new PackageNotFoundError('pkg_123');
     assert.equal(e.code, 'PACKAGE_NOT_FOUND');
-    assert.equal(e.recovery, 'terminal');
+    assert.equal(e.recovery, 'correctable');
     assert.equal(e.field, 'package_id');
     assert.match(e.message, /pkg_123/);
     assert.ok(e instanceof AdcpError);
   });
 
-  it('MediaBuyNotFoundError has correct shape', () => {
+  it('MediaBuyNotFoundError', () => {
     const e = new MediaBuyNotFoundError('mb_999');
     assert.equal(e.code, 'MEDIA_BUY_NOT_FOUND');
-    assert.equal(e.recovery, 'terminal');
+    assert.equal(e.recovery, 'correctable');
     assert.equal(e.field, 'media_buy_id');
     assert.match(e.message, /mb_999/);
   });
@@ -46,28 +55,28 @@ describe('Typed AdcpError subclasses — code + recovery shape', () => {
   it('ProductNotFoundError', () => {
     const e = new ProductNotFoundError('prod_x');
     assert.equal(e.code, 'PRODUCT_NOT_FOUND');
-    assert.equal(e.recovery, 'terminal');
+    assert.equal(e.recovery, 'correctable');
     assert.equal(e.field, 'product_id');
   });
 
   it('CreativeNotFoundError', () => {
     const e = new CreativeNotFoundError('cr_a');
     assert.equal(e.code, 'CREATIVE_NOT_FOUND');
-    assert.equal(e.recovery, 'terminal');
+    assert.equal(e.recovery, 'correctable');
     assert.equal(e.field, 'creative_id');
   });
 
   it('ProductUnavailableError', () => {
     const e = new ProductUnavailableError('prod_sold');
     assert.equal(e.code, 'PRODUCT_UNAVAILABLE');
-    assert.equal(e.recovery, 'terminal');
+    assert.equal(e.recovery, 'correctable');
     assert.match(e.message, /sold out/);
   });
 
   it('CreativeRejectedError carries reason in details', () => {
     const e = new CreativeRejectedError('cr_b', 'brand_safety_failed');
     assert.equal(e.code, 'CREATIVE_REJECTED');
-    assert.equal(e.recovery, 'terminal');
+    assert.equal(e.recovery, 'correctable');
     assert.equal(e.details.reason, 'brand_safety_failed');
   });
 
@@ -90,7 +99,7 @@ describe('Typed AdcpError subclasses — code + recovery shape', () => {
   it('IdempotencyConflictError defaults to clear suggestion', () => {
     const e = new IdempotencyConflictError();
     assert.equal(e.code, 'IDEMPOTENCY_CONFLICT');
-    assert.equal(e.recovery, 'terminal');
+    assert.equal(e.recovery, 'correctable');
     assert.equal(e.field, 'idempotency_key');
     assert.match(e.suggestion, /fresh/);
   });
@@ -106,7 +115,7 @@ describe('Typed AdcpError subclasses — code + recovery shape', () => {
   it('InvalidStateError', () => {
     const e = new InvalidStateError('status', 'cannot transition from completed to active');
     assert.equal(e.code, 'INVALID_STATE');
-    assert.equal(e.recovery, 'terminal');
+    assert.equal(e.recovery, 'correctable');
   });
 
   it('BackwardsTimeRangeError', () => {
@@ -120,13 +129,13 @@ describe('Typed AdcpError subclasses — code + recovery shape', () => {
   it('AuthRequiredError', () => {
     const e = new AuthRequiredError();
     assert.equal(e.code, 'AUTH_REQUIRED');
-    assert.equal(e.recovery, 'terminal');
+    assert.equal(e.recovery, 'correctable');
   });
 
   it('PermissionDeniedError carries action in details', () => {
     const e = new PermissionDeniedError('create_media_buy');
     assert.equal(e.code, 'PERMISSION_DENIED');
-    assert.equal(e.recovery, 'terminal');
+    assert.equal(e.recovery, 'correctable');
     assert.equal(e.details.action, 'create_media_buy');
   });
 
@@ -146,27 +155,27 @@ describe('Typed AdcpError subclasses — code + recovery shape', () => {
   it('UnsupportedFeatureError carries feature in details', () => {
     const e = new UnsupportedFeatureError('rfc_9421_signing');
     assert.equal(e.code, 'UNSUPPORTED_FEATURE');
-    assert.equal(e.recovery, 'terminal');
+    assert.equal(e.recovery, 'correctable');
     assert.equal(e.details.feature, 'rfc_9421_signing');
   });
 
   it('ComplianceUnsatisfiedError', () => {
     const e = new ComplianceUnsatisfiedError('missing_brand_safety_attestation');
     assert.equal(e.code, 'COMPLIANCE_UNSATISFIED');
-    assert.equal(e.recovery, 'terminal');
+    assert.equal(e.recovery, 'correctable');
     assert.equal(e.details.reason, 'missing_brand_safety_attestation');
   });
 
   it('GovernanceDeniedError', () => {
     const e = new GovernanceDeniedError('spending_authority_revoked');
     assert.equal(e.code, 'GOVERNANCE_DENIED');
-    assert.equal(e.recovery, 'terminal');
+    assert.equal(e.recovery, 'correctable');
   });
 
   it('PolicyViolationError', () => {
     const e = new PolicyViolationError('alcohol_in_kid_zone');
     assert.equal(e.code, 'POLICY_VIOLATION');
-    assert.equal(e.recovery, 'terminal');
+    assert.equal(e.recovery, 'correctable');
   });
 
   it('All typed errors are instanceof AdcpError', () => {
@@ -204,8 +213,67 @@ describe('Typed AdcpError subclasses — code + recovery shape', () => {
     const e = new PackageNotFoundError('pkg_123', { suggestion: 'Use pkg_456 instead' });
     const wire = e.toStructuredError();
     assert.equal(wire.code, 'PACKAGE_NOT_FOUND');
-    assert.equal(wire.recovery, 'terminal');
+    assert.equal(wire.recovery, 'correctable');
     assert.equal(wire.field, 'package_id');
     assert.equal(wire.suggestion, 'Use pkg_456 instead');
+  });
+
+  // Drift guard: every typed class produces an error whose recovery matches
+  // getErrorRecovery(error.code). If the spec rev changes a recovery
+  // classification, this test stays green automatically because both sides
+  // (the typed class default + the spec reference) read from STANDARD_ERROR_CODES.
+  // If someone hardcodes recovery on a typed class to a wrong value, this
+  // test fires.
+  it('every typed-error class recovery matches getErrorRecovery(code)', () => {
+    const errors = [
+      new PackageNotFoundError('x'),
+      new MediaBuyNotFoundError('x'),
+      new ProductNotFoundError('x'),
+      new CreativeNotFoundError('x'),
+      new ProductUnavailableError('x'),
+      new CreativeRejectedError('x', 'r'),
+      new BudgetTooLowError(),
+      new BudgetExhaustedError(),
+      new IdempotencyConflictError(),
+      new InvalidRequestError('f', 'm'),
+      new InvalidStateError('f', 'm'),
+      new BackwardsTimeRangeError(),
+      new AuthRequiredError(),
+      new PermissionDeniedError('a'),
+      new RateLimitedError(60),
+      new ServiceUnavailableError(),
+      new UnsupportedFeatureError('f'),
+      new ComplianceUnsatisfiedError('r'),
+      new GovernanceDeniedError('r'),
+      new PolicyViolationError('p'),
+    ];
+    for (const e of errors) {
+      const specRecovery = getErrorRecovery(e.code);
+      assert.equal(
+        e.recovery,
+        specRecovery,
+        `${e.constructor.name} (${e.code}) recovery="${e.recovery}" but spec says "${specRecovery}"`
+      );
+    }
+  });
+});
+
+describe('AdcpError — recovery defaults from spec when omitted', () => {
+  it('omitting recovery falls back to getErrorRecovery(code) for standard codes', () => {
+    const e = new AdcpError('TERMS_REJECTED', { message: 'omitted recovery' });
+    assert.equal(e.recovery, 'correctable');
+  });
+
+  it('omitting recovery for a non-standard code falls back to terminal', () => {
+    // Matches `adcpError(...)`'s factory default: unknown vendor codes get
+    // `terminal` so the buyer escalates rather than auto-retrying something
+    // we can't classify.
+    const e = new AdcpError('GAM_INTERNAL_QUOTA_EXCEEDED', { message: 'vendor code' });
+    assert.equal(e.recovery, 'terminal');
+  });
+
+  it('explicit recovery still overrides the spec default', () => {
+    const e = new AdcpError('PRODUCT_UNAVAILABLE', { recovery: 'terminal', message: 'permanent removal' });
+    assert.equal(e.recovery, 'terminal');
   });
 });

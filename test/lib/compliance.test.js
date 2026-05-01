@@ -243,9 +243,9 @@ describe('computeOverallStatus', () => {
 // ============================================================
 
 describe('track partitioning', () => {
-  test('tested_tracks contains only pass/fail/partial tracks', () => {
+  test('tested_tracks contains only pass/fail/partial/silent tracks', () => {
     for (const t of mockResult.tested_tracks) {
-      assert.ok(['pass', 'fail', 'partial'].includes(t.status));
+      assert.ok(['pass', 'fail', 'partial', 'silent'].includes(t.status));
     }
   });
 

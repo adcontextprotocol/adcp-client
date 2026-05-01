@@ -32,10 +32,26 @@ function basePlatform(specialism = 'sales-non-guaranteed') {
   };
 }
 
+// Ed25519 fixture with `adcp_use: 'webhook-signing'` so the registry's
+// auto-wire path (signingKey → webhooks.signerKey) accepts it. The
+// `x` / `d` values are valid base64url but cryptographically meaningless
+// — they're never actually used to sign anything in these tests; the
+// JWKS validator is faked.
 const SAMPLE_KEY = {
   keyId: 'tenant-key-1',
-  publicJwk: { kty: 'RSA', n: 'pub_modulus_xxx', e: 'AQAB' },
-  privateJwk: { kty: 'RSA', n: 'pub_modulus_xxx', e: 'AQAB', d: 'priv_exp_yyy' },
+  publicJwk: {
+    kty: 'OKP',
+    crv: 'Ed25519',
+    x: 'AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA',
+    adcp_use: 'webhook-signing',
+  },
+  privateJwk: {
+    kty: 'OKP',
+    crv: 'Ed25519',
+    x: 'AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA',
+    d: 'BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB',
+    adcp_use: 'webhook-signing',
+  },
 };
 
 const DEFAULT_SERVER_OPTIONS = {
@@ -921,5 +937,713 @@ describe('TenantRegistry — autoValidate footgun guard (F7)', () => {
     }
     const hit = warnings.find(w => w.includes('autoValidate'));
     assert.strictEqual(hit, undefined, 'no autoValidate warning when explicitly true');
+  });
+});
+
+describe('TenantRegistry — multi-URL (agentUrls) cutover support', () => {
+  it('routes traffic from any URL in agentUrls to the same tenant', async () => {
+    const validator = fakeValidator(async () => ({ ok: true }));
+    const registry = createTenantRegistry({
+      jwksValidator: validator,
+      defaultServerOptions: DEFAULT_SERVER_OPTIONS,
+      autoValidate: false,
+    });
+
+    registry.register('cutover_tenant', {
+      agentUrls: ['https://new.example.com', 'https://old.example.com'],
+      signingKey: SAMPLE_KEY,
+      platform: basePlatform(),
+    });
+    await registry.recheck('cutover_tenant');
+
+    const fromNew = registry.resolveByHost('new.example.com');
+    const fromOld = registry.resolveByHost('old.example.com');
+    assert.ok(fromNew, 'resolves on canonical URL');
+    assert.ok(fromOld, 'resolves on alias URL');
+    assert.strictEqual(fromNew.tenantId, 'cutover_tenant');
+    assert.strictEqual(fromOld.tenantId, 'cutover_tenant');
+    assert.strictEqual(fromNew.server, fromOld.server, 'same server instance for both URLs');
+  });
+
+  it('JWKS validation hits every URL in agentUrls — aliases are validated independently', async () => {
+    const seenHosts = [];
+    const validator = fakeValidator(async ({ agentUrl }) => {
+      seenHosts.push(agentUrl);
+      return { ok: true };
+    });
+    const registry = createTenantRegistry({
+      jwksValidator: validator,
+      defaultServerOptions: DEFAULT_SERVER_OPTIONS,
+      autoValidate: false,
+    });
+
+    registry.register('cutover', {
+      agentUrls: ['https://canonical.example.com', 'https://alias-a.example.com', 'https://alias-b.example.com'],
+      signingKey: SAMPLE_KEY,
+      platform: basePlatform(),
+    });
+    await registry.recheck('cutover');
+
+    assert.deepStrictEqual(
+      seenHosts,
+      ['https://canonical.example.com', 'https://alias-a.example.com', 'https://alias-b.example.com'],
+      'every alias is independently validated — round-1 expert security finding'
+    );
+  });
+
+  it('aliases with stale brand.json mark the whole tenant disabled', async () => {
+    const validator = fakeValidator(async ({ agentUrl }) => {
+      if (agentUrl === 'https://stale-alias.example.com') {
+        return { ok: false, recovery: 'permanent', reason: 'signingKey not in published JWKS' };
+      }
+      return { ok: true };
+    });
+    const registry = createTenantRegistry({
+      jwksValidator: validator,
+      defaultServerOptions: DEFAULT_SERVER_OPTIONS,
+      autoValidate: false,
+    });
+
+    registry.register('partial', {
+      agentUrls: ['https://canonical.example.com', 'https://stale-alias.example.com'],
+      signingKey: SAMPLE_KEY,
+      platform: basePlatform(),
+    });
+    const status = await registry.recheck('partial');
+    assert.strictEqual(status.health, 'disabled', 'any permanent alias failure disables the tenant');
+    assert.match(status.reason, /stale-alias/);
+  });
+
+  it('rejects register-time route collision against an existing tenant', () => {
+    const registry = createTenantRegistry({
+      jwksValidator: fakeValidator(async () => ({ ok: true })),
+      defaultServerOptions: DEFAULT_SERVER_OPTIONS,
+      autoValidate: false,
+    });
+
+    registry.register('first', {
+      agentUrls: ['https://shared.example.com/api'],
+      signingKey: SAMPLE_KEY,
+      platform: basePlatform(),
+    });
+
+    // Same host + same path prefix → collision.
+    assert.throws(
+      () =>
+        registry.register('second', {
+          agentUrls: ['https://shared.example.com/api'],
+          signingKey: SAMPLE_KEY,
+          platform: basePlatform(),
+        }),
+      /route .* collides with tenant 'first'/
+    );
+
+    // Different path prefix on same host → allowed.
+    registry.register('third', {
+      agentUrls: ['https://shared.example.com/other'],
+      signingKey: SAMPLE_KEY,
+      platform: basePlatform(),
+    });
+  });
+
+  it('TenantStatus.agentUrls surfaces the full URL list for multi-URL tenants', async () => {
+    const registry = createTenantRegistry({
+      jwksValidator: fakeValidator(async () => ({ ok: true })),
+      defaultServerOptions: DEFAULT_SERVER_OPTIONS,
+      autoValidate: false,
+    });
+
+    registry.register('multi-status', {
+      agentUrls: ['https://primary.example.com', 'https://secondary.example.com'],
+      signingKey: SAMPLE_KEY,
+      platform: basePlatform(),
+    });
+    await registry.recheck('multi-status');
+
+    const status = registry.getStatus('multi-status');
+    assert.deepStrictEqual(status.agentUrls, ['https://primary.example.com', 'https://secondary.example.com']);
+    assert.strictEqual(status.agentUrl, 'https://primary.example.com', 'canonical still surfaced');
+  });
+
+  it('TenantStatus.agentUrls is a one-element array for single-URL tenants (compat)', async () => {
+    const registry = createTenantRegistry({
+      jwksValidator: fakeValidator(async () => ({ ok: true })),
+      defaultServerOptions: DEFAULT_SERVER_OPTIONS,
+      autoValidate: false,
+    });
+
+    registry.register('single', {
+      agentUrl: 'https://only.example.com',
+      signingKey: SAMPLE_KEY,
+      platform: basePlatform(),
+    });
+    await registry.recheck('single');
+
+    const status = registry.getStatus('single');
+    assert.deepStrictEqual(status.agentUrls, ['https://only.example.com']);
+    assert.strictEqual(status.agentUrl, 'https://only.example.com');
+  });
+
+  it('TenantStatus.agentUrl reports the canonical URL for multi-URL tenants', async () => {
+    const registry = createTenantRegistry({
+      jwksValidator: fakeValidator(async () => ({ ok: true })),
+      defaultServerOptions: DEFAULT_SERVER_OPTIONS,
+      autoValidate: false,
+    });
+
+    registry.register('multi', {
+      agentUrls: ['https://primary.example.com', 'https://secondary.example.com'],
+      signingKey: SAMPLE_KEY,
+      platform: basePlatform(),
+    });
+    await registry.recheck('multi');
+
+    const status = registry.getStatus('multi');
+    assert.strictEqual(status.agentUrl, 'https://primary.example.com');
+    assert.strictEqual(status.health, 'healthy');
+  });
+
+  it('rejects setting both agentUrl and agentUrls', () => {
+    const registry = createTenantRegistry({
+      jwksValidator: fakeValidator(async () => ({ ok: true })),
+      defaultServerOptions: DEFAULT_SERVER_OPTIONS,
+      autoValidate: false,
+    });
+
+    assert.throws(
+      () =>
+        registry.register('ambiguous', {
+          agentUrl: 'https://one.example.com',
+          agentUrls: ['https://two.example.com'],
+          signingKey: SAMPLE_KEY,
+          platform: basePlatform(),
+        }),
+      /set exactly one of/
+    );
+  });
+
+  it('rejects empty agentUrls array', () => {
+    const registry = createTenantRegistry({
+      jwksValidator: fakeValidator(async () => ({ ok: true })),
+      defaultServerOptions: DEFAULT_SERVER_OPTIONS,
+      autoValidate: false,
+    });
+
+    assert.throws(
+      () =>
+        registry.register('empty', {
+          agentUrls: [],
+          signingKey: SAMPLE_KEY,
+          platform: basePlatform(),
+        }),
+      /must contain at least one URL/
+    );
+  });
+
+  it('rejects neither agentUrl nor agentUrls', () => {
+    const registry = createTenantRegistry({
+      jwksValidator: fakeValidator(async () => ({ ok: true })),
+      defaultServerOptions: DEFAULT_SERVER_OPTIONS,
+      autoValidate: false,
+    });
+
+    assert.throws(
+      () =>
+        registry.register('missing', {
+          signingKey: SAMPLE_KEY,
+          platform: basePlatform(),
+        }),
+      /must provide either/
+    );
+  });
+
+  it('multi-URL tenant with mixed path prefixes — longest-prefix-wins still applies across hosts', async () => {
+    const registry = createTenantRegistry({
+      jwksValidator: fakeValidator(async () => ({ ok: true })),
+      defaultServerOptions: DEFAULT_SERVER_OPTIONS,
+      autoValidate: false,
+    });
+
+    // Tenant A on canonical-host with /sales prefix; Tenant B on alias-host
+    // with /sales-broadcast prefix. A request to alias-host/sales-broadcast/mcp
+    // should resolve to Tenant B (longer matching prefix wins).
+    registry.register('tenant_short', {
+      agentUrls: ['https://canonical.example.com/sales'],
+      signingKey: SAMPLE_KEY,
+      platform: basePlatform(),
+    });
+    registry.register('tenant_long', {
+      agentUrls: ['https://canonical.example.com/sales-broadcast'],
+      signingKey: SAMPLE_KEY,
+      platform: basePlatform(),
+    });
+    await registry.recheck('tenant_short');
+    await registry.recheck('tenant_long');
+
+    const longMatch = registry.resolveByRequest('canonical.example.com', '/sales-broadcast/mcp');
+    assert.ok(longMatch);
+    assert.strictEqual(longMatch.tenantId, 'tenant_long');
+
+    const shortMatch = registry.resolveByRequest('canonical.example.com', '/sales/mcp');
+    assert.ok(shortMatch);
+    assert.strictEqual(shortMatch.tenantId, 'tenant_short');
+  });
+});
+
+describe('TenantRegistry — unsigned tenants (signingKey optional in 3.x)', () => {
+  it('register without signingKey skips JWKS validation; tenant goes straight to healthy', async () => {
+    let validatorCalls = 0;
+    const validator = fakeValidator(async () => {
+      validatorCalls++;
+      return { ok: true };
+    });
+    const registry = createTenantRegistry({
+      jwksValidator: validator,
+      defaultServerOptions: DEFAULT_SERVER_OPTIONS,
+      autoValidate: false,
+    });
+
+    registry.register('unsigned', {
+      agentUrl: 'https://unsigned.example.com',
+      // no signingKey — adopter shipping in 3.x without standing up KMS
+      platform: basePlatform(),
+    });
+
+    const status = await registry.recheck('unsigned');
+    assert.strictEqual(status.health, 'healthy');
+    assert.strictEqual(status.reason, 'unsigned (no signingKey)');
+    assert.strictEqual(validatorCalls, 0, 'validator must not be invoked when signingKey is omitted');
+    assert.ok(registry.resolveByHost('unsigned.example.com'), 'unsigned tenant accepts traffic');
+  });
+
+  it('register({ awaitFirstValidation: true }) on unsigned tenant returns healthy synchronously', async () => {
+    const validator = fakeValidator(async () => {
+      throw new Error('validator should not run for unsigned tenants');
+    });
+    const registry = createTenantRegistry({
+      jwksValidator: validator,
+      defaultServerOptions: DEFAULT_SERVER_OPTIONS,
+      autoValidate: true,
+    });
+
+    const status = await registry.register(
+      'unsigned_sync',
+      { agentUrl: 'https://unsigned-sync.example.com', platform: basePlatform() },
+      { awaitFirstValidation: true }
+    );
+    assert.strictEqual(status.health, 'healthy');
+    assert.strictEqual(status.reason, 'unsigned (no signingKey)');
+  });
+
+  it('signed and unsigned tenants coexist in the same registry', async () => {
+    const validator = fakeValidator(async () => ({ ok: true }));
+    const registry = createTenantRegistry({
+      jwksValidator: validator,
+      defaultServerOptions: DEFAULT_SERVER_OPTIONS,
+      autoValidate: false,
+    });
+
+    registry.register('signed', {
+      agentUrl: 'https://signed.example.com',
+      signingKey: SAMPLE_KEY,
+      platform: basePlatform(),
+    });
+    registry.register('unsigned', {
+      agentUrl: 'https://unsigned.example.com',
+      platform: basePlatform(),
+    });
+
+    await Promise.all([registry.recheck('signed'), registry.recheck('unsigned')]);
+
+    assert.strictEqual(registry.getStatus('signed').health, 'healthy');
+    assert.strictEqual(registry.getStatus('unsigned').health, 'healthy');
+    assert.strictEqual(registry.getStatus('unsigned').reason, 'unsigned (no signingKey)');
+  });
+});
+
+describe('createSelfSignedTenantKey', () => {
+  const { createSelfSignedTenantKey } = require('../dist/lib/server/decisioning/tenant-registry');
+
+  it('returns a TenantSigningKey-shaped object with Ed25519 material', async () => {
+    const key = await createSelfSignedTenantKey();
+    assert.ok(key.keyId, 'keyId is set');
+    assert.match(key.keyId, /^self-signed-/, 'default keyId is timestamped');
+    assert.strictEqual(key.publicJwk.kty, 'OKP');
+    assert.strictEqual(key.publicJwk.crv, 'Ed25519');
+    assert.ok(key.publicJwk.x, 'public x coordinate present');
+    assert.ok(key.privateJwk.d, 'private scalar present');
+    // Public-half fields match across the keypair (RFC 7517).
+    assert.strictEqual(key.privateJwk.x, key.publicJwk.x);
+  });
+
+  it('honors explicit keyId override', async () => {
+    const key = await createSelfSignedTenantKey({ keyId: 'my-stable-kid' });
+    assert.strictEqual(key.keyId, 'my-stable-kid');
+  });
+
+  it('roundtrips through the registry — self-signed key + matching JWKS publishes healthy', async () => {
+    const key = await createSelfSignedTenantKey({ keyId: 'roundtrip-kid' });
+    // Stub validator that simulates a brand.json containing exactly this key.
+    const validator = fakeValidator(async ({ signingKey }) => {
+      if (
+        signingKey.keyId === 'roundtrip-kid' &&
+        signingKey.publicJwk.kty === 'OKP' &&
+        signingKey.publicJwk.crv === 'Ed25519' &&
+        signingKey.publicJwk.x === key.publicJwk.x
+      ) {
+        return { ok: true };
+      }
+      return { ok: false, recovery: 'permanent', reason: 'mismatch' };
+    });
+    const registry = createTenantRegistry({
+      jwksValidator: validator,
+      defaultServerOptions: DEFAULT_SERVER_OPTIONS,
+      autoValidate: false,
+    });
+
+    registry.register('rt', {
+      agentUrl: 'https://rt.example.com',
+      signingKey: key,
+      platform: basePlatform(),
+    });
+    const status = await registry.recheck('rt');
+    assert.strictEqual(status.health, 'healthy');
+  });
+});
+
+describe('createNoopJwksValidator — NODE_ENV allowlist', () => {
+  const { createNoopJwksValidator } = require('../dist/lib/server/decisioning/tenant-registry');
+
+  // Save and restore env across tests to keep them hermetic. The test
+  // harness sets NODE_ENV='test' at file load (line 4); resetting after
+  // each case prevents cross-test bleed.
+  function withEnv(overrides, fn) {
+    const saved = { NODE_ENV: process.env.NODE_ENV, ADCP_NOOP_JWKS_ACK: process.env.ADCP_NOOP_JWKS_ACK };
+    for (const [k, v] of Object.entries(overrides)) {
+      if (v === undefined) delete process.env[k];
+      else process.env[k] = v;
+    }
+    try {
+      return fn();
+    } finally {
+      for (const [k, v] of Object.entries(saved)) {
+        if (v === undefined) delete process.env[k];
+        else process.env[k] = v;
+      }
+    }
+  }
+
+  it('constructs under NODE_ENV=test', () => {
+    withEnv({ NODE_ENV: 'test', ADCP_NOOP_JWKS_ACK: undefined }, () => {
+      const v = createNoopJwksValidator();
+      assert.ok(typeof v.validate === 'function');
+    });
+  });
+
+  it('constructs under NODE_ENV=development', () => {
+    withEnv({ NODE_ENV: 'development', ADCP_NOOP_JWKS_ACK: undefined }, () => {
+      const v = createNoopJwksValidator();
+      assert.ok(typeof v.validate === 'function');
+    });
+  });
+
+  it('throws under NODE_ENV=production without ack', () => {
+    withEnv({ NODE_ENV: 'production', ADCP_NOOP_JWKS_ACK: undefined }, () => {
+      assert.throws(() => createNoopJwksValidator(), /refuses to construct.*production/);
+    });
+  });
+
+  it('throws when NODE_ENV is unset and no ack — covers raw Lambda / custom containers', () => {
+    withEnv({ NODE_ENV: undefined, ADCP_NOOP_JWKS_ACK: undefined }, () => {
+      assert.throws(() => createNoopJwksValidator(), /refuses to construct.*<unset>/);
+    });
+  });
+
+  it('throws under NODE_ENV=staging without ack', () => {
+    withEnv({ NODE_ENV: 'staging', ADCP_NOOP_JWKS_ACK: undefined }, () => {
+      assert.throws(() => createNoopJwksValidator(), /refuses to construct.*staging/);
+    });
+  });
+
+  it('ADCP_NOOP_JWKS_ACK=1 unblocks construction outside the allowlist', () => {
+    withEnv({ NODE_ENV: 'production', ADCP_NOOP_JWKS_ACK: '1' }, () => {
+      const v = createNoopJwksValidator();
+      assert.ok(typeof v.validate === 'function');
+    });
+  });
+
+  it('ADCP_NOOP_JWKS_ACK=true (truthy lookalike) does NOT unblock — strict literal "1" required', () => {
+    withEnv({ NODE_ENV: 'production', ADCP_NOOP_JWKS_ACK: 'true' }, () => {
+      assert.throws(() => createNoopJwksValidator(), /refuses to construct/);
+    });
+    withEnv({ NODE_ENV: 'production', ADCP_NOOP_JWKS_ACK: 'yes' }, () => {
+      assert.throws(() => createNoopJwksValidator(), /refuses to construct/);
+    });
+  });
+
+  it('returned validator always returns ok=true', async () => {
+    await withEnv({ NODE_ENV: 'test', ADCP_NOOP_JWKS_ACK: undefined }, async () => {
+      const v = createNoopJwksValidator();
+      const res = await v.validate({
+        agentUrl: 'https://anything.example.com',
+        signingKey: { keyId: 'k', publicJwk: { kty: 'OKP' }, privateJwk: { kty: 'OKP' } },
+      });
+      assert.strictEqual(res.ok, true);
+    });
+  });
+});
+
+describe('TenantRegistry — webhook-signing auto-wire', () => {
+  // The auto-wire plumbs TenantConfig.signingKey into the underlying
+  // AdcpServer's webhooks.signerKey. Direct observation requires
+  // spying on createAdcpServerFromPlatform, which is internal — so
+  // these tests assert observable outcomes:
+  //   - register() succeeds with a valid webhook-signing key (no throw)
+  //   - register() throws with adcp_use missing / wrong
+  //   - register() throws with non-Ed25519 / non-EC-P256 JWK shape
+  //   - register() with explicit serverOptions.webhooks.signerKey
+  //     bypasses the assertion (auto-wire skipped)
+
+  const VALID_KEY = {
+    keyId: 'k1',
+    publicJwk: {
+      kty: 'OKP',
+      crv: 'Ed25519',
+      x: 'AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA',
+      adcp_use: 'webhook-signing',
+    },
+    privateJwk: {
+      kty: 'OKP',
+      crv: 'Ed25519',
+      x: 'AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA',
+      d: 'BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB',
+      adcp_use: 'webhook-signing',
+    },
+  };
+
+  it('Ed25519 key with adcp_use=webhook-signing → register succeeds', () => {
+    const validator = fakeValidator(async () => ({ ok: true }));
+    const registry = createTenantRegistry({
+      jwksValidator: validator,
+      defaultServerOptions: DEFAULT_SERVER_OPTIONS,
+      autoValidate: false,
+    });
+    assert.doesNotThrow(() =>
+      registry.register('autowire-ok', {
+        agentUrl: 'https://autowire-ok.example.com',
+        signingKey: VALID_KEY,
+        platform: basePlatform(),
+      })
+    );
+  });
+
+  it('EC P-256 key with adcp_use=webhook-signing → register succeeds', () => {
+    const ecKey = {
+      keyId: 'ec-1',
+      publicJwk: {
+        kty: 'EC',
+        crv: 'P-256',
+        x: 'AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA',
+        y: 'BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB',
+        adcp_use: 'webhook-signing',
+      },
+      privateJwk: {
+        kty: 'EC',
+        crv: 'P-256',
+        x: 'AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA',
+        y: 'BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB',
+        d: 'CCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCC',
+        adcp_use: 'webhook-signing',
+      },
+    };
+    const validator = fakeValidator(async () => ({ ok: true }));
+    const registry = createTenantRegistry({
+      jwksValidator: validator,
+      defaultServerOptions: DEFAULT_SERVER_OPTIONS,
+      autoValidate: false,
+    });
+    assert.doesNotThrow(() =>
+      registry.register('autowire-ec', {
+        agentUrl: 'https://autowire-ec.example.com',
+        signingKey: ecKey,
+        platform: basePlatform(),
+      })
+    );
+  });
+
+  it('missing adcp_use → register throws with remediation hint', () => {
+    const noUseKey = {
+      ...VALID_KEY,
+      publicJwk: { ...VALID_KEY.publicJwk, adcp_use: undefined },
+      privateJwk: { ...VALID_KEY.privateJwk, adcp_use: undefined },
+    };
+    const validator = fakeValidator(async () => ({ ok: true }));
+    const registry = createTenantRegistry({
+      jwksValidator: validator,
+      defaultServerOptions: DEFAULT_SERVER_OPTIONS,
+      autoValidate: false,
+    });
+    assert.throws(
+      () =>
+        registry.register('autowire-no-use', {
+          agentUrl: 'https://autowire-no-use.example.com',
+          signingKey: noUseKey,
+          platform: basePlatform(),
+        }),
+      /publicJwk\.adcp_use must be 'webhook-signing'.*<unset>/s
+    );
+  });
+
+  it('wrong adcp_use (e.g., request-signing) → register throws pointing at adcp#2423', () => {
+    const requestSigningKey = {
+      ...VALID_KEY,
+      publicJwk: { ...VALID_KEY.publicJwk, adcp_use: 'request-signing' },
+      privateJwk: { ...VALID_KEY.privateJwk, adcp_use: 'request-signing' },
+    };
+    const validator = fakeValidator(async () => ({ ok: true }));
+    const registry = createTenantRegistry({
+      jwksValidator: validator,
+      defaultServerOptions: DEFAULT_SERVER_OPTIONS,
+      autoValidate: false,
+    });
+    assert.throws(
+      () =>
+        registry.register('autowire-wrong-use', {
+          agentUrl: 'https://autowire-wrong-use.example.com',
+          signingKey: requestSigningKey,
+          platform: basePlatform(),
+        }),
+      /adcp#2423/
+    );
+  });
+
+  it('asymmetric adcp_use across publicJwk / privateJwk → register throws on private mismatch', () => {
+    const asymmKey = {
+      ...VALID_KEY,
+      privateJwk: { ...VALID_KEY.privateJwk, adcp_use: 'request-signing' },
+    };
+    const validator = fakeValidator(async () => ({ ok: true }));
+    const registry = createTenantRegistry({
+      jwksValidator: validator,
+      defaultServerOptions: DEFAULT_SERVER_OPTIONS,
+      autoValidate: false,
+    });
+    assert.throws(
+      () =>
+        registry.register('autowire-asymm', {
+          agentUrl: 'https://autowire-asymm.example.com',
+          signingKey: asymmKey,
+          platform: basePlatform(),
+        }),
+      /privateJwk\.adcp_use.*same purpose as publicJwk/
+    );
+  });
+
+  it('RSA key → register throws (RSA not in AdCP signing-algorithm set)', () => {
+    const rsaKey = {
+      keyId: 'rsa-1',
+      publicJwk: { kty: 'RSA', n: 'AAA', e: 'AQAB', adcp_use: 'webhook-signing' },
+      privateJwk: { kty: 'RSA', n: 'AAA', e: 'AQAB', d: 'BBB', adcp_use: 'webhook-signing' },
+    };
+    const validator = fakeValidator(async () => ({ ok: true }));
+    const registry = createTenantRegistry({
+      jwksValidator: validator,
+      defaultServerOptions: DEFAULT_SERVER_OPTIONS,
+      autoValidate: false,
+    });
+    assert.throws(
+      () =>
+        registry.register('autowire-rsa', {
+          agentUrl: 'https://autowire-rsa.example.com',
+          signingKey: rsaKey,
+          platform: basePlatform(),
+        }),
+      /unsupported JWK shape.*RSA/
+    );
+  });
+
+  it('explicit serverOptions.webhooks.signerKey → auto-wire skipped, assertion bypassed', () => {
+    // Adopter has wired their own webhook signer (KMS-backed, distinct
+    // key per tenant, etc.) — the registry MUST defer to that and skip
+    // auto-wiring even if signingKey would have failed the strict check.
+    const wrongUseKey = {
+      ...VALID_KEY,
+      publicJwk: { ...VALID_KEY.publicJwk, adcp_use: 'request-signing' },
+      privateJwk: { ...VALID_KEY.privateJwk, adcp_use: 'request-signing' },
+    };
+    const validator = fakeValidator(async () => ({ ok: true }));
+    const registry = createTenantRegistry({
+      jwksValidator: validator,
+      defaultServerOptions: DEFAULT_SERVER_OPTIONS,
+      autoValidate: false,
+    });
+    assert.doesNotThrow(() =>
+      registry.register('autowire-explicit-override', {
+        agentUrl: 'https://autowire-override.example.com',
+        signingKey: wrongUseKey,
+        platform: basePlatform(),
+        serverOptions: {
+          webhooks: {
+            signerKey: {
+              keyid: 'explicit-webhook-key',
+              alg: 'ed25519',
+              privateKey: { kty: 'OKP', kid: 'explicit-webhook-key', crv: 'Ed25519', x: 'XXX', d: 'YYY' },
+            },
+          },
+        },
+      })
+    );
+  });
+
+  it('explicit serverOptions.webhooks.signerProvider → auto-wire skipped', () => {
+    // Same as above but for the KMS-backed path.
+    const wrongUseKey = {
+      ...VALID_KEY,
+      publicJwk: { ...VALID_KEY.publicJwk, adcp_use: 'request-signing' },
+      privateJwk: { ...VALID_KEY.privateJwk, adcp_use: 'request-signing' },
+    };
+    const validator = fakeValidator(async () => ({ ok: true }));
+    const registry = createTenantRegistry({
+      jwksValidator: validator,
+      defaultServerOptions: DEFAULT_SERVER_OPTIONS,
+      autoValidate: false,
+    });
+    assert.doesNotThrow(() =>
+      registry.register('autowire-provider-override', {
+        agentUrl: 'https://autowire-provider.example.com',
+        signingKey: wrongUseKey,
+        platform: basePlatform(),
+        serverOptions: {
+          webhooks: {
+            signerProvider: {
+              keyid: 'kms-key',
+              algorithm: 'ed25519',
+              fingerprint: 'sha256:abc',
+              sign: async () => new Uint8Array(64),
+            },
+          },
+        },
+      })
+    );
+  });
+
+  it('createSelfSignedTenantKey output passes the auto-wire assertion end-to-end', async () => {
+    const { createSelfSignedTenantKey } = require('../dist/lib/server/decisioning/tenant-registry');
+    const key = await createSelfSignedTenantKey();
+    assert.strictEqual(key.publicJwk.adcp_use, 'webhook-signing');
+    assert.strictEqual(key.privateJwk.adcp_use, 'webhook-signing');
+    const validator = fakeValidator(async () => ({ ok: true }));
+    const registry = createTenantRegistry({
+      jwksValidator: validator,
+      defaultServerOptions: DEFAULT_SERVER_OPTIONS,
+      autoValidate: false,
+    });
+    assert.doesNotThrow(() =>
+      registry.register('selfsigned-autowire', {
+        agentUrl: 'https://selfsigned.example.com',
+        signingKey: key,
+        platform: basePlatform(),
+      })
+    );
   });
 });

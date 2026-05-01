@@ -3,7 +3,7 @@ process.env.NODE_ENV = 'test';
 const { describe, it } = require('node:test');
 const assert = require('node:assert/strict');
 
-const { createAdcpServerFromPlatform, getAllAdcpMigrations } = require('../dist/lib/server');
+const { createAdcpServerFromPlatform, getAllAdcpMigrations } = require('../dist/lib/server/legacy/v5');
 
 describe('createAdcpServerFromPlatform — pool shortcut', () => {
   it('getAllAdcpMigrations returns concatenated DDL for all three tables', () => {

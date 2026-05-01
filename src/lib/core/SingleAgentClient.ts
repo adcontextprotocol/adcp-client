@@ -120,17 +120,9 @@ import {
   listDeclaredFeatures,
   TASK_FEATURE_MAP,
 } from '../utils/capabilities';
-import {
-  adaptCreateMediaBuyRequestForV2,
-  adaptUpdateMediaBuyRequestForV2,
-  normalizeMediaBuyResponse,
-} from '../utils/creative-adapter';
-import { adaptSyncCreativesRequestForV2 } from '../utils/sync-creatives-adapter';
-import { normalizeFormatsResponse } from '../utils/format-renders';
-import { normalizePreviewCreativeResponse } from '../utils/preview-normalizer';
-import { normalizeGetProductsResponse, adaptGetProductsRequestForV2 } from '../utils/pricing-adapter';
 import { normalizeRequestParams } from '../utils/request-normalizer';
 import { validateUserAgent } from '../utils/validate-user-agent';
+import { getV25Adapter } from '../adapters/legacy/v2-5';
 
 /**
  * Error class for v3 feature compatibility issues
@@ -327,6 +319,15 @@ export interface SingleAgentClientConfig extends ConversationConfig {
   };
   /** Governance configuration for buyer-side campaign governance */
   governance?: import('./GovernanceTypes').GovernanceConfig;
+  /**
+   * Transport-level safeguards. Applies to every call this client dispatches
+   * unless overridden at call time.
+   *
+   * Set `maxResponseBytes` when crawling untrusted agents (registries,
+   * federated discovery layers) to prevent a hostile vendor from buffering
+   * a large reply before any application-layer schema validation runs.
+   */
+  transport?: import('../protocols').TransportOptions;
 }
 
 /**
@@ -343,6 +344,50 @@ export interface SingleAgentClientConfig extends ConversationConfig {
  * - 🐛 Debug logging and observability
  * - 🎯 Works with both MCP and A2A protocols
  */
+/**
+ * Does a JS runtime value's type plausibly match a JSON Schema's declared
+ * shape? Used by the v2 adapter aliasing path to avoid moving a string
+ * into a slot the agent's tool schema declared as an object (e.g.,
+ * Wonderstruck's `brand: BrandReference` slot vs our adapter's
+ * `brand_manifest: 'https://...'` URL string).
+ *
+ * Recurses into `anyOf` / `oneOf`: the move is safe iff at least one
+ * variant accepts the value's runtime type. `$ref` we can't introspect
+ * locally — return true and let the seller's own validation catch.
+ *
+ * The empty schema `{}` is treated as "doesn't accept this type" so
+ * Pydantic-generated tool schemas with `anyOf: [{}, {type: null}]` —
+ * which technically allow anything but in practice mask a stricter
+ * Pydantic union — don't pull the buyer into the broken alias.
+ */
+function valueMatchesSchemaType(value: unknown, propSchema: unknown): boolean {
+  if (!propSchema || typeof propSchema !== 'object') return false;
+  const schema = propSchema as { type?: unknown; oneOf?: unknown; anyOf?: unknown; $ref?: unknown };
+  if (schema.$ref) return true;
+
+  const valueType: string = Array.isArray(value)
+    ? 'array'
+    : value === null
+      ? 'null'
+      : typeof value === 'object'
+        ? 'object'
+        : typeof value;
+
+  // anyOf / oneOf: any variant matching = safe.
+  for (const key of ['anyOf', 'oneOf'] as const) {
+    const variants = (schema as { [k: string]: unknown })[key];
+    if (Array.isArray(variants)) {
+      return variants.some(v => valueMatchesSchemaType(value, v));
+    }
+  }
+
+  const declared = schema.type;
+  if (declared === undefined) return false;
+  if (typeof declared === 'string') return declared === valueType;
+  if (Array.isArray(declared)) return declared.includes(valueType);
+  return false;
+}
+
 export class SingleAgentClient {
   private executor: TaskExecutor;
   private asyncHandler?: AsyncHandler;
@@ -392,6 +437,7 @@ export class SingleAgentClient {
       onActivity: config.onActivity,
       governance: config.governance,
       adcpVersion: this.resolvedAdcpVersion,
+      transport: config.transport,
     });
 
     // Create async handler if handlers are provided
@@ -1150,9 +1196,25 @@ export class SingleAgentClient {
 
     const agent = await this.ensureEndpointDiscovered();
 
+    // Schema-driven pre-send validation runs on the unadapted v3 shape so
+    // wire-format adapters (e.g. adaptGetProductsRequestForV2) don't strip
+    // v3-only fields out from under the v3 bundled schema.
+    this.executor.validateRequest(taskType, normalizedParams);
+
     // Adapt request for v2 servers if needed
     const serverVersion = await this.detectServerVersion();
     const adaptedParams = await this.adaptRequestForServerVersion(taskType, normalizedParams);
+
+    // Symmetric to the pre-adapter v3 pass above: when the adapter
+    // rewrote the request for a v2 server, warn-validate the adapted
+    // shape against the cached v2.5 schema bundle. Drift gets collected
+    // here and merged into result.metadata.debug_logs after executeTask
+    // returns — without that merge the warning would silently drop on
+    // the floor and adapter drift would land in production unnoticed.
+    const v25DriftLogs: any[] = [];
+    if (serverVersion === 'v2') {
+      this.executor.validateAdaptedRequestAgainstV2(taskType, adaptedParams, v25DriftLogs);
+    }
 
     const result = await this.executor.executeTask<T>(
       agent,
@@ -1162,6 +1224,15 @@ export class SingleAgentClient {
       options,
       serverVersion
     );
+
+    // Merge collected drift into the executor's debug_logs so adopters
+    // reading result.debug_logs see post-adapter v2.5 warnings alongside
+    // the executor's own logs. On error paths the executor may not surface
+    // result.debug_logs at all — drift collected before the failure is
+    // dropped, matching the executor's own debug-log behavior.
+    if (v25DriftLogs.length > 0) {
+      result.debug_logs = [...(result.debug_logs ?? []), ...v25DriftLogs];
+    }
 
     // Normalize response to v3 format
     if (result.success && result.data) {
@@ -1201,24 +1272,14 @@ export class SingleAgentClient {
     let adapted = params;
 
     if (version !== 'v3') {
-      // Adapt v3 requests for v2 servers
-      switch (taskType) {
-        case 'get_products':
-          adapted = adaptGetProductsRequestForV2(params);
-          break;
-
-        case 'create_media_buy':
-          adapted = adaptCreateMediaBuyRequestForV2(params);
-          break;
-
-        case 'update_media_buy':
-          adapted = adaptUpdateMediaBuyRequestForV2(params);
-          break;
-
-        case 'sync_creatives':
-          adapted = adaptSyncCreativesRequestForV2(params);
-          break;
-      }
+      // Dispatch through the legacy v2.5 adapter registry. Per-tool pairs
+      // live in `src/lib/adapters/legacy/v2-5/<tool>.ts`. Tools without a
+      // registered pair (or pairs whose request side is pass-through)
+      // leave `adapted` unchanged. Adding a future legacy version means
+      // adding a sibling `legacy/<version>/` directory, not editing
+      // this dispatch.
+      const pair = getV25Adapter(taskType);
+      if (pair) adapted = pair.adaptRequest(params);
     }
 
     // Strip any top-level fields not declared in the agent's tool schema.
@@ -1248,15 +1309,25 @@ export class SingleAgentClient {
     const declaredFields = new Set(Object.keys(toolSchema));
 
     // The v2 adapter may rename fields (e.g. brand → brand_manifest) that a
-    // v3 server — misdetected as v2 — doesn't declare.  Reconcile known
+    // v3 server — misdetected as v2 — doesn't declare. Reconcile known
     // adapter mappings so the value isn't silently dropped.
+    //
+    // CRITICAL: only alias when the JS type of the moved value is
+    // compatible with the destination field's declared shape. v2.5 sellers
+    // (e.g. Wonderstruck) declare `brand` in their tool schema as a
+    // BrandReference object — v2 adapter produces a `brand_manifest` URL
+    // string, and blindly aliasing the string into the object slot causes
+    // the seller to reject with `Input should be a valid dictionary or
+    // instance of BrandReference`. Skip the alias when shapes don't match
+    // and let the field-stripping path drop the v2-shaped value cleanly.
     const adapterAliases: [string, string][] = [['brand_manifest', 'brand']];
     for (const [adapterField, schemaField] of adapterAliases) {
       if (
         adapted[adapterField] !== undefined &&
         !declaredFields.has(adapterField) &&
         declaredFields.has(schemaField) &&
-        adapted[schemaField] === undefined
+        adapted[schemaField] === undefined &&
+        valueMatchesSchemaType(adapted[adapterField], (toolSchema as Record<string, unknown>)[schemaField])
       ) {
         adapted[schemaField] = adapted[adapterField];
         delete adapted[adapterField];
@@ -1292,23 +1363,12 @@ export class SingleAgentClient {
    * Converts v2 responses to v3 structure for consistent API surface.
    */
   private normalizeResponseToV3(taskType: string, data: any): any {
-    switch (taskType) {
-      case 'get_products':
-        return normalizeGetProductsResponse(data);
-
-      case 'list_creative_formats':
-        return normalizeFormatsResponse(data);
-
-      case 'preview_creative':
-        return normalizePreviewCreativeResponse(data);
-
-      case 'create_media_buy':
-      case 'update_media_buy':
-        return normalizeMediaBuyResponse(data);
-
-      default:
-        return data;
-    }
+    // Dispatch through the legacy v2.5 adapter registry. The pair's
+    // optional `normalizeResponse` runs when present; otherwise the
+    // response is passed through unchanged.
+    const pair = getV25Adapter(taskType);
+    if (pair?.normalizeResponse) return pair.normalizeResponse(data);
+    return data;
   }
 
   /**
@@ -1704,6 +1764,11 @@ export class SingleAgentClient {
     options?: TaskOptions & { agent?: AgentConfig }
   ): Promise<TaskResult<SyncPlansResponse>> {
     const agent = options?.agent ?? this.getGovernanceAgent();
+    // Pre-send schema check on the unadapted shape, mirroring the public-task
+    // executeTask path. Without this call, governance/protocol entry points
+    // that bypass the executeTask seam silently round-trip malformed requests
+    // to the server instead of failing locally.
+    this.executor.validateRequest('sync_plans', params);
     return this.executor.executeTask<SyncPlansResponse>(agent, 'sync_plans', params, inputHandler, options);
   }
 
@@ -1719,6 +1784,7 @@ export class SingleAgentClient {
     options?: TaskOptions & { agent?: AgentConfig }
   ): Promise<TaskResult<GetPlanAuditLogsResponse>> {
     const agent = options?.agent ?? this.getGovernanceAgent();
+    this.executor.validateRequest('get_plan_audit_logs', params);
     return this.executor.executeTask<GetPlanAuditLogsResponse>(
       agent,
       'get_plan_audit_logs',
@@ -1774,6 +1840,7 @@ export class SingleAgentClient {
     options?: TaskOptions
   ): Promise<TaskResult<GetAdCPCapabilitiesResponse>> {
     const agent = await this.ensureEndpointDiscovered();
+    this.executor.validateRequest('get_adcp_capabilities', params);
     return this.executor.executeTask<GetAdCPCapabilitiesResponse>(
       agent,
       'get_adcp_capabilities',
@@ -2114,10 +2181,23 @@ export class SingleAgentClient {
     }
     const agent = await this.ensureEndpointDiscovered();
 
+    // Schema-driven pre-send validation runs on the unadapted v3 shape so
+    // wire-format adapters (e.g. adaptGetProductsRequestForV2) don't strip
+    // v3-only fields out from under the v3 bundled schema.
+    this.executor.validateRequest(taskName, normalizedParams);
+
     // Adapt request for the server's protocol version (e.g. strip v3-only
     // fields like buying_mode when talking to v2 agents).
     const serverVersion = await this.detectServerVersion();
     const adaptedParams = await this.adaptRequestForServerVersion(taskName, normalizedParams);
+
+    // Symmetric warn-only post-adapter pass against the v2.5 schema bundle.
+    // Drift gets surfaced via result.metadata.debug_logs so adapter
+    // regressions in production aren't silently swallowed.
+    const v25DriftLogs: any[] = [];
+    if (serverVersion === 'v2') {
+      this.executor.validateAdaptedRequestAgainstV2(taskName, adaptedParams, v25DriftLogs);
+    }
 
     const result = await this.executor.executeTask<T>(
       agent,
@@ -2127,6 +2207,10 @@ export class SingleAgentClient {
       options,
       serverVersion
     );
+
+    if (v25DriftLogs.length > 0) {
+      result.debug_logs = [...(result.debug_logs ?? []), ...v25DriftLogs];
+    }
 
     // Normalize response to v3 format for consistent API surface
     if (result.success && result.data) {

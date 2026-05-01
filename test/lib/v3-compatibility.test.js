@@ -528,6 +528,122 @@ describe('Creative Assignment Adapter', () => {
       assert.deepStrictEqual(result.brand, { brand_id: 'br_999' });
       assert.strictEqual(result.brand_manifest, undefined);
     });
+
+    // buyer_ref derivation (#1115) — v2.5 requires `buyer_ref` top-level +
+    // per-package as the buyer's reference for THIS media buy. v3 carries
+    // the same client-controlled-unique-identity contract on
+    // `idempotency_key`; reusing it preserves seller-side dedupe on replays.
+    describe('buyer_ref derivation from idempotency_key (v2.5 conformance)', () => {
+      test('derives top-level buyer_ref from idempotency_key when caller did not supply one', () => {
+        const result = adaptCreateMediaBuyRequestForV2({
+          account: { account_id: 'acc-1' },
+          brand: { domain: 'example.com' },
+          packages: [{ product_id: 'prod-1', budget: 1000, pricing_option_id: 'po-1' }],
+          start_time: 'asap',
+          end_time: '2027-12-31T23:59:59Z',
+          idempotency_key: 'idemp-aaa',
+        });
+        assert.strictEqual(result.buyer_ref, 'idemp-aaa');
+      });
+
+      test('caller-supplied buyer_ref wins over idempotency_key derivation', () => {
+        const result = adaptCreateMediaBuyRequestForV2({
+          buyer_ref: 'caller-buyer-1',
+          account: { account_id: 'acc-1' },
+          brand: { domain: 'example.com' },
+          packages: [{ product_id: 'prod-1', budget: 1000, pricing_option_id: 'po-1' }],
+          start_time: 'asap',
+          end_time: '2027-12-31T23:59:59Z',
+          idempotency_key: 'idemp-aaa',
+        });
+        assert.strictEqual(result.buyer_ref, 'caller-buyer-1');
+      });
+
+      test('no buyer_ref emitted when neither caller buyer_ref nor idempotency_key is present', () => {
+        // v3 pre-send validation should already have rejected this; defensive
+        // path for warn-mode where the request still reaches the adapter.
+        // Better to omit and let v2.5 surface the missing required field
+        // than synthesize an unstable value that breaks dedupe on replay.
+        const result = adaptCreateMediaBuyRequestForV2({
+          account: { account_id: 'acc-1' },
+          brand: { domain: 'example.com' },
+          packages: [],
+          start_time: 'asap',
+          end_time: '2027-12-31T23:59:59Z',
+        });
+        assert.strictEqual(result.buyer_ref, undefined);
+      });
+
+      test('per-package buyer_ref defaults to <parent>-<index> when package supplies neither buyer_ref nor idempotency_key', () => {
+        const result = adaptCreateMediaBuyRequestForV2({
+          account: { account_id: 'acc-1' },
+          brand: { domain: 'example.com' },
+          packages: [
+            { product_id: 'prod-1', budget: 1000, pricing_option_id: 'po-1' },
+            { product_id: 'prod-2', budget: 2000, pricing_option_id: 'po-2' },
+          ],
+          start_time: 'asap',
+          end_time: '2027-12-31T23:59:59Z',
+          idempotency_key: 'idemp-bbb',
+        });
+        assert.strictEqual(result.packages[0].buyer_ref, 'idemp-bbb-0');
+        assert.strictEqual(result.packages[1].buyer_ref, 'idemp-bbb-1');
+      });
+
+      test('per-package idempotency_key wins over the parent-derived default', () => {
+        const result = adaptCreateMediaBuyRequestForV2({
+          account: { account_id: 'acc-1' },
+          brand: { domain: 'example.com' },
+          packages: [{ product_id: 'prod-1', budget: 1000, pricing_option_id: 'po-1', idempotency_key: 'pkg-idemp' }],
+          start_time: 'asap',
+          end_time: '2027-12-31T23:59:59Z',
+          idempotency_key: 'idemp-ccc',
+        });
+        assert.strictEqual(result.packages[0].buyer_ref, 'pkg-idemp');
+      });
+
+      test('caller-supplied per-package buyer_ref wins over both', () => {
+        const result = adaptCreateMediaBuyRequestForV2({
+          account: { account_id: 'acc-1' },
+          brand: { domain: 'example.com' },
+          packages: [
+            {
+              product_id: 'prod-1',
+              budget: 1000,
+              pricing_option_id: 'po-1',
+              buyer_ref: 'caller-pkg-1',
+              idempotency_key: 'pkg-idemp',
+            },
+          ],
+          start_time: 'asap',
+          end_time: '2027-12-31T23:59:59Z',
+          idempotency_key: 'idemp-ddd',
+        });
+        assert.strictEqual(result.packages[0].buyer_ref, 'caller-pkg-1');
+      });
+
+      test('replays of the same v3 request produce identical buyer_refs (dedupe contract)', () => {
+        // The seller-side dedupe contract relies on replays producing the
+        // SAME buyer_ref. This test pins that invariant: same input → same
+        // output, including all derived buyer_refs.
+        const v3 = {
+          account: { account_id: 'acc-1' },
+          brand: { domain: 'example.com' },
+          packages: [
+            { product_id: 'prod-1', budget: 1000, pricing_option_id: 'po-1' },
+            { product_id: 'prod-2', budget: 2000, pricing_option_id: 'po-2' },
+          ],
+          start_time: 'asap',
+          end_time: '2027-12-31T23:59:59Z',
+          idempotency_key: 'idemp-replay',
+        };
+        const a = adaptCreateMediaBuyRequestForV2(JSON.parse(JSON.stringify(v3)));
+        const b = adaptCreateMediaBuyRequestForV2(JSON.parse(JSON.stringify(v3)));
+        assert.strictEqual(a.buyer_ref, b.buyer_ref);
+        assert.strictEqual(a.packages[0].buyer_ref, b.packages[0].buyer_ref);
+        assert.strictEqual(a.packages[1].buyer_ref, b.packages[1].buyer_ref);
+      });
+    });
   });
 
   describe('adaptGetProductsRequestForV2', () => {
@@ -1931,11 +2047,15 @@ describe('DeviceType type validation', () => {
 const { STANDARD_ERROR_CODES, isStandardErrorCode, getErrorRecovery } = require('../../dist/lib/types/error-codes.js');
 
 const { ErrorSchema } = require('../../dist/lib/types/schemas.generated.js');
+const { ErrorCodeValues } = require('../../dist/lib/types/enums.generated.js');
 
 describe('Standard Error Codes', () => {
-  test('STANDARD_ERROR_CODES contains exactly 28 codes', () => {
-    const codes = Object.keys(STANDARD_ERROR_CODES);
-    assert.strictEqual(codes.length, 28);
+  test('STANDARD_ERROR_CODES enumerates every code in the spec enum', () => {
+    // Drift guard — was previously hardcoded to 28; now tied to the generated
+    // enum so that adding codes to error-code.json fails this test until they
+    // get description+recovery rows in error-codes.ts. The companion test in
+    // standard-error-codes-drift.test.js is the authoritative drift guard.
+    assert.strictEqual(Object.keys(STANDARD_ERROR_CODES).length, ErrorCodeValues.length);
   });
 
   test('includes the idempotency codes added in AdCP v3 (PR #2315)', () => {
@@ -1959,7 +2079,11 @@ describe('Standard Error Codes', () => {
       .map(([code]) => code);
     assert.ok(transientCodes.includes('RATE_LIMITED'));
     assert.ok(transientCodes.includes('SERVICE_UNAVAILABLE'));
-    assert.ok(transientCodes.includes('PRODUCT_UNAVAILABLE'));
+    // Spec moved CONFLICT to transient (concurrent-modification retry).
+    assert.ok(transientCodes.includes('CONFLICT'));
+    // GOVERNANCE_UNAVAILABLE / CAMPAIGN_SUSPENDED are also transient (added in AdCP 3.0).
+    assert.ok(transientCodes.includes('GOVERNANCE_UNAVAILABLE'));
+    assert.ok(transientCodes.includes('CAMPAIGN_SUSPENDED'));
   });
 
   test('terminal codes require human intervention', () => {
@@ -1968,8 +2092,8 @@ describe('Standard Error Codes', () => {
       .map(([code]) => code);
     assert.ok(terminalCodes.includes('ACCOUNT_SUSPENDED'));
     assert.ok(terminalCodes.includes('ACCOUNT_PAYMENT_REQUIRED'));
+    assert.ok(terminalCodes.includes('ACCOUNT_NOT_FOUND'));
     assert.ok(terminalCodes.includes('BUDGET_EXHAUSTED'));
-    assert.ok(terminalCodes.includes('UNSUPPORTED_FEATURE'));
   });
 
   test('isStandardErrorCode returns true for known codes', () => {

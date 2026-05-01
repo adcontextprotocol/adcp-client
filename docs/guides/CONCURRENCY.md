@@ -138,7 +138,7 @@ If every handler's state is scoped to a tenant/brand/publisher account, use
 the session-scoping primitives instead of threading a key through every call:
 
 ```ts
-import { createAdcpServer, scopedStore, requireSessionKey } from '@adcp/sdk/server';
+import { createAdcpServer, scopedStore, requireSessionKey } from '@adcp/sdk/server/legacy/v5';
 
 const server = createAdcpServer({
   name: 'My Publisher', version: '1.0.0',

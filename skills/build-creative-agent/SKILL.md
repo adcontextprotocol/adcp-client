@@ -37,7 +37,7 @@ The `interaction_model` in each specialism's `index.yaml` is the forcing functio
 
 Full treatment in `skills/build-seller-agent/SKILL.md` §Protocol-Wide Requirements and §Composing. Minimum viable pointers for a creative agent:
 
-- **`idempotency_key`** on every mutating request (`sync_creatives`, `build_creative`, `report_usage`, any `sync_*` you implement). Wire `createIdempotencyStore` into `createAdcpServer({ idempotency })`.
+- **`idempotency_key`** on every mutating request (`sync_creatives`, `build_creative`, `report_usage`, any `sync_*` you implement). Pass `createIdempotencyStore` to `createAdcpServerFromPlatform(platform, { idempotency })`.
 - **Authentication** via `serve({ authenticate })` with `verifyApiKey`/`verifyBearer` from `@adcp/sdk/server`. Unauthenticated agents fail the universal `security_baseline` storyboard.
 - **Signature-header transparency**: accept requests with `Signature-Input`/`Signature` headers even if you don't claim `signed-requests`.
 
@@ -45,7 +45,7 @@ Full treatment in `skills/build-seller-agent/SKILL.md` §Protocol-Wide Requireme
 
 Creative review flows are naturally async — `sync_creatives` may return `pending_review` with a task envelope, and your review pipeline emits completion webhooks when the creative is approved, rejected, or transitions to a new state. `build_creative` for the ad-server archetype emits `report_usage` completion webhooks. Use `ctx.emitWebhook` — don't hand-roll `fetch` with HMAC signing.
 
-Wire `createAdcpServer({ webhooks: { signerKey } })` and call `ctx.emitWebhook({ url, payload, operation_id })` from any handler. The framework handles RFC 9421 signing, stable `idempotency_key` across retries, backoff + terminal error handling. Full pattern in [`skills/build-seller-agent/SKILL.md`](../build-seller-agent/SKILL.md) § Webhooks.
+Pass `webhooks: { signerKey }` to `createAdcpServerFromPlatform(platform, { webhooks })` and call `ctx.emitWebhook({ url, payload, operation_id })` from any handler. The framework handles RFC 9421 signing, stable `idempotency_key` across retries, backoff + terminal error handling. Full pattern in [`skills/build-seller-agent/SKILL.md`](../build-seller-agent/SKILL.md) § Webhooks.
 
 **`operation_id` rules** (the top at-least-once-delivery bug): stable across retries. `creative_review.${creative_id}` or `report_usage.${report_batch_id}` — NOT a fresh UUID per retry.
 
@@ -92,7 +92,7 @@ What happens when a creative is synced:
 >
 > **Cross-cutting pitfalls matrix runs keep catching:**
 >
-> - **Declare `capabilities: { specialisms: ['creative-ad-server'] }` (or `'creative-template'` / `'creative-generative'`) on `createAdcpServer`.** Value is `string[]` of enum ids (not `[{id, version}]`). Agents that don't declare their specialism fail the grader with "No applicable tracks found" even if every tool works — tracks are gated on the specialism claim.
+> - **Declare `capabilities.specialisms: ['creative-ad-server'] as const` (or `'creative-template'` / `'creative-generative'`) on the `DecisioningPlatform` you pass to `createAdcpServerFromPlatform`.** Value is `string[]` of enum ids (not `[{id, version}]`). Agents that don't declare their specialism fail the grader with "No applicable tracks found" even if every tool works — tracks are gated on the specialism claim.
 > - `build_creative` response is `{ creative_manifest: { format_id, assets } }` (single) or `{ creative_manifests: [...] }` (multi). Platform-native fields at the top level (`tag_url`, `creative_id`, `media_type`) are **invalid** — use `buildCreativeResponse({ creative_manifest })` / `buildCreativeMultiResponse({ creative_manifests })` from `@adcp/sdk/server` to lock the shape at compile time.
 > - Each asset in `creative_manifest.assets` requires an `asset_type` discriminator. Use the typed factories (`imageAsset`, `videoAsset`, `audioAsset`, `htmlAsset`, `urlAsset`, `textAsset`) so the discriminator is injected for you; a plain `{ serving_tag: { content: '<vast>...' } }` fails validation.
 > - `preview_creative` renders have the same pattern — each `renders[]` entry is a oneOf on `output_format`. Use `urlRender({...})`, `htmlRender({...})`, or `bothRender({...})` to inject the discriminator and require the matching `preview_url` / `preview_html` field automatically.
@@ -121,7 +121,7 @@ Asset values use type-specific shapes, not a generic `asset_type` discriminator:
 
 ### Context and Ext Passthrough
 
-`createAdcpServer` auto-echoes the request's `context` into every response from domain-grouped handlers — **do not set `context` yourself in your handler return values.** The framework injects it post-handler only when the field isn't already present.
+The framework auto-echoes the request's `context` into every response from typed sub-platform handlers — **do not set `context` yourself in your handler return values.** It's injected post-handler only when the field isn't already present.
 
 **Crucial:** `context` is schema-typed as an object. If your handler hand-sets a string or narrative description, validation fails with `/context: must be object` and the framework does not overwrite. Leave the field out entirely.
 
@@ -131,8 +131,9 @@ Some schemas also define an `ext` field for vendor-namespaced extensions. If you
 
 | SDK piece                                               | Usage                                                            |
 | ------------------------------------------------------- | ---------------------------------------------------------------- |
-| `createAdcpServer(config)`                              | Create server with domain-grouped handlers and auto-capabilities |
-| `serve(() => createAdcpServer(config))`                 | Start HTTP server on `:3001/mcp`                                 |
+| `createAdcpServerFromPlatform(platform, opts)`          | Create server from a typed `DecisioningPlatform` — compile-time specialism enforcement, auto-capabilities |
+| `createAdcpServer(config)` *(legacy)*                   | v5 handler-bag entry. Mid-migration / escape-hatch only; reach via `@adcp/sdk/server/legacy/v5`            |
+| `serve(() => createAdcpServerFromPlatform(platform, opts))` | Start HTTP server on `:3001/mcp`                                                                       |
 | `creative: { listCreativeFormats, syncCreatives, ... }` | Domain group — register handlers by name                         |
 | `ctx.store.put(collection, id, data)`                   | Persist state (creative library) across requests                 |
 | `ctx.store.get(collection, id)`                         | Retrieve persisted state                                         |
@@ -144,7 +145,7 @@ Some schemas also define an `ext` field for vendor-namespaced extensions. If you
 | `previewCreativeResponse(data)`                         | Auto-applied response builder (don't call manually)              |
 | `adcpError(code, { message })`                          | Structured error                                                 |
 
-Import: `import { createAdcpServer, serve, adcpError } from '@adcp/sdk';`
+Import: `import { createAdcpServerFromPlatform, serve, adcpError } from '@adcp/sdk/server';`
 
 ## Setup
 
@@ -174,7 +175,7 @@ Minimal `tsconfig.json`:
 ## Implementation
 
 1. Single `.ts` file — all tools in one file
-2. Use `createAdcpServer` with a `creative` domain group — `get_adcp_capabilities` is auto-generated
+2. Use `createAdcpServerFromPlatform` with `creative: CreativeAdServerPlatform` (or `CreativeBuilderPlatform`) on a `DecisioningPlatform` class — `get_adcp_capabilities` is auto-generated
 3. Handlers return raw data objects — response builders are auto-applied
 4. Use `ctx.store` for persisting the creative library across requests (InMemoryStateStore by default)
 5. Register `preview_creative` manually on the returned server (union schema not in domain group)
@@ -182,8 +183,17 @@ Minimal `tsconfig.json`:
 7. Context passthrough is handled by the framework — no need to manually echo `args.context`
 
 ```typescript
-import { createAdcpServer, serve, adcpError, urlRender } from '@adcp/sdk';
-import { createIdempotencyStore, memoryBackend } from '@adcp/sdk/server';
+import {
+  createAdcpServerFromPlatform,
+  serve,
+  adcpError,
+  urlRender,
+  createIdempotencyStore,
+  memoryBackend,
+  type DecisioningPlatform,
+  type CreativeAdServerPlatform,
+  type AccountStore,
+} from '@adcp/sdk/server';
 
 const formats = [
   {
@@ -218,19 +228,24 @@ const idempotency = createIdempotencyStore({
   ttlSeconds: 86400, // 24 hours (spec bounds: 1h–7d)
 });
 
-serve(() =>
-  createAdcpServer({
-    name: 'My Creative Agent',
-    version: '1.0.0',
-    idempotency,
+class MyCreative implements DecisioningPlatform {
+  capabilities = {
+    specialisms: ['creative-ad-server'] as const,
+    config: {},
+  };
 
-    // Principal scoping for idempotency. MUST never return undefined —
-    // every mutating request would reject as SERVICE_UNAVAILABLE. A
-    // constant works for a demo; use ctx.account for multi-tenant prod.
-    resolveSessionKey: () => 'default-principal',
+  accounts: AccountStore = {
+    resolve: async ref => ({
+      id: 'account_id' in ref ? ref.account_id : 'cr_acc_1',
+      operator: 'me',
+      ctx_metadata: {},
+    }),
+    upsert: async () => ({ ok: true, items: [] }),
+    list: async () => ({ items: [], nextCursor: null }),
+  };
 
-    creative: {
-      listCreativeFormats: async (params, ctx) => {
+  creative: CreativeAdServerPlatform = {
+    listCreativeFormats: async (params, ctx) => {
         return { formats };
       },
 
@@ -289,27 +304,39 @@ serve(() =>
         };
       },
 
-      previewCreative: async params => {
-        return {
-          response_type: 'single',
-          previews: [
-            {
-              preview_id: `prev_${Date.now()}`,
-              input: { name: params.creative_manifest?.name ?? 'Preview' },
-              renders: [
-                urlRender({
-                  render_id: `r_${Date.now()}`,
-                  preview_url: 'https://example.com/preview.png',
-                  role: 'primary',
-                  dimensions: { width: 300, height: 250 },
-                }),
-              ],
-            },
-          ],
-          expires_at: new Date(Date.now() + 3600000).toISOString(),
-        };
-      },
+    previewCreative: async params => {
+      return {
+        response_type: 'single',
+        previews: [
+          {
+            preview_id: `prev_${Date.now()}`,
+            input: { name: params.creative_manifest?.name ?? 'Preview' },
+            renders: [
+              urlRender({
+                render_id: `r_${Date.now()}`,
+                preview_url: 'https://example.com/preview.png',
+                role: 'primary',
+                dimensions: { width: 300, height: 250 },
+              }),
+            ],
+          },
+        ],
+        expires_at: new Date(Date.now() + 3600000).toISOString(),
+      };
     },
+  };
+}
+
+const platform = new MyCreative();
+
+serve(() =>
+  createAdcpServerFromPlatform(platform, {
+    name: 'My Creative Agent',
+    version: '1.0.0',
+    idempotency,
+    // Principal scoping for idempotency. MUST never return undefined —
+    // every mutating request would reject as SERVICE_UNAVAILABLE.
+    resolveSessionKey: () => 'default-principal',
   })
 );
 ```
@@ -513,8 +540,9 @@ Common failure decoder:
 
 | Mistake                                                                | Fix                                                                                                                                 |
 | ---------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------- |
-| Using `createTaskCapableServer` + `server.tool()`                      | Use `createAdcpServer` with `creative` domain group                                                                                 |
-| Manually registering `get_adcp_capabilities`                           | Auto-generated by `createAdcpServer` from registered handlers                                                                       |
+| Using `createTaskCapableServer` + `server.tool()`                      | Use `createAdcpServerFromPlatform` with a typed `creative: CreativeAdServerPlatform` (or `CreativeBuilderPlatform`) field           |
+| Calling `createAdcpServer` directly in new code                        | Reach for `createAdcpServerFromPlatform`; `createAdcpServer` lives at `@adcp/sdk/server/legacy/v5` for mid-migration / escape-hatch only |
+| Manually registering `get_adcp_capabilities`                           | Auto-generated by `createAdcpServerFromPlatform` from your typed `DecisioningPlatform` — do not register it                         |
 | Calling `server.registerTool('preview_creative', ...)`                 | `AdcpServer` does not expose `registerTool` — put `previewCreative` in the `creative:` domain group like the other handlers         |
 | Using module-level Maps for state                                      | Use `ctx.store.put/get/list` — framework provides `InMemoryStateStore` by default                                                   |
 | Calling response builders manually in domain handlers                  | Handlers return raw data — response builders are auto-applied across the `creative:` group, including `preview_creative`            |

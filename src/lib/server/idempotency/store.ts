@@ -20,7 +20,7 @@
  *
  * @example
  * ```typescript
- * import { createAdcpServer, createIdempotencyStore, memoryBackend } from '@adcp/sdk/server';
+ * import { createAdcpServer, createIdempotencyStore, memoryBackend } from '@adcp/sdk/server/legacy/v5';
  *
  * const idempotency = createIdempotencyStore({
  *   backend: memoryBackend(),

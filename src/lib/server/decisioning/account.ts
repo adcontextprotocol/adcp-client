@@ -2,7 +2,7 @@
  * Account model. Single-level (matches AdCP wire's AccountReference).
  * Platform-internal hierarchies (GAM Network → Advertiser → Order;
  * Spotify Brand → Campaign) are encoded in `metadata`, not in the typed
- * shape. Generic `TMeta` lets platforms type their metadata at the call site.
+ * shape. Generic `TCtxMeta` lets platforms type their metadata at the call site.
  *
  * Tenant isolation is enforced at `accounts.resolve()` returning null for
  * cross-scope references, not via a multi-level type.
@@ -26,7 +26,7 @@ import type { CursorPage, CursorRequest } from './pagination';
  * Account — framework's rich representation. A strict superset of the wire
  * `Account` shape (from `list_accounts` / response envelopes):
  *
- *   - Adds `metadata: TMeta` (platform-internal fields the framework doesn't
+ *   - Adds `metadata: TCtxMeta` (platform-internal fields the framework doesn't
  *     read but adopters use to thread platform-specific data)
  *   - Adds `authInfo: AuthPrincipal` (auth context for the request — MUST NOT
  *     leak to the wire)
@@ -36,7 +36,7 @@ import type { CursorPage, CursorRequest } from './pagination';
  * Framework projects to wire shape via `toWireAccount`: strips `metadata` +
  * `authInfo`, renames `id` → `account_id`. ~10 lines, no `as never` casts.
  */
-export interface Account<TMeta = Record<string, unknown>> {
+export interface Account<TCtxMeta = Record<string, unknown>> {
   /** Your platform's account_id. Maps to wire `Account.account_id`. */
   id: string;
 
@@ -87,27 +87,12 @@ export interface Account<TMeta = Record<string, unknown>> {
    * Put adapter state in `ctx_metadata`; treat it as fresh from your
    * `accounts.resolve()` on every request.
    */
-  ctx_metadata: TMeta;
+  ctx_metadata: TCtxMeta;
 
   /** Caller's authenticated principal. **Stripped before emitting on the wire.** */
   authInfo: AuthPrincipal;
 }
 
-/**
- * Request context passed to `AccountStore.resolve()` so adopters fronting
- * an upstream platform API can translate the auth principal into their
- * tenant model on resolution. Mirrors `ResolveAccountContext` on the
- * underlying `AdcpServerConfig`.
- *
- * `authInfo` is the OAuth-style token shape the framework extracts from
- * `serve({ authenticate })` — it's the FRAMEWORK auth shape, not the v6
- * `AuthPrincipal` (which is what the platform sets on the RESOLVED
- * `Account.authInfo`). The transition is intentional: the framework hands
- * the resolver the raw transport-level auth, and the resolver decides
- * what to persist on the Account as `AuthPrincipal`.
- *
- * @public
- */
 /**
  * The OAuth-style auth shape extracted by `serve({ authenticate })`. Threaded
  * to `accounts.resolve(ref, ctx)` and to the `tasks_get` custom-tool handler
@@ -135,6 +120,30 @@ export interface ResolveContext {
   toolName?: string;
 }
 
+/**
+ * Context passed to AccountStore tool methods that operate on a single
+ * resolved Account (today: `getAccountFinancials`). Threads the resolved
+ * `Account<TCtxMeta>` through so adopters can read `ctx.account.ctx_metadata`
+ * (auth tokens, upstream IDs, etc.) without re-resolving from the request.
+ *
+ * Strict superset of `ResolveContext`: same `authInfo` / `toolName` fields,
+ * plus the resolved account. Distinct type because `accounts.resolve()`
+ * produces the account and therefore cannot receive it on input.
+ *
+ * **NOT applicable to `reportUsage`.** `ReportUsageRequest.usage[]` carries
+ * a per-row `account: AccountReference`; a request can span multiple
+ * accounts. Pre-resolving a single `ctx.account` would misrepresent that
+ * shape. `reportUsage` keeps `ResolveContext` and per-row resolution is
+ * the adopter's responsibility (call `accounts.resolve` from inside the
+ * impl, once per row).
+ *
+ * @public
+ */
+export interface AccountToolContext<TCtxMeta = Record<string, unknown>> extends ResolveContext {
+  /** Resolved Account from `accounts.resolve()`. Populated by the framework before dispatch. */
+  account: Account<TCtxMeta>;
+}
+
 export interface AuthPrincipal {
   /** Stable identifier for the calling agent (e.g., `https://buyer.example.com/mcp`). */
   agent_url?: string;
@@ -142,13 +151,15 @@ export interface AuthPrincipal {
   kind: 'api_key' | 'oauth' | 'signature' | 'public';
   /** Bearer token / API key value. Platform-side don't log this. */
   token?: string;
+  /** Token expiry (ms since epoch). Set by `accounts.refreshToken` after a successful refresh. */
+  expiresAt?: number;
   /** OAuth scopes / API-key principal name. */
   principal?: string;
   /** Additional claims (jwt sub, kid, etc.). */
   claims?: Record<string, unknown>;
 }
 
-export interface AccountStore<TMeta = Record<string, unknown>> {
+export interface AccountStore<TCtxMeta = Record<string, unknown>> {
   /**
    * How buyers reference accounts on this platform.
    * - `'explicit'` — buyer passes `account_id` inline on every request (Snap,
@@ -201,7 +212,7 @@ export interface AccountStore<TMeta = Record<string, unknown>> {
    *   throw a generic exception. Framework maps to `SERVICE_UNAVAILABLE`
    *   so the buyer can retry.
    */
-  resolve(ref: AccountReference | undefined, ctx?: ResolveContext): Promise<Account<TMeta> | null>;
+  resolve(ref: AccountReference | undefined, ctx?: ResolveContext): Promise<Account<TCtxMeta> | null>;
 
   /**
    * sync_accounts API surface. Framework normalizes the wire request; platform
@@ -219,7 +230,7 @@ export interface AccountStore<TMeta = Record<string, unknown>> {
    *
    * **Optional.** Same rationale as `upsert` — stateless platforms can omit.
    */
-  list?(filter: AccountFilter & CursorRequest): Promise<CursorPage<Account<TMeta>>>;
+  list?(filter: AccountFilter & CursorRequest): Promise<CursorPage<Account<TCtxMeta>>>;
 
   /**
    * report_usage API surface. Operator-billed platforms accept usage rows
@@ -248,12 +259,71 @@ export interface AccountStore<TMeta = Record<string, unknown>> {
    * fixable rejection (`'PERMISSION_DENIED'` if the principal can't see
    * financials for the requested account).
    *
+   * `ctx.account` is the resolved `Account<TCtxMeta>` (framework calls
+   * `accounts.resolve(req.account)` first and threads the result in).
+   * Adopters fronting an upstream platform read tokens / upstream IDs from
+   * `ctx.account.ctx_metadata` without re-resolving.
+   *
    * `ctx.authInfo` carries the caller's OAuth principal (when
    * `serve({ authenticate })` is wired). Platforms that guard financials
    * per-principal use it to authorize the read — same pattern as
    * `accounts.resolve`.
    */
-  getAccountFinancials?(req: GetAccountFinancialsRequest, ctx?: ResolveContext): Promise<GetAccountFinancialsSuccess>;
+  getAccountFinancials?(
+    req: GetAccountFinancialsRequest,
+    ctx: AccountToolContext<TCtxMeta>
+  ): Promise<GetAccountFinancialsSuccess>;
+
+  /**
+   * Mid-request token refresh hook. Optional. Called by the framework when
+   * a platform method throws `AdcpError({ code: 'AUTH_REQUIRED' })` AND
+   * `refreshToken` is defined — the framework refreshes via this hook,
+   * mutates `account.authInfo.token` with the returned value, and retries
+   * the failing platform method exactly once.
+   *
+   * The reason string lets adopters distinguish trigger conditions:
+   *   - `'auth_required'` — platform method threw AUTH_REQUIRED in flight.
+   *
+   * Treat as an open string union: future values may be added. Adopters
+   * SHOULD switch exhaustively (`default: throw`) so behavior drift on
+   * minor SDK bumps fails loud rather than silently no-oping.
+   *
+   * **In-flight only.** The refreshed token is scoped to the current
+   * request — the framework does NOT echo it back to the buyer. Use this
+   * for adapters that front an upstream platform API (Snap, Meta,
+   * retail-media OAuth flows) where the SDK caches an upstream token
+   * server-side and the buyer's auth-to-this-agent is separate.
+   *
+   * **Account-object identity contract.** The framework mutates
+   * `account.authInfo.token` (and `expiresAt` if returned) on the Account
+   * passed in. Adopters who memoize / cache `Account` objects across
+   * requests MUST return a fresh copy from `accounts.resolve()` for each
+   * request — sharing a cached Account would leak the refreshed token to
+   * any subsequent caller that resolves the same id. Returning a new
+   * object literal per call (the canonical pattern) is safe.
+   *
+   * **Concurrency.** `refreshToken` MUST be safe under concurrent
+   * invocation on the same account — two parallel in-flight calls hitting
+   * AUTH_REQUIRED at once will both call this hook. Adopters whose
+   * upstream provider rate-limits refresh should coalesce internally
+   * (e.g., a per-account in-flight refresh promise). The framework does
+   * not coalesce.
+   *
+   * **Failure surfaces correctable AUTH_REQUIRED.** If `refreshToken`
+   * itself throws, the framework projects to `AUTH_REQUIRED` with
+   * `recovery: 'correctable'` and a fixed message (the inner exception
+   * text is NOT echoed on the wire — refresh failures routinely include
+   * upstream details that should not cross the trust boundary). Log inner
+   * details server-side. Don't use SERVICE_UNAVAILABLE — refresh failure
+   * means the upstream authorization is gone, not that the service is
+   * transiently down.
+   *
+   * **Expiry timestamp** (`expiresAt`, ms since epoch) is optional. When
+   * returned, the framework writes it to `account.authInfo.expiresAt` so
+   * adopters reading the resolved Account can branch on it (proactive
+   * refresh is not yet wired; reactive-only in v6.x).
+   */
+  refreshToken?(account: Account<TCtxMeta>, reason: 'auth_required'): Promise<{ token: string; expiresAt?: number }>;
 }
 
 /**
@@ -315,7 +385,7 @@ export type AdcpAccountStatus =
 import type { Account as WireAccount } from '../../types/tools.generated';
 
 /**
- * Project a framework `Account<TMeta>` to the wire `Account` shape.
+ * Project a framework `Account<TCtxMeta>` to the wire `Account` shape.
  *
  * Strips `metadata` and `authInfo` (framework-internal); renames `id` →
  * `account_id`; passes through `name`, `status`, `brand`, `operator`,
@@ -323,10 +393,10 @@ import type { Account as WireAccount } from '../../types/tools.generated';
  *
  * Used by the framework when emitting `list_accounts` and other wire
  * responses that include account data. Adopters never call this directly —
- * they return `Account<TMeta>` from `accounts.resolve` / `accounts.list`
+ * they return `Account<TCtxMeta>` from `accounts.resolve` / `accounts.list`
  * and the framework projects.
  */
-export function toWireAccount<TMeta>(account: Account<TMeta>): WireAccount {
+export function toWireAccount<TCtxMeta>(account: Account<TCtxMeta>): WireAccount {
   const wire: WireAccount = {
     account_id: account.id,
     name: account.name,

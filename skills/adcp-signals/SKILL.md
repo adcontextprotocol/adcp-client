@@ -13,10 +13,10 @@ This skill enables you to execute the AdCP Signals Protocol with signal agents. 
 
 The Signals Protocol provides 2 standardized tasks for discovering and activating targeting data:
 
-| Task              | Purpose                                 | Response Time |
-| ----------------- | --------------------------------------- | ------------- |
-| `get_signals`     | Discover signals using natural language | ~60s          |
-| `activate_signal` | Activate a signal on a platform/agent   | Minutes-Hours |
+| Task | Purpose | Response Time |
+|------|---------|---------------|
+| `get_signals` | Discover signals using natural language | ~60s |
+| `activate_signal` | Activate a signal on a platform/agent | Minutes-Hours |
 
 ## Typical Workflow
 
@@ -34,7 +34,6 @@ The Signals Protocol provides 2 standardized tasks for discovering and activatin
 Discover signals based on natural language description, with deployment status across platforms.
 
 **Request:**
-
 ```json
 {
   "signal_spec": "High-income households interested in luxury goods",
@@ -55,7 +54,6 @@ Discover signals based on natural language description, with deployment status a
 ```
 
 **Key fields:**
-
 - `signal_spec` (string, conditional): Natural language description of desired signals. Required unless `signal_ids` is provided.
 - `destinations` (array, optional): Filter signals to those activatable on specific agents/platforms. When omitted, returns all signals available on the current agent. Each item: `type`, `platform`/`agent_url`, optional `account`.
 - `countries` (array, optional): ISO 3166-1 alpha-2 country codes where signals will be used
@@ -63,7 +61,6 @@ Discover signals based on natural language description, with deployment status a
 - `max_results` (number, optional): Limit number of results
 
 **Deployment types:**
-
 ```json
 // DSP platform
 { "type": "platform", "platform": "the-trade-desk", "account": "agency-123" }
@@ -73,7 +70,6 @@ Discover signals based on natural language description, with deployment status a
 ```
 
 **Response contains:**
-
 - `signals`: Array of matching signals with:
   - `signal_agent_segment_id`: Use this in `activate_signal`
   - `name`, `description`: Human-readable signal info
@@ -89,7 +85,6 @@ Discover signals based on natural language description, with deployment status a
 Activate a signal for use on a specific platform or agent.
 
 **Request:**
-
 ```json
 {
   "signal_agent_segment_id": "luxury_auto_intenders",
@@ -104,12 +99,10 @@ Activate a signal for use on a specific platform or agent.
 ```
 
 **Key fields:**
-
 - `signal_agent_segment_id` (string, required): From `get_signals` response
 - `deployments` (array, required): Target deployment(s) with `type`, `platform`/`agent_url`, and optional `account`
 
 **Response contains:**
-
 - `deployments`: Array with activation results per target
   - `activation_key`: The key to use for targeting (segment ID or key-value pair)
   - `deployed_at`: ISO timestamp when activation completed
@@ -125,7 +118,6 @@ Activate a signal for use on a specific platform or agent.
 Signals can be activated on two types of targets:
 
 **DSP Platforms:**
-
 ```json
 {
   "type": "platform",
@@ -135,7 +127,6 @@ Signals can be activated on two types of targets:
 ```
 
 **Sales Agents:**
-
 ```json
 {
   "type": "agent",
@@ -148,7 +139,6 @@ Signals can be activated on two types of targets:
 When signals are live, the response includes an activation key for targeting:
 
 **Segment ID format (typical for DSPs):**
-
 ```json
 {
   "type": "segment_id",
@@ -157,7 +147,6 @@ When signals are live, the response includes an activation key for targeting:
 ```
 
 **Key-Value format (typical for sales agents):**
-
 ```json
 {
   "type": "key_value",
@@ -175,7 +164,6 @@ When signals are live, the response includes an activation key for targeting:
 ### Coverage Percentage
 
 Indicates signal reach relative to the agent's population:
-
 - 99%: Very broad signal (matches most identifiers)
 - 50%: Medium signal
 - 1%: Very niche signal
@@ -183,7 +171,6 @@ Indicates signal reach relative to the agent's population:
 ### Asynchronous Operations
 
 Signal activation may take time. Check the response:
-
 - `is_live: true` + `activation_key`: Ready to use immediately
 - `is_live: false` + `estimated_activation_duration_minutes`: Activation in progress
 
@@ -203,7 +190,6 @@ Common error codes:
 - `AGENT_ACCESS_DENIED`: Not authorized for this signal agent
 
 Error responses include:
-
 ```json
 {
   "errors": [

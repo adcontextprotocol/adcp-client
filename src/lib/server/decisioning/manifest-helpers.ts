@@ -69,14 +69,12 @@ export function requireAsset<T extends AssetInstanceType>(
   const asset = manifest?.assets?.[assetId];
   if (!asset) {
     throw new AdcpError('INVALID_REQUEST', {
-      recovery: 'correctable',
       message: messageOverride ?? `creative_manifest.assets.${assetId} is required`,
       field: `creative_manifest.assets.${assetId}`,
     });
   }
   if (asset.asset_type !== assetType) {
     throw new AdcpError('INVALID_REQUEST', {
-      recovery: 'correctable',
       message:
         messageOverride ??
         `creative_manifest.assets.${assetId} must be a ${assetType} asset (got asset_type='${asset.asset_type}')`,

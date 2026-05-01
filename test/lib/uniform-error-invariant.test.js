@@ -12,8 +12,8 @@ const { test, describe, after } = require('node:test');
 const assert = require('node:assert');
 
 const { runConformance } = require('../../dist/lib/conformance/index.js');
-const { serve, createAdcpServer, adcpError } = require('../../dist/lib/index.js');
-const { verifyApiKey } = require('../../dist/lib/server/index.js');
+const { serve, adcpError } = require('../../dist/lib/index.js');
+const { createAdcpServer, verifyApiKey } = require('../../dist/lib/server/legacy/v5/index.js');
 
 const TENANT_A_TOKEN = 'tenant_a_key';
 const TENANT_B_TOKEN = 'tenant_b_key';

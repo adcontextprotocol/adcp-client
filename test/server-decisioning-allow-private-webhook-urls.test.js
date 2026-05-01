@@ -134,13 +134,16 @@ describe('F11: allowPrivateWebhookUrls opt — relaxes loopback/private-IP guard
     const warnings = [];
     const originalWarn = console.warn;
     const originalEnv = process.env.NODE_ENV;
-    const originalAck = process.env.ADCP_DECISIONING_ALLOW_INMEMORY_TASKS;
+    const originalAckTasks = process.env.ADCP_DECISIONING_ALLOW_INMEMORY_TASKS;
+    const originalAckState = process.env.ADCP_DECISIONING_ALLOW_INMEMORY_STATE;
     console.warn = (...args) => warnings.push(args.join(' '));
     process.env.NODE_ENV = 'production';
-    // The in-memory task registry refuses to construct outside test/dev
-    // unless this ack is set. Production is fine for THIS test because we
-    // only care that the allowPrivateWebhookUrls warn fires.
+    // The in-memory task registry AND the in-memory state store both
+    // refuse to construct outside test/dev unless these acks are set.
+    // Production is fine for THIS test because we only care that the
+    // allowPrivateWebhookUrls warn fires.
     process.env.ADCP_DECISIONING_ALLOW_INMEMORY_TASKS = '1';
+    process.env.ADCP_DECISIONING_ALLOW_INMEMORY_STATE = '1';
     try {
       createAdcpServerFromPlatform(basePlatform(), {
         ...BASE_OPTS,
@@ -149,8 +152,10 @@ describe('F11: allowPrivateWebhookUrls opt — relaxes loopback/private-IP guard
     } finally {
       console.warn = originalWarn;
       process.env.NODE_ENV = originalEnv;
-      if (originalAck === undefined) delete process.env.ADCP_DECISIONING_ALLOW_INMEMORY_TASKS;
-      else process.env.ADCP_DECISIONING_ALLOW_INMEMORY_TASKS = originalAck;
+      if (originalAckTasks === undefined) delete process.env.ADCP_DECISIONING_ALLOW_INMEMORY_TASKS;
+      else process.env.ADCP_DECISIONING_ALLOW_INMEMORY_TASKS = originalAckTasks;
+      if (originalAckState === undefined) delete process.env.ADCP_DECISIONING_ALLOW_INMEMORY_STATE;
+      else process.env.ADCP_DECISIONING_ALLOW_INMEMORY_STATE = originalAckState;
     }
     const hit = warnings.find(w => w.includes('allowPrivateWebhookUrls'));
     assert.ok(hit, `expected footgun warning, got: ${JSON.stringify(warnings)}`);

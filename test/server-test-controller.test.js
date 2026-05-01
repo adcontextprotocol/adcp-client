@@ -884,7 +884,7 @@ describe('registerTestController context echo', () => {
 
 describe('registerTestController compliance_testing auto-emission', () => {
   it('sets capabilities.compliance_testing.scenarios from a TestControllerStoreFactory', () => {
-    const { createAdcpServer, registerTestController } = require('../dist/lib/server');
+    const { createAdcpServer, registerTestController } = require('../dist/lib/server/legacy/v5');
     const server = createAdcpServer({
       name: 't',
       version: '0.0.1',
@@ -902,7 +902,7 @@ describe('registerTestController compliance_testing auto-emission', () => {
   });
 
   it('infers scenarios from a plain TestControllerStore via method presence', () => {
-    const { createAdcpServer, registerTestController } = require('../dist/lib/server');
+    const { createAdcpServer, registerTestController } = require('../dist/lib/server/legacy/v5');
     const server = createAdcpServer({
       name: 't',
       version: '0.0.1',
@@ -919,7 +919,7 @@ describe('registerTestController compliance_testing auto-emission', () => {
   });
 
   it('does NOT add compliance_testing to supported_protocols (it is a capability block, not a protocol)', () => {
-    const { createAdcpServer, registerTestController } = require('../dist/lib/server');
+    const { createAdcpServer, registerTestController } = require('../dist/lib/server/legacy/v5');
     const server = createAdcpServer({
       name: 't',
       version: '0.0.1',
@@ -937,7 +937,7 @@ describe('registerTestController compliance_testing auto-emission', () => {
     // A server that wires two controllers (e.g. one for media-buy tools and
     // one for governance tools, sharing a session store) should advertise
     // the union of both scenario sets, not just the first registration's.
-    const { createAdcpServer, registerTestController } = require('../dist/lib/server');
+    const { createAdcpServer, registerTestController } = require('../dist/lib/server/legacy/v5');
     const server = createAdcpServer({
       name: 't',
       version: '0.0.1',

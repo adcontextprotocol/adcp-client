@@ -33,9 +33,9 @@ import type {
   ActivateSignalSuccess,
 } from '../../../types/tools.generated';
 
-type Ctx<TMeta> = RequestContext<Account<TMeta>>;
+type Ctx<TCtxMeta> = RequestContext<Account<TCtxMeta>>;
 
-export interface SignalsPlatform<TMeta = Record<string, unknown>> {
+export interface SignalsPlatform<TCtxMeta = Record<string, unknown>> {
   /**
    * Catalog discovery. Sync — query your signal index, return signals
    * matching the buyer's filters (industry, intent type, audience size,
@@ -46,7 +46,7 @@ export interface SignalsPlatform<TMeta = Record<string, unknown>> {
    * `'POLICY_VIOLATION'` if the buyer doesn't have rights to the data
    * category they're requesting).
    */
-  getSignals(req: GetSignalsRequest, ctx: Ctx<TMeta>): Promise<GetSignalsResponse>;
+  getSignals(req: GetSignalsRequest, ctx: Ctx<TCtxMeta>): Promise<GetSignalsResponse>;
 
   /**
    * Provision a signal onto one or more destination platforms (Snap,
@@ -67,5 +67,5 @@ export interface SignalsPlatform<TMeta = Record<string, unknown>> {
    *   - `'POLICY_VIOLATION'` — buyer lacks rights to activate this data
    *   - `'INVALID_REQUEST'` — missing or unrecognized destination
    */
-  activateSignal(req: ActivateSignalRequest, ctx: Ctx<TMeta>): Promise<ActivateSignalSuccess>;
+  activateSignal(req: ActivateSignalRequest, ctx: Ctx<TCtxMeta>): Promise<ActivateSignalSuccess>;
 }

@@ -12,6 +12,51 @@
 > migrators move one specialism at a time without rewriting the whole
 > agent.
 
+## tl;dr — five breaking changes to search-replace
+
+If you've been on the field for 2-3 weeks and skipping rounds, these
+are the cumulative breaking changes you face on `npm update @adcp/sdk`.
+Each is mechanical; the full list is what makes the major-version bump
+feel archaeological if you only see them all at once.
+
+| # | What | Search → Replace | Why |
+|---|---|---|---|
+| 1 | `Account.metadata` → `Account.ctx_metadata` | `\.metadata` (in your `accounts.resolve`/`upsert`/`list` returns and any `ctx.account.metadata` reads) → `.ctx_metadata` | Naming consistency with the resource-level `ctx_metadata` substrate. The wire field was renamed pre-GA (5a490534). |
+| 2 | `@adcp/sdk/server/decisioning` → `@adcp/sdk/server` | `from '@adcp/sdk/server/decisioning'` → `from '@adcp/sdk/server'` | Decisioning runtime promoted to the canonical server entry point. The old subpath is no longer published. |
+| 3 | `createAdcpServer` → `createAdcpServerFromPlatform` (or the legacy subpath) | `import { createAdcpServer } from '@adcp/sdk'` (or `'@adcp/sdk/server'`) → `import { createAdcpServer } from '@adcp/sdk/server/legacy/v5'` for in-flight migrations; new code reaches for `createAdcpServerFromPlatform` from `@adcp/sdk/server` | **Hard-removed in v6.0** — the top-level and `@adcp/sdk/server` re-exports are gone. Existing v5 adopters get a runtime `TypeError: createAdcpServer is not a function` until they pin to `@adcp/sdk/server/legacy/v5`. The legacy subpath re-exports the full top-level surface (`export * from '../..'`), so the migration is a single import-line swap. New code should reach for `createAdcpServerFromPlatform` to get compile-time specialism enforcement, capability projection, idempotency, signing, async tasks, and status normalization pre-wired. See § Step-by-step migration below for the full v5 → v6 rewrite. |
+| 4 | `TMeta` → `TCtxMeta` generic param | `<TConfig, TMeta>` → `<TConfig, TCtxMeta>` (purely internal — only matters if you reference the generic by name in your own type aliases) | Type-level rename to align with the `ctx_metadata` field name. No runtime impact; default inference still binds at the call site. |
+| 5 | `getMediaBuys` is now required on `SalesPlatform` | Add `getMediaBuys: async () => ({ media_buys: [] })` if your seller doesn't model persistent media buys (write-only push-channel adopters return an empty array) | Compile-time enforcement that every seller can be enumerated. Previously optional; missing it now fails the typecheck. |
+
+### One-shot search-replace for greenfield 5.x → 6.0
+
+```sh
+# Rename Account.metadata → Account.ctx_metadata in your handler bodies.
+# Verify each hit by hand — only Account references should change; do NOT
+# blindly rewrite every `.metadata` (e.g., `package.metadata` is unrelated).
+grep -rn '\.metadata' src/ | grep -i 'account\|Account'
+
+# Move imports to the new server entry.
+sed -i '' "s|from '@adcp/sdk/server/decisioning'|from '@adcp/sdk/server'|g" src/**/*.ts
+
+# In-flight v5 stayers: pin to the legacy subpath. Cover both old import
+# paths — `@adcp/sdk` (top-level) and `@adcp/sdk/server` (subpath) — both
+# of which lost the export in v6.0.
+sed -i '' "s|import { createAdcpServer } from '@adcp/sdk'|import { createAdcpServer } from '@adcp/sdk/server/legacy/v5'|g" src/**/*.ts
+sed -i '' "s|import { createAdcpServer } from '@adcp/sdk/server'|import { createAdcpServer } from '@adcp/sdk/server/legacy/v5'|g" src/**/*.ts
+# If your import was a multi-name destructure (e.g.
+# `import { createAdcpServer, serve } from '@adcp/sdk/server'`), the legacy
+# subpath re-exports the full top-level surface — split the import or
+# point the whole line at `@adcp/sdk/server/legacy/v5`. Both work.
+
+# Add the getMediaBuys stub to any sales platforms that don't have it.
+# Manual — grep for SalesPlatform implementations and add the no-op.
+grep -rn 'sales:' src/ --include='*.ts' | grep -v 'getMediaBuys'
+```
+
+Adopters who already split per-call rounds (rounds 11–14 readers) have
+applied each of these in isolation; this section is for adopters who
+skipped to GA and need the cumulative view.
+
 ## Why migrate?
 
 v6.0 collapses the v5 handler-bag (per-domain `mediaBuy` / `creative` /
@@ -234,6 +279,38 @@ createAdcpServerFromPlatform(platform, {
 
 ## Common gotchas
 
+- **Auto-hydration is a hint, not a source-of-truth check.** When
+  `update_media_buy { media_buy_id: 'mb_unknown' }` arrives, the
+  framework looks up `mb_unknown` in the ctx_metadata cache and:
+  1. Hit → attaches `req.media_buy` with the wire shape + `ctx_metadata`.
+  2. Miss → leaves `req.media_buy` undefined and **runs the handler
+     anyway**.
+
+  The framework does NOT throw `MEDIA_BUY_NOT_FOUND` / `PRODUCT_NOT_FOUND`
+  / `SIGNAL_NOT_FOUND` / `RIGHTS_NOT_FOUND` on a miss — that would force
+  every adopter to pre-warm the cache before serving traffic, which is
+  the wrong default for a hint-based cache. Causes of a miss:
+
+  1. Buyer hasn't called the discovery verb in this session (cold start,
+     fresh tenant, post-restart). Hydration is purely additive context.
+  2. Cache evicted (TTL, LRU). Same.
+  3. Buyer truly referenced an unknown id. The publisher's DB is the
+     source of truth and SHOULD reject in the handler.
+
+  Adopters who want strict existence checks implement them in the
+  handler:
+
+  ```ts
+  updateMediaBuy: async (id, patch, ctx) => {
+    if (!patch.media_buy && !(await db.findMediaBuy(id))) {
+      throw new MediaBuyNotFoundError({ message: `media_buy ${id} not found` });
+    }
+    // ...
+  }
+  ```
+
+  Same pattern for `req.signal` (activate_signal), `req.rights`
+  (acquire_rights), `req.creative` (provide_performance_feedback).
 - **`accounts.resolve()` is mandatory.** Even single-tenant agents must
   declare `resolution: 'derived'` and return a synthetic singleton. The
   framework calls `resolve()` on every request.
@@ -304,6 +381,57 @@ createAdcpServerFromPlatform(platform, {
   });
   ```
   Standard one-brand-per-host deployments don't need the override.
+- **`TenantConfig.signingKey` auto-wires into webhook signing.** When
+  set, the registry plumbs `signingKey` through to
+  `serverOptions.webhooks.signerKey` automatically — adopters set the
+  key once on `TenantConfig` and outbound webhook deliveries are RFC
+  9421-signed by default. Strict on `adcp_use`: the JWK MUST carry
+  `adcp_use: "webhook-signing"` per AdCP key-purpose discriminator
+  (adcp#2423). Register-time error if missing or mismatched. Adopters
+  who wire their own webhook signer on `serverOptions.webhooks.signerKey`
+  / `signerProvider` pass through unaffected — explicit config wins
+  and auto-wiring is skipped (e.g., KMS-backed signing, distinct keys
+  per tenant). Supported JWK shapes: Ed25519 (`kty=OKP, crv=Ed25519`)
+  and ECDSA P-256 (`kty=EC, crv=P-256`); RSA / EC P-384 throw with a
+  remediation hint pointing at `docs/guides/SIGNING-GUIDE.md`.
+- **`TenantConfig.signingKey` is optional in 3.x; 4.0 mandates it.**
+  AdCP 3.x treats request signing as optional-but-recommended (CLAUDE.md
+  § Protocol-Wide Requirements; `signed-requests` is a preview
+  specialism). Adopters spiking the SDK before standing up KMS or
+  publishing brand.json can omit `signingKey` and the registry skips
+  JWKS validation entirely — the tenant transitions straight from
+  `pending` to `healthy` with `reason: 'unsigned (no signingKey)'`.
+  4.0 will flip this to required; until then it's a soft launch path:
+  ```ts
+  registry.register('dev-tenant', {
+    agentUrl: 'https://dev.example.com',
+    // signingKey omitted — JWKS validation is skipped, tenant goes healthy
+    platform: ...,
+  });
+  ```
+  For local dev with the signing path exercised but no brand.json
+  endpoint stood up yet, pair `createSelfSignedTenantKey()` (Ed25519
+  keypair generator) with `createNoopJwksValidator()` (gated to
+  `NODE_ENV` ∈ {`test`, `development`} or `ADCP_NOOP_JWKS_ACK=1`):
+  ```ts
+  import {
+    createTenantRegistry,
+    createSelfSignedTenantKey,
+    createNoopJwksValidator,
+  } from '@adcp/sdk/server';
+
+  const key = await createSelfSignedTenantKey({ keyId: 'dev-key-1' });
+  const registry = createTenantRegistry({
+    jwksValidator: createNoopJwksValidator(),
+    defaultServerOptions: { name: 'dev', version: '0.0.0' },
+  });
+  registry.register('dev', {
+    agentUrl: 'https://dev.example.com',
+    signingKey: key,
+    platform: ...,
+  });
+  ```
+  Production keeps the default validator and publishes brand.json.
 - **`TenantRegistry.get(tenantId)` for direct lookup.** When your route
   layer binds tenantId before calling into the registry (path-routed
   multi-tenant deployments), `get(tenantId)` returns
@@ -342,6 +470,120 @@ createAdcpServerFromPlatform(platform, {
   stays inside the SDK's own `node_modules`. Once the SDK is consumed
   via published tarball (`npm install @adcp/sdk@x.y.z`), this
   disappears — link mode is the only setup that triggers it.
+- **`zod` is now a required peer dependency** (`^4.1.5` in 6.0.1; was
+  `^4.1.0` in 6.0.0 — bumped to match the codegen tools' floors). The
+  SDK's `ZodSchema` types must resolve to the same `zod` instance the
+  consumer uses; otherwise zod 4's `version.minor` literal type tag
+  makes nominally-identical schemas incompatible at the type level.
+  The npm-tarball install path picks this up automatically (npm 7+
+  installs peer deps); `npm link` / `pnpm link` consumers must run
+  `pnpm dedupe` (or remove the linked SDK's nested `node_modules/zod`)
+  so a single `zod` resolves at the consumer's `node_modules` root.
+  Empirically reported by an adopter: 48 type errors and a 4 GB tsc
+  OOM with two zod copies (4.1.12 vs 4.3.6 in the linked SDK).
+  - **If you see `Cannot find module 'zod'` at server boot**, your
+    package manager didn't install the peer dep automatically (npm 6,
+    `--legacy-peer-deps`, or pnpm without the auto-install setting).
+    Install explicitly: `npm install zod@^4.1.5` (or `pnpm add zod@^4.1.5`).
+    The SDK can't catch this at runtime — `import { z } from 'zod'`
+    resolves at module load, before any SDK code runs.
+- **zod 4.3.0 `.partial()` regression on `.refine()` schemas.** Zod
+  4.3.0 made `.partial()` throw at runtime when the source schema
+  carries a `.refine(...)`. SDK 6.0 builds against `zod@4.1.x` to
+  avoid silently bumping consumers into this hazard, but consumers
+  whose own `zod` resolves to 4.3+ will hit the throw on any local
+  schema that combines `.partial()` + `.refine()`. Workaround: split
+  the refine into a follow-up `.superRefine` after the `.partial()`,
+  or pin the consumer-side `zod` to `<4.3.0` until you've audited
+  affected schemas. Not an SDK bug — flagging here so adopters
+  migrating off 5.x see the symptom in context.
+- **`Format['assets']` is narrower in 6.0 — bare casts from
+  `Record<string, unknown>[]` no longer compile.** v5 accepted
+  `assets as Format['assets']` from any record-shape; v6's
+  `(BaseIndividualAsset | RepeatableGroupAsset)[]` is tight enough
+  that TypeScript flags the cast as "neither type sufficiently
+  overlaps with the other." Two ways out:
+  - Refactor the converter to return the typed shape directly
+    (read the `BaseIndividualAsset` / `RepeatableGroupAsset` exports
+    from `@adcp/sdk`, build into them rather than into
+    `Record<string, unknown>`). This is the long-term cleaner path.
+  - Mechanical: change `as Format['assets']` to
+    `as unknown as Format['assets']`. Compiles. Only meaningful if
+    your converter has been correct on shape all along — which it
+    likely has, since the wire-level shape didn't change between
+    5.x and 6.0.
+  Only adopters with their own v4/v5-era asset-converter helpers
+  hit this; SDK-typed call sites already use the narrowed shape.
+
+## Auto-hydration error contract
+
+Auto-hydration is on for four mutating verbs in 6.0:
+`createMediaBuy` (per-package `pkg.product`), `updateMediaBuy`
+(`req.media_buy`), `activateSignal` (`req.signal`), and
+`acquireRights` (`req.rights`). The framework looks up each
+referenced id in the `CtxMetadataStore` and attaches the cached
+wire shape (plus `ctx_metadata`) onto the request as a
+non-enumerable field. If you ship `5.x` adapters that did the
+same lookup by hand, you can drop the publisher-side
+existence-check round-trip — but only if you understand the
+contract on a miss.
+
+**Behavior on a miss.** The cache is a *hint*, not source-of-
+truth. When `getEntry(account, kind, id)` returns nothing, the
+framework leaves the attached field undefined and **the handler
+runs anyway**. The publisher's own DB stays authoritative for
+"does this id exist?"
+
+The framework deliberately does NOT throw `PRODUCT_NOT_FOUND` /
+`MEDIA_BUY_NOT_FOUND` on a hydration miss because a miss can mean
+any of:
+
+1. The buyer never called the discovery verb in this session
+   (cold start, fresh tenant). Hydration is purely additive
+   context.
+2. The cache evicted (TTL, LRU). Same: publisher's DB is the
+   source of truth.
+3. The buyer truly referenced an unknown id. The publisher SHOULD
+   reject — this is the existence check that belongs in the
+   handler.
+
+The framework cannot distinguish (1)/(2) from (3) without
+consulting the publisher's DB, which is exactly what the handler
+does. Erroring at the framework layer would force every adopter
+to manage cache warmth or pre-load every resource into the cache
+before serving traffic — wrong default for a hint cache.
+
+**Handler-side existence check pattern:**
+
+```ts
+import { MediaBuyNotFoundError } from '@adcp/sdk/server';
+// — or PackageNotFoundError, ProductNotFoundError, CreativeNotFoundError, etc.
+// from `@adcp/sdk/server/decisioning/errors-typed`. Typed classes auto-map
+// to their wire error code with `recovery: 'terminal'` baked in; throw
+// these instead of `new AdcpError(...)` for spec-defined not-found cases.
+
+updateMediaBuy: async (id, patch, ctx) => {
+  // patch.media_buy is set by hydration on hit, undefined on miss.
+  // Fall through to the publisher's DB on miss.
+  const buy = patch.media_buy ?? (await db.findMediaBuy(id));
+  if (!buy) {
+    throw new MediaBuyNotFoundError({ message: `media_buy ${id} not found` });
+  }
+  // ... apply patch ...
+}
+```
+
+**The `__adcp_hydrated__` marker.** Hydrated fields carry a
+non-enumerable `__adcp_hydrated__: true` so handler authors and
+middleware can disambiguate "publisher passed it" from "framework
+attached it." The hydrated field is **advisory context only**;
+the wire contract is defined by the spec's request fields, not by
+what the SDK happens to attach.
+
+**Store-fetch failures** (Postgres unavailable, transient network)
+are logged and swallowed. Hydration must NEVER break a successful
+dispatch — same posture as a cache miss. The handler still runs;
+your DB-side existence check still gates the operation.
 
 ## What's deferred to v6.1+
 

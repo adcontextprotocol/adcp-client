@@ -42,7 +42,7 @@ read `docs/migration-5.x-to-6.x.md` for the platform path — and the
 A minimal signals agent using `createAdcpServer`:
 
 ```typescript
-import { createAdcpServer, serve } from '@adcp/sdk';
+import { createAdcpServer, serve } from '@adcp/sdk/server/legacy/v5';
 
 serve(() => createAdcpServer({
   name: 'My Signals Agent',
@@ -87,7 +87,7 @@ npx @adcp/sdk@latest http://localhost:3001/mcp get_signals '{}'   # call get_sig
 The declarative way to build AdCP agents. You provide domain-grouped handler functions, and the framework handles schema validation, response formatting, account resolution, capabilities generation, and error catching.
 
 ```typescript
-import { createAdcpServer, serve } from '@adcp/sdk';
+import { createAdcpServer, serve } from '@adcp/sdk/server/legacy/v5';
 
 serve(() => createAdcpServer({
   name: 'My Publisher',
@@ -129,7 +129,7 @@ MCP is the default transport (`serve({ server: adcp })`). To additionally expose
 
 ```typescript
 import express from 'express';
-import { createAdcpServer, serve, createA2AAdapter } from '@adcp/sdk';
+import { createAdcpServer, serve, createA2AAdapter } from '@adcp/sdk/server/legacy/v5';
 
 const adcp = createAdcpServer({
   mediaBuy: { getProducts: async () => ({ products: [] }) },
@@ -362,7 +362,7 @@ The same validator runs on the `AdcpClient` side — storyboards and third-party
 If your agent receives signed requests from buyers, verify them using `requireAuthenticatedOrSigned()` — one call that bundles signature verification with credential fallback and `requiredFor` enforcement:
 
 ```typescript
-import { createAdcpServer, serve } from '@adcp/sdk';
+import { createAdcpServer, serve } from '@adcp/sdk/server/legacy/v5';
 import {
   verifySignatureAsAuthenticator,
   verifyApiKey,
@@ -522,6 +522,8 @@ return adcpError('SERVICE_UNAVAILABLE', 'Try again in 30 seconds');
 return adcpError('ACCOUNT_SUSPENDED', 'Contact support');
 ```
 
+> **Heads-up for buyer-agent authors**: four codes are spec-`correctable` but operator-semantically human-escalate — don't auto-mutate-and-retry on `POLICY_VIOLATION`, `COMPLIANCE_UNSATISFIED`, `GOVERNANCE_DENIED`, or `AUTH_REQUIRED`. Surface to the user. (`AUTH_REQUIRED` conflates missing-creds with revoked-creds; until [adcontextprotocol/adcp#3730](https://github.com/adcontextprotocol/adcp/issues/3730) splits these, treat as escalate.) See `skills/call-adcp-agent/SKILL.md` for the full callout.
+
 See `docs/llms.txt` for the full error code table with recovery classifications.
 
 ### Storyboards
@@ -542,7 +544,7 @@ Key storyboards for server-side builders:
 The `serve()` helper handles HTTP transport setup. Pass it a factory function that returns a configured `McpServer`:
 
 ```typescript
-import { createAdcpServer, serve } from '@adcp/sdk';
+import { createAdcpServer, serve } from '@adcp/sdk/server/legacy/v5';
 
 serve(() => createAdcpServer({ name: 'My Agent', version: '1.0.0', /* handlers */ }));
 serve(() => createAdcpServer({ /* ... */ }), { port: 8080 });          // custom port

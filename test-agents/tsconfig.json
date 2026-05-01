@@ -7,7 +7,10 @@
     "skipLibCheck": true,
     "outDir": "dist",
     "paths": {
-      "@adcp/sdk": ["../dist/lib/index.d.ts"]
+      "@adcp/sdk": ["../dist/lib/index.d.ts"],
+      "@adcp/sdk/server": ["../dist/lib/server/index.d.ts"],
+      "@adcp/sdk/server/legacy/v5": ["../dist/lib/server/legacy/v5/index.d.ts"],
+      "@adcp/sdk/signing": ["../dist/lib/signing/index.d.ts"]
     }
   },
   "include": ["./*.ts"]

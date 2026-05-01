@@ -27,6 +27,8 @@
 import type { DecisioningPlatform, RequiredPlatformsFor, RequiredCapabilitiesFor } from './platform';
 import type { DecisioningAdcpServer, CreateAdcpServerFromPlatformOptions } from './runtime/from-platform';
 import { createAdcpServerFromPlatform } from './runtime/from-platform';
+import type { SignerKey } from '../../signing/signer';
+import type { AdcpJsonWebKey } from '../../signing/types';
 
 // ---------------------------------------------------------------------------
 // Public types
@@ -38,9 +40,31 @@ export interface TenantSigningKey {
   /**
    * JWK form of the public key. MUST appear in the JWKS at
    * `{agentUrl}/.well-known/brand.json` for the tenant to validate.
+   *
+   * **`adcp_use` requirement.** The JWK MUST carry
+   * `adcp_use: "webhook-signing"` for the registry to auto-wire this
+   * key into outbound webhook signing. Per AdCP, request-signing and
+   * webhook-signing keys MUST be distinct (key-purpose discriminator,
+   * adcp#2423) — a key intended for inbound request-signature
+   * verification CANNOT double as a webhook-signing key. If you have
+   * both purposes, register two tenants OR wire the request-signing
+   * verifier separately on `serverOptions.signedRequests` and put only
+   * the webhook-signing key on `signingKey`.
+   *
+   * Set with: `publicJwk: { ...jwk, adcp_use: 'webhook-signing' }`.
+   * `createSelfSignedTenantKey()` sets it for you.
    */
   publicJwk: JsonWebKey;
-  /** Private JWK used to sign outbound responses (RFC 9421). */
+  /**
+   * Private JWK used to sign outbound webhooks (RFC 9421). MUST carry
+   * `adcp_use: "webhook-signing"`. The registry's `buildServer` plumbs
+   * this into `serverOptions.webhooks.signerKey` automatically — set
+   * the key once on `signingKey` and outbound webhook deliveries are
+   * RFC 9421-signed by default. Adopters who want a different webhook
+   * key (or don't want auto-wiring) explicitly set
+   * `serverOptions.webhooks.signerKey` / `signerProvider`; the explicit
+   * config wins and auto-wiring is skipped.
+   */
   privateJwk: JsonWebKey;
 }
 
@@ -50,8 +74,31 @@ export interface TenantConfig<P extends DecisioningPlatform = DecisioningPlatfor
    * `https://acme-tv.example.com`). Used for host-route matching and —
    * unless `jwksUrl` overrides — as the JWKS fetch base (the default
    * validator computes `{host}/.well-known/brand.json` from this URL).
+   *
+   * For deployments that accept traffic on multiple URLs simultaneously
+   * (DNS cutover, vanity domains, internal + public hostname), use
+   * {@link agentUrls} instead — `agentUrl` is the single-URL convenience
+   * form. When both are set, `agentUrls` wins and `agentUrl` is ignored.
    */
-  agentUrl: string;
+  agentUrl?: string;
+  /**
+   * Multiple public URLs this tenant accepts traffic on. Use for cutover
+   * windows where `old.example.com/mcp` and `new.example.com/mcp` must
+   * both resolve to the same tenant for a window before DNS or buyer
+   * caches catch up. The first URL is the **canonical** one — JWKS
+   * validation uses it (and any `jwksUrl` override applies to all URLs).
+   * Additional URLs are aliases; they share the same brand and signing
+   * key.
+   *
+   * Adopters with two truly distinct brands serving from one platform
+   * should register separate tenants — each brand has its own JWKS and
+   * signing identity. `agentUrls` is for the single-brand-multiple-URLs
+   * case.
+   *
+   * MUST contain at least one URL when set. Exactly one of `agentUrl` or
+   * `agentUrls` must be provided; supplying both is a register() error.
+   */
+  agentUrls?: string[];
   /**
    * Override the JWKS fetch URL for this tenant. Use this when the
    * tenant's brand.json doesn't sit at the host root — i.e., a single
@@ -68,8 +115,30 @@ export interface TenantConfig<P extends DecisioningPlatform = DecisioningPlatfor
    * field via the `jwksUrl` argument on `JwksValidator.validate`.
    */
   jwksUrl?: string;
-  /** Signing keypair for RFC 9421 response signing. */
-  signingKey: TenantSigningKey;
+  /**
+   * Signing keypair for RFC 9421 response signing. **Optional in 3.x;
+   * mandated in 4.0.**
+   *
+   * When set, the registry validates `publicJwk` appears in the tenant's
+   * published JWKS at `{agentUrl}/.well-known/brand.json` (or `jwksUrl`
+   * if overridden) before transitioning the tenant to `healthy`.
+   *
+   * When omitted, JWKS validation is skipped entirely — the tenant
+   * transitions directly from `pending` to `healthy` on register(), with
+   * `reason: 'unsigned (no signingKey)'`. AdCP 3.x treats request signing
+   * as optional, so adopters spiking the SDK before standing up KMS or
+   * publishing brand.json can ship without signing material. Buyers MUST
+   * NOT break when an agent doesn't sign in 3.x — that's covered by the
+   * "tolerate Signature headers" baseline regardless of whether the
+   * agent itself signs.
+   *
+   * For local dev with signing enabled, pair `createSelfSignedTenantKey()`
+   * (generates an Ed25519 keypair) with `createNoopJwksValidator()`
+   * (skips the brand.json roundtrip in dev/test). Production adopters
+   * keep the default validator and publish the public half via
+   * brand.json.
+   */
+  signingKey?: TenantSigningKey;
   /** The DecisioningPlatform impl for this tenant. */
   platform: P &
     RequiredPlatformsFor<P['capabilities']['specialisms'][number]> &
@@ -104,7 +173,21 @@ export type TenantHealth = 'pending' | 'healthy' | 'unverified' | 'disabled';
 
 export interface TenantStatus {
   tenantId: string;
+  /**
+   * Canonical URL — the first entry in the tenant's `agentUrls` (or the
+   * single `agentUrl` value). JWKS validates against this URL; ops
+   * dashboards page on this field for the primary identity.
+   */
   agentUrl: string;
+  /**
+   * Full URL list when the tenant was registered with `agentUrls[]`.
+   * Single-URL tenants get a one-element array. Ops dashboards iterate
+   * this field to show every URL serving the tenant; required so admins
+   * can detect stale aliases or accidental host overlap with another
+   * tenant (#1097 follow-up — collision check below errors at register
+   * time, but the operator still wants visibility into what's live).
+   */
+  agentUrls: readonly string[];
   health: TenantHealth;
   /** Reason for unverified/disabled state. */
   reason?: string;
@@ -353,6 +436,171 @@ function isMatchingKey(jwk: unknown, expected: JsonWebKey, expectedKid: string):
 }
 
 // ---------------------------------------------------------------------------
+// Self-signed key + no-op validator helpers (3.x adoption ergonomics)
+// ---------------------------------------------------------------------------
+
+/**
+ * Generate an Ed25519 keypair suitable for `TenantConfig.signingKey`.
+ *
+ * Convenience for adopters spiking the SDK before standing up KMS or
+ * publishing brand.json. AdCP 3.x treats request signing as optional, so
+ * `TenantConfig.signingKey` is itself optional — but adopters who DO
+ * want to exercise the signing path (storyboards, signed-requests
+ * grader, end-to-end tests) need a working key without the operational
+ * lift of a real KMS.
+ *
+ * Pair with `createNoopJwksValidator()` to skip the brand.json
+ * roundtrip in dev/test, OR publish the returned `publicJwk` at
+ * `{agentUrl}/.well-known/brand.json` (under `jwks.keys[]`) and use the
+ * default validator unchanged.
+ *
+ * **Production**: don't generate signing material in-process. Adopt a
+ * KMS-backed loader (HashiCorp Vault, AWS KMS, GCP Secret Manager) — a
+ * process compromise leaks an in-memory privateJwk and the only remedy
+ * is rotation across every counterparty cache.
+ *
+ * @param opts.keyId Optional `kid` for the key. Defaults to a
+ *   timestamped value (`self-signed-{ISO date}`). Stable across restarts
+ *   only if you pass a stable `keyId`.
+ */
+export async function createSelfSignedTenantKey(opts?: { keyId?: string }): Promise<TenantSigningKey> {
+  // Lazy import — `jose` is a runtime dep, but the import-cost is real
+  // and most adopters never call this. Keep the registry's hot path
+  // (register / resolve) free of jose.
+  const { generateKeyPair, exportJWK } = await import('jose');
+  const { publicKey, privateKey } = await generateKeyPair('EdDSA', { crv: 'Ed25519', extractable: true });
+  const rawPublic = (await exportJWK(publicKey)) as JsonWebKey;
+  const rawPrivate = (await exportJWK(privateKey)) as JsonWebKey;
+  const keyId = opts?.keyId ?? `self-signed-${new Date().toISOString().slice(0, 10)}`;
+  // Tag both halves with `adcp_use: "webhook-signing"`. The registry's
+  // auto-wire path requires this tag (assertWebhookSigningUse below);
+  // setting it on the helper output means adopters get a working
+  // signing posture out of the box.
+  const publicJwk: JsonWebKey = { ...rawPublic, adcp_use: 'webhook-signing' } as JsonWebKey;
+  const privateJwk: JsonWebKey = { ...rawPrivate, adcp_use: 'webhook-signing' } as JsonWebKey;
+  return { keyId, publicJwk, privateJwk };
+}
+
+/**
+ * No-op JWKS validator that always returns `{ ok: true }`. Use ONLY in
+ * dev/test when you've set `signingKey` (e.g., via
+ * `createSelfSignedTenantKey()`) but haven't published brand.json yet —
+ * this skips the JWKS roundtrip so tenants reach `healthy` without a
+ * real `/.well-known/brand.json` endpoint.
+ *
+ * **Refuses to construct outside `NODE_ENV` ∈ {`'test'`, `'development'`}**
+ * unless the operator sets `ADCP_NOOP_JWKS_ACK=1` to explicitly
+ * acknowledge the risk. Mirrors the `idempotency: 'disabled'` allowlist
+ * pattern — `NODE_ENV` defaults to unset in raw Lambda / custom
+ * containers / many K8s deployments, so a `=== 'production'` check
+ * would no-op in exactly the environments where a silent skip-validation
+ * start is most dangerous.
+ *
+ * The ack value MUST be the literal string `'1'`. Truthy lookalikes
+ * (`'true'`, `'yes'`) intentionally don't satisfy the gate to prevent
+ * copy-paste typos.
+ *
+ * In production, leave the registry's default validator wired and
+ * publish brand.json. Or omit `signingKey` entirely (`TenantConfig`
+ * makes it optional in 3.x), which skips JWKS validation without
+ * needing this helper.
+ */
+export function createNoopJwksValidator(): JwksValidator {
+  const env = process.env.NODE_ENV;
+  const acknowledged = process.env.ADCP_NOOP_JWKS_ACK === '1';
+  const isAllowlistedDevEnv = env === 'test' || env === 'development';
+  if (!isAllowlistedDevEnv && !acknowledged) {
+    throw new Error(
+      'createNoopJwksValidator: refuses to construct with NODE_ENV=' +
+        (env === undefined ? '<unset>' : JSON.stringify(env)) +
+        '. The no-op validator skips JWKS verification, so a tenant whose published brand.json does not actually ' +
+        'contain the configured signingKey would reach `healthy` and serve unverifiable signed responses. ' +
+        'The SDK only allows it under NODE_ENV=test or NODE_ENV=development by default. Either: ' +
+        '(a) use the default validator (createDefaultJwksValidator) and publish a real brand.json, ' +
+        '(b) omit signingKey from TenantConfig — JWKS validation is skipped entirely for unsigned tenants in 3.x, ' +
+        '(c) set NODE_ENV=test or NODE_ENV=development if this is a dev-only environment, or ' +
+        '(d) set ADCP_NOOP_JWKS_ACK=1 to explicitly acknowledge the risk for non-standard environments.'
+    );
+  }
+  // eslint-disable-next-line no-console
+  console.warn(
+    '[adcp] createNoopJwksValidator: JWKS validation is DISABLED for this registry. ' +
+      'Tenants will reach `healthy` without a brand.json roundtrip. Use only in dev/test.'
+  );
+  return {
+    async validate(): Promise<JwksValidationResult> {
+      return { ok: true };
+    },
+  };
+}
+
+// ---------------------------------------------------------------------------
+// Webhook auto-wire — convert TenantSigningKey to a SignerKey the framework's
+// webhook emitter understands. Strict on `adcp_use` per AdCP key-purpose
+// discriminator (adcp#2423).
+// ---------------------------------------------------------------------------
+
+/**
+ * Derive the RFC 9421 signing algorithm from JWK shape. AdCP webhook
+ * signing supports Ed25519 (kty=OKP, crv=Ed25519) and ECDSA P-256
+ * (kty=EC, crv=P-256). Anything else throws — RSA / EC P-384 / etc.
+ * are not in the AdCP signing-algorithm set.
+ */
+function deriveSigningAlg(jwk: JsonWebKey): 'ed25519' | 'ecdsa-p256-sha256' {
+  if (jwk.kty === 'OKP' && jwk.crv === 'Ed25519') return 'ed25519';
+  if (jwk.kty === 'EC' && jwk.crv === 'P-256') return 'ecdsa-p256-sha256';
+  throw new Error(
+    `TenantConfig.signingKey: unsupported JWK shape kty=${JSON.stringify(jwk.kty)} crv=${JSON.stringify(jwk.crv)}. ` +
+      'AdCP RFC 9421 webhook signing requires Ed25519 (kty=OKP, crv=Ed25519) or ECDSA P-256 (kty=EC, crv=P-256). ' +
+      'See `docs/guides/SIGNING-GUIDE.md` for key-generation recipes.'
+  );
+}
+
+/**
+ * Enforce AdCP key-purpose discriminator: a key wired into webhook
+ * signing MUST carry `adcp_use: "webhook-signing"`. Throws with a
+ * remediation-pointing error otherwise. Called only when auto-wiring
+ * fires (signingKey set + serverOptions.webhooks.signerKey unset);
+ * adopters who want different keys per purpose wire them explicitly
+ * and bypass this check.
+ */
+function assertWebhookSigningUse(key: TenantSigningKey): void {
+  const publicUse = (key.publicJwk as Record<string, unknown>).adcp_use;
+  const privateUse = (key.privateJwk as Record<string, unknown>).adcp_use;
+  if (publicUse !== 'webhook-signing') {
+    throw new Error(
+      `TenantConfig.signingKey: publicJwk.adcp_use must be 'webhook-signing' for the registry's webhook auto-wire path. ` +
+        `Got ${publicUse === undefined ? '<unset>' : JSON.stringify(publicUse)}. ` +
+        'Per AdCP, request-signing and webhook-signing keys MUST be distinct (key-purpose discriminator, adcp#2423). ' +
+        'Either: (a) tag this key with `adcp_use: "webhook-signing"` if it IS the webhook-signing key, ' +
+        '(b) mint a separate webhook-signing key and put the request-signing key on serverOptions.signedRequests instead, or ' +
+        '(c) wire `serverOptions.webhooks.signerKey` explicitly — the explicit config bypasses auto-wiring.'
+    );
+  }
+  if (privateUse !== 'webhook-signing') {
+    throw new Error(
+      `TenantConfig.signingKey: privateJwk.adcp_use must be 'webhook-signing' (same purpose as publicJwk). ` +
+        `Got ${privateUse === undefined ? '<unset>' : JSON.stringify(privateUse)}.`
+    );
+  }
+}
+
+/**
+ * Convert `TenantSigningKey` to the framework-internal `SignerKey`
+ * shape consumed by the webhook emitter. Field-name shift: the
+ * `TenantSigningKey` surface uses `keyId` (camelCase, adopter-facing);
+ * `SignerKey` uses `keyid` (lowercase, RFC 9421 wire term).
+ */
+function tenantKeyToSignerKey(key: TenantSigningKey): SignerKey {
+  const alg = deriveSigningAlg(key.publicJwk);
+  return {
+    keyid: key.keyId,
+    alg,
+    privateKey: key.privateJwk as AdcpJsonWebKey,
+  };
+}
+
+// ---------------------------------------------------------------------------
 // Registry implementation
 // ---------------------------------------------------------------------------
 
@@ -360,17 +608,47 @@ interface TenantEntry {
   config: TenantConfig;
   server: DecisioningAdcpServer;
   status: TenantStatus;
-  /** Lowercased host parsed from `config.agentUrl`. */
-  host: string;
   /**
-   * Path prefix parsed from `config.agentUrl`. Always starts with `/`,
-   * never ends with a trailing `/` unless the prefix IS `/` (root).
-   * Subdomain-routed tenants have prefix `/`; path-routed tenants have
-   * prefix like `/sales` or `/creative`.
+   * Parsed (host, pathPrefix) routes for every URL on the tenant. One
+   * entry per `agentUrls` element; single-element array for the
+   * single-URL case. Resolution iterates this list and picks the longest
+   * matching path prefix across all hosts.
    */
-  pathPrefix: string;
+  routes: ReadonlyArray<{ host: string; pathPrefix: string }>;
   /** Pending revalidation; consulted by `recheck` to dedupe in-flight work. */
   pending?: Promise<TenantStatus>;
+}
+
+/**
+ * Resolve the canonical agent URL + the full URL list from a TenantConfig.
+ *
+ * - `agentUrls` (when set) wins. First element is canonical (used for
+ *   JWKS resolution and status reporting).
+ * - `agentUrl` (single-URL form) maps to a one-element list.
+ * - Setting both is a programmer error — refuse explicitly so the
+ *   ambiguity doesn't silently drop one of them.
+ *
+ * Returns `[canonical, allUrls]`. `allUrls` is the routing surface;
+ * `canonical` is what JWKS / status reports use.
+ */
+function resolveTenantUrls(config: TenantConfig): readonly [string, ReadonlyArray<string>] {
+  const list = config.agentUrls;
+  const single = config.agentUrl;
+  if (list !== undefined && single !== undefined) {
+    throw new Error(
+      'TenantConfig: set exactly one of `agentUrl` (single URL) or `agentUrls` (multi-URL). Setting both is ambiguous.'
+    );
+  }
+  if (list !== undefined) {
+    if (list.length === 0) {
+      throw new Error('TenantConfig: `agentUrls` must contain at least one URL when provided.');
+    }
+    return [list[0]!, list];
+  }
+  if (single !== undefined) {
+    return [single, [single]];
+  }
+  throw new Error('TenantConfig: must provide either `agentUrl` or `agentUrls`.');
 }
 
 /**
@@ -455,6 +733,29 @@ export function createTenantRegistry(opts: TenantRegistryOptions): TenantRegistr
       ...opts.defaultServerOptions,
       ...config.serverOptions,
     };
+    // Auto-wire `signingKey` into webhook emission. Adopters set the key
+    // once on TenantConfig and outbound webhook deliveries are RFC
+    // 9421-signed by default. Skip when:
+    //   - signingKey is omitted (3.x unsigned path), or
+    //   - the adopter has already wired their own webhook signer on
+    //     serverOptions.webhooks (explicit config wins — adopters with
+    //     KMS-backed signing or distinct webhook keys per tenant pass
+    //     through unaffected).
+    // Strict on `adcp_use`: the JWK MUST carry `adcp_use:
+    // "webhook-signing"` per AdCP key-purpose discriminator (adcp#2423).
+    // Throws at register() time with a remediation-pointing error rather
+    // than silently no-op'ing the auto-wire.
+    if (
+      config.signingKey &&
+      merged.webhooks?.signerKey === undefined &&
+      merged.webhooks?.signerProvider === undefined
+    ) {
+      assertWebhookSigningUse(config.signingKey);
+      merged.webhooks = {
+        ...(merged.webhooks ?? {}),
+        signerKey: tenantKeyToSignerKey(config.signingKey),
+      };
+    }
     return createAdcpServerFromPlatform(config.platform, merged);
   }
 
@@ -463,51 +764,92 @@ export function createTenantRegistry(opts: TenantRegistryOptions): TenantRegistr
     if (!entry) {
       throw new Error(`runValidation: tenant '${tenantId}' not registered`);
     }
+    const [canonicalUrl, allUrls] = resolveTenantUrls(entry.config);
+    // Unsigned tenant — adopter chose to ship without signing in 3.x.
+    // Skip JWKS validation entirely; tenant goes straight to healthy.
+    // `buildServer` short-circuits the webhook auto-wire on the same
+    // condition (signingKey is undefined), so the tenant emits unsigned
+    // webhooks too — consistent posture across JWKS and signing.
+    if (!entry.config.signingKey) {
+      const status: TenantStatus = {
+        tenantId,
+        agentUrl: canonicalUrl,
+        agentUrls: allUrls,
+        health: 'healthy',
+        reason: 'unsigned (no signingKey)',
+        lastCheckedAt: new Date().toISOString(),
+      };
+      entry.status = status;
+      return status;
+    }
+    // Multi-URL tenants validate every URL independently. Aliases share the
+    // signing key; if an alias publishes a brand.json that doesn't include
+    // the key (DNS hijack, operator misconfig, stale mirror), traffic to
+    // that alias would receive responses no buyer can verify. Aggregate
+    // failures: tenant is healthy iff ALL URLs validate; first permanent
+    // failure → disabled; transient-only → pending/unverified per existing
+    // policy. The explicit `jwksUrl` override applies to all URLs (the
+    // documented contract for sub-routed deployments).
+    const perUrlResults: Array<{ url: string; res: JwksValidationResult }> = [];
+    for (const url of allUrls) {
+      let res: JwksValidationResult;
+      try {
+        res = await validator.validate({
+          agentUrl: url,
+          ...(entry.config.jwksUrl !== undefined && { jwksUrl: entry.config.jwksUrl }),
+          signingKey: entry.config.signingKey,
+        });
+      } catch (err) {
+        res = {
+          ok: false,
+          recovery: 'transient',
+          reason: `validator threw on '${url}': ${err instanceof Error ? err.message : String(err)}`,
+        };
+      }
+      perUrlResults.push({ url, res });
+      // First permanent failure short-circuits — no point hitting the rest;
+      // the tenant is going to disabled regardless.
+      if (!res.ok && res.recovery === 'permanent') break;
+    }
+    // Aggregate: pick the worst outcome across the urls we validated.
     let result: JwksValidationResult;
-    try {
-      result = await validator.validate({
-        agentUrl: entry.config.agentUrl,
-        ...(entry.config.jwksUrl !== undefined && { jwksUrl: entry.config.jwksUrl }),
-        signingKey: entry.config.signingKey,
-      });
-    } catch (err) {
-      // Validator threw — treat as transient (network glitch, etc.).
-      // Without this catch the tenant would be stuck in `pending`
-      // forever — `runValidation` rejects, `entry.status` never
-      // transitions. Closes Emma's round-1 #16.
+    const firstPermanent = perUrlResults.find(r => !r.res.ok && r.res.recovery === 'permanent');
+    const firstTransient = perUrlResults.find(r => !r.res.ok && r.res.recovery === 'transient');
+    if (firstPermanent) {
+      result = {
+        ok: false,
+        recovery: 'permanent',
+        reason: `${firstPermanent.url}: ${firstPermanent.res.reason}`,
+      };
+    } else if (firstTransient) {
       result = {
         ok: false,
         recovery: 'transient',
-        reason: `validator threw: ${err instanceof Error ? err.message : String(err)}`,
+        reason: `${firstTransient.url}: ${firstTransient.res.reason}`,
       };
+    } else {
+      result = { ok: true };
     }
     const now = new Date().toISOString();
     const wasFirstValidation = entry.status.health === 'pending';
+    const baseStatus = { tenantId, agentUrl: canonicalUrl, agentUrls: allUrls, lastCheckedAt: now };
     let status: TenantStatus;
     if (result.ok) {
-      status = { tenantId, agentUrl: entry.config.agentUrl, health: 'healthy', lastCheckedAt: now };
+      status = { ...baseStatus, health: 'healthy' };
     } else if (result.recovery === 'transient') {
       // Transient failure on FIRST validation → stay `pending` (refuse
       // traffic). Transient failure AFTER first success → `unverified`
       // (graceful degradation — the tenant's known good).
       status = {
-        tenantId,
-        agentUrl: entry.config.agentUrl,
+        ...baseStatus,
         health: wasFirstValidation ? 'pending' : 'unverified',
         reason: result.reason,
-        lastCheckedAt: now,
       };
     } else {
       // Permanent failure → `disabled` regardless of prior state. The
       // signing-key material doesn't match what's published; refusing
       // traffic is the safe default.
-      status = {
-        tenantId,
-        agentUrl: entry.config.agentUrl,
-        health: 'disabled',
-        reason: result.reason,
-        lastCheckedAt: now,
-      };
+      status = { ...baseStatus, health: 'disabled', reason: result.reason };
     }
     entry.status = status;
     return status;
@@ -522,10 +864,31 @@ export function createTenantRegistry(opts: TenantRegistryOptions): TenantRegistr
       if (tenants.has(tenantId)) {
         throw new Error(`tenant '${tenantId}' already registered; unregister first`);
       }
+      const [canonicalUrl, allUrls] = resolveTenantUrls(config as unknown as TenantConfig);
+      const routes = allUrls.map(url => parseHostAndPrefix(url));
+      // Reject overlapping (host, pathPrefix) routes against already-registered
+      // tenants. Without this, two tenants can claim the same alias host
+      // silently — `resolveByRequest` picks the first-inserted (deterministic
+      // per-process via Map insertion order, but cross-process flaky on
+      // restart-order changes). Surface the collision now rather than
+      // discover it in production. Round-1 expert review (security-medium).
+      for (const route of routes) {
+        for (const [otherId, otherEntry] of tenants) {
+          for (const otherRoute of otherEntry.routes) {
+            if (otherRoute.host === route.host && otherRoute.pathPrefix === route.pathPrefix) {
+              throw new Error(
+                `tenant '${tenantId}' route ${route.host}${route.pathPrefix} collides with tenant '${otherId}'; ` +
+                  `register them under distinct hosts or path prefixes`
+              );
+            }
+          }
+        }
+      }
       const server = buildServer(config as unknown as TenantConfig);
       const initialStatus: TenantStatus = {
         tenantId,
-        agentUrl: config.agentUrl,
+        agentUrl: canonicalUrl,
+        agentUrls: allUrls,
         // `pending` (NOT `unverified`) — first validation hasn't run.
         // resolveByHost refuses traffic until validation succeeds at
         // least once. Closes the register-then-serve race window.
@@ -533,13 +896,11 @@ export function createTenantRegistry(opts: TenantRegistryOptions): TenantRegistr
         reason: 'awaiting initial JWKS validation',
         lastCheckedAt: new Date().toISOString(),
       };
-      const { host, pathPrefix } = parseHostAndPrefix(config.agentUrl);
       const entry: TenantEntry = {
         config: config as unknown as TenantConfig,
         server,
         status: initialStatus,
-        host,
-        pathPrefix,
+        routes,
       };
       tenants.set(tenantId, entry);
       // Operability: log when an explicit jwksUrl points somewhere
@@ -552,7 +913,7 @@ export function createTenantRegistry(opts: TenantRegistryOptions): TenantRegistr
       if (config.jwksUrl && config.jwksUrl.length > 0) {
         let canonical: string;
         try {
-          canonical = new URL('/.well-known/brand.json', config.agentUrl).toString();
+          canonical = new URL('/.well-known/brand.json', canonicalUrl).toString();
         } catch {
           canonical = '<invalid agentUrl>';
         }
@@ -604,17 +965,22 @@ export function createTenantRegistry(opts: TenantRegistryOptions): TenantRegistr
       const cleanPath = stripQueryAndFragment(pathname);
       let best: { tenantId: string; entry: TenantEntry; prefixLength: number } | null = null;
       for (const [tenantId, entry] of tenants) {
-        if (entry.host !== lowered) continue;
-        if (!pathPrefixMatches(entry.pathPrefix, cleanPath)) continue;
         // Refuse traffic for pending (first validation hasn't succeeded)
         // and disabled (permanent validation failure). `unverified` —
         // previously healthy, latest recheck failed transiently — still
         // resolves; operators choose graceful degradation here.
         if (entry.status.health === 'pending' || entry.status.health === 'disabled') continue;
-        // Longest-prefix match wins. `/sales-broadcast` beats `/sales`.
-        const prefixLength = entry.pathPrefix === '/' ? 0 : entry.pathPrefix.length;
-        if (best === null || prefixLength > best.prefixLength) {
-          best = { tenantId, entry, prefixLength };
+        // Multi-URL tenants register one route per `agentUrls[]` entry.
+        // Longest-prefix match across ALL routes on ALL tenants wins —
+        // a tenant with `/sales-broadcast` on alias-host beats a tenant
+        // with `/sales` on canonical-host for `/sales-broadcast/mcp`.
+        for (const route of entry.routes) {
+          if (route.host !== lowered) continue;
+          if (!pathPrefixMatches(route.pathPrefix, cleanPath)) continue;
+          const prefixLength = route.pathPrefix === '/' ? 0 : route.pathPrefix.length;
+          if (best === null || prefixLength > best.prefixLength) {
+            best = { tenantId, entry, prefixLength };
+          }
         }
       }
       if (best === null) return null;

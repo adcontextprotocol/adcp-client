@@ -981,7 +981,9 @@ async function complyImpl(agentUrl: string, options: ComplyOptions): Promise<Com
     }
 
     const summary = buildSummary(trackResults, storyboardResults);
-    const testedTracks = trackResults.filter(t => t.status === 'pass' || t.status === 'fail' || t.status === 'partial');
+    const testedTracks = trackResults.filter(
+      t => t.status === 'pass' || t.status === 'fail' || t.status === 'partial' || t.status === 'silent'
+    );
     const skippedTracks = trackResults
       .filter(t => t.status === 'skip')
       .map(t => ({
@@ -1180,7 +1182,9 @@ async function runWithDegradedProfile(
     agent_profile: profile,
     overall_status: overallStatus,
     tracks: trackResults,
-    tested_tracks: trackResults.filter(t => t.status === 'pass' || t.status === 'fail' || t.status === 'partial'),
+    tested_tracks: trackResults.filter(
+      t => t.status === 'pass' || t.status === 'fail' || t.status === 'partial' || t.status === 'silent'
+    ),
     skipped_tracks: [],
     summary,
     observations: allObservations,
@@ -1222,6 +1226,7 @@ async function buildUnreachableResult(
       tracks_failed: 0,
       tracks_skipped: 0,
       tracks_partial: 0,
+      tracks_silent: 0,
       headline,
     },
     observations,
@@ -1236,10 +1241,19 @@ async function buildUnreachableResult(
  * auth_required and unreachable are set directly in the early-exit path.
  */
 export function computeOverallStatus(summary: ComplianceSummary): OverallStatus {
-  const attempted = summary.tracks_passed + summary.tracks_failed + summary.tracks_partial;
+  // Silent tracks count as `attempted` (they ran) but never as
+  // unambiguously `passing` — surfacing them as `partial` matches the
+  // grader's "wired-but-not-exercised" framing in adcontextprotocol/adcp#2834.
+  // Tolerate `tracks_silent === undefined` so summaries serialized
+  // before 6.2 (e.g. cached registry rows) still grade correctly.
+  const silent = summary.tracks_silent ?? 0;
+  const attempted = summary.tracks_passed + summary.tracks_failed + summary.tracks_partial + silent;
   if (attempted === 0) return 'partial';
-  if (summary.tracks_failed === 0 && summary.tracks_partial === 0) return 'passing';
-  if (summary.tracks_passed === 0 && summary.tracks_partial === 0) return 'failing';
+  if (summary.tracks_failed === 0 && summary.tracks_partial === 0 && silent === 0) return 'passing';
+  // 'failing' requires that nothing softer than a hard fail was reported —
+  // a run with silent tracks alongside fails is mixed (partial), not
+  // categorically failing.
+  if (summary.tracks_passed === 0 && summary.tracks_partial === 0 && silent === 0) return 'failing';
   return 'partial';
 }
 
@@ -1248,20 +1262,22 @@ function buildSummary(tracks: TrackResult[], storyboardResults: StoryboardResult
   const failed = tracks.filter(t => t.status === 'fail').length;
   const skipped = tracks.filter(t => t.status === 'skip').length;
   const partial = tracks.filter(t => t.status === 'partial').length;
+  const silent = tracks.filter(t => t.status === 'silent').length;
 
-  const attempted = passed + failed + partial;
+  const attempted = passed + failed + partial + silent;
   let headline: string;
 
   if (attempted === 0) {
     headline = 'No applicable tracks found for this agent';
-  } else if (failed === 0 && partial === 0) {
+  } else if (failed === 0 && partial === 0 && silent === 0) {
     headline = `All ${passed} track(s) pass`;
-  } else if (passed === 0 && partial === 0) {
+  } else if (passed === 0 && partial === 0 && silent === 0) {
     headline = `All ${failed} attempted track(s) failing`;
   } else {
     const parts: string[] = [];
     if (passed > 0) parts.push(`${passed} passing`);
     if (partial > 0) parts.push(`${partial} partial`);
+    if (silent > 0) parts.push(`${silent} silent`);
     if (failed > 0) parts.push(`${failed} failing`);
     headline = parts.join(', ');
   }
@@ -1288,6 +1304,7 @@ function buildSummary(tracks: TrackResult[], storyboardResults: StoryboardResult
     tracks_failed: failed,
     tracks_skipped: skipped,
     tracks_partial: partial,
+    tracks_silent: silent,
     headline,
     total_steps: totalSteps,
     steps_passed: stepsPassed,
@@ -1303,8 +1320,18 @@ function buildSummary(tracks: TrackResult[], storyboardResults: StoryboardResult
 export function formatComplianceResults(result: ComplianceResult): string {
   let output = '';
 
-  // Header
-  const overallIcon = result.summary.tracks_failed === 0 && result.summary.tracks_partial === 0 ? '✅' : '❌';
+  // Header. Silent tracks share the partial icon — neither is a clean
+  // green check, but neither is a hard failure. Pulling silent into ❌
+  // would over-penalize a wired-but-not-exercised agent the same as a
+  // failing one. `?? 0` matches the runtime tolerance in
+  // computeOverallStatus so older serialized summaries still render.
+  const silentCount = result.summary.tracks_silent ?? 0;
+  const overallIcon =
+    result.summary.tracks_failed === 0 && result.summary.tracks_partial === 0 && silentCount === 0
+      ? '✅'
+      : result.summary.tracks_failed > 0
+        ? '❌'
+        : '⚠️';
   output += `\n${overallIcon}  AdCP Compliance Report\n`;
   output += `${'─'.repeat(50)}\n`;
   output += `Agent:    ${result.agent_url}\n`;
@@ -1326,12 +1353,23 @@ export function formatComplianceResults(result: ComplianceResult): string {
 
   for (const track of result.tracks) {
     const icon =
-      track.status === 'pass' ? '✅' : track.status === 'fail' ? '❌' : track.status === 'partial' ? '⚠️' : '⏭️';
+      track.status === 'pass'
+        ? '✅'
+        : track.status === 'fail'
+          ? '❌'
+          : track.status === 'partial'
+            ? '⚠️'
+            : track.status === 'silent'
+              ? '🔇'
+              : '⏭️';
     const scenarioCount = track.scenarios.length;
     const passedCount = track.scenarios.filter(s => s.overall_passed).length;
 
     if (track.status === 'skip') {
       output += `${icon}  ${track.label}  (not applicable)\n`;
+    } else if (track.status === 'silent') {
+      output += `${icon}  ${track.label}  ${passedCount}/${scenarioCount} scenarios pass  (no lifecycle observed)`;
+      output += `  (${(track.duration_ms / 1000).toFixed(1)}s)\n`;
     } else {
       output += `${icon}  ${track.label}  ${passedCount}/${scenarioCount} scenarios pass`;
       output += `  (${(track.duration_ms / 1000).toFixed(1)}s)\n`;

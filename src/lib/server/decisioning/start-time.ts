@@ -91,7 +91,6 @@ export function resolveStartTime(raw: string | undefined, opts: ResolveStartTime
   const parsed = new Date(raw);
   if (isNaN(parsed.getTime())) {
     throw new AdcpError('INVALID_REQUEST', {
-      recovery: 'correctable',
       message: `${fieldName} is not a valid ISO 8601 timestamp: '${raw}'`,
       field: fieldName,
       suggestion: "Use 'asap' or an ISO 8601 timestamp (e.g., '2026-05-01T00:00:00Z')",
@@ -100,7 +99,6 @@ export function resolveStartTime(raw: string | undefined, opts: ResolveStartTime
 
   if (opts.notBefore && parsed.getTime() < opts.notBefore.getTime()) {
     throw new AdcpError('INVALID_REQUEST', {
-      recovery: 'correctable',
       message: `${fieldName} is in the past: ${parsed.toISOString()} (cutoff ${opts.notBefore.toISOString()})`,
       field: fieldName,
       suggestion: 'Use a future timestamp or `asap`',

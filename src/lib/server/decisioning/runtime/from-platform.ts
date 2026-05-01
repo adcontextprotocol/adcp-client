@@ -83,6 +83,7 @@ import type { AdcpLogger } from '../../create-adcp-server';
 import { buildRequestContext, buildHandoffContext } from './to-context';
 import {
   type CtxMetadataStore,
+  type ResourceKind,
   createCtxMetadataStore,
   pgCtxMetadataStore,
   getCtxMetadataMigration,
@@ -566,7 +567,7 @@ export interface DecisioningAdcpServer extends AdcpServer {
 }
 
 // Use `DecisioningPlatform<any, any>` for the generic constraint. The default
-// `TMeta = Record<string, unknown>` doesn't accept adopter metadata interfaces
+// `TCtxMeta = Record<string, unknown>` doesn't accept adopter metadata interfaces
 // without an index signature (e.g., `interface MyMeta { brand_id: string }`),
 // which is a needless friction point — adopter metadata is opaque to the
 // framework, so we don't need to constrain it here.
@@ -978,10 +979,20 @@ export function createAdcpServerFromPlatform<P extends DecisioningPlatform<any, 
       'eventTracking',
       mergeOpts
     ),
-    signals: mergeHandlers(opts.signals, buildSignalsHandlers(platform, ctxFor), 'signals', mergeOpts),
+    signals: mergeHandlers(
+      opts.signals,
+      buildSignalsHandlers(platform, ctxFor, effectiveCtxMetadata, fwLogger),
+      'signals',
+      mergeOpts
+    ),
     governance: mergeHandlers(opts.governance, buildGovernanceHandlers(platform, ctxFor), 'governance', mergeOpts),
     accounts: mergeHandlers(opts.accounts, buildAccountHandlers(platform, ctxFor), 'accounts', mergeOpts),
-    brandRights: mergeHandlers(opts.brandRights, buildBrandRightsHandlers(platform, ctxFor), 'brandRights', mergeOpts),
+    brandRights: mergeHandlers(
+      opts.brandRights,
+      buildBrandRightsHandlers(platform, ctxFor, effectiveCtxMetadata, fwLogger),
+      'brandRights',
+      mergeOpts
+    ),
     customTools: {
       ...opts.customTools,
       tasks_get: buildTasksGetTool(platform, taskRegistry),
@@ -1443,17 +1454,79 @@ type SubmittedEnvelope = {
 };
 
 /**
+ * Mid-request token refresh hook config (#1145 Gap 2). When `refresh.fn`
+ * is defined and the platform method throws `AdcpError({ code: 'AUTH_REQUIRED' })`,
+ * `projectSync` refreshes the account's token via the hook, mutates
+ * `account.authInfo.token`, and retries the platform method ONCE. If the
+ * refresh hook itself throws, projects to `AUTH_REQUIRED` with
+ * `recovery: 'correctable'` so the buyer re-links via their UI flow.
+ */
+interface RefreshConfig {
+  account: Account<unknown>;
+  fn?: (account: Account<unknown>, reason: 'auth_required') => Promise<{ token: string; expiresAt?: number }>;
+}
+
+/**
+ * Run a platform method with reactive token refresh on `AUTH_REQUIRED`.
+ * Without a refresh fn (or no `refresh` at all) this passes the call
+ * through. With one, catches `AUTH_REQUIRED`, calls `refresh.fn`, mutates
+ * `account.authInfo.token` (and `expiresAt` if returned), and retries the
+ * inner call exactly once.
+ *
+ * Failure modes:
+ *   - Refresh hook throws → re-throw `AUTH_REQUIRED` with `recovery: 'correctable'`
+ *     so the buyer re-links via their UI.
+ *   - Retried call throws `AUTH_REQUIRED` again → bubble out (don't refresh
+ *     a second time).
+ */
+async function runWithTokenRefresh<T>(fn: () => Promise<T>, refresh: RefreshConfig | undefined): Promise<T> {
+  if (!refresh?.fn) return fn();
+  try {
+    return await fn();
+  } catch (err) {
+    if (!(err instanceof AdcpError) || err.code !== 'AUTH_REQUIRED') {
+      throw err;
+    }
+    let refreshed: { token: string; expiresAt?: number };
+    try {
+      refreshed = await refresh.fn(refresh.account, 'auth_required');
+    } catch {
+      // Refresh-fn exception text is intentionally NOT echoed on the wire
+      // — upstream identity-provider error messages routinely embed
+      // refresh-token prefixes, internal hostnames, OAuth provider error
+      // codes, and stack-trace fragments. Adopters log details server-
+      // side; the buyer gets a fixed message + correctable recovery
+      // signaling they need to re-authorize.
+      throw new AdcpError('AUTH_REQUIRED', {
+        message: 'Token refresh failed; re-authentication required',
+        recovery: 'correctable',
+      });
+    }
+    refresh.account.authInfo.token = refreshed.token;
+    if (refreshed.expiresAt !== undefined) {
+      refresh.account.authInfo.expiresAt = refreshed.expiresAt;
+    }
+    return fn();
+  }
+}
+
+/**
  * Project a sync platform call onto the wire dispatch shape. `AdcpError`
  * throws → wire `adcp_error` envelope; other thrown errors bubble to the
  * framework's `SERVICE_UNAVAILABLE` mapping.
+ *
+ * When `refresh` is provided and the call throws `AUTH_REQUIRED`, the
+ * framework calls `refresh.fn(refresh.account, 'auth_required')`, updates
+ * `account.authInfo.token`, and retries the platform method once.
  */
 async function projectSync<TResult, TWire>(
   fn: () => Promise<TResult>,
-  mapResult: (r: TResult) => TWire
+  mapResult: (r: TResult) => TWire,
+  refresh?: RefreshConfig
 ): Promise<TWire | AdcpErrorResponse> {
   try {
-    const result = await fn();
-    const wire = mapResult(result);
+    const result = await runWithTokenRefresh(fn, refresh);
+    const wire = mapResult(result as TResult);
     // Single-chokepoint runtime strip: ctx_metadata MUST NEVER cross to the
     // buyer. Defense-in-depth (compile-time WireShape<T> + runtime walk).
     // Mutates `wire` in place — every handler builds a fresh response per
@@ -1485,7 +1558,6 @@ async function projectSync<TResult, TWire>(
       return adcpError('ACCOUNT_NOT_FOUND', {
         message: 'Account not found',
         field: 'account',
-        recovery: 'terminal',
       });
     }
     throw err;
@@ -1556,6 +1628,29 @@ async function routeIfHandoff<TInner, TWire>(
       const inner = await taskFn(buildHandoffContext(taskRegistry, taskId));
       return project(inner);
     });
+  }
+  // Catch the most common LLM-scaffolded mistake: hand-rolling a
+  // `{status: 'submitted', task_id: '...'}` envelope instead of returning
+  // `ctx.handoffToTask(fn)`. The framework owns the submitted envelope —
+  // adopters either return the sync-success arm or a TaskHandoff marker.
+  // A bare submitted-shape return here would slip past dispatch and fail
+  // response-schema validation downstream with a generic shape error;
+  // pointing at the right SDK primitive up-front saves the debug round-trip.
+  if (
+    result != null &&
+    typeof result === 'object' &&
+    (result as { status?: unknown }).status === 'submitted' &&
+    'task_id' in (result as object)
+  ) {
+    throw new Error(
+      `Specialism handler returned a hand-rolled \`{status: 'submitted', task_id}\` ` +
+        `envelope. The framework owns the submitted envelope — return ` +
+        `\`ctx.handoffToTask(async (taskCtx) => { ... })\` from the handler ` +
+        `and the framework will issue the task_id, persist the handoff, and ` +
+        `wrap the wire envelope. Returning a bare submitted shape skips the ` +
+        `task registry and the buyer ends up polling a task_id the framework ` +
+        `never registered.`
+    );
   }
   const projected = project(result);
   if (opts.autoEmitCompletion === true && opts.pushNotificationUrl) {
@@ -1930,17 +2025,26 @@ function makeCtxFor(ctxMetadataStore?: CtxMetadataStore): CtxForFn {
 async function autoStoreResources(
   store: CtxMetadataStore | undefined,
   accountId: string | undefined,
-  kind: 'product' | 'media_buy' | 'package' | 'creative' | 'audience' | 'signal',
+  kind: ResourceKind,
   resources: readonly unknown[] | undefined,
   idField: string,
   logger: AdcpLogger
 ): Promise<void> {
   if (!store || !accountId || !resources) return;
+  let skippedMissingId = 0;
   for (const r of resources) {
     if (r == null || typeof r !== 'object') continue;
     const obj = r as Record<string, unknown>;
     const id = obj[idField];
-    if (typeof id !== 'string' || id.length === 0) continue;
+    if (typeof id !== 'string' || id.length === 0) {
+      // The id field is wire-required on every resource the framework
+      // auto-stores (e.g. `signal_agent_segment_id` on a signal,
+      // `product_id` on a product). Silently skipping leaves buyers with
+      // no way to reference the resource on a downstream mutating call —
+      // a strong indicator the handler returned a misshaped response.
+      skippedMissingId++;
+      continue;
+    }
     const ctxMeta = obj['ctx_metadata'];
     // Strip ctx_metadata from the resource before storing — round-trip
     // restores it on hydration. Keeping a pristine wire copy in `resource`.
@@ -1956,6 +2060,13 @@ async function autoStoreResources(
       const msg = err instanceof Error ? err.message : String(err);
       logger.warn(`[adcp/decisioning] auto-store ${kind} ${id} failed: ${msg}`);
     }
+  }
+  if (skippedMissingId > 0) {
+    logger.warn(
+      `[adcp/decisioning] auto-store skipped ${skippedMissingId} ${kind} ` +
+        `record(s) missing required '${idField}' — buyers will not be able ` +
+        `to reference these resources on a subsequent mutating call.`
+    );
   }
 }
 
@@ -2005,8 +2116,123 @@ async function hydratePackagesWithProducts(
     if (entry.value !== null && entry.value !== undefined) {
       hydrated['ctx_metadata'] = entry.value;
     }
-    (pkg as Record<string, unknown>)['product'] = hydrated;
+    Object.defineProperty(hydrated, '__adcp_hydrated__', {
+      value: true,
+      enumerable: false,
+      writable: false,
+      configurable: false,
+    });
+    // Non-enumerable: see hydrateSingleResource for rationale (no leak via
+    // JSON.stringify / spread / Object.entries; direct access works).
+    Object.defineProperty(pkg, 'product', {
+      value: hydrated,
+      enumerable: false,
+      writable: true,
+      configurable: true,
+    });
   }
+}
+
+/**
+ * Auto-hydrate one resource referenced by id at the top level of a request.
+ *
+ * Generalization of {@link hydratePackagesWithProducts} for verbs whose
+ * primary resource lives directly on the request body (`update_media_buy`,
+ * `provide_performance_feedback`, `activate_signal`, `acquire_rights`).
+ * Walks the store for `(kind, id)`, attaches `target[attachField] =
+ * { ...resource, ctx_metadata }` when the entry has a wire resource.
+ *
+ * ## Error contract on missing references
+ *
+ * **Misses are silent. The handler runs anyway with `target[attachField]`
+ * undefined.** This is deliberate — the framework cache is a *hint*, not
+ * the source of truth. A miss can mean any of:
+ *
+ *   1. The buyer never called the discovery verb in this session (cold
+ *      start, fresh tenant). Hydration is purely additive context; the
+ *      publisher's own DB is authoritative for whether the id exists.
+ *   2. The cache evicted (TTL, LRU). Same: publisher's DB stays the
+ *      source of truth.
+ *   3. The buyer truly referenced an unknown id. The publisher SHOULD
+ *      reject this — see the handler-side guard pattern below.
+ *
+ * Adopters who want strict existence checks (option 1: framework throws
+ * `PRODUCT_NOT_FOUND` / `MEDIA_BUY_NOT_FOUND` and the handler never runs)
+ * implement that check inside the handler:
+ *
+ * ```ts
+ * updateMediaBuy: async (id, patch, ctx) => {
+ *   // Hydration miss + DB miss = unknown to this seller.
+ *   if (!patch.media_buy && !(await db.findMediaBuy(id))) {
+ *     throw new MediaBuyNotFoundError({ message: `media_buy ${id} not found` });
+ *   }
+ *   // ...
+ * }
+ * ```
+ *
+ * The framework cannot distinguish (1)/(2) from (3) without consulting the
+ * publisher's DB, which is exactly what the handler does. Erroring at the
+ * framework layer would force every adopter to manage cache warmth or
+ * pre-load every media_buy into the cache before serving traffic — wrong
+ * default for a hint-based cache.
+ *
+ * ## Field semantics on the hydrated value
+ *
+ * The attached field is **non-enumerable** so accidental serialization
+ * (`JSON.stringify(req)`, spread `{...req}`, `Object.entries(req)`)
+ * doesn't leak the publisher's `ctx_metadata` blob into request-side audit
+ * sinks. Direct property access (`req.media_buy.ctx_metadata`) still
+ * works; the field is invisible only to enumeration-based serializers.
+ *
+ * Hydrated fields carry a `__adcp_hydrated__: true` non-enumerable marker
+ * so handler authors and middleware can disambiguate "publisher passed it"
+ * from "framework attached it" — the field is **advisory context only**;
+ * the wire contract is defined by the spec request fields, not by what
+ * the SDK happens to attach.
+ *
+ * Store-fetch failures (Postgres unavailable, etc.) are logged + swallowed.
+ * Hydration must NEVER break a successful dispatch — same posture as a
+ * cache miss.
+ */
+async function hydrateSingleResource(
+  store: CtxMetadataStore | undefined,
+  accountId: string | undefined,
+  kind: ResourceKind,
+  id: string | undefined,
+  attachField: string,
+  target: unknown,
+  logger: AdcpLogger
+): Promise<void> {
+  if (!store || !accountId || !id || target == null || typeof target !== 'object') return;
+  let entry: { value: unknown; resource?: unknown } | undefined;
+  try {
+    entry = await store.getEntry(accountId, kind, id);
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    logger.warn(`[adcp/decisioning] auto-hydrate ${kind}:${id} failed: ${msg}`);
+    return;
+  }
+  if (!entry?.resource || typeof entry.resource !== 'object') return;
+  const hydrated: Record<string, unknown> = { ...(entry.resource as Record<string, unknown>) };
+  if (entry.value !== null && entry.value !== undefined) {
+    hydrated['ctx_metadata'] = entry.value;
+  }
+  Object.defineProperty(hydrated, '__adcp_hydrated__', {
+    value: true,
+    enumerable: false,
+    writable: false,
+    configurable: false,
+  });
+  // Attach as non-enumerable so JSON.stringify(req), spread {...req}, and
+  // Object.entries(req) do NOT carry the publisher's ctx_metadata blob into
+  // log lines, audit sinks, or replay payloads. Direct access (req.foo)
+  // still works.
+  Object.defineProperty(target, attachField, {
+    value: hydrated,
+    enumerable: false,
+    writable: true,
+    configurable: true,
+  });
 }
 
 /**
@@ -2077,7 +2303,6 @@ function extractPushConfig(
       throw new AdcpError('INVALID_REQUEST', {
         message: `push_notification_config.url rejected: ${validation.reason}`,
         field: 'push_notification_config.url',
-        recovery: 'terminal',
       });
     }
     url = rawUrl;
@@ -2090,7 +2315,6 @@ function extractPushConfig(
       throw new AdcpError('INVALID_REQUEST', {
         message: `push_notification_config.token rejected: ${validation.reason}`,
         field: 'push_notification_config.token',
-        recovery: 'terminal',
       });
     }
     token = rawToken;
@@ -2319,9 +2543,21 @@ function buildMediaBuyHandlers<P extends DecisioningPlatform<any, any>>(
         return adcpError('INVALID_REQUEST', {
           message: 'update_media_buy requires media_buy_id',
           field: 'media_buy_id',
-          recovery: 'correctable',
         });
       }
+      // Auto-hydrate: attach the full MediaBuy (wire shape + ctx_metadata)
+      // at `req.media_buy`. Publisher reads `req.media_buy.ctx_metadata?.gam`
+      // directly — no separate lookup. Misses are silent; publisher falls
+      // back to its own DB.
+      await hydrateSingleResource(
+        ctxMetadataStore,
+        reqCtx.account?.id,
+        'media_buy',
+        media_buy_id,
+        'media_buy',
+        params,
+        logger
+      );
       return projectSync(
         async () => {
           const push = extractPushConfig(params, logger, {
@@ -2360,7 +2596,6 @@ function buildMediaBuyHandlers<P extends DecisioningPlatform<any, any>>(
       if (!sales.syncCreatives) {
         return adcpError('UNSUPPORTED_FEATURE', {
           message: 'sync_creatives not supported by this sales platform',
-          recovery: 'terminal',
         });
       }
       return projectSync(
@@ -2431,6 +2666,25 @@ function buildMediaBuyHandlers<P extends DecisioningPlatform<any, any>>(
     ...(sales.providePerformanceFeedback && {
       providePerformanceFeedback: async (params, ctx) => {
         const reqCtx = ctxFor(ctx);
+        // Auto-hydrate `req.media_buy` from the prior createMediaBuy /
+        // getMediaBuys store entry, plus `req.creative` when the buyer
+        // scoped feedback to a specific creative. Both fields are optional
+        // hydration targets — adopters who only care about the feedback
+        // payload itself can ignore them.
+        const accountId = reqCtx.account?.id;
+        await hydrateSingleResource(
+          ctxMetadataStore,
+          accountId,
+          'media_buy',
+          (params as { media_buy_id?: string }).media_buy_id,
+          'media_buy',
+          params,
+          logger
+        );
+        const creativeId = (params as { creative_id?: string }).creative_id;
+        if (creativeId) {
+          await hydrateSingleResource(ctxMetadataStore, accountId, 'creative', creativeId, 'creative', params, logger);
+        }
         return projectSync(
           () => sales.providePerformanceFeedback!(params, reqCtx),
           r => r
@@ -2512,7 +2766,6 @@ function buildCreativeHandlers<P extends DecisioningPlatform<any, any>>(
       if (!('previewCreative' in creative)) {
         return adcpError('UNSUPPORTED_FEATURE', {
           message: 'preview_creative not supported by this platform',
-          recovery: 'terminal',
         });
       }
       const reqCtx = ctxFor(ctx);
@@ -2528,7 +2781,6 @@ function buildCreativeHandlers<P extends DecisioningPlatform<any, any>>(
       if (!creative.syncCreatives) {
         return adcpError('UNSUPPORTED_FEATURE', {
           message: 'sync_creatives not supported by this creative platform',
-          recovery: 'terminal',
         });
       }
       return projectSync(
@@ -2562,7 +2814,6 @@ function buildCreativeHandlers<P extends DecisioningPlatform<any, any>>(
       if (!('listCreatives' in creative)) {
         return adcpError('UNSUPPORTED_FEATURE', {
           message: 'list_creatives not supported by this platform',
-          recovery: 'terminal',
         });
       }
       const reqCtx = ctxFor(ctx);
@@ -2576,7 +2827,6 @@ function buildCreativeHandlers<P extends DecisioningPlatform<any, any>>(
       if (!('getCreativeDelivery' in creative)) {
         return adcpError('UNSUPPORTED_FEATURE', {
           message: 'get_creative_delivery not supported by this platform',
-          recovery: 'terminal',
         });
       }
       const reqCtx = ctxFor(ctx);
@@ -2649,7 +2899,9 @@ function buildEventTrackingHandlers<P extends DecisioningPlatform<any, any>>(
 
 function buildSignalsHandlers<P extends DecisioningPlatform<any, any>>(
   platform: P,
-  ctxFor: CtxForFn
+  ctxFor: CtxForFn,
+  ctxMetadataStore: CtxMetadataStore | undefined,
+  logger: AdcpLogger
 ): SignalsHandlers<Account> | undefined {
   const signals = platform.signals;
   if (!signals) return undefined;
@@ -2657,12 +2909,37 @@ function buildSignalsHandlers<P extends DecisioningPlatform<any, any>>(
     getSignals: async (params, ctx) => {
       const reqCtx = ctxFor(ctx);
       return projectSync(
-        () => signals.getSignals(params, reqCtx),
+        async () => {
+          const result = await signals.getSignals(params, reqCtx);
+          // Auto-store signals so subsequent activate_signal can hydrate
+          // `req.signal` from the publisher's prior catalog entry.
+          await autoStoreResources(
+            ctxMetadataStore,
+            reqCtx.account?.id,
+            'signal',
+            (result as { signals?: readonly unknown[] })?.signals,
+            'signal_agent_segment_id',
+            logger
+          );
+          return result;
+        },
         r => r
       );
     },
     activateSignal: async (params, ctx) => {
       const reqCtx = ctxFor(ctx);
+      // Auto-hydrate `req.signal` from the prior getSignals store entry —
+      // publisher reads pricing options, agent segment id, ctx_metadata
+      // directly without the buyer round-tripping the full signal object.
+      await hydrateSingleResource(
+        ctxMetadataStore,
+        reqCtx.account?.id,
+        'signal',
+        (params as { signal_agent_segment_id?: string }).signal_agent_segment_id,
+        'signal',
+        params,
+        logger
+      );
       return projectSync(
         () => signals.activateSignal(params, reqCtx),
         r => r
@@ -2673,7 +2950,9 @@ function buildSignalsHandlers<P extends DecisioningPlatform<any, any>>(
 
 function buildBrandRightsHandlers<P extends DecisioningPlatform<any, any>>(
   platform: P,
-  ctxFor: CtxForFn
+  ctxFor: CtxForFn,
+  ctxMetadataStore: CtxMetadataStore | undefined,
+  logger: AdcpLogger
 ): BrandRightsHandlers<Account> | undefined {
   const br = platform.brandRights;
   if (!br) return undefined;
@@ -2688,7 +2967,21 @@ function buildBrandRightsHandlers<P extends DecisioningPlatform<any, any>>(
     getRights: async (params, ctx) => {
       const reqCtx = ctxFor(ctx);
       return projectSync(
-        () => br.getRights(params, reqCtx),
+        async () => {
+          const result = await br.getRights(params, reqCtx);
+          // Auto-store rights offerings so subsequent acquire_rights can
+          // hydrate `req.rights` (pricing_options + ctx_metadata) without
+          // a separate publisher lookup.
+          await autoStoreResources(
+            ctxMetadataStore,
+            reqCtx.account?.id,
+            'rights_grant',
+            (result as { rights?: readonly unknown[] })?.rights,
+            'rights_id',
+            logger
+          );
+          return result;
+        },
         r => r
       );
     },
@@ -2699,6 +2992,17 @@ function buildBrandRightsHandlers<P extends DecisioningPlatform<any, any>>(
     // (the spec doesn't define a polling tool for `acquire_rights`).
     acquireRights: async (params, ctx) => {
       const reqCtx = ctxFor(ctx);
+      // Auto-hydrate `req.rights` from the prior getRights catalog entry.
+      // Publisher reads selected pricing option + ctx_metadata directly.
+      await hydrateSingleResource(
+        ctxMetadataStore,
+        reqCtx.account?.id,
+        'rights_grant',
+        (params as { rights_id?: string }).rights_id,
+        'rights',
+        params,
+        logger
+      );
       return projectSync(
         () => br.acquireRights(params, reqCtx),
         r => r
@@ -2951,13 +3255,26 @@ function buildAccountHandlers<P extends DecisioningPlatform<any, any>>(
 
   if (accounts.getAccountFinancials) {
     handlers.getAccountFinancials = async (params, ctx) => {
+      // Resolve the account first so `ctx.account` is populated when the
+      // platform method runs. Adopters fronting an upstream platform read
+      // tokens / upstream IDs off `ctx.account.ctx_metadata` without
+      // having to re-resolve from `params.account`.
       const resolveCtx = {
         ...(ctx.authInfo !== undefined && { authInfo: ctx.authInfo }),
         toolName: 'get_account_financials' as const,
       };
+      const resolved = await accounts.resolve(params.account, resolveCtx);
+      if (!resolved) {
+        throw new AdcpError('ACCOUNT_NOT_FOUND', {
+          message: 'Account not found',
+          recovery: 'terminal',
+        });
+      }
+      const toolCtx = { ...resolveCtx, account: resolved };
       return projectSync(
-        () => accounts.getAccountFinancials!(params, resolveCtx),
-        r => r
+        () => accounts.getAccountFinancials!(params, toolCtx),
+        r => r,
+        accounts.refreshToken ? { account: resolved, fn: accounts.refreshToken.bind(accounts) } : undefined
       );
     };
   }

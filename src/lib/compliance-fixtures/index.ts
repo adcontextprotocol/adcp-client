@@ -25,7 +25,7 @@
  *     touching handler code.
  *
  * ```ts
- * import { createAdcpServer } from '@adcp/sdk/server';
+ * import { createAdcpServer } from '@adcp/sdk/server/legacy/v5';
  * import { seedComplianceFixtures, COMPLIANCE_FIXTURES } from '@adcp/sdk/compliance-fixtures';
  *
  * const server = createAdcpServer({

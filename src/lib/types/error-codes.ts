@@ -3,7 +3,15 @@
  *
  * Sellers MAY use codes not in this vocabulary for platform-specific errors.
  * Agents MUST handle unknown codes by falling back to the recovery classification.
+ *
+ * The `StandardErrorCode` union is derived from `ErrorCodeValues` in
+ * `enums.generated.ts` (auto-generated from `schemas/cache/{version}/enums/error-code.json`).
+ * The runtime lookup table `STANDARD_ERROR_CODES` is asserted complete via
+ * `satisfies Record<StandardErrorCode, ErrorCodeInfo>` — adding a code to the
+ * spec without filling in a description and recovery will fail typecheck.
  */
+
+import { ErrorCodeValues } from './enums.generated';
 
 export type ErrorRecovery = 'transient' | 'correctable' | 'terminal';
 
@@ -11,35 +19,7 @@ export type ErrorRecovery = 'transient' | 'correctable' | 'terminal';
  * Standard error codes defined in the AdCP specification.
  * Use these for type-safe error handling in agent recovery logic.
  */
-export type StandardErrorCode =
-  | 'INVALID_REQUEST'
-  | 'AUTH_REQUIRED'
-  | 'RATE_LIMITED'
-  | 'SERVICE_UNAVAILABLE'
-  | 'POLICY_VIOLATION'
-  | 'PRODUCT_NOT_FOUND'
-  | 'PRODUCT_UNAVAILABLE'
-  | 'PROPOSAL_EXPIRED'
-  | 'BUDGET_TOO_LOW'
-  | 'CREATIVE_REJECTED'
-  | 'UNSUPPORTED_FEATURE'
-  | 'AUDIENCE_TOO_SMALL'
-  | 'ACCOUNT_NOT_FOUND'
-  | 'ACCOUNT_SETUP_REQUIRED'
-  | 'ACCOUNT_AMBIGUOUS'
-  | 'ACCOUNT_PAYMENT_REQUIRED'
-  | 'ACCOUNT_SUSPENDED'
-  | 'COMPLIANCE_UNSATISFIED'
-  | 'BUDGET_EXHAUSTED'
-  | 'BUDGET_EXCEEDED'
-  | 'CONFLICT'
-  | 'IDEMPOTENCY_CONFLICT'
-  | 'IDEMPOTENCY_EXPIRED'
-  | 'INVALID_STATE'
-  | 'MEDIA_BUY_NOT_FOUND'
-  | 'NOT_CANCELLABLE'
-  | 'PACKAGE_NOT_FOUND'
-  | 'VALIDATION_ERROR';
+export type StandardErrorCode = (typeof ErrorCodeValues)[number];
 
 interface ErrorCodeInfo {
   description: string;
@@ -47,84 +27,92 @@ interface ErrorCodeInfo {
 }
 
 /**
- * Runtime lookup table for the 26 standard AdCP error codes.
+ * Runtime lookup table for the standard AdCP error codes.
  * Each entry includes a description and the recommended recovery strategy.
+ *
+ * Recovery classifications mirror the spec's `enumDescriptions` block in
+ * `error-code.json`. Descriptions are condensed to the first-sentence summary;
+ * agents needing the full prescriptive text should consult the schema directly.
  */
-export const STANDARD_ERROR_CODES: Record<StandardErrorCode, ErrorCodeInfo> = {
+export const STANDARD_ERROR_CODES = {
   INVALID_REQUEST: {
-    description: 'The request is malformed or contains invalid parameters',
+    description: 'Request is malformed, missing required fields, or violates schema constraints',
     recovery: 'correctable',
   },
   AUTH_REQUIRED: {
-    description: 'Authentication is required or the provided credentials are invalid',
+    description: 'Authentication is required to access this resource',
     recovery: 'correctable',
   },
   RATE_LIMITED: {
-    description: 'Too many requests; retry after the specified delay',
+    description: 'Request rate exceeded; retry after the retry_after interval',
     recovery: 'transient',
   },
   SERVICE_UNAVAILABLE: {
-    description: 'The service is temporarily unavailable',
+    description: 'Seller service is temporarily unavailable',
     recovery: 'transient',
   },
   POLICY_VIOLATION: {
-    description: 'The request violates a platform or advertiser policy',
+    description: "Request violates the seller's content or advertising policies",
     recovery: 'correctable',
   },
   PRODUCT_NOT_FOUND: {
-    description: 'The requested product does not exist',
+    description: 'One or more referenced product IDs are unknown or expired',
     recovery: 'correctable',
   },
   PRODUCT_UNAVAILABLE: {
-    description: 'The product exists but is not currently available',
-    recovery: 'transient',
+    description: 'The requested product is sold out or no longer available',
+    recovery: 'correctable',
   },
   PROPOSAL_EXPIRED: {
-    description: 'The proposal has expired and is no longer valid',
+    description: 'A referenced proposal ID has passed its expires_at timestamp',
     recovery: 'correctable',
   },
   BUDGET_TOO_LOW: {
-    description: 'The specified budget is below the minimum threshold',
+    description: "Budget is below the seller's minimum",
     recovery: 'correctable',
   },
   CREATIVE_REJECTED: {
-    description: 'One or more creatives failed review or validation',
+    description: 'Creative failed content policy review',
     recovery: 'correctable',
   },
   UNSUPPORTED_FEATURE: {
-    description: 'The requested feature is not supported by this seller',
-    recovery: 'terminal',
+    description: 'A requested feature or field is not supported by this seller',
+    recovery: 'correctable',
   },
   AUDIENCE_TOO_SMALL: {
-    description: 'The target audience is too small to deliver against',
+    description: 'Audience segment is below the minimum required size for targeting',
     recovery: 'correctable',
   },
   ACCOUNT_NOT_FOUND: {
-    description: 'The specified account does not exist',
+    description: 'The account reference could not be resolved',
     recovery: 'terminal',
   },
   ACCOUNT_SETUP_REQUIRED: {
-    description: 'The account requires additional setup before use',
-    recovery: 'terminal',
+    description: 'Natural key resolved but the account needs setup before use',
+    recovery: 'correctable',
   },
   ACCOUNT_AMBIGUOUS: {
-    description: 'Multiple accounts match; provide a more specific identifier',
+    description: 'Natural key resolves to multiple accounts',
     recovery: 'correctable',
   },
   ACCOUNT_PAYMENT_REQUIRED: {
-    description: 'The account has an outstanding payment issue',
+    description: 'Account has an outstanding balance requiring payment before new buys',
     recovery: 'terminal',
   },
   ACCOUNT_SUSPENDED: {
-    description: 'The account has been suspended',
+    description: 'Account has been suspended',
     recovery: 'terminal',
   },
   COMPLIANCE_UNSATISFIED: {
-    description: 'Compliance requirements have not been met',
+    description: "A required disclosure from the brief's compliance section cannot be satisfied by the target format",
+    recovery: 'correctable',
+  },
+  GOVERNANCE_DENIED: {
+    description: 'A registered governance agent denied the transaction',
     recovery: 'correctable',
   },
   BUDGET_EXHAUSTED: {
-    description: 'The budget has been fully spent',
+    description: 'Account or campaign budget has been fully spent',
     recovery: 'terminal',
   },
   BUDGET_EXCEEDED: {
@@ -132,8 +120,8 @@ export const STANDARD_ERROR_CODES: Record<StandardErrorCode, ErrorCodeInfo> = {
     recovery: 'correctable',
   },
   CONFLICT: {
-    description: 'The request conflicts with the current state of the resource',
-    recovery: 'correctable',
+    description: 'Concurrent modification detected; the resource was modified between read and write',
+    recovery: 'transient',
   },
   IDEMPOTENCY_CONFLICT: {
     description:
@@ -143,6 +131,10 @@ export const STANDARD_ERROR_CODES: Record<StandardErrorCode, ErrorCodeInfo> = {
   IDEMPOTENCY_EXPIRED: {
     description:
       "The idempotency_key is past the seller's replay window. If the prior call succeeded, look up the resource by natural key before retrying; otherwise mint a fresh UUID v4.",
+    recovery: 'correctable',
+  },
+  CREATIVE_DEADLINE_EXCEEDED: {
+    description: "Creative change submitted after the package's creative_deadline",
     recovery: 'correctable',
   },
   INVALID_STATE: {
@@ -161,14 +153,77 @@ export const STANDARD_ERROR_CODES: Record<StandardErrorCode, ErrorCodeInfo> = {
     description: 'Referenced package does not exist within the specified media buy',
     recovery: 'correctable',
   },
+  CREATIVE_NOT_FOUND: {
+    description: "Referenced creative does not exist in the agent's creative library",
+    recovery: 'correctable',
+  },
+  SIGNAL_NOT_FOUND: {
+    description: "Referenced signal does not exist in the agent's catalog",
+    recovery: 'correctable',
+  },
+  SESSION_NOT_FOUND: {
+    description: 'SI session ID is invalid, expired, or does not exist',
+    recovery: 'correctable',
+  },
+  PLAN_NOT_FOUND: {
+    description: 'Referenced governance plan does not exist or is not accessible',
+    recovery: 'correctable',
+  },
+  REFERENCE_NOT_FOUND: {
+    description:
+      'Generic fallback for a referenced identifier, grant, session, or other resource that does not exist or is not accessible by the caller',
+    recovery: 'correctable',
+  },
+  SESSION_TERMINATED: {
+    description: 'SI session has already been terminated and cannot accept further messages',
+    recovery: 'correctable',
+  },
   VALIDATION_ERROR: {
     description: 'Request contains invalid field values or violates business rules beyond schema validation',
     recovery: 'correctable',
   },
-} as const;
+  PRODUCT_EXPIRED: {
+    description: 'One or more referenced products have passed their expires_at timestamp',
+    recovery: 'correctable',
+  },
+  PROPOSAL_NOT_COMMITTED: {
+    description: "The referenced proposal has proposal_status 'draft' and cannot be used to create a media buy",
+    recovery: 'correctable',
+  },
+  IO_REQUIRED: {
+    description: 'The committed proposal requires a signed insertion order but no io_acceptance was provided',
+    recovery: 'correctable',
+  },
+  TERMS_REJECTED: {
+    description: 'Buyer-proposed measurement_terms were rejected by the seller',
+    recovery: 'correctable',
+  },
+  REQUOTE_REQUIRED: {
+    description:
+      'An update_media_buy request changes the parameter envelope (budget, flight dates, volume, targeting) the original quote was priced against',
+    recovery: 'correctable',
+  },
+  VERSION_UNSUPPORTED: {
+    description: 'The declared adcp_major_version is not supported by this seller',
+    recovery: 'correctable',
+  },
+  CAMPAIGN_SUSPENDED: {
+    description: 'Campaign governance has been suspended pending human review',
+    recovery: 'transient',
+  },
+  GOVERNANCE_UNAVAILABLE: {
+    description: 'A registered governance agent is unreachable and the seller cannot obtain a governance decision',
+    recovery: 'transient',
+  },
+  PERMISSION_DENIED: {
+    description:
+      "The authenticated caller is not authorized for the requested action under the seller's policies, or a required signed credential is missing or invalid",
+    recovery: 'correctable',
+  },
+} as const satisfies Record<StandardErrorCode, ErrorCodeInfo>;
 
 /**
- * Check whether an error code is one of the 26 standard AdCP codes.
+ * Check whether an error code is one of the standard AdCP codes.
  */
 export function isStandardErrorCode(code: string): code is StandardErrorCode {
   return code in STANDARD_ERROR_CODES;

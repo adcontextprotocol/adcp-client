@@ -11,7 +11,7 @@ const {
   createAdcpServer,
   AuthError,
   DEFAULT_JWT_ALGORITHMS,
-} = require('../dist/lib/server/index.js');
+} = require('../dist/lib/server/legacy/v5/index.js');
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -494,7 +494,7 @@ describe('serve() propagates AuthInfo to MCP handlers via req.auth', () => {
 
   before(async () => {
     seenAuth = null;
-    const { createAdcpServer } = require('../dist/lib/server/index.js');
+    const { createAdcpServer } = require('../dist/lib/server/legacy/v5/index.js');
     const createAgentWithCapture = () =>
       createAdcpServer({
         name: 'Capture',

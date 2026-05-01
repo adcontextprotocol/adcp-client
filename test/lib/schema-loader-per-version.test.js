@@ -197,4 +197,25 @@ describe('schema-loader per-version state', () => {
     assert.strictEqual(resolveBundleKey('v2.5'), 'v2.5');
     assert.strictEqual(resolveBundleKey('v2.6'), 'v2.6');
   });
+
+  test('ensureCoreLoaded narrowing keeps v3 bundled-path validators intact', () => {
+    // Regression guard for the v2.5-schemas branch: when ensureCoreLoaded was
+    // narrowed from "skip all fileIndex entries" to "skip only response tool
+    // files" so v2.5 flat-tree fragments register, v3's bundled-path
+    // validators must still resolve through getValidator unchanged. Bundled
+    // and flat-tree request schemas have distinct $ids (bundled has
+    // `/schemas/3.0.1/bundled/...` vs flat `/schemas/3.0.1/...`), so no
+    // AJV-side collision; this test pins that invariant.
+    _resetValidationLoader('3.0.1');
+    const v = getValidator('create_media_buy', 'request', '3.0.1');
+    assert.ok(v, 'v3 create_media_buy::request must compile after narrowing');
+    // Schema reference should point at the bundled file (the path the loader
+    // selects when the bundled tree exists).
+    const schema = v.schema;
+    assert.match(
+      schema.$id,
+      /\/bundled\//,
+      `expected bundled $id, got: ${schema.$id} — bundled-path priority must survive ensureCoreLoaded narrowing`
+    );
+  });
 });

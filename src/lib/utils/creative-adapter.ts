@@ -53,31 +53,87 @@ export interface PackageResponseV2 {
 }
 
 /**
+ * Optional context for deriving a per-package `buyer_ref` when the v3 input
+ * doesn't carry one. v2.5 `package-request.json` requires `buyer_ref` (the
+ * `oneOf` accepts `package_id` OR `buyer_ref`; on creation no `package_id`
+ * exists yet, so `buyer_ref` is the actual required identifier). v3 doesn't
+ * model packages with `buyer_ref`, but `idempotency_key` carries equivalent
+ * client-controlled-unique-identity semantics. The `parentBuyerRef` plus
+ * `index` compose a stable per-package reference that re-derives identically
+ * on replay — preserving the idempotency contract sellers depend on for
+ * deduping.
+ */
+export interface PackageAdapterContext {
+  /** Top-level `buyer_ref` derived from the parent v3 request. */
+  parentBuyerRef?: string;
+  /** Position of the package within the parent's `packages[]` array. */
+  index?: number;
+}
+
+/**
  * Adapt a v3-style package request for a v2 server.
  * Converts creative_assignments to creative_ids (dropping weight and placement_ids).
  * Strips v3-only package fields (optimization_goals, catalogs).
+ *
+ * When `ctx` is provided and the input has no `buyer_ref`, derives one as
+ * `package.idempotency_key || ${ctx.parentBuyerRef}-${ctx.index}` so v2.5
+ * package-request validation passes. Caller-supplied `buyer_ref` always wins.
  */
-export function adaptPackageRequestForV2(pkg: PackageRequestV3): PackageRequestV2 {
-  const { optimization_goals, catalogs, ...rest } = pkg as PackageRequestV3 & {
+export function adaptPackageRequestForV2(pkg: PackageRequestV3, ctx?: PackageAdapterContext): PackageRequestV2 {
+  const {
+    optimization_goals,
+    catalogs,
+    idempotency_key: pkgIdempotencyKey,
+    buyer_ref: callerBuyerRef,
+    ...rest
+  } = pkg as PackageRequestV3 & {
     optimization_goals?: unknown;
     catalogs?: unknown;
+    idempotency_key?: unknown;
+    buyer_ref?: unknown;
   };
 
+  // Derive per-package buyer_ref. Caller-supplied wins; then per-package
+  // idempotency_key; then a stable composition of the parent's buyer_ref
+  // and the package's array index. If none of those are available we
+  // pass through without a buyer_ref and let the v2.5 validator surface
+  // the missing field — better than synthesizing an unstable value that
+  // breaks dedupe on replay.
+  const derivedBuyerRef =
+    typeof callerBuyerRef === 'string' && callerBuyerRef.length > 0
+      ? callerBuyerRef
+      : typeof pkgIdempotencyKey === 'string' && pkgIdempotencyKey.length > 0
+        ? pkgIdempotencyKey
+        : ctx?.parentBuyerRef !== undefined && ctx?.index !== undefined
+          ? `${ctx.parentBuyerRef}-${ctx.index}`
+          : undefined;
+
+  const baseOut: PackageRequestV2 = rest as PackageRequestV2;
   if (!rest.creative_assignments) {
-    return rest as PackageRequestV2;
+    return derivedBuyerRef === undefined ? baseOut : { ...baseOut, buyer_ref: derivedBuyerRef };
   }
 
   const { creative_assignments, ...withoutAssignments } = rest;
 
   return {
     ...withoutAssignments,
+    ...(derivedBuyerRef !== undefined && { buyer_ref: derivedBuyerRef }),
     creative_ids: creative_assignments.map((a: CreativeAssignment) => a.creative_id),
   };
 }
 
 /**
  * Adapt a create_media_buy request for a v2 server.
- * Strips v3-only top-level fields, converts brand → brand_manifest, and adapts packages.
+ * Strips v3-only top-level fields, converts brand → brand_manifest, derives
+ * `buyer_ref` (top-level + per-package) from `idempotency_key`, and adapts
+ * packages.
+ *
+ * v2.5 requires `buyer_ref` as the buyer's reference for THIS media buy,
+ * top-level + per-package. v3 doesn't model `buyer_ref` but `idempotency_key`
+ * carries the same client-controlled-unique-identity semantics. Reusing it
+ * preserves the idempotency contract sellers depend on for deduping replays:
+ * the same v3 request always produces the same v2.5 `buyer_ref`. Caller-
+ * supplied `buyer_ref` (if any) always wins.
  */
 export function adaptCreateMediaBuyRequestForV2(request: any): any {
   const {
@@ -89,6 +145,7 @@ export function adaptCreateMediaBuyRequestForV2(request: any): any {
     brand_manifest: inputManifest,
     adcp_major_version,
     idempotency_key,
+    buyer_ref: callerBuyerRef,
     ...rest
   } = request;
 
@@ -113,11 +170,23 @@ export function adaptCreateMediaBuyRequestForV2(request: any): any {
         : undefined;
   const brand_manifest = callerUrl || (brand?.domain ? `https://${brand.domain}` : undefined);
 
+  const buyer_ref =
+    typeof callerBuyerRef === 'string' && callerBuyerRef.length > 0
+      ? callerBuyerRef
+      : typeof idempotency_key === 'string' && idempotency_key.length > 0
+        ? idempotency_key
+        : undefined;
+
   return {
     ...rest,
+    ...(buyer_ref !== undefined && { buyer_ref }),
     ...(brand && !brand_manifest && { brand }),
     ...(brand_manifest !== undefined && { brand_manifest }),
-    ...(rest.packages && { packages: rest.packages.map(adaptPackageRequestForV2) }),
+    ...(rest.packages && {
+      packages: rest.packages.map((pkg: PackageRequestV3, index: number) =>
+        adaptPackageRequestForV2(pkg, { parentBuyerRef: buyer_ref, index })
+      ),
+    }),
   };
 }
 

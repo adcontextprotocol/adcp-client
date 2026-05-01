@@ -40,9 +40,9 @@ import type {
   GetPlanAuditLogsResponse,
 } from '../../../types/tools.generated';
 
-type Ctx<TMeta> = RequestContext<Account<TMeta>>;
+type Ctx<TCtxMeta> = RequestContext<Account<TCtxMeta>>;
 
-export interface CampaignGovernancePlatform<TMeta = Record<string, unknown>> {
+export interface CampaignGovernancePlatform<TCtxMeta = Record<string, unknown>> {
   /**
    * Runtime governance decision. Buyer (or seller, on the seller's behalf)
    * sends a proposed action; the agent inspects it against the plan and
@@ -57,24 +57,24 @@ export interface CampaignGovernancePlatform<TMeta = Record<string, unknown>> {
    * `status: 'denied'` for governance decisions that ARE the answer
    * (the plan exists and the agent is rejecting the action).
    */
-  checkGovernance(req: CheckGovernanceRequest, ctx: Ctx<TMeta>): Promise<CheckGovernanceResponse>;
+  checkGovernance(req: CheckGovernanceRequest, ctx: Ctx<TCtxMeta>): Promise<CheckGovernanceResponse>;
 
   /**
    * Plan CRUD. Buyers sync their campaign plans into the governance
    * agent so the agent can maintain spend authority + delivery context.
    */
-  syncPlans(req: SyncPlansRequest, ctx: Ctx<TMeta>): Promise<SyncPlansResponse>;
+  syncPlans(req: SyncPlansRequest, ctx: Ctx<TCtxMeta>): Promise<SyncPlansResponse>;
 
   /**
    * Outcome reporting. Sellers report what actually happened (impressions
    * delivered, spend incurred, status transitions) so the agent can
    * calibrate future decisions.
    */
-  reportPlanOutcome(req: ReportPlanOutcomeRequest, ctx: Ctx<TMeta>): Promise<ReportPlanOutcomeResponse>;
+  reportPlanOutcome(req: ReportPlanOutcomeRequest, ctx: Ctx<TCtxMeta>): Promise<ReportPlanOutcomeResponse>;
 
   /**
    * Audit log read. Returns the chronological history of governance
    * decisions + outcome reports for a plan.
    */
-  getPlanAuditLogs(req: GetPlanAuditLogsRequest, ctx: Ctx<TMeta>): Promise<GetPlanAuditLogsResponse>;
+  getPlanAuditLogs(req: GetPlanAuditLogsRequest, ctx: Ctx<TCtxMeta>): Promise<GetPlanAuditLogsResponse>;
 }

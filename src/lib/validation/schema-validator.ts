@@ -128,11 +128,22 @@ function formatIssue(err: ErrorObject): ValidationIssue {
   };
 }
 
+// Path segments we refuse to walk into during schema-path resolution. AJV
+// emits trusted `schemaPath` strings today, but the function is exported in
+// shape (anything in this file is reachable via the compiled JS), so any
+// future caller passing user-influenced paths can't traverse into prototype
+// chains. Bundled schemas have no use for these names either.
+const FORBIDDEN_SCHEMA_PATH_SEGMENTS = new Set(['__proto__', 'constructor', 'prototype']);
+
 /**
  * Resolve an AJV `schemaPath` like `"#/properties/account/oneOf"` against
  * the compiled validator's root schema. Returns `undefined` if the path
  * doesn't land on an object. Handles URI-encoded path segments (AJV
  * escapes `~` as `~0` and `/` as `~1` per RFC 6901).
+ *
+ * Refuses prototype-chain segments and uses own-property indexing so a
+ * future caller (or a pathological future schema) can't induce a walk
+ * into `Object.prototype`.
  */
 function resolveSchemaPath(rootSchema: unknown, schemaPath: string): unknown {
   if (rootSchema == null) return undefined;
@@ -142,9 +153,213 @@ function resolveSchemaPath(rootSchema: unknown, schemaPath: string): unknown {
   for (const raw of clean.split('/')) {
     if (cursor == null || (typeof cursor !== 'object' && !Array.isArray(cursor))) return undefined;
     const decoded = raw.replace(/~1/g, '/').replace(/~0/g, '~');
+    if (FORBIDDEN_SCHEMA_PATH_SEGMENTS.has(decoded)) return undefined;
+    if (!Object.prototype.hasOwnProperty.call(cursor, decoded)) return undefined;
     cursor = (cursor as Record<string, unknown>)[decoded];
   }
   return cursor;
+}
+
+/**
+ * Compact AJV's `oneOf` / `anyOf` cascades before they reach the wire.
+ *
+ * AJV with `allErrors: true` emits one error per non-matching variant
+ * plus a synthetic "must match exactly one schema" root. For a 9-way
+ * `pricing_options` union with a single bad `pricing_model` value that
+ * is 14+ errors per failed item, drowning real residual errors elsewhere
+ * in the same payload (adcontextprotocol/adcp-client#1111).
+ *
+ * Strategy:
+ *  1. For each union root, group variant errors by variant index.
+ *  2. Inspect each variant's schema for `const`-constrained properties.
+ *     A property where ≥2 variants assert `const` at the same path is a
+ *     candidate discriminator (covers single-field discriminators like
+ *     `pricing_model` and composite ones like `audience-selector`'s
+ *     `(type, value_type)`).
+ *  3. Collapse a candidate path iff EVERY variant that asserts `const`
+ *     there emitted a `const` error. (If some variants silently passed,
+ *     the user's value matched some allowed const — collapsing would
+ *     hide that and tell them their valid value was wrong.)
+ *  4. Each collapse becomes a synthetic `enum`-keyword issue carrying
+ *     the union of allowed const values; the existing `formatIssue`
+ *     enrichment then renders "must be one of: A, B, ...".
+ *  5. After collapse, if any variant has zero residual errors, the
+ *     discriminator collapse fully explains the failure — drop the
+ *     synthetic union root and the residuals from the other variants.
+ *  6. Otherwise pick the variant with the fewest residual errors,
+ *     tie-breaking by fewest residual `const` errors so a variant the
+ *     user's discriminator value satisfied wins over a sibling whose
+ *     discriminator they violated. Drop the rest.
+ */
+function compactUnionErrors(errors: readonly ErrorObject[], rootSchema: unknown): ErrorObject[] {
+  if (errors.length === 0) return [...errors];
+
+  // Pre-bucket once so each error is scanned a constant number of times even
+  // when a malicious or pathological payload pushes Ajv to emit thousands of
+  // errors across many union failures. The naive `for root in unionRoots: for
+  // e in errors` form is O(U·N) — at K=100 product items each producing a
+  // 14-error pricing-options cascade that's ~140k iterations on the
+  // request-validation hot path.
+  const errorsByOneOfPath = new Map<string, ErrorObject[]>();
+  for (const e of errors) {
+    const m = e.schemaPath.match(/^(.*\/(?:oneOf|anyOf))\/\d+(?:\/|$)/);
+    if (!m) continue;
+    const root = m[1]!;
+    const bucket = errorsByOneOfPath.get(root);
+    if (bucket) bucket.push(e);
+    else errorsByOneOfPath.set(root, [e]);
+  }
+
+  const dropped = new Set<ErrorObject>();
+  const added: ErrorObject[] = [];
+
+  // Deepest-first ordering matters for nested unions: by the time the outer
+  // root is evaluated, the inner cascade has already been replaced by a
+  // synthetic enum at a `<...>/discriminator/<field>` schemaPath that won't
+  // match the outer's `oneOfPath + '/'` prefix and stays independent.
+  const unionRoots = errors
+    .filter(e => e.keyword === 'oneOf' || e.keyword === 'anyOf')
+    .slice()
+    .sort((a, b) => b.schemaPath.length - a.schemaPath.length);
+
+  for (const root of unionRoots) {
+    if (dropped.has(root)) continue;
+    const oneOfPath = root.schemaPath;
+    const rootInstance = root.instancePath;
+
+    // Variant errors: pulled from the prebuilt index (constant per-error work
+    // above), then grouped by variant index. instancePath scoping keeps two
+    // separate union failures sharing the same `schemaPath` but different
+    // instancePaths — e.g., `products[0].pricing_options[0]` and
+    // `products[1]...` — independent.
+    const candidateErrors = errorsByOneOfPath.get(oneOfPath) ?? [];
+    const byVariant = new Map<number, ErrorObject[]>();
+    for (const e of candidateErrors) {
+      if (e === root || dropped.has(e)) continue;
+      const tail = e.schemaPath.slice(oneOfPath.length + 1);
+      const m = tail.match(/^(\d+)(?:\/|$)/);
+      if (!m) continue;
+      if (e.instancePath !== rootInstance && !e.instancePath.startsWith(rootInstance + '/')) continue;
+      const idx = parseInt(m[1]!, 10);
+      const bucket = byVariant.get(idx);
+      if (bucket) bucket.push(e);
+      else byVariant.set(idx, [e]);
+    }
+    if (byVariant.size === 0) continue;
+
+    // Resolve the variant schema array. Without it we fall back to a pure
+    // error-shape collapse (still correct, just less precise on which
+    // variants asserted const where the user happened to match).
+    const variantSchemas = resolveSchemaPath(rootSchema, oneOfPath);
+    const variantArr: readonly unknown[] = Array.isArray(variantSchemas) ? variantSchemas : [];
+
+    // For each top-level property in each variant, record which variants
+    // declare a `const` value there. Top-level only — composite
+    // discriminators in AdCP (`audience-selector`, pricing-option) all
+    // sit at the variant root.
+    const constAsserters = new Map<string, Map<number, unknown>>();
+    for (let i = 0; i < variantArr.length; i++) {
+      const variant = variantArr[i];
+      if (!variant || typeof variant !== 'object') continue;
+      const props = (variant as { properties?: unknown }).properties;
+      if (!props || typeof props !== 'object') continue;
+      for (const [key, prop] of Object.entries(props as Record<string, unknown>)) {
+        if (prop && typeof prop === 'object' && 'const' in prop) {
+          const path = `/${key.replace(/~/g, '~0').replace(/\//g, '~1')}`;
+          let m = constAsserters.get(path);
+          if (!m) constAsserters.set(path, (m = new Map()));
+          m.set(i, (prop as { const: unknown }).const);
+        }
+      }
+    }
+
+    // For each candidate path with ≥2 asserters, did every asserter emit?
+    const collapsedPaths = new Set<string>();
+    for (const [relPath, asserters] of constAsserters) {
+      if (asserters.size < 2) continue;
+      const absolutePath = rootInstance + relPath;
+      const emittersByVariant = new Map<number, ErrorObject>();
+      for (const [idx, errs] of byVariant) {
+        for (const e of errs) {
+          if (e.keyword === 'const' && e.instancePath === absolutePath) {
+            emittersByVariant.set(idx, e);
+            break;
+          }
+        }
+      }
+      let allEmitted = true;
+      for (const idx of asserters.keys()) {
+        if (!emittersByVariant.has(idx)) {
+          allEmitted = false;
+          break;
+        }
+      }
+      if (!allEmitted) continue;
+
+      const allowedValues: unknown[] = [];
+      for (const v of asserters.values()) {
+        const already = allowedValues.some(existing => existing === v);
+        if (!already) allowedValues.push(v);
+      }
+      const sample = emittersByVariant.values().next().value as ErrorObject;
+      // Synthetic enum issue. `schemaPath: ''` keeps it out of any caller
+      // that walks the path back to a real schema location (the synthesized
+      // `<oneOfPath>/discriminator/<field>` would dangle if dereferenced)
+      // while still satisfying the wire shape — the response-side errors
+      // helper already gates `schemaPath` exposure via `exposeSchemaPath`.
+      // `JSON.stringify` on the const values is safe: they come from the
+      // bundled (trusted) schema and the outer wire envelope re-encodes
+      // anyway, so control characters or quotes can't break framing.
+      added.push({
+        ...sample,
+        keyword: 'enum',
+        schemaPath: '',
+        message: `must be one of: ${allowedValues.map(v => JSON.stringify(v)).join(', ')}`,
+        params: { allowedValues },
+      } as ErrorObject);
+      for (const e of emittersByVariant.values()) dropped.add(e);
+      collapsedPaths.add(absolutePath);
+    }
+
+    // Compute residuals after the collapse.
+    const residualByVariant = new Map<number, ErrorObject[]>();
+    for (const [idx, errs] of byVariant) {
+      residualByVariant.set(
+        idx,
+        errs.filter(e => !dropped.has(e))
+      );
+    }
+
+    if (collapsedPaths.size > 0) {
+      const anyZeroResidual = [...residualByVariant.values()].some(r => r.length === 0);
+      if (anyZeroResidual) {
+        for (const errs of residualByVariant.values()) for (const e of errs) dropped.add(e);
+        dropped.add(root);
+        continue;
+      }
+    }
+
+    // Pick the best surviving variant; prefer fewest residuals, tie-break
+    // by fewest residual `const` errors (so variants whose discriminator
+    // the user actually picked win over siblings whose discriminator they
+    // violated).
+    let bestIdx = -1;
+    let bestCount = Infinity;
+    let bestConsts = Infinity;
+    for (const [idx, residual] of residualByVariant) {
+      const constCount = residual.reduce((n, e) => (e.keyword === 'const' ? n + 1 : n), 0);
+      if (residual.length < bestCount || (residual.length === bestCount && constCount < bestConsts)) {
+        bestIdx = idx;
+        bestCount = residual.length;
+        bestConsts = constCount;
+      }
+    }
+    for (const [idx, residual] of residualByVariant) {
+      if (idx !== bestIdx) for (const e of residual) dropped.add(e);
+    }
+  }
+
+  return [...errors.filter(e => !dropped.has(e)), ...added];
 }
 
 /**
@@ -186,9 +401,10 @@ export function validateRequest(toolName: string, payload: unknown, version?: st
   const valid = validator(payload) as boolean;
   if (valid) return { valid: true, issues: [], variant: 'request' };
   const rootSchema = (validator as { schema?: unknown }).schema;
+  const compacted = compactUnionErrors(validator.errors ?? [], rootSchema);
   return {
     valid: false,
-    issues: (validator.errors ?? []).map(formatIssue).map(i => enrichWithVariants(i, rootSchema)),
+    issues: compacted.map(formatIssue).map(i => enrichWithVariants(i, rootSchema)),
     variant: 'request',
   };
 }
@@ -232,9 +448,10 @@ export function validateResponse(toolName: string, payload: unknown, version?: s
     : {};
   if (valid) return { valid: true, issues: [], variant: usedVariant, ...fallbackFields };
   const rootSchema = (effective as { schema?: unknown }).schema;
+  const compacted = compactUnionErrors(effective.errors ?? [], rootSchema);
   return {
     valid: false,
-    issues: (effective.errors ?? []).map(formatIssue).map(i => enrichWithVariants(i, rootSchema)),
+    issues: compacted.map(formatIssue).map(i => enrichWithVariants(i, rootSchema)),
     variant: usedVariant,
     ...fallbackFields,
   };

@@ -12,7 +12,7 @@
  *
  * @example
  * ```typescript
- * import { createAdcpServer, serve } from '@adcp/sdk/server';
+ * import { createAdcpServer, serve } from '@adcp/sdk/server/legacy/v5';
  *
  * serve(() => createAdcpServer({
  *   name: 'My Publisher',
@@ -248,6 +248,7 @@ import type {
   ReportUsageResponse,
   PreviewCreativeResponse,
   AccountReference,
+  BrandReference,
   ListContentStandardsResponse,
   GetContentStandardsResponse,
   CreateContentStandardsResponse,
@@ -278,6 +279,33 @@ export interface AdcpLogger {
   warn(message: string, data?: Record<string, unknown>): void;
   error(message: string, data?: Record<string, unknown>): void;
 }
+
+/**
+ * Module-singleton default `InMemoryStateStore`. Adopters who use the
+ * factory pattern `serve(() => createAdcpServer({...}))` get a fresh
+ * `createAdcpServer` invocation per request — without this singleton, the
+ * destructured default `stateStore = new InMemoryStateStore()` would mint
+ * a brand-new in-memory store per request, silently dropping every
+ * `ctx.store.put(...)` between calls. Empirically reproduced in matrix
+ * v3: an LLM-built SI agent that put session state in `ctx.store` on
+ * `si_initiate_session` failed to find it on the next request's
+ * `si_send_message`.
+ *
+ * Sharing one default store across the process is what every other Node
+ * framework's "memory store" already does, and it's what the skills
+ * (creative, SI, etc.) explicitly promise: "framework provides
+ * InMemoryStateStore by default — no need for module-level Maps".
+ *
+ * Multi-tenant adopters and production deployments pass their own store
+ * (`PostgresStateStore`, etc.); the default is for development and
+ * single-tenant agents only.
+ *
+ * Tests that need isolation pass an explicit `stateStore: new
+ * InMemoryStateStore()`. The module-level default does not break
+ * existing test isolation because tests have always opted-in to a fresh
+ * store per case.
+ */
+const DEFAULT_STATE_STORE = new InMemoryStateStore();
 
 const noopLogger: AdcpLogger = {
   debug() {},
@@ -669,20 +697,34 @@ export type AdcpServerToolName = keyof AdcpToolMap;
  * Parameter shape passed to `resolveIdempotencyPrincipal`. Wide enough to
  * carry any wire request (the framework calls every mutating tool through
  * the same resolver), narrow enough to surface the most-common scoping
- * fields (`account`, `brand`) without a cast.
+ * fields (`account`, `brand`) using the canonical wire types.
  *
- * Adopters scoping by `params.account?.account_id` or
- * `params.brand?.domain` (the public-token-shared-across-tenants pattern)
- * get autocomplete + type narrowing without `as { account?: ... }`. Tool-
- * specific scoping (e.g., custom session header on `si_send_message`)
+ * `account` and `brand` resolve to the same `AccountReference` /
+ * `BrandReference` types the rest of the SDK uses. The
+ * `account: AccountReference` discriminated union forces adopters scoping
+ * by tenant to narrow before reading variant-specific fields:
+ *
+ * ```ts
+ * resolveIdempotencyPrincipal: (ctx, params) => {
+ *   if (params.account && 'account_id' in params.account) {
+ *     return params.account.account_id; // narrowed to {account_id: string}
+ *   }
+ *   if (params.account?.brand?.domain) {
+ *     return `${params.account.brand.domain}:${params.account.operator}`;
+ *   }
+ *   return ctx.account?.id ?? 'anon';
+ * }
+ * ```
+ *
+ * Tool-specific scoping (e.g., custom session header on `si_send_message`)
  * still has the open `Record<string, unknown>` index signature for
  * everything else.
  */
 export interface IdempotencyPrincipalParams extends Record<string, unknown> {
   /** Buyer-supplied account reference. Most mutating tools carry this. */
-  account?: { account_id?: string; brand?: { domain?: string }; sandbox?: boolean; [k: string]: unknown };
+  account?: AccountReference;
   /** Buyer-supplied brand reference (used by some tools without account). */
-  brand?: { domain?: string; [k: string]: unknown };
+  brand?: BrandReference;
 }
 
 // ---------------------------------------------------------------------------
@@ -1350,7 +1392,7 @@ export interface AdcpServerConfig<TAccount = unknown> {
    *
    * @example
    * ```ts
-   * import { createAdcpServer, bridgeFromTestControllerStore } from '@adcp/sdk';
+   * import { createAdcpServer, bridgeFromTestControllerStore } from '@adcp/sdk/server/legacy/v5';
    *
    * const seedStore = new Map<string, unknown>();
    * const server = createAdcpServer({
@@ -2249,6 +2291,11 @@ function buildSupportedVersionsList(capConfig: AdcpCapabilitiesConfig | undefine
  * Reach for `createAdcpServer` directly only when you need fine control
  * over individual handlers, are mid-migration from a v5 codebase, or
  * have custom-shaped tools the platform interface doesn't yet model.
+ *
+ * @see {@link createAdcpServerFromPlatform} — the canonical v6 entry.
+ * @see `@adcp/sdk/server/legacy/v5` — the stable subpath for long-term
+ *   v5 pinning. The top-level re-export here may be removed in a
+ *   future major; the subpath is the supported home.
  * See `docs/migration-5.x-to-6.x.md`.
  *
  * Before each handler runs, the framework:
@@ -2269,7 +2316,7 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
     resolveAccountFromAuth,
     resolveSessionKey,
     exposeErrorDetails = process.env.NODE_ENV !== 'production',
-    stateStore = new InMemoryStateStore(),
+    stateStore = DEFAULT_STATE_STORE,
     logger = noopLogger,
     capabilities: capConfig,
     idempotency: idempotencyConfig,
@@ -2361,6 +2408,49 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
       "createAdcpServer: idempotency: 'disabled' is set. Mutating requests will not be replay-checked and " +
         '`get_adcp_capabilities` will declare `idempotency.supported: false`. Use only in non-production test fleets.'
     );
+  }
+
+  // Production gate on the default in-memory `stateStore`. Mirrors
+  // `buildDefaultTaskRegistry` policy in `from-platform.ts` and the
+  // `idempotency: 'disabled'` allowlist above: the module-singleton
+  // default is correct for dev and single-tenant agents, but
+  // multi-tenant production deployments that mint one
+  // `createAdcpServer` per resolved tenant would silently share state
+  // across tenants. Refuse outside `{NODE_ENV=test, NODE_ENV=development}`
+  // unless the adopter sets `ADCP_DECISIONING_ALLOW_INMEMORY_STATE=1` as
+  // an explicit ops escape hatch. v6.0 shipped this as a one-time warn;
+  // 6.0.1 promotes it to a hard refusal so the production footgun closes
+  // before any adopter trips on it.
+  //
+  // Ordered AFTER the idempotency-disabled gate so adopters who hit
+  // both surface the higher-severity error (idempotency-disabled
+  // double-executes mutations on retry; state-store sharing leaks
+  // tenant data — both bad, idempotency goes first because the
+  // recovery is "wire a store" while state-store recovery is "pass
+  // your own").
+  if (stateStore === DEFAULT_STATE_STORE) {
+    const env = process.env.NODE_ENV;
+    const safe = env === 'test' || env === 'development';
+    const ack = process.env.ADCP_DECISIONING_ALLOW_INMEMORY_STATE === '1';
+    if (!safe && !ack) {
+      throw new Error(
+        'createAdcpServer: in-memory state store refused outside ' +
+          '{NODE_ENV=test, NODE_ENV=development}. The default ' +
+          '`InMemoryStateStore` is a process-shared module singleton — ' +
+          'single-tenant agents get the documented `ctx.store` cross-request ' +
+          'persistence, but multi-tenant deployments would silently share ' +
+          'state across resolved tenants. Pick one of:\n' +
+          '  1. (Recommended) Pass `stateStore: new PostgresStateStore({ pool })` ' +
+          'to keep state across restarts AND partition across tenants. See ' +
+          '`@adcp/sdk/server` for the migration helper.\n' +
+          '  2. Pass `stateStore: new InMemoryStateStore()` explicitly if you ' +
+          'accept that state is per-process and shared across all resolved ' +
+          'tenants. Single-tenant agents only.\n' +
+          '  3. ADCP_DECISIONING_ALLOW_INMEMORY_STATE=1 env flag is the ops ' +
+          'escape hatch (same effect as #2 but config-only); prefer #2 in ' +
+          'adopter code so the choice is visible at the call site.'
+      );
+    }
   }
 
   // Enforce lock-step between the `signed-requests` specialism claim and the

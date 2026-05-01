@@ -301,6 +301,11 @@ export class TaskExecutor {
        * truth for both validation and wire-level major.
        */
       adcpVersion?: string;
+      /**
+       * Transport-level safeguards applied to every call this executor
+       * dispatches. Per-call options can override individual fields.
+       */
+      transport?: import('../protocols').TransportOptions;
     } = {}
   ) {
     this.responseParser = new ProtocolResponseParser();
@@ -329,6 +334,33 @@ export class TaskExecutor {
    */
   getGovernanceMiddleware(): GovernanceMiddleware | undefined {
     return this.governanceMiddleware;
+  }
+
+  /**
+   * Run the configured pre-send schema check against the user-facing request
+   * shape. Callers invoke this on the unadapted (v3) params before any wire
+   * adaptation runs, so the validator sees the same object the caller wrote.
+   * Throws in strict, logs to `debugLogs` in warn, no-ops in off.
+   */
+  validateRequest(taskName: string, params: unknown, debugLogs?: any[]): void {
+    validateOutgoingRequest(taskName, params, this.requestValidationMode, debugLogs, this.config.adcpVersion);
+  }
+
+  /**
+   * After `adaptRequestForServerVersion` has rewritten a v3 request into v2
+   * wire format, validate the adapted shape against the cached v2.5 schema
+   * bundle. Always warn-only — adapter bugs shouldn't break user requests,
+   * and the v3 pre-send pass already vouched for the user-facing input.
+   * This pass exists to surface drift between what the adapter emits and
+   * what a v2.5 server expects on the wire (primarily as CI signal via the
+   * adapter-conformance test suite).
+   *
+   * Skips silently for tasks without a v2.5 schema or when the v2.5 bundle
+   * isn't cached. Caller is responsible for gating on `serverVersion === 'v2'`
+   * so v3-targeted traffic doesn't pay the validation cost.
+   */
+  validateAdaptedRequestAgainstV2(taskName: string, adaptedParams: unknown, debugLogs?: any[]): void {
+    validateOutgoingRequest(taskName, adaptedParams, 'warn', debugLogs, 'v2.5');
   }
 
   /**
@@ -524,15 +556,6 @@ export class TaskExecutor {
         metadata: { toolName: taskName, type: 'request' },
       };
 
-      // Pre-send schema check — throws in strict, logs in warn, skips in off.
-      validateOutgoingRequest(
-        taskName,
-        effectiveParams,
-        this.requestValidationMode,
-        debugLogs,
-        this.config.adcpVersion
-      );
-
       // Send initial request and get streaming response with webhook URL.
       // Pass the caller's A2A session ids (contextId for conversation binding,
       // taskId for resuming a non-terminal server-side task). The adapter
@@ -544,6 +567,7 @@ export class TaskExecutor {
         serverVersion,
         session: { contextId: options.contextId, taskId: options.taskId },
         adcpVersion: this.config.adcpVersion,
+        transport: options.transport ?? this.config.transport,
       });
 
       // Emit protocol_response activity
@@ -1286,6 +1310,7 @@ export class TaskExecutor {
       {
         serverVersion: this.lastKnownServerVersion,
         adcpVersion: this.config.adcpVersion,
+        transport: this.config.transport,
       }
     )) as Record<string, unknown>;
     return (response.tasks as TaskInfo[]) || [];
@@ -1342,6 +1367,7 @@ export class TaskExecutor {
       {
         serverVersion: this.lastKnownServerVersion,
         adcpVersion: this.config.adcpVersion,
+        transport: this.config.transport,
       }
     )) as Record<string, unknown>;
     // We don't run `extractResponseData` here: that helper's
@@ -1517,6 +1543,7 @@ export class TaskExecutor {
         debugLogs,
         serverVersion: this.lastKnownServerVersion,
         adcpVersion: this.config.adcpVersion,
+        transport: this.config.transport,
       }
     );
 
@@ -1808,7 +1835,14 @@ export class TaskExecutor {
 
     try {
       const normalizedResponse = this.normalizeResponseForValidation(response, taskName);
-      const outcome = validateIncomingResponse(taskName, normalizedResponse, mode, debugLogs, this.config.adcpVersion);
+      // Validate against the version the agent actually spoke. Without
+      // this, v2.5 sellers (e.g. Wonderstruck) return valid v2.5-shaped
+      // responses and the SDK rejects them as malformed v3 — surfaces as
+      // `pricing_options must NOT have fewer than 1 items` and similar
+      // shape mismatches that don't exist in v2.5. The v3 → v2 path is
+      // already correctly version-pinned via lastKnownServerVersion.
+      const validationVersion = this.lastKnownServerVersion === 'v2' ? 'v2.5' : this.config.adcpVersion;
+      const outcome = validateIncomingResponse(taskName, normalizedResponse, mode, debugLogs, validationVersion);
       if (outcome.valid) return { valid: true, errors: [] };
 
       const errorStrings = outcome.issues.map(i => `${i.pointer}: ${i.message}`);

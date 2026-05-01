@@ -32,23 +32,24 @@ jobs:
         run: npm run format:check
 
       - name: Sync schemas from AdCP
-        run: npm run sync-schemas
+        run: npm run sync-schemas:all
 
       - name: Validate generated files are in sync
         run: |
           npm run generate-types
+          npm run generate-types:v2.5
           npm run generate-wellknown-schemas
 
-          if ! git diff --exit-code -I '// Generated at:' src/lib/types/*.generated.ts src/lib/agents/index.generated.ts 2>/dev/null; then
+          if ! git diff --exit-code -I '// Generated at:' src/lib/types/*.generated.ts src/lib/types/v2-5/tools.generated.ts src/lib/agents/index.generated.ts 2>/dev/null; then
             echo ""
             echo "❌ Generated TypeScript files are out of sync with AdCP schemas!"
             echo ""
             echo "📋 Changes detected in:"
-            git diff --name-only src/lib/types/*.generated.ts src/lib/agents/index.generated.ts 2>/dev/null || true
+            git diff --name-only src/lib/types/*.generated.ts src/lib/types/v2-5/tools.generated.ts src/lib/agents/index.generated.ts 2>/dev/null || true
             echo ""
             echo "🔧 To fix, run locally:"
-            echo "  npm run sync-schemas"
-            echo "  npm run generate-types"
+            echo "  npm run sync-schemas:all"
+            echo "  npm run generate-types:all"
             echo "  npm run generate-wellknown-schemas"
             echo ""
             echo "Then commit the updated generated files."

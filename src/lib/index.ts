@@ -241,6 +241,7 @@ export {
   VersionUnsupportedError,
   IdempotencyConflictError,
   IdempotencyExpiredError,
+  ResponseTooLargeError,
   adcpErrorToTypedError,
   isADCPError,
   isErrorOfType,
@@ -584,7 +585,6 @@ export {
   cleanupExpiredTasks,
   getMcpTasksMigration,
   MCP_TASKS_MIGRATION,
-  createAdcpServer,
   ADCP_PRE_TRANSPORT,
   checkGovernance,
   governanceDeniedError,
@@ -693,6 +693,8 @@ export type {
 
 // ====== ERROR HANDLING & RETRY ======
 export { isRetryable, getRetryDelay } from './utils/retry';
+export { decideRetry, BuyerRetryPolicy } from './utils/buyer-retry-policy';
+export type { RetryDecision, RetryContext, RetryDecisionOverride } from './utils/buyer-retry-policy';
 
 // Public API: use these for programmatic error handling
 export {
@@ -835,7 +837,7 @@ export {
   closeMCPConnections,
   bundleSupportsAdcpVersionField,
 } from './protocols';
-export type { CallToolOptions } from './protocols';
+export type { CallToolOptions, TransportOptions } from './protocols';
 
 // ====== RESPONSE UTILITIES ======
 // Public utilities for working with AdCP responses

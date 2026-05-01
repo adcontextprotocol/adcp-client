@@ -23,7 +23,7 @@
 
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { createAdcpServer, InMemoryStateStore, serve, type ServeContext } from '@adcp/sdk';
+import { createAdcpServer, InMemoryStateStore, serve, type ServeContext } from '@adcp/sdk/server/legacy/v5';
 import {
   createExpressVerifier,
   InMemoryReplayStore,

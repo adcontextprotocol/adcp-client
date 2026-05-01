@@ -42,7 +42,7 @@ Specialism ID (kebab-case) = storyboard directory. Storyboard `id:` (snake_case,
 
 Every production governance agent — regardless of specialism — must wire these. Full treatment in `skills/build-seller-agent/SKILL.md` §Protocol-Wide Requirements and §Composing OAuth, signing, and idempotency; minimum-viable pointers:
 
-- **`idempotency_key`** on every mutating request (`sync_plans`, `create_property_list`/`update_property_list`/`delete_property_list`, `create_collection_list`/`update_collection_list`/`delete_collection_list`, `create_content_standards`/`update_content_standards`, `calibrate_content`). Wire `createIdempotencyStore` into `createAdcpServer({ idempotency })`.
+- **`idempotency_key`** on every mutating request (`sync_plans`, `create_property_list`/`update_property_list`/`delete_property_list`, `create_collection_list`/`update_collection_list`/`delete_collection_list`, `create_content_standards`/`update_content_standards`, `calibrate_content`). Pass `createIdempotencyStore` to `createAdcpServerFromPlatform(platform, { idempotency })`.
 - **Authentication** via `serve({ authenticate: verifyApiKey(...)/verifyBearer(...) })` from `@adcp/sdk/server`. Unauthenticated agents fail the universal `security_baseline` storyboard.
 - **Signature-header transparency**: don't reject requests that carry `Signature-Input`/`Signature` headers even if you don't claim `signed-requests`.
 - **Resolve-then-authorize** on id lookups (`get_property_list`, `get_content_standards`, `get_collection_list`): return byte-equivalent errors whether the id is cross-tenant or nonexistent — always `REFERENCE_NOT_FOUND`, never `PERMISSION_DENIED`. `adcp fuzz` runs a paired-probe invariant that enforces this; stand up two test tenants and pass `--auth-token` + `--auth-token-cross-tenant` for full coverage. See `skills/build-seller-agent/SKILL.md` §Resolve-then-authorize for the full rules.
@@ -79,7 +79,7 @@ For campaign governance, how should the agent decide?
 >
 > **Cross-cutting pitfalls matrix runs keep catching:**
 >
-> - **Declare `capabilities: { specialisms: ['governance-spend-authority', 'property-lists'] }` on `createAdcpServer`.** Value is `string[]` of enum ids (not `[{id, version}]`). Agents that don't declare their specialism fail the grader with "No applicable tracks found" even if every tool works — tracks are gated on the specialism claim.
+> - **Declare `capabilities.specialisms: ['governance-spend-authority', 'property-lists'] as const` on the `DecisioningPlatform` you pass to `createAdcpServerFromPlatform`.** Value is `string[]` of enum ids (not `[{id, version}]`). Agents that don't declare their specialism fail the grader with "No applicable tracks found" even if every tool works — tracks are gated on the specialism claim.
 > - Every mutating-tool response (`create_property_list`, `create_collection_list`, `create_content_standards`, etc.) has `additionalProperties: false` — don't add extra fields. Return exactly what the schema declares.
 
 ### Campaign Governance
@@ -452,7 +452,7 @@ taskToolResponse({
 
 ### Context and Ext Passthrough
 
-`createAdcpServer` auto-echoes the request's `context` into every response — **do not set `context` yourself in your handler return values.** The framework injects it post-handler only when the field isn't already present.
+The framework auto-echoes the request's `context` into every response — **do not set `context` yourself in your handler return values.** It's injected post-handler only when the field isn't already present.
 
 **Crucial:** `context` is schema-typed as an object. If your handler hand-sets a string or narrative description, validation fails with `/context: must be object` and the framework does not overwrite. Leave the field out entirely; the framework handles it.
 
@@ -462,14 +462,15 @@ Some schemas also define an `ext` field for vendor-namespaced extensions. If you
 
 | SDK piece                                | Usage                                                                      |
 | ---------------------------------------- | -------------------------------------------------------------------------- |
-| `createAdcpServer({ name, governance })` | Create server with domain-grouped handlers and auto-generated capabilities |
-| `serve(() => createAdcpServer(...))`     | Start HTTP server on `:3001/mcp`                                           |
+| `createAdcpServerFromPlatform(platform, opts)` | Create server from a typed `DecisioningPlatform` — compile-time specialism enforcement, auto-generated capabilities, ctx_metadata round-trip |
+| `createAdcpServer(config)` *(legacy)*    | v5 handler-bag entry. Mid-migration / escape-hatch only; reach via `@adcp/sdk/server/legacy/v5`                                              |
+| `serve(() => createAdcpServerFromPlatform(platform, opts))` | Start HTTP server on `:3001/mcp`                                                                              |
 | `ctx.store`                              | State persistence — `get/put/patch/delete/list` domain objects             |
 | `adcpError(code, { message })`           | Structured error                                                           |
 
 Handlers return raw data objects. The framework auto-wraps responses and auto-generates `get_adcp_capabilities` from registered handlers.
 
-Import: `import { createAdcpServer, serve, adcpError } from '@adcp/sdk';`
+Import: `import { createAdcpServerFromPlatform, serve, adcpError } from '@adcp/sdk/server';`
 
 ## Setup
 
@@ -498,7 +499,7 @@ Minimal `tsconfig.json`:
 
 ## Implementation
 
-1. Single `.ts` file — use `createAdcpServer` with the `governance` domain group
+1. Single `.ts` file — `class MyGovernance implements DecisioningPlatform` with `campaignGovernance`, `propertyLists`, `collectionLists`, `contentStandards` typed sub-platforms
 2. Do not register `get_adcp_capabilities` — the framework generates it from registered handlers
 3. Return raw data objects from handlers — the framework wraps responses automatically
 4. Use `ctx.store` to persist plans, property lists, and content standards
@@ -507,48 +508,79 @@ Minimal `tsconfig.json`:
 
 ```typescript
 import { randomUUID } from 'node:crypto';
-import { createAdcpServer, serve } from '@adcp/sdk';
-import { createIdempotencyStore, memoryBackend } from '@adcp/sdk/server';
+import {
+  createAdcpServerFromPlatform,
+  serve,
+  createIdempotencyStore,
+  memoryBackend,
+  type DecisioningPlatform,
+  type CampaignGovernancePlatform,
+  type PropertyListsPlatform,
+  type AccountStore,
+} from '@adcp/sdk/server';
 
 const idempotency = createIdempotencyStore({
   backend: memoryBackend(),
   ttlSeconds: 86400,
 });
 
+class MyGovernance implements DecisioningPlatform {
+  capabilities = {
+    specialisms: ['governance-spend-authority', 'property-lists'] as const,
+    config: {},
+  };
+
+  accounts: AccountStore = {
+    resolve: async ref => ({
+      id: 'account_id' in ref ? ref.account_id : 'gov_acc_1',
+      operator: 'me',
+      ctx_metadata: {},
+    }),
+    upsert: async () => ({ ok: true, items: [] }),
+    list: async () => ({ items: [], nextCursor: null }),
+  };
+
+  campaignGovernance: CampaignGovernancePlatform = {
+    syncPlans: async (req, ctx) => {
+      for (const plan of req.plans) {
+        await ctx.store.put('plan', plan.plan_id, plan);
+      }
+      return {
+        plans: req.plans.map(p => ({
+          plan_id: p.plan_id,
+          status: 'active' as const,
+          version: 1,
+        })),
+      };
+    },
+    checkGovernance: async (req, ctx) => {
+      const plan = await ctx.store.get('plan', req.plan_id);
+      // ... decision logic ...
+      return {
+        check_id: `chk_${randomUUID()}`,
+        status: 'approved' as const,
+        plan_id: req.plan_id,
+        explanation: 'Within spending authority',
+      };
+    },
+    // ... reportPlanOutcome, getPlanAuditLogs, etc.
+  };
+
+  propertyLists: PropertyListsPlatform = {
+    listPropertyLists: async (req, ctx) => ({ property_lists: [] }),
+    createPropertyList: async (req, ctx) => ({ /* ... */ }),
+    updatePropertyList: async (req, ctx) => ({ /* ... */ }),
+    deletePropertyList: async (req, ctx) => ({ /* ... */ }),
+  };
+}
+
+const platform = new MyGovernance();
+
 serve(() =>
-  createAdcpServer({
+  createAdcpServerFromPlatform(platform, {
     name: 'Governance Agent',
     version: '1.0.0',
     idempotency,
-    // MUST never return undefined — or every mutating request rejects as
-    // SERVICE_UNAVAILABLE. See the Idempotency section for production guidance.
-    resolveSessionKey: () => 'default-principal',
-
-    governance: {
-      syncPlans: async (params, ctx) => {
-        for (const plan of params.plans) {
-          await ctx.store.put('plan', plan.plan_id, plan);
-        }
-        return {
-          plans: params.plans.map(p => ({
-            plan_id: p.plan_id,
-            status: 'active' as const,
-            version: 1,
-          })),
-        };
-      },
-      checkGovernance: async (params, ctx) => {
-        const plan = await ctx.store.get('plan', params.plan_id);
-        // ... decision logic ...
-        return {
-          check_id: `chk_${randomUUID()}`,
-          status: 'approved' as const,
-          plan_id: params.plan_id,
-          explanation: 'Within spending authority',
-        };
-      },
-      // ... other governance handlers
-    },
   })
 );
 ```
@@ -568,7 +600,7 @@ Route decisions based on the plan state and request parameters:
 
 ## Idempotency
 
-AdCP v3 requires an `idempotency_key` on every mutating request — for governance agents that's `create_property_list` / `update_property_list` / `delete_property_list`, `create_content_standards` / `update_content_standards`, `sync_plans`, and `report_plan_outcome` (`check_governance` and the various `get_*` / `list_*` tools are read-only and exempt). Wire `createIdempotencyStore` from `@adcp/sdk/server` into `createAdcpServer` and the framework handles missing-key rejection (`INVALID_REQUEST`), JCS-canonicalized payload hashing, `IDEMPOTENCY_CONFLICT` on same-key-different-payload (no payload leaked in the error), `IDEMPOTENCY_EXPIRED` past the TTL, `replayed: true` envelope injection on cache hits, and automatic declaration of `adcp.idempotency.replay_ttl_seconds` on `get_adcp_capabilities`. Only successful responses cache — errors re-execute on retry so a failed `sync_plans` or outcome report can be retried cleanly. Scoping is per-principal via `resolveSessionKey` (or override with `resolveIdempotencyPrincipal`) — typically the operator / tenant id.
+AdCP v3 requires an `idempotency_key` on every mutating request — for governance agents that's `create_property_list` / `update_property_list` / `delete_property_list`, `create_content_standards` / `update_content_standards`, `sync_plans`, and `report_plan_outcome` (`check_governance` and the various `get_*` / `list_*` tools are read-only and exempt). Pass `createIdempotencyStore` from `@adcp/sdk/server` to `createAdcpServerFromPlatform(platform, { idempotency })` and the framework handles missing-key rejection (`INVALID_REQUEST`), JCS-canonicalized payload hashing, `IDEMPOTENCY_CONFLICT` on same-key-different-payload (no payload leaked in the error), `IDEMPOTENCY_EXPIRED` past the TTL, `replayed: true` envelope injection on cache hits, and automatic declaration of `adcp.idempotency.replay_ttl_seconds` on `get_adcp_capabilities`. Only successful responses cache — errors re-execute on retry so a failed `sync_plans` or outcome report can be retried cleanly. Scoping is per-principal via `resolveSessionKey` (or override with `resolveIdempotencyPrincipal`) — typically the operator / tenant id.
 
 ```typescript
 import { createIdempotencyStore, memoryBackend } from '@adcp/sdk/server';
@@ -578,14 +610,13 @@ const idempotency = createIdempotencyStore({
   ttlSeconds: 86400, // 3600–604800 per spec; throws if out of range
 });
 
-const server = createAdcpServer({
+const server = createAdcpServerFromPlatform(platform, {
+  name: '...', version: '...',
   idempotency,
   // MUST never return undefined — or every mutating request rejects as
-  // SERVICE_UNAVAILABLE. A constant works for a demo; for multi-tenant
-  // production, type the account via `createAdcpServer<MyAccount>({...})`
-  // and use `(ctx) => ctx.account?.id`.
+  // SERVICE_UNAVAILABLE. A constant works for a demo; production uses
+  // `(ctx) => ctx.account?.id` against the typed `Account<MyMeta>`.
   resolveSessionKey: () => 'default-principal',
-  // ... governance handlers (create/update/delete property lists, content standards, syncPlans, reportPlanOutcome)
 });
 ```
 

@@ -17,7 +17,7 @@
  *     with type-safe `handler` params derived from the schema's shape.
  *
  * ```ts
- * import { createAdcpServer } from '@adcp/sdk/server';
+ * import { createAdcpServer } from '@adcp/sdk/server/legacy/v5';
  * import { TOOL_INPUT_SHAPES, customToolFor } from '@adcp/sdk/schemas';
  *
  * createAdcpServer({

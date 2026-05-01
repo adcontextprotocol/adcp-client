@@ -1,7 +1,7 @@
 ---
 name: call-adcp-agent
 description: Wire-level invariants for any AdCP buyer call — idempotency_key replay semantics, account `oneOf` variants, async `status:'submitted'`+`task_id` polling, error recovery from `adcp_error.issues[]`. Load before any per-protocol task skill (adcp-media-buy, adcp-creative, adcp-signals, adcp-governance, adcp-si, adcp-brand) when calling an AdCP agent as a buyer.
-adcp_version: '3.x'
+adcp_version: "3.x"
 type: cross-cutting
 ---
 
@@ -24,7 +24,7 @@ Walk these in order on first contact:
 
 1. **Agent card** (A2A) or **`tools/list`** (MCP): returns tool NAMES. AdCP MCP servers no longer publish per-tool parameter schemas in `tools/list` — everything shows `{type: 'object', properties: {}}`. Don't try to infer shape from here.
 2. **`get_adcp_capabilities`**: returns supported protocols (`media_buy`, `signals`, `creative`, …), AdCP major versions, feature flags. Tells you WHICH tools this agent supports, not how to call them.
-3. **`get_schema(tool_name)`** _(when the agent exposes it — pending standardization in [#3057](https://github.com/adcontextprotocol/adcp/issues/3057), not yet universal)_: returns the JSON Schema for a tool's request/response. Preferred over reading bundled schemas when available.
+3. **`get_schema(tool_name)`** *(when the agent exposes it — pending standardization in [#3057](https://github.com/adcontextprotocol/adcp/issues/3057), not yet universal)*: returns the JSON Schema for a tool's request/response. Preferred over reading bundled schemas when available.
 4. **Bundled schemas** (offline, authoritative): every SDK ships the AdCP JSON Schemas locally. Path differs by SDK — spec repo source uses `dist/schemas/<version>/bundled/`, `@adcp/client` puts them at `schemas/cache/<version>/bundled/` after `npm run sync-schemas`, Python and Go SDKs use their own conventions. **Don't hardcode a path** — let the SDK's loader find them, or ask the developer. Each schema is `<protocol>/<tool>-{request,response}.json` once you locate the bundle. The canonical source for every SDK is `https://adcontextprotocol.org/protocol/<version>.tgz`.
 
 ## Non-obvious rules every buyer must follow
@@ -105,7 +105,7 @@ Every validation failure produces:
         "keyword": "oneOf",
         "message": "must match exactly one schema in oneOf",
         "variants": [
-          { "index": 0, "required": ["account_id"], "properties": ["account_id"] },
+          { "index": 0, "required": ["account_id"],        "properties": ["account_id"] },
           { "index": 1, "required": ["brand", "operator"], "properties": ["brand", "operator", "sandbox"] }
         ]
       },
@@ -194,7 +194,9 @@ Returns `{ signals: [{ signal_agent_segment_id, match_rate, pricing, ... }] }`. 
 {
   "idempotency_key": "<uuid>",
   "signal_agent_segment_id": "sig_premium_ctv_sports",
-  "destinations": [{ "type": "platform", "platform": "the-trade-desk" }]
+  "destinations": [
+    { "type": "platform", "platform": "the-trade-desk" }
+  ]
 }
 ```
 
@@ -203,6 +205,7 @@ Returns `{ signals: [{ signal_agent_segment_id, match_rate, pricing, ... }] }`. 
 ## Transport notes
 
 - **MCP**: `tools/call` with `{ name: 'tool_name', arguments: {...} }`. Returns `{ content, structuredContent, isError? }`. Read `structuredContent` for the typed response.
+  - **Use the official `@modelcontextprotocol/sdk` client.** The Streamable HTTP transport requires `Accept: application/json, text/event-stream` on every request — a raw `fetch()` with only `Accept: application/json` gets an unhelpful `406 Not Acceptable` from the server before any AdCP framing runs. The official client sets the header correctly; reach for it instead of rolling your own HTTP plumbing.
 - **A2A**: `message/send` with a `DataPart` of shape `{ skill: 'tool_name', input: {...} }` (the legacy key `parameters` is also accepted). Returns an A2A `Task`; the typed response is at `task.artifacts[0].parts[0].data`.
 
 Both transports share: idempotency, error shape, schema enforcement, and handler semantics. If a call works on one, the equivalent call works on the other.
@@ -220,19 +223,102 @@ Both transports share: idempotency, error shape, schema enforcement, and handler
 
 Quick lookup before reading the full envelope. Match what you see in `adcp_error.issues[*]`, apply the fix:
 
-| Symptom                                                         | What it means                                                         | Fix                                                                           |
-| --------------------------------------------------------------- | --------------------------------------------------------------------- | ----------------------------------------------------------------------------- |
-| `keyword: 'oneOf'` with `variants[]`                            | Discriminated union — you sent fields from multiple variants, or none | Pick ONE variant from `variants[]`. Send only its `required` fields.          |
-| 2-3 `additionalProperties` errors at the same pointer           | You merged `oneOf` variants ({account_id, brand, operator, …})        | Drop to one variant. Don't keep "extra" fields "for completeness".            |
-| `keyword: 'required'`, `pointer: '/idempotency_key'`            | Mutating tool, no UUID                                                | Generate fresh UUID per logical operation. Reuse it on retries.               |
-| `keyword: 'type'` or `additionalProperties` at `/budget`        | Sent `{amount, currency}`                                             | `budget` is a number. Currency is implied by `pricing_option_id`.             |
-| `additionalProperties` at `/format_id` (string passed)          | Sent `"format_id": "video_..."`                                       | `format_id` is `{agent_url, id}` — always an object.                          |
-| `keyword: 'enum'` at `/destinations/*/type`                     | Made-up destination type                                              | Use `'platform'` (with `platform`) or `'agent'` (with `agent_url`).           |
-| Response carries `status: 'submitted'` and `task_id`            | Async — work is queued, NOT done                                      | Poll via `tasks/get` (A2A) or the MCP async task extension using `task_id`.   |
-| `recovery: 'transient'` (rate limit, 5xx, timeout)              | Server-side, retry-safe                                               | Retry with the **same** `idempotency_key`.                                    |
-| `recovery: 'correctable'`                                       | Buyer-side fix                                                        | Read `issues[]`, patch the pointers, resend. Most cases close in one attempt. |
-| `recovery: 'terminal'` (account suspended, payment required, …) | Requires human action                                                 | Don't retry. Surface to the user.                                             |
-| HTTP 401 with `WWW-Authenticate` header                         | Missing or expired credential                                         | Add `Authorization` per the agent's auth spec; re-auth if applicable.         |
+| Symptom | What it means | Fix |
+|---|---|---|
+| `keyword: 'oneOf'` with `variants[]` | Discriminated union — you sent fields from multiple variants, or none | Pick ONE variant from `variants[]`. Send only its `required` fields. |
+| 2-3 `additionalProperties` errors at the same pointer | You merged `oneOf` variants ({account_id, brand, operator, …}) | Drop to one variant. Don't keep "extra" fields "for completeness". |
+| `keyword: 'required'`, `pointer: '/idempotency_key'` | Mutating tool, no UUID | Generate fresh UUID per logical operation. Reuse it on retries. |
+| `keyword: 'type'` or `additionalProperties` at `/budget` | Sent `{amount, currency}` | `budget` is a number. Currency is implied by `pricing_option_id`. |
+| `additionalProperties` at `/format_id` (string passed) | Sent `"format_id": "video_..."` | `format_id` is `{agent_url, id}` — always an object. |
+| `keyword: 'enum'` at `/destinations/*/type` | Made-up destination type | Use `'platform'` (with `platform`) or `'agent'` (with `agent_url`). |
+| Response carries `status: 'submitted'` and `task_id` | Async — work is queued, NOT done | Poll via `tasks/get` (A2A) or the MCP async task extension using `task_id`. |
+| `recovery: 'transient'` (rate limit, 5xx, timeout) | Server-side, retry-safe | Retry with the **same** `idempotency_key`. |
+| `406 Not Acceptable` before any AdCP framing | Hand-rolled HTTP without `Accept: text/event-stream` (MCP transport) | Use `@modelcontextprotocol/sdk` client; it sets the right Accept header. |
+| `recovery: 'correctable'` | Buyer-side fix | Read `issues[]`, patch the pointers, resend. Most cases close in one attempt. (See exceptions below — four codes are technically `correctable` but operator-semantically human-escalate.) |
+| `recovery: 'terminal'` (account suspended, payment required, …) | Requires human action | Don't retry. Surface to the user. |
+| HTTP 401 with `WWW-Authenticate` header | Missing or expired credential | Add `Authorization` per the agent's auth spec; re-auth if applicable. |
+
+> **⚠️ Four codes are technically `correctable` but operator-semantically human-escalate. Don't auto-tweak.**
+>
+> - **`POLICY_VIOLATION`** — buyer's content/targeting violates seller policy. Auto-mutating creative or targeting and resubmitting **looks like evasion** to the seller's governance reviewer. Surface to a human.
+> - **`COMPLIANCE_UNSATISFIED`** — required disclosure can't be satisfied by the chosen format. Auto-relaxing the compliance section IS the compliance failure. Surface to a human.
+> - **`GOVERNANCE_DENIED`** — registered governance agent rejected the spend. Auto-shrinking budget and retrying looks like governance evasion. Surface to the plan operator.
+> - **`AUTH_REQUIRED`** — conflates missing creds (genuinely correctable) with revoked / expired creds (operator must rotate). Until [adcontextprotocol/adcp#3730](https://github.com/adcontextprotocol/adcp/issues/3730) splits this into `auth_missing` + `auth_invalid`, treat as escalate-after-one-attempt.
+>
+> Spec recovery on these is `correctable`; operator behavior is human-in-loop. The pattern: read `error.message` + `error.suggestion`, surface to the user, **don't loop**.
+
+### Operationalize the recovery rules — `decideRetry`
+
+`@adcp/sdk` exports `decideRetry(error, ctx?)` which encodes the operator-grade defaults from the table above plus this section. It returns a discriminated `RetryDecision` so the type system enforces the same-vs-fresh `idempotency_key` rule:
+
+```typescript
+import { decideRetry } from '@adcp/sdk';
+import { randomUUID } from 'node:crypto';
+
+async function callWithRetry(toolName: string, params: Record<string, unknown>): Promise<unknown> {
+  let attempt = 1;
+  let idempotencyKey = randomUUID();
+
+  while (true) {
+    try {
+      return await agent.call(toolName, { ...params, idempotency_key: idempotencyKey });
+    } catch (e) {
+      const error = extractAdcpError(e); // your SDK's error extractor
+      if (!error) throw e; // not an AdCP-shaped failure — let it bubble
+
+      const decision = decideRetry(error, { attempt });
+
+      if (decision.action === 'retry') {
+        // Server-side transient (RATE_LIMITED, SERVICE_UNAVAILABLE, CONFLICT).
+        // Replay with the SAME idempotency_key after the suggested delay.
+        await sleep(decision.delayMs);
+        attempt++;
+        continue;
+      }
+
+      if (decision.action === 'mutate-and-retry') {
+        // Buyer-fixable. Apply the seller's correction (decision.field /
+        // decision.suggestion) and mint a FRESH idempotency_key — payload
+        // changed, so the seller's replay-window must NOT dedupe.
+        params = applyCorrection(params, error, decision); // your domain logic
+        idempotencyKey = randomUUID();
+        await sleep(decision.delayMs); // small jitter (~125-250ms by default)
+        attempt++;
+        continue;
+      }
+
+      // 'escalate' — stop the loop and surface to a human. Includes
+      // commercial-relationship signals (POLICY_VIOLATION etc.), auth
+      // failures, IDEMPOTENCY_EXPIRED (do a natural-key check first!),
+      // attempt-cap exhaustion, and unknown vendor codes.
+      throw new EscalationRequired(decision.reason, decision.message);
+    }
+  }
+}
+```
+
+The discriminated union means TypeScript narrows correctly in each branch — `decision.delayMs` is only available on retry/mutate-and-retry, `decision.field` only on mutate-and-retry, `decision.message` only on escalate.
+
+For per-vertical overrides (e.g., a creative-template platform that legitimately auto-fixes `CREATIVE_REJECTED` format mismatches), instantiate `BuyerRetryPolicy` directly:
+
+```typescript
+import { BuyerRetryPolicy } from '@adcp/sdk';
+
+const policy = new BuyerRetryPolicy({
+  overrides: {
+    CREATIVE_REJECTED: (error) => {
+      if (error.field === 'creative.format' && /unsupported_format/.test(error.message)) {
+        return { action: 'mutate-and-retry', delayMs: 0, attemptCap: 2, sameIdempotencyKey: false, reason: 'capability' };
+      }
+      return null; // fall through to default (escalate as commercial)
+    },
+  },
+});
+
+const decision = policy.decide(error, { attempt });
+```
+
+Default policy is intentionally conservative — see the source comments in `src/lib/utils/buyer-retry-policy.ts` for per-code reasoning.
 
 If your symptom isn't here, fall through to the next section.
 
