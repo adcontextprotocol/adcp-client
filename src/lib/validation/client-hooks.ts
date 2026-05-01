@@ -75,7 +75,17 @@ export function validateOutgoingRequest(
   version?: string
 ): ValidationOutcome | undefined {
   if (mode === 'off') return undefined;
-  const outcome = validateRequest(taskName, params, version);
+  let outcome: ValidationOutcome;
+  try {
+    outcome = validateRequest(taskName, params, version);
+  } catch (err) {
+    // Schema bundle not found (schemas/cache/ unpopulated). In warn mode,
+    // skip validation rather than crashing the call — schema absence is a
+    // dev-environment gap, not a protocol error. Strict mode re-throws so
+    // CI catches misconfigured test environments.
+    if (mode === 'warn') return undefined;
+    throw err;
+  }
   if (outcome.valid) return outcome;
   if (mode === 'warn') {
     logWarning(debugLogs, taskName, outcome);
