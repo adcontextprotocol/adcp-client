@@ -1454,17 +1454,79 @@ type SubmittedEnvelope = {
 };
 
 /**
+ * Mid-request token refresh hook config (#1145 Gap 2). When `refresh.fn`
+ * is defined and the platform method throws `AdcpError({ code: 'AUTH_REQUIRED' })`,
+ * `projectSync` refreshes the account's token via the hook, mutates
+ * `account.authInfo.token`, and retries the platform method ONCE. If the
+ * refresh hook itself throws, projects to `AUTH_REQUIRED` with
+ * `recovery: 'correctable'` so the buyer re-links via their UI flow.
+ */
+interface RefreshConfig {
+  account: Account<unknown>;
+  fn?: (account: Account<unknown>, reason: 'auth_required') => Promise<{ token: string; expiresAt?: number }>;
+}
+
+/**
+ * Run a platform method with reactive token refresh on `AUTH_REQUIRED`.
+ * Without a refresh fn (or no `refresh` at all) this passes the call
+ * through. With one, catches `AUTH_REQUIRED`, calls `refresh.fn`, mutates
+ * `account.authInfo.token` (and `expiresAt` if returned), and retries the
+ * inner call exactly once.
+ *
+ * Failure modes:
+ *   - Refresh hook throws → re-throw `AUTH_REQUIRED` with `recovery: 'correctable'`
+ *     so the buyer re-links via their UI.
+ *   - Retried call throws `AUTH_REQUIRED` again → bubble out (don't refresh
+ *     a second time).
+ */
+async function runWithTokenRefresh<T>(fn: () => Promise<T>, refresh: RefreshConfig | undefined): Promise<T> {
+  if (!refresh?.fn) return fn();
+  try {
+    return await fn();
+  } catch (err) {
+    if (!(err instanceof AdcpError) || err.code !== 'AUTH_REQUIRED') {
+      throw err;
+    }
+    let refreshed: { token: string; expiresAt?: number };
+    try {
+      refreshed = await refresh.fn(refresh.account, 'auth_required');
+    } catch {
+      // Refresh-fn exception text is intentionally NOT echoed on the wire
+      // — upstream identity-provider error messages routinely embed
+      // refresh-token prefixes, internal hostnames, OAuth provider error
+      // codes, and stack-trace fragments. Adopters log details server-
+      // side; the buyer gets a fixed message + correctable recovery
+      // signaling they need to re-authorize.
+      throw new AdcpError('AUTH_REQUIRED', {
+        message: 'Token refresh failed; re-authentication required',
+        recovery: 'correctable',
+      });
+    }
+    refresh.account.authInfo.token = refreshed.token;
+    if (refreshed.expiresAt !== undefined) {
+      refresh.account.authInfo.expiresAt = refreshed.expiresAt;
+    }
+    return fn();
+  }
+}
+
+/**
  * Project a sync platform call onto the wire dispatch shape. `AdcpError`
  * throws → wire `adcp_error` envelope; other thrown errors bubble to the
  * framework's `SERVICE_UNAVAILABLE` mapping.
+ *
+ * When `refresh` is provided and the call throws `AUTH_REQUIRED`, the
+ * framework calls `refresh.fn(refresh.account, 'auth_required')`, updates
+ * `account.authInfo.token`, and retries the platform method once.
  */
 async function projectSync<TResult, TWire>(
   fn: () => Promise<TResult>,
-  mapResult: (r: TResult) => TWire
+  mapResult: (r: TResult) => TWire,
+  refresh?: RefreshConfig
 ): Promise<TWire | AdcpErrorResponse> {
   try {
-    const result = await fn();
-    const wire = mapResult(result);
+    const result = await runWithTokenRefresh(fn, refresh);
+    const wire = mapResult(result as TResult);
     // Single-chokepoint runtime strip: ctx_metadata MUST NEVER cross to the
     // buyer. Defense-in-depth (compile-time WireShape<T> + runtime walk).
     // Mutates `wire` in place — every handler builds a fresh response per
@@ -1496,7 +1558,6 @@ async function projectSync<TResult, TWire>(
       return adcpError('ACCOUNT_NOT_FOUND', {
         message: 'Account not found',
         field: 'account',
-        recovery: 'terminal',
       });
     }
     throw err;
@@ -2242,7 +2303,6 @@ function extractPushConfig(
       throw new AdcpError('INVALID_REQUEST', {
         message: `push_notification_config.url rejected: ${validation.reason}`,
         field: 'push_notification_config.url',
-        recovery: 'terminal',
       });
     }
     url = rawUrl;
@@ -2255,7 +2315,6 @@ function extractPushConfig(
       throw new AdcpError('INVALID_REQUEST', {
         message: `push_notification_config.token rejected: ${validation.reason}`,
         field: 'push_notification_config.token',
-        recovery: 'terminal',
       });
     }
     token = rawToken;
@@ -2484,7 +2543,6 @@ function buildMediaBuyHandlers<P extends DecisioningPlatform<any, any>>(
         return adcpError('INVALID_REQUEST', {
           message: 'update_media_buy requires media_buy_id',
           field: 'media_buy_id',
-          recovery: 'correctable',
         });
       }
       // Auto-hydrate: attach the full MediaBuy (wire shape + ctx_metadata)
@@ -2538,7 +2596,6 @@ function buildMediaBuyHandlers<P extends DecisioningPlatform<any, any>>(
       if (!sales.syncCreatives) {
         return adcpError('UNSUPPORTED_FEATURE', {
           message: 'sync_creatives not supported by this sales platform',
-          recovery: 'terminal',
         });
       }
       return projectSync(
@@ -2709,7 +2766,6 @@ function buildCreativeHandlers<P extends DecisioningPlatform<any, any>>(
       if (!('previewCreative' in creative)) {
         return adcpError('UNSUPPORTED_FEATURE', {
           message: 'preview_creative not supported by this platform',
-          recovery: 'terminal',
         });
       }
       const reqCtx = ctxFor(ctx);
@@ -2725,7 +2781,6 @@ function buildCreativeHandlers<P extends DecisioningPlatform<any, any>>(
       if (!creative.syncCreatives) {
         return adcpError('UNSUPPORTED_FEATURE', {
           message: 'sync_creatives not supported by this creative platform',
-          recovery: 'terminal',
         });
       }
       return projectSync(
@@ -2759,7 +2814,6 @@ function buildCreativeHandlers<P extends DecisioningPlatform<any, any>>(
       if (!('listCreatives' in creative)) {
         return adcpError('UNSUPPORTED_FEATURE', {
           message: 'list_creatives not supported by this platform',
-          recovery: 'terminal',
         });
       }
       const reqCtx = ctxFor(ctx);
@@ -2773,7 +2827,6 @@ function buildCreativeHandlers<P extends DecisioningPlatform<any, any>>(
       if (!('getCreativeDelivery' in creative)) {
         return adcpError('UNSUPPORTED_FEATURE', {
           message: 'get_creative_delivery not supported by this platform',
-          recovery: 'terminal',
         });
       }
       const reqCtx = ctxFor(ctx);
@@ -3202,13 +3255,26 @@ function buildAccountHandlers<P extends DecisioningPlatform<any, any>>(
 
   if (accounts.getAccountFinancials) {
     handlers.getAccountFinancials = async (params, ctx) => {
+      // Resolve the account first so `ctx.account` is populated when the
+      // platform method runs. Adopters fronting an upstream platform read
+      // tokens / upstream IDs off `ctx.account.ctx_metadata` without
+      // having to re-resolve from `params.account`.
       const resolveCtx = {
         ...(ctx.authInfo !== undefined && { authInfo: ctx.authInfo }),
         toolName: 'get_account_financials' as const,
       };
+      const resolved = await accounts.resolve(params.account, resolveCtx);
+      if (!resolved) {
+        throw new AdcpError('ACCOUNT_NOT_FOUND', {
+          message: 'Account not found',
+          recovery: 'terminal',
+        });
+      }
+      const toolCtx = { ...resolveCtx, account: resolved };
       return projectSync(
-        () => accounts.getAccountFinancials!(params, resolveCtx),
-        r => r
+        () => accounts.getAccountFinancials!(params, toolCtx),
+        r => r,
+        accounts.refreshToken ? { account: resolved, fn: accounts.refreshToken.bind(accounts) } : undefined
       );
     };
   }

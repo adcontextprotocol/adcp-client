@@ -304,6 +304,26 @@ export interface StoryboardStep {
   comply_scenario?: string;
   /** Whether this step depends on state from a previous step */
   stateful?: boolean;
+  /**
+   * Declares that this step substitutes for one or more peer steps in the
+   * same phase. When a target peer skips with `not_applicable` or
+   * `missing_tool` (no advertised tool), the runner defers the cascade and
+   * waives it iff this substitute step passes. Same-phase only; cross-phase
+   * substitution is not supported.
+   *
+   * Canonical case: `list_accounts` declares `peer_substitutes_for:
+   * sync_accounts` on explicit-mode social platforms where the buyer never
+   * calls `sync_accounts` because accounts are pre-provisioned out-of-band.
+   *
+   * Without this declaration, a `missing_tool` skip on a stateful step
+   * trips the cascade immediately (state genuinely never materialized).
+   * With it, the runner gives a declared substitute a chance to establish
+   * equivalent state before tripping.
+   *
+   * Use `string[]` for the rare bulk case (e.g., a `bulk_setup` that
+   * substitutes for both account and event-source provisioning).
+   */
+  peer_substitutes_for?: string | string[];
   /** When true, the step passes if the task returns an error */
   expect_error?: boolean;
   /**
@@ -1542,6 +1562,23 @@ export interface AssertionResult {
    * has prose to report.
    */
   hint?: StoryboardStepHint;
+  /**
+   * Lifecycle resources or transitions an observation-based invariant
+   * saw over the run. Set only by invariants whose verdict is meaningful
+   * exclusively when something was observed (`status.monotonic` today),
+   * emitted on the `onEnd` summary record. The track-level rollup
+   * demotes a passing track to `TrackStatus: 'silent'` when every record
+   * carrying this field reports `0`.
+   *
+   * This MUST count actual lifecycle resources or transitions observed
+   * — never "the assertion was applicable" or "the assertion ran." A
+   * future invariant that emits `observation_count` with skip-style
+   * semantics would cause silent demotion for the wrong reason.
+   *
+   * Absent on assertions that don't model observation counts. Companion
+   * to adcontextprotocol/adcp#2834.
+   */
+  observation_count?: number;
 }
 
 /**

@@ -522,6 +522,8 @@ return adcpError('SERVICE_UNAVAILABLE', 'Try again in 30 seconds');
 return adcpError('ACCOUNT_SUSPENDED', 'Contact support');
 ```
 
+> **Heads-up for buyer-agent authors**: four codes are spec-`correctable` but operator-semantically human-escalate — don't auto-mutate-and-retry on `POLICY_VIOLATION`, `COMPLIANCE_UNSATISFIED`, `GOVERNANCE_DENIED`, or `AUTH_REQUIRED`. Surface to the user. (`AUTH_REQUIRED` conflates missing-creds with revoked-creds; until [adcontextprotocol/adcp#3730](https://github.com/adcontextprotocol/adcp/issues/3730) splits these, treat as escalate.) See `skills/call-adcp-agent/SKILL.md` for the full callout.
+
 See `docs/llms.txt` for the full error code table with recovery classifications.
 
 ### Storyboards

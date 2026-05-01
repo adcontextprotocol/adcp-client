@@ -340,6 +340,40 @@ export class FeatureUnsupportedError extends ADCPError {
 }
 
 /**
+ * Error thrown when a response body exceeds the configured `maxResponseBytes`
+ * cap on the transport. Surfaced when crawling untrusted agents (registries,
+ * federated discovery layers) to prevent a hostile vendor from buffering a
+ * large reply before schema validation runs.
+ *
+ * Recovery: `terminal` from the SDK's view — repeating the call against the
+ * same agent will hit the same cap. The buyer's options are to widen the
+ * cap (per-call `transport.maxResponseBytes`) when the agent's payload is
+ * legitimately large, or to flag the agent as misbehaving.
+ */
+export class ResponseTooLargeError extends ADCPError {
+  readonly code = 'RESPONSE_TOO_LARGE';
+
+  constructor(
+    public readonly limit: number,
+    public readonly bytesRead: number,
+    public readonly url: string,
+    /**
+     * The `Content-Length` header value when the cap was tripped before any
+     * body bytes were read. Undefined when the response was streamed and
+     * exceeded the cap mid-flight, or when the server omitted the header.
+     */
+    public readonly declaredContentLength?: number
+  ) {
+    super(
+      declaredContentLength !== undefined
+        ? `Response body declared ${declaredContentLength} bytes, exceeds maxResponseBytes cap of ${limit} (${url})`
+        : `Response body exceeded maxResponseBytes cap of ${limit} after reading ${bytesRead} bytes (${url})`
+    );
+    this.details = { limit, bytesRead, url, declaredContentLength };
+  }
+}
+
+/**
  * Reason the v3 guard refused a mutating dispatch.
  * - `version`: seller's `major_versions` does not include 3
  * - `idempotency`: seller reports v3 but omits the required
