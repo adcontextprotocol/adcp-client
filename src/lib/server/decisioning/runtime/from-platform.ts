@@ -1463,10 +1463,7 @@ type SubmittedEnvelope = {
  */
 interface RefreshConfig {
   account: Account<unknown>;
-  fn?: (
-    account: Account<unknown>,
-    reason: 'auth_required'
-  ) => Promise<{ token: string; expiresAt?: number }>;
+  fn?: (account: Account<unknown>, reason: 'auth_required') => Promise<{ token: string; expiresAt?: number }>;
 }
 
 /**
@@ -1493,15 +1490,21 @@ async function runWithTokenRefresh<T>(fn: () => Promise<T>, refresh: RefreshConf
     let refreshed: { token: string; expiresAt?: number };
     try {
       refreshed = await refresh.fn(refresh.account, 'auth_required');
-    } catch (refreshErr) {
+    } catch {
+      // Refresh-fn exception text is intentionally NOT echoed on the wire
+      // — upstream identity-provider error messages routinely embed
+      // refresh-token prefixes, internal hostnames, OAuth provider error
+      // codes, and stack-trace fragments. Adopters log details server-
+      // side; the buyer gets a fixed message + correctable recovery
+      // signaling they need to re-authorize.
       throw new AdcpError('AUTH_REQUIRED', {
-        message: `Token refresh failed: ${refreshErr instanceof Error ? refreshErr.message : String(refreshErr)}`,
+        message: 'Token refresh failed; re-authentication required',
         recovery: 'correctable',
       });
     }
     refresh.account.authInfo.token = refreshed.token;
     if (refreshed.expiresAt !== undefined) {
-      (refresh.account.authInfo as { expiresAt?: number }).expiresAt = refreshed.expiresAt;
+      refresh.account.authInfo.expiresAt = refreshed.expiresAt;
     }
     return fn();
   }

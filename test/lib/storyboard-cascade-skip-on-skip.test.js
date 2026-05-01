@@ -857,6 +857,133 @@ describe('runStoryboard: #1144 peer_substitutes_for — declared-substitute resc
     assert.ok(!downstream.skipped, 'no cascade — bulk substitute rescued both targets');
   });
 
+  test('peer_substitutes_for: self-reference rejected at parse time', async () => {
+    agent = await startFakeAgent();
+    const storyboard = storyboardWith([
+      {
+        id: 'self',
+        title: 'self-substitute',
+        task: '__test_setup',
+        stateful: true,
+        peer_substitutes_for: 'self',
+        auth: 'none',
+        sample_request: {},
+      },
+    ]);
+    await assert.rejects(
+      runStoryboard([agent.url], storyboard, {
+        protocol: 'mcp',
+        allow_http: true,
+        agentTools: ['__test_setup', 'get_adcp_capabilities'],
+        _profile: { name: 'fake', tools: [{ name: '__test_setup' }, { name: 'get_adcp_capabilities' }] },
+      }),
+      /peer_substitutes_for cannot reference itself/
+    );
+  });
+
+  test('peer_substitutes_for: empty-string entry in array rejected at parse time', async () => {
+    agent = await startFakeAgent();
+    const storyboard = storyboardWith([
+      {
+        id: 'target',
+        title: 'target',
+        task: '__test_setup',
+        stateful: true,
+        auth: 'none',
+        sample_request: {},
+      },
+      {
+        id: 'sub',
+        title: 'substitute with empty entry',
+        task: '__test_assert',
+        stateful: true,
+        peer_substitutes_for: ['target', ''],
+        auth: 'none',
+        sample_request: {},
+      },
+    ]);
+    await assert.rejects(
+      runStoryboard([agent.url], storyboard, {
+        protocol: 'mcp',
+        allow_http: true,
+        agentTools: ['__test_setup', '__test_assert', 'get_adcp_capabilities'],
+        _profile: {
+          name: 'fake',
+          tools: [{ name: '__test_setup' }, { name: '__test_assert' }, { name: 'get_adcp_capabilities' }],
+        },
+      }),
+      /peer_substitutes_for entries must be non-empty strings/
+    );
+  });
+
+  test('peer_substitutes_for: target step must be stateful (rejected at parse time)', async () => {
+    agent = await startFakeAgent();
+    const storyboard = storyboardWith([
+      {
+        id: 'target_nonstateful',
+        title: 'non-stateful target',
+        task: '__test_setup',
+        auth: 'none',
+        sample_request: {},
+      },
+      {
+        id: 'sub',
+        title: 'substitute pointing at non-stateful target',
+        task: '__test_assert',
+        stateful: true,
+        peer_substitutes_for: 'target_nonstateful',
+        auth: 'none',
+        sample_request: {},
+      },
+    ]);
+    await assert.rejects(
+      runStoryboard([agent.url], storyboard, {
+        protocol: 'mcp',
+        allow_http: true,
+        agentTools: ['__test_setup', '__test_assert', 'get_adcp_capabilities'],
+        _profile: {
+          name: 'fake',
+          tools: [{ name: '__test_setup' }, { name: '__test_assert' }, { name: 'get_adcp_capabilities' }],
+        },
+      }),
+      /peer_substitutes_for target 'target_nonstateful' must be stateful/
+    );
+  });
+
+  test('peer_substitutes_for: substitute step must itself be stateful (rejected at parse time)', async () => {
+    agent = await startFakeAgent();
+    const storyboard = storyboardWith([
+      {
+        id: 'target',
+        title: 'stateful target',
+        task: '__test_setup',
+        stateful: true,
+        auth: 'none',
+        sample_request: {},
+      },
+      {
+        id: 'sub_nonstateful',
+        title: 'non-stateful substitute',
+        task: '__test_assert',
+        peer_substitutes_for: 'target',
+        auth: 'none',
+        sample_request: {},
+      },
+    ]);
+    await assert.rejects(
+      runStoryboard([agent.url], storyboard, {
+        protocol: 'mcp',
+        allow_http: true,
+        agentTools: ['__test_setup', '__test_assert', 'get_adcp_capabilities'],
+        _profile: {
+          name: 'fake',
+          tools: [{ name: '__test_setup' }, { name: '__test_assert' }, { name: 'get_adcp_capabilities' }],
+        },
+      }),
+      /peer_substitutes_for is only legal on stateful steps/
+    );
+  });
+
   test('peer_substitutes_for is same-phase only — cross-phase reference rejected at parse time', async () => {
     // Scope guard: substitution is confined to a single phase. The
     // loader's authoring-time validator rejects cross-phase references

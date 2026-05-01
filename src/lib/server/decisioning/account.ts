@@ -94,21 +94,6 @@ export interface Account<TCtxMeta = Record<string, unknown>> {
 }
 
 /**
- * Request context passed to `AccountStore.resolve()` so adopters fronting
- * an upstream platform API can translate the auth principal into their
- * tenant model on resolution. Mirrors `ResolveAccountContext` on the
- * underlying `AdcpServerConfig`.
- *
- * `authInfo` is the OAuth-style token shape the framework extracts from
- * `serve({ authenticate })` — it's the FRAMEWORK auth shape, not the v6
- * `AuthPrincipal` (which is what the platform sets on the RESOLVED
- * `Account.authInfo`). The transition is intentional: the framework hands
- * the resolver the raw transport-level auth, and the resolver decides
- * what to persist on the Account as `AuthPrincipal`.
- *
- * @public
- */
-/**
  * The OAuth-style auth shape extracted by `serve({ authenticate })`. Threaded
  * to `accounts.resolve(ref, ctx)` and to the `tasks_get` custom-tool handler
  * so adopters can authorize the resolution against the principal.
@@ -137,13 +122,20 @@ export interface ResolveContext {
 
 /**
  * Context passed to AccountStore tool methods that operate on a single
- * resolved Account (e.g., `getAccountFinancials`). Threads the resolved
+ * resolved Account (today: `getAccountFinancials`). Threads the resolved
  * `Account<TCtxMeta>` through so adopters can read `ctx.account.ctx_metadata`
  * (auth tokens, upstream IDs, etc.) without re-resolving from the request.
  *
  * Strict superset of `ResolveContext`: same `authInfo` / `toolName` fields,
  * plus the resolved account. Distinct type because `accounts.resolve()`
  * produces the account and therefore cannot receive it on input.
+ *
+ * **NOT applicable to `reportUsage`.** `ReportUsageRequest.usage[]` carries
+ * a per-row `account: AccountReference`; a request can span multiple
+ * accounts. Pre-resolving a single `ctx.account` would misrepresent that
+ * shape. `reportUsage` keeps `ResolveContext` and per-row resolution is
+ * the adopter's responsibility (call `accounts.resolve` from inside the
+ * impl, once per row).
  *
  * @public
  */
@@ -159,6 +151,8 @@ export interface AuthPrincipal {
   kind: 'api_key' | 'oauth' | 'signature' | 'public';
   /** Bearer token / API key value. Platform-side don't log this. */
   token?: string;
+  /** Token expiry (ms since epoch). Set by `accounts.refreshToken` after a successful refresh. */
+  expiresAt?: number;
   /** OAuth scopes / API-key principal name. */
   principal?: string;
   /** Additional claims (jwt sub, kid, etc.). */
@@ -290,26 +284,46 @@ export interface AccountStore<TCtxMeta = Record<string, unknown>> {
    * The reason string lets adopters distinguish trigger conditions:
    *   - `'auth_required'` — platform method threw AUTH_REQUIRED in flight.
    *
+   * Treat as an open string union: future values may be added. Adopters
+   * SHOULD switch exhaustively (`default: throw`) so behavior drift on
+   * minor SDK bumps fails loud rather than silently no-oping.
+   *
    * **In-flight only.** The refreshed token is scoped to the current
    * request — the framework does NOT echo it back to the buyer. Use this
    * for adapters that front an upstream platform API (Snap, Meta,
    * retail-media OAuth flows) where the SDK caches an upstream token
    * server-side and the buyer's auth-to-this-agent is separate.
    *
+   * **Account-object identity contract.** The framework mutates
+   * `account.authInfo.token` (and `expiresAt` if returned) on the Account
+   * passed in. Adopters who memoize / cache `Account` objects across
+   * requests MUST return a fresh copy from `accounts.resolve()` for each
+   * request — sharing a cached Account would leak the refreshed token to
+   * any subsequent caller that resolves the same id. Returning a new
+   * object literal per call (the canonical pattern) is safe.
+   *
+   * **Concurrency.** `refreshToken` MUST be safe under concurrent
+   * invocation on the same account — two parallel in-flight calls hitting
+   * AUTH_REQUIRED at once will both call this hook. Adopters whose
+   * upstream provider rate-limits refresh should coalesce internally
+   * (e.g., a per-account in-flight refresh promise). The framework does
+   * not coalesce.
+   *
    * **Failure surfaces correctable AUTH_REQUIRED.** If `refreshToken`
    * itself throws, the framework projects to `AUTH_REQUIRED` with
-   * `recovery: 'correctable'` so the buyer re-links via their UI flow.
-   * Don't use SERVICE_UNAVAILABLE — refresh failure means the upstream
-   * authorization is gone, not that the service is transiently down.
+   * `recovery: 'correctable'` and a fixed message (the inner exception
+   * text is NOT echoed on the wire — refresh failures routinely include
+   * upstream details that should not cross the trust boundary). Log inner
+   * details server-side. Don't use SERVICE_UNAVAILABLE — refresh failure
+   * means the upstream authorization is gone, not that the service is
+   * transiently down.
    *
    * **Expiry timestamp** (`expiresAt`, ms since epoch) is optional. When
-   * returned, callers can pre-emptively refresh tokens nearing expiry
-   * (proactive refresh is not yet wired; reactive-only in v6.x).
+   * returned, the framework writes it to `account.authInfo.expiresAt` so
+   * adopters reading the resolved Account can branch on it (proactive
+   * refresh is not yet wired; reactive-only in v6.x).
    */
-  refreshToken?(
-    account: Account<TCtxMeta>,
-    reason: 'auth_required'
-  ): Promise<{ token: string; expiresAt?: number }>;
+  refreshToken?(account: Account<TCtxMeta>, reason: 'auth_required'): Promise<{ token: string; expiresAt?: number }>;
 }
 
 /**

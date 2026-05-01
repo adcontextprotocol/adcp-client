@@ -1143,9 +1143,141 @@ describe('AccountStore optional methods (v1.0 gap-fill for rc.1)', () => {
     });
     assert.strictEqual(result.isError, true);
     const error = result.structuredContent.errors?.[0] ?? result.structuredContent;
-    assert.match(JSON.stringify(error), /AUTH_REQUIRED/);
-    assert.match(JSON.stringify(error), /correctable/);
-    assert.match(JSON.stringify(error), /refresh endpoint returned 403/);
+    const wire = JSON.stringify(error);
+    assert.match(wire, /AUTH_REQUIRED/);
+    assert.match(wire, /correctable/);
+    // Inner exception text is intentionally NOT echoed on the wire —
+    // see the leak-prevention test below for the security rationale.
+    assert.doesNotMatch(wire, /refresh endpoint returned 403/);
+  });
+
+  it('getAccountFinancials retry that also throws AUTH_REQUIRED bubbles without a third call (#1145)', async () => {
+    // Refresh-then-retry is a single-shot. If the retry also throws
+    // AUTH_REQUIRED (e.g., refreshed token was already invalidated by
+    // a concurrent revoke), the error bubbles directly to the buyer
+    // without a second refresh attempt. Adopters should NOT see the
+    // refresh hook fire twice for one request.
+    const { AdcpError } = require('../dist/lib/server/decisioning/async-outcome.js');
+    let attempt = 0;
+    let refreshCalls = 0;
+    const platform = buildPlatform({
+      accounts: {
+        resolve: async () => ({
+          id: 'acc_x',
+          name: 'Acme',
+          status: 'active',
+          ctx_metadata: {},
+          authInfo: { kind: 'oauth', token: 'tok' },
+        }),
+        getAccountFinancials: async () => {
+          attempt += 1;
+          throw new AdcpError('AUTH_REQUIRED', { message: 'still expired', recovery: 'correctable' });
+        },
+        refreshToken: async () => {
+          refreshCalls += 1;
+          return { token: 'fresh_but_already_invalidated' };
+        },
+      },
+    });
+    const server = createAdcpServerFromPlatform(platform, {
+      name: 'gap2-double',
+      version: '0.0.1',
+      validation: { requests: 'off', responses: 'off' },
+    });
+    const result = await server.dispatchTestRequest({
+      method: 'tools/call',
+      params: { name: 'get_account_financials', arguments: { account: { account_id: 'acc_x' } } },
+    });
+    assert.strictEqual(result.isError, true);
+    assert.strictEqual(attempt, 2, 'platform method ran twice (initial + one retry)');
+    assert.strictEqual(refreshCalls, 1, 'refresh fired exactly once');
+  });
+
+  it('refresh-failure error message does NOT echo upstream exception text on the wire (#1145)', async () => {
+    // Security: refresh-fn exception text routinely embeds refresh-token
+    // prefixes, internal hostnames, and OAuth provider error codes that
+    // shouldn't cross to the buyer. The framework projects a fixed
+    // message; adopters log inner details server-side.
+    const { AdcpError } = require('../dist/lib/server/decisioning/async-outcome.js');
+    const platform = buildPlatform({
+      accounts: {
+        resolve: async () => ({
+          id: 'acc_y',
+          name: 'Acme',
+          status: 'active',
+          ctx_metadata: {},
+          authInfo: { kind: 'oauth', token: 'tok' },
+        }),
+        getAccountFinancials: async () => {
+          throw new AdcpError('AUTH_REQUIRED', { message: 'expired', recovery: 'correctable' });
+        },
+        refreshToken: async () => {
+          // Realistic upstream OAuth-lib-style throw — embeds a
+          // refresh-token-like prefix and an internal hostname.
+          throw new Error('invalid_grant: rt=1//0gAbCdEfG... at idp.internal.corp:8443');
+        },
+      },
+    });
+    const server = createAdcpServerFromPlatform(platform, {
+      name: 'gap2-leak',
+      version: '0.0.1',
+      validation: { requests: 'off', responses: 'off' },
+    });
+    const result = await server.dispatchTestRequest({
+      method: 'tools/call',
+      params: { name: 'get_account_financials', arguments: { account: { account_id: 'acc_y' } } },
+    });
+    assert.strictEqual(result.isError, true);
+    const wire = JSON.stringify(result.structuredContent);
+    assert.match(wire, /AUTH_REQUIRED/);
+    assert.match(wire, /correctable/);
+    assert.doesNotMatch(wire, /invalid_grant/, 'upstream OAuth error code MUST NOT cross to wire');
+    assert.doesNotMatch(wire, /idp\.internal\.corp/, 'internal hostname MUST NOT cross to wire');
+    assert.doesNotMatch(wire, /1\/\/0g/, 'refresh-token prefix MUST NOT cross to wire');
+  });
+
+  it('refreshToken successful refresh writes expiresAt onto account.authInfo (#1145)', async () => {
+    // Adopters reading `ctx.account.authInfo.expiresAt` after a refresh
+    // see the new expiry. The contract anchors proactive-refresh
+    // patterns (not yet wired but the field is reachable today).
+    const { AdcpError } = require('../dist/lib/server/decisioning/async-outcome.js');
+    let lastSeenExpiresAt;
+    const platform = buildPlatform({
+      accounts: {
+        resolve: async () => ({
+          id: 'acc_z',
+          name: 'Acme',
+          status: 'active',
+          ctx_metadata: {},
+          authInfo: { kind: 'oauth', token: 'old' },
+        }),
+        getAccountFinancials: async (req, ctx) => {
+          if (ctx.account.authInfo.token === 'old') {
+            throw new AdcpError('AUTH_REQUIRED', { message: 'expired', recovery: 'correctable' });
+          }
+          lastSeenExpiresAt = ctx.account.authInfo.expiresAt;
+          return {
+            account: { account_id: 'acc_z' },
+            currency: 'USD',
+            period: { start: '2026-04-01', end: '2026-04-30' },
+            timezone: 'America/New_York',
+            spend: { total_spend: 1, media_buy_count: 1 },
+          };
+        },
+        refreshToken: async () => ({ token: 'fresh', expiresAt: 1800000000000 }),
+      },
+    });
+    const server = createAdcpServerFromPlatform(platform, {
+      name: 'gap2-expires',
+      version: '0.0.1',
+      validation: { requests: 'off', responses: 'off' },
+    });
+    const result = await server.dispatchTestRequest({
+      method: 'tools/call',
+      params: { name: 'get_account_financials', arguments: { account: { account_id: 'acc_z' } } },
+    });
+    assert.notStrictEqual(result.isError, true, JSON.stringify(result.structuredContent));
+    assert.strictEqual(lastSeenExpiresAt, 1800000000000, 'expiresAt is reachable on retry call');
   });
 
   it('getAccountFinancials does not retry on non-AUTH errors (#1145)', async () => {
