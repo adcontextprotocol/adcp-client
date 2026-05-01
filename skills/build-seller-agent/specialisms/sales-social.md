@@ -18,7 +18,6 @@ Storyboard: `social_platform` (category `sales_social`, track `audiences`).
 - `sync_accounts` with `account_scope`, `payment_terms`, `setup` fields — advertiser onboarding with identity verification setup_url when pending
 - `list_accounts` with brand filter — buyers listing their accounts on your platform
 - `sync_audiences` → returns `{ audiences: [{ audience_id, name, status: 'active', action: 'created' }] }` — buyer pushes audience segment definitions for platform match
-- `sync_catalogs` → product catalog push for dynamic product ads (Meta DPA, Snap Dynamic Ads, TikTok Dynamic Showcase). The storyboard's catalog-item macros (`{SKU}`, `{GTIN}`) resolve per-impression at render time.
 - `sync_creatives` for platform-native assemblies with `{ creative_id, action, status: 'pending_review' }` — image + headline + description slots assembled into the native unit
 - `log_event` → returns `{ events: [{ event_id, status: 'accepted' }] }` — server-side conversion events for attribution / optimization
 - `get_account_financials` → returns `{ account, financials: { currency, current_spend, remaining_balance, payment_status } }` — prepaid-balance monitoring typical of walled gardens
