@@ -234,10 +234,8 @@ sales: SalesPlatform<MyMeta> = {
       const decision = await this.waitForOperatorApproval(req);
 
       if (decision.denied) {
-        throw new AdcpError('GOVERNANCE_DENIED', {
-          recovery: 'terminal',
-          message: decision.reason,
-        });
+        // recovery defaults to 'correctable' per spec — buyer should escalate to plan operator
+        throw new AdcpError('GOVERNANCE_DENIED', { message: decision.reason });
       }
 
       // Return → task transitions to `completed` with this as `result`
@@ -341,9 +339,9 @@ The escape hatch — `ctx.runAsync` + `ctx.startTask` — exists for the genuine
 
 Common codes:
 
-- **Buyer-fixable** (`recovery: 'correctable'`): `INVALID_REQUEST`, `BUDGET_TOO_LOW`, `POLICY_VIOLATION`, `CREATIVE_REJECTED`, `MEDIA_BUY_NOT_FOUND`, `INVALID_STATE`, `REQUOTE_REQUIRED`
+- **Buyer-fixable** (`recovery: 'correctable'`): `INVALID_REQUEST`, `BUDGET_TOO_LOW`, `POLICY_VIOLATION`, `CREATIVE_REJECTED`, `MEDIA_BUY_NOT_FOUND`, `INVALID_STATE`, `REQUOTE_REQUIRED`, `GOVERNANCE_DENIED` *(spec-correctable but treat as operator-escalate in practice — see `skills/call-adcp-agent/SKILL.md`)*
 - **Transient** (`recovery: 'transient'`, retry with backoff): `RATE_LIMITED` (always include `retry_after`), `SERVICE_UNAVAILABLE`
-- **Terminal** (`recovery: 'terminal'`, requires human action): `GOVERNANCE_DENIED`, `ACCOUNT_SUSPENDED`, `PERMISSION_DENIED`, `UNSUPPORTED_FEATURE`
+- **Terminal** (`recovery: 'terminal'`, requires human action): `ACCOUNT_SUSPENDED`, `PERMISSION_DENIED`, `UNSUPPORTED_FEATURE`
 
 Generic thrown errors (`Error`, `TypeError`) become `SERVICE_UNAVAILABLE` at the framework boundary.
 

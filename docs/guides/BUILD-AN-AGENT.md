@@ -522,7 +522,7 @@ return adcpError('SERVICE_UNAVAILABLE', 'Try again in 30 seconds');
 return adcpError('ACCOUNT_SUSPENDED', 'Contact support');
 ```
 
-See `docs/llms.txt` for the full error code table with recovery classifications.
+See `docs/llms.txt` for the full error code table with recovery classifications. Note: `POLICY_VIOLATION`, `COMPLIANCE_UNSATISFIED`, `GOVERNANCE_DENIED`, and `AUTH_REQUIRED` are spec-`correctable` but buyer agents should escalate to operator rather than auto-retry with a mutated payload — see `skills/call-adcp-agent/SKILL.md` for the full escalation table.
 
 ### Storyboards
 

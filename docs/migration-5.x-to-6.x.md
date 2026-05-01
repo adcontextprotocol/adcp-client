@@ -201,7 +201,8 @@ sales: {
     await this.queueForReview({ taskId: taskCtx.id, request: req });
     const decision = await this.waitForOperator(req);
     if (decision.denied) {
-      throw new AdcpError('GOVERNANCE_DENIED', { recovery: 'terminal', message: decision.reason });
+      // recovery defaults to 'correctable' per spec — buyer should escalate to plan operator
+      throw new AdcpError('GOVERNANCE_DENIED', { message: decision.reason });
     }
     return { media_buy_id: decision.id, status: 'pending_creatives', confirmed_at: new Date().toISOString(), packages: [] };
   }),

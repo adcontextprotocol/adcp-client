@@ -563,4 +563,4 @@ Common error codes:
 - `UNAUTHORIZED`: Not authorized to access this resource
 - `VALIDATION_ERROR`: Invalid filter or rule configuration
 - `PLAN_NOT_FOUND`: No plan with this ID, or the principal is not authorized for it. Returned indistinguishably from the unauthorized case to prevent plan-ID enumeration.
-- `GOVERNANCE_DENIED`: `check_governance` rejected the action. Read `governance_context.findings[]` to identify the failed rule, correct the payload, and retry.
+- `GOVERNANCE_DENIED`: `check_governance` rejected the action. Read `governance_context.findings[]` to identify the failed rule. If the denial is from seller-side governance middleware over a correctable plan parameter (e.g. budget ceiling), correct within plan limits and retry. If the denial comes from a registered governance agent with spending authority, escalate to the plan operator — do not auto-correct.
