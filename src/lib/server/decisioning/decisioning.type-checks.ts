@@ -171,8 +171,16 @@ function _capabilities_supported_billings_operator(): Pick<DecisioningCapabiliti
   return { supportedBillings: ['operator'] as const };
 }
 
+function _capabilities_supported_billings_advertiser(): Pick<DecisioningCapabilities, 'supportedBillings'> {
+  return { supportedBillings: ['advertiser'] as const };
+}
+
+function _capabilities_supported_billings_all_three(): Pick<DecisioningCapabilities, 'supportedBillings'> {
+  return { supportedBillings: ['operator', 'agent', 'advertiser'] as const };
+}
+
 function _capabilities_supported_billings_invalid(): Pick<DecisioningCapabilities, 'supportedBillings'> {
-  // @ts-expect-error — only 'operator' | 'agent' allowed.
+  // @ts-expect-error — only 'operator' | 'agent' | 'advertiser' allowed.
   return { supportedBillings: ['publisher'] as const };
 }
 
