@@ -2162,52 +2162,87 @@ export class SingleAgentClient {
     inputHandler?: InputHandler,
     options?: TaskOptions
   ): Promise<TaskResult<T>> {
-    const normalizedParams = normalizeRequestParams(taskName, params, {
-      skipIdempotencyAutoInject: options?.skipIdempotencyAutoInject,
-    });
-    await this.validateTaskFeatures(taskName);
-    if (this.config.requireV3ForMutations && isMutatingTask(taskName)) {
-      await this.requireSupportedMajor(taskName);
+    const startTime = Date.now();
+    try {
+      const normalizedParams = normalizeRequestParams(taskName, params, {
+        skipIdempotencyAutoInject: options?.skipIdempotencyAutoInject,
+      });
+      await this.validateTaskFeatures(taskName);
+      if (this.config.requireV3ForMutations && isMutatingTask(taskName)) {
+        await this.requireSupportedMajor(taskName);
+      }
+      const agent = await this.ensureEndpointDiscovered();
+
+      // Schema-driven pre-send validation runs on the unadapted v3 shape so
+      // wire-format adapters (e.g. adaptGetProductsRequestForV2) don't strip
+      // v3-only fields out from under the v3 bundled schema.
+      this.executor.validateRequest(taskName, normalizedParams);
+
+      // Adapt request for the server's protocol version (e.g. strip v3-only
+      // fields like buying_mode when talking to v2 agents).
+      const serverVersion = await this.detectServerVersion();
+      const adaptedParams = await this.adaptRequestForServerVersion(taskName, normalizedParams);
+
+      // Symmetric warn-only post-adapter pass against the v2.5 schema bundle.
+      // Drift gets surfaced via result.metadata.debug_logs so adapter
+      // regressions in production aren't silently swallowed.
+      const v25DriftLogs: any[] = [];
+      if (serverVersion === 'v2') {
+        this.executor.validateAdaptedRequestAgainstV2(taskName, adaptedParams, v25DriftLogs);
+      }
+
+      const result = await this.executor.executeTask<T>(
+        agent,
+        taskName,
+        adaptedParams,
+        inputHandler,
+        options,
+        serverVersion
+      );
+
+      if (v25DriftLogs.length > 0) {
+        result.debug_logs = [...(result.debug_logs ?? []), ...v25DriftLogs];
+      }
+
+      // Normalize response to v3 format for consistent API surface
+      if (result.success && result.data) {
+        result.data = this.normalizeResponseToV3(taskName, result.data) as T;
+      }
+
+      return result;
+    } catch (error) {
+      // Auth and timeout errors are established throws that callers handle
+      // explicitly (e.g. NeedsAuthorizationError triggers OAuth flows).
+      // Rethrow them so callers' existing catch sites continue to work.
+      if (error instanceof AuthenticationRequiredError || error instanceof TaskTimeoutError) {
+        throw error;
+      }
+      // All other pre-flight errors (feature validation, schema validation,
+      // version detection, request adaptation) surface as structured TaskResult
+      // rather than raw exceptions — matching the declared return type and the
+      // contract the internal executor already upholds for network-layer errors.
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      return {
+        success: false as const,
+        status: 'failed' as const,
+        error: errorMessage,
+        metadata: {
+          taskId: crypto.randomUUID(),
+          taskName,
+          agent: {
+            id: this.agent.id,
+            name: this.agent.name,
+            protocol: this.normalizedAgent.protocol,
+          },
+          responseTimeMs: Date.now() - startTime,
+          timestamp: new Date().toISOString(),
+          clarificationRounds: 0,
+          status: 'failed',
+        },
+        conversation: [],
+        debug_logs: [],
+      };
     }
-    const agent = await this.ensureEndpointDiscovered();
-
-    // Schema-driven pre-send validation runs on the unadapted v3 shape so
-    // wire-format adapters (e.g. adaptGetProductsRequestForV2) don't strip
-    // v3-only fields out from under the v3 bundled schema.
-    this.executor.validateRequest(taskName, normalizedParams);
-
-    // Adapt request for the server's protocol version (e.g. strip v3-only
-    // fields like buying_mode when talking to v2 agents).
-    const serverVersion = await this.detectServerVersion();
-    const adaptedParams = await this.adaptRequestForServerVersion(taskName, normalizedParams);
-
-    // Symmetric warn-only post-adapter pass against the v2.5 schema bundle.
-    // Drift gets surfaced via result.metadata.debug_logs so adapter
-    // regressions in production aren't silently swallowed.
-    const v25DriftLogs: any[] = [];
-    if (serverVersion === 'v2') {
-      this.executor.validateAdaptedRequestAgainstV2(taskName, adaptedParams, v25DriftLogs);
-    }
-
-    const result = await this.executor.executeTask<T>(
-      agent,
-      taskName,
-      adaptedParams,
-      inputHandler,
-      options,
-      serverVersion
-    );
-
-    if (v25DriftLogs.length > 0) {
-      result.debug_logs = [...(result.debug_logs ?? []), ...v25DriftLogs];
-    }
-
-    // Normalize response to v3 format for consistent API surface
-    if (result.success && result.data) {
-      result.data = this.normalizeResponseToV3(taskName, result.data) as T;
-    }
-
-    return result;
   }
 
   // ====== DEFERRED TASK MANAGEMENT ======
