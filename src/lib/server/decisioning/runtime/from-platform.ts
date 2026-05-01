@@ -1089,8 +1089,12 @@ export function createAdcpServerFromPlatform<P extends DecisioningPlatform<any, 
           const id = (resolved as { id?: unknown } | null | undefined)?.id;
           if (typeof id === 'string' && id.length > 0) return id;
         } catch (err) {
+          // Don't surface `err.message` — adopter resolvers (especially
+          // OAuth-backed ones) sometimes embed token fragments or account
+          // refs in thrown errors. The error class name is enough triage
+          // signal; the resolver itself owns its own error logging upstream.
           fwLogger.warn('[adcp/auto-seed] platform.accounts.resolve threw during seed write; dropping fixture', {
-            error: err instanceof Error ? err.message : String(err),
+            errorType: err instanceof Error ? err.name : typeof err,
           });
         }
         return undefined;
@@ -3435,11 +3439,13 @@ function buildAccountHandlers<P extends DecisioningPlatform<any, any>>(
 // Auto-seed helpers (catalog-backed comply sandbox; issue #1091)
 // ────────────────────────────────────────────────────────────
 
-// Pull the request's account_id from the comply tool input. Sandbox-flagged
-// requests carry it on `input.account.account_id`; non-sandbox traffic is
-// already short-circuited by `complyTest.sandboxGate`, so a missing id here
-// means the adapter fired outside the gated path — drop the write rather
-// than collapse it into a shared namespace.
+// Bridge-side fallback: pull the raw `account.account_id` from a tool input
+// when the framework didn't pre-resolve `ctx.account` (e.g., a custom
+// dispatcher that bypasses `resolveAccount`). The auto-seed bridge prefers
+// `ctx.account?.id` (resolved by the framework on `get_products`); this
+// helper only runs when that's absent. Auto-seed *writes* go through
+// `resolveAutoSeedAccountId` (defined inline in the auto-seed wiring) so
+// the namespace key on write always matches the bridge's resolved-id read.
 function readAutoSeedAccountId(input: Record<string, unknown>): string | undefined {
   const account = input.account;
   if (account == null || typeof account !== 'object') return undefined;
