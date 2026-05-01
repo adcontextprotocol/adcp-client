@@ -115,6 +115,7 @@ import type { AdcpCapabilities, ToolInfo, FeatureName } from '../utils/capabilit
 import {
   buildSyntheticCapabilities,
   augmentCapabilitiesFromTools,
+  looksLikeV3Capabilities,
   parseCapabilitiesResponse,
   resolveFeature,
   listDeclaredFeatures,
@@ -2765,6 +2766,25 @@ export class SingleAgentClient {
         const result = await this.executor.executeTask<any>(agent, 'get_adcp_capabilities', {}, undefined);
 
         if (result.success && result.data) {
+          this.cachedCapabilities = augmentCapabilitiesFromTools(parseCapabilitiesResponse(result.data), tools);
+          this.maybeWarnV2Sunset(this.cachedCapabilities);
+          return this.cachedCapabilities;
+        }
+        // Tightened v2 fallback (issue #1189). When `result.success` is false
+        // but `result.data` is structurally v3-shaped, the agent is a v3 agent
+        // with a wire-shape bug — typically a single failed schema validation
+        // on `get_adcp_capabilities`. Falling back to v2 in this case masks
+        // the original bug behind cascading "AdCP schema data for version v2.5
+        // not found" errors that nobody can debug. Parse the data anyway,
+        // surface the validation failure loudly, and continue with the
+        // v3 capabilities the agent actually returned.
+        if (result.data && looksLikeV3Capabilities(result.data)) {
+          console.warn(
+            `[AdCP] Agent "${this.agent.id}" returned a get_adcp_capabilities response that ` +
+              `failed validation, but the response is structurally v3-shaped. Treating as v3 ` +
+              `(the agent has a wire-shape bug — that's the thing to fix). ` +
+              (typeof result.error === 'string' ? `Validation error: ${result.error}` : '')
+          );
           this.cachedCapabilities = augmentCapabilitiesFromTools(parseCapabilitiesResponse(result.data), tools);
           this.maybeWarnV2Sunset(this.cachedCapabilities);
           return this.cachedCapabilities;
