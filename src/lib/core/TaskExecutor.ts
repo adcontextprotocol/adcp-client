@@ -1118,8 +1118,10 @@ export class TaskExecutor {
     const submitted: SubmittedContinuation<T> = {
       taskId: serverTaskId,
       webhookUrl,
-      track: () => this.getTaskStatus(agent, serverTaskId),
-      waitForCompletion: (pollInterval = 60000) => this.pollTaskCompletion<T>(agent, serverTaskId, pollInterval),
+      track: (transport?: import('../protocols').TransportOptions) =>
+        this.getTaskStatus(agent, serverTaskId, transport ?? options.transport),
+      waitForCompletion: (pollInterval = 60000) =>
+        this.pollTaskCompletion<T>(agent, serverTaskId, pollInterval, options.transport),
     };
 
     return {
@@ -1292,7 +1294,10 @@ export class TaskExecutor {
   /**
    * List tasks for an agent, preferring MCP Tasks protocol when available.
    */
-  private async listTasksForAgent(agent: AgentConfig): Promise<TaskInfo[]> {
+  private async listTasksForAgent(
+    agent: AgentConfig,
+    transport?: import('../protocols').TransportOptions
+  ): Promise<TaskInfo[]> {
     // Try MCP Tasks protocol method first
     if (agent.protocol === 'mcp') {
       const authToken = getAuthToken(agent);
@@ -1310,7 +1315,7 @@ export class TaskExecutor {
       {
         serverVersion: this.lastKnownServerVersion,
         adcpVersion: this.config.adcpVersion,
-        transport: this.config.transport,
+        transport: transport ?? this.config.transport,
       }
     )) as Record<string, unknown>;
     return (response.tasks as TaskInfo[]) || [];
@@ -1319,9 +1324,9 @@ export class TaskExecutor {
   /**
    * Task tracking methods (PR #78)
    */
-  async listTasks(agent: AgentConfig): Promise<TaskInfo[]> {
+  async listTasks(agent: AgentConfig, transport?: import('../protocols').TransportOptions): Promise<TaskInfo[]> {
     try {
-      return await this.listTasksForAgent(agent);
+      return await this.listTasksForAgent(agent, transport);
     } catch {
       // Static message only — CodeQL's taint analysis treats `error` and
       // every property of it as sensitive once it originates from an
@@ -1332,7 +1337,11 @@ export class TaskExecutor {
     }
   }
 
-  async getTaskStatus(agent: AgentConfig, taskId: string): Promise<TaskInfo> {
+  async getTaskStatus(
+    agent: AgentConfig,
+    taskId: string,
+    transport?: import('../protocols').TransportOptions
+  ): Promise<TaskInfo> {
     // AdCP `tasks/get` is the cross-protocol work-status interface
     // (`schemas/cache/<v>/bundled/core/tasks-get-{request,response}.json`).
     // Dispatched as a buyer-callable tool over the agent's transport
@@ -1367,7 +1376,7 @@ export class TaskExecutor {
       {
         serverVersion: this.lastKnownServerVersion,
         adcpVersion: this.config.adcpVersion,
-        transport: this.config.transport,
+        transport: transport ?? this.config.transport,
       }
     )) as Record<string, unknown>;
     // We don't run `extractResponseData` here: that helper's
@@ -1382,9 +1391,14 @@ export class TaskExecutor {
     return mapTasksGetResponseToTaskInfo(response);
   }
 
-  async pollTaskCompletion<T>(agent: AgentConfig, taskId: string, pollInterval = 60000): Promise<TaskResult<T>> {
+  async pollTaskCompletion<T>(
+    agent: AgentConfig,
+    taskId: string,
+    pollInterval = 60000,
+    transport?: import('../protocols').TransportOptions
+  ): Promise<TaskResult<T>> {
     while (true) {
-      const status = await this.getTaskStatus(agent, taskId);
+      const status = await this.getTaskStatus(agent, taskId, transport);
 
       if (status.status === ADCP_STATUS.COMPLETED) {
         const pollSuccess = this.isOperationSuccess(status.result);
@@ -1543,7 +1557,7 @@ export class TaskExecutor {
         debugLogs,
         serverVersion: this.lastKnownServerVersion,
         adcpVersion: this.config.adcpVersion,
-        transport: this.config.transport,
+        transport: options.transport ?? this.config.transport,
       }
     );
 
@@ -1647,12 +1661,12 @@ export class TaskExecutor {
   /**
    * Get task list for a specific agent
    */
-  async getTaskList(agentId: string): Promise<TaskInfo[]> {
+  async getTaskList(agentId: string, transport?: import('../protocols').TransportOptions): Promise<TaskInfo[]> {
     // First try to get from agent via protocol
     const agent = this.findAgentById(agentId);
     if (agent) {
       try {
-        return await this.listTasksForAgent(agent);
+        return await this.listTasksForAgent(agent, transport);
       } catch {
         // Static message — see comment on listTasks above.
         console.warn('Failed to get remote task list (see DEBUG=adcp:* logs for detail)');

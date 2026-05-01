@@ -76,10 +76,10 @@ describe('A2A agent-card discovery — maxResponseBytes', () => {
         assert.strictEqual(err.code, 'RESPONSE_TOO_LARGE');
         assert.strictEqual(err.limit, 64 * 1024);
         // Server emits Content-Length, so the pre-check trips before any
-        // body bytes are read. `bytesRead` is 0, `declaredContentLength`
+        // body bytes are read. `bytesRead` is 0, `contentLengthHeader`
         // is the server's announced size.
         assert.strictEqual(err.bytesRead, 0);
-        assert.ok(err.declaredContentLength > 64 * 1024);
+        assert.ok(err.contentLengthHeader > 64 * 1024);
         return true;
       }
     );

@@ -358,18 +358,19 @@ export class ResponseTooLargeError extends ADCPError {
     public readonly bytesRead: number,
     public readonly url: string,
     /**
-     * The `Content-Length` header value when the cap was tripped before any
-     * body bytes were read. Undefined when the response was streamed and
-     * exceeded the cap mid-flight, or when the server omitted the header.
+     * The parsed value of the `Content-Length` response header when the cap
+     * was tripped on the pre-check (before any body bytes were read). Undefined
+     * when the response was streamed and exceeded the cap mid-flight, or when
+     * the server omitted the header.
      */
-    public readonly declaredContentLength?: number
+    public readonly contentLengthHeader?: number
   ) {
     super(
-      declaredContentLength !== undefined
-        ? `Response body declared ${declaredContentLength} bytes, exceeds maxResponseBytes cap of ${limit} (${url})`
+      contentLengthHeader !== undefined
+        ? `Response body declared ${contentLengthHeader} bytes, exceeds maxResponseBytes cap of ${limit} (${url})`
         : `Response body exceeded maxResponseBytes cap of ${limit} after reading ${bytesRead} bytes (${url})`
     );
-    this.details = { limit, bytesRead, url, declaredContentLength };
+    this.details = { limit, bytesRead, url, contentLengthHeader };
   }
 }
 
