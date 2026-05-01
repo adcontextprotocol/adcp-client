@@ -141,9 +141,38 @@ describe('evaluateGraderOutput', () => {
     });
   });
 
-  describe('unparseable / empty input', () => {
+  describe('overall_status: partial — no tracks ran (attempted=0)', () => {
+    it('returns passed=false when all track counts are zero (wrong storyboard / discovery filtered)', () => {
+      // computeOverallStatus emits 'partial' when attempted===0. This must NOT pass —
+      // it means no tracks wired at all, not that tracks ran silently.
+      const result = evaluateGraderOutput({
+        overall_status: 'partial',
+        summary: {
+          tracks_passed: 0,
+          tracks_failed: 0,
+          tracks_partial: 0,
+          tracks_silent: 0,
+          steps_failed: 0,
+        },
+      });
+      assert.equal(result.passed, false);
+      assert.equal(result.silentTracks, false);
+    });
+  });
+
+  describe('null / non-object input', () => {
+    it('returns passed=false for null', () => {
+      const result = evaluateGraderOutput(null);
+      assert.equal(result.passed, false);
+    });
+
     it('returns passed=false for empty object', () => {
       const result = evaluateGraderOutput({});
+      assert.equal(result.passed, false);
+    });
+
+    it('returns passed=false for array', () => {
+      const result = evaluateGraderOutput([]);
       assert.equal(result.passed, false);
     });
   });
