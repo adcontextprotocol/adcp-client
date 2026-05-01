@@ -724,23 +724,60 @@ async function executeStoryboardPass(
   let passedCount = 0;
   let failedCount = 0;
   let skippedCount = 0;
-  // Stateful-cascade flags live at storyboard scope, NOT phase scope —
-  // cross-phase storyboards (e.g. signal_marketplace/governance_denied:
-  // setup in phases 1-2, consumption in phase 3) need the cascade to
-  // survive phase boundaries. Once a stateful step in any phase failed
-  // or skipped to materialize state, every downstream stateful step
-  // stays cascade-skipped regardless of which phase it lives in.
-  let statefulFailed = false;
+  // Per-phase stateful-cascade tracking (#1161).
+  //
+  // Map entry exists iff the phase tripped its stateful cascade — i.e.,
+  // a stateful step in the phase failed or skipped for a missing-state
+  // reason. Value is the trigger context (skip-step diagnostic) OR null
+  // when the trip was a real failure (failure-wins-within-phase rule, so
+  // downstream cascade-detail says "prior stateful step failed" rather
+  // than referencing an earlier benign skip).
+  //
+  // Replaces the storyboard-scope `statefulFailed` boolean: each phase's
+  // stateful steps consult `phase.depends_on` (default: all prior phases)
+  // to decide whether any upstream phase tripped. Independent phases
+  // (`depends_on: []`) keep running even if other phases tripped.
+  //
+  // Within-phase cascade is preserved: once any stateful step in a phase
+  // trips, subsequent stateful steps in the SAME phase cascade-skip
+  // unconditionally (later steps need state from earlier steps in this
+  // phase by storyboard authoring intent).
+  //
   // `substitution_chain` is set when the trigger came from a
   // deferred-and-unrescued `peer_substitutes_for` declaration (#1144) so
   // the cascade-detail message can name the substitute(s) that didn't
   // pass. Absent for the immediate-trip path and the legacy any-peer
   // not_applicable path.
-  let statefulSkipTrigger: {
+  type CascadeTrigger = {
     stepId: string;
     reason: RunnerSkipReason | RunnerDetailedSkipReason;
     substitution_chain?: string;
-  } | null = null;
+  };
+  const phaseStatefulCascades = new Map<string, CascadeTrigger | null>();
+  // Phase IDs in declaration order, accumulated as we iterate so the
+  // default `depends_on` resolution ("all prior phases") doesn't re-scan
+  // the storyboard. Phases push their own id at end-of-phase.
+  const priorPhaseIds: string[] = [];
+
+  // Helpers for per-phase cascade state.
+  const effectiveDependsOn = (phase: { depends_on?: string[] }, prior: readonly string[]): readonly string[] =>
+    phase.depends_on ?? prior;
+  const cascadeForPhase = (
+    phase: { id: string; depends_on?: string[] },
+    prior: readonly string[]
+  ): { tripped: true; trigger: CascadeTrigger | null } | { tripped: false } => {
+    // Within-phase cascade always counts — stateful steps later in this
+    // phase depend on state from stateful steps earlier in this phase.
+    if (phaseStatefulCascades.has(phase.id)) {
+      return { tripped: true, trigger: phaseStatefulCascades.get(phase.id) ?? null };
+    }
+    for (const depId of effectiveDependsOn(phase, prior)) {
+      if (phaseStatefulCascades.has(depId)) {
+        return { tripped: true, trigger: phaseStatefulCascades.get(depId) ?? null };
+      }
+    }
+    return { tripped: false };
+  };
   // Step results whose failures the main loop added to failedCount. The
   // branch-set post-pass decrements only for entries that were actually
   // counted, so an optional phase that hit `presenceDetected` (a PRM 2xx
@@ -1040,11 +1077,16 @@ async function executeStoryboardPass(
       // distinguishes the two so adopters reading the cascade know
       // whether to look at a real failure or a structural mismatch
       // (storyboard step requires a tool the agent doesn't advertise).
-      if (statefulFailed && step.stateful) {
-        const detail = statefulSkipTrigger
-          ? statefulSkipTrigger.substitution_chain
-            ? `Skipped: prior stateful step "${statefulSkipTrigger.stepId}" skipped (${statefulSkipTrigger.reason}); ${statefulSkipTrigger.substitution_chain}; state never materialized.`
-            : `Skipped: prior stateful step "${statefulSkipTrigger.stepId}" skipped (${statefulSkipTrigger.reason}); state never materialized.`
+      // Per-phase cascade scoping (#1161): consults `phase.depends_on`
+      // (default: all prior phases) plus the current phase's own
+      // within-phase cascade state.
+      const cascade = step.stateful ? cascadeForPhase(phase, priorPhaseIds) : { tripped: false };
+      if (cascade.tripped && step.stateful) {
+        const trigger = (cascade as { tripped: true; trigger: CascadeTrigger | null }).trigger;
+        const detail = trigger
+          ? trigger.substitution_chain
+            ? `Skipped: prior stateful step "${trigger.stepId}" skipped (${trigger.reason}); ${trigger.substitution_chain}; state never materialized.`
+            : `Skipped: prior stateful step "${trigger.stepId}" skipped (${trigger.reason}); state never materialized.`
           : 'Skipped: prior stateful step failed.';
         stepResults.push({
           storyboard_id: storyboard.id,
@@ -1191,13 +1233,15 @@ async function executeStoryboardPass(
                 };
               }
             } else {
-              statefulFailed = true;
-              // Record provenance for the cascade detail message. First trip
-              // wins — subsequent triggers don't overwrite, since the cascade
-              // text references the originating diagnostic (the leftmost
+              // Trip this phase's cascade. First trip wins — subsequent
+              // triggers don't overwrite, since the cascade text
+              // references the originating diagnostic (the leftmost
               // missing-state stateful step in the phase).
-              if (statefulSkipTrigger === null) {
-                statefulSkipTrigger = { stepId: step.id, reason: result.skip_reason ?? 'missing_tool' };
+              if (!phaseStatefulCascades.has(phase.id)) {
+                phaseStatefulCascades.set(phase.id, {
+                  stepId: step.id,
+                  reason: result.skip_reason ?? 'missing_tool',
+                });
               }
             }
           } else if (result.skip_reason === 'not_applicable') {
@@ -1258,13 +1302,13 @@ async function executeStoryboardPass(
           countedAsFailed.add(result);
         }
         if (step.stateful) {
-          statefulFailed = true;
           // Real failure takes precedence over a prior skip-trigger in
           // the cascade detail message — failures are the worse
           // diagnostic, so downstream cascade-skipped steps should
           // reference the failure rather than the earlier benign-ish
-          // missing-state skip.
-          statefulSkipTrigger = null;
+          // missing-state skip. `null` trigger encodes "real failure,
+          // detail says 'prior stateful step failed'."
+          phaseStatefulCascades.set(phase.id, null);
         }
         // In multi-instance mode, annotate the failure with the cross-instance
         // attribution block so CI readers pattern-match it as a deployment bug.
@@ -1284,11 +1328,8 @@ async function executeStoryboardPass(
     // already tripped `statefulFailed` at the failure site with the
     // worse-diagnostic real-failure message; we defer to that and don't
     // overwrite.
-    if (phasePendingNotApplicable && !phaseEstablishedStatefulState && !statefulFailed) {
-      statefulFailed = true;
-      if (statefulSkipTrigger === null) {
-        statefulSkipTrigger = phasePendingNotApplicable;
-      }
+    if (phasePendingNotApplicable && !phaseEstablishedStatefulState && !phaseStatefulCascades.has(phase.id)) {
+      phaseStatefulCascades.set(phase.id, phasePendingNotApplicable);
     }
 
     // Phase-end cascade resolution for deferred `missing_tool` triggers
@@ -1299,17 +1340,18 @@ async function executeStoryboardPass(
     // hard cascade with a detail message that names the substitute(s)
     // tried so adopters reading the report see the substitution chain
     // rather than a bare `missing_tool` cascade origin.
-    if (phasePendingMissingTool && !phaseRescuedTargets.has(phasePendingMissingTool.stepId) && !statefulFailed) {
-      statefulFailed = true;
-      if (statefulSkipTrigger === null) {
-        const subs = phasePendingMissingTool.substitutes;
-        const subsList = subs.length === 1 ? `"${subs[0]}"` : subs.map(s => `"${s}"`).join(', ');
-        statefulSkipTrigger = {
-          stepId: phasePendingMissingTool.stepId,
-          reason: phasePendingMissingTool.reason,
-          substitution_chain: `declared substitute ${subsList} did not pass`,
-        };
-      }
+    if (
+      phasePendingMissingTool &&
+      !phaseRescuedTargets.has(phasePendingMissingTool.stepId) &&
+      !phaseStatefulCascades.has(phase.id)
+    ) {
+      const subs = phasePendingMissingTool.substitutes;
+      const subsList = subs.length === 1 ? `"${subs[0]}"` : subs.map(s => `"${s}"`).join(', ');
+      phaseStatefulCascades.set(phase.id, {
+        stepId: phasePendingMissingTool.stepId,
+        reason: phasePendingMissingTool.reason,
+        substitution_chain: `declared substitute ${subsList} did not pass`,
+      });
     }
 
     phaseResults.push({
@@ -1319,6 +1361,9 @@ async function executeStoryboardPass(
       steps: stepResults,
       duration_ms: Date.now() - phaseStart,
     });
+    // Accumulate phase id for default `depends_on` resolution in the next
+    // iteration — phases declared later see this one as a prior phase.
+    priorPhaseIds.push(phase.id);
   }
 
   // Branch-set post-pass: phases in a branch set (explicit `branch_set:`
