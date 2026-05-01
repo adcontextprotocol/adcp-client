@@ -23,6 +23,17 @@ Storyboard: `social_platform` (category `sales_social`, track `audiences`).
 - `log_event` → returns `{ events: [{ event_id, status: 'accepted' }] }` — server-side conversion events for attribution / optimization
 - `get_account_financials` → returns `{ account, financials: { currency, current_spend, remaining_balance, payment_status } }` — prepaid-balance monitoring typical of walled gardens
 
-**Handler grouping in `createAdcpServer`:** `sync_audiences`, `sync_catalogs`, and `log_event` live under `eventTracking`, NOT `mediaBuy`. `get_account_financials` and `sync_accounts` live under `accounts`. Baseline `get_products`/`create_media_buy`/etc. stay under `mediaBuy`.
+**Method mapping in `createAdcpServerFromPlatform`:** every `sales-social` tool maps to a typed method on the platform object — no manual handler-bag grouping required:
+
+| Wire tool | Platform field | Method |
+|---|---|---|
+| `sync_audiences` | `audiences` (`AudiencePlatform<TCtxMeta>`) | `audiences.syncAudiences` |
+| `sync_catalogs` | `sales` (`SalesPlatform<TCtxMeta>`) | `sales.syncCatalogs` |
+| `log_event` | `sales` | `sales.logEvent` |
+| `sync_event_sources` | `sales` | `sales.syncEventSources` |
+| `get_account_financials` | `accounts` (`AccountStore<TCtxMeta>`) | `accounts.getAccountFinancials` |
+| `sync_accounts` | `accounts` | `accounts.upsert` |
+
+Declare `TCtxMeta` once as your advertiser-metadata shape (e.g., `interface SocialMeta { advertiserId: string; pixelId: string }`) on `DecisioningPlatform<Config, SocialMeta>` and every handler's `ctx.account.ctx_metadata` is fully typed — no casts needed. Use `defineSalesPlatform<SocialMeta>({...})` or `defineAudiencePlatform<SocialMeta>({...})` when building inline (object literal) rather than as a class to preserve typed `req` parameters in handler bodies.
 
 **Don't** rip out `get_products` or `create_media_buy` when adding `sales-social` — you need them. The failure mode from doing so: buyers who discover your agent via `get_adcp_capabilities` expecting a media-buy seller hit immediate compliance failures when every baseline storyboard fails with "tool not registered," and your entire `sales-non-guaranteed` bundle regresses to 0/N passing.
