@@ -113,7 +113,13 @@ function buildPrompt(
   storyboardId: string,
   port: number,
   skillAbsDir: string,
-  upstream?: { specialism: string; url: string; apiKey: string; openapiPath: string; operatorMapping: Array<{ adcp_operator: string; upstream_operator_id: string }> }
+  upstream?: {
+    specialism: string;
+    url: string;
+    apiKey: string;
+    openapiPath: string;
+    operatorMapping: Array<{ adcp_operator: string; upstream_operator_id: string }>;
+  }
 ): string {
   const upstreamSection = upstream
     ? `
@@ -418,27 +424,40 @@ function log(msg: string): void {
 async function bootUpstreamForHarness(
   specialism: string,
   port: number
-): Promise<{
-  url: string;
-  apiKey: string;
-  openapiPath: string;
-  operatorMapping: Array<{ adcp_operator: string; upstream_operator_id: string }>;
-  close: () => Promise<void>;
-} | undefined> {
-  // Use the compiled dist/ entry point so the harness doesn't depend on tsx
-  // resolution from a child process. Same path the CLI uses.
-  // eslint-disable-next-line @typescript-eslint/no-var-requires
-  const { bootMockServer } = require(resolve(REPO_ROOT, 'dist/lib/mock-server/index.js')) as {
-    bootMockServer: (opts: { specialism: string; port: number }) => Promise<{
+): Promise<
+  | {
       url: string;
       apiKey: string;
+      openapiPath: string;
+      operatorMapping: Array<{ adcp_operator: string; upstream_operator_id: string }>;
       close: () => Promise<void>;
-    }>;
-  };
-  // eslint-disable-next-line @typescript-eslint/no-var-requires
-  const seed = require(resolve(REPO_ROOT, `dist/lib/mock-server/${specialism}/seed-data.js`)) as {
-    OPERATORS: Array<{ adcp_operator: string; operator_id: string }>;
-  };
+    }
+  | undefined
+> {
+  // Use the compiled dist/ entry point so the harness doesn't depend on tsx
+  // resolution from a child process. Same path the CLI uses. If dist/ is
+  // missing (contributor forgot `npm run build`), surface the same friendly
+  // hint the CLI gives at bin/adcp.js — `MODULE_NOT_FOUND` straight from
+  // require() is unhelpful and makes contributors think the harness is
+  // broken instead of just unbuilt.
+  let bootMockServer: (opts: { specialism: string; port: number }) => Promise<{
+    url: string;
+    apiKey: string;
+    close: () => Promise<void>;
+  }>;
+  let seed: { OPERATORS: Array<{ adcp_operator: string; operator_id: string }> };
+  try {
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    ({ bootMockServer } = require(resolve(REPO_ROOT, 'dist/lib/mock-server/index.js')));
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    seed = require(resolve(REPO_ROOT, `dist/lib/mock-server/${specialism}/seed-data.js`));
+  } catch (err) {
+    log(
+      `[harness] mock-server module not found in dist/. Run \`npm run build\` first.\n` +
+        `  underlying: ${(err as Error)?.message ?? err}`
+    );
+    throw new Error(`mock-server (${specialism}) not built; run \`npm run build\``);
+  }
   const handle = await bootMockServer({ specialism, port });
   const openapiPath = resolve(REPO_ROOT, `src/lib/mock-server/${specialism}/openapi.yaml`);
   const operatorMapping = seed.OPERATORS.map(op => ({

@@ -42,7 +42,7 @@ components:
   schemas:
     Cohort:
       type: object
-      required: [cohort_id, name, category, member_count, total_universe, freshness_days, activation_status, data_provider_domain, data_provider_id, pricing, value_type]
+      required: [cohort_id, name, category, member_count, total_universe, freshness_days, activation_status, data_provider_domain, data_provider_id, data_provider_name, pricing, value_type]
       properties:
         cohort_id:
           type: string
@@ -75,6 +75,14 @@ components:
           type: string
           description: Data-provider-internal ID for this cohort.
           example: "likely_ev_buyers"
+        data_provider_name:
+          type: string
+          description: |
+            Human-readable name of the upstream data provider — flows directly
+            to AdCP `signal_id.data_provider` (required by signals response
+            schema). Without this field, adapters have to fabricate the value
+            from the domain, which trains the wrong reflex.
+          example: "Trident Auto Insights"
         value_type:
           type: string
           enum: [binary, numeric, categorical]

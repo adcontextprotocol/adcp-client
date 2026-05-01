@@ -49,7 +49,7 @@ export async function bootSignalMarketplace(options: BootOptions): Promise<BootR
     }).catch(err => {
       // Defense-in-depth — handlers should never throw, but if one does we
       // emit a 500 with a request_id so adopter logs can still trace it.
-      const requestId = req.headers['x-request-id'] as string | undefined ?? randomUUID();
+      const requestId = (req.headers['x-request-id'] as string | undefined) ?? randomUUID();
       writeJson(res, 500, {
         code: 'internal_error',
         message: err?.message ?? 'unexpected error',
@@ -172,9 +172,7 @@ function handleListCohorts(url: URL, ctx: HandlerCtx, op: MockOperator, res: Ser
   if (category) filtered = filtered.filter(c => c.category === category);
   if (dataProviderDomain) filtered = filtered.filter(c => c.data_provider_domain === dataProviderDomain);
   if (q) {
-    filtered = filtered.filter(
-      c => c.name.toLowerCase().includes(q) || c.description.toLowerCase().includes(q)
-    );
+    filtered = filtered.filter(c => c.name.toLowerCase().includes(q) || c.description.toLowerCase().includes(q));
   }
 
   const projected = filtered.map(c => projectCohortPricing(c, op));
@@ -221,10 +219,7 @@ async function handleCreateActivation(
     writeJson(res, 400, { code: 'invalid_request', message: 'Body must be an object.' });
     return;
   }
-  const { cohort_id, destination_id, pricing_id, duration_days, client_request_id } = body as Record<
-    string,
-    unknown
-  >;
+  const { cohort_id, destination_id, pricing_id, duration_days, client_request_id } = body as Record<string, unknown>;
   if (typeof cohort_id !== 'string' || typeof destination_id !== 'string' || typeof pricing_id !== 'string') {
     writeJson(res, 400, {
       code: 'invalid_request',
@@ -236,12 +231,31 @@ async function handleCreateActivation(
   // Idempotency replay — same client_request_id under same operator returns the
   // existing activation. Different operators using the same client_request_id
   // are independent because the table is keyed on `<operator_id>::<key>`.
+  // Body equivalence: replays with mismatched (cohort_id, destination_id,
+  // pricing_id) return 409 idempotency_conflict instead of silently returning
+  // the original — matches Stripe's idempotency contract and the AdCP spec
+  // semantics. Surfaces adapter bugs that reuse a single client_request_id
+  // across logically-distinct AdCP requests instead of hiding them.
   if (typeof client_request_id === 'string' && client_request_id.length > 0) {
     const idemKey = `${op.operator_id}::${client_request_id}`;
     const existing = ctx.idempotency.get(idemKey);
     if (existing) {
       const activation = ctx.activations.get(existing);
       if (activation) {
+        const sameBody =
+          activation.cohort_id === cohort_id &&
+          activation.destination_id === destination_id &&
+          activation.pricing_id === pricing_id;
+        if (!sameBody) {
+          writeJson(res, 409, {
+            code: 'idempotency_conflict',
+            message:
+              `client_request_id ${client_request_id} was previously used with a different ` +
+              `(cohort_id, destination_id, pricing_id) tuple. ` +
+              `Use a fresh idempotency key for distinct requests.`,
+          });
+          return;
+        }
         writeJson(res, 200, serializeActivation(activation));
         return;
       }

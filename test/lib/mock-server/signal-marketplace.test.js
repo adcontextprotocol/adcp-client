@@ -168,4 +168,90 @@ describe('mock-server signal-marketplace', () => {
     assert.equal(created.status, 'active');
     assert.ok(created.agent_activation_key);
   });
+
+  it('returns 409 idempotency_conflict when client_request_id is reused with a different body', async () => {
+    // Real upstreams (Stripe, AdCP spec) require returning a conflict on
+    // idempotency-key reuse with mismatched body. Silently returning the
+    // original would hide adapter bugs that reuse a single client_request_id
+    // across logically-distinct AdCP requests.
+    const auth = {
+      Authorization: `Bearer ${DEFAULT_API_KEY}`,
+      'X-Operator-Id': 'op_pinnacle',
+      'Content-Type': 'application/json',
+    };
+
+    const first = await fetch(`${handle.url}/v2/activations`, {
+      method: 'POST',
+      headers: auth,
+      body: JSON.stringify({
+        cohort_id: 'ckhsh_us_evb_2024q4_001',
+        destination_id: 'dest_ttd_main',
+        pricing_id: 'tier_default_evb_cpm',
+        client_request_id: 'idem-conflict-test',
+      }),
+    });
+    assert.equal(first.status, 201);
+
+    const conflict = await fetch(`${handle.url}/v2/activations`, {
+      method: 'POST',
+      headers: auth,
+      body: JSON.stringify({
+        cohort_id: 'ckhsh_us_pp_2024q4_002',
+        destination_id: 'dest_ttd_main',
+        pricing_id: 'tier_default_pp_cpm',
+        client_request_id: 'idem-conflict-test',
+      }),
+    });
+    assert.equal(conflict.status, 409);
+    const conflictBody = await conflict.json();
+    assert.equal(conflictBody.code, 'idempotency_conflict');
+  });
+
+  it('rejects an invalid pricing_id with 400 invalid_pricing', async () => {
+    const res = await fetch(`${handle.url}/v2/activations`, {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${DEFAULT_API_KEY}`,
+        'X-Operator-Id': 'op_pinnacle',
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        cohort_id: 'ckhsh_us_evb_2024q4_001',
+        destination_id: 'dest_ttd_main',
+        pricing_id: 'tier_does_not_exist',
+        client_request_id: 'invalid-pricing-test',
+      }),
+    });
+    assert.equal(res.status, 400);
+    const body = await res.json();
+    assert.equal(body.code, 'invalid_pricing');
+  });
+
+  it('rejects malformed JSON body with 400 invalid_json', async () => {
+    const res = await fetch(`${handle.url}/v2/activations`, {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${DEFAULT_API_KEY}`,
+        'X-Operator-Id': 'op_pinnacle',
+        'Content-Type': 'application/json',
+      },
+      body: '{ this is not json',
+    });
+    assert.equal(res.status, 400);
+    const body = await res.json();
+    assert.equal(body.code, 'invalid_json');
+  });
+
+  it('exposes data_provider_name on every cohort (required for AdCP signal_id.data_provider)', async () => {
+    const res = await fetch(`${handle.url}/v2/cohorts`, {
+      headers: { Authorization: `Bearer ${DEFAULT_API_KEY}`, 'X-Operator-Id': 'op_pinnacle' },
+    });
+    const body = await res.json();
+    for (const cohort of body.cohorts) {
+      assert.ok(
+        typeof cohort.data_provider_name === 'string' && cohort.data_provider_name.length > 0,
+        `cohort ${cohort.cohort_id} missing data_provider_name`
+      );
+    }
+  });
 });

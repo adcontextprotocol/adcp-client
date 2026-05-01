@@ -1043,6 +1043,10 @@ NOTES:
       }
     } else if (args[i] === '--api-key') {
       apiKey = args[++i];
+      if (apiKey === undefined || apiKey === '' || apiKey.startsWith('--')) {
+        console.error(`ERROR: --api-key requires a value\n`);
+        process.exit(2);
+      }
     } else {
       console.error(`ERROR: unknown option: ${args[i]}\n`);
       process.exit(2);

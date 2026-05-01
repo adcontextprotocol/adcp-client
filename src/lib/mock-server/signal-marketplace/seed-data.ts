@@ -9,6 +9,11 @@ export interface MockCohort {
   activation_status: 'active' | 'draft' | 'archived';
   data_provider_domain: string;
   data_provider_id: string;
+  /** Human-readable name of the upstream data provider — flows directly to
+   * AdCP `signal_id.data_provider` (required by signals response schema).
+   * Without it, adapters have to fabricate the value from the domain, which
+   * trains the wrong reflex. */
+  data_provider_name: string;
   value_type: 'binary' | 'numeric' | 'categorical';
   range?: { min: number; max: number };
   categories?: string[];
@@ -69,6 +74,7 @@ export const COHORTS: MockCohort[] = [
     activation_status: 'active',
     data_provider_domain: 'tridentauto.example',
     data_provider_id: 'likely_ev_buyers',
+    data_provider_name: 'Trident Auto Insights',
     value_type: 'binary',
     pricing: [
       {
@@ -94,6 +100,7 @@ export const COHORTS: MockCohort[] = [
     activation_status: 'active',
     data_provider_domain: 'tridentauto.example',
     data_provider_id: 'purchase_propensity',
+    data_provider_name: 'Trident Auto Insights',
     value_type: 'numeric',
     range: { min: 0, max: 1 },
     pricing: [
@@ -120,6 +127,7 @@ export const COHORTS: MockCohort[] = [
     activation_status: 'active',
     data_provider_domain: 'meridiangeo.example',
     data_provider_id: 'competitor_visitors',
+    data_provider_name: 'Meridian Geo',
     value_type: 'binary',
     pricing: [
       {
@@ -145,6 +153,7 @@ export const COHORTS: MockCohort[] = [
     activation_status: 'active',
     data_provider_domain: 'shopgrid.example',
     data_provider_id: 'new_to_brand',
+    data_provider_name: 'ShopGrid Retail Data',
     value_type: 'binary',
     pricing: [
       {
