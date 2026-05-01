@@ -2682,7 +2682,9 @@ export class SingleAgentClient {
           // complete cleanly. Re-initialize with a fresh connection and retry once.
           if (!(sessionErr instanceof StreamableHTTPError)) throw sessionErr;
           // Auth/authz failures won't be fixed by reconnecting — fast-fail, matching
-          // the guard in withCachedConnection (mcp.ts).
+          // the guard in withCachedConnection (mcp.ts). StreamableHTTPError.code is
+          // always a numeric HTTP status (no string-message fallback needed here, unlike
+          // is401Error which handles generic Error shapes).
           if (sessionErr.code === 401 || sessionErr.code === 403) throw sessionErr;
           debugLogs.push({
             type: 'info',
