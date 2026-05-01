@@ -32,6 +32,28 @@ AdCP operations are **distributed and asynchronous by default**. An agent might:
 npm install @adcp/sdk
 ```
 
+### TypeScript requirements
+
+`@adcp/sdk` exports Zod schemas as part of its public API. Zod v4's CTS locale
+types require `esModuleInterop: true` in your `tsconfig.json`. If you see
+`TS1259` errors pointing into `node_modules/zod/v4/locales/`, this flag is
+missing. The minimum working `tsconfig.json` for an `@adcp/sdk` project:
+
+```json
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "module": "commonjs",
+    "esModuleInterop": true,
+    "skipLibCheck": true
+  }
+}
+```
+
+`skipLibCheck: true` is additionally recommended to suppress `TS2694`/`TS18028`
+errors that TypeScript may surface from unrelated `@types/*` packages installed
+by other tools in your workspace.
+
 ## Quick Start: Distributed Operations
 
 ```typescript

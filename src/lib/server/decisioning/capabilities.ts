@@ -12,7 +12,14 @@
  * @public
  */
 
-import type { ZodSchema } from 'zod';
+/** Structural interface compatible with any Zod schema (v3 or v4) — avoids
+ * leaking a direct `import type { ZodSchema } from 'zod'` into emitted .d.ts
+ * files, which would force adopters to set esModuleInterop due to zod v4's
+ * CTS locale barrel. Any `z.ZodType<T>` satisfies this. */
+interface ConfigSchema<T> {
+  parse(data: unknown): T;
+  safeParse(data: unknown): { success: boolean; data?: T; error?: unknown };
+}
 import type {
   AdCPSpecialism,
   MediaChannel,
@@ -181,7 +188,7 @@ export interface DecisioningCapabilities<TConfig = unknown> {
    * framework validates at platform construction time; missing or wrong-shaped
    * config rejects the agent at boot rather than at first request.
    */
-  configSchema?: ZodSchema<TConfig>;
+  configSchema?: ConfigSchema<TConfig>;
 }
 
 export interface CreativeAgentRef {

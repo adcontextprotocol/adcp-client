@@ -11,6 +11,10 @@ We'll build a **signals agent** that serves audience segments via the `get_signa
 - Node.js 18+
 - `@adcp/sdk` installed (`npm install @adcp/sdk`)
 - `@modelcontextprotocol/sdk` (installed as a dependency of `@adcp/sdk`)
+- TypeScript project with `"esModuleInterop": true` in `tsconfig.json` (required
+  because `@adcp/sdk` re-exports Zod v4 schemas whose CTS locale types need this
+  flag; also set `"skipLibCheck": true` to suppress unrelated `@types/*`
+  warnings from other tools in your workspace)
 
 ## Two paths
 
