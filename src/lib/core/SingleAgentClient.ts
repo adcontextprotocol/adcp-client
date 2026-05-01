@@ -343,6 +343,50 @@ export interface SingleAgentClientConfig extends ConversationConfig {
  * - 🐛 Debug logging and observability
  * - 🎯 Works with both MCP and A2A protocols
  */
+/**
+ * Does a JS runtime value's type plausibly match a JSON Schema's declared
+ * shape? Used by the v2 adapter aliasing path to avoid moving a string
+ * into a slot the agent's tool schema declared as an object (e.g.,
+ * Wonderstruck's `brand: BrandReference` slot vs our adapter's
+ * `brand_manifest: 'https://...'` URL string).
+ *
+ * Recurses into `anyOf` / `oneOf`: the move is safe iff at least one
+ * variant accepts the value's runtime type. `$ref` we can't introspect
+ * locally — return true and let the seller's own validation catch.
+ *
+ * The empty schema `{}` is treated as "doesn't accept this type" so
+ * Pydantic-generated tool schemas with `anyOf: [{}, {type: null}]` —
+ * which technically allow anything but in practice mask a stricter
+ * Pydantic union — don't pull the buyer into the broken alias.
+ */
+function valueMatchesSchemaType(value: unknown, propSchema: unknown): boolean {
+  if (!propSchema || typeof propSchema !== 'object') return false;
+  const schema = propSchema as { type?: unknown; oneOf?: unknown; anyOf?: unknown; $ref?: unknown };
+  if (schema.$ref) return true;
+
+  const valueType: string = Array.isArray(value)
+    ? 'array'
+    : value === null
+      ? 'null'
+      : typeof value === 'object'
+        ? 'object'
+        : typeof value;
+
+  // anyOf / oneOf: any variant matching = safe.
+  for (const key of ['anyOf', 'oneOf'] as const) {
+    const variants = (schema as { [k: string]: unknown })[key];
+    if (Array.isArray(variants)) {
+      return variants.some(v => valueMatchesSchemaType(value, v));
+    }
+  }
+
+  const declared = schema.type;
+  if (declared === undefined) return false;
+  if (typeof declared === 'string') return declared === valueType;
+  if (Array.isArray(declared)) return declared.includes(valueType);
+  return false;
+}
+
 export class SingleAgentClient {
   private executor: TaskExecutor;
   private asyncHandler?: AsyncHandler;
@@ -1273,15 +1317,25 @@ export class SingleAgentClient {
     const declaredFields = new Set(Object.keys(toolSchema));
 
     // The v2 adapter may rename fields (e.g. brand → brand_manifest) that a
-    // v3 server — misdetected as v2 — doesn't declare.  Reconcile known
+    // v3 server — misdetected as v2 — doesn't declare. Reconcile known
     // adapter mappings so the value isn't silently dropped.
+    //
+    // CRITICAL: only alias when the JS type of the moved value is
+    // compatible with the destination field's declared shape. v2.5 sellers
+    // (e.g. Wonderstruck) declare `brand` in their tool schema as a
+    // BrandReference object — v2 adapter produces a `brand_manifest` URL
+    // string, and blindly aliasing the string into the object slot causes
+    // the seller to reject with `Input should be a valid dictionary or
+    // instance of BrandReference`. Skip the alias when shapes don't match
+    // and let the field-stripping path drop the v2-shaped value cleanly.
     const adapterAliases: [string, string][] = [['brand_manifest', 'brand']];
     for (const [adapterField, schemaField] of adapterAliases) {
       if (
         adapted[adapterField] !== undefined &&
         !declaredFields.has(adapterField) &&
         declaredFields.has(schemaField) &&
-        adapted[schemaField] === undefined
+        adapted[schemaField] === undefined &&
+        valueMatchesSchemaType(adapted[adapterField], (toolSchema as Record<string, unknown>)[schemaField])
       ) {
         adapted[schemaField] = adapted[adapterField];
         delete adapted[adapterField];
