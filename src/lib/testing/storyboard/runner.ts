@@ -149,15 +149,27 @@ function buildSkip(reason: RunnerSkipReason, detail?: string): { reason: RunnerS
 }
 
 /**
- * True for skip reasons that imply the step's state never materialized —
- * the runner treats these as equivalent to a failed stateful step for
- * cascade-skip purposes. Benign skips (peer branch took, OAuth wasn't
- * advertised, controller seeding cascaded — all handled elsewhere) don't
- * appear here. Accepts both the canonical `RunnerSkipReason` and the
- * detailed variant so callers don't need to narrow before checking.
+ * True for skip reasons that imply state genuinely never materialized
+ * — no other code path could have established it. The runner trips
+ * the cascade immediately on these. `missing_tool` and
+ * `missing_test_controller` qualify: the agent doesn't advertise the
+ * tool, end of story.
+ *
+ * `not_applicable` is intentionally NOT in this set even though F6's
+ * first cut bundled it in. `not_applicable` means "this path doesn't
+ * apply to this agent", which is consistent with "a peer path in the
+ * same phase establishes equivalent state" — e.g. an explicit-mode
+ * seller skips `sync_accounts` as not_applicable because
+ * `list_accounts` is the canonical alternative for that account
+ * shape. Tripping the cascade on the first not_applicable would
+ * collapse this distinction and skip the substitute. The runner
+ * therefore defers `not_applicable`'s cascade decision to phase end —
+ * see `phasePendingNotApplicable` handling in the phase loop.
  */
-function isMissingStateSkipReason(reason: RunnerSkipReason | RunnerDetailedSkipReason | undefined): boolean {
-  return reason === 'missing_tool' || reason === 'missing_test_controller' || reason === 'not_applicable';
+function isHardMissingStateSkipReason(
+  reason: RunnerSkipReason | RunnerDetailedSkipReason | undefined,
+): boolean {
+  return reason === 'missing_tool' || reason === 'missing_test_controller';
 }
 
 /**
@@ -877,6 +889,18 @@ async function executeStoryboardPass(
     // scope (declared above the phase loop) so the cascade survives
     // cross-phase setup → assertion patterns. See declaration site for
     // the rationale (signal_marketplace/governance_denied story).
+    //
+    // Phase-scoped substitution tracking (adcp-client#1005, round-9).
+    // A `not_applicable` skip on a stateful step doesn't mean state
+    // never materialized — it means *this* path doesn't apply, and the
+    // storyboard may have a peer step (e.g. `list_accounts` paired
+    // with `sync_accounts`) that establishes equivalent state. We
+    // record the trigger and defer the cascade decision to phase end:
+    // if any stateful step in this phase passed, the substitute did
+    // its job and we don't trip. If none did, we promote the pending
+    // trigger to a hard cascade so downstream phases skip cleanly.
+    let phasePendingNotApplicable: { stepId: string; reason: RunnerSkipReason | RunnerDetailedSkipReason } | null = null;
+    let phaseEstablishedStatefulState = false;
     // PRM presence-probe state (adcp-client#677). `phaseAbsent` flips when
     // /.well-known/oauth-protected-resource returns 404 — subsequent steps
     // in this phase cascade-skip instead of failing their http_status:200
@@ -1081,29 +1105,71 @@ async function executeStoryboardPass(
       if (result.skipped) {
         skippedCount++;
         context = result.context;
-        // Cascade-skip extension: a stateful step that SKIPS for a
-        // missing-state reason (`missing_tool`, `missing_test_controller`,
-        // `not_applicable`) is morally equivalent to a stateful step that
-        // failed — the state downstream steps depend on never
-        // materialized. Without this trip, a follow-up stateful step
-        // runs against absent state and surfaces a misleading
-        // assertion failure. Skips that imply state DID materialize via
-        // another path (`peer_branch_taken`, `controller_seeding_failed`
-        // — already handled by phase-level cascade, `oauth_not_advertised`
-        // — phase-absent path) deliberately don't trip the flag.
-        if (step.stateful && isMissingStateSkipReason(result.skip_reason)) {
-          statefulFailed = true;
-          // Record provenance for the cascade detail message. First trip
-          // wins — subsequent triggers don't overwrite, since the cascade
-          // text references the originating diagnostic (the leftmost
-          // missing-state stateful step in the phase).
-          if (statefulSkipTrigger === null) {
-            statefulSkipTrigger = { stepId: step.id, reason: result.skip_reason ?? 'missing_tool' };
+        // Cascade-skip extension: a stateful step that SKIPS because the
+        // agent simply lacks the tool (`missing_tool`,
+        // `missing_test_controller`) is equivalent to a failed stateful
+        // step — state genuinely never materialized. Trip immediately so
+        // downstream stateful steps skip with `prerequisite_failed`
+        // instead of running against absent state and surfacing a
+        // misleading assertion failure.
+        //
+        // `not_applicable` is handled separately (adcp-client#1005,
+        // round-9). It signals "this path doesn't apply to this agent",
+        // and the storyboard may have a peer step in the same phase
+        // that establishes equivalent state — e.g. an explicit-mode
+        // seller's `list_accounts` substituting for `sync_accounts`.
+        // We record a pending trigger and let the rest of the phase
+        // run; the cascade decision is finalized at phase end based on
+        // whether any stateful peer passed.
+        //
+        // Skips that imply state DID materialize via another path
+        // (`peer_branch_taken`, `controller_seeding_failed` — handled
+        // by phase-level cascade, `oauth_not_advertised` — phase-absent
+        // path) deliberately don't trip the flag.
+        if (step.stateful) {
+          if (isHardMissingStateSkipReason(result.skip_reason)) {
+            statefulFailed = true;
+            // Record provenance for the cascade detail message. First trip
+            // wins — subsequent triggers don't overwrite, since the cascade
+            // text references the originating diagnostic (the leftmost
+            // missing-state stateful step in the phase).
+            if (statefulSkipTrigger === null) {
+              statefulSkipTrigger = { stepId: step.id, reason: result.skip_reason ?? 'missing_tool' };
+            }
+          } else if (result.skip_reason === 'not_applicable') {
+            // Defer cascade decision until end of phase. Applies the
+            // same first-wins rule used for `statefulSkipTrigger`: the
+            // eventual cascade-detail message references the leftmost
+            // not_applicable step in the phase.
+            //
+            // Scope note: this branch matches the canonical literal
+            // `'not_applicable'` only. Detailed-form skip reasons that
+            // canonicalize to not_applicable (`probe_skipped`,
+            // `not_in_only_vectors`, `grader_skipped`,
+            // `mcp_mode_flattens_url_edges`) carry the detailed form
+            // on `result.skip_reason` and do NOT enter the deferred
+            // path — they preserve the pre-fix behavior of not
+            // tripping the cascade. `oauth_not_advertised` is handled
+            // by the separate `phaseAbsent` code path before this
+            // branch is reached. If a future detailed reason should
+            // participate in substitute-aware deferral, extend this
+            // condition deliberately rather than assuming canonical
+            // mapping is enough.
+            if (phasePendingNotApplicable === null) {
+              phasePendingNotApplicable = { stepId: step.id, reason: 'not_applicable' };
+            }
           }
         }
       } else if (result.passed) {
         context = result.context;
         passedCount++;
+        // A passing stateful step counts as the phase establishing
+        // state. If a sibling skipped not_applicable earlier (or skips
+        // it later in the loop), this pass is the substitute path —
+        // the deferred cascade should NOT fire at phase end.
+        if (step.stateful) {
+          phaseEstablishedStatefulState = true;
+        }
       } else {
         phasePassed = false;
         // Optional phases normally swallow step failures — the storyboard's
@@ -1130,6 +1196,23 @@ async function executeStoryboardPass(
         if (isMultiInstance) {
           annotateMultiInstanceFailure(result, storyboard, stepResults);
         }
+      }
+    }
+
+    // Phase-end cascade resolution for deferred `not_applicable` triggers.
+    // If a stateful step skipped not_applicable earlier in this phase and
+    // no stateful peer subsequently passed, the substitute path failed to
+    // establish state — promote to a hard cascade so downstream phases
+    // skip cleanly instead of running against absent state. A peer that
+    // passed (e.g. `list_accounts` substituting for an explicit-mode
+    // `sync_accounts`) cancels the trigger entirely. A peer that *failed*
+    // already tripped `statefulFailed` at the failure site with the
+    // worse-diagnostic real-failure message; we defer to that and don't
+    // overwrite.
+    if (phasePendingNotApplicable && !phaseEstablishedStatefulState && !statefulFailed) {
+      statefulFailed = true;
+      if (statefulSkipTrigger === null) {
+        statefulSkipTrigger = phasePendingNotApplicable;
       }
     }
 

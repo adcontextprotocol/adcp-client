@@ -1,16 +1,25 @@
 /**
- * F6 — cascade-skip stateful steps when a prior stateful step SKIPPED for
- * a missing-state reason. Today the runner cascades only on failed
- * stateful steps; a skipped stateful step (missing_tool /
- * missing_test_controller / not_applicable) leaves downstream stateful
- * steps to run against absent state and surface misleading "X didn't
- * match" errors. This test asserts the extended cascade.
+ * Cascade-skip behavior when a prior stateful step skipped or failed.
  *
- * Surfaced by training-agent v6 spike — cross-specialism storyboard
- * (signal_marketplace/governance_denied) has a setup step that requires
- * sync_governance and an assertion step that requires activate_signal;
- * a signals-only agent skips the setup as missing_tool, and the runner
- * incorrectly ran the assertion against absent governance state.
+ * Two skip reasons trip the cascade immediately because the agent
+ * genuinely lacks the capability and no in-phase peer can substitute:
+ *
+ *   - `missing_tool` — agent did not advertise the required tool
+ *   - `missing_test_controller` — agent did not advertise comply_test_controller
+ *
+ * `not_applicable` is handled differently: it means "this path doesn't
+ * apply to this agent" but the storyboard may carry a peer step (e.g.
+ * `list_accounts` paired with `sync_accounts`) that establishes
+ * equivalent state. The runner defers the cascade decision to phase
+ * end — if any stateful peer in the same phase passes, the substitute
+ * is treated as the state-establishing event and no cascade fires. If
+ * none does, the deferred trigger promotes to a hard cascade so
+ * downstream phases skip cleanly with `prerequisite_failed`.
+ *
+ * Real stateful failures always trip the cascade immediately and win
+ * the diagnostic message — a real failure is the worse signal, so
+ * downstream cascade text references the failure rather than any
+ * earlier benign skip.
  */
 
 const { describe, test, afterEach } = require('node:test');
@@ -139,27 +148,48 @@ describe('runStoryboard: F6 cascade-skip on missing-state stateful skip', () => 
     assert.match(assertStep.skip.detail ?? '', /state never materialized/);
   });
 
-  test('cascade-skip on not_applicable: explicit-mode sync_accounts skip cascades to dependent stateful step', async () => {
+  test('cascade-skip on not_applicable WHEN no stateful peer establishes state: cascade fires across phases', async () => {
     // F9 introduced not_applicable for sync_accounts in explicit mode.
-    // F6 ensures a downstream stateful step that needed sync_accounts
-    // state cascade-skips rather than running against absent state.
+    // adcp-client#1005 round-9 refined the cascade: not_applicable is
+    // semantically "this path doesn't apply" rather than "state never
+    // materialized" — the storyboard may carry a peer step (e.g.
+    // list_accounts) that establishes equivalent state. The cascade
+    // should fire ONLY when no such peer succeeded in the same phase.
+    //
+    // This test isolates the no-substitute case: sync_accounts skips
+    // not_applicable in phase 1 with no peer, downstream stateful step
+    // sits in phase 2. The phase-end cascade resolution should promote
+    // the deferred trigger and the phase-2 step should cascade-skip
+    // with prerequisite_failed.
     agent = await startFakeAgent();
-    const storyboard = storyboardWith([
+    const storyboard = storyboardWithPhases([
       {
-        id: 'sync',
-        title: 'sync_accounts setup',
-        task: 'sync_accounts',
-        stateful: true,
-        auth: 'none',
-        sample_request: { accounts: [] },
+        id: 'account_setup',
+        title: 'account setup (sync only)',
+        steps: [
+          {
+            id: 'sync',
+            title: 'sync_accounts setup',
+            task: 'sync_accounts',
+            stateful: true,
+            auth: 'none',
+            sample_request: { accounts: [] },
+          },
+        ],
       },
       {
-        id: 'assert',
-        title: 'assert against synced state',
-        task: '__test_assert',
-        stateful: true,
-        auth: 'none',
-        sample_request: {},
+        id: 'consume',
+        title: 'consume account state',
+        steps: [
+          {
+            id: 'assert',
+            title: 'assert against synced state',
+            task: '__test_assert',
+            stateful: true,
+            auth: 'none',
+            sample_request: {},
+          },
+        ],
       },
     ]);
     const ADVERTISED = ['sync_accounts', '__test_assert', 'get_adcp_capabilities'];
@@ -171,16 +201,305 @@ describe('runStoryboard: F6 cascade-skip on missing-state stateful skip', () => 
         name: 'fake',
         tools: ADVERTISED.map(name => ({ name })),
         // require_operator_auth: true triggers the F9 not_applicable
-        // gate on sync_accounts (runner.ts:1519-1545).
+        // gate on sync_accounts.
         raw_capabilities: { account: { require_operator_auth: true } },
       },
     });
-    const [syncStep, assertStep] = result.phases[0].steps;
+    const syncStep = result.phases[0].steps[0];
+    const assertStep = result.phases[1].steps[0];
     assert.strictEqual(syncStep.skipped, true);
     assert.strictEqual(syncStep.skip_reason, 'not_applicable');
-    assert.strictEqual(assertStep.skipped, true, 'F6: cascade fires on not_applicable');
+    assert.strictEqual(assertStep.skipped, true, 'cascade fires when no stateful peer established state');
     assert.strictEqual(assertStep.skip_reason, 'prerequisite_failed');
     assert.match(assertStep.skip.detail ?? '', /not_applicable/);
+    assert.match(assertStep.skip.detail ?? '', /prior stateful step "sync"/);
+  });
+
+  test('not_applicable + stateful peer passes in SAME phase → no cascade (substitute established state)', async () => {
+    // adcp-client#1005 round-9: explicit-mode sellers skip
+    // sync_accounts as not_applicable BUT establish account state
+    // through list_accounts (the canonical alternative for that
+    // account shape). Pre-fix: the runner cascade-skipped every
+    // downstream stateful step including list_accounts itself,
+    // collapsing 12 adapter storyboards to 1/N passing. Post-fix: the
+    // not_applicable trigger is deferred to phase end, list_accounts
+    // runs and passes (counts as the substitute), and downstream
+    // stateful steps proceed normally.
+    agent = await startFakeAgent();
+    const storyboard = storyboardWithPhases([
+      {
+        id: 'account_setup',
+        title: 'account setup',
+        steps: [
+          {
+            id: 'sync',
+            title: 'sync_accounts (not applicable in explicit mode)',
+            task: 'sync_accounts',
+            stateful: true,
+            auth: 'none',
+            sample_request: { accounts: [] },
+          },
+          {
+            // The fake agent answers __test_setup with { ok: true }.
+            // Acts as a stand-in for list_accounts as the
+            // state-establishing peer.
+            id: 'list',
+            title: 'list_accounts substitute',
+            task: '__test_setup',
+            stateful: true,
+            auth: 'none',
+            sample_request: {},
+          },
+        ],
+      },
+      {
+        id: 'consume',
+        title: 'consume account state',
+        steps: [
+          {
+            id: 'audience',
+            title: 'sync_audiences depends on account state',
+            task: '__test_assert',
+            stateful: true,
+            auth: 'none',
+            sample_request: {},
+          },
+        ],
+      },
+    ]);
+    const ADVERTISED = ['sync_accounts', '__test_setup', '__test_assert', 'get_adcp_capabilities'];
+    const result = await runStoryboard([agent.url], storyboard, {
+      protocol: 'mcp',
+      allow_http: true,
+      agentTools: ADVERTISED,
+      _profile: {
+        name: 'fake',
+        tools: ADVERTISED.map(name => ({ name })),
+        raw_capabilities: { account: { require_operator_auth: true } },
+      },
+    });
+    const [syncStep, listStep] = result.phases[0].steps;
+    const audienceStep = result.phases[1].steps[0];
+    assert.strictEqual(syncStep.skipped, true, 'sync_accounts skipped not_applicable');
+    assert.strictEqual(syncStep.skip_reason, 'not_applicable');
+    // The substitute peer must run (NOT cascade-skipped) — this is
+    // the regression the fix targets.
+    assert.notStrictEqual(listStep.skipped, true, 'list_accounts substitute runs (not cascade-skipped)');
+    assert.strictEqual(listStep.passed, true, 'list_accounts substitute passes');
+    // Downstream stateful step proceeds because the phase established
+    // state via the substitute.
+    assert.notStrictEqual(audienceStep.skipped, true, 'cross-phase stateful step runs (substitute established state)');
+  });
+
+  test('not_applicable: peer passes BEFORE the not_applicable skip → no cascade (order-independent)', async () => {
+    // Order-flip variant of the substitute test. list_accounts comes
+    // first and passes; sync_accounts is gated to not_applicable
+    // afterwards. The phase-end resolution must work regardless of
+    // step ordering: if any stateful peer passed, the deferred
+    // trigger never fires.
+    agent = await startFakeAgent();
+    const storyboard = storyboardWithPhases([
+      {
+        id: 'account_setup',
+        title: 'account setup',
+        steps: [
+          {
+            id: 'list',
+            title: 'list_accounts substitute (runs first)',
+            task: '__test_setup',
+            stateful: true,
+            auth: 'none',
+            sample_request: {},
+          },
+          {
+            id: 'sync',
+            title: 'sync_accounts (not applicable)',
+            task: 'sync_accounts',
+            stateful: true,
+            auth: 'none',
+            sample_request: { accounts: [] },
+          },
+        ],
+      },
+      {
+        id: 'consume',
+        title: 'consume account state',
+        steps: [
+          {
+            id: 'audience',
+            title: 'depends on account state',
+            task: '__test_assert',
+            stateful: true,
+            auth: 'none',
+            sample_request: {},
+          },
+        ],
+      },
+    ]);
+    const ADVERTISED = ['sync_accounts', '__test_setup', '__test_assert', 'get_adcp_capabilities'];
+    const result = await runStoryboard([agent.url], storyboard, {
+      protocol: 'mcp',
+      allow_http: true,
+      agentTools: ADVERTISED,
+      _profile: {
+        name: 'fake',
+        tools: ADVERTISED.map(name => ({ name })),
+        raw_capabilities: { account: { require_operator_auth: true } },
+      },
+    });
+    const [listStep, syncStep] = result.phases[0].steps;
+    const audienceStep = result.phases[1].steps[0];
+    assert.strictEqual(listStep.passed, true);
+    assert.strictEqual(syncStep.skipped, true);
+    assert.strictEqual(syncStep.skip_reason, 'not_applicable');
+    assert.ok(!audienceStep.skipped, 'no cascade — peer passed earlier in phase');
+  });
+
+  test('not_applicable + non-stateful peer that passes does NOT cancel the deferred cascade', async () => {
+    // The substitute signal is a passing *stateful* peer — non-stateful
+    // peers explicitly do not establish state per the storyboard's own
+    // declaration. A storyboard that pairs a stateful not_applicable
+    // step with a non-stateful peer that runs successfully should still
+    // cascade-skip downstream stateful steps, because the phase did not
+    // establish state via any stateful path.
+    agent = await startFakeAgent();
+    const storyboard = storyboardWithPhases([
+      {
+        id: 'account_setup',
+        title: 'account setup',
+        steps: [
+          {
+            id: 'sync',
+            title: 'sync_accounts (not applicable)',
+            task: 'sync_accounts',
+            stateful: true,
+            auth: 'none',
+            sample_request: { accounts: [] },
+          },
+          {
+            id: 'observe',
+            title: 'non-stateful observation peer',
+            task: '__test_assert',
+            // No stateful: true — runs successfully but does not
+            // establish state per the storyboard's declaration.
+            auth: 'none',
+            sample_request: {},
+          },
+        ],
+      },
+      {
+        id: 'consume',
+        title: 'consume account state',
+        steps: [
+          {
+            id: 'audience',
+            title: 'depends on account state',
+            task: '__test_assert',
+            stateful: true,
+            auth: 'none',
+            sample_request: {},
+          },
+        ],
+      },
+    ]);
+    const ADVERTISED = ['sync_accounts', '__test_assert', 'get_adcp_capabilities'];
+    const result = await runStoryboard([agent.url], storyboard, {
+      protocol: 'mcp',
+      allow_http: true,
+      agentTools: ADVERTISED,
+      _profile: {
+        name: 'fake',
+        tools: ADVERTISED.map(name => ({ name })),
+        raw_capabilities: { account: { require_operator_auth: true } },
+      },
+    });
+    const [syncStep, observeStep] = result.phases[0].steps;
+    const audienceStep = result.phases[1].steps[0];
+    assert.strictEqual(syncStep.skipped, true);
+    assert.strictEqual(syncStep.skip_reason, 'not_applicable');
+    assert.ok(!observeStep.skipped, 'non-stateful peer runs');
+    assert.strictEqual(observeStep.passed, true);
+    // Cascade still fires because no *stateful* peer established state.
+    assert.strictEqual(audienceStep.skipped, true, 'cascade fires — non-stateful pass does not establish state');
+    assert.strictEqual(audienceStep.skip_reason, 'prerequisite_failed');
+    assert.match(audienceStep.skip.detail ?? '', /not_applicable/);
+  });
+
+  test('not_applicable + later real failure in same phase: real failure wins the diagnostic', async () => {
+    // When a stateful step skips not_applicable and a *later* stateful
+    // step in the same phase fails for real, the real failure should
+    // win the cascade-detail message — failures are the worse signal,
+    // so downstream readers should see "prior stateful step failed"
+    // rather than a stale not_applicable trigger. This locks in the
+    // `&& !statefulFailed` guard at the phase-end resolution: when a
+    // real failure has already tripped statefulFailed (and cleared
+    // statefulSkipTrigger), the deferred not_applicable trigger must
+    // not overwrite the failure-detail message.
+    agent = await startFakeAgent();
+    const storyboard = storyboardWithPhases([
+      {
+        id: 'account_setup',
+        title: 'account setup',
+        steps: [
+          {
+            id: 'sync',
+            title: 'sync_accounts (not applicable)',
+            task: 'sync_accounts',
+            stateful: true,
+            auth: 'none',
+            sample_request: { accounts: [] },
+          },
+          {
+            id: 'broken',
+            title: 'stateful peer that fails for real',
+            task: '__test_fail',
+            stateful: true,
+            auth: 'none',
+            sample_request: {},
+          },
+        ],
+      },
+      {
+        id: 'consume',
+        title: 'consume account state',
+        steps: [
+          {
+            id: 'audience',
+            title: 'depends on account state',
+            task: '__test_assert',
+            stateful: true,
+            auth: 'none',
+            sample_request: {},
+          },
+        ],
+      },
+    ]);
+    const ADVERTISED = ['sync_accounts', '__test_fail', '__test_assert', 'get_adcp_capabilities'];
+    const result = await runStoryboard([agent.url], storyboard, {
+      protocol: 'mcp',
+      allow_http: true,
+      agentTools: ADVERTISED,
+      _profile: {
+        name: 'fake',
+        tools: ADVERTISED.map(name => ({ name })),
+        raw_capabilities: { account: { require_operator_auth: true } },
+      },
+    });
+    const [syncStep, brokenStep] = result.phases[0].steps;
+    const audienceStep = result.phases[1].steps[0];
+    assert.strictEqual(syncStep.skip_reason, 'not_applicable');
+    assert.strictEqual(brokenStep.passed, false, 'broken peer failed for real');
+    assert.ok(!brokenStep.skipped, 'broken peer ran (did not skip)');
+    assert.strictEqual(audienceStep.skipped, true);
+    assert.strictEqual(audienceStep.skip_reason, 'prerequisite_failed');
+    // Real failure wins the diagnostic — the cascade-detail must NOT
+    // reference the not_applicable skip.
+    assert.match(audienceStep.skip.detail ?? '', /prior stateful step failed/);
+    assert.doesNotMatch(
+      audienceStep.skip.detail ?? '',
+      /not_applicable/,
+      'detail must reference the real failure, not the earlier not_applicable trigger',
+    );
   });
 
   test('cascade-skip detail references "failed" (not "skipped") when prior stateful step actually failed', async () => {
