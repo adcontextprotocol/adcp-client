@@ -1010,6 +1010,208 @@ describe('AccountStore optional methods (v1.0 gap-fill for rc.1)', () => {
     assert.strictEqual(result.structuredContent.spend.total_spend, 1234.56);
   });
 
+  it('getAccountFinancials threads resolved Account into ctx.account (#1145)', async () => {
+    // Adopters fronting an upstream platform (Snap, Meta, retail-media)
+    // need the resolved Account on `ctx.account` so they can read tokens
+    // and upstream IDs from `ctx.account.ctx_metadata` without re-resolving.
+    let receivedCtx;
+    const platform = buildPlatform({
+      accounts: {
+        resolve: async () => ({
+          id: 'acc_42',
+          name: 'Acme via Pinnacle',
+          status: 'active',
+          ctx_metadata: { upstreamCustomerId: 'snap_cust_xyz', accessToken: 'secret_token_42' },
+          authInfo: { kind: 'oauth' },
+        }),
+        getAccountFinancials: async (req, ctx) => {
+          receivedCtx = ctx;
+          return {
+            account: { account_id: 'acc_42' },
+            currency: 'USD',
+            period: { start: '2026-04-01', end: '2026-04-30' },
+            timezone: 'America/New_York',
+            spend: { total_spend: 9.99, media_buy_count: 1 },
+          };
+        },
+      },
+    });
+    const server = createAdcpServerFromPlatform(platform, {
+      name: 'gap1',
+      version: '0.0.1',
+      validation: { requests: 'off', responses: 'off' },
+    });
+    const result = await server.dispatchTestRequest({
+      method: 'tools/call',
+      params: { name: 'get_account_financials', arguments: { account: { account_id: 'acc_42' } } },
+    });
+    assert.notStrictEqual(result.isError, true, JSON.stringify(result.structuredContent));
+    assert.ok(receivedCtx, 'getAccountFinancials was invoked');
+    assert.ok(receivedCtx.account, 'ctx.account is populated');
+    assert.strictEqual(receivedCtx.account.id, 'acc_42');
+    assert.strictEqual(
+      receivedCtx.account.ctx_metadata.upstreamCustomerId,
+      'snap_cust_xyz',
+      'adopter reads upstream IDs from ctx.account.ctx_metadata without re-resolving'
+    );
+    assert.strictEqual(receivedCtx.account.ctx_metadata.accessToken, 'secret_token_42');
+  });
+
+  it('getAccountFinancials retries via refreshToken on AUTH_REQUIRED then succeeds (#1145)', async () => {
+    // UA's case: upstream platform token expires mid-call. Adapter
+    // throws AdcpError({ code: 'AUTH_REQUIRED' }), framework calls
+    // refreshToken, mutates account.authInfo.token, retries once.
+    const { AdcpError } = require('../dist/lib/server/decisioning/async-outcome.js');
+    let attempt = 0;
+    let refreshArgs;
+    const platform = buildPlatform({
+      accounts: {
+        resolve: async () => ({
+          id: 'acc_42',
+          name: 'Acme',
+          status: 'active',
+          ctx_metadata: {},
+          authInfo: { kind: 'oauth', token: 'expired_token' },
+        }),
+        getAccountFinancials: async (req, ctx) => {
+          attempt += 1;
+          if (attempt === 1) {
+            assert.strictEqual(ctx.account.authInfo.token, 'expired_token', 'first call sees the stale token');
+            throw new AdcpError('AUTH_REQUIRED', { message: 'token expired upstream', recovery: 'correctable' });
+          }
+          assert.strictEqual(ctx.account.authInfo.token, 'fresh_token', 'retry sees the refreshed token');
+          return {
+            account: { account_id: 'acc_42' },
+            currency: 'USD',
+            period: { start: '2026-04-01', end: '2026-04-30' },
+            timezone: 'America/New_York',
+            spend: { total_spend: 5.5, media_buy_count: 1 },
+          };
+        },
+        refreshToken: async (account, reason) => {
+          refreshArgs = { accountId: account.id, reason };
+          return { token: 'fresh_token' };
+        },
+      },
+    });
+    const server = createAdcpServerFromPlatform(platform, {
+      name: 'gap2',
+      version: '0.0.1',
+      validation: { requests: 'off', responses: 'off' },
+    });
+    const result = await server.dispatchTestRequest({
+      method: 'tools/call',
+      params: { name: 'get_account_financials', arguments: { account: { account_id: 'acc_42' } } },
+    });
+    assert.notStrictEqual(result.isError, true, JSON.stringify(result.structuredContent));
+    assert.strictEqual(attempt, 2, 'platform method ran twice (initial + retry)');
+    assert.deepStrictEqual(refreshArgs, { accountId: 'acc_42', reason: 'auth_required' });
+    assert.strictEqual(result.structuredContent.spend.total_spend, 5.5);
+  });
+
+  it('getAccountFinancials surfaces correctable AUTH_REQUIRED when refreshToken itself throws (#1145)', async () => {
+    // Refresh failure means the upstream authorization is gone — the
+    // account isn't currently authorized. Buyer re-links via their UI;
+    // recovery: 'correctable'. NOT SERVICE_UNAVAILABLE — that would
+    // imply transient retry, but the underlying state won't fix itself.
+    const { AdcpError } = require('../dist/lib/server/decisioning/async-outcome.js');
+    const platform = buildPlatform({
+      accounts: {
+        resolve: async () => ({
+          id: 'acc_42',
+          name: 'Acme',
+          status: 'active',
+          ctx_metadata: {},
+          authInfo: { kind: 'oauth', token: 'expired_token' },
+        }),
+        getAccountFinancials: async () => {
+          throw new AdcpError('AUTH_REQUIRED', { message: 'token expired', recovery: 'correctable' });
+        },
+        refreshToken: async () => {
+          throw new Error('refresh endpoint returned 403');
+        },
+      },
+    });
+    const server = createAdcpServerFromPlatform(platform, {
+      name: 'gap2-fail',
+      version: '0.0.1',
+      validation: { requests: 'off', responses: 'off' },
+    });
+    const result = await server.dispatchTestRequest({
+      method: 'tools/call',
+      params: { name: 'get_account_financials', arguments: { account: { account_id: 'acc_42' } } },
+    });
+    assert.strictEqual(result.isError, true);
+    const error = result.structuredContent.errors?.[0] ?? result.structuredContent;
+    assert.match(JSON.stringify(error), /AUTH_REQUIRED/);
+    assert.match(JSON.stringify(error), /correctable/);
+    assert.match(JSON.stringify(error), /refresh endpoint returned 403/);
+  });
+
+  it('getAccountFinancials does not retry on non-AUTH errors (#1145)', async () => {
+    // Refresh hook is reactive ONLY to AUTH_REQUIRED. INVALID_REQUEST,
+    // PERMISSION_DENIED, etc. flow through unchanged — refresh is a
+    // narrow signal, not a generic retry.
+    const { AdcpError } = require('../dist/lib/server/decisioning/async-outcome.js');
+    let refreshCalled = false;
+    let attempt = 0;
+    const platform = buildPlatform({
+      accounts: {
+        resolve: async () => ({
+          id: 'acc_42',
+          name: 'Acme',
+          status: 'active',
+          ctx_metadata: {},
+          authInfo: { kind: 'oauth', token: 'tok' },
+        }),
+        getAccountFinancials: async () => {
+          attempt += 1;
+          throw new AdcpError('INVALID_REQUEST', { message: 'bad period', recovery: 'correctable' });
+        },
+        refreshToken: async () => {
+          refreshCalled = true;
+          return { token: 'new' };
+        },
+      },
+    });
+    const server = createAdcpServerFromPlatform(platform, {
+      name: 'gap2-nonauth',
+      version: '0.0.1',
+      validation: { requests: 'off', responses: 'off' },
+    });
+    const result = await server.dispatchTestRequest({
+      method: 'tools/call',
+      params: { name: 'get_account_financials', arguments: { account: { account_id: 'acc_42' } } },
+    });
+    assert.strictEqual(result.isError, true);
+    assert.strictEqual(attempt, 1, 'no retry on non-AUTH error');
+    assert.strictEqual(refreshCalled, false, 'refreshToken not called for non-AUTH error');
+  });
+
+  it('getAccountFinancials surfaces ACCOUNT_NOT_FOUND when accounts.resolve returns null', async () => {
+    let getFinancialsCalled = false;
+    const platform = buildPlatform({
+      accounts: {
+        resolve: async () => null,
+        getAccountFinancials: async () => {
+          getFinancialsCalled = true;
+          return {};
+        },
+      },
+    });
+    const server = createAdcpServerFromPlatform(platform, {
+      name: 'gap1-nf',
+      version: '0.0.1',
+      validation: { requests: 'off', responses: 'off' },
+    });
+    const result = await server.dispatchTestRequest({
+      method: 'tools/call',
+      params: { name: 'get_account_financials', arguments: { account: { account_id: 'unknown' } } },
+    });
+    assert.strictEqual(result.isError, true, 'unresolvable account surfaces an error');
+    assert.strictEqual(getFinancialsCalled, false, 'getAccountFinancials does not run on unresolved account');
+  });
+
   // Note: when neither the platform nor the merge seam supplies a handler
   // for report_usage / get_account_financials, the framework simply doesn't
   // register the tool — `tools/list` won't include it and a buyer call

@@ -135,6 +135,23 @@ export interface ResolveContext {
   toolName?: string;
 }
 
+/**
+ * Context passed to AccountStore tool methods that operate on a single
+ * resolved Account (e.g., `getAccountFinancials`). Threads the resolved
+ * `Account<TCtxMeta>` through so adopters can read `ctx.account.ctx_metadata`
+ * (auth tokens, upstream IDs, etc.) without re-resolving from the request.
+ *
+ * Strict superset of `ResolveContext`: same `authInfo` / `toolName` fields,
+ * plus the resolved account. Distinct type because `accounts.resolve()`
+ * produces the account and therefore cannot receive it on input.
+ *
+ * @public
+ */
+export interface AccountToolContext<TCtxMeta = Record<string, unknown>> extends ResolveContext {
+  /** Resolved Account from `accounts.resolve()`. Populated by the framework before dispatch. */
+  account: Account<TCtxMeta>;
+}
+
 export interface AuthPrincipal {
   /** Stable identifier for the calling agent (e.g., `https://buyer.example.com/mcp`). */
   agent_url?: string;
@@ -248,12 +265,51 @@ export interface AccountStore<TCtxMeta = Record<string, unknown>> {
    * fixable rejection (`'PERMISSION_DENIED'` if the principal can't see
    * financials for the requested account).
    *
+   * `ctx.account` is the resolved `Account<TCtxMeta>` (framework calls
+   * `accounts.resolve(req.account)` first and threads the result in).
+   * Adopters fronting an upstream platform read tokens / upstream IDs from
+   * `ctx.account.ctx_metadata` without re-resolving.
+   *
    * `ctx.authInfo` carries the caller's OAuth principal (when
    * `serve({ authenticate })` is wired). Platforms that guard financials
    * per-principal use it to authorize the read — same pattern as
    * `accounts.resolve`.
    */
-  getAccountFinancials?(req: GetAccountFinancialsRequest, ctx?: ResolveContext): Promise<GetAccountFinancialsSuccess>;
+  getAccountFinancials?(
+    req: GetAccountFinancialsRequest,
+    ctx: AccountToolContext<TCtxMeta>
+  ): Promise<GetAccountFinancialsSuccess>;
+
+  /**
+   * Mid-request token refresh hook. Optional. Called by the framework when
+   * a platform method throws `AdcpError({ code: 'AUTH_REQUIRED' })` AND
+   * `refreshToken` is defined — the framework refreshes via this hook,
+   * mutates `account.authInfo.token` with the returned value, and retries
+   * the failing platform method exactly once.
+   *
+   * The reason string lets adopters distinguish trigger conditions:
+   *   - `'auth_required'` — platform method threw AUTH_REQUIRED in flight.
+   *
+   * **In-flight only.** The refreshed token is scoped to the current
+   * request — the framework does NOT echo it back to the buyer. Use this
+   * for adapters that front an upstream platform API (Snap, Meta,
+   * retail-media OAuth flows) where the SDK caches an upstream token
+   * server-side and the buyer's auth-to-this-agent is separate.
+   *
+   * **Failure surfaces correctable AUTH_REQUIRED.** If `refreshToken`
+   * itself throws, the framework projects to `AUTH_REQUIRED` with
+   * `recovery: 'correctable'` so the buyer re-links via their UI flow.
+   * Don't use SERVICE_UNAVAILABLE — refresh failure means the upstream
+   * authorization is gone, not that the service is transiently down.
+   *
+   * **Expiry timestamp** (`expiresAt`, ms since epoch) is optional. When
+   * returned, callers can pre-emptively refresh tokens nearing expiry
+   * (proactive refresh is not yet wired; reactive-only in v6.x).
+   */
+  refreshToken?(
+    account: Account<TCtxMeta>,
+    reason: 'auth_required'
+  ): Promise<{ token: string; expiresAt?: number }>;
 }
 
 /**

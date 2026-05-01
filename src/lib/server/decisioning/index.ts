@@ -86,6 +86,7 @@ export type {
   SyncAccountsResultRow,
   AdcpAccountStatus,
   ResolveContext,
+  AccountToolContext,
   ResolvedAuthInfo,
 } from './account';
 
