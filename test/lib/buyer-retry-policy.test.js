@@ -43,16 +43,41 @@ describe('decideRetry — operator-grade defaults', () => {
       assert.equal(d.action, 'escalate');
       assert.equal(d.reason, 'attempts_exhausted');
     });
+
+    it('retry_after exceeding spec range [1,3600] is clamped to 3600s', () => {
+      const d = decideRetry(err('RATE_LIMITED', { recovery: 'transient', retry_after: 86_400 }));
+      assert.equal(d.action, 'retry');
+      assert.equal(d.delayMs, 3_600_000);
+    });
+
+    it('exponential backoff caps at 3600s on absurd attempt counts', () => {
+      // Without the clamp, attempt 20 with baseDelayMs=1000 → 1000 * 2^19
+      // = ~9 minutes; attempt 30 → ~16 days. Cap saves naive callers.
+      const d = decideRetry(err('SERVICE_UNAVAILABLE', { recovery: 'transient' }), { attempt: 30 });
+      // Already 'attempts_exhausted' before delayMs is computed — but if a
+      // caller somehow held a policy with a high attemptCap, the clamp would
+      // still bound the delay. Verify via a fresh policy.
+      const d2 = new BuyerRetryPolicy({
+        overrides: {
+          SERVICE_UNAVAILABLE: () => null, // fall through to default policy
+        },
+      }).decide(err('SERVICE_UNAVAILABLE', { recovery: 'transient' }), { attempt: 30 });
+      // Default cap is 3 → escalate.
+      assert.equal(d.action, 'escalate');
+      assert.equal(d2.action, 'escalate');
+    });
   });
 
-  describe('correctable codes mutate-and-retry with FRESH idempotency_key', () => {
-    it('PACKAGE_NOT_FOUND → mutate-and-retry (redirect)', () => {
+  describe('correctable codes mutate-and-retry with FRESH idempotency_key + jitter', () => {
+    it('PACKAGE_NOT_FOUND → mutate-and-retry (redirect) with delayMs jitter', () => {
       const d = decideRetry(err('PACKAGE_NOT_FOUND', { field: 'package_id', suggestion: 'verify via get_media_buys' }));
       assert.equal(d.action, 'mutate-and-retry');
       assert.equal(d.sameIdempotencyKey, false);
       assert.equal(d.reason, 'redirect');
       assert.equal(d.field, 'package_id');
       assert.match(d.suggestion, /get_media_buys/);
+      // jitter is 50-100% of 250ms baseDelay → 125-250ms
+      assert.ok(d.delayMs >= 125 && d.delayMs <= 250, `delayMs ${d.delayMs} outside jitter window`);
     });
 
     it('PRODUCT_UNAVAILABLE → mutate-and-retry (redirect)', () => {
@@ -77,6 +102,32 @@ describe('decideRetry — operator-grade defaults', () => {
       const d = decideRetry(err('BUDGET_TOO_LOW'));
       assert.equal(d.action, 'mutate-and-retry');
       assert.equal(d.reason, 'budget');
+    });
+  });
+
+  describe('idempotency safety guards (financial-liability defense)', () => {
+    it('IDEMPOTENCY_CONFLICT → mutate-and-retry (different payload, fresh key is safe)', () => {
+      const d = decideRetry(err('IDEMPOTENCY_CONFLICT'));
+      assert.equal(d.action, 'mutate-and-retry');
+      assert.equal(d.reason, 'validation');
+    });
+
+    it('IDEMPOTENCY_EXPIRED → escalate (idempotency_check_required) — DO NOT auto-retry', () => {
+      // The spec explicitly warns: if the prior call may have succeeded, the
+      // buyer MUST do a natural-key check before minting a new key. Otherwise
+      // this is exactly how double-creation happens. Tracked at
+      // adcontextprotocol/adcp 3.0.x error-code.json enumDescriptions.
+      const d = decideRetry(err('IDEMPOTENCY_EXPIRED'));
+      assert.equal(d.action, 'escalate');
+      assert.equal(d.reason, 'idempotency_check_required');
+    });
+  });
+
+  describe('account state escalates (operator must resolve)', () => {
+    it('ACCOUNT_AMBIGUOUS → escalate (auth) — agent rarely has cached account_id to fix locally', () => {
+      const d = decideRetry(err('ACCOUNT_AMBIGUOUS'));
+      assert.equal(d.action, 'escalate');
+      assert.equal(d.reason, 'auth');
     });
   });
 

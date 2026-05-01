@@ -40,6 +40,18 @@ const policy = new BuyerRetryPolicy({
 });
 ```
 
-Default policy diverges from the spec's `recovery` field for the codes called out in #1153 — operator-grade defaults, not just a 3-class enum reflection. Companion test (`test/lib/buyer-retry-policy.test.js`) asserts every standard error code has a defined default and the four commercial-relationship codes escalate.
+Default policy diverges from the spec's `recovery` field for the codes called out in #1153 — operator-grade defaults, not just a 3-class enum reflection.
+
+**Safety guards baked into the defaults:**
+
+- **`IDEMPOTENCY_EXPIRED` → escalate (`idempotency_check_required`)**, NOT auto-retry. The spec explicitly warns: if the prior call may have succeeded, the buyer MUST do a natural-key check before minting a new key. Otherwise this is exactly how double-creation happens. This is a financial-liability default — adopters with a registered natural-key resolver can override per-code.
+- **Exponential backoff capped at 3600s.** Without it, attempt 10 with a 1s base would sleep ~17 minutes (longer than most agent task budgets); attempt 30 → ~16 days. The cap mirrors the spec's `retry_after` range.
+- **Mutate-and-retry includes a 125–250ms jitter** (50–100% of a 250ms base). Without it, fleet operators running thousands of campaigns all hit the seller in lockstep after a correlated storm (e.g., `PROPOSAL_EXPIRED` across the fleet at midnight UTC). The jitter de-correlates without changing semantics.
+- **Compile-time coverage** — `DEFAULT_CODE_POLICY: Record<ErrorCode, CodePolicy>` (not `Partial`), so adding a code to the spec's `ErrorCodeValues` without a policy entry fails typecheck. The runtime drift test is belt-and-suspenders.
+- **`overrides` accepts both `Partial<Record<ErrorCode, ...>>` (typo-safe for standard codes) and `Record<string, ...>` (for vendor codes)** — the union catches misspellings on standard codes at compile time without locking out vendor extensions.
+
+`attemptCap` raised to 3 for the `*_NOT_FOUND` redirect family and `TERMS_REJECTED` / `REQUOTE_REQUIRED` requote family — most buyers cache one stale ID and need one re-discovery, but ramped-pacing scenarios can cycle 2–3 times as the catalog rotates.
+
+`ACCOUNT_AMBIGUOUS` is `escalate (auth)` — spec says "pass explicit account_id" but the agent typically doesn't have the right ID cached without going back to `list_accounts`; escalating with the seller's hint is more honest than burning a guaranteed-wrong replay.
 
 Adopters using the existing `isRetryable()` / `getRetryDelay()` helpers in `@adcp/sdk` continue to work — `decideRetry` is additive.

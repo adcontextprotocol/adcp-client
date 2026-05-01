@@ -49,6 +49,13 @@ export type RetryDecision =
     }
   | {
       action: 'mutate-and-retry';
+      /**
+       * Suggested pre-retry delay in milliseconds. Lightweight jitter so fleet
+       * operators don't all hit the seller in the same instant after a
+       * correlated storm (e.g., `PROPOSAL_EXPIRED` across thousands of
+       * campaigns at once).
+       */
+      delayMs: number;
       /** Maximum attempts (including the original) before escalating. */
       attemptCap: number;
       /** Caller MUST mint a fresh `idempotency_key` because the payload changes. */
@@ -65,6 +72,7 @@ export type RetryDecision =
         | 'commercial' // POLICY_VIOLATION / COMPLIANCE_UNSATISFIED / GOVERNANCE_DENIED — human review
         | 'auth' // AUTH_REQUIRED / PERMISSION_DENIED — operator must rotate creds / grant access
         | 'governance_unreachable' // GOVERNANCE_UNAVAILABLE / CAMPAIGN_SUSPENDED — out-of-band
+        | 'idempotency_check_required' // IDEMPOTENCY_EXPIRED — buyer MUST do a natural-key check before minting a new key (spec safety constraint to prevent double-creation)
         | 'terminal' // spec recovery 'terminal' (account suspended, budget exhausted, …)
         | 'attempts_exhausted' // hit attemptCap — caller already retried as many times as the policy allows
         | 'unknown'; // non-standard code, no policy override — buyer surfaces to user
@@ -93,17 +101,25 @@ export type RetryDecisionOverride = (error: AdcpStructuredError, ctx: RetryConte
 // Default per-code policy table
 // ---------------------------------------------------------------------------
 
-interface CodePolicy {
-  action: RetryDecision['action'];
-  attemptCap: number;
-  // For 'retry':
-  baseDelayMs?: number;
-  expBackoff?: boolean;
-  // For 'mutate-and-retry':
-  reason?: Extract<RetryDecision, { action: 'mutate-and-retry' }>['reason'];
-  // For 'escalate':
-  escalateReason?: Extract<RetryDecision, { action: 'escalate' }>['reason'];
-}
+type CodePolicy =
+  | {
+      action: 'retry';
+      attemptCap: number;
+      baseDelayMs: number;
+      /** When true, scales `baseDelayMs` by 2^(attempt-1), clamped to 3600s. */
+      expBackoff?: boolean;
+    }
+  | {
+      action: 'mutate-and-retry';
+      attemptCap: number;
+      reason: Extract<RetryDecision, { action: 'mutate-and-retry' }>['reason'];
+      /** Pre-retry delay (jitter window). Helps fleet operators avoid a thundering herd. */
+      baseDelayMs?: number;
+    }
+  | {
+      action: 'escalate';
+      escalateReason: Extract<RetryDecision, { action: 'escalate' }>['reason'];
+    };
 
 /**
  * Defaults per standard error code. Each entry is operator-grade — what the
@@ -118,89 +134,105 @@ interface CodePolicy {
  * - `GOVERNANCE_UNAVAILABLE`, `CAMPAIGN_SUSPENDED` are spec-`transient` but
  *   escalate here (out-of-band — agent can't unblock).
  */
-const DEFAULT_CODE_POLICY: Partial<Record<ErrorCode, CodePolicy>> = {
+const DEFAULT_CODE_POLICY: Record<ErrorCode, CodePolicy> = {
   // Transients — server-side, retry-safe with same idempotency_key.
   RATE_LIMITED: { action: 'retry', attemptCap: 5, baseDelayMs: 1000, expBackoff: true },
   SERVICE_UNAVAILABLE: { action: 'retry', attemptCap: 3, baseDelayMs: 1000, expBackoff: true },
   CONFLICT: { action: 'retry', attemptCap: 2, baseDelayMs: 0 },
 
   // Out-of-band transients — agent can't unblock; surface to operator.
-  GOVERNANCE_UNAVAILABLE: { action: 'escalate', attemptCap: 0, escalateReason: 'governance_unreachable' },
-  CAMPAIGN_SUSPENDED: { action: 'escalate', attemptCap: 0, escalateReason: 'governance_unreachable' },
+  GOVERNANCE_UNAVAILABLE: { action: 'escalate', escalateReason: 'governance_unreachable' },
+  CAMPAIGN_SUSPENDED: { action: 'escalate', escalateReason: 'governance_unreachable' },
 
-  // Resource-not-found — re-discover and retry once with corrected id.
-  ACCOUNT_NOT_FOUND: { action: 'mutate-and-retry', attemptCap: 2, reason: 'redirect' },
-  MEDIA_BUY_NOT_FOUND: { action: 'mutate-and-retry', attemptCap: 2, reason: 'redirect' },
-  PACKAGE_NOT_FOUND: { action: 'mutate-and-retry', attemptCap: 2, reason: 'redirect' },
-  PRODUCT_NOT_FOUND: { action: 'mutate-and-retry', attemptCap: 2, reason: 'redirect' },
-  CREATIVE_NOT_FOUND: { action: 'mutate-and-retry', attemptCap: 2, reason: 'redirect' },
-  SIGNAL_NOT_FOUND: { action: 'mutate-and-retry', attemptCap: 2, reason: 'redirect' },
-  SESSION_NOT_FOUND: { action: 'mutate-and-retry', attemptCap: 2, reason: 'redirect' },
-  PLAN_NOT_FOUND: { action: 'mutate-and-retry', attemptCap: 2, reason: 'redirect' },
-  REFERENCE_NOT_FOUND: { action: 'mutate-and-retry', attemptCap: 2, reason: 'redirect' },
+  // Resource-not-found — re-discover and retry. attemptCap: 3 so a buyer with
+  // a stale cache can list, mutate, list-again-on-second-staleness, and still
+  // succeed before escalation.
+  ACCOUNT_NOT_FOUND: { action: 'mutate-and-retry', attemptCap: 3, reason: 'redirect', baseDelayMs: 250 },
+  MEDIA_BUY_NOT_FOUND: { action: 'mutate-and-retry', attemptCap: 3, reason: 'redirect', baseDelayMs: 250 },
+  PACKAGE_NOT_FOUND: { action: 'mutate-and-retry', attemptCap: 3, reason: 'redirect', baseDelayMs: 250 },
+  PRODUCT_NOT_FOUND: { action: 'mutate-and-retry', attemptCap: 3, reason: 'redirect', baseDelayMs: 250 },
+  CREATIVE_NOT_FOUND: { action: 'mutate-and-retry', attemptCap: 3, reason: 'redirect', baseDelayMs: 250 },
+  SIGNAL_NOT_FOUND: { action: 'mutate-and-retry', attemptCap: 3, reason: 'redirect', baseDelayMs: 250 },
+  SESSION_NOT_FOUND: { action: 'mutate-and-retry', attemptCap: 3, reason: 'redirect', baseDelayMs: 250 },
+  PLAN_NOT_FOUND: { action: 'mutate-and-retry', attemptCap: 3, reason: 'redirect', baseDelayMs: 250 },
+  REFERENCE_NOT_FOUND: { action: 'mutate-and-retry', attemptCap: 3, reason: 'redirect', baseDelayMs: 250 },
 
-  // Stale-resource — re-discover.
-  PRODUCT_EXPIRED: { action: 'mutate-and-retry', attemptCap: 2, reason: 'redirect' },
-  PROPOSAL_EXPIRED: { action: 'mutate-and-retry', attemptCap: 2, reason: 'redirect' },
-  PRODUCT_UNAVAILABLE: { action: 'mutate-and-retry', attemptCap: 2, reason: 'redirect' },
+  // Stale-resource — re-discover. Same as not-found family.
+  PRODUCT_EXPIRED: { action: 'mutate-and-retry', attemptCap: 3, reason: 'redirect', baseDelayMs: 250 },
+  PROPOSAL_EXPIRED: { action: 'mutate-and-retry', attemptCap: 3, reason: 'redirect', baseDelayMs: 250 },
+  PRODUCT_UNAVAILABLE: { action: 'mutate-and-retry', attemptCap: 3, reason: 'redirect', baseDelayMs: 250 },
 
   // Capability mismatch — drop the unsupported field and retry.
-  UNSUPPORTED_FEATURE: { action: 'mutate-and-retry', attemptCap: 2, reason: 'capability' },
-  VERSION_UNSUPPORTED: { action: 'mutate-and-retry', attemptCap: 2, reason: 'capability' },
+  UNSUPPORTED_FEATURE: { action: 'mutate-and-retry', attemptCap: 2, reason: 'capability', baseDelayMs: 250 },
+  VERSION_UNSUPPORTED: { action: 'mutate-and-retry', attemptCap: 2, reason: 'capability', baseDelayMs: 250 },
 
   // Re-quote — go back to get_products in 'refine' mode against the proposal.
-  TERMS_REJECTED: { action: 'mutate-and-retry', attemptCap: 2, reason: 'requote' },
-  REQUOTE_REQUIRED: { action: 'mutate-and-retry', attemptCap: 2, reason: 'requote' },
-  PROPOSAL_NOT_COMMITTED: { action: 'mutate-and-retry', attemptCap: 2, reason: 'requote' },
-  IO_REQUIRED: { action: 'mutate-and-retry', attemptCap: 2, reason: 'requote' },
+  TERMS_REJECTED: { action: 'mutate-and-retry', attemptCap: 3, reason: 'requote', baseDelayMs: 250 },
+  REQUOTE_REQUIRED: { action: 'mutate-and-retry', attemptCap: 3, reason: 'requote', baseDelayMs: 250 },
+  PROPOSAL_NOT_COMMITTED: { action: 'mutate-and-retry', attemptCap: 2, reason: 'requote', baseDelayMs: 250 },
+  IO_REQUIRED: { action: 'mutate-and-retry', attemptCap: 2, reason: 'requote', baseDelayMs: 250 },
 
   // Budget — adjust and retry.
-  BUDGET_TOO_LOW: { action: 'mutate-and-retry', attemptCap: 2, reason: 'budget' },
-  BUDGET_EXCEEDED: { action: 'mutate-and-retry', attemptCap: 2, reason: 'budget' },
-  AUDIENCE_TOO_SMALL: { action: 'mutate-and-retry', attemptCap: 2, reason: 'budget' },
+  BUDGET_TOO_LOW: { action: 'mutate-and-retry', attemptCap: 2, reason: 'budget', baseDelayMs: 250 },
+  BUDGET_EXCEEDED: { action: 'mutate-and-retry', attemptCap: 2, reason: 'budget', baseDelayMs: 250 },
+  AUDIENCE_TOO_SMALL: { action: 'mutate-and-retry', attemptCap: 2, reason: 'budget', baseDelayMs: 250 },
 
   // Validation / state — read issues[] and patch.
-  INVALID_REQUEST: { action: 'mutate-and-retry', attemptCap: 2, reason: 'validation' },
-  VALIDATION_ERROR: { action: 'mutate-and-retry', attemptCap: 2, reason: 'validation' },
-  INVALID_STATE: { action: 'mutate-and-retry', attemptCap: 2, reason: 'state' },
-  NOT_CANCELLABLE: { action: 'mutate-and-retry', attemptCap: 2, reason: 'state' },
+  INVALID_REQUEST: { action: 'mutate-and-retry', attemptCap: 2, reason: 'validation', baseDelayMs: 250 },
+  VALIDATION_ERROR: { action: 'mutate-and-retry', attemptCap: 2, reason: 'validation', baseDelayMs: 250 },
+  INVALID_STATE: { action: 'mutate-and-retry', attemptCap: 2, reason: 'state', baseDelayMs: 250 },
+  NOT_CANCELLABLE: { action: 'mutate-and-retry', attemptCap: 2, reason: 'state', baseDelayMs: 250 },
 
-  // Idempotency — fresh key, then retry. (The agent shouldn't have hit these
-  // if it's using the SDK's idempotency helper, but be defensive.)
-  IDEMPOTENCY_CONFLICT: { action: 'mutate-and-retry', attemptCap: 2, reason: 'validation' },
-  IDEMPOTENCY_EXPIRED: { action: 'mutate-and-retry', attemptCap: 2, reason: 'validation' },
+  // Idempotency:
+  // - CONFLICT (different payload, same key in window) — fresh key + retry is safe;
+  //   the seller already rejected the new payload before doing any work.
+  // - EXPIRED (cached response evicted past replay_ttl) — DO NOT auto-retry. The
+  //   spec explicitly warns: if the prior call may have succeeded, the buyer
+  //   MUST do a natural-key check (e.g., get_media_buys by buyer_ref) BEFORE
+  //   minting a new key. Otherwise this is exactly how double-creation happens.
+  IDEMPOTENCY_CONFLICT: { action: 'mutate-and-retry', attemptCap: 2, reason: 'validation', baseDelayMs: 250 },
+  IDEMPOTENCY_EXPIRED: { action: 'escalate', escalateReason: 'idempotency_check_required' },
 
   // Creative deadline — buyer can re-negotiate or surface to user.
-  CREATIVE_DEADLINE_EXCEEDED: { action: 'mutate-and-retry', attemptCap: 2, reason: 'state' },
+  CREATIVE_DEADLINE_EXCEEDED: { action: 'mutate-and-retry', attemptCap: 2, reason: 'state', baseDelayMs: 250 },
 
-  // Account state — operator must resolve. Spec recovery is `correctable` for
-  // ACCOUNT_AMBIGUOUS / ACCOUNT_SETUP_REQUIRED but they need human action.
-  ACCOUNT_AMBIGUOUS: { action: 'mutate-and-retry', attemptCap: 2, reason: 'redirect' },
-  ACCOUNT_SETUP_REQUIRED: { action: 'escalate', attemptCap: 0, escalateReason: 'auth' },
-  ACCOUNT_PAYMENT_REQUIRED: { action: 'escalate', attemptCap: 0, escalateReason: 'auth' },
-  ACCOUNT_SUSPENDED: { action: 'escalate', attemptCap: 0, escalateReason: 'terminal' },
-  BUDGET_EXHAUSTED: { action: 'escalate', attemptCap: 0, escalateReason: 'terminal' },
+  // Account state — operator must resolve.
+  // ACCOUNT_AMBIGUOUS: spec says "pass explicit account_id" but the agent
+  // typically doesn't have the right id cached without going back to
+  // list_accounts — escalating with the seller's hint is more honest than
+  // burning a retry on a guaranteed-wrong replay.
+  ACCOUNT_AMBIGUOUS: { action: 'escalate', escalateReason: 'auth' },
+  ACCOUNT_SETUP_REQUIRED: { action: 'escalate', escalateReason: 'auth' },
+  ACCOUNT_PAYMENT_REQUIRED: { action: 'escalate', escalateReason: 'auth' },
+  ACCOUNT_SUSPENDED: { action: 'escalate', escalateReason: 'terminal' },
+  BUDGET_EXHAUSTED: { action: 'escalate', escalateReason: 'terminal' },
 
   // SI session — recreate.
-  SESSION_TERMINATED: { action: 'mutate-and-retry', attemptCap: 2, reason: 'redirect' },
+  SESSION_TERMINATED: { action: 'mutate-and-retry', attemptCap: 2, reason: 'redirect', baseDelayMs: 250 },
 
   // Creative rejection — surface to user; agent shouldn't auto-modify creative.
-  CREATIVE_REJECTED: { action: 'escalate', attemptCap: 0, escalateReason: 'commercial' },
+  // (Format-mismatch rejections are technically buyer-fixable, but the spec
+  // doesn't structurally distinguish them from brand-safety rejections; pessimistic
+  // default. Adopters with creative-template platforms can override per-code.)
+  CREATIVE_REJECTED: { action: 'escalate', escalateReason: 'commercial' },
 
   // Commercial-relationship signals — DO NOT auto-tweak. Human in loop.
-  POLICY_VIOLATION: { action: 'escalate', attemptCap: 0, escalateReason: 'commercial' },
-  COMPLIANCE_UNSATISFIED: { action: 'escalate', attemptCap: 0, escalateReason: 'commercial' },
-  GOVERNANCE_DENIED: { action: 'escalate', attemptCap: 0, escalateReason: 'commercial' },
+  POLICY_VIOLATION: { action: 'escalate', escalateReason: 'commercial' },
+  COMPLIANCE_UNSATISFIED: { action: 'escalate', escalateReason: 'commercial' },
+  GOVERNANCE_DENIED: { action: 'escalate', escalateReason: 'commercial' },
 
   // Auth — until adcp#3730 splits missing-vs-revoked, escalate. Otherwise
   // naive loops hammer SSO endpoints on revoked tokens.
-  AUTH_REQUIRED: { action: 'escalate', attemptCap: 0, escalateReason: 'auth' },
-  PERMISSION_DENIED: { action: 'escalate', attemptCap: 0, escalateReason: 'auth' },
+  AUTH_REQUIRED: { action: 'escalate', escalateReason: 'auth' },
+  PERMISSION_DENIED: { action: 'escalate', escalateReason: 'auth' },
 };
 
 // ---------------------------------------------------------------------------
 // Implementation
 // ---------------------------------------------------------------------------
+
+/** Cap on any computed retry delay. Mirrors the spec's `retry_after` range [1, 3600]. */
+const MAX_DELAY_MS = 3_600_000;
 
 function clampDelayMs(
   retryAfterSeconds: number | undefined,
@@ -212,9 +244,9 @@ function clampDelayMs(
     return Math.max(1, Math.min(3600, Math.floor(retryAfterSeconds))) * 1000;
   }
   if (exp) {
-    return fallbackMs * Math.pow(2, Math.max(0, attempt - 1));
+    return Math.min(MAX_DELAY_MS, fallbackMs * Math.pow(2, Math.max(0, attempt - 1)));
   }
-  return fallbackMs;
+  return Math.min(MAX_DELAY_MS, fallbackMs);
 }
 
 function applyPolicy(
@@ -239,8 +271,10 @@ function applyPolicy(
       return { action: 'escalate', reason: 'terminal', message: error.message };
     }
     if (fallbackByRecovery === 'mutate') {
+      const jitterMs = Math.floor(250 * (0.5 + Math.random() * 0.5));
       return {
         action: 'mutate-and-retry',
+        delayMs: jitterMs,
         attemptCap: 2,
         sameIdempotencyKey: false,
         reason: 'validation',
@@ -251,12 +285,16 @@ function applyPolicy(
     return { action: 'escalate', reason: 'unknown', message: error.message };
   }
 
-  if (attempt >= policy.attemptCap && policy.action !== 'escalate') {
+  if (policy.action === 'escalate') {
+    return { action: 'escalate', reason: policy.escalateReason, message: error.message };
+  }
+
+  if (attempt >= policy.attemptCap) {
     return { action: 'escalate', reason: 'attempts_exhausted', message: error.message };
   }
 
   if (policy.action === 'retry') {
-    const delayMs = clampDelayMs(error.retry_after, policy.baseDelayMs ?? 1000, attempt, policy.expBackoff ?? false);
+    const delayMs = clampDelayMs(error.retry_after, policy.baseDelayMs, attempt, policy.expBackoff ?? false);
     return {
       action: 'retry',
       delayMs,
@@ -266,18 +304,20 @@ function applyPolicy(
     };
   }
 
-  if (policy.action === 'mutate-and-retry') {
-    return {
-      action: 'mutate-and-retry',
-      attemptCap: policy.attemptCap,
-      sameIdempotencyKey: false,
-      reason: policy.reason ?? 'validation',
-      ...(error.field !== undefined && { field: error.field }),
-      ...(error.suggestion !== undefined && { suggestion: error.suggestion }),
-    };
-  }
-
-  return { action: 'escalate', reason: policy.escalateReason ?? 'terminal', message: error.message };
+  // mutate-and-retry. Add small jitter (50-100% of baseDelayMs, default
+  // 250ms) so fleet operators don't all hit the seller at once after a
+  // correlated storm (e.g., PROPOSAL_EXPIRED across thousands of campaigns).
+  const base = policy.baseDelayMs ?? 250;
+  const jitterMs = Math.floor(base * (0.5 + Math.random() * 0.5));
+  return {
+    action: 'mutate-and-retry',
+    delayMs: Math.min(MAX_DELAY_MS, jitterMs),
+    attemptCap: policy.attemptCap,
+    sameIdempotencyKey: false,
+    reason: policy.reason,
+    ...(error.field !== undefined && { field: error.field }),
+    ...(error.suggestion !== undefined && { suggestion: error.suggestion }),
+  };
 }
 
 /**
@@ -307,11 +347,28 @@ function applyPolicy(
  */
 export class BuyerRetryPolicy {
   private readonly overrides: ReadonlyMap<string, RetryDecisionOverride>;
-  private readonly fallback: 'mutate' | 'escalate-unknown';
+  private readonly unknownCode: 'mutate' | 'escalate';
 
-  constructor(opts: { overrides?: Record<string, RetryDecisionOverride>; unknownCode?: 'mutate' | 'escalate' } = {}) {
+  constructor(
+    opts: {
+      /**
+       * Per-code override functions. Keyed by error code (typed as
+       * `Partial<Record<ErrorCode, RetryDecisionOverride>>` so typos like
+       * `POLICY_VIOLATIN` fail compile). Returns `null` to fall through to
+       * the default policy.
+       */
+      overrides?: Partial<Record<ErrorCode, RetryDecisionOverride>> & Record<string, RetryDecisionOverride>;
+      /**
+       * What to do when the error code is not in the standard vocabulary
+       * AND has no per-code override. `'escalate'` (default) is the safer
+       * choice for unknown vendor codes — buyer surfaces to user.
+       * `'mutate'` lets the buyer attempt a generic correction-and-retry.
+       */
+      unknownCode?: 'mutate' | 'escalate';
+    } = {}
+  ) {
     this.overrides = new Map(Object.entries(opts.overrides ?? {}));
-    this.fallback = opts.unknownCode === 'mutate' ? 'mutate' : 'escalate-unknown';
+    this.unknownCode = opts.unknownCode ?? 'escalate';
   }
 
   decide(error: AdcpStructuredError, ctx: RetryContext = {}): RetryDecision {
@@ -322,7 +379,7 @@ export class BuyerRetryPolicy {
       if (result) return result;
     }
     const policy = DEFAULT_CODE_POLICY[error.code as ErrorCode];
-    return applyPolicy(policy, error, attempt, this.fallback);
+    return applyPolicy(policy, error, attempt, this.unknownCode === 'mutate' ? 'mutate' : 'escalate-unknown');
   }
 }
 
