@@ -1542,6 +1542,23 @@ export interface AssertionResult {
    * has prose to report.
    */
   hint?: StoryboardStepHint;
+  /**
+   * Lifecycle resources or transitions an observation-based invariant
+   * saw over the run. Set only by invariants whose verdict is meaningful
+   * exclusively when something was observed (`status.monotonic` today),
+   * emitted on the `onEnd` summary record. The track-level rollup
+   * demotes a passing track to `TrackStatus: 'silent'` when every record
+   * carrying this field reports `0`.
+   *
+   * This MUST count actual lifecycle resources or transitions observed
+   * — never "the assertion was applicable" or "the assertion ran." A
+   * future invariant that emits `observation_count` with skip-style
+   * semantics would cause silent demotion for the wrong reason.
+   *
+   * Absent on assertions that don't model observation counts. Companion
+   * to adcontextprotocol/adcp#2834.
+   */
+  observation_count?: number;
 }
 
 /**

@@ -149,6 +149,12 @@ function skipReasonLabel(reason: string | undefined): string | undefined {
 
 /**
  * Compute the track status from storyboard results.
+ *
+ * `silent` lands when every observation-based invariant on the track
+ * ran with zero observations *and* nothing failed — the agent is wired
+ * but its lifecycle protections were not exercised this run, so the
+ * track has nothing to attest. See `TrackStatus` doc and
+ * adcontextprotocol/adcp#2834.
  */
 function computeTrackStatus(results: StoryboardResult[]): TrackStatus {
   const totalPassed = results.reduce((sum, r) => sum + r.passed_count, 0);
@@ -158,7 +164,20 @@ function computeTrackStatus(results: StoryboardResult[]): TrackStatus {
 
   if (totalSteps === 0) return 'skip';
   if (totalSteps === totalSkipped) return 'skip';
-  if (totalFailed === 0) return 'pass';
-  if (totalPassed === 0) return 'fail';
-  return 'partial';
+  if (totalFailed > 0) return totalPassed === 0 ? 'fail' : 'partial';
+
+  // No failures. Demote to `silent` when every observation-bearing
+  // invariant record reports zero observations. Step-level passes alone
+  // (response_schema, field_present, …) are not enough to lift a track
+  // out of silent — only an invariant that actually observed a
+  // lifecycle resource counts as real protection. Tracks whose
+  // invariants don't carry `observation_count` (no observation-based
+  // assertion ran) stay `pass` as before.
+  const observationRecords = results
+    .flatMap(r => r.assertions ?? [])
+    .filter(a => typeof a.observation_count === 'number');
+  if (observationRecords.length > 0 && observationRecords.every(a => a.observation_count === 0)) {
+    return 'silent';
+  }
+  return 'pass';
 }
