@@ -131,6 +131,7 @@ import { normalizePreviewCreativeResponse } from '../utils/preview-normalizer';
 import { normalizeGetProductsResponse, adaptGetProductsRequestForV2 } from '../utils/pricing-adapter';
 import { normalizeRequestParams } from '../utils/request-normalizer';
 import { validateUserAgent } from '../utils/validate-user-agent';
+import { getV3ToV25Adapter } from '../adapters/v3-to-v2-5';
 
 /**
  * Error class for v3 feature compatibility issues
@@ -1270,24 +1271,13 @@ export class SingleAgentClient {
     let adapted = params;
 
     if (version !== 'v3') {
-      // Adapt v3 requests for v2 servers
-      switch (taskType) {
-        case 'get_products':
-          adapted = adaptGetProductsRequestForV2(params);
-          break;
-
-        case 'create_media_buy':
-          adapted = adaptCreateMediaBuyRequestForV2(params);
-          break;
-
-        case 'update_media_buy':
-          adapted = adaptUpdateMediaBuyRequestForV2(params);
-          break;
-
-        case 'sync_creatives':
-          adapted = adaptSyncCreativesRequestForV2(params);
-          break;
-      }
+      // Dispatch through the v3 → v2.5 adapter registry. Per-tool pairs
+      // live in `src/lib/adapters/v3-to-v2-5/<tool>.ts`. Tools without a
+      // registered pair (or pairs whose request side is pass-through)
+      // leave `adapted` unchanged. Adding v2.6 / v3.1 in the future
+      // means adding a sibling registry, not editing this dispatch.
+      const pair = getV3ToV25Adapter(taskType);
+      if (pair) adapted = pair.adaptRequest(params);
     }
 
     // Strip any top-level fields not declared in the agent's tool schema.
@@ -1371,23 +1361,12 @@ export class SingleAgentClient {
    * Converts v2 responses to v3 structure for consistent API surface.
    */
   private normalizeResponseToV3(taskType: string, data: any): any {
-    switch (taskType) {
-      case 'get_products':
-        return normalizeGetProductsResponse(data);
-
-      case 'list_creative_formats':
-        return normalizeFormatsResponse(data);
-
-      case 'preview_creative':
-        return normalizePreviewCreativeResponse(data);
-
-      case 'create_media_buy':
-      case 'update_media_buy':
-        return normalizeMediaBuyResponse(data);
-
-      default:
-        return data;
-    }
+    // Dispatch through the v3 → v2.5 adapter registry. The pair's
+    // optional `normalizeResponse` runs when present; otherwise the
+    // response is passed through unchanged.
+    const pair = getV3ToV25Adapter(taskType);
+    if (pair?.normalizeResponse) return pair.normalizeResponse(data);
+    return data;
   }
 
   /**
