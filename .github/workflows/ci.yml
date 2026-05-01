@@ -32,7 +32,7 @@ jobs:
         run: npm run format:check
 
       - name: Sync schemas from AdCP
-        run: npm run sync-schemas
+        run: npm run sync-schemas:all
 
       - name: Validate generated files are in sync
         run: |
