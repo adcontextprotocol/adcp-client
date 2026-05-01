@@ -191,8 +191,12 @@ function _capabilities_supported_billings_operator(): Pick<DecisioningCapabiliti
   return { supportedBillings: ['operator'] as const };
 }
 
+function _capabilities_supported_billings_advertiser(): Pick<DecisioningCapabilities, 'supportedBillings'> {
+  return { supportedBillings: ['advertiser'] as const };
+}
+
 function _capabilities_supported_billings_invalid(): Pick<DecisioningCapabilities, 'supportedBillings'> {
-  // @ts-expect-error — only 'operator' | 'agent' allowed.
+  // @ts-expect-error — only 'operator' | 'agent' | 'advertiser' allowed.
   return { supportedBillings: ['publisher'] as const };
 }
 
@@ -266,6 +270,7 @@ export const _references = [
   _account_store_resolution_derived,
   _account_store_resolution_invalid_value,
   _capabilities_supported_billings_operator,
+  _capabilities_supported_billings_advertiser,
   _capabilities_supported_billings_invalid,
   _targeting_capabilities_nested,
   _targeting_capabilities_rejects_unknown_geo_metro,
