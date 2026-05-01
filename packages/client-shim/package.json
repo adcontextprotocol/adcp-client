@@ -1,7 +1,8 @@
 {
   "name": "@adcp/client",
   "version": "6.0.0",
-  "description": "Renamed to @adcp/sdk. Compatibility shim that re-exports @adcp/sdk under the legacy package name.",
+  "private": true,
+  "description": "DEPRECATED. Renamed to @adcp/sdk. This shim is no longer published — install @adcp/sdk@^6.1.0 instead. Source kept in-tree for historical reference; `private: true` keeps it out of the npm release flow (paired with `ignore: ['@adcp/client']` in .changeset/config.json).",
   "main": "index.js",
   "types": "index.d.ts",
   "type": "commonjs",
