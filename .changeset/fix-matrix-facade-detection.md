@@ -23,7 +23,7 @@ Two changes to make the test honest:
    - `GET /_lookup/<resource>?<adcp_field>=<value>` — runtime resolution from AdCP-side identifiers to upstream IDs. Replaces the hardcoded mapping table the prompt used to inline.
    - `GET /_debug/traffic` — per-endpoint hit counters. The harness queries this after the storyboard run and asserts headline endpoints (`POST /event/track`, `POST /custom_audience/upload`, etc.) were called ≥ 1 time. Façade adapters that return shape-valid AdCP responses without calling these endpoints fail this check regardless of storyboard pass.
 
-Initial scope: sales-social only (proof of concept). Other specialisms (signal-marketplace, creative-template, sales-guaranteed) get the same treatment in follow-up work. Each carries a per-specialism `expectedHitsForSpecialism()` list in the harness — empty list means no traffic assertion (back-compat for un-instrumented mocks).
+All four specialisms (sales-social, signal-marketplace, creative-template, sales-guaranteed) ship with `/_lookup/<resource>` discovery, `/_debug/traffic` counters, and `bump()` calls on every routed handler. Each carries a per-specialism `expectedHitsForSpecialism()` list in the harness — empty list means no traffic assertion (back-compat for un-instrumented mocks).
 
 Boot summaries also stripped of specific advertiser/operator values so adapters can't read them from the CLI banner.
 
