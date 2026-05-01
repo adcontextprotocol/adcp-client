@@ -286,12 +286,17 @@ export interface MCPConnectionResult {
  *
  * The returned client is connected and ready for use. Callers are responsible for
  * calling client.close() when done.
+ *
+ * Auth: pass either `authHeaders` (static token) or `options.authProvider` (OAuth).
+ * The provider is forwarded to both StreamableHTTP and SSE transports so OAuth
+ * works through the SSE fallback as well.
  */
 export async function connectMCPWithFallback(
   url: URL,
   authHeaders: Record<string, string>,
   debugLogs: DebugLogEntry[] = [],
-  label = 'connection'
+  label = 'connection',
+  options: { authProvider?: OAuthClientProvider } = {}
 ): Promise<MCPClient> {
   return withSpan(
     'adcp.mcp.connect',
@@ -300,7 +305,7 @@ export async function connectMCPWithFallback(
       'adcp.connection_label': label,
     },
     async () => {
-      return connectMCPWithFallbackImpl(url, authHeaders, debugLogs, label);
+      return connectMCPWithFallbackImpl(url, authHeaders, debugLogs, label, options);
     }
   );
 }
@@ -309,7 +314,8 @@ async function connectMCPWithFallbackImpl(
   url: URL,
   authHeaders: Record<string, string>,
   debugLogs: DebugLogEntry[] = [],
-  label = 'connection'
+  label = 'connection',
+  options: { authProvider?: OAuthClientProvider } = {}
 ): Promise<MCPClient> {
   const signingContext = signingContextStorage.getStore();
   // Wrap order (innermost → outermost): network → size-limit → signing → capture.
@@ -328,6 +334,9 @@ async function connectMCPWithFallbackImpl(
     requestInit: { headers: authHeaders },
     fetch: wrapFetchWithCapture(baseFetch),
   };
+  if (options.authProvider) {
+    transportOptions.authProvider = options.authProvider;
+  }
   let failedClient: MCPClient | undefined;
 
   try {
@@ -438,6 +447,7 @@ async function connectMCPWithFallbackImpl(
       new SSEClientTransport(url, {
         requestInit: { headers: authHeaders },
         fetch: wrapFetchWithCapture(baseFetch),
+        ...(options.authProvider ? { authProvider: options.authProvider } : {}),
       })
     );
     debugLogs.push({

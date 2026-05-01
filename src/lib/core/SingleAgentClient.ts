@@ -731,12 +731,20 @@ export class SingleAgentClient {
       throw new AuthenticationRequiredError(providedUri, oauthMetadata || undefined);
     }
 
-    // None worked and no 401 - generic discovery failure
+    // None worked and no 401 - generic discovery failure.
+    // The most common cause is `agent_uri` pointing at the host root when the
+    // MCP endpoint lives at a non-standard path; the SDK only auto-probes `/`,
+    // `/mcp`, and `/mcp/`. Surface that hint so operators can fix the
+    // registration instead of debugging transport.
     throw new Error(
       `Failed to discover MCP endpoint. Tried:\n` +
         uniqueUrls.map((url, i) => `  ${i + 1}. ${url}`).join('\n') +
         '\n' +
-        `None responded to MCP protocol.`
+        `None responded to MCP protocol.\n\n` +
+        `Hint: this usually means agent_uri does not include the MCP endpoint path. ` +
+        `The SDK only probes /, /mcp, and /mcp/ automatically. ` +
+        `If your server exposes MCP at a different path (e.g. /api/mcp, /adcp/mcp), ` +
+        `register that exact path as agent_uri.`
     );
   }
 
@@ -2653,20 +2661,29 @@ export class SingleAgentClient {
       // Discover endpoint if needed
       const agent = await this.ensureEndpointDiscovered();
 
-      // Use the shared connectMCP path so both static bearer AND saved OAuth
-      // tokens work. OAuth takes the refresh-capable authProvider branch.
-      const { connectMCP } = await import('../protocols/mcp');
-      const connectOptions: Parameters<typeof connectMCP>[0] = { agentUrl: agent.agent_uri };
+      // Use the shared fallback path so both static bearer AND saved OAuth tokens
+      // benefit from the same StreamableHTTP-then-SSE behavior every other code
+      // path uses (callMCPTool, mcp-tasks). Without this, listTools fails on the
+      // first transport error even when SSE would succeed.
+      const { connectMCPWithFallback } = await import('../protocols/mcp');
+      const fallbackOptions: NonNullable<Parameters<typeof connectMCPWithFallback>[4]> = {};
+      let authHeaders: Record<string, string> = {};
       if (this.normalizedAgent.oauth_tokens) {
         const { createNonInteractiveOAuthProvider } = await import('../auth/oauth');
-        connectOptions.authProvider = createNonInteractiveOAuthProvider(this.normalizedAgent, {
+        fallbackOptions.authProvider = createNonInteractiveOAuthProvider(this.normalizedAgent, {
           agentHint: this.normalizedAgent.id,
         });
       } else if (this.normalizedAgent.auth_token) {
-        connectOptions.authToken = this.normalizedAgent.auth_token;
+        authHeaders = createMCPAuthHeaders(this.normalizedAgent.auth_token);
       }
 
-      const { client: mcpClient } = await connectMCP(connectOptions);
+      const mcpClient = await connectMCPWithFallback(
+        new URL(agent.agent_uri),
+        authHeaders,
+        [],
+        'getAgentInfo',
+        fallbackOptions
+      );
       try {
         const toolsList = await mcpClient.listTools();
 
