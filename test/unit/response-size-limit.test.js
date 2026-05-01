@@ -215,6 +215,64 @@ describe('responseSizeLimit — wrapFetchWithSizeLimit', () => {
   });
 });
 
+describe('responseSizeLimit — SSE pass-through', () => {
+  it('passes text/event-stream responses through without applying the cap', async () => {
+    // SSE is unbounded by design. The MCP transport opens a long-lived
+    // GET /mcp for server-initiated messages; cumulative frame bytes must
+    // never trip the cap. A response with Content-Type: text/event-stream
+    // must return unchanged — no Content-Length pre-check, no streaming
+    // counter.
+    const sseChunks = [new TextEncoder().encode('data: frame1\n\n'), new TextEncoder().encode('data: frame2\n\n')];
+    const upstream = async () =>
+      new Response(
+        new ReadableStream({
+          start(controller) {
+            sseChunks.forEach(c => controller.enqueue(c));
+            controller.close();
+          },
+        }),
+        {
+          status: 200,
+          // Cap is 10 bytes; declared Content-Length is 50 KB — both
+          // pre-check and streaming counter would fire if SSE weren't exempt.
+          headers: { 'content-type': 'text/event-stream', 'content-length': '51200' },
+        }
+      );
+    const wrapped = wrapFetchWithSizeLimit(upstream);
+
+    const response = await withResponseSizeLimit(10, () => wrapped('https://example.invalid/mcp'));
+    assert.strictEqual(response.headers.get('content-type'), 'text/event-stream');
+    const text = await response.text();
+    assert.ok(text.includes('data: frame1'), 'SSE body must be readable after pass-through');
+  });
+
+  it('still caps non-SSE responses when the cap is active', async () => {
+    // Regression guard: the SSE exemption must not disable the cap for
+    // regular JSON/binary responses that happen to arrive on the same
+    // fetch wrapper.
+    const upstream = makeFetch(new Uint8Array(5000), { 'content-length': '5000' });
+    const wrapped = wrapFetchWithSizeLimit(upstream);
+
+    await assert.rejects(
+      withResponseSizeLimit(100, () => wrapped('https://example.invalid/').then(r => r.arrayBuffer())),
+      err => err instanceof ResponseTooLargeError
+    );
+  });
+
+  it('treats text/event-stream with charset param as SSE', async () => {
+    const upstream = async () =>
+      new Response(new Uint8Array(50_000), {
+        status: 200,
+        headers: { 'content-type': 'text/event-stream; charset=utf-8' },
+      });
+    const wrapped = wrapFetchWithSizeLimit(upstream);
+
+    // Must not throw despite 50 KB body with a 100-byte cap.
+    const response = await withResponseSizeLimit(100, () => wrapped('https://example.invalid/mcp'));
+    assert.ok(response.headers.get('content-type')?.startsWith('text/event-stream'));
+  });
+});
+
 describe('responseSizeLimit — gzip-bomb defense', () => {
   it("forces Accept-Encoding: identity when the cap is active so the byte counter sees what's on the wire", async () => {
     // Without this, undici's default `Accept-Encoding: gzip, deflate, br`

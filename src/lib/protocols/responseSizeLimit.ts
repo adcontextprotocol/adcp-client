@@ -100,6 +100,13 @@ export function wrapFetchWithSizeLimit(upstream: typeof fetch): typeof fetch {
 }
 
 function enforceSizeLimit(response: Response, maxBytes: number, url: string): Response {
+  // SSE is unbounded by design. Server-initiated message streams and the
+  // MCP transport's long-lived GET /mcp side channel legitimately emit
+  // frames indefinitely. Don't cap them — return the original response.
+  if (response.headers.get('content-type')?.includes('text/event-stream')) {
+    return response;
+  }
+
   // Cheap pre-check: if the server declares a Content-Length over the cap,
   // tear the connection down before reading any of the body. Servers can
   // omit or lie about Content-Length, which is why the streaming counter
