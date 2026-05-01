@@ -610,6 +610,302 @@ describe('runStoryboard: F6 cascade-skip on missing-state stateful skip', () => 
   });
 });
 
+describe('runStoryboard: #1144 peer_substitutes_for — declared-substitute rescue for missing_tool', () => {
+  let agent;
+
+  afterEach(async () => {
+    if (agent) await stopAgent(agent);
+    agent = undefined;
+    await closeMCPConnections().catch(() => {});
+  });
+
+  test('missing_tool + declared substitute that PASSES → no cascade (rescue)', async () => {
+    // The 1/9/0 adapter case (#1144): sync_accounts is missing_tool because
+    // the agent doesn't advertise it (explicit-mode platform with accounts
+    // pre-provisioned out-of-band). list_accounts declares
+    // `peer_substitutes_for: sync_accounts` and passes — phase establishes
+    // equivalent state via the substitute, downstream stateful steps run.
+    agent = await startFakeAgent();
+    const storyboard = storyboardWithPhases([
+      {
+        id: 'account_setup',
+        title: 'account setup',
+        steps: [
+          {
+            id: 'sync',
+            title: 'sync_accounts (not advertised — missing_tool)',
+            task: 'sync_accounts',
+            stateful: true,
+            auth: 'none',
+            sample_request: {},
+          },
+          {
+            id: 'list',
+            title: 'list_accounts (declared substitute)',
+            task: '__test_setup',
+            stateful: true,
+            peer_substitutes_for: 'sync',
+            auth: 'none',
+            sample_request: {},
+          },
+        ],
+      },
+      {
+        id: 'consume',
+        title: 'consume account state',
+        steps: [
+          {
+            id: 'audience',
+            title: 'depends on account state',
+            task: '__test_assert',
+            stateful: true,
+            auth: 'none',
+            sample_request: {},
+          },
+        ],
+      },
+    ]);
+    // sync_accounts is NOT advertised — triggers missing_tool.
+    // __test_setup IS advertised — list_accounts runs and passes.
+    const ADVERTISED = ['__test_setup', '__test_assert', 'get_adcp_capabilities'];
+    const result = await runStoryboard([agent.url], storyboard, {
+      protocol: 'mcp',
+      allow_http: true,
+      agentTools: ADVERTISED,
+      _profile: { name: 'fake', tools: ADVERTISED.map(name => ({ name })) },
+    });
+    const [syncStep, listStep] = result.phases[0].steps;
+    const audienceStep = result.phases[1].steps[0];
+    assert.strictEqual(syncStep.skipped, true, 'sync_accounts skipped missing_tool');
+    assert.strictEqual(syncStep.skip_reason, 'missing_tool');
+    assert.strictEqual(listStep.passed, true, 'list_accounts substitute passes');
+    assert.ok(!audienceStep.skipped, 'no cascade — declared substitute established state');
+  });
+
+  test('mutual declaration + both miss → cascade fires with substitution-chain detail', async () => {
+    // Both sync_accounts and list_accounts unadvertised AND each declares
+    // the other as a substitute. Both steps are deferred (each has a
+    // declared substitute in the phase). Phase-end resolution promotes
+    // the first deferred trigger and the cascade-detail names the
+    // declared substitute that didn't rescue — the new diagnostic
+    // affordance from #1144 so adopters see the substitution chain.
+    agent = await startFakeAgent();
+    const storyboard = storyboardWithPhases([
+      {
+        id: 'account_setup',
+        title: 'account setup',
+        steps: [
+          {
+            id: 'sync',
+            title: 'sync_accounts (missing)',
+            task: 'sync_accounts',
+            stateful: true,
+            peer_substitutes_for: 'list',
+            auth: 'none',
+            sample_request: {},
+          },
+          {
+            id: 'list',
+            title: 'list_accounts substitute (also missing)',
+            task: 'list_accounts',
+            stateful: true,
+            peer_substitutes_for: 'sync',
+            auth: 'none',
+            sample_request: {},
+          },
+        ],
+      },
+      {
+        id: 'consume',
+        title: 'consume account state',
+        steps: [
+          {
+            id: 'audience',
+            title: 'depends on account state',
+            task: '__test_assert',
+            stateful: true,
+            auth: 'none',
+            sample_request: {},
+          },
+        ],
+      },
+    ]);
+    // Neither sync_accounts nor list_accounts advertised.
+    const ADVERTISED = ['__test_assert', 'get_adcp_capabilities'];
+    const result = await runStoryboard([agent.url], storyboard, {
+      protocol: 'mcp',
+      allow_http: true,
+      agentTools: ADVERTISED,
+      _profile: { name: 'fake', tools: ADVERTISED.map(name => ({ name })) },
+    });
+    const [syncStep, listStep] = result.phases[0].steps;
+    const audienceStep = result.phases[1].steps[0];
+    assert.strictEqual(syncStep.skip_reason, 'missing_tool');
+    assert.strictEqual(listStep.skip_reason, 'missing_tool');
+    assert.strictEqual(audienceStep.skipped, true, 'cascade fires when no peer rescued');
+    assert.strictEqual(audienceStep.skip_reason, 'prerequisite_failed');
+    // First-wins: phasePendingMissingTool tracks the leftmost step.
+    // Detail names the originating step AND the declared substitute
+    // that didn't pass.
+    assert.match(audienceStep.skip.detail ?? '', /prior stateful step "sync"/);
+    assert.match(audienceStep.skip.detail ?? '', /missing_tool/);
+    assert.match(audienceStep.skip.detail ?? '', /declared substitute "list" did not pass/);
+  });
+
+  test('missing_tool with NO declared substitute → cascade fires immediately (existing behavior preserved)', async () => {
+    // Backward-compat guard: a stateful step that misses without anyone
+    // in the phase declaring `peer_substitutes_for: <this>` still trips
+    // the cascade immediately. The deferred-rescue path is opt-in.
+    agent = await startFakeAgent();
+    const storyboard = storyboardWith([
+      {
+        id: 'setup',
+        title: 'setup state (no declared substitute)',
+        task: '__test_setup',
+        stateful: true,
+        auth: 'none',
+        sample_request: {},
+      },
+      {
+        id: 'assert',
+        title: 'assert against state',
+        task: '__test_assert',
+        stateful: true,
+        auth: 'none',
+        sample_request: {},
+      },
+    ]);
+    const ADVERTISED = ['__test_assert', 'get_adcp_capabilities'];
+    const result = await runStoryboard([agent.url], storyboard, {
+      protocol: 'mcp',
+      allow_http: true,
+      agentTools: ADVERTISED,
+      _profile: { name: 'fake', tools: ADVERTISED.map(name => ({ name })) },
+    });
+    const [setupStep, assertStep] = result.phases[0].steps;
+    assert.strictEqual(setupStep.skip_reason, 'missing_tool');
+    assert.strictEqual(assertStep.skipped, true);
+    assert.strictEqual(assertStep.skip_reason, 'prerequisite_failed');
+    // Detail does NOT mention substitution chain — no declaration in play.
+    assert.doesNotMatch(assertStep.skip.detail ?? '', /declared substitute/);
+  });
+
+  test('peer_substitutes_for accepts string[] — any declared substitute passing rescues', async () => {
+    // Bulk-substitute hedge: a `bulk_setup` step can declare it
+    // substitutes for multiple peers at once. Any single passing
+    // substitute rescues every named target.
+    agent = await startFakeAgent();
+    const storyboard = storyboardWithPhases([
+      {
+        id: 'setup_phase',
+        title: 'setup',
+        steps: [
+          {
+            id: 'sync_accounts_step',
+            title: 'sync_accounts (missing)',
+            task: 'sync_accounts',
+            stateful: true,
+            auth: 'none',
+            sample_request: {},
+          },
+          {
+            id: 'sync_event_sources_step',
+            title: 'sync_event_sources (missing)',
+            task: 'sync_event_sources',
+            stateful: true,
+            auth: 'none',
+            sample_request: {},
+          },
+          {
+            id: 'bulk',
+            title: 'bulk_setup (substitutes for both)',
+            task: '__test_setup',
+            stateful: true,
+            peer_substitutes_for: ['sync_accounts_step', 'sync_event_sources_step'],
+            auth: 'none',
+            sample_request: {},
+          },
+        ],
+      },
+      {
+        id: 'consume',
+        title: 'consume state',
+        steps: [
+          {
+            id: 'downstream',
+            title: 'depends on both',
+            task: '__test_assert',
+            stateful: true,
+            auth: 'none',
+            sample_request: {},
+          },
+        ],
+      },
+    ]);
+    const ADVERTISED = ['__test_setup', '__test_assert', 'get_adcp_capabilities'];
+    const result = await runStoryboard([agent.url], storyboard, {
+      protocol: 'mcp',
+      allow_http: true,
+      agentTools: ADVERTISED,
+      _profile: { name: 'fake', tools: ADVERTISED.map(name => ({ name })) },
+    });
+    const [syncAcc, syncEvt, bulk] = result.phases[0].steps;
+    const downstream = result.phases[1].steps[0];
+    assert.strictEqual(syncAcc.skip_reason, 'missing_tool');
+    assert.strictEqual(syncEvt.skip_reason, 'missing_tool');
+    assert.strictEqual(bulk.passed, true, 'bulk substitute passes');
+    assert.ok(!downstream.skipped, 'no cascade — bulk substitute rescued both targets');
+  });
+
+  test('peer_substitutes_for is same-phase only — cross-phase reference rejected at parse time', async () => {
+    // Scope guard: substitution is confined to a single phase. The
+    // loader's authoring-time validator rejects cross-phase references
+    // so storyboard authors see typos and scope mistakes on build, not
+    // as a silent no-rescue at run time.
+    agent = await startFakeAgent();
+    const storyboard = storyboardWithPhases([
+      {
+        id: 'phase_one',
+        title: 'phase 1',
+        steps: [
+          {
+            id: 'sync',
+            title: 'sync_accounts (target lives here)',
+            task: 'sync_accounts',
+            stateful: true,
+            auth: 'none',
+            sample_request: {},
+          },
+        ],
+      },
+      {
+        id: 'phase_two',
+        title: 'phase 2 (would-be substitute lives here)',
+        steps: [
+          {
+            id: 'list',
+            title: 'list_accounts in wrong phase',
+            task: '__test_setup',
+            stateful: true,
+            peer_substitutes_for: 'sync',
+            auth: 'none',
+            sample_request: {},
+          },
+        ],
+      },
+    ]);
+    await assert.rejects(
+      runStoryboard([agent.url], storyboard, {
+        protocol: 'mcp',
+        allow_http: true,
+        agentTools: ['__test_setup', 'get_adcp_capabilities'],
+        _profile: { name: 'fake', tools: [{ name: '__test_setup' }, { name: 'get_adcp_capabilities' }] },
+      }),
+      /peer_substitutes_for target 'sync' is not a step in this phase/
+    );
+  });
+});
+
 describe('runStoryboard: F6 round-2 — cascade survives phase boundaries', () => {
   let agent;
 
