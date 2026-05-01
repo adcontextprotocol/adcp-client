@@ -1496,7 +1496,6 @@ async function projectSync<TResult, TWire>(
       return adcpError('ACCOUNT_NOT_FOUND', {
         message: 'Account not found',
         field: 'account',
-        recovery: 'terminal',
       });
     }
     throw err;
@@ -2242,7 +2241,6 @@ function extractPushConfig(
       throw new AdcpError('INVALID_REQUEST', {
         message: `push_notification_config.url rejected: ${validation.reason}`,
         field: 'push_notification_config.url',
-        recovery: 'terminal',
       });
     }
     url = rawUrl;
@@ -2255,7 +2253,6 @@ function extractPushConfig(
       throw new AdcpError('INVALID_REQUEST', {
         message: `push_notification_config.token rejected: ${validation.reason}`,
         field: 'push_notification_config.token',
-        recovery: 'terminal',
       });
     }
     token = rawToken;
@@ -2484,7 +2481,6 @@ function buildMediaBuyHandlers<P extends DecisioningPlatform<any, any>>(
         return adcpError('INVALID_REQUEST', {
           message: 'update_media_buy requires media_buy_id',
           field: 'media_buy_id',
-          recovery: 'correctable',
         });
       }
       // Auto-hydrate: attach the full MediaBuy (wire shape + ctx_metadata)
@@ -2538,7 +2534,6 @@ function buildMediaBuyHandlers<P extends DecisioningPlatform<any, any>>(
       if (!sales.syncCreatives) {
         return adcpError('UNSUPPORTED_FEATURE', {
           message: 'sync_creatives not supported by this sales platform',
-          recovery: 'terminal',
         });
       }
       return projectSync(
@@ -2709,7 +2704,6 @@ function buildCreativeHandlers<P extends DecisioningPlatform<any, any>>(
       if (!('previewCreative' in creative)) {
         return adcpError('UNSUPPORTED_FEATURE', {
           message: 'preview_creative not supported by this platform',
-          recovery: 'terminal',
         });
       }
       const reqCtx = ctxFor(ctx);
@@ -2725,7 +2719,6 @@ function buildCreativeHandlers<P extends DecisioningPlatform<any, any>>(
       if (!creative.syncCreatives) {
         return adcpError('UNSUPPORTED_FEATURE', {
           message: 'sync_creatives not supported by this creative platform',
-          recovery: 'terminal',
         });
       }
       return projectSync(
@@ -2759,7 +2752,6 @@ function buildCreativeHandlers<P extends DecisioningPlatform<any, any>>(
       if (!('listCreatives' in creative)) {
         return adcpError('UNSUPPORTED_FEATURE', {
           message: 'list_creatives not supported by this platform',
-          recovery: 'terminal',
         });
       }
       const reqCtx = ctxFor(ctx);
@@ -2773,7 +2765,6 @@ function buildCreativeHandlers<P extends DecisioningPlatform<any, any>>(
       if (!('getCreativeDelivery' in creative)) {
         return adcpError('UNSUPPORTED_FEATURE', {
           message: 'get_creative_delivery not supported by this platform',
-          recovery: 'terminal',
         });
       }
       const reqCtx = ctxFor(ctx);
