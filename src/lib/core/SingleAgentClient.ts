@@ -2655,8 +2655,13 @@ export class SingleAgentClient {
 
       // Use the shared connectMCP path so both static bearer AND saved OAuth
       // tokens work. OAuth takes the refresh-capable authProvider branch.
-      const { connectMCP } = await import('../protocols/mcp');
-      const connectOptions: Parameters<typeof connectMCP>[0] = { agentUrl: agent.agent_uri };
+      const { connectMCP, StreamableHTTPError } = await import('../protocols/mcp');
+      const debugLogs: import('../types/adcp').DebugLogEntry[] = [];
+      const connectOptions: Parameters<typeof connectMCP>[0] = {
+        agentUrl: agent.agent_uri,
+        debugLogs,
+        ...(this.normalizedAgent.headers && { customHeaders: this.normalizedAgent.headers }),
+      };
       if (this.normalizedAgent.oauth_tokens) {
         const { createNonInteractiveOAuthProvider } = await import('../auth/oauth');
         connectOptions.authProvider = createNonInteractiveOAuthProvider(this.normalizedAgent, {
@@ -2668,7 +2673,26 @@ export class SingleAgentClient {
 
       const { client: mcpClient } = await connectMCP(connectOptions);
       try {
-        const toolsList = await mcpClient.listTools();
+        let toolsList: Awaited<ReturnType<typeof mcpClient.listTools>>;
+        try {
+          toolsList = await mcpClient.listTools();
+        } catch (sessionErr) {
+          // FastMCP and other stateful StreamableHTTP servers can return 400
+          // "Missing session ID" if the initial session negotiation didn't
+          // complete cleanly. Re-initialize with a fresh connection and retry once.
+          if (!(sessionErr instanceof StreamableHTTPError)) throw sessionErr;
+          debugLogs.push({
+            type: 'info',
+            message: `MCP: getAgentInfo StreamableHTTP session error (${sessionErr.code}), reconnecting`,
+            timestamp: new Date().toISOString(),
+          });
+          const { client: retryClient } = await connectMCP(connectOptions);
+          try {
+            toolsList = await retryClient.listTools();
+          } finally {
+            retryClient.close().catch(() => {});
+          }
+        }
 
         const tools = toolsList.tools.map(tool => ({
           name: tool.name,
@@ -2685,11 +2709,7 @@ export class SingleAgentClient {
           tools,
         };
       } finally {
-        try {
-          await mcpClient.close();
-        } catch {
-          /* ignore */
-        }
+        mcpClient.close().catch(() => {});
       }
     } else if (this.normalizedAgent.protocol === 'a2a') {
       // Use A2A SDK to get agent card

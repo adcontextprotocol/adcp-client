@@ -489,6 +489,23 @@ export interface AgentConfig {
   request_signing?: AgentRequestSigningConfig;
 
   /**
+   * MCP transport hint. When set, skips auto-detection and uses the specified
+   * transport for MCP protocol agents. Omit to use the default auto-detection
+   * (tries StreamableHTTP, falls back to SSE for public addresses).
+   *
+   * Use `'streamable_http'` for FastMCP and other Python MCP servers that
+   * require the StreamableHTTP session-init handshake (`initialize` →
+   * `Mcp-Session-Id` → tool call). Setting this avoids unnecessary SSE
+   * fallback probes when the server is known to require StreamableHTTP.
+   *
+   * Use `'sse'` for legacy servers that only support the SSE transport.
+   *
+   * Matches the `mcp_transport` registry field in adcp#3066 (Option B) so
+   * AAO-provided hints can be forwarded here directly.
+   */
+  mcp_transport?: 'streamable_http' | 'sse';
+
+  /**
    * Pre-connected MCP `Client` for in-process testing without an HTTP loopback server.
    * When present, tool calls are dispatched directly to this client, bypassing URL
    * validation, OAuth refresh, and the connection cache. All client-side pipeline

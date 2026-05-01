@@ -19,7 +19,7 @@ import { wrapFetchWithCapture } from './rawResponseCapture';
 import { wrapFetchWithSizeLimit } from './responseSizeLimit';
 
 // Re-export for convenience
-export { UnauthorizedError };
+export { UnauthorizedError, StreamableHTTPError };
 
 /** Response shape returned by MCPClient.callTool(). */
 type CallToolResponse = {
@@ -671,6 +671,7 @@ export async function connectMCP(options: {
 
   try {
     await mcpClient.connect(transport);
+    trackStreamableHTTPUrl(baseUrl.toString());
     debugLogs.push({
       type: 'success',
       message: 'MCP: Connected successfully',
