@@ -381,6 +381,44 @@ createAdcpServerFromPlatform(platform, {
   });
   ```
   Standard one-brand-per-host deployments don't need the override.
+- **`TenantConfig.signingKey` is optional in 3.x; 4.0 mandates it.**
+  AdCP 3.x treats request signing as optional-but-recommended (CLAUDE.md
+  § Protocol-Wide Requirements; `signed-requests` is a preview
+  specialism). Adopters spiking the SDK before standing up KMS or
+  publishing brand.json can omit `signingKey` and the registry skips
+  JWKS validation entirely — the tenant transitions straight from
+  `pending` to `healthy` with `reason: 'unsigned (no signingKey)'`.
+  4.0 will flip this to required; until then it's a soft launch path:
+  ```ts
+  registry.register('dev-tenant', {
+    agentUrl: 'https://dev.example.com',
+    // signingKey omitted — JWKS validation is skipped, tenant goes healthy
+    platform: ...,
+  });
+  ```
+  For local dev with the signing path exercised but no brand.json
+  endpoint stood up yet, pair `createSelfSignedTenantKey()` (Ed25519
+  keypair generator) with `createNoopJwksValidator()` (gated to
+  `NODE_ENV` ∈ {`test`, `development`} or `ADCP_NOOP_JWKS_ACK=1`):
+  ```ts
+  import {
+    createTenantRegistry,
+    createSelfSignedTenantKey,
+    createNoopJwksValidator,
+  } from '@adcp/sdk/server';
+
+  const key = await createSelfSignedTenantKey({ keyId: 'dev-key-1' });
+  const registry = createTenantRegistry({
+    jwksValidator: createNoopJwksValidator(),
+    defaultServerOptions: { name: 'dev', version: '0.0.0' },
+  });
+  registry.register('dev', {
+    agentUrl: 'https://dev.example.com',
+    signingKey: key,
+    platform: ...,
+  });
+  ```
+  Production keeps the default validator and publishes brand.json.
 - **`TenantRegistry.get(tenantId)` for direct lookup.** When your route
   layer binds tenantId before calling into the registry (path-routed
   multi-tenant deployments), `get(tenantId)` returns

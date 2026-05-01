@@ -1173,3 +1173,206 @@ describe('TenantRegistry — multi-URL (agentUrls) cutover support', () => {
     assert.strictEqual(shortMatch.tenantId, 'tenant_short');
   });
 });
+
+describe('TenantRegistry — unsigned tenants (signingKey optional in 3.x)', () => {
+  it('register without signingKey skips JWKS validation; tenant goes straight to healthy', async () => {
+    let validatorCalls = 0;
+    const validator = fakeValidator(async () => {
+      validatorCalls++;
+      return { ok: true };
+    });
+    const registry = createTenantRegistry({
+      jwksValidator: validator,
+      defaultServerOptions: DEFAULT_SERVER_OPTIONS,
+      autoValidate: false,
+    });
+
+    registry.register('unsigned', {
+      agentUrl: 'https://unsigned.example.com',
+      // no signingKey — adopter shipping in 3.x without standing up KMS
+      platform: basePlatform(),
+    });
+
+    const status = await registry.recheck('unsigned');
+    assert.strictEqual(status.health, 'healthy');
+    assert.strictEqual(status.reason, 'unsigned (no signingKey)');
+    assert.strictEqual(validatorCalls, 0, 'validator must not be invoked when signingKey is omitted');
+    assert.ok(registry.resolveByHost('unsigned.example.com'), 'unsigned tenant accepts traffic');
+  });
+
+  it('register({ awaitFirstValidation: true }) on unsigned tenant returns healthy synchronously', async () => {
+    const validator = fakeValidator(async () => {
+      throw new Error('validator should not run for unsigned tenants');
+    });
+    const registry = createTenantRegistry({
+      jwksValidator: validator,
+      defaultServerOptions: DEFAULT_SERVER_OPTIONS,
+      autoValidate: true,
+    });
+
+    const status = await registry.register(
+      'unsigned_sync',
+      { agentUrl: 'https://unsigned-sync.example.com', platform: basePlatform() },
+      { awaitFirstValidation: true }
+    );
+    assert.strictEqual(status.health, 'healthy');
+    assert.strictEqual(status.reason, 'unsigned (no signingKey)');
+  });
+
+  it('signed and unsigned tenants coexist in the same registry', async () => {
+    const validator = fakeValidator(async () => ({ ok: true }));
+    const registry = createTenantRegistry({
+      jwksValidator: validator,
+      defaultServerOptions: DEFAULT_SERVER_OPTIONS,
+      autoValidate: false,
+    });
+
+    registry.register('signed', {
+      agentUrl: 'https://signed.example.com',
+      signingKey: SAMPLE_KEY,
+      platform: basePlatform(),
+    });
+    registry.register('unsigned', {
+      agentUrl: 'https://unsigned.example.com',
+      platform: basePlatform(),
+    });
+
+    await Promise.all([registry.recheck('signed'), registry.recheck('unsigned')]);
+
+    assert.strictEqual(registry.getStatus('signed').health, 'healthy');
+    assert.strictEqual(registry.getStatus('unsigned').health, 'healthy');
+    assert.strictEqual(registry.getStatus('unsigned').reason, 'unsigned (no signingKey)');
+  });
+});
+
+describe('createSelfSignedTenantKey', () => {
+  const { createSelfSignedTenantKey } = require('../dist/lib/server/decisioning/tenant-registry');
+
+  it('returns a TenantSigningKey-shaped object with Ed25519 material', async () => {
+    const key = await createSelfSignedTenantKey();
+    assert.ok(key.keyId, 'keyId is set');
+    assert.match(key.keyId, /^self-signed-/, 'default keyId is timestamped');
+    assert.strictEqual(key.publicJwk.kty, 'OKP');
+    assert.strictEqual(key.publicJwk.crv, 'Ed25519');
+    assert.ok(key.publicJwk.x, 'public x coordinate present');
+    assert.ok(key.privateJwk.d, 'private scalar present');
+    // Public-half fields match across the keypair (RFC 7517).
+    assert.strictEqual(key.privateJwk.x, key.publicJwk.x);
+  });
+
+  it('honors explicit keyId override', async () => {
+    const key = await createSelfSignedTenantKey({ keyId: 'my-stable-kid' });
+    assert.strictEqual(key.keyId, 'my-stable-kid');
+  });
+
+  it('roundtrips through the registry — self-signed key + matching JWKS publishes healthy', async () => {
+    const key = await createSelfSignedTenantKey({ keyId: 'roundtrip-kid' });
+    // Stub validator that simulates a brand.json containing exactly this key.
+    const validator = fakeValidator(async ({ signingKey }) => {
+      if (
+        signingKey.keyId === 'roundtrip-kid' &&
+        signingKey.publicJwk.kty === 'OKP' &&
+        signingKey.publicJwk.crv === 'Ed25519' &&
+        signingKey.publicJwk.x === key.publicJwk.x
+      ) {
+        return { ok: true };
+      }
+      return { ok: false, recovery: 'permanent', reason: 'mismatch' };
+    });
+    const registry = createTenantRegistry({
+      jwksValidator: validator,
+      defaultServerOptions: DEFAULT_SERVER_OPTIONS,
+      autoValidate: false,
+    });
+
+    registry.register('rt', {
+      agentUrl: 'https://rt.example.com',
+      signingKey: key,
+      platform: basePlatform(),
+    });
+    const status = await registry.recheck('rt');
+    assert.strictEqual(status.health, 'healthy');
+  });
+});
+
+describe('createNoopJwksValidator — NODE_ENV allowlist', () => {
+  const { createNoopJwksValidator } = require('../dist/lib/server/decisioning/tenant-registry');
+
+  // Save and restore env across tests to keep them hermetic. The test
+  // harness sets NODE_ENV='test' at file load (line 4); resetting after
+  // each case prevents cross-test bleed.
+  function withEnv(overrides, fn) {
+    const saved = { NODE_ENV: process.env.NODE_ENV, ADCP_NOOP_JWKS_ACK: process.env.ADCP_NOOP_JWKS_ACK };
+    for (const [k, v] of Object.entries(overrides)) {
+      if (v === undefined) delete process.env[k];
+      else process.env[k] = v;
+    }
+    try {
+      return fn();
+    } finally {
+      for (const [k, v] of Object.entries(saved)) {
+        if (v === undefined) delete process.env[k];
+        else process.env[k] = v;
+      }
+    }
+  }
+
+  it('constructs under NODE_ENV=test', () => {
+    withEnv({ NODE_ENV: 'test', ADCP_NOOP_JWKS_ACK: undefined }, () => {
+      const v = createNoopJwksValidator();
+      assert.ok(typeof v.validate === 'function');
+    });
+  });
+
+  it('constructs under NODE_ENV=development', () => {
+    withEnv({ NODE_ENV: 'development', ADCP_NOOP_JWKS_ACK: undefined }, () => {
+      const v = createNoopJwksValidator();
+      assert.ok(typeof v.validate === 'function');
+    });
+  });
+
+  it('throws under NODE_ENV=production without ack', () => {
+    withEnv({ NODE_ENV: 'production', ADCP_NOOP_JWKS_ACK: undefined }, () => {
+      assert.throws(() => createNoopJwksValidator(), /refuses to construct.*production/);
+    });
+  });
+
+  it('throws when NODE_ENV is unset and no ack — covers raw Lambda / custom containers', () => {
+    withEnv({ NODE_ENV: undefined, ADCP_NOOP_JWKS_ACK: undefined }, () => {
+      assert.throws(() => createNoopJwksValidator(), /refuses to construct.*<unset>/);
+    });
+  });
+
+  it('throws under NODE_ENV=staging without ack', () => {
+    withEnv({ NODE_ENV: 'staging', ADCP_NOOP_JWKS_ACK: undefined }, () => {
+      assert.throws(() => createNoopJwksValidator(), /refuses to construct.*staging/);
+    });
+  });
+
+  it('ADCP_NOOP_JWKS_ACK=1 unblocks construction outside the allowlist', () => {
+    withEnv({ NODE_ENV: 'production', ADCP_NOOP_JWKS_ACK: '1' }, () => {
+      const v = createNoopJwksValidator();
+      assert.ok(typeof v.validate === 'function');
+    });
+  });
+
+  it('ADCP_NOOP_JWKS_ACK=true (truthy lookalike) does NOT unblock — strict literal "1" required', () => {
+    withEnv({ NODE_ENV: 'production', ADCP_NOOP_JWKS_ACK: 'true' }, () => {
+      assert.throws(() => createNoopJwksValidator(), /refuses to construct/);
+    });
+    withEnv({ NODE_ENV: 'production', ADCP_NOOP_JWKS_ACK: 'yes' }, () => {
+      assert.throws(() => createNoopJwksValidator(), /refuses to construct/);
+    });
+  });
+
+  it('returned validator always returns ok=true', async () => {
+    await withEnv({ NODE_ENV: 'test', ADCP_NOOP_JWKS_ACK: undefined }, async () => {
+      const v = createNoopJwksValidator();
+      const res = await v.validate({
+        agentUrl: 'https://anything.example.com',
+        signingKey: { keyId: 'k', publicJwk: { kty: 'OKP' }, privateJwk: { kty: 'OKP' } },
+      });
+      assert.strictEqual(res.ok, true);
+    });
+  });
+});

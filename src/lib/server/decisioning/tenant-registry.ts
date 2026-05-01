@@ -91,8 +91,30 @@ export interface TenantConfig<P extends DecisioningPlatform = DecisioningPlatfor
    * field via the `jwksUrl` argument on `JwksValidator.validate`.
    */
   jwksUrl?: string;
-  /** Signing keypair for RFC 9421 response signing. */
-  signingKey: TenantSigningKey;
+  /**
+   * Signing keypair for RFC 9421 response signing. **Optional in 3.x;
+   * mandated in 4.0.**
+   *
+   * When set, the registry validates `publicJwk` appears in the tenant's
+   * published JWKS at `{agentUrl}/.well-known/brand.json` (or `jwksUrl`
+   * if overridden) before transitioning the tenant to `healthy`.
+   *
+   * When omitted, JWKS validation is skipped entirely — the tenant
+   * transitions directly from `pending` to `healthy` on register(), with
+   * `reason: 'unsigned (no signingKey)'`. AdCP 3.x treats request signing
+   * as optional, so adopters spiking the SDK before standing up KMS or
+   * publishing brand.json can ship without signing material. Buyers MUST
+   * NOT break when an agent doesn't sign in 3.x — that's covered by the
+   * "tolerate Signature headers" baseline regardless of whether the
+   * agent itself signs.
+   *
+   * For local dev with signing enabled, pair `createSelfSignedTenantKey()`
+   * (generates an Ed25519 keypair) with `createNoopJwksValidator()`
+   * (skips the brand.json roundtrip in dev/test). Production adopters
+   * keep the default validator and publish the public half via
+   * brand.json.
+   */
+  signingKey?: TenantSigningKey;
   /** The DecisioningPlatform impl for this tenant. */
   platform: P &
     RequiredPlatformsFor<P['capabilities']['specialisms'][number]> &
@@ -390,6 +412,99 @@ function isMatchingKey(jwk: unknown, expected: JsonWebKey, expectedKid: string):
 }
 
 // ---------------------------------------------------------------------------
+// Self-signed key + no-op validator helpers (3.x adoption ergonomics)
+// ---------------------------------------------------------------------------
+
+/**
+ * Generate an Ed25519 keypair suitable for `TenantConfig.signingKey`.
+ *
+ * Convenience for adopters spiking the SDK before standing up KMS or
+ * publishing brand.json. AdCP 3.x treats request signing as optional, so
+ * `TenantConfig.signingKey` is itself optional — but adopters who DO
+ * want to exercise the signing path (storyboards, signed-requests
+ * grader, end-to-end tests) need a working key without the operational
+ * lift of a real KMS.
+ *
+ * Pair with `createNoopJwksValidator()` to skip the brand.json
+ * roundtrip in dev/test, OR publish the returned `publicJwk` at
+ * `{agentUrl}/.well-known/brand.json` (under `jwks.keys[]`) and use the
+ * default validator unchanged.
+ *
+ * **Production**: don't generate signing material in-process. Adopt a
+ * KMS-backed loader (HashiCorp Vault, AWS KMS, GCP Secret Manager) — a
+ * process compromise leaks an in-memory privateJwk and the only remedy
+ * is rotation across every counterparty cache.
+ *
+ * @param opts.keyId Optional `kid` for the key. Defaults to a
+ *   timestamped value (`self-signed-{ISO date}`). Stable across restarts
+ *   only if you pass a stable `keyId`.
+ */
+export async function createSelfSignedTenantKey(opts?: { keyId?: string }): Promise<TenantSigningKey> {
+  // Lazy import — `jose` is a runtime dep, but the import-cost is real
+  // and most adopters never call this. Keep the registry's hot path
+  // (register / resolve) free of jose.
+  const { generateKeyPair, exportJWK } = await import('jose');
+  const { publicKey, privateKey } = await generateKeyPair('EdDSA', { crv: 'Ed25519', extractable: true });
+  const publicJwk = (await exportJWK(publicKey)) as JsonWebKey;
+  const privateJwk = (await exportJWK(privateKey)) as JsonWebKey;
+  const keyId = opts?.keyId ?? `self-signed-${new Date().toISOString().slice(0, 10)}`;
+  return { keyId, publicJwk, privateJwk };
+}
+
+/**
+ * No-op JWKS validator that always returns `{ ok: true }`. Use ONLY in
+ * dev/test when you've set `signingKey` (e.g., via
+ * `createSelfSignedTenantKey()`) but haven't published brand.json yet —
+ * this skips the JWKS roundtrip so tenants reach `healthy` without a
+ * real `/.well-known/brand.json` endpoint.
+ *
+ * **Refuses to construct outside `NODE_ENV` ∈ {`'test'`, `'development'`}**
+ * unless the operator sets `ADCP_NOOP_JWKS_ACK=1` to explicitly
+ * acknowledge the risk. Mirrors the `idempotency: 'disabled'` allowlist
+ * pattern — `NODE_ENV` defaults to unset in raw Lambda / custom
+ * containers / many K8s deployments, so a `=== 'production'` check
+ * would no-op in exactly the environments where a silent skip-validation
+ * start is most dangerous.
+ *
+ * The ack value MUST be the literal string `'1'`. Truthy lookalikes
+ * (`'true'`, `'yes'`) intentionally don't satisfy the gate to prevent
+ * copy-paste typos.
+ *
+ * In production, leave the registry's default validator wired and
+ * publish brand.json. Or omit `signingKey` entirely (`TenantConfig`
+ * makes it optional in 3.x), which skips JWKS validation without
+ * needing this helper.
+ */
+export function createNoopJwksValidator(): JwksValidator {
+  const env = process.env.NODE_ENV;
+  const acknowledged = process.env.ADCP_NOOP_JWKS_ACK === '1';
+  const isAllowlistedDevEnv = env === 'test' || env === 'development';
+  if (!isAllowlistedDevEnv && !acknowledged) {
+    throw new Error(
+      'createNoopJwksValidator: refuses to construct with NODE_ENV=' +
+        (env === undefined ? '<unset>' : JSON.stringify(env)) +
+        '. The no-op validator skips JWKS verification, so a tenant whose published brand.json does not actually ' +
+        'contain the configured signingKey would reach `healthy` and serve unverifiable signed responses. ' +
+        'The SDK only allows it under NODE_ENV=test or NODE_ENV=development by default. Either: ' +
+        '(a) use the default validator (createDefaultJwksValidator) and publish a real brand.json, ' +
+        '(b) omit signingKey from TenantConfig — JWKS validation is skipped entirely for unsigned tenants in 3.x, ' +
+        '(c) set NODE_ENV=test or NODE_ENV=development if this is a dev-only environment, or ' +
+        '(d) set ADCP_NOOP_JWKS_ACK=1 to explicitly acknowledge the risk for non-standard environments.'
+    );
+  }
+  // eslint-disable-next-line no-console
+  console.warn(
+    '[adcp] createNoopJwksValidator: JWKS validation is DISABLED for this registry. ' +
+      'Tenants will reach `healthy` without a brand.json roundtrip. Use only in dev/test.'
+  );
+  return {
+    async validate(): Promise<JwksValidationResult> {
+      return { ok: true };
+    },
+  };
+}
+
+// ---------------------------------------------------------------------------
 // Registry implementation
 // ---------------------------------------------------------------------------
 
@@ -531,6 +646,24 @@ export function createTenantRegistry(opts: TenantRegistryOptions): TenantRegistr
       throw new Error(`runValidation: tenant '${tenantId}' not registered`);
     }
     const [canonicalUrl, allUrls] = resolveTenantUrls(entry.config);
+    // Unsigned tenant — adopter chose to ship without signing in 3.x.
+    // Skip JWKS validation entirely; tenant goes straight to healthy.
+    // The privateJwk isn't wired into a response-signing path on this
+    // surface today, so omitting signingKey only changes the JWKS
+    // roundtrip (and the future 4.0 sign-this-response code path that
+    // will key off `signingKey !== undefined`).
+    if (!entry.config.signingKey) {
+      const status: TenantStatus = {
+        tenantId,
+        agentUrl: canonicalUrl,
+        agentUrls: allUrls,
+        health: 'healthy',
+        reason: 'unsigned (no signingKey)',
+        lastCheckedAt: new Date().toISOString(),
+      };
+      entry.status = status;
+      return status;
+    }
     // Multi-URL tenants validate every URL independently. Aliases share the
     // signing key; if an alias publishes a brand.json that doesn't include
     // the key (DNS hijack, operator misconfig, stale mirror), traffic to
