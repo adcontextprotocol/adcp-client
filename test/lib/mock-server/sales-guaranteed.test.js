@@ -277,4 +277,33 @@ describe('mock-server sales-guaranteed', () => {
       assert.ok(e.upstreamField);
     }
   });
+
+  describe('Façade-detection instrumentation (issue #1225)', () => {
+    it('GET /_lookup/network resolves adcp_publisher to upstream network_code', async () => {
+      const res = await fetch(`${handle.url}/_lookup/network?adcp_publisher=${NETWORKS[0].adcp_publisher}`);
+      assert.equal(res.status, 200);
+      const body = await res.json();
+      assert.equal(body.adcp_publisher, NETWORKS[0].adcp_publisher);
+      assert.equal(body.network_code, NETWORKS[0].network_code);
+    });
+
+    it('GET /_lookup/network returns 404 for unknown adcp_publisher', async () => {
+      const res = await fetch(`${handle.url}/_lookup/network?adcp_publisher=does-not-exist.example`);
+      assert.equal(res.status, 404);
+    });
+
+    it('GET /_lookup/network returns 400 without adcp_publisher query param', async () => {
+      const res = await fetch(`${handle.url}/_lookup/network`);
+      assert.equal(res.status, 400);
+    });
+
+    it('GET /_debug/traffic returns hit counts for exercised routes', async () => {
+      await fetch(`${handle.url}/_lookup/network?adcp_publisher=${NETWORKS[0].adcp_publisher}`);
+      await fetch(`${handle.url}/v1/products`, { headers: authHeaders() });
+      const res = await fetch(`${handle.url}/_debug/traffic`);
+      const body = await res.json();
+      assert.ok((body.traffic['GET /_lookup/network'] ?? 0) >= 1);
+      assert.ok((body.traffic['GET /v1/products'] ?? 0) >= 1);
+    });
+  });
 });

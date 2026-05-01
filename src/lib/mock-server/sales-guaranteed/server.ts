@@ -95,6 +95,15 @@ export async function bootSalesGuaranteed(options: BootOptions): Promise<BootRes
   // Idempotency table — keyed `<network_code>::<resource_kind>::<client_request_id>`.
   const idempotency = new Map<string, string>();
 
+  // Traffic counters keyed by `<METHOD> <route-template>`. Harness queries
+  // `GET /_debug/traffic` after the storyboard run and asserts headline
+  // routes were hit ≥1. Façade adapters that skip the upstream produce zero
+  // counters and fail the assertion. adcontextprotocol/adcp-client#1225.
+  const traffic = new Map<string, number>();
+  const bump = (routeTemplate: string): void => {
+    traffic.set(routeTemplate, (traffic.get(routeTemplate) ?? 0) + 1);
+  };
+
   const server = createServer((req, res) => {
     handleRequest(req, res).catch(err => {
       writeJson(res, 500, { code: 'internal_error', message: err?.message ?? 'unexpected error' });
@@ -121,6 +130,47 @@ export async function bootSalesGuaranteed(options: BootOptions): Promise<BootRes
   };
 
   async function handleRequest(req: IncomingMessage, res: ServerResponse): Promise<void> {
+    const url = new URL(req.url ?? '/', 'http://127.0.0.1');
+    const path = url.pathname;
+    const method = req.method ?? 'GET';
+
+    // Façade-detection traffic dump — harness-only, no auth required.
+    if (method === 'GET' && path === '/_debug/traffic') {
+      writeJson(res, 200, { traffic: Object.fromEntries(traffic) });
+      return;
+    }
+
+    // Discovery endpoint — replaces the hardcoded principal-mapping table the
+    // harness used to inline. Adapters resolve at runtime by querying with
+    // the AdCP-side identifier they receive from buyers (`account.publisher`,
+    // `account.brand.domain`). No auth required — discovery happens before
+    // the agent has any network context. Issue #1225.
+    if (method === 'GET' && path === '/_lookup/network') {
+      bump('GET /_lookup/network');
+      const adcpPublisher = url.searchParams.get('adcp_publisher');
+      if (!adcpPublisher) {
+        writeJson(res, 400, {
+          code: 'invalid_request',
+          message: 'adcp_publisher query parameter is required.',
+        });
+        return;
+      }
+      const match = networks.find(n => n.adcp_publisher === adcpPublisher);
+      if (!match) {
+        writeJson(res, 404, {
+          code: 'network_not_found',
+          message: `No upstream network registered for adcp_publisher=${adcpPublisher}.`,
+        });
+        return;
+      }
+      writeJson(res, 200, {
+        adcp_publisher: match.adcp_publisher,
+        network_code: match.network_code,
+        display_name: match.display_name,
+      });
+      return;
+    }
+
     const auth = req.headers['authorization'];
     if (!auth || !auth.startsWith('Bearer ') || auth.slice(7) !== apiKey) {
       writeJson(res, 401, { code: 'unauthorized', message: 'Missing or invalid bearer credential.' });
@@ -141,17 +191,31 @@ export async function bootSalesGuaranteed(options: BootOptions): Promise<BootRes
       return;
     }
 
-    const url = new URL(req.url ?? '/', 'http://127.0.0.1');
-    const path = url.pathname;
-    const method = req.method ?? 'GET';
+    if (method === 'GET' && path === '/v1/inventory') {
+      bump('GET /v1/inventory');
+      return handleListInventory(network, res);
+    }
+    if (method === 'GET' && path === '/v1/products') {
+      bump('GET /v1/products');
+      return handleListProducts(url, network, res);
+    }
+    if (method === 'GET' && path === '/v1/creatives') {
+      bump('GET /v1/creatives');
+      return handleListCreatives(network, res);
+    }
+    if (method === 'POST' && path === '/v1/creatives') {
+      bump('POST /v1/creatives');
+      return handleCreateCreative(req, network, res);
+    }
 
-    if (method === 'GET' && path === '/v1/inventory') return handleListInventory(network, res);
-    if (method === 'GET' && path === '/v1/products') return handleListProducts(url, network, res);
-    if (method === 'GET' && path === '/v1/creatives') return handleListCreatives(network, res);
-    if (method === 'POST' && path === '/v1/creatives') return handleCreateCreative(req, network, res);
-
-    if (method === 'GET' && path === '/v1/orders') return handleListOrders(network, res);
-    if (method === 'POST' && path === '/v1/orders') return handleCreateOrder(req, network, res);
+    if (method === 'GET' && path === '/v1/orders') {
+      bump('GET /v1/orders');
+      return handleListOrders(network, res);
+    }
+    if (method === 'POST' && path === '/v1/orders') {
+      bump('POST /v1/orders');
+      return handleCreateOrder(req, network, res);
+    }
 
     const orderMatch = path.match(/^\/v1\/orders\/([^/]+)(\/.*)?$/);
     if (orderMatch && orderMatch[1]) {
@@ -162,19 +226,36 @@ export async function bootSalesGuaranteed(options: BootOptions): Promise<BootRes
         writeJson(res, 404, { code: 'order_not_found', message: `Order ${orderId} not found.` });
         return;
       }
-      if (method === 'GET' && subPath === '/') return handleGetOrder(order, res);
-      if (method === 'GET' && subPath === '/lineitems') return handleListLineItems(order, res);
-      if (method === 'POST' && subPath === '/lineitems') return handleCreateLineItem(req, order, res);
+      if (method === 'GET' && subPath === '/') {
+        bump('GET /v1/orders/{id}');
+        return handleGetOrder(order, res);
+      }
+      if (method === 'GET' && subPath === '/lineitems') {
+        bump('GET /v1/orders/{id}/lineitems');
+        return handleListLineItems(order, res);
+      }
+      if (method === 'POST' && subPath === '/lineitems') {
+        bump('POST /v1/orders/{id}/lineitems');
+        return handleCreateLineItem(req, order, res);
+      }
       const liAttachMatch = subPath.match(/^\/lineitems\/([^/]+)\/creative-attach$/);
       if (method === 'POST' && liAttachMatch && liAttachMatch[1]) {
+        bump('POST /v1/orders/{id}/lineitems/{li}/creative-attach');
         return handleAttachCreative(req, order, decodeURIComponent(liAttachMatch[1]), res);
       }
-      if (method === 'GET' && subPath === '/delivery') return handleGetDelivery(order, res);
-      if (method === 'POST' && subPath === '/conversions') return handleIngestConversions(req, order, res);
+      if (method === 'GET' && subPath === '/delivery') {
+        bump('GET /v1/orders/{id}/delivery');
+        return handleGetDelivery(order, res);
+      }
+      if (method === 'POST' && subPath === '/conversions') {
+        bump('POST /v1/orders/{id}/conversions');
+        return handleIngestConversions(req, order, res);
+      }
     }
 
     const taskMatch = path.match(/^\/v1\/tasks\/([^/]+)$/);
     if (method === 'GET' && taskMatch && taskMatch[1]) {
+      bump('GET /v1/tasks/{id}');
       return handleGetTask(decodeURIComponent(taskMatch[1]), network, res);
     }
 

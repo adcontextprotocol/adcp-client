@@ -383,4 +383,30 @@ describe('mock-server creative-template', () => {
     }
     assert.ok(/path|workspace/i.test(handle.principalScope));
   });
+
+  describe('Façade-detection instrumentation (issue #1225)', () => {
+    it('GET /_lookup/workspace resolves AdCP-side identifiers to upstream workspace_id', async () => {
+      const res = await fetch(`${handle.url}/_lookup/workspace?adcp_advertiser=acmeoutdoor.example`);
+      assert.equal(res.status, 200);
+      const body = await res.json();
+      assert.equal(body.adcp_advertiser, 'acmeoutdoor.example');
+      assert.equal(body.workspace_id, 'ws_acme_studio');
+    });
+
+    it('GET /_lookup/workspace returns 404 for unknown adcp_advertiser', async () => {
+      const res = await fetch(`${handle.url}/_lookup/workspace?adcp_advertiser=does-not-exist.example`);
+      assert.equal(res.status, 404);
+    });
+
+    it('GET /_debug/traffic returns hit counts for exercised routes', async () => {
+      await fetch(`${handle.url}/_lookup/workspace?adcp_advertiser=acmeoutdoor.example`);
+      await fetch(`${handle.url}/v3/workspaces/ws_acme_studio/templates`, {
+        headers: { Authorization: `Bearer ${DEFAULT_API_KEY}` },
+      });
+      const res = await fetch(`${handle.url}/_debug/traffic`);
+      const body = await res.json();
+      assert.ok((body.traffic['GET /_lookup/workspace'] ?? 0) >= 1);
+      assert.ok((body.traffic['GET /v3/workspaces/{ws}/templates'] ?? 0) >= 1);
+    });
+  });
 });

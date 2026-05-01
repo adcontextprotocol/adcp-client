@@ -254,4 +254,38 @@ describe('mock-server signal-marketplace', () => {
       );
     }
   });
+
+  describe('Façade-detection instrumentation (issue #1225)', () => {
+    it('GET /_lookup/operator resolves AdCP-side identifiers to upstream operator_id', async () => {
+      const res = await fetch(`${handle.url}/_lookup/operator?adcp_operator=pinnacle-agency.example`);
+      assert.equal(res.status, 200);
+      const body = await res.json();
+      assert.equal(body.adcp_operator, 'pinnacle-agency.example');
+      assert.equal(body.operator_id, 'op_pinnacle');
+    });
+
+    it('GET /_lookup/operator returns 404 for unknown adcp_operator', async () => {
+      const res = await fetch(`${handle.url}/_lookup/operator?adcp_operator=does-not-exist.example`);
+      assert.equal(res.status, 404);
+    });
+
+    it('GET /_lookup/operator returns 400 without adcp_operator query param', async () => {
+      const res = await fetch(`${handle.url}/_lookup/operator`);
+      assert.equal(res.status, 400);
+    });
+
+    it('GET /_debug/traffic returns hit counts for routes the adapter exercised', async () => {
+      // Hit a couple endpoints first so traffic is non-empty.
+      await fetch(`${handle.url}/_lookup/operator?adcp_operator=pinnacle-agency.example`);
+      await fetch(`${handle.url}/v2/cohorts`, {
+        headers: { Authorization: `Bearer ${DEFAULT_API_KEY}`, 'X-Operator-Id': 'op_pinnacle' },
+      });
+      const res = await fetch(`${handle.url}/_debug/traffic`);
+      assert.equal(res.status, 200);
+      const body = await res.json();
+      assert.ok(body.traffic);
+      assert.ok((body.traffic['GET /_lookup/operator'] ?? 0) >= 1);
+      assert.ok((body.traffic['GET /v2/cohorts'] ?? 0) >= 1);
+    });
+  });
 });
