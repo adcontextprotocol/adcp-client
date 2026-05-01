@@ -89,7 +89,6 @@ export function validationError(
   opts?: { field?: string; code?: ErrorCode | (string & {}) }
 ): AdcpError {
   return new AdcpError((opts?.code ?? 'VALIDATION_ERROR') as ErrorCode, {
-    recovery: 'correctable',
     message,
     ...(opts?.field !== undefined && { field: opts.field }),
   });
@@ -139,7 +138,6 @@ export function upstreamError(
   const details = extraDetails !== undefined ? pickSafeDetails(extraDetails, Object.keys(extraDetails)) : undefined;
 
   return new AdcpError(errorCode, {
-    recovery: 'transient',
     message: `${prefix}: ${upstreamMsg}`,
     ...(isRateLimited && { retry_after: 60 }),
     ...(details !== undefined && { details }),

@@ -16,7 +16,7 @@
  */
 
 import { ErrorCodeValues } from '../../types/enums.generated';
-import type { StandardErrorCode } from '../../types/error-codes';
+import { getErrorRecovery, type StandardErrorCode } from '../../types/error-codes';
 
 /**
  * Error code vocabulary mirroring `schemas/cache/<version>/enums/error-code.json`.
@@ -120,7 +120,13 @@ export class AdcpError extends Error {
   constructor(
     code: ErrorCode | (string & {}),
     options: {
-      recovery: 'transient' | 'correctable' | 'terminal';
+      /**
+       * Recovery classification. Optional — defaults to the spec-correct
+       * value for any standard `code` (via `getErrorRecovery`). Pass an
+       * explicit value only to override the spec default for a vendor-
+       * specific reason; for non-standard codes the default is `correctable`.
+       */
+      recovery?: 'transient' | 'correctable' | 'terminal';
       message: string;
       field?: string;
       suggestion?: string;
@@ -130,7 +136,7 @@ export class AdcpError extends Error {
   ) {
     super(options.message);
     this.code = code;
-    this.recovery = options.recovery;
+    this.recovery = options.recovery ?? getErrorRecovery(code) ?? 'correctable';
     maybeWarnUnknownErrorCode(code);
     if (options.field !== undefined) this.field = options.field;
     if (options.suggestion !== undefined) this.suggestion = options.suggestion;
