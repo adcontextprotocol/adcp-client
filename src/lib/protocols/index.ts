@@ -48,6 +48,7 @@ import { ADCP_MAJOR_VERSION, ADCP_VERSION, parseAdcpMajorVersion } from '../vers
 import { ConfigurationError } from '../errors';
 import { resolveBundleKey } from '../validation/schema-loader';
 import { buildAgentSigningContext, CAPABILITY_OP, ensureCapabilityLoaded } from '../signing/client';
+import { withResponseSizeLimit } from './responseSizeLimit';
 
 /**
  * Derive the wire-level `adcp_major_version` integer from a caller-supplied
@@ -142,6 +143,46 @@ export function applyVersionEnvelope(
 }
 
 /**
+ * Transport-level safeguards applied to a call.
+ *
+ * Wired into the SDK's internal fetch chain via AsyncLocalStorage, so the
+ * cap takes effect even when the underlying transport's connection cache
+ * reuses a fetch that was created on an earlier call with different limits.
+ */
+export interface TransportOptions {
+  /**
+   * Maximum response body size (in octets) the SDK will read before aborting
+   * with `ResponseTooLargeError`. When unset, the SDK does not impose a cap —
+   * matches the underlying MCP / A2A transport defaults.
+   *
+   * Set this when crawling **untrusted** agents (registries, federated
+   * discovery layers, monitoring tools) to prevent a hostile vendor from
+   * buffering a large reply before any application-layer schema validation
+   * runs. Counted across response chunks; pre-cancels when `Content-Length`
+   * exceeds the cap. Applies to A2A agent-card discovery
+   * (`/.well-known/agent.json`) on the same call as well.
+   *
+   * Per-call override (`TaskOptions.transport.maxResponseBytes`) beats the
+   * value set on the client constructor (`SingleAgentClientConfig.transport`).
+   *
+   * @remarks
+   * **Leave unset for long-lived buyer sessions.** When set, the cap applies
+   * to every fetch in the call's ALS scope — including any side-channel
+   * `GET` the MCP transport opens for server-initiated messages. Long-lived
+   * connections that legitimately stream more cumulative bytes than the cap
+   * will be torn down. The option is intended for one-shot discovery / crawl
+   * paths where the response is bounded by definition.
+   *
+   * @remarks
+   * Future hardening knobs (DNS-rebind defense, scheme allow-list, request
+   * timeout overrides) will land here as additional fields rather than
+   * forcing callers to compose their own `fetch` — wrap order with the SDK's
+   * existing signing / capture wrappers is non-obvious and a footgun.
+   */
+  maxResponseBytes?: number;
+}
+
+/**
  * Options for {@link ProtocolClient.callTool}. All fields are optional.
  *
  * `webhookUrl` / `webhookSecret` / `webhookToken` are for ASYNC TASK STATUS
@@ -172,6 +213,11 @@ export interface CallToolOptions {
    * that path to probe seller version negotiation.
    */
   adcpVersion?: string;
+  /**
+   * Transport-level safeguards (size caps, etc.). Per-call override of any
+   * matching field on the client constructor's `transport` option.
+   */
+  transport?: TransportOptions;
 }
 
 /**
@@ -192,7 +238,16 @@ export class ProtocolClient {
     args: Record<string, unknown>,
     options: CallToolOptions = {}
   ): Promise<unknown> {
-    const { debugLogs = [], webhookUrl, webhookSecret, webhookToken, serverVersion, session, adcpVersion } = options;
+    const {
+      debugLogs = [],
+      webhookUrl,
+      webhookSecret,
+      webhookToken,
+      serverVersion,
+      session,
+      adcpVersion,
+      transport,
+    } = options;
     // Per-instance version envelope. Throws on unparseable pins via
     // `resolveWireMajor`; construction-time `resolveAdcpVersion` is the
     // primary gate but this is the failsafe for callers reaching
@@ -200,215 +255,221 @@ export class ProtocolClient {
     // MCP path). Returns `{ adcp_major_version }` for 3.0 pins and
     // `{ adcp_major_version, adcp_version }` for 3.1+ pins.
     const versionEnvelope = buildVersionEnvelope(adcpVersion, serverVersion);
-    return withSpan(
-      `adcp.${agent.protocol}.call_tool`,
-      {
-        'adcp.agent_id': agent.id,
-        'adcp.protocol': agent.protocol,
-        'adcp.tool': toolName,
-        'http.url': agent.agent_uri,
-      },
-      async () => {
-        // In-process MCP path: pre-connected client, no HTTP transport.
-        // Idempotency injection, schema validation, and governance middleware all
-        // still apply (they run in SingleAgentClient above this call). We skip
-        // URL validation, OAuth refresh, and signing — none apply in-process.
-        if (agent.protocol === 'mcp' && agent._inProcessMcpClient) {
-          const inProcArgs = applyVersionEnvelope(args, versionEnvelope);
-          return callMCPToolWithClient(agent._inProcessMcpClient, toolName, inProcArgs, debugLogs);
-        }
+    // Enter the response-size-limit ALS slot once for this call. The slot is
+    // read by `wrapFetchWithSizeLimit` in both protocol transports, so the
+    // cap applies regardless of which path (MCP / A2A / OAuth refresh) the
+    // call ends up taking. No-op when the cap is unset or non-positive.
+    return withResponseSizeLimit(transport?.maxResponseBytes, () =>
+      withSpan(
+        `adcp.${agent.protocol}.call_tool`,
+        {
+          'adcp.agent_id': agent.id,
+          'adcp.protocol': agent.protocol,
+          'adcp.tool': toolName,
+          'http.url': agent.agent_uri,
+        },
+        async () => {
+          // In-process MCP path: pre-connected client, no HTTP transport.
+          // Idempotency injection, schema validation, and governance middleware all
+          // still apply (they run in SingleAgentClient above this call). We skip
+          // URL validation, OAuth refresh, and signing — none apply in-process.
+          if (agent.protocol === 'mcp' && agent._inProcessMcpClient) {
+            const inProcArgs = applyVersionEnvelope(args, versionEnvelope);
+            return callMCPToolWithClient(agent._inProcessMcpClient, toolName, inProcArgs, debugLogs);
+          }
 
-        validateAgentUrl(agent.agent_uri);
+          validateAgentUrl(agent.agent_uri);
 
-        // OAuth 2.0 client credentials (RFC 6749 §4.4): re-exchange the
-        // secret for a fresh access token whenever the cached one is within
-        // its expiration skew. Runs before every call so mid-session expiry
-        // can't leave the caller with a stale bearer. No-op if the agent
-        // doesn't declare client credentials. Cheap on warm cache (single
-        // `Date.now()` compare); a single POST to the token endpoint on miss.
-        //
-        // `allowPrivateIp` inherits the trust the caller already placed in
-        // `agent.agent_uri` — if they're making a call to a private-IP agent,
-        // they've authorized this process to talk to private-IP hosts, so
-        // the token endpoint on the same network is reachable too. Public
-        // agent URLs with private-IP token endpoints still require an
-        // explicit opt-in via the library API.
-        if (agent.oauth_client_credentials) {
-          const ccStorage = getAgentStorage(agent);
-          const allowPrivateIp = isLikelyPrivateUrl(agent.agent_uri);
-          await ensureClientCredentialsTokens(agent, { storage: ccStorage, allowPrivateIp });
-        }
+          // OAuth 2.0 client credentials (RFC 6749 §4.4): re-exchange the
+          // secret for a fresh access token whenever the cached one is within
+          // its expiration skew. Runs before every call so mid-session expiry
+          // can't leave the caller with a stale bearer. No-op if the agent
+          // doesn't declare client credentials. Cheap on warm cache (single
+          // `Date.now()` compare); a single POST to the token endpoint on miss.
+          //
+          // `allowPrivateIp` inherits the trust the caller already placed in
+          // `agent.agent_uri` — if they're making a call to a private-IP agent,
+          // they've authorized this process to talk to private-IP hosts, so
+          // the token endpoint on the same network is reachable too. Public
+          // agent URLs with private-IP token endpoints still require an
+          // explicit opt-in via the library API.
+          if (agent.oauth_client_credentials) {
+            const ccStorage = getAgentStorage(agent);
+            const allowPrivateIp = isLikelyPrivateUrl(agent.agent_uri);
+            await ensureClientCredentialsTokens(agent, { storage: ccStorage, allowPrivateIp });
+          }
 
-        const authToken = getAuthToken(agent);
+          const authToken = getAuthToken(agent);
 
-        // RFC 9421 signing context. Built once per call and passed through
-        // to each protocol-layer entry (`callMCPToolWithTasks`, `callA2ATool`,
-        // `callMCPToolWithOAuth`) — those entries seed `signingContextStorage`
-        // (AsyncLocalStorage) so the internal transport helpers read it
-        // without an explicit parameter. Keep the explicit arg here: it's the
-        // ALS seed, not incidental plumbing. `get_adcp_capabilities` is
-        // exempt from signing (it's the discovery call itself) and also
-        // triggers cache priming for any other op on agents with
-        // `request_signing` configured.
-        const signingContext = buildAgentSigningContext(agent);
-        if (signingContext && toolName !== CAPABILITY_OP) {
-          await ensureCapabilityLoaded(agent, signingContext, primeArgs =>
-            ProtocolClient.callTool(agent, CAPABILITY_OP, primeArgs, {
-              debugLogs,
-              serverVersion,
-              adcpVersion,
-            })
-          );
-        }
-
-        // Inject the version envelope on every request so sellers can validate
-        // compatibility. Skip for v2 servers — they don't recognise the
-        // version fields and strict-schema agents reject them. The envelope
-        // shape is per-pin: 3.0 pins get the integer `adcp_major_version`
-        // alone; 3.1+ pins get both that and the release-precision string
-        // `adcp_version` (`'3.1'` / `'3.1.0-beta.1'`) per spec PR
-        // `adcontextprotocol/adcp#3493`.
-        const argsWithVersion = applyVersionEnvelope(args, versionEnvelope);
-
-        // Build push_notification_config for ASYNC TASK STATUS notifications
-        // (NOT for reporting_webhook - that stays in args)
-        // Schema: https://adcontextprotocol.org/schemas/v1/core/push-notification-config.json
-        const pushNotificationConfig: PushNotificationConfig | undefined = webhookUrl
-          ? {
-              url: webhookUrl,
-              ...(webhookToken && { token: webhookToken }),
-              authentication: {
-                schemes: ['HMAC-SHA256'],
-                credentials: webhookSecret || 'placeholder_secret_min_32_characters_required',
-              },
-            }
-          : undefined;
-
-        if (agent.protocol === 'mcp') {
-          // For MCP, include push_notification_config in tool arguments (MCP spec)
-          const argsWithWebhook = pushNotificationConfig
-            ? { ...argsWithVersion, push_notification_config: pushNotificationConfig }
-            : argsWithVersion;
-
-          // If the agent config carries authorization-code OAuth tokens,
-          // route through the OAuth provider path so the MCP SDK can refresh
-          // on 401 instead of hard-failing. Excludes client-credentials
-          // agents: they have a cached access token but no refresh_token,
-          // and their refresh path is a secret re-exchange (handled above),
-          // not the SDK's refresh_token grant.
-          if (agent.oauth_tokens && !agent.oauth_client_credentials) {
-            const storage = getAgentStorage(agent);
-            const authProvider = createNonInteractiveOAuthProvider(agent, {
-              agentHint: agent.id,
-              storage,
-            });
-            try {
-              return await callMCPToolWithOAuth({
-                agentUrl: agent.agent_uri,
-                toolName,
-                args: argsWithWebhook,
-                authProvider,
+          // RFC 9421 signing context. Built once per call and passed through
+          // to each protocol-layer entry (`callMCPToolWithTasks`, `callA2ATool`,
+          // `callMCPToolWithOAuth`) — those entries seed `signingContextStorage`
+          // (AsyncLocalStorage) so the internal transport helpers read it
+          // without an explicit parameter. Keep the explicit arg here: it's the
+          // ALS seed, not incidental plumbing. `get_adcp_capabilities` is
+          // exempt from signing (it's the discovery call itself) and also
+          // triggers cache priming for any other op on agents with
+          // `request_signing` configured.
+          const signingContext = buildAgentSigningContext(agent);
+          if (signingContext && toolName !== CAPABILITY_OP) {
+            await ensureCapabilityLoaded(agent, signingContext, primeArgs =>
+              ProtocolClient.callTool(agent, CAPABILITY_OP, primeArgs, {
                 debugLogs,
-                customHeaders: agent.headers,
-                signingContext,
+                serverVersion,
+                adcpVersion,
+              })
+            );
+          }
+
+          // Inject the version envelope on every request so sellers can validate
+          // compatibility. Skip for v2 servers — they don't recognise the
+          // version fields and strict-schema agents reject them. The envelope
+          // shape is per-pin: 3.0 pins get the integer `adcp_major_version`
+          // alone; 3.1+ pins get both that and the release-precision string
+          // `adcp_version` (`'3.1'` / `'3.1.0-beta.1'`) per spec PR
+          // `adcontextprotocol/adcp#3493`.
+          const argsWithVersion = applyVersionEnvelope(args, versionEnvelope);
+
+          // Build push_notification_config for ASYNC TASK STATUS notifications
+          // (NOT for reporting_webhook - that stays in args)
+          // Schema: https://adcontextprotocol.org/schemas/v1/core/push-notification-config.json
+          const pushNotificationConfig: PushNotificationConfig | undefined = webhookUrl
+            ? {
+                url: webhookUrl,
+                ...(webhookToken && { token: webhookToken }),
+                authentication: {
+                  schemes: ['HMAC-SHA256'],
+                  credentials: webhookSecret || 'placeholder_secret_min_32_characters_required',
+                },
+              }
+            : undefined;
+
+          if (agent.protocol === 'mcp') {
+            // For MCP, include push_notification_config in tool arguments (MCP spec)
+            const argsWithWebhook = pushNotificationConfig
+              ? { ...argsWithVersion, push_notification_config: pushNotificationConfig }
+              : argsWithVersion;
+
+            // If the agent config carries authorization-code OAuth tokens,
+            // route through the OAuth provider path so the MCP SDK can refresh
+            // on 401 instead of hard-failing. Excludes client-credentials
+            // agents: they have a cached access token but no refresh_token,
+            // and their refresh path is a secret re-exchange (handled above),
+            // not the SDK's refresh_token grant.
+            if (agent.oauth_tokens && !agent.oauth_client_credentials) {
+              const storage = getAgentStorage(agent);
+              const authProvider = createNonInteractiveOAuthProvider(agent, {
+                agentHint: agent.id,
+                storage,
               });
+              try {
+                return await callMCPToolWithOAuth({
+                  agentUrl: agent.agent_uri,
+                  toolName,
+                  args: argsWithWebhook,
+                  authProvider,
+                  debugLogs,
+                  customHeaders: agent.headers,
+                  signingContext,
+                });
+              } catch (err) {
+                // Refresh failed or server rejected the refreshed token — walk the
+                // discovery chain so the caller can distinguish "re-auth needed"
+                // from other failure modes.
+                await rethrowAsNeedsAuthorization(err, agent.agent_uri);
+                throw err;
+              }
+            }
+
+            // Use callMCPToolWithTasks which auto-detects server tasks capability
+            // and falls back to standard callTool when tasks are not supported
+            try {
+              return await callMCPToolWithTasks(
+                agent.agent_uri,
+                toolName,
+                argsWithWebhook,
+                authToken,
+                debugLogs,
+                agent.headers,
+                signingContext ? { signingContext } : undefined
+              );
             } catch (err) {
-              // Refresh failed or server rejected the refreshed token — walk the
-              // discovery chain so the caller can distinguish "re-auth needed"
-              // from other failure modes.
+              // Client-credentials agents: on 401, the AS may have rotated
+              // something out-of-band. Force a fresh exchange and retry once
+              // before surfacing the error. Bounded (single retry) so we don't
+              // loop if the credentials are genuinely wrong.
+              if (agent.oauth_client_credentials && is401Error(err)) {
+                const ccStorage = getAgentStorage(agent);
+                const allowPrivateIp = isLikelyPrivateUrl(agent.agent_uri);
+                await ensureClientCredentialsTokens(agent, { storage: ccStorage, force: true, allowPrivateIp });
+                const retryAuthToken = agent.oauth_tokens?.access_token ?? authToken;
+                try {
+                  return await callMCPToolWithTasks(
+                    agent.agent_uri,
+                    toolName,
+                    argsWithWebhook,
+                    retryAuthToken,
+                    debugLogs,
+                    agent.headers,
+                    signingContext ? { signingContext } : undefined
+                  );
+                } catch (retryErr) {
+                  await rethrowAsNeedsAuthorization(retryErr, agent.agent_uri);
+                  throw retryErr;
+                }
+              }
               await rethrowAsNeedsAuthorization(err, agent.agent_uri);
               throw err;
             }
-          }
-
-          // Use callMCPToolWithTasks which auto-detects server tasks capability
-          // and falls back to standard callTool when tasks are not supported
-          try {
-            return await callMCPToolWithTasks(
-              agent.agent_uri,
-              toolName,
-              argsWithWebhook,
-              authToken,
-              debugLogs,
-              agent.headers,
-              signingContext ? { signingContext } : undefined
-            );
-          } catch (err) {
-            // Client-credentials agents: on 401, the AS may have rotated
-            // something out-of-band. Force a fresh exchange and retry once
-            // before surfacing the error. Bounded (single retry) so we don't
-            // loop if the credentials are genuinely wrong.
-            if (agent.oauth_client_credentials && is401Error(err)) {
-              const ccStorage = getAgentStorage(agent);
-              const allowPrivateIp = isLikelyPrivateUrl(agent.agent_uri);
-              await ensureClientCredentialsTokens(agent, { storage: ccStorage, force: true, allowPrivateIp });
-              const retryAuthToken = agent.oauth_tokens?.access_token ?? authToken;
-              try {
-                return await callMCPToolWithTasks(
-                  agent.agent_uri,
-                  toolName,
-                  argsWithWebhook,
-                  retryAuthToken,
-                  debugLogs,
-                  agent.headers,
-                  signingContext ? { signingContext } : undefined
-                );
-              } catch (retryErr) {
-                await rethrowAsNeedsAuthorization(retryErr, agent.agent_uri);
-                throw retryErr;
+          } else if (agent.protocol === 'a2a') {
+            // For A2A, pass pushNotificationConfig separately (not in skill parameters)
+            try {
+              return await callA2ATool(
+                agent.agent_uri,
+                toolName,
+                argsWithVersion,
+                authToken,
+                debugLogs,
+                pushNotificationConfig,
+                agent.headers,
+                signingContext,
+                session
+              );
+            } catch (err) {
+              // Same single-retry-on-401 for client-credentials agents as the
+              // MCP path above. Kept symmetric so A2A CC agents aren't a
+              // second-class experience — including the NeedsAuthorizationError
+              // rewrap on a retry that still 401s.
+              if (agent.oauth_client_credentials && is401Error(err)) {
+                const ccStorage = getAgentStorage(agent);
+                const allowPrivateIp = isLikelyPrivateUrl(agent.agent_uri);
+                await ensureClientCredentialsTokens(agent, { storage: ccStorage, force: true, allowPrivateIp });
+                const retryAuthToken = agent.oauth_tokens?.access_token ?? authToken;
+                try {
+                  return await callA2ATool(
+                    agent.agent_uri,
+                    toolName,
+                    argsWithVersion,
+                    retryAuthToken,
+                    debugLogs,
+                    pushNotificationConfig,
+                    agent.headers,
+                    signingContext,
+                    session
+                  );
+                } catch (retryErr) {
+                  await rethrowAsNeedsAuthorization(retryErr, agent.agent_uri);
+                  throw retryErr;
+                }
               }
+              await rethrowAsNeedsAuthorization(err, agent.agent_uri);
+              throw err;
             }
-            await rethrowAsNeedsAuthorization(err, agent.agent_uri);
-            throw err;
+          } else {
+            throw new Error(`Unsupported protocol: ${agent.protocol}`);
           }
-        } else if (agent.protocol === 'a2a') {
-          // For A2A, pass pushNotificationConfig separately (not in skill parameters)
-          try {
-            return await callA2ATool(
-              agent.agent_uri,
-              toolName,
-              argsWithVersion,
-              authToken,
-              debugLogs,
-              pushNotificationConfig,
-              agent.headers,
-              signingContext,
-              session
-            );
-          } catch (err) {
-            // Same single-retry-on-401 for client-credentials agents as the
-            // MCP path above. Kept symmetric so A2A CC agents aren't a
-            // second-class experience — including the NeedsAuthorizationError
-            // rewrap on a retry that still 401s.
-            if (agent.oauth_client_credentials && is401Error(err)) {
-              const ccStorage = getAgentStorage(agent);
-              const allowPrivateIp = isLikelyPrivateUrl(agent.agent_uri);
-              await ensureClientCredentialsTokens(agent, { storage: ccStorage, force: true, allowPrivateIp });
-              const retryAuthToken = agent.oauth_tokens?.access_token ?? authToken;
-              try {
-                return await callA2ATool(
-                  agent.agent_uri,
-                  toolName,
-                  argsWithVersion,
-                  retryAuthToken,
-                  debugLogs,
-                  pushNotificationConfig,
-                  agent.headers,
-                  signingContext,
-                  session
-                );
-              } catch (retryErr) {
-                await rethrowAsNeedsAuthorization(retryErr, agent.agent_uri);
-                throw retryErr;
-              }
-            }
-            await rethrowAsNeedsAuthorization(err, agent.agent_uri);
-            throw err;
-          }
-        } else {
-          throw new Error(`Unsupported protocol: ${agent.protocol}`);
         }
-      }
+      )
     );
   }
 }
@@ -442,14 +503,21 @@ async function rethrowAsNeedsAuthorization(err: unknown, agentUrl: string): Prom
 }
 
 /**
- * Simple factory functions for protocol-specific clients
+ * Simple factory functions for protocol-specific clients.
+ *
+ * Both factories accept a `transport` argument that flows through to the
+ * size-cap surface so callers reaching the factory exports honor the same
+ * `maxResponseBytes` contract as `ProtocolClient.callTool`. Without it,
+ * the factories would silently bypass the cap, which the public API
+ * (`TransportOptions`) implies they honor.
  */
 export const createMCPClient = (
   agentUrl: string,
   authToken?: string,
   headers?: Record<string, string>,
   serverVersion?: 'v2' | 'v3',
-  adcpVersion?: string
+  adcpVersion?: string,
+  transport?: TransportOptions
 ) => {
   // Validate the pin at factory time so a typo surfaces here rather than at
   // first call. `buildVersionEnvelope` throws via `resolveWireMajor` on bad
@@ -457,13 +525,15 @@ export const createMCPClient = (
   const versionEnvelope = buildVersionEnvelope(adcpVersion, serverVersion);
   return {
     callTool: (toolName: string, args: Record<string, unknown>, debugLogs?: DebugLogEntry[]) =>
-      callMCPToolWithTasks(
-        agentUrl,
-        toolName,
-        applyVersionEnvelope(args, versionEnvelope),
-        authToken,
-        debugLogs,
-        headers
+      withResponseSizeLimit(transport?.maxResponseBytes, () =>
+        callMCPToolWithTasks(
+          agentUrl,
+          toolName,
+          applyVersionEnvelope(args, versionEnvelope),
+          authToken,
+          debugLogs,
+          headers
+        )
       ),
   };
 };
@@ -473,19 +543,22 @@ export const createA2AClient = (
   authToken?: string,
   headers?: Record<string, string>,
   serverVersion?: 'v2' | 'v3',
-  adcpVersion?: string
+  adcpVersion?: string,
+  transport?: TransportOptions
 ) => {
   const versionEnvelope = buildVersionEnvelope(adcpVersion, serverVersion);
   return {
     callTool: (toolName: string, parameters: Record<string, unknown>, debugLogs?: DebugLogEntry[]) =>
-      callA2ATool(
-        agentUrl,
-        toolName,
-        applyVersionEnvelope(parameters, versionEnvelope),
-        authToken,
-        debugLogs,
-        undefined,
-        headers
+      withResponseSizeLimit(transport?.maxResponseBytes, () =>
+        callA2ATool(
+          agentUrl,
+          toolName,
+          applyVersionEnvelope(parameters, versionEnvelope),
+          authToken,
+          debugLogs,
+          undefined,
+          headers
+        )
       ),
   };
 };
