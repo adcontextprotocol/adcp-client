@@ -433,7 +433,11 @@ describe('handleTestControllerRequest', () => {
         { seedCache }
       );
       assert.strictEqual(replay.success, true);
-      assert.strictEqual(replay.message, 'Fixture re-seeded (equivalent)', 'replay must dedupe within the same account');
+      assert.strictEqual(
+        replay.message,
+        'Fixture re-seeded (equivalent)',
+        'replay must dedupe within the same account'
+      );
     });
 
     it('same account replaying with divergent fixture still returns INVALID_PARAMS', async () => {
@@ -461,7 +465,11 @@ describe('handleTestControllerRequest', () => {
         },
         { seedCache }
       );
-      assert.strictEqual(divergent.error, 'INVALID_PARAMS', 'divergent replay within same account must still be rejected');
+      assert.strictEqual(
+        divergent.error,
+        'INVALID_PARAMS',
+        'divergent replay within same account must still be rejected'
+      );
     });
 
     it('legacy behavior preserved: requests without account use unscoped keys', async () => {
@@ -485,6 +493,38 @@ describe('handleTestControllerRequest', () => {
         { seedCache }
       );
       assert.strictEqual(divergent.error, 'INVALID_PARAMS');
+    });
+
+    it('empty-string account_id falls through to legacy unscoped behavior', async () => {
+      // Adopters who carry the account envelope but leave account_id blank
+      // (e.g., a misconfigured request builder) should land in the same
+      // unscoped namespace as no-account-at-all rather than the literal
+      // "empty-string" tenant. Pins the guard's `id.length > 0` check.
+      const store = { async seedProduct() {} };
+      const seedCache = createSeedFixtureCache();
+      await handleTestControllerRequest(
+        store,
+        {
+          scenario: 'seed_product',
+          account: { account_id: '' },
+          params: { product_id: 'p1', fixture: { x: 1 } },
+        },
+        { seedCache }
+      );
+      const divergent = await handleTestControllerRequest(
+        store,
+        {
+          scenario: 'seed_product',
+          account: { account_id: '' },
+          params: { product_id: 'p1', fixture: { x: 2 } },
+        },
+        { seedCache }
+      );
+      assert.strictEqual(
+        divergent.error,
+        'INVALID_PARAMS',
+        'empty-string account_id must collapse into unscoped namespace'
+      );
     });
   });
 
