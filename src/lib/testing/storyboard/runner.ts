@@ -1092,13 +1092,26 @@ async function executeStoryboardPass(
         // — already handled by phase-level cascade, `oauth_not_advertised`
         // — phase-absent path) deliberately don't trip the flag.
         if (step.stateful && isMissingStateSkipReason(result.skip_reason)) {
-          statefulFailed = true;
-          // Record provenance for the cascade detail message. First trip
-          // wins — subsequent triggers don't overwrite, since the cascade
-          // text references the originating diagnostic (the leftmost
-          // missing-state stateful step in the phase).
-          if (statefulSkipTrigger === null) {
-            statefulSkipTrigger = { stepId: step.id, reason: result.skip_reason ?? 'missing_tool' };
+          // Exception: the spec defines sync_accounts ↔ list_accounts as mutually
+          // exclusive substitutes. Explicit-mode adopters (require_operator_auth: true)
+          // use list_accounts instead of sync_accounts to establish account state.
+          // When sync_accounts skips not_applicable AND list_accounts is advertised,
+          // state WILL materialize via list_accounts — don't cascade-skip it as if
+          // state never materialized. If list_accounts is also missing, the normal
+          // missing_tool cascade fires on that step instead.
+          const isSyncAccountsSubstitution =
+            step.task === 'sync_accounts' &&
+            result.skip_reason === 'not_applicable' &&
+            options.agentTools?.includes('list_accounts') === true;
+          if (!isSyncAccountsSubstitution) {
+            statefulFailed = true;
+            // Record provenance for the cascade detail message. First trip
+            // wins — subsequent triggers don't overwrite, since the cascade
+            // text references the originating diagnostic (the leftmost
+            // missing-state stateful step in the phase).
+            if (statefulSkipTrigger === null) {
+              statefulSkipTrigger = { stepId: step.id, reason: result.skip_reason ?? 'missing_tool' };
+            }
           }
         }
       } else if (result.passed) {

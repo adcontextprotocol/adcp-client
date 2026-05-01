@@ -446,6 +446,31 @@ createAdcpServerFromPlatform(platform, {
   or pin the consumer-side `zod` to `<4.3.0` until you've audited
   affected schemas. Not an SDK bug — flagging here so adopters
   migrating off 5.x see the symptom in context.
+- **`Format['assets']` cast tightening.** v6 narrowed `Format['assets']`
+  to `(BaseIndividualAsset | RepeatableGroupAsset)[]` (previously the
+  type was looser). A bare `as Format['assets']` cast from
+  `Record<string, unknown>[]` now fails TypeScript's overlap check
+  (`Conversion of type 'Record<string, unknown>[]' to type '...' may be
+  a mistake because neither type sufficiently overlaps`). Fix: build
+  asset objects as properly-typed values from the start, or use a
+  two-step cast where a broad intermediate is required:
+
+  ```ts
+  // Before (compiled in v5, breaks in v6)
+  return { ..., assets: builtAssets as Format['assets'] };
+
+  // After — option A: type the builder to return the correct union
+  function buildAdcpAsset(slot: AssetSlot): BaseIndividualAsset | RepeatableGroupAsset { ... }
+  return { ..., assets: format.assets.map(buildAdcpAsset) };
+
+  // After — option B: two-step cast (use sparingly; type-unsafe)
+  return { ..., assets: builtAssets as unknown as Format['assets'] };
+  ```
+
+  The `getIndividualAssets` / `getRepeatableGroups` helpers in
+  `@adcp/sdk/server` return the typed union directly; prefer those
+  over manual map+cast in `build_creative` / `preview_creative`
+  handlers.
 
 ## Auto-hydration error contract
 
