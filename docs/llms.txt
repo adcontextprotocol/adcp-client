@@ -115,21 +115,25 @@ TypeScript enforces exhaustiveness at compile time when the `_` catchall is omit
 
 Both request and response validation default to **warn-only** (`'warn'`). Schema drift from a seller goes to `result.debug_logs` as a warning; `result.data` still contains the wire response. This matches real-world v2.x deployment reality where sellers may not satisfy 100% of the current schema constraints.
 
-Configure per-client via `validation` in the `ADCPMultiAgentClient` options:
+Configure per-client via `validation` in the `ADCPMultiAgentClient` constructor options (`ADCPMultiAgentClient.simple()` does not expose this option):
 
 ```typescript
-const client = ADCPMultiAgentClient.simple(url, {
-  // validation defaults (both 'warn') — no need to set these unless overriding:
-  validation: {
-    requests: 'warn',    // 'warn' | 'strict' | 'off'
-    responses: 'warn',   // 'warn' | 'strict' | 'off'
-  },
-});
+const client = new ADCPMultiAgentClient(
+  [{ id: 'my-agent', agent_uri: url, protocol: 'mcp' }],
+  {
+    // validation defaults (both 'warn') — no need to set these unless overriding:
+    validation: {
+      requests: 'warn',    // 'warn' | 'strict' | 'off'
+      responses: 'warn',   // 'warn' | 'strict' | 'off'
+    },
+  }
+);
 
 // Strict mode: fail the task when schema drift detected (conformance CI, smoke tests):
-const strictClient = ADCPMultiAgentClient.simple(url, {
-  validation: { responses: 'strict' },
-});
+const strictClient = new ADCPMultiAgentClient(
+  [{ id: 'my-agent', agent_uri: url, protocol: 'mcp' }],
+  { validation: { responses: 'strict' } }
+);
 ```
 
 The storyboard runner and conformance harness always use `responses: 'strict'` so spec deviations surface as test failures.

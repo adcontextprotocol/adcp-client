@@ -274,19 +274,19 @@ export interface SingleAgentClientConfig extends ConversationConfig {
      * - `warn`: log to debug logs and continue
      * - `off`: skip the validator entirely (no overhead)
      *
-     * @default `strict` in dev/test, `warn` in production
+     * @default `'warn'`
      */
     requests?: import('../validation/client-hooks').ValidationMode;
     /**
      * Validate incoming responses against the bundled AdCP JSON schema.
      *
-     * - `strict`: fail the task with `VALIDATION_ERROR`
-     * - `warn`: log to debug logs and surface the task as successful
+     * - `strict`: fail the task with `VALIDATION_ERROR` (use in conformance CI)
+     * - `warn`: log to debug logs and surface the task as successful (default)
      * - `off`: skip the validator entirely
      *
      * Overrides `strictSchemaValidation` when set.
      *
-     * @default `strict` in dev/test, `warn` in production
+     * @default `'warn'`
      */
     responses?: import('../validation/client-hooks').ValidationMode;
     /**

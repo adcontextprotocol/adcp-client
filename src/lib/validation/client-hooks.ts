@@ -10,7 +10,7 @@ import { buildValidationError } from './schema-errors';
 export type ValidationMode = 'strict' | 'warn' | 'off';
 
 export interface ValidationHookConfig {
-  /** Validate outgoing requests. Default: strict in dev/test, warn in prod. */
+  /** Validate outgoing requests. Default: warn everywhere. */
   requests?: ValidationMode;
   /** Validate incoming responses. Default: warn everywhere. Use `'strict'` to hard-fail on drift (e.g. conformance runner, CI). */
   responses?: ValidationMode;
