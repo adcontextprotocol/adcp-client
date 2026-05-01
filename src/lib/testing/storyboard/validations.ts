@@ -151,6 +151,10 @@ function runValidation(validation: StoryboardValidation, ctx: ValidationContext)
       return validateA2AContextContinuity(validation, ctx);
     case 'refs_resolve':
       return validateRefsResolve(validation, ctx);
+    case 'field_less_than':
+      return validateFieldLessThan(validation, ctx);
+    case 'field_equals_context':
+      return validateFieldEqualsContext(validation, ctx);
     default:
       return {
         check: validation.check,
@@ -1908,6 +1912,191 @@ function dedupRefs(refs: Array<Record<string, unknown>>, keys: string[]): Array<
     if (!seen.has(k)) seen.set(k, ref);
   }
   return Array.from(seen.values());
+}
+
+// ────────────────────────────────────────────────────────────
+// field_less_than / field_equals_context (cross-step comparison)
+//
+// Both checks read from ctx.storyboardContext — the accumulator
+// populated by context_outputs rules across step boundaries.
+// The precedent is refs_resolve's `resolveRefsRoot('context', ctx)`
+// path. Added for adcp#2642 cross-step comparison primitives.
+// ────────────────────────────────────────────────────────────
+
+/**
+ * Resolve the comparand for a cross-step check from the storyboard context.
+ *
+ * Returns `{ found: true, value }` when the context key is set and present,
+ * `{ found: false, observation }` when context_key is set but absent (the
+ * prior step may have been skipped on a branch-set path — not an error),
+ * and `{ found: true, value: validation.value }` when no context_key is
+ * given (fall back to literal comparand).
+ */
+function resolveContextComparand(
+  validation: StoryboardValidation,
+  ctx: ValidationContext
+): { found: true; value: unknown } | { found: false; observation: string } {
+  if (!validation.context_key) {
+    return { found: true, value: validation.value };
+  }
+  if (!ctx.storyboardContext) {
+    return {
+      found: false,
+      observation: `context_key_absent: storyboardContext not available for key "${validation.context_key}"`,
+    };
+  }
+  if (!(validation.context_key in ctx.storyboardContext)) {
+    return {
+      found: false,
+      observation: `context_key_absent: key "${validation.context_key}" not found in storyboard context (prior step may have been skipped)`,
+    };
+  }
+  return { found: true, value: ctx.storyboardContext[validation.context_key] };
+}
+
+function validateFieldLessThan(validation: StoryboardValidation, ctx: ValidationContext): ValidationResult {
+  if (!validation.path) {
+    return {
+      check: 'field_less_than',
+      passed: false,
+      description: validation.description,
+      error: 'No path specified for field_less_than validation',
+      json_pointer: null,
+      expected: 'path must be set in storyboard validation entry',
+      actual: null,
+    };
+  }
+
+  const comparandResult = resolveContextComparand(validation, ctx);
+  if (!comparandResult.found) {
+    return {
+      check: 'field_less_than',
+      passed: true,
+      description: validation.description,
+      observations: [comparandResult.observation],
+    };
+  }
+
+  const actual = resolvePath(resolveTarget(ctx).data, validation.path);
+  const comparand = comparandResult.value;
+  const pointer = toJsonPointer(validation.path);
+
+  if (actual === undefined || actual === null) {
+    return {
+      check: 'field_less_than',
+      passed: false,
+      description: validation.description,
+      path: validation.path,
+      error: `Field not found at path: ${validation.path}`,
+      json_pointer: pointer,
+      expected: `numeric value < ${JSON.stringify(comparand)}`,
+      actual: null,
+    };
+  }
+  if (typeof actual !== 'number' || !Number.isFinite(actual)) {
+    return {
+      check: 'field_less_than',
+      passed: false,
+      description: validation.description,
+      path: validation.path,
+      error: `field_less_than requires a finite number at path "${validation.path}"; got ${typeof actual} ${JSON.stringify(actual)}`,
+      json_pointer: pointer,
+      expected: `finite number < ${JSON.stringify(comparand)}`,
+      actual: actual ?? null,
+    };
+  }
+  if (typeof comparand !== 'number' || !Number.isFinite(comparand)) {
+    return {
+      check: 'field_less_than',
+      passed: false,
+      description: validation.description,
+      path: validation.path,
+      error: `field_less_than comparand must be a finite number; got ${typeof comparand} ${JSON.stringify(comparand)}`,
+      json_pointer: pointer,
+      expected: `finite number (comparand)`,
+      actual: actual,
+    };
+  }
+
+  if (actual < comparand) {
+    return {
+      check: 'field_less_than',
+      passed: true,
+      description: validation.description,
+      path: validation.path,
+      json_pointer: pointer,
+    };
+  }
+  return {
+    check: 'field_less_than',
+    passed: false,
+    description: validation.description,
+    path: validation.path,
+    error: `Expected ${JSON.stringify(actual)} < ${JSON.stringify(comparand)}`,
+    json_pointer: pointer,
+    expected: `< ${JSON.stringify(comparand)}`,
+    actual,
+  };
+}
+
+function validateFieldEqualsContext(validation: StoryboardValidation, ctx: ValidationContext): ValidationResult {
+  if (!validation.path) {
+    return {
+      check: 'field_equals_context',
+      passed: false,
+      description: validation.description,
+      error: 'No path specified for field_equals_context validation',
+      json_pointer: null,
+      expected: 'path must be set in storyboard validation entry',
+      actual: null,
+    };
+  }
+  if (!validation.context_key) {
+    return {
+      check: 'field_equals_context',
+      passed: false,
+      description: validation.description,
+      error: 'field_equals_context requires context_key to be set',
+      json_pointer: null,
+      expected: 'context_key must be set in storyboard validation entry',
+      actual: null,
+    };
+  }
+
+  const comparandResult = resolveContextComparand(validation, ctx);
+  if (!comparandResult.found) {
+    return {
+      check: 'field_equals_context',
+      passed: true,
+      description: validation.description,
+      observations: [comparandResult.observation],
+    };
+  }
+
+  const actual = resolvePath(resolveTarget(ctx).data, validation.path);
+  const expected = comparandResult.value;
+  const pointer = toJsonPointer(validation.path);
+
+  const passed = valuesMatch(actual, expected);
+  if (passed) {
+    return {
+      check: 'field_equals_context',
+      passed: true,
+      description: validation.description,
+      path: validation.path,
+      json_pointer: pointer,
+    };
+  }
+  return {
+    check: 'field_equals_context',
+    passed: false,
+    description: validation.description,
+    path: validation.path,
+    error: `Expected ${JSON.stringify(expected)} (from context["${validation.context_key}"]); got ${JSON.stringify(actual)}`,
+    json_pointer: pointer,
+    expected,
+    actual: actual ?? null,
+  };
 }
 
 // resolvePath re-exported from ./path for backwards compat
