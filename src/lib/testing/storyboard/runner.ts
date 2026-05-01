@@ -1087,6 +1087,18 @@ async function executeStoryboardPass(
       stepResults.push(result);
       priorStepResults.set(step.id, result);
 
+      // Thread accumulated cross-step context into each assertion context
+      // before onStep fires. `context` here is the accumulated state from
+      // all prior steps (updated at the bottom of this loop); assertions
+      // read it via ctx.storyboardContext to implement cross-step comparison
+      // validators (adcp-client#1140, Option 2 / context-outputs style).
+      // Each assertion gets its own shallow copy so a mutating handler
+      // doesn't corrupt the view seen by subsequent assertions in the same
+      // step, or the live accumulator seen by subsequent steps.
+      for (const spec of assertions) {
+        assertionContexts.get(spec.id)!.storyboardContext = { ...context };
+      }
+
       // Fire per-step assertions. Each result is appended to the step's
       // `validations[]` under `check: "assertion"` so existing UI renders
       // them alongside inline checks, and mirrored into `assertionResults`
@@ -1341,6 +1353,12 @@ async function executeStoryboardPass(
     countedAsFailed
   );
   skippedCount += branchSetDelta.skippedDelta;
+
+  // Update assertion contexts with the final accumulated context so onEnd
+  // handlers see the full run's context (not just through the penultimate step).
+  for (const spec of assertions) {
+    assertionContexts.get(spec.id)!.storyboardContext = { ...context };
+  }
 
   // Fire storyboard-scoped assertions. These observe the full run and can
   // emit `scope: "storyboard"` findings that flip `overall_passed` without
