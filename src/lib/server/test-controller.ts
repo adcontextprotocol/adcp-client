@@ -515,11 +515,28 @@ function fixturesEquivalent(a: Record<string, unknown>, b: Record<string, unknow
 
 /** Dispatch a seed scenario through the correct adapter method, honoring the
  * spec idempotency rules when a {@link SeedFixtureCache} is provided. */
+/**
+ * Build the seed-cache key for a scenario. When `scope` is present (the
+ * request's `account.account_id`), it's prefixed so two sandbox accounts
+ * on one server can each seed the same `product_id` with divergent
+ * fixtures without colliding in the process-wide `SeedFixtureCache`.
+ *
+ * Without scope (legacy callers, or requests with no `account` envelope),
+ * the unscoped key is used — preserving the pre-#1215 behavior. Adopters
+ * who relied on cross-account replay equivalence (rare, since storyboards
+ * usually scope per account anyway) are unaffected when their requests
+ * don't carry an `account` block.
+ */
+function makeSeedCacheKey(unscopedKey: string, scope: string | undefined): string {
+  return scope != null && scope.length > 0 ? `${scope}:${unscopedKey}` : unscopedKey;
+}
+
 async function dispatchSeed(
   store: TestControllerStore,
   scenario: SeedScenario,
   params: Record<string, unknown> | undefined,
-  cache: SeedFixtureCache | undefined
+  cache: SeedFixtureCache | undefined,
+  scope: string | undefined
 ): Promise<ComplyTestControllerResponse> {
   // Validate fixture is a plain object (not null, array, or primitive) before
   // casting — the adapter signature promises Record<string, unknown>.
@@ -560,7 +577,7 @@ async function dispatchSeed(
       if (!store.seedProduct) return controllerError('UNKNOWN_SCENARIO', `Scenario not supported: ${scenario}`);
       const productId = params.product_id as string;
       dispatch = {
-        key: `seed_product:${productId}`,
+        key: makeSeedCacheKey(`seed_product:${productId}`, scope),
         invoke: () => store.seedProduct!(productId, fixture),
       };
       break;
@@ -574,7 +591,7 @@ async function dispatchSeed(
       const productId = params.product_id as string;
       const pricingOptionId = params.pricing_option_id as string;
       dispatch = {
-        key: `seed_pricing_option:${productId}:${pricingOptionId}`,
+        key: makeSeedCacheKey(`seed_pricing_option:${productId}:${pricingOptionId}`, scope),
         invoke: () => store.seedPricingOption!(productId, pricingOptionId, fixture),
       };
       break;
@@ -587,7 +604,7 @@ async function dispatchSeed(
       if (!store.seedCreative) return controllerError('UNKNOWN_SCENARIO', `Scenario not supported: ${scenario}`);
       const creativeId = params.creative_id as string;
       dispatch = {
-        key: `seed_creative:${creativeId}`,
+        key: makeSeedCacheKey(`seed_creative:${creativeId}`, scope),
         invoke: () => store.seedCreative!(creativeId, fixture),
       };
       break;
@@ -600,7 +617,7 @@ async function dispatchSeed(
       if (!store.seedPlan) return controllerError('UNKNOWN_SCENARIO', `Scenario not supported: ${scenario}`);
       const planId = params.plan_id as string;
       dispatch = {
-        key: `seed_plan:${planId}`,
+        key: makeSeedCacheKey(`seed_plan:${planId}`, scope),
         invoke: () => store.seedPlan!(planId, fixture),
       };
       break;
@@ -613,7 +630,7 @@ async function dispatchSeed(
       if (!store.seedMediaBuy) return controllerError('UNKNOWN_SCENARIO', `Scenario not supported: ${scenario}`);
       const mediaBuyId = params.media_buy_id as string;
       dispatch = {
-        key: `seed_media_buy:${mediaBuyId}`,
+        key: makeSeedCacheKey(`seed_media_buy:${mediaBuyId}`, scope),
         invoke: () => store.seedMediaBuy!(mediaBuyId, fixture),
       };
       break;
@@ -626,7 +643,7 @@ async function dispatchSeed(
       if (!store.seedCreativeFormat) return controllerError('UNKNOWN_SCENARIO', `Scenario not supported: ${scenario}`);
       const formatId = params.format_id as string;
       dispatch = {
-        key: `seed_creative_format:${formatId}`,
+        key: makeSeedCacheKey(`seed_creative_format:${formatId}`, scope),
         invoke: () => store.seedCreativeFormat!(formatId, fixture),
       };
       break;
@@ -873,8 +890,26 @@ export async function handleTestControllerRequest(
       case SEED_SCENARIOS.SEED_CREATIVE:
       case SEED_SCENARIOS.SEED_PLAN:
       case SEED_SCENARIOS.SEED_MEDIA_BUY:
-      case SEED_SCENARIOS.SEED_CREATIVE_FORMAT:
-        return await dispatchSeed(store, scenario as SeedScenario, params, options?.seedCache);
+      case SEED_SCENARIOS.SEED_CREATIVE_FORMAT: {
+        // Per-account seed-cache scope (issue #1215). Two sandbox accounts on
+        // one server can each seed the same `product_id` with divergent
+        // fixtures; without a scope prefix the cache treats divergent replays
+        // as INVALID_PARAMS even when each account's fixture is internally
+        // self-consistent. Read the request envelope's `account.account_id`
+        // (no resolver call here — test-controller is a generic helper that
+        // doesn't know about platform.accounts.resolve, and read-time
+        // misalignment is fine because the cache only governs idempotency,
+        // not user-visible state). Empty/missing → unscoped (legacy keys).
+        const account = input.account;
+        const scope =
+          account != null && typeof account === 'object'
+            ? (() => {
+                const id = (account as { account_id?: unknown }).account_id;
+                return typeof id === 'string' && id.length > 0 ? id : undefined;
+              })()
+            : undefined;
+        return await dispatchSeed(store, scenario as SeedScenario, params, options?.seedCache, scope);
+      }
 
       default:
         return controllerError('UNKNOWN_SCENARIO', 'Unrecognized scenario name');
