@@ -448,7 +448,29 @@ export type StoryboardValidationCheck =
   | 'a2a_submitted_artifact'
   | 'a2a_context_continuity'
   // Cross-step checks
-  | 'refs_resolve';
+  | 'refs_resolve'
+  /**
+   * Assert a numeric field in the current step's response is strictly less than
+   * a comparand. The comparand is either a context-captured runtime value
+   * (`context_key` on `StoryboardValidation`) or a literal number (`value`).
+   * Fails with a type error when either operand is non-numeric or absent.
+   * When `context_key` is specified but the key is absent from `storyboardContext`,
+   * the check passes with a `context_key_absent` observation (prior step may have
+   * been legitimately skipped on a branch-set path).
+   * Added for adcp#2642 cross-step comparison primitives.
+   */
+  | 'field_less_than'
+  /**
+   * Assert a field in the current step's response deep-equals a value captured
+   * from an earlier step via `context_key`. Unlike `field_value` + `$context.key`
+   * substitution (which resolves the comparand at YAML authoring time), this
+   * check compares against a runtime-captured value — suitable for asserting that
+   * a response echoes back an id or token that was only known at run time.
+   * When `context_key` is absent from `storyboardContext`, passes with a
+   * `context_key_absent` observation.
+   * Added for adcp#2642 cross-step comparison primitives.
+   */
+  | 'field_equals_context';
 
 /**
  * Captured A2A wire shape from a `message/send` JSON-RPC response. The
@@ -545,6 +567,16 @@ export interface StoryboardValidation {
    *  - `fail` — treat as missing
    */
   on_out_of_scope?: 'warn' | 'ignore' | 'fail';
+  // ─── field_less_than / field_equals_context fields ────────
+  /**
+   * Key to look up in the accumulated `storyboardContext` for cross-step
+   * comparison checks (`field_less_than`, `field_equals_context`).
+   * Only consumed by those two check types — ignored on all others.
+   * When set and the key is absent from context, the check passes with a
+   * `context_key_absent` observation rather than failing — the prior step
+   * that was supposed to populate the key may have been legitimately skipped.
+   */
+  context_key?: string;
 }
 
 // ────────────────────────────────────────────────────────────

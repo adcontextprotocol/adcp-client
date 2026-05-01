@@ -1036,11 +1036,41 @@ async function executeStoryboardPass(
       }
 
       // Skip remaining steps if a stateful dependency failed (or
-      // skipped for a missing-state reason). The detail message
-      // distinguishes the two so adopters reading the cascade know
-      // whether to look at a real failure or a structural mismatch
-      // (storyboard step requires a tool the agent doesn't advertise).
+      // skipped for a missing-state reason). Before applying the
+      // cascade reason, check the step's intrinsic skip-eligibility:
+      // if the agent never advertised this step's tool, the correct
+      // reason is `missing_tool` (a benign, passed: true skip) —
+      // not `prerequisite_failed` (a failed skip). This distinguishes
+      // "this agent has a real setup bug" from "this agent doesn't
+      // claim this surface, by design" (adcp-client#1169).
+      //
+      // Uses resolveTaskName so that $test_kit.* steps are checked
+      // against the resolved concrete task name, not the template
+      // string (which would never be in agentTools).
       if (statefulFailed && step.stateful) {
+        const resolvedTask = resolveTaskName(step, options);
+        if (options.agentTools && resolvedTask && !options.agentTools.includes(resolvedTask)) {
+          const toolDetail = `Agent did not advertise tool "${resolvedTask}"; agent tools: [${options.agentTools.join(', ')}].`;
+          const missingToolResult: StoryboardStepResult = {
+            storyboard_id: storyboard.id,
+            step_id: step.id,
+            phase_id: phase.id,
+            title: step.title,
+            task: resolvedTask,
+            passed: true,
+            skipped: true,
+            skip_reason: 'missing_tool',
+            skip: buildSkip('missing_tool', toolDetail),
+            duration_ms: 0,
+            validations: [],
+            context,
+            extraction: { path: 'none' },
+          };
+          stepResults.push(missingToolResult);
+          priorStepResults.set(step.id, missingToolResult);
+          skippedCount++;
+          continue;
+        }
         const detail = statefulSkipTrigger
           ? statefulSkipTrigger.substitution_chain
             ? `Skipped: prior stateful step "${statefulSkipTrigger.stepId}" skipped (${statefulSkipTrigger.reason}); ${statefulSkipTrigger.substitution_chain}; state never materialized.`
@@ -1086,6 +1116,18 @@ async function executeStoryboardPass(
       }
       stepResults.push(result);
       priorStepResults.set(step.id, result);
+
+      // Thread accumulated cross-step context into each assertion context
+      // before onStep fires. `context` here is the accumulated state from
+      // all prior steps (updated at the bottom of this loop); assertions
+      // read it via ctx.storyboardContext to implement cross-step comparison
+      // validators (adcp-client#1140, Option 2 / context-outputs style).
+      // Each assertion gets its own shallow copy so a mutating handler
+      // doesn't corrupt the view seen by subsequent assertions in the same
+      // step, or the live accumulator seen by subsequent steps.
+      for (const spec of assertions) {
+        assertionContexts.get(spec.id)!.storyboardContext = { ...context };
+      }
 
       // Fire per-step assertions. Each result is appended to the step's
       // `validations[]` under `check: "assertion"` so existing UI renders
@@ -1341,6 +1383,12 @@ async function executeStoryboardPass(
     countedAsFailed
   );
   skippedCount += branchSetDelta.skippedDelta;
+
+  // Update assertion contexts with the final accumulated context so onEnd
+  // handlers see the full run's context (not just through the penultimate step).
+  for (const spec of assertions) {
+    assertionContexts.get(spec.id)!.storyboardContext = { ...context };
+  }
 
   // Fire storyboard-scoped assertions. These observe the full run and can
   // emit `scope: "storyboard"` findings that flip `overall_passed` without

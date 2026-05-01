@@ -9,6 +9,7 @@ This document contains essential guidelines for AI coding assistants (Claude, Co
 **Type reference** — Read `docs/TYPE-SUMMARY.md` for curated type signatures (AgentConfig, TaskResult, ConversationContext, and all tool request/response shapes).
 
 **Do NOT read these files** — they are large generated files that waste context:
+
 - `src/lib/types/tools.generated.ts` (~13,000 lines) — use TYPE-SUMMARY.md instead
 - `src/lib/types/core.generated.ts` (~2,000 lines) — use TYPE-SUMMARY.md instead
 - `src/lib/types/schemas.generated.ts` (~8,000 lines) — Zod runtime schemas, rarely needed directly
@@ -208,6 +209,10 @@ npm run sync-schemas       # Download from protocol repo
 npm run generate-types     # Generate TypeScript types
 npm run generate-zod-schemas  # Generate runtime validation
 ```
+
+### Wire-version compat (v3 SDK ↔ legacy sellers)
+
+The SDK speaks one AdCP major (`ADCP_VERSION` in `src/lib/version.ts`, currently `3.0.1`) on its public surface and adapts to legacy sellers underneath. v2.5 is the only active legacy shim; the recipe for adding a new one (e.g. v3 when the SDK pin moves to v4) lives in [`docs/development/WIRE-VERSION-COMPAT.md`](./docs/development/WIRE-VERSION-COMPAT.md). Touch that doc whenever you add to `src/lib/adapters/legacy/`, `src/lib/types/v*-*/`, or `schemas/cache/<version>/`.
 
 ## Testing Strategies
 

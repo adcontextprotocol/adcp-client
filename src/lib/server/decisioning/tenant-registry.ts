@@ -116,27 +116,55 @@ export interface TenantConfig<P extends DecisioningPlatform = DecisioningPlatfor
    */
   jwksUrl?: string;
   /**
-   * Signing keypair for RFC 9421 response signing. **Optional in 3.x;
+   * Tenant's webhook-signing identity (RFC 9421). **Optional in 3.x;
    * mandated in 4.0.**
    *
-   * When set, the registry validates `publicJwk` appears in the tenant's
-   * published JWKS at `{agentUrl}/.well-known/brand.json` (or `jwksUrl`
-   * if overridden) before transitioning the tenant to `healthy`.
+   * **Scope is webhooks only.** AdCP 3.x defines exactly one
+   * outbound seller-→buyer signing surface: webhook deliveries. The
+   * synchronous tools/call reply is **not** signed at the body level
+   * — TLS provides session-scoped integrity for the immediate response,
+   * and signed webhooks carry durable at-rest integrity for async
+   * artifacts. This is the deliberate two-surface design, not a
+   * coverage gap; see `docs/building/understanding/security-model.mdx`
+   * § "What gets signed — and what doesn't" (adcp#3737, resolved by
+   * adcp#3742). Adopters who need attestable artifacts for
+   * synchronous flows structure the tool to emit a signed webhook
+   * (the "request-the-webhook" pattern in the same doc).
    *
-   * When omitted, JWKS validation is skipped entirely — the tenant
-   * transitions directly from `pending` to `healthy` on register(), with
-   * `reason: 'unsigned (no signingKey)'`. AdCP 3.x treats request signing
-   * as optional, so adopters spiking the SDK before standing up KMS or
-   * publishing brand.json can ship without signing material. Buyers MUST
-   * NOT break when an agent doesn't sign in 3.x — that's covered by the
+   * When set, the registry does two things:
+   *
+   *   1. **JWKS validation.** Confirms `publicJwk` appears in the
+   *      tenant's published JWKS at `{agentUrl}/.well-known/brand.json`
+   *      (or `jwksUrl` if overridden) before transitioning the tenant
+   *      to `healthy`.
+   *   2. **Webhook auto-wire.** Plumbs the privateJwk into
+   *      `serverOptions.webhooks.signerKey` automatically, so outbound
+   *      webhook deliveries are signed without the adopter wiring the
+   *      key twice. Strict on `adcp_use: "webhook-signing"` per AdCP
+   *      key-purpose discriminator (adcp#2423). Adopters wiring a
+   *      KMS-backed signer or a distinct webhook key per tenant set
+   *      `serverOptions.webhooks.signerKey` / `signerProvider`
+   *      explicitly — the explicit config wins and auto-wiring is
+   *      skipped.
+   *
+   * When omitted, both behaviors short-circuit: JWKS validation is
+   * skipped, the tenant transitions directly from `pending` to
+   * `healthy` on register() with `reason: 'unsigned (no signingKey)'`,
+   * and outbound webhooks are emitted unsigned (or, in 4.0, would be
+   * a registration error). AdCP 3.x treats signing as optional, so
+   * adopters spiking the SDK before standing up KMS or publishing
+   * brand.json can ship without signing material. Buyers MUST NOT
+   * break when an agent doesn't sign in 3.x — that's covered by the
    * "tolerate Signature headers" baseline regardless of whether the
    * agent itself signs.
    *
    * For local dev with signing enabled, pair `createSelfSignedTenantKey()`
-   * (generates an Ed25519 keypair) with `createNoopJwksValidator()`
+   * (generates an Ed25519 keypair already tagged
+   * `adcp_use: "webhook-signing"`) with `createNoopJwksValidator()`
    * (skips the brand.json roundtrip in dev/test). Production adopters
    * keep the default validator and publish the public half via
-   * brand.json.
+   * brand.json. See `docs/guides/SIGNING-GUIDE.md` § "Self-signed dev
+   * path" for the worked recipe.
    */
   signingKey?: TenantSigningKey;
   /** The DecisioningPlatform impl for this tenant. */

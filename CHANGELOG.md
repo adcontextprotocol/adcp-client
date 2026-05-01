@@ -1,5 +1,65 @@
 # Changelog
 
+## 6.4.0
+
+### Minor Changes
+
+- e76ab7d: Add `field_less_than` and `field_equals_context` cross-step comparison validators to the storyboard runner.
+
+  These two new `StoryboardValidationCheck` kinds let storyboard authors assert relationships between a current-step response field and a value captured from an earlier step via `context_outputs`. The runtime accumulator is the existing `storyboardContext` (option 2 / context-outputs style), consistent with the `refs_resolve` validator precedent.
+  - **`field_less_than`** — asserts a numeric field is strictly less than a comparand. The comparand is either a runtime context value (`context_key`) or a literal (`value`). Emits a type error if either operand is non-numeric; passes with a `context_key_absent` observation if the referenced context key was never populated (prior step may have been legitimately skipped on a branch-set path).
+  - **`field_equals_context`** — asserts a field deep-equals a context-captured runtime value. Requires `context_key`. Same skip-with-observation behavior when the key is absent.
+
+  Both validators require `path`. Both add `context_key?: string` to `StoryboardValidation` (ignored by all other check types).
+
+  Enables the runner side of adcp#2642, which adds these check kinds to the universal storyboard schema enum once this lands.
+
+- 7b804ea: feat(conformance): expose per-step accumulated context in AssertionContext for cross-step comparison validators
+
+  Adds `storyboardContext?: StoryboardContext` to `AssertionContext`. The runner
+  now threads the accumulated context (all prior steps' `context_outputs` and
+  convention-extracted values) into every assertion's context object before each
+  `onStep` call, using the Option 2 / context-outputs style (same key namespace
+  as `$context.*` placeholders and `context_outputs` entries).
+
+  Assertion implementations can now read `ctx.storyboardContext?.['my_key']` to
+  compare values from a prior step against the current step's result. Missing
+  keys return `undefined`; individual assertion handlers decide whether to skip
+  or fail on absence.
+
+  Implements the runner side of adcp-client#1140 / adcontextprotocol/adcp#2642.
+
+### Patch Changes
+
+- 5d98910: Fix storyboard runner cascade over-applying `prerequisite_failed` to steps independently `not_applicable` or `missing_tool` (adcp-client#1169).
+
+  When an upstream stateful step trips the cascade, the runner now evaluates each downstream stateful step's intrinsic skip-eligibility **before** applying the cascade reason. If the agent never advertised the step's tool, the step is classified as `missing_tool` (`passed: true`) rather than `prerequisite_failed` (`passed: false`). This makes the storyboard report honest for agents with reduced specialism surfaces: `missing_tool` means "this agent doesn't claim this surface, by design", while `prerequisite_failed` means "this agent has a real setup bug affecting state that should have materialized."
+
+- b8c0872: Use `DEFAULT_REPORTING_CAPABILITIES` in decisioning-platform worked examples and SKILL.md quickstart. Updates `broadcast-tv`, `mock-seller`, and `programmatic` examples to import and reference the exported constant rather than hand-rolling `reporting_capabilities` inline. Adds the constant to the `build-decisioning-platform` imports cheat sheet and `getProducts` product literal so codegen agents produce schema-valid products on first try.
+- 2e0cb46: Cross-link the merged spec decision (adcp#3742, "synchronous response bodies are not signed — by design") in `TenantConfig.signingKey`'s JSDoc, and add a "Self-signed dev path" recipe to `docs/guides/SIGNING-GUIDE.md`.
+
+  The field's prior doc described the signing scope as "RFC 9421 response signing" — that wording predated the spec decision and didn't match what the SDK actually does. Updated to reflect: scope is webhook-signing only; the synchronous tools/call reply is not signed at the body level by deliberate design (TLS for sync, signed webhooks for async); adopters needing attestable artifacts for synchronous flows use the request-the-webhook pattern. Doc points at `docs/building/understanding/security-model.mdx` § "What gets signed — and what doesn't" for the canonical reasoning.
+
+  The signing guide now carries the worked recipe for the multi-tenant self-signed dev loop: `createTenantRegistry` + `createSelfSignedTenantKey()` + `createNoopJwksValidator()` (gated to `NODE_ENV` ∈ {test, development} unless `ADCP_NOOP_JWKS_ACK=1`). Production promotion path covered (publish JWK to brand.json, swap in-memory key for KMS-backed `SigningProvider`). Plus the omit-key path for adopters who aren't ready to sign yet.
+
+  No behavior change.
+
+- 3a9b7fe: Fix `adaptSyncCreativesRequestForV2` to pass the role-keyed `assets` manifest through unchanged.
+
+  PR #1118 introduced a flatten step that extracted the first role's asset from the manifest and passed it as a flat payload (`{ asset_type, url, … }`). This was incorrect: the v2.5 `creative-asset.json` schema declares `assets` using `patternProperties` keyed by role string — the same manifest shape v3 uses — so the flat output failed v2.5 schema validation on every field. The adapter now passes `assets` through verbatim, and the `sync_creatives` conformance fixture in `adapter-v2-5-conformance.test.js` has been updated from an `expected_failures` pin to a standard passing assertion.
+
+- 9cf9f9a: transport.maxResponseBytes hygiene: thread per-call override through TaskExecutor secondary call sites, rename ResponseTooLargeError field, add MCP integration test. Closes #1177.
+  - `TaskExecutor.getTaskStatus`, `listTasksForAgent`, `listTasks`, `getTaskList`, `continueTaskWithInput`, and
+    `pollTaskCompletion` now accept a per-call `transport?` override that beats the constructor-level cap.
+    `SubmittedContinuation.track` exposes the per-call override; `waitForCompletion` inherits the
+    transport cap from task-submission time (intentional — polling loops run an indefinite number of
+    requests and a per-loop override would be a footgun).
+  - `ResponseTooLargeError.declaredContentLength` renamed to `contentLengthHeader` (pre-release fix;
+    the field was introduced in the same release cycle and has zero published consumer surface).
+  - `test/unit/mcp-tool-size-limit.test.js` — end-to-end integration test proving the cap fires through
+    `ProtocolClient.callTool` → `connectMCPWithFallbackImpl` → `wrapFetchWithSizeLimit` for the
+    non-OAuth MCP path.
+
 ## 6.3.0
 
 ### Minor Changes
