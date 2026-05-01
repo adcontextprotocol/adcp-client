@@ -123,12 +123,10 @@ function buildPrompt(
     auth: UpstreamAuth;
     openapiPath: string;
     principalScope: string;
-    principalMapping: Array<{
-      adcpField: string;
-      adcpValue: string;
-      upstreamField: string;
-      upstreamValue: string;
-    }>;
+    /** AdCP-side principal field name(s) the agent will receive — e.g.
+     * `account.advertiser`, `account.operator`. Listed without specific
+     * values so the agent can't hardcode the mapping (issue #1225). */
+    principalAdcpFields: string[];
   }
 ): string {
   const authSection = upstream
@@ -143,7 +141,7 @@ function buildPrompt(
 
 You are NOT inventing a decisioning/signal/creative platform from scratch. The adopter brings an existing upstream platform and you are writing the AdCP wrapper around it.
 
-The upstream platform is running locally as a fixture. Treat it exactly as you would the adopter's real platform — call its HTTP API to fetch state and post mutations.
+The upstream platform is running locally as a fixture. Treat it exactly as you would the adopter's real platform — call its HTTP API to fetch state and post mutations. **Do NOT mock or stub the upstream calls in your handlers.** Every AdCP handler must execute at least one real HTTP request against the upstream as part of its work; the harness checks endpoint hit-counts after the storyboard run and fails the test if expected upstream calls were skipped (façade detection per adcontextprotocol/adcp-client#1225).
 
 **Base URL**: ${upstream.url}
 **OpenAPI spec** (read this first): ${upstream.openapiPath}
@@ -151,13 +149,15 @@ The upstream platform is running locally as a fixture. Treat it exactly as you w
 **Authentication**:${authSection}
 - Per-tenant scope: ${upstream.principalScope}
 
-**Principal mapping**: the AdCP request you receive will carry an identifier (e.g., \`account.operator\` or \`account.advertiser\`). You must translate that to the upstream tenant identifier when calling the upstream API:
+**Runtime principal resolution.** The AdCP request you receive will carry one or more identifiers (${upstream.principalAdcpFields.map(f => `\`${f}\``).join(', ')}) — domain strings or operator names from the buyer's perspective. You do NOT know what specific values the storyboard will send; you MUST resolve them at runtime by calling the upstream's lookup endpoint:
 
-${upstream.principalMapping.map(m => `- AdCP \`${m.adcpField}: "${m.adcpValue}"\`  →  upstream \`${m.upstreamField}: ${m.upstreamValue}\``).join('\n')}
+\`\`\`
+GET ${upstream.url}/_lookup/<resource>?<adcp_field>=<value>
+\`\`\`
 
-The mapping table above is fixed seed data for this fixture; in production this would be a config file or DB lookup. Hard-code it for the test (a Map literal in your adapter is fine).
+For example, given AdCP \`account.advertiser: <some-domain>\`, your adapter might call \`GET ${upstream.url}/_lookup/advertiser?adcp_advertiser=<some-domain>\` and use the returned upstream id for subsequent calls. Hardcoding a mapping table will not work — the harness uses values your prompt does not contain.
 
-If a buyer's principal value isn't in your mapping, return an appropriate AdCP error rather than calling upstream with no/wrong tenant scope.
+If a buyer's principal value isn't found by the lookup endpoint (404), return an appropriate AdCP error rather than calling upstream with no/wrong tenant scope.
 `
     : '';
 
@@ -440,12 +440,14 @@ interface UpstreamHandle {
   auth: UpstreamAuth;
   openapiPath: string;
   principalScope: string;
-  principalMapping: Array<{
-    adcpField: string;
-    adcpValue: string;
-    upstreamField: string;
-    upstreamValue: string;
-  }>;
+  /** AdCP-side principal fields the agent will receive (e.g.
+   * `account.advertiser`). The harness no longer leaks specific value
+   * mappings to Claude — only the field names. Issue #1225. */
+  principalAdcpFields: string[];
+  /** Endpoint paths the harness expects to see hit at least once during a
+   * storyboard run. After the agent finishes, the harness queries
+   * `GET <url>/_debug/traffic` and asserts each of these has count ≥ 1. */
+  expectedEndpointHits: string[];
   close: () => Promise<void>;
 }
 
@@ -460,7 +462,7 @@ async function bootUpstreamForHarness(specialism: string, port: number): Promise
     url: string;
     auth: UpstreamAuth;
     principalScope: string;
-    principalMapping: UpstreamHandle['principalMapping'];
+    principalMapping: Array<{ adcpField: string }>;
     close: () => Promise<void>;
   }>;
   try {
@@ -476,14 +478,37 @@ async function bootUpstreamForHarness(specialism: string, port: number): Promise
   const handle = await bootMockServer({ specialism, port });
   const openapiPath = resolve(REPO_ROOT, `src/lib/mock-server/${specialism}/openapi.yaml`);
   log(`upstream mock-server (${specialism}) up on ${handle.url}`);
+  // Distinct AdCP field names from the principal-mapping table (deduped) —
+  // no specific values, just the field names the agent will receive.
+  const principalAdcpFields = Array.from(new Set(handle.principalMapping.map(m => m.adcpField)));
   return {
     url: handle.url,
     auth: handle.auth,
     openapiPath,
     principalScope: handle.principalScope,
-    principalMapping: handle.principalMapping,
+    principalAdcpFields,
+    expectedEndpointHits: expectedHitsForSpecialism(specialism),
     close: handle.close,
   };
+}
+
+/** Per-specialism list of upstream endpoints the harness expects the agent
+ * to call at least once during a storyboard run. Façade adapters that
+ * return shape-valid AdCP responses without calling these endpoints fail
+ * the post-run traffic assertion. Issue #1225. */
+function expectedHitsForSpecialism(specialism: string): string[] {
+  switch (specialism) {
+    case 'sales-social':
+      return [
+        'POST /oauth/token',
+        'GET /_lookup/advertiser',
+        'POST /v1.3/advertiser/{id}/custom_audience/upload',
+        'POST /v1.3/advertiser/{id}/event/track',
+      ];
+    default:
+      // Other specialisms haven't been instrumented yet — no traffic check.
+      return [];
+  }
 }
 
 async function main(): Promise<void> {
@@ -520,7 +545,7 @@ async function main(): Promise<void> {
               auth: upstream.auth,
               openapiPath: upstream.openapiPath,
               principalScope: upstream.principalScope,
-              principalMapping: upstream.principalMapping,
+              principalAdcpFields: upstream.principalAdcpFields,
             }
           : undefined
       ),
@@ -536,9 +561,42 @@ async function main(): Promise<void> {
 
     const url = `http://127.0.0.1:${args.port}/mcp`;
     log(`grading storyboard ${args.storyboard}`);
-    const { passed, raw } = runGrader(url, args.storyboard);
+    const { passed: storyboardPassed, raw } = runGrader(url, args.storyboard);
     process.stdout.write(raw);
-    log(passed ? `PASS — storyboard ${args.storyboard}` : `FAIL — storyboard ${args.storyboard}`);
+
+    // Façade-detection check (issue #1225). Even if the storyboard passes,
+    // we assert the agent actually called the upstream's headline endpoints.
+    // Adapters that return shape-valid AdCP responses without integrating
+    // with the upstream pass the storyboard but fail this check.
+    let trafficOk = true;
+    if (upstream && upstream.expectedEndpointHits.length > 0) {
+      try {
+        const trafficRes = await fetch(`${upstream.url}/_debug/traffic`);
+        const trafficBody = (await trafficRes.json()) as { traffic: Record<string, number> };
+        const missing: string[] = [];
+        for (const route of upstream.expectedEndpointHits) {
+          const hits = trafficBody.traffic[route] ?? 0;
+          if (hits < 1) missing.push(route);
+        }
+        if (missing.length > 0) {
+          trafficOk = false;
+          log(`FAÇADE DETECTED — agent passed storyboard shape checks but never called these upstream endpoints:`);
+          for (const m of missing) log(`  ✗ ${m}`);
+          log(`Full upstream traffic: ${JSON.stringify(trafficBody.traffic, null, 2)}`);
+        } else {
+          log(`upstream traffic verified — agent called all expected endpoints`);
+        }
+      } catch (err) {
+        log(`upstream traffic check skipped: ${(err as Error)?.message ?? err}`);
+      }
+    }
+
+    const passed = storyboardPassed && trafficOk;
+    log(
+      passed
+        ? `PASS — storyboard ${args.storyboard} + upstream traffic verified`
+        : `FAIL — storyboard=${storyboardPassed ? 'pass' : 'fail'}, traffic=${trafficOk ? 'ok' : 'façade'}`
+    );
     process.exit(passed ? 0 : 1);
   } finally {
     if (agent) {

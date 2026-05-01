@@ -223,9 +223,6 @@ function formatCreativeTemplateSummary(url: string, apiKey: string): string {
 }
 
 function formatSalesSocialSummary(url: string, client: { client_id: string; client_secret: string }): string {
-  const advertiserLines = ADVERTISERS.map(
-    adv => `  ${adv.advertiser_id}  →  AdCP account.advertiser: "${adv.adcp_advertiser}"`
-  ).join('\n');
   return [
     `Mock social platform (TikTok-flavored) running at ${url}`,
     ``,
@@ -236,12 +233,16 @@ function formatSalesSocialSummary(url: string, client: { client_id: string; clie
     `  Then attach the issued access_token as Authorization: Bearer <token>`,
     `  Refresh via same endpoint with grant_type=refresh_token (token rotation on use).`,
     ``,
-    `Advertiser mapping (path-scoped):`,
-    advertiserLines,
+    `Path-scoped multi-tenancy: /v1.3/advertiser/{advertiser_id}/...`,
+    `Resolve {advertiser_id} from AdCP-side identifier at runtime via:`,
+    `  GET ${url}/_lookup/advertiser?adcp_advertiser=<adcp-side-value>`,
+    `(Specific advertiser values are not exposed to adapters — see issue #1225.)`,
     ``,
     `OpenAPI spec: src/lib/mock-server/sales-social/openapi.yaml`,
     `Key routes:`,
     `  POST   ${url}/oauth/token                                                  (no auth)`,
+    `  GET    ${url}/_lookup/advertiser?adcp_advertiser=<value>                  (no auth)`,
+    `  GET    ${url}/_debug/traffic                                              (no auth)`,
     `  GET    ${url}/v1.3/advertiser/{advertiser_id}/info`,
     `  POST   ${url}/v1.3/advertiser/{advertiser_id}/custom_audience/create`,
     `  POST   ${url}/v1.3/advertiser/{advertiser_id}/custom_audience/upload      (hashed PII)`,
