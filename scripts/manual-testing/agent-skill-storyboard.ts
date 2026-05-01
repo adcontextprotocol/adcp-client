@@ -35,6 +35,7 @@ import { mkdtemp, readFile, writeFile, rm, stat, chmod, symlink } from 'node:fs/
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { connect } from 'node:net';
+import { evaluateGraderOutput } from '../../src/lib/testing/compliance/grader-output.js';
 
 interface Args {
   skill: string;
@@ -409,11 +410,10 @@ function runGrader(url: string, storyboardId: string): { passed: boolean; raw: s
   let passed = false;
   try {
     const parsed = JSON.parse(res.stdout);
-    if (typeof parsed.overall_status === 'string') {
-      passed = parsed.overall_status === 'passing';
-    } else if (parsed.summary && typeof parsed.summary === 'object') {
-      const s = parsed.summary as { tracks_passed?: number; tracks_failed?: number };
-      passed = (s.tracks_failed ?? 0) === 0 && (s.tracks_passed ?? 0) > 0;
+    const result = evaluateGraderOutput(parsed);
+    passed = result.passed;
+    if (result.passed && result.silentTracks) {
+      log('warning: track classified as silent — grading as pass (no failed or partial tracks)');
     }
   } catch {
     // stdout wasn't clean JSON — the CLI printed an error to stderr and
