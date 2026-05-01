@@ -381,6 +381,19 @@ createAdcpServerFromPlatform(platform, {
   });
   ```
   Standard one-brand-per-host deployments don't need the override.
+- **`TenantConfig.signingKey` auto-wires into webhook signing.** When
+  set, the registry plumbs `signingKey` through to
+  `serverOptions.webhooks.signerKey` automatically — adopters set the
+  key once on `TenantConfig` and outbound webhook deliveries are RFC
+  9421-signed by default. Strict on `adcp_use`: the JWK MUST carry
+  `adcp_use: "webhook-signing"` per AdCP key-purpose discriminator
+  (adcp#2423). Register-time error if missing or mismatched. Adopters
+  who wire their own webhook signer on `serverOptions.webhooks.signerKey`
+  / `signerProvider` pass through unaffected — explicit config wins
+  and auto-wiring is skipped (e.g., KMS-backed signing, distinct keys
+  per tenant). Supported JWK shapes: Ed25519 (`kty=OKP, crv=Ed25519`)
+  and ECDSA P-256 (`kty=EC, crv=P-256`); RSA / EC P-384 throw with a
+  remediation hint pointing at `docs/guides/SIGNING-GUIDE.md`.
 - **`TenantConfig.signingKey` is optional in 3.x; 4.0 mandates it.**
   AdCP 3.x treats request signing as optional-but-recommended (CLAUDE.md
   § Protocol-Wide Requirements; `signed-requests` is a preview

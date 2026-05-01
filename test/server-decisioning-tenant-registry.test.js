@@ -32,10 +32,26 @@ function basePlatform(specialism = 'sales-non-guaranteed') {
   };
 }
 
+// Ed25519 fixture with `adcp_use: 'webhook-signing'` so the registry's
+// auto-wire path (signingKey → webhooks.signerKey) accepts it. The
+// `x` / `d` values are valid base64url but cryptographically meaningless
+// — they're never actually used to sign anything in these tests; the
+// JWKS validator is faked.
 const SAMPLE_KEY = {
   keyId: 'tenant-key-1',
-  publicJwk: { kty: 'RSA', n: 'pub_modulus_xxx', e: 'AQAB' },
-  privateJwk: { kty: 'RSA', n: 'pub_modulus_xxx', e: 'AQAB', d: 'priv_exp_yyy' },
+  publicJwk: {
+    kty: 'OKP',
+    crv: 'Ed25519',
+    x: 'AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA',
+    adcp_use: 'webhook-signing',
+  },
+  privateJwk: {
+    kty: 'OKP',
+    crv: 'Ed25519',
+    x: 'AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA',
+    d: 'BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB',
+    adcp_use: 'webhook-signing',
+  },
 };
 
 const DEFAULT_SERVER_OPTIONS = {
@@ -1374,5 +1390,260 @@ describe('createNoopJwksValidator — NODE_ENV allowlist', () => {
       });
       assert.strictEqual(res.ok, true);
     });
+  });
+});
+
+describe('TenantRegistry — webhook-signing auto-wire', () => {
+  // The auto-wire plumbs TenantConfig.signingKey into the underlying
+  // AdcpServer's webhooks.signerKey. Direct observation requires
+  // spying on createAdcpServerFromPlatform, which is internal — so
+  // these tests assert observable outcomes:
+  //   - register() succeeds with a valid webhook-signing key (no throw)
+  //   - register() throws with adcp_use missing / wrong
+  //   - register() throws with non-Ed25519 / non-EC-P256 JWK shape
+  //   - register() with explicit serverOptions.webhooks.signerKey
+  //     bypasses the assertion (auto-wire skipped)
+
+  const VALID_KEY = {
+    keyId: 'k1',
+    publicJwk: {
+      kty: 'OKP',
+      crv: 'Ed25519',
+      x: 'AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA',
+      adcp_use: 'webhook-signing',
+    },
+    privateJwk: {
+      kty: 'OKP',
+      crv: 'Ed25519',
+      x: 'AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA',
+      d: 'BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB',
+      adcp_use: 'webhook-signing',
+    },
+  };
+
+  it('Ed25519 key with adcp_use=webhook-signing → register succeeds', () => {
+    const validator = fakeValidator(async () => ({ ok: true }));
+    const registry = createTenantRegistry({
+      jwksValidator: validator,
+      defaultServerOptions: DEFAULT_SERVER_OPTIONS,
+      autoValidate: false,
+    });
+    assert.doesNotThrow(() =>
+      registry.register('autowire-ok', {
+        agentUrl: 'https://autowire-ok.example.com',
+        signingKey: VALID_KEY,
+        platform: basePlatform(),
+      })
+    );
+  });
+
+  it('EC P-256 key with adcp_use=webhook-signing → register succeeds', () => {
+    const ecKey = {
+      keyId: 'ec-1',
+      publicJwk: {
+        kty: 'EC',
+        crv: 'P-256',
+        x: 'AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA',
+        y: 'BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB',
+        adcp_use: 'webhook-signing',
+      },
+      privateJwk: {
+        kty: 'EC',
+        crv: 'P-256',
+        x: 'AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA',
+        y: 'BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB',
+        d: 'CCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCC',
+        adcp_use: 'webhook-signing',
+      },
+    };
+    const validator = fakeValidator(async () => ({ ok: true }));
+    const registry = createTenantRegistry({
+      jwksValidator: validator,
+      defaultServerOptions: DEFAULT_SERVER_OPTIONS,
+      autoValidate: false,
+    });
+    assert.doesNotThrow(() =>
+      registry.register('autowire-ec', {
+        agentUrl: 'https://autowire-ec.example.com',
+        signingKey: ecKey,
+        platform: basePlatform(),
+      })
+    );
+  });
+
+  it('missing adcp_use → register throws with remediation hint', () => {
+    const noUseKey = {
+      ...VALID_KEY,
+      publicJwk: { ...VALID_KEY.publicJwk, adcp_use: undefined },
+      privateJwk: { ...VALID_KEY.privateJwk, adcp_use: undefined },
+    };
+    const validator = fakeValidator(async () => ({ ok: true }));
+    const registry = createTenantRegistry({
+      jwksValidator: validator,
+      defaultServerOptions: DEFAULT_SERVER_OPTIONS,
+      autoValidate: false,
+    });
+    assert.throws(
+      () =>
+        registry.register('autowire-no-use', {
+          agentUrl: 'https://autowire-no-use.example.com',
+          signingKey: noUseKey,
+          platform: basePlatform(),
+        }),
+      /publicJwk\.adcp_use must be 'webhook-signing'.*<unset>/s
+    );
+  });
+
+  it('wrong adcp_use (e.g., request-signing) → register throws pointing at adcp#2423', () => {
+    const requestSigningKey = {
+      ...VALID_KEY,
+      publicJwk: { ...VALID_KEY.publicJwk, adcp_use: 'request-signing' },
+      privateJwk: { ...VALID_KEY.privateJwk, adcp_use: 'request-signing' },
+    };
+    const validator = fakeValidator(async () => ({ ok: true }));
+    const registry = createTenantRegistry({
+      jwksValidator: validator,
+      defaultServerOptions: DEFAULT_SERVER_OPTIONS,
+      autoValidate: false,
+    });
+    assert.throws(
+      () =>
+        registry.register('autowire-wrong-use', {
+          agentUrl: 'https://autowire-wrong-use.example.com',
+          signingKey: requestSigningKey,
+          platform: basePlatform(),
+        }),
+      /adcp#2423/
+    );
+  });
+
+  it('asymmetric adcp_use across publicJwk / privateJwk → register throws on private mismatch', () => {
+    const asymmKey = {
+      ...VALID_KEY,
+      privateJwk: { ...VALID_KEY.privateJwk, adcp_use: 'request-signing' },
+    };
+    const validator = fakeValidator(async () => ({ ok: true }));
+    const registry = createTenantRegistry({
+      jwksValidator: validator,
+      defaultServerOptions: DEFAULT_SERVER_OPTIONS,
+      autoValidate: false,
+    });
+    assert.throws(
+      () =>
+        registry.register('autowire-asymm', {
+          agentUrl: 'https://autowire-asymm.example.com',
+          signingKey: asymmKey,
+          platform: basePlatform(),
+        }),
+      /privateJwk\.adcp_use.*same purpose as publicJwk/
+    );
+  });
+
+  it('RSA key → register throws (RSA not in AdCP signing-algorithm set)', () => {
+    const rsaKey = {
+      keyId: 'rsa-1',
+      publicJwk: { kty: 'RSA', n: 'AAA', e: 'AQAB', adcp_use: 'webhook-signing' },
+      privateJwk: { kty: 'RSA', n: 'AAA', e: 'AQAB', d: 'BBB', adcp_use: 'webhook-signing' },
+    };
+    const validator = fakeValidator(async () => ({ ok: true }));
+    const registry = createTenantRegistry({
+      jwksValidator: validator,
+      defaultServerOptions: DEFAULT_SERVER_OPTIONS,
+      autoValidate: false,
+    });
+    assert.throws(
+      () =>
+        registry.register('autowire-rsa', {
+          agentUrl: 'https://autowire-rsa.example.com',
+          signingKey: rsaKey,
+          platform: basePlatform(),
+        }),
+      /unsupported JWK shape.*RSA/
+    );
+  });
+
+  it('explicit serverOptions.webhooks.signerKey → auto-wire skipped, assertion bypassed', () => {
+    // Adopter has wired their own webhook signer (KMS-backed, distinct
+    // key per tenant, etc.) — the registry MUST defer to that and skip
+    // auto-wiring even if signingKey would have failed the strict check.
+    const wrongUseKey = {
+      ...VALID_KEY,
+      publicJwk: { ...VALID_KEY.publicJwk, adcp_use: 'request-signing' },
+      privateJwk: { ...VALID_KEY.privateJwk, adcp_use: 'request-signing' },
+    };
+    const validator = fakeValidator(async () => ({ ok: true }));
+    const registry = createTenantRegistry({
+      jwksValidator: validator,
+      defaultServerOptions: DEFAULT_SERVER_OPTIONS,
+      autoValidate: false,
+    });
+    assert.doesNotThrow(() =>
+      registry.register('autowire-explicit-override', {
+        agentUrl: 'https://autowire-override.example.com',
+        signingKey: wrongUseKey,
+        platform: basePlatform(),
+        serverOptions: {
+          webhooks: {
+            signerKey: {
+              keyid: 'explicit-webhook-key',
+              alg: 'ed25519',
+              privateKey: { kty: 'OKP', kid: 'explicit-webhook-key', crv: 'Ed25519', x: 'XXX', d: 'YYY' },
+            },
+          },
+        },
+      })
+    );
+  });
+
+  it('explicit serverOptions.webhooks.signerProvider → auto-wire skipped', () => {
+    // Same as above but for the KMS-backed path.
+    const wrongUseKey = {
+      ...VALID_KEY,
+      publicJwk: { ...VALID_KEY.publicJwk, adcp_use: 'request-signing' },
+      privateJwk: { ...VALID_KEY.privateJwk, adcp_use: 'request-signing' },
+    };
+    const validator = fakeValidator(async () => ({ ok: true }));
+    const registry = createTenantRegistry({
+      jwksValidator: validator,
+      defaultServerOptions: DEFAULT_SERVER_OPTIONS,
+      autoValidate: false,
+    });
+    assert.doesNotThrow(() =>
+      registry.register('autowire-provider-override', {
+        agentUrl: 'https://autowire-provider.example.com',
+        signingKey: wrongUseKey,
+        platform: basePlatform(),
+        serverOptions: {
+          webhooks: {
+            signerProvider: {
+              keyid: 'kms-key',
+              algorithm: 'ed25519',
+              fingerprint: 'sha256:abc',
+              sign: async () => new Uint8Array(64),
+            },
+          },
+        },
+      })
+    );
+  });
+
+  it('createSelfSignedTenantKey output passes the auto-wire assertion end-to-end', async () => {
+    const { createSelfSignedTenantKey } = require('../dist/lib/server/decisioning/tenant-registry');
+    const key = await createSelfSignedTenantKey();
+    assert.strictEqual(key.publicJwk.adcp_use, 'webhook-signing');
+    assert.strictEqual(key.privateJwk.adcp_use, 'webhook-signing');
+    const validator = fakeValidator(async () => ({ ok: true }));
+    const registry = createTenantRegistry({
+      jwksValidator: validator,
+      defaultServerOptions: DEFAULT_SERVER_OPTIONS,
+      autoValidate: false,
+    });
+    assert.doesNotThrow(() =>
+      registry.register('selfsigned-autowire', {
+        agentUrl: 'https://selfsigned.example.com',
+        signingKey: key,
+        platform: basePlatform(),
+      })
+    );
   });
 });

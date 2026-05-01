@@ -27,6 +27,8 @@
 import type { DecisioningPlatform, RequiredPlatformsFor, RequiredCapabilitiesFor } from './platform';
 import type { DecisioningAdcpServer, CreateAdcpServerFromPlatformOptions } from './runtime/from-platform';
 import { createAdcpServerFromPlatform } from './runtime/from-platform';
+import type { SignerKey } from '../../signing/signer';
+import type { AdcpJsonWebKey } from '../../signing/types';
 
 // ---------------------------------------------------------------------------
 // Public types
@@ -38,9 +40,31 @@ export interface TenantSigningKey {
   /**
    * JWK form of the public key. MUST appear in the JWKS at
    * `{agentUrl}/.well-known/brand.json` for the tenant to validate.
+   *
+   * **`adcp_use` requirement.** The JWK MUST carry
+   * `adcp_use: "webhook-signing"` for the registry to auto-wire this
+   * key into outbound webhook signing. Per AdCP, request-signing and
+   * webhook-signing keys MUST be distinct (key-purpose discriminator,
+   * adcp#2423) — a key intended for inbound request-signature
+   * verification CANNOT double as a webhook-signing key. If you have
+   * both purposes, register two tenants OR wire the request-signing
+   * verifier separately on `serverOptions.signedRequests` and put only
+   * the webhook-signing key on `signingKey`.
+   *
+   * Set with: `publicJwk: { ...jwk, adcp_use: 'webhook-signing' }`.
+   * `createSelfSignedTenantKey()` sets it for you.
    */
   publicJwk: JsonWebKey;
-  /** Private JWK used to sign outbound responses (RFC 9421). */
+  /**
+   * Private JWK used to sign outbound webhooks (RFC 9421). MUST carry
+   * `adcp_use: "webhook-signing"`. The registry's `buildServer` plumbs
+   * this into `serverOptions.webhooks.signerKey` automatically — set
+   * the key once on `signingKey` and outbound webhook deliveries are
+   * RFC 9421-signed by default. Adopters who want a different webhook
+   * key (or don't want auto-wiring) explicitly set
+   * `serverOptions.webhooks.signerKey` / `signerProvider`; the explicit
+   * config wins and auto-wiring is skipped.
+   */
   privateJwk: JsonWebKey;
 }
 
@@ -445,9 +469,15 @@ export async function createSelfSignedTenantKey(opts?: { keyId?: string }): Prom
   // (register / resolve) free of jose.
   const { generateKeyPair, exportJWK } = await import('jose');
   const { publicKey, privateKey } = await generateKeyPair('EdDSA', { crv: 'Ed25519', extractable: true });
-  const publicJwk = (await exportJWK(publicKey)) as JsonWebKey;
-  const privateJwk = (await exportJWK(privateKey)) as JsonWebKey;
+  const rawPublic = (await exportJWK(publicKey)) as JsonWebKey;
+  const rawPrivate = (await exportJWK(privateKey)) as JsonWebKey;
   const keyId = opts?.keyId ?? `self-signed-${new Date().toISOString().slice(0, 10)}`;
+  // Tag both halves with `adcp_use: "webhook-signing"`. The registry's
+  // auto-wire path requires this tag (assertWebhookSigningUse below);
+  // setting it on the helper output means adopters get a working
+  // signing posture out of the box.
+  const publicJwk: JsonWebKey = { ...rawPublic, adcp_use: 'webhook-signing' } as JsonWebKey;
+  const privateJwk: JsonWebKey = { ...rawPrivate, adcp_use: 'webhook-signing' } as JsonWebKey;
   return { keyId, publicJwk, privateJwk };
 }
 
@@ -501,6 +531,72 @@ export function createNoopJwksValidator(): JwksValidator {
     async validate(): Promise<JwksValidationResult> {
       return { ok: true };
     },
+  };
+}
+
+// ---------------------------------------------------------------------------
+// Webhook auto-wire — convert TenantSigningKey to a SignerKey the framework's
+// webhook emitter understands. Strict on `adcp_use` per AdCP key-purpose
+// discriminator (adcp#2423).
+// ---------------------------------------------------------------------------
+
+/**
+ * Derive the RFC 9421 signing algorithm from JWK shape. AdCP webhook
+ * signing supports Ed25519 (kty=OKP, crv=Ed25519) and ECDSA P-256
+ * (kty=EC, crv=P-256). Anything else throws — RSA / EC P-384 / etc.
+ * are not in the AdCP signing-algorithm set.
+ */
+function deriveSigningAlg(jwk: JsonWebKey): 'ed25519' | 'ecdsa-p256-sha256' {
+  if (jwk.kty === 'OKP' && jwk.crv === 'Ed25519') return 'ed25519';
+  if (jwk.kty === 'EC' && jwk.crv === 'P-256') return 'ecdsa-p256-sha256';
+  throw new Error(
+    `TenantConfig.signingKey: unsupported JWK shape kty=${JSON.stringify(jwk.kty)} crv=${JSON.stringify(jwk.crv)}. ` +
+      'AdCP RFC 9421 webhook signing requires Ed25519 (kty=OKP, crv=Ed25519) or ECDSA P-256 (kty=EC, crv=P-256). ' +
+      'See `docs/guides/SIGNING-GUIDE.md` for key-generation recipes.'
+  );
+}
+
+/**
+ * Enforce AdCP key-purpose discriminator: a key wired into webhook
+ * signing MUST carry `adcp_use: "webhook-signing"`. Throws with a
+ * remediation-pointing error otherwise. Called only when auto-wiring
+ * fires (signingKey set + serverOptions.webhooks.signerKey unset);
+ * adopters who want different keys per purpose wire them explicitly
+ * and bypass this check.
+ */
+function assertWebhookSigningUse(key: TenantSigningKey): void {
+  const publicUse = (key.publicJwk as Record<string, unknown>).adcp_use;
+  const privateUse = (key.privateJwk as Record<string, unknown>).adcp_use;
+  if (publicUse !== 'webhook-signing') {
+    throw new Error(
+      `TenantConfig.signingKey: publicJwk.adcp_use must be 'webhook-signing' for the registry's webhook auto-wire path. ` +
+        `Got ${publicUse === undefined ? '<unset>' : JSON.stringify(publicUse)}. ` +
+        'Per AdCP, request-signing and webhook-signing keys MUST be distinct (key-purpose discriminator, adcp#2423). ' +
+        'Either: (a) tag this key with `adcp_use: "webhook-signing"` if it IS the webhook-signing key, ' +
+        '(b) mint a separate webhook-signing key and put the request-signing key on serverOptions.signedRequests instead, or ' +
+        '(c) wire `serverOptions.webhooks.signerKey` explicitly — the explicit config bypasses auto-wiring.'
+    );
+  }
+  if (privateUse !== 'webhook-signing') {
+    throw new Error(
+      `TenantConfig.signingKey: privateJwk.adcp_use must be 'webhook-signing' (same purpose as publicJwk). ` +
+        `Got ${privateUse === undefined ? '<unset>' : JSON.stringify(privateUse)}.`
+    );
+  }
+}
+
+/**
+ * Convert `TenantSigningKey` to the framework-internal `SignerKey`
+ * shape consumed by the webhook emitter. Field-name shift: the
+ * `TenantSigningKey` surface uses `keyId` (camelCase, adopter-facing);
+ * `SignerKey` uses `keyid` (lowercase, RFC 9421 wire term).
+ */
+function tenantKeyToSignerKey(key: TenantSigningKey): SignerKey {
+  const alg = deriveSigningAlg(key.publicJwk);
+  return {
+    keyid: key.keyId,
+    alg,
+    privateKey: key.privateJwk as AdcpJsonWebKey,
   };
 }
 
@@ -637,6 +733,29 @@ export function createTenantRegistry(opts: TenantRegistryOptions): TenantRegistr
       ...opts.defaultServerOptions,
       ...config.serverOptions,
     };
+    // Auto-wire `signingKey` into webhook emission. Adopters set the key
+    // once on TenantConfig and outbound webhook deliveries are RFC
+    // 9421-signed by default. Skip when:
+    //   - signingKey is omitted (3.x unsigned path), or
+    //   - the adopter has already wired their own webhook signer on
+    //     serverOptions.webhooks (explicit config wins — adopters with
+    //     KMS-backed signing or distinct webhook keys per tenant pass
+    //     through unaffected).
+    // Strict on `adcp_use`: the JWK MUST carry `adcp_use:
+    // "webhook-signing"` per AdCP key-purpose discriminator (adcp#2423).
+    // Throws at register() time with a remediation-pointing error rather
+    // than silently no-op'ing the auto-wire.
+    if (
+      config.signingKey &&
+      merged.webhooks?.signerKey === undefined &&
+      merged.webhooks?.signerProvider === undefined
+    ) {
+      assertWebhookSigningUse(config.signingKey);
+      merged.webhooks = {
+        ...(merged.webhooks ?? {}),
+        signerKey: tenantKeyToSignerKey(config.signingKey),
+      };
+    }
     return createAdcpServerFromPlatform(config.platform, merged);
   }
 
@@ -648,10 +767,9 @@ export function createTenantRegistry(opts: TenantRegistryOptions): TenantRegistr
     const [canonicalUrl, allUrls] = resolveTenantUrls(entry.config);
     // Unsigned tenant — adopter chose to ship without signing in 3.x.
     // Skip JWKS validation entirely; tenant goes straight to healthy.
-    // The privateJwk isn't wired into a response-signing path on this
-    // surface today, so omitting signingKey only changes the JWKS
-    // roundtrip (and the future 4.0 sign-this-response code path that
-    // will key off `signingKey !== undefined`).
+    // `buildServer` short-circuits the webhook auto-wire on the same
+    // condition (signingKey is undefined), so the tenant emits unsigned
+    // webhooks too — consistent posture across JWKS and signing.
     if (!entry.config.signingKey) {
       const status: TenantStatus = {
         tenantId,
