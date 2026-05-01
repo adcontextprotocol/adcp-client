@@ -1,5 +1,79 @@
 # Changelog
 
+## 6.1.0
+
+### Minor Changes
+
+- e6481ad: Adds a warn-only post-adapter validation pass against the v2.5 schema bundle. After `adaptRequestForServerVersion` rewrites a v3 request into v2 wire format for a v2-detected agent, `SingleAgentClient` calls `executor.validateAdaptedRequestAgainstV2(taskName, adaptedParams)` which validates the adapted shape against the cached v2.5 schemas in warn mode. Symmetric counterpart to the existing pre-adapter v3 pass: that one catches "user wrote bad v3", this one catches "adapter produced bad v2.5".
+
+  Always warn-only — adapter bugs shouldn't break user requests, and the v3 pre-send pass already vouched for the user-facing input shape. The pass surfaces drift via `debugLogs` (when callers pass an array; SDK-internal call sites currently don't, so warnings are silent in production until the upcoming adapter-conformance test suite consumes them as CI signal).
+
+  Skips silently for tasks without a v2.5 schema (custom tools, tasks added since 2.5.3) and when the v2.5 bundle isn't cached. Caller in `SingleAgentClient` gates on `serverVersion === 'v2'` so v3-targeted traffic doesn't pay the validation cost.
+
+  Initial baseline against the canonical adapter outputs surfaced two real drift items worth tracking separately: `adaptCreateMediaBuyRequestForV2` doesn't emit `buyer_ref` (v2.5 requires it top-level + per-package), and `adaptSyncCreativesRequestForV2`'s `assets.video` shape fails a `oneOf` in v2.5. These will be addressed alongside the adapter-conformance test suite.
+
+  `TaskExecutor.validateAdaptedRequestAgainstV2(taskName, adaptedParams, debugLogs?)` is the public seam; mirrors the shape of `validateRequest`.
+
+- e6481ad: Adds v2.5 schema bundle support so the SDK can validate against the actually-shipping AdCP 2.5.3 contract, not just v3.
+
+  `scripts/sync-v2-5-schemas.ts` (`npm run sync-schemas:v2.5`) pulls the v2.5.3 schema bundle from `adcontextprotocol/adcp@2.5-maintenance` at a pinned commit and drops it at `schemas/cache/v2.5/`. The pinned-SHA approach is necessary because the upstream `v2.5.2` and `v2.5.3` releases were never tagged or published as GitHub releases despite shipping in `package.json` and `CHANGELOG.md` (filed at `adcontextprotocol/adcp#3689`); pulling from the published spec site would silently regress to v2.5.1, missing the `additionalProperties: true` forward-compat relaxation, the `error.json` `details` typing fix, and the `impressions` / `paused` package-request fields.
+
+  The existing `resolveBundleKey('v2.5')` legacy alias and `copy-schemas-to-dist.ts` legacy-prerelease path both already routed `v2.5` correctly without resolver changes — the bundle ships at `dist/lib/schemas-data/v2.5/` alongside `dist/lib/schemas-data/3.0/`.
+
+  `schema-loader.ts`'s `ensureCoreLoaded` now registers request tool files in addition to fragments. v2.5's source tree ships flat (no pre-bundled `bundled/` subtree) with cross-fragment `$ref`s like `media-buy/create-media-buy-request.json` referencing `/schemas/media-buy/package-request.json`. The filename-suffix heuristic in `buildFileIndex` misclassifies fragments like `package-request.json` as tools (`package::request`), so the previous "skip everything in fileIndex" rule left them unregistered and AJV emitted `MissingRefError` on the cross-fragment lookup. The narrowed rule now skips only response tool files (which need `relaxResponseRoot` lazy-applied via `getValidator`); request tool files and fragments are pre-registered, so cross-fragment `$ref`s resolve at compile time. v3's bundled-schemas path is unaffected (refs were already inlined).
+
+  No buyer-facing API surface change. Internal-only — the v2.5 bundle is reachable via `getValidator(toolName, direction, 'v2.5')` for upcoming adapter-conformance work.
+
+### Patch Changes
+
+- e6481ad: Adds an adapter-conformance test suite that pins the v3→v2 wire adapters against the cached v2.5 schema bundle. CI signal for "the v2 wire adapters produce v2.5-conformant output."
+
+  Each canonical v3 fixture runs through `adaptRequestForServerVersion`; the adapted output must validate against `schemas/cache/v2.5/`. Tools with known drift have explicit `expected_failures` entries pointing at the tracking issue and pinning the failure-mode pointers — so a fix that closes the gap surfaces as an unexpected pass and prompts the entry to be removed. A "every v2-adapted tool has a fixture" guard test ensures new adapters can't ship without conformance coverage.
+
+  Initial state: `get_products` and `update_media_buy` conform clean. `create_media_buy` has known drift on `/buyer_ref` (top-level + per-package), tracked at adcontextprotocol/adcp-client#1115. `sync_creatives` has known drift on `/creatives/0/assets/video` (v3 manifest shape vs v2.5 single-asset-payload `oneOf`), tracked at adcontextprotocol/adcp-client#1116.
+
+  No source changes. Test-only — but a changeset because the suite is the binding contract for v2 wire conformance going forward.
+
+- 16ad465: `adaptCreateMediaBuyRequestForV2` now derives `buyer_ref` (top-level + per-package) from the v3 `idempotency_key`, fixing v2.5 wire-validation failures for v3 buyers calling v2 sellers (adcontextprotocol/adcp-client#1115).
+
+  v2.5's `create_media_buy` schema requires `buyer_ref` top-level and per-package as the buyer's reference for THIS media buy. v3 doesn't model `buyer_ref` directly, but `idempotency_key` carries the same client-controlled-unique-identity contract. Reusing it preserves the seller-side dedupe contract on replays — the same v3 input always produces the same v2.5 `buyer_ref` values.
+
+  Derivation precedence:
+  - **Top-level `buyer_ref`**: caller-supplied wins → else `idempotency_key` → else omitted (v3 pre-send validation should already have rejected the missing required field; on warn-mode passthrough the v2.5 validator surfaces it).
+  - **Per-package `buyer_ref`**: caller-supplied wins → else `package.idempotency_key` → else `${parent_buyer_ref}-${index}`. Position-based composition is stable across replays of the same package list.
+
+  `adaptPackageRequestForV2` gains an optional second argument `PackageAdapterContext` (`{ parentBuyerRef?, index? }`) so callers threading per-package derivation supply the parent's reference + index. Backward-compatible: the existing single-argument signature continues to work for callers that don't need derivation (e.g., the existing `update_media_buy` adapter, which passes packages by `package_id`).
+
+  Conformance state: the v2.5 adapter-conformance test suite (added in #1121) flips `create_media_buy` from a known-drift `expected_failures` fixture to a passing fixture. Future regressions surface as test failures.
+
+- ee02cf2: v6.0.1: F6 cascade-skip respects same-phase substitutes for `not_applicable` skips, plus a migration-doc note on the `Format['assets']` cast tightening.
+
+  **F6 cascade refinement (high-severity adopter regression).** F6's first cut treated `not_applicable` skips on stateful steps as equivalent to `missing_tool` / `missing_test_controller` — every downstream stateful step cascade-skipped with `prerequisite_failed`. That's correct when state genuinely couldn't materialize, but it collapses the `sync_accounts` ↔ `list_accounts` substitution that the spec defines as canonical for explicit-mode sellers (`account.require_operator_auth: true`). Adopters running 12 storyboards on the new SDK saw every storyboard collapse to 1/N steps passing because `list_accounts` — the substitute path that WOULD have established account state — was itself cascade-skipped before it could run.
+
+  The runner now defers the cascade decision for `not_applicable` skips to phase end. If any stateful peer in the same phase passes (e.g., `list_accounts` after a not-applicable `sync_accounts`), the substitute is treated as having established state and the cascade does not fire. If no peer establishes state, the cascade promotes to `statefulFailed` at phase end and downstream phases skip cleanly with `prerequisite_failed` — the prior contract for the no-substitute case is preserved. `missing_tool` and `missing_test_controller` continue to trip the cascade immediately (state genuinely never materialized; nothing in the same phase can substitute for an absent tool).
+
+  Order-independent: the substitute can run before or after the not-applicable step in the phase. Five new/updated tests cover (1) cascade fires when no peer establishes state, (2) substitute runs and cascade is canceled when the not-applicable step is first, (3) same with substitute first, (4) non-stateful peer that passes does NOT cancel the cascade — the storyboard's own `stateful: true` declaration gates whether a step counts as state-establishing, (5) a real failure later in the same phase wins the cascade-detail message over an earlier not-applicable trigger (failures are the worse signal).
+
+  **Storyboard-side caveat.** `compliance/cache/3.0.1/specialisms/audience-sync/index.yaml` declares `list_accounts: stateful: false`, so adopters running that storyboard against an explicit-mode agent will see `list_accounts` itself run again (no longer cascade-skipped) but the deferred trigger still fires at phase end because no stateful peer established state. Tracked as a follow-up upstream-spec fix (`adcontextprotocol/adcp` storyboard yaml — flip the flag, since the step does establish account state for downstream `sync_audiences`). Adopters running `sales-social` and other storyboards where `list_accounts` is correctly `stateful: true` get full restoration on 6.0.1 bump without changes.
+
+  **Migration doc — `Format['assets']` cast tightening (low-severity adopter paper cut).** v6 narrowed `Format['assets']` from a permissive shape to `(BaseIndividualAsset | RepeatableGroupAsset)[]`, which means v5-era adopter helpers that erased their assets to `Record<string, unknown>[]` no longer compile with a bare `as Format['assets']`. Added a migration-doc bullet under "Common gotchas" pointing at two fixes: refactor the converter to build into the typed shape (preferred) or mechanically change the cast to `as unknown as Format['assets']` (works, only meaningful if your converter has been correct on shape all along — wire shape didn't change between 5.x and 6.0). Only adopters with their own v4/v5-era asset-converter helpers hit this; SDK-typed call sites already use the narrowed shape.
+
+  Triage source: adcontextprotocol/adcp-client#1005 round-9 review (workspace migration to `@adcp/sdk@6.0.0` across 13 adapters).
+
+- 112b10d: v6.0.1: production gate the default `stateStore` + zod floor bump + missing-peer-dep doc.
+
+  **Production gate.** The 6.0 default `InMemoryStateStore` was a process-shared module singleton — correct for dev and single-tenant agents (closes the Pattern 3 SI session-loss bug at the documented `serve(() => createAdcpServer({...}))` factory pattern), but a multi-tenant production deployment that mints one `createAdcpServer` per resolved tenant would silently share state across tenants. 6.0 shipped this as a one-time `logger.warn`; 6.0.1 promotes it to a hard refusal mirroring `buildDefaultTaskRegistry`'s task-registry policy. Outside `{NODE_ENV=test, NODE_ENV=development}` the default in-memory store throws with a three-line explicit recovery path: pass `PostgresStateStore` (recommended), pass `new InMemoryStateStore()` explicitly (acknowledged), or set `ADCP_DECISIONING_ALLOW_INMEMORY_STATE=1` (ops escape hatch). Single-tenant adopters and dev/test deployments are unaffected.
+
+  **Gate ordering.** The new state-store gate fires AFTER the existing `idempotency: 'disabled'` gate so adopters who hit both surface the higher-severity error first (idempotency-disabled silently double-executes mutations on retry; state-store sharing leaks tenant data — both bad, idempotency goes first because the recovery is "wire a store" while state-store recovery is "pass your own").
+
+  **zod floor bump.** Peer-dep range tightened from `^4.1.0` to `^4.1.5` to match `json-schema-to-zod` (peers `^4.1.3`) and `ts-to-zod` (peers `^4.1.5`) — the SDK's own codegen-tool floors. Removes a build-vs-runtime range mismatch where adopters on `zod@4.1.0`–`4.1.4` would technically fall below the codegen tools' floors.
+
+  **Missing-peer-dep troubleshooting doc.** Added a sub-bullet to the migration doc explaining the `Cannot find module 'zod'` symptom (package manager didn't auto-install the peer) and the explicit-install fix. The SDK can't catch this at runtime — `import { z } from 'zod'` resolves at module load, before any SDK code runs — so a documentation pointer is the right shape.
+
+  **Test command env.** `npm test` and `npm run test:lib` now set `NODE_ENV=test` so the production gate doesn't refuse on test runs that don't already set the env. Existing tests that flip NODE_ENV mid-run to exercise production paths now also set `ADCP_DECISIONING_ALLOW_INMEMORY_STATE=1` alongside the existing task-registry ack.
+
+  897/897 server-side tests pass. The new state-store gate has 6 dedicated tests in `test/server-state-store-extensions.test.js` covering: production-throw, production+ack→allow, production+explicit-store→allow, development→allow, test→allow, undef-NODE_ENV→throw.
+
 ## 6.0.0
 
 ### Major Changes
