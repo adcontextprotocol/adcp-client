@@ -28,12 +28,32 @@ Storyboard: `social_platform` (category `sales_social`, track `audiences`).
 | Wire tool | Platform field | Method |
 |---|---|---|
 | `sync_audiences` | `audiences` (`AudiencePlatform<TCtxMeta>`) | `audiences.syncAudiences` |
-| `sync_catalogs` | `sales` (`SalesPlatform<TCtxMeta>`) | `sales.syncCatalogs` |
-| `log_event` | `sales` | `sales.logEvent` |
+| `log_event` | `sales` (`SalesPlatform<TCtxMeta>`) | `sales.logEvent` |
 | `sync_event_sources` | `sales` | `sales.syncEventSources` |
 | `get_account_financials` | `accounts` (`AccountStore<TCtxMeta>`) | `accounts.getAccountFinancials` |
 | `sync_accounts` | `accounts` | `accounts.upsert` |
 
-Declare `TCtxMeta` once as your advertiser-metadata shape (e.g., `interface SocialMeta { advertiserId: string; pixelId: string }`) on `DecisioningPlatform<Config, SocialMeta>` and every handler's `ctx.account.ctx_metadata` is fully typed — no casts needed. Use `defineSalesPlatform<SocialMeta>({...})` or `defineAudiencePlatform<SocialMeta>({...})` when building inline (object literal) rather than as a class to preserve typed `req` parameters in handler bodies.
+(`sync_catalogs` → `sales.syncCatalogs` is only needed if you also claim `sales-catalog-driven` / `sales-retail-media` for DPA support.)
+
+Declare `TCtxMeta` once as your advertiser-metadata shape (e.g., `interface SocialMeta { advertiserId: string; pixelId: string }`) on `DecisioningPlatform<Config, SocialMeta>` and every handler's `ctx.account.ctx_metadata` is fully typed — no casts needed.
+
+When building inline with object literals, wrap both sub-objects with typed helpers to preserve typed `req` parameters in handler bodies:
+
+```ts
+createAdcpServerFromPlatform({
+  capabilities: { specialisms: ['sales-social', 'sales-non-guaranteed', 'audience-sync'] as const, ... },
+  accounts: { resolve: async (ref) => ..., upsert: async (refs) => ..., getAccountFinancials: async (req, ctx) => ... },
+  sales: defineSalesPlatform<SocialMeta>({
+    getProducts: async (req, ctx) => ...,  // req: GetProductsRequest ✓
+    syncEventSources: async (req, ctx) => { const sources = req.event_sources ?? []; ... },
+    logEvent: async (req, ctx) => ...,
+    // ... other sales methods
+  }),
+  audiences: defineAudiencePlatform<SocialMeta>({
+    syncAudiences: async (audiences, ctx) => { /* audiences: Audience[] ✓ */ },
+    pollAudienceStatuses: async (ids, ctx) => ...,
+  }),
+}, opts);
+```
 
 **Don't** rip out `get_products` or `create_media_buy` when adding `sales-social` — you need them. The failure mode from doing so: buyers who discover your agent via `get_adcp_capabilities` expecting a media-buy seller hit immediate compliance failures when every baseline storyboard fails with "tool not registered," and your entire `sales-non-guaranteed` bundle regresses to 0/N passing.
