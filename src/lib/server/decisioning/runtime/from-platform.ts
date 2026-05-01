@@ -1472,10 +1472,15 @@ type SubmittedEnvelope = {
  * `account.authInfo.token`, and retries the platform method ONCE. If the
  * refresh hook itself throws, projects to `AUTH_REQUIRED` with
  * `recovery: 'correctable'` so the buyer re-links via their UI flow.
+ *
+ * Parameterized over `TCtxMeta` (#1168) so adopters' refresh hooks see
+ * typed `account.ctx_metadata` rather than `unknown`. Default `unknown`
+ * preserves backward compat for call sites that don't thread the
+ * adopter's metadata shape through.
  */
-interface RefreshConfig {
-  account: Account<unknown>;
-  fn?: (account: Account<unknown>, reason: 'auth_required') => Promise<{ token: string; expiresAt?: number }>;
+interface RefreshConfig<TCtxMeta = unknown> {
+  account: Account<TCtxMeta>;
+  fn?: (account: Account<TCtxMeta>, reason: 'auth_required') => Promise<{ token: string; expiresAt?: number }>;
 }
 
 /**
@@ -1491,7 +1496,10 @@ interface RefreshConfig {
  *   - Retried call throws `AUTH_REQUIRED` again → bubble out (don't refresh
  *     a second time).
  */
-async function runWithTokenRefresh<T>(fn: () => Promise<T>, refresh: RefreshConfig | undefined): Promise<T> {
+async function runWithTokenRefresh<TCtxMeta, T>(
+  fn: () => Promise<T>,
+  refresh: RefreshConfig<TCtxMeta> | undefined
+): Promise<T> {
   if (!refresh?.fn) return fn();
   try {
     return await fn();
@@ -1531,10 +1539,10 @@ async function runWithTokenRefresh<T>(fn: () => Promise<T>, refresh: RefreshConf
  * framework calls `refresh.fn(refresh.account, 'auth_required')`, updates
  * `account.authInfo.token`, and retries the platform method once.
  */
-async function projectSync<TResult, TWire>(
+async function projectSync<TResult, TWire, TCtxMeta = unknown>(
   fn: () => Promise<TResult>,
   mapResult: (r: TResult) => TWire,
-  refresh?: RefreshConfig
+  refresh?: RefreshConfig<TCtxMeta>
 ): Promise<TWire | AdcpErrorResponse> {
   try {
     const result = await runWithTokenRefresh(fn, refresh);
