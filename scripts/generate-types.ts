@@ -129,7 +129,7 @@ interface ToolDefinition {
  * EXCEPTION: Fields with descriptions containing "must echo this value back unchanged"
  * (like context fields) preserve additionalProperties: true to maintain protocol compliance.
  */
-function enforceStrictSchema(schema: any): any {
+export function enforceStrictSchema(schema: any): any {
   if (!schema || typeof schema !== 'object') {
     return schema;
   }
