@@ -310,19 +310,23 @@ describe('createAdcpServerFromPlatform — catalog-backed auto-seed (issue #1091
       },
     });
 
-    const aProducts = (
-      await callGetProducts(server, { account: { account_id: 'tenant_a', sandbox: true } })
-    ).structuredContent.products;
-    const bProducts = (
-      await callGetProducts(server, { account: { account_id: 'tenant_b', sandbox: true } })
-    ).structuredContent.products;
+    const aProducts = (await callGetProducts(server, { account: { account_id: 'tenant_a', sandbox: true } }))
+      .structuredContent.products;
+    const bProducts = (await callGetProducts(server, { account: { account_id: 'tenant_b', sandbox: true } }))
+      .structuredContent.products;
 
-    assert.ok(aProducts.some(p => p.product_id === 'tenant_a_display'), 'tenant_a should see its own product');
+    assert.ok(
+      aProducts.some(p => p.product_id === 'tenant_a_display'),
+      'tenant_a should see its own product'
+    );
     assert.ok(
       !aProducts.some(p => p.product_id === 'tenant_b_video'),
       "tenant_a must NOT see tenant_b's product (cross-tenant leak)"
     );
-    assert.ok(bProducts.some(p => p.product_id === 'tenant_b_video'), 'tenant_b should see its own product');
+    assert.ok(
+      bProducts.some(p => p.product_id === 'tenant_b_video'),
+      'tenant_b should see its own product'
+    );
     assert.ok(
       !bProducts.some(p => p.product_id === 'tenant_a_display'),
       "tenant_b must NOT see tenant_a's product (cross-tenant leak)"

@@ -3409,10 +3409,7 @@ function readAutoSeedAccountId(input: Record<string, unknown>): string | undefin
   return typeof id === 'string' && id.length > 0 ? id : undefined;
 }
 
-function autoSeedStoreFor(
-  store: Map<string, Map<string, unknown>>,
-  accountId: string
-): Map<string, unknown> {
+function autoSeedStoreFor(store: Map<string, Map<string, unknown>>, accountId: string): Map<string, unknown> {
   let inner = store.get(accountId);
   if (inner == null) {
     inner = new Map<string, unknown>();
@@ -3427,9 +3424,7 @@ function autoSeedStoreFor(
 // accounts) never leak fixtures across tenants. Reads
 // `ctx.account?.id` first (set by `resolveAccount` at request time) and
 // falls back to `ctx.input.account.account_id` when no resolver is wired.
-function makeAutoSeedBridge(
-  store: Map<string, Map<string, unknown>>
-): TestControllerBridge<unknown> {
+function makeAutoSeedBridge(store: Map<string, Map<string, unknown>>): TestControllerBridge<unknown> {
   return {
     getSeededProducts: ctx => {
       const resolved = (ctx.account as { id?: unknown } | undefined)?.id;
