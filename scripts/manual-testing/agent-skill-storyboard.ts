@@ -463,11 +463,31 @@ function runGrader(url: string, storyboardId: string): { passed: boolean; raw: s
   let passed = false;
   try {
     const parsed = JSON.parse(res.stdout);
+    // Pass criteria, in order:
+    //   1. `overall_status === 'passing'` — explicit pass from the grader
+    //   2. `overall_status === 'partial'` AND zero step/track failures — all
+    //      observed assertions passed but the runner classified the track as
+    //      'silent' (no specialism-level criteria definitively scored).
+    //      Treating this as fail produces false negatives when the agent is
+    //      actually conformant (issue #1209).
+    //   3. Legacy fallback when overall_status is absent — relies on summary
+    //      counts.
+    const summary = parsed.summary as
+      | { tracks_passed?: number; tracks_failed?: number; steps_passed?: number; steps_failed?: number }
+      | undefined;
+    const stepsFailed = summary?.steps_failed ?? 0;
+    const tracksFailed = summary?.tracks_failed ?? 0;
     if (typeof parsed.overall_status === 'string') {
-      passed = parsed.overall_status === 'passing';
-    } else if (parsed.summary && typeof parsed.summary === 'object') {
-      const s = parsed.summary as { tracks_passed?: number; tracks_failed?: number };
-      passed = (s.tracks_failed ?? 0) === 0 && (s.tracks_passed ?? 0) > 0;
+      if (parsed.overall_status === 'passing') {
+        passed = true;
+      } else if (parsed.overall_status === 'partial' && stepsFailed === 0 && tracksFailed === 0) {
+        passed = true;
+        log(`grader returned overall_status=partial with no failed steps/tracks — treating as pass (issue #1209)`);
+      } else {
+        passed = false;
+      }
+    } else if (summary) {
+      passed = tracksFailed === 0 && (summary.tracks_passed ?? 0) > 0;
     }
   } catch {
     // stdout wasn't clean JSON — the CLI printed an error to stderr and

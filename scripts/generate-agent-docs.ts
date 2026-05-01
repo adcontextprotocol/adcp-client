@@ -693,6 +693,24 @@ function generateLlmsTxt(
   );
   ln();
 
+  // --- ext.adcp Extension Namespace ---
+  ln(`## ext.adcp Extension Namespace`);
+  ln();
+  ln(
+    `**\`ext.adcp.*\` namespace.** The SDK reserves keys under \`ext.adcp.*\` for read-by-agent extensions that don't yet warrant their own AdCP spec field. Agents that recognize a key act on it; agents that don't recognize it ignore it silently (per AdCP \`ext\` semantics: accepted-without-error). The namespace is transport-neutral — it travels in the \`ext\` envelope field on both MCP and A2A transports. Keys in this namespace are hints **inbound to seller/responder agents** from the SDK or test tooling; **buyer agents building production flows MUST NOT emit \`ext.adcp.*\` keys**.`
+  );
+  ln();
+  ln(`| Key | Stamped by | Purpose |`);
+  ln(`|-----|-----------|---------|`);
+  ln(
+    `| \`ext.adcp.disable_sandbox\` | \`adcp storyboard run --no-sandbox\` | Hint (value: \`true\`) to bypass internal sandbox routing and exercise real adapter paths. Seller agents that honor this key serve production-shaped responses regardless of internal sandbox heuristics (env-var fallbacks, brand-domain detection, fixture substitutes). |`
+  );
+  ln();
+  ln(
+    `Third-party extensions MUST use a distinct namespace (e.g. \`ext.com.example.*\`) to avoid collisions with future \`ext.adcp.*\` keys.`
+  );
+  ln();
+
   // --- Tools by domain ---
   ln(`## Tools`);
   ln();

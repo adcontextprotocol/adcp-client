@@ -1066,16 +1066,40 @@ export function createAdcpServerFromPlatform<P extends DecisioningPlatform<any, 
     if (autoSeedStore != null) {
       // Inject auto-seed adapters for `seed_product` and `seed_pricing_option`
       // when the adopter didn't wire explicit ones. Explicit adapters win — the
-      // spread only fills the undefined slots. Each write is keyed by the
-      // request's `account.account_id` so two sandbox accounts can seed the
-      // same `product_id` without colliding.
+      // spread only fills the undefined slots.
+      //
+      // **Namespace key: raw `account.account_id`.** The adapter does NOT call
+      // `platform.accounts.resolve` even though that would seem symmetric with
+      // the bridge's `ctx.account?.id` read — calling resolve here without
+      // `authInfo` (which `ComplyControllerContext` doesn't expose) lets a
+      // caller spoof `account.account_id: 'victim'` and have a non-validating
+      // resolver write seeds into the victim's resolved namespace. Raw id is
+      // the safe choice: a caller can only write to their own claimed id, and
+      // the sandboxGate already filters non-sandbox traffic.
+      //
+      // **Trade-off.** Adopters whose resolver maps `account_id` to a distinct
+      // internal id (e.g., `acc_1` → `tenant_a:acc_1`) will see seeded fixtures
+      // disappear — the adapter writes to `acc_1`, the bridge reads
+      // `tenant_a:acc_1`, no match. That's a documented limitation, not a
+      // security issue: silent test loss, not cross-tenant pollution. The
+      // architectural fix (widen `ComplyControllerContext` to expose the
+      // framework-resolved account so writes match reads even under mapping
+      // resolvers) is tracked at #1216. Mapping-resolver adopters wire
+      // explicit seed adapters today.
       const explicitSeed = opts.complyTest.seed ?? {};
       const autoSeed = { ...explicitSeed };
 
       if (!explicitSeed.product) {
         autoSeed.product = async (params, ctx) => {
           const accountId = readAutoSeedAccountId(ctx.input);
-          if (accountId == null) return;
+          if (accountId == null) {
+            fwLogger.warn(
+              '[adcp/auto-seed] seed_product fired without `account.account_id`; dropping write. ' +
+                'Verify the request envelope carries an account ref and the sandboxGate is configured correctly.',
+              { product_id: params.product_id }
+            );
+            return;
+          }
           autoSeedStoreFor(autoSeedStore, accountId).set(params.product_id, {
             ...params.fixture,
             product_id: params.product_id,
@@ -1086,7 +1110,14 @@ export function createAdcpServerFromPlatform<P extends DecisioningPlatform<any, 
       if (!explicitSeed.pricing_option) {
         autoSeed.pricing_option = async (params, ctx) => {
           const accountId = readAutoSeedAccountId(ctx.input);
-          if (accountId == null) return;
+          if (accountId == null) {
+            fwLogger.warn(
+              '[adcp/auto-seed] seed_pricing_option fired without `account.account_id`; dropping write. ' +
+                'Verify the request envelope carries an account ref and the sandboxGate is configured correctly.',
+              { product_id: params.product_id, pricing_option_id: params.pricing_option_id }
+            );
+            return;
+          }
           const accountStore = autoSeedStoreFor(autoSeedStore, accountId);
           const existing = accountStore.get(params.product_id) as Record<string, unknown> | undefined;
           const pricingOption = { ...params.fixture, pricing_option_id: params.pricing_option_id };
@@ -3397,11 +3428,19 @@ function buildAccountHandlers<P extends DecisioningPlatform<any, any>>(
 // Auto-seed helpers (catalog-backed comply sandbox; issue #1091)
 // ────────────────────────────────────────────────────────────
 
-// Pull the request's account_id from the comply tool input. Sandbox-flagged
-// requests carry it on `input.account.account_id`; non-sandbox traffic is
-// already short-circuited by `complyTest.sandboxGate`, so a missing id here
-// means the adapter fired outside the gated path — drop the write rather
-// than collapse it into a shared namespace.
+// Auto-seed namespace key extractor. Used by both the write side (the
+// `seed.product` / `seed.pricing_option` adapter closures injected
+// inline in the auto-seed wiring) and the read side (`makeAutoSeedBridge`
+// when `ctx.account?.id` is absent — i.e., the framework didn't
+// pre-resolve the account on a custom dispatcher path).
+//
+// Write-side rationale: the adapter cannot reach the framework-resolved
+// `ctx.account.id` (the comply-controller's `ComplyControllerContext`
+// only exposes `{ input }`), and calling `platform.accounts.resolve`
+// here without `authInfo` would let a caller spoof `account.account_id`
+// and write into another tenant's resolved namespace. The architectural
+// fix (widen `ComplyControllerContext` to surface the resolved account)
+// is tracked at #1216 — until then, raw id is the secure choice.
 function readAutoSeedAccountId(input: Record<string, unknown>): string | undefined {
   const account = input.account;
   if (account == null || typeof account !== 'object') return undefined;

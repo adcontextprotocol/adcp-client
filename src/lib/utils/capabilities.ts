@@ -381,6 +381,52 @@ export function buildSyntheticCapabilities(tools: ToolInfo[]): AdcpCapabilities 
 }
 
 /**
+ * Build synthetic v3 capabilities when the agent advertises
+ * `get_adcp_capabilities` (a v3-only tool) but the call itself failed —
+ * either the executor threw, or the response was non-success with no
+ * structurally v3-shaped data (the case `looksLikeV3Capabilities` would
+ * have caught).
+ *
+ * The agent is verifiably v3 because the v3-only discovery tool is
+ * present in `tools/list`. Falling back to v2 synthetic in this case
+ * triggers v2.5-schema lookups that have nothing to do with the original
+ * failure, cascading "AdCP schema data for version v2.5 not found"
+ * across every subsequent step. Treating as v3 (synthetic) lets the
+ * caller continue against the right adapter set; the underlying
+ * `get_adcp_capabilities` failure still surfaces in logs at the
+ * call site.
+ *
+ * Sets `_synthetic: true` so version-compat checks know detail-level
+ * fields (idempotency TTL, supportedVersions) are unknown — callers
+ * skip those checks rather than throw `VersionUnsupportedError` on a
+ * verifiably-v3 agent.
+ *
+ * Refs: #1217 (carve-out from #1197/closed), #1189 / #1201 (the v3-shape
+ * heuristic this complements).
+ */
+export function buildSyntheticV3Capabilities(tools: ToolInfo[]): AdcpCapabilities {
+  const toolNames = new Set(tools.map(t => t.name));
+  const protocols = detectProtocolsFromTools(toolNames);
+
+  const features: MediaBuyFeatures = {
+    inlineCreativeManagement: toolNames.has('sync_creatives'),
+    propertyListFiltering: false,
+    contentStandards: false,
+    conversionTracking: EVENT_TRACKING_TOOLS.some(t => toolNames.has(t)),
+    audienceTargeting: toolNames.has('sync_audiences'),
+  };
+
+  return {
+    version: 'v3',
+    majorVersions: [3],
+    protocols,
+    features,
+    extensions: [],
+    _synthetic: true,
+  };
+}
+
+/**
  * Heuristic: does this `get_adcp_capabilities` response look v3-shaped?
  *
  * Used by callers (e.g. SingleAgentClient.getCapabilities) when the response
