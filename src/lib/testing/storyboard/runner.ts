@@ -1005,7 +1005,7 @@ async function executeStoryboardPass(
         const resolvedTask = resolveTaskName(step, options);
         if (options.agentTools && resolvedTask && !options.agentTools.includes(resolvedTask)) {
           const toolDetail = `Agent did not advertise tool "${resolvedTask}"; agent tools: [${options.agentTools.join(', ')}].`;
-          stepResults.push({
+          const missingToolResult: StoryboardStepResult = {
             storyboard_id: storyboard.id,
             step_id: step.id,
             phase_id: phase.id,
@@ -1019,7 +1019,9 @@ async function executeStoryboardPass(
             validations: [],
             context,
             extraction: { path: 'none' },
-          });
+          };
+          stepResults.push(missingToolResult);
+          priorStepResults.set(step.id, missingToolResult);
           skippedCount++;
           continue;
         }
