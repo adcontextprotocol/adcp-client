@@ -53,11 +53,25 @@ describe('SingleAgentClient.requireV3 — corroborated check', () => {
     );
   });
 
-  test('rejects synthetic capabilities even when v3 is claimed', async () => {
+  // _synthetic + v3 means the agent advertised get_adcp_capabilities (a v3
+  // tool) but the call failed. We know the agent is v3; the fix in issue #1189
+  // lets this through so v2 adapters don't cascade on top of the real error.
+  // idempotency is not included because buildSyntheticV3Capabilities doesn't
+  // set it — the idempotency check is skipped for synthetic caps.
+  test('accepts synthetic v3 capabilities (tool present, call failed)', async () => {
     const client = clientWithCapabilities({
       version: 'v3',
       majorVersions: [3],
-      idempotency,
+      _synthetic: true,
+      // no idempotency — synthetic caps skip the idempotency check
+    });
+    await client.requireV3('sync_creatives'); // must not throw
+  });
+
+  test('rejects synthetic v2 capabilities (no get_adcp_capabilities tool)', async () => {
+    const client = clientWithCapabilities({
+      version: 'v2',
+      majorVersions: [2],
       _synthetic: true,
     });
     await assert.rejects(

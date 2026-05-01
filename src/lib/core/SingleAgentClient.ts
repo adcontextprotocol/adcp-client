@@ -114,6 +114,7 @@ import * as crypto from 'crypto';
 import type { AdcpCapabilities, ToolInfo, FeatureName } from '../utils/capabilities';
 import {
   buildSyntheticCapabilities,
+  buildSyntheticV3Capabilities,
   augmentCapabilitiesFromTools,
   parseCapabilitiesResponse,
   resolveFeature,
@@ -2769,17 +2770,16 @@ export class SingleAgentClient {
           this.maybeWarnV2Sunset(this.cachedCapabilities);
           return this.cachedCapabilities;
         }
-        // Log when executeTask returns but success is false — this causes
-        // the server to be treated as v2 even though it advertises
-        // get_adcp_capabilities, which will trigger v2 field adapters.
+        // Log when executeTask returns but success is false — agent is
+        // treated as v3 (synthetic) so v2 field adapters don't run.
         // We deliberately omit `result.data` from the log: it can carry
         // OAuth metadata that flowed through `agent.oauth_client_credentials`,
         // and CodeQL traces clear-text logging when it appears here. The
-        // shape booleans + status are enough to triage the v2 fallback.
+        // shape booleans + status are enough to triage the capabilities failure.
         console.warn(
           `[AdCP] Agent "${this.agent.id}" advertises get_adcp_capabilities but the call ` +
-            `returned non-success — falling back to v2 synthetic capabilities. ` +
-            `This may cause v2 field adapters to run against a v3 server.`,
+            `returned non-success — treating as v3 with a broken capabilities endpoint. ` +
+            `Fix the agent's get_adcp_capabilities handler to surface the real error.`,
           {
             success: result.success,
             // result.error is a string error message; we don't include its full
@@ -2798,18 +2798,24 @@ export class SingleAgentClient {
         }
         console.warn(
           `[AdCP] Agent "${this.agent.id}" advertises get_adcp_capabilities but the call ` +
-            `threw — falling back to v2 synthetic capabilities. ` +
-            `This may cause v2 field adapters to run against a v3 server. ` +
+            `threw — treating as v3 with a broken capabilities endpoint. ` +
             `Error: ${error instanceof Error ? error.message : String(error)}`
         );
       }
+
+      // Tool was present but call failed: agent is v3 (has the v3 tool), just
+      // can't confirm detailed caps. Do NOT fall back to v2 — that would
+      // trigger v2.5 schema lookups that obscure the original failure.
+      // augmentCapabilitiesFromTools mirrors the success path (line 2769) so
+      // comply_test_controller adds compliance_testing to protocols here too.
+      this.cachedCapabilities = augmentCapabilitiesFromTools(buildSyntheticV3Capabilities(tools), tools);
+      return this.cachedCapabilities;
     }
 
-    // Build synthetic capabilities from tool list (v2)
+    // No get_adcp_capabilities tool at all → affirmative v2 signal.
     console.warn(
-      `[AdCP] Agent "${this.agent.id}" detected as v2` +
-        (hasCapabilitiesTool ? ' (has get_adcp_capabilities tool but call failed)' : '') +
-        `. Tools: [${tools.map(t => t.name).join(', ')}]`
+      `[AdCP] Agent "${this.agent.id}" detected as v2 (no get_adcp_capabilities tool). ` +
+        `Tools: [${tools.map(t => t.name).join(', ')}]`
     );
     this.cachedCapabilities = buildSyntheticCapabilities(tools);
     return this.cachedCapabilities;
@@ -2965,7 +2971,13 @@ export class SingleAgentClient {
     if (this.isV2Allowed()) return;
     const capabilities = await this.getCapabilities();
 
-    if (capabilities._synthetic) {
+    // _synthetic + v2: no get_adcp_capabilities tool — we can't confirm the
+    // agent supports our version. Throw so the caller fails loud rather than
+    // silently sending v2-adapted requests to an unknown agent.
+    // _synthetic + v3: the tool was present but the call failed — agent is
+    // verifiably v3 (it advertises the v3 discovery tool). Fall through to
+    // the normal majorVersions check; majorVersions: [3] will pass.
+    if (capabilities._synthetic && capabilities.version !== 'v3') {
       throw new VersionUnsupportedError(taskType, 'synthetic', capabilities.version, this.agent.agent_uri);
     }
     // Prefer release-precision matching when the seller advertises
@@ -2989,7 +3001,11 @@ export class SingleAgentClient {
         throw new VersionUnsupportedError(taskType, 'version', capabilities.version, this.agent.agent_uri);
       }
     }
-    if (!capabilities.idempotency?.replayTtlSeconds) {
+    // Synthetic v3 caps: agent is verifiably v3 (has the tool) but the
+    // capabilities call failed, so replayTtlSeconds is unknown. Skip the
+    // idempotency check — we know the agent must support it, we just can't
+    // confirm the TTL until the capabilities endpoint is fixed.
+    if (!capabilities._synthetic && !capabilities.idempotency?.replayTtlSeconds) {
       throw new VersionUnsupportedError(taskType, 'idempotency', capabilities.version, this.agent.agent_uri);
     }
   }

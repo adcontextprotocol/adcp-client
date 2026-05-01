@@ -352,6 +352,10 @@ export function augmentCapabilitiesFromTools(capabilities: AdcpCapabilities, too
   };
 }
 
+/**
+ * Build synthetic v2 capabilities when the agent has no `get_adcp_capabilities`
+ * tool at all — the clearest signal the agent predates AdCP 3.0.
+ */
 export function buildSyntheticCapabilities(tools: ToolInfo[]): AdcpCapabilities {
   const toolNames = new Set(tools.map(t => t.name));
   const protocols = detectProtocolsFromTools(toolNames);
@@ -373,6 +377,36 @@ export function buildSyntheticCapabilities(tools: ToolInfo[]): AdcpCapabilities 
   return {
     version: 'v2',
     majorVersions: [2],
+    protocols,
+    features,
+    extensions: [],
+    _synthetic: true,
+  };
+}
+
+/**
+ * Build synthetic v3 capabilities when the agent advertises
+ * `get_adcp_capabilities` (a v3-only tool) but the call failed.
+ * The agent is verifiably v3 (it has the tool); we just couldn't
+ * confirm the detailed capability block. v2 adapters must NOT run
+ * against this agent — that would trigger v2.5 schema lookups that
+ * have nothing to do with the original failure.
+ */
+export function buildSyntheticV3Capabilities(tools: ToolInfo[]): AdcpCapabilities {
+  const toolNames = new Set(tools.map(t => t.name));
+  const protocols = detectProtocolsFromTools(toolNames);
+
+  const features: MediaBuyFeatures = {
+    inlineCreativeManagement: toolNames.has('sync_creatives'),
+    propertyListFiltering: false,
+    contentStandards: false,
+    conversionTracking: EVENT_TRACKING_TOOLS.some(t => toolNames.has(t)),
+    audienceTargeting: toolNames.has('sync_audiences'),
+  };
+
+  return {
+    version: 'v3',
+    majorVersions: [3],
     protocols,
     features,
     extensions: [],
