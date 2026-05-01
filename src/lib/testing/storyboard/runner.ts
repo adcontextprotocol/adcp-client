@@ -2022,7 +2022,7 @@ async function executeStep(
   // `allowed_values` fields so expected values can reference prior steps
   // (e.g., replay tests assert `media_buy_id === $context.initial_media_buy_id`).
   let validations: ValidationResult[] = [];
-  if (step.validations?.length && (taskResult || httpResult)) {
+  if (step.validations?.length && (taskResult || httpResult || a2aEnvelope)) {
     const resolvedValidations = step.validations.map(v => {
       const resolved = { ...v };
       if (resolved.value !== undefined) {
