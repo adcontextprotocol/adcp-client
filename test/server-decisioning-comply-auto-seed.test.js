@@ -274,4 +274,58 @@ describe('createAdcpServerFromPlatform — catalog-backed auto-seed (issue #1091
 
     assert.strictEqual(result.structuredContent?.error, 'UNKNOWN_SCENARIO');
   });
+
+  it('multi-tenant: two sandbox accounts on one server do NOT share the auto-seed namespace', async () => {
+    // Realistic multi-tenant pattern: each tenant has its own catalog with
+    // distinct product_ids. Tenant A's seeded products must not appear in
+    // tenant B's `get_products`, and vice versa.
+    //
+    // Note on cross-tenant *same-id divergent-fixture* collisions: the SDK's
+    // process-wide `SeedFixtureCache` keys by `seed_product:${product_id}`
+    // (test-controller.ts:~563) and rejects divergent fixtures with
+    // INVALID_PARAMS. That's a pre-existing SDK limitation tracked
+    // separately — auto-seed's per-account store can't paper over it.
+    // True per-account seedCache scoping is a follow-up; for now,
+    // multi-tenant correctness is "different products don't leak."
+    const server = createAdcpServerFromPlatform(basePlatform(), {
+      ...BASE_OPTS,
+      complyTest: { sandboxGate: SANDBOX_GATE },
+    });
+
+    await callComply(server, {
+      scenario: 'seed_product',
+      account: { account_id: 'tenant_a', sandbox: true },
+      params: {
+        product_id: 'tenant_a_display',
+        fixture: { delivery_type: 'non_guaranteed', channels: ['display'] },
+      },
+    });
+
+    await callComply(server, {
+      scenario: 'seed_product',
+      account: { account_id: 'tenant_b', sandbox: true },
+      params: {
+        product_id: 'tenant_b_video',
+        fixture: { delivery_type: 'guaranteed', channels: ['video'] },
+      },
+    });
+
+    const aProducts = (
+      await callGetProducts(server, { account: { account_id: 'tenant_a', sandbox: true } })
+    ).structuredContent.products;
+    const bProducts = (
+      await callGetProducts(server, { account: { account_id: 'tenant_b', sandbox: true } })
+    ).structuredContent.products;
+
+    assert.ok(aProducts.some(p => p.product_id === 'tenant_a_display'), 'tenant_a should see its own product');
+    assert.ok(
+      !aProducts.some(p => p.product_id === 'tenant_b_video'),
+      "tenant_a must NOT see tenant_b's product (cross-tenant leak)"
+    );
+    assert.ok(bProducts.some(p => p.product_id === 'tenant_b_video'), 'tenant_b should see its own product');
+    assert.ok(
+      !bProducts.some(p => p.product_id === 'tenant_a_display'),
+      "tenant_b must NOT see tenant_a's product (cross-tenant leak)"
+    );
+  });
 });

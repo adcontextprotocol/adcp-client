@@ -115,7 +115,9 @@ const DEFAULT_FRAMEWORK_LOGGER: AdcpLogger = {
 };
 import { createInMemoryStatusChangeBus, type StatusChangeBus, type PublishStatusChangeOpts } from '../status-changes';
 import { createComplyController, type ComplyControllerConfig } from '../../../testing/comply-controller';
-import { bridgeFromTestControllerStore } from '../../test-controller-bridge';
+import type { TestControllerBridge } from '../../test-controller-bridge';
+import { mergeSeedProduct } from '../../../testing/seed-merge';
+import type { Product } from '../../../types/tools.generated';
 import { normalizeErrors } from '../../normalize-errors';
 
 /**
@@ -857,22 +859,39 @@ export function createAdcpServerFromPlatform<P extends DecisioningPlatform<any, 
   // without the adopter writing any adapter code. The bridge makes seeded
   // products visible in `get_products` responses on sandbox requests.
   //
+  // **Multi-tenant isolation.** The store is keyed by `account_id` so two
+  // sandbox accounts on the same server (e.g. multiple tenants under one
+  // TenantRegistry-fronted server, or distinct sandbox accounts on a
+  // single-tenant server) never see each other's seeded products in
+  // `get_products`. Adopters who need tighter scoping (per-session,
+  // per-brand, per-storyboard-run) wire `bridgeFromSessionStore` explicitly
+  // — auto-seed is the floor, not the ceiling.
+  //
+  // **Caveat.** The comply-controller's process-wide `SeedFixtureCache`
+  // (`test-controller.ts createSeedFixtureCache`) keys by
+  // `seed_product:${product_id}` and rejects divergent fixtures replayed
+  // under the same id with `INVALID_PARAMS`. So two sandbox accounts can
+  // freely seed *different* product_ids without leakage, but cannot seed
+  // the same product_id with different fixtures on one server. That's a
+  // pre-existing SDK limitation independent of auto-seed; lifting it
+  // requires per-account seedCache scoping — tracked as a follow-up.
+  //
   // The entire auto-seed path is skipped when EITHER `seed.product` OR
-  // `seed_pricing_option` is explicitly wired — mixing explicit and auto-seed
+  // `seed.pricing_option` is explicitly wired — mixing explicit and auto-seed
   // adapters against the same bridge would yield inconsistent `get_products`
   // responses. In that case the adopter owns the full seed + bridge wiring.
-  const autoSeedStore: Map<string, unknown> | undefined =
+  const autoSeedStore: Map<string, Map<string, unknown>> | undefined =
     opts.complyTest != null &&
     platform.sales?.getProducts != null &&
     !opts.testController &&
     !opts.complyTest.seed?.product &&
     !opts.complyTest.seed?.pricing_option
-      ? new Map<string, unknown>()
+      ? new Map<string, Map<string, unknown>>()
       : undefined;
 
   const config: AdcpServerConfig<Account> = {
     ...opts,
-    ...(autoSeedStore != null && { testController: bridgeFromTestControllerStore(autoSeedStore) }),
+    ...(autoSeedStore != null && { testController: makeAutoSeedBridge(autoSeedStore) }),
     ...(projectedCapabilitiesConfig != null && { capabilities: projectedCapabilitiesConfig }),
     // Pool-derived stores override the spread above when adopters supplied
     // `pool` but no explicit per-store opt. Explicit values still win.
@@ -1047,19 +1066,29 @@ export function createAdcpServerFromPlatform<P extends DecisioningPlatform<any, 
     if (autoSeedStore != null) {
       // Inject auto-seed adapters for `seed_product` and `seed_pricing_option`
       // when the adopter didn't wire explicit ones. Explicit adapters win — the
-      // spread only fills the undefined slots.
+      // spread only fills the undefined slots. Each write is keyed by the
+      // request's `account.account_id` so two sandbox accounts can seed the
+      // same `product_id` without colliding.
       const explicitSeed = opts.complyTest.seed ?? {};
       const autoSeed = { ...explicitSeed };
 
       if (!explicitSeed.product) {
-        autoSeed.product = async params => {
-          autoSeedStore.set(params.product_id, { ...params.fixture, product_id: params.product_id });
+        autoSeed.product = async (params, ctx) => {
+          const accountId = readAutoSeedAccountId(ctx.input);
+          if (accountId == null) return;
+          autoSeedStoreFor(autoSeedStore, accountId).set(params.product_id, {
+            ...params.fixture,
+            product_id: params.product_id,
+          });
         };
       }
 
       if (!explicitSeed.pricing_option) {
-        autoSeed.pricing_option = async params => {
-          const existing = autoSeedStore.get(params.product_id) as Record<string, unknown> | undefined;
+        autoSeed.pricing_option = async (params, ctx) => {
+          const accountId = readAutoSeedAccountId(ctx.input);
+          if (accountId == null) return;
+          const accountStore = autoSeedStoreFor(autoSeedStore, accountId);
+          const existing = accountStore.get(params.product_id) as Record<string, unknown> | undefined;
           const pricingOption = { ...params.fixture, pricing_option_id: params.pricing_option_id };
           const existingOptions = Array.isArray(
             (existing as { pricing_options?: unknown[] } | undefined)?.pricing_options
@@ -1072,7 +1101,7 @@ export function createAdcpServerFromPlatform<P extends DecisioningPlatform<any, 
               typeof p === 'object' &&
               (p as Record<string, unknown>).pricing_option_id !== params.pricing_option_id
           );
-          autoSeedStore.set(params.product_id, {
+          accountStore.set(params.product_id, {
             ...(existing ?? { product_id: params.product_id }),
             pricing_options: [...filtered, pricingOption],
           });
@@ -3362,4 +3391,65 @@ function buildAccountHandlers<P extends DecisioningPlatform<any, any>>(
   }
 
   return handlers;
+}
+
+// ────────────────────────────────────────────────────────────
+// Auto-seed helpers (catalog-backed comply sandbox; issue #1091)
+// ────────────────────────────────────────────────────────────
+
+// Pull the request's account_id from the comply tool input. Sandbox-flagged
+// requests carry it on `input.account.account_id`; non-sandbox traffic is
+// already short-circuited by `complyTest.sandboxGate`, so a missing id here
+// means the adapter fired outside the gated path — drop the write rather
+// than collapse it into a shared namespace.
+function readAutoSeedAccountId(input: Record<string, unknown>): string | undefined {
+  const account = input.account;
+  if (account == null || typeof account !== 'object') return undefined;
+  const id = (account as { account_id?: unknown }).account_id;
+  return typeof id === 'string' && id.length > 0 ? id : undefined;
+}
+
+function autoSeedStoreFor(
+  store: Map<string, Map<string, unknown>>,
+  accountId: string
+): Map<string, unknown> {
+  let inner = store.get(accountId);
+  if (inner == null) {
+    inner = new Map<string, unknown>();
+    store.set(accountId, inner);
+  }
+  return inner;
+}
+
+// Build a `TestControllerBridge` over the per-account auto-seed store. The
+// bridge filters seeded products by the resolved account so multi-tenant
+// servers (TenantRegistry-fronted, or single-tenant with multiple sandbox
+// accounts) never leak fixtures across tenants. Reads
+// `ctx.account?.id` first (set by `resolveAccount` at request time) and
+// falls back to `ctx.input.account.account_id` when no resolver is wired.
+function makeAutoSeedBridge(
+  store: Map<string, Map<string, unknown>>
+): TestControllerBridge<unknown> {
+  return {
+    getSeededProducts: ctx => {
+      const resolved = (ctx.account as { id?: unknown } | undefined)?.id;
+      const accountId =
+        typeof resolved === 'string' && resolved.length > 0 ? resolved : readAutoSeedAccountId(ctx.input);
+      if (accountId == null) return [];
+      const inner = store.get(accountId);
+      if (inner == null || inner.size === 0) return [];
+      const products: Product[] = [];
+      for (const [productId, fixture] of inner.entries()) {
+        const merged = mergeSeedProduct(
+          {},
+          {
+            ...(fixture && typeof fixture === 'object' ? (fixture as Partial<Product>) : {}),
+            product_id: productId,
+          }
+        );
+        products.push(merged as Product);
+      }
+      return products;
+    },
+  };
 }
