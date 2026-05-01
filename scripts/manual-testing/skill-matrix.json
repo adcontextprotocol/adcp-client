@@ -8,7 +8,11 @@
     { "skill": "skills/build-seller-agent/SKILL.md", "storyboard": "security_baseline" },
     { "skill": "skills/build-brand-rights-agent/SKILL.md", "storyboard": "brand_rights" },
     { "skill": "skills/build-creative-agent/SKILL.md", "storyboard": "creative_ad_server" },
-    { "skill": "skills/build-creative-agent/SKILL.md", "storyboard": "creative_template" },
+    {
+      "skill": "skills/build-creative-agent/SKILL.md",
+      "storyboard": "creative_template",
+      "upstream": "creative-template"
+    },
     { "skill": "skills/build-decisioning-creative-template/SKILL.md", "storyboard": "creative_template" },
     { "skill": "skills/build-generative-seller-agent/SKILL.md", "storyboard": "creative_generative" },
     { "skill": "skills/build-governance-agent/SKILL.md", "storyboard": "governance_spend_authority" },

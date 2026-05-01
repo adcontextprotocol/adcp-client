@@ -1014,6 +1014,10 @@ ARGUMENTS:
                                             (LiveRamp/Lotame/Oracle Data Cloud
                                             family). Multi-operator API key
                                             pattern; X-Operator-Id required.
+                       creative-template    Celtra/Innovid-shaped creative
+                                            platform with async renders.
+                                            Workspace-scoped paths; multi-stage
+                                            polling (queued → running → complete).
 
 OPTIONS:
   --port N           Listen port. Default: 4500.
