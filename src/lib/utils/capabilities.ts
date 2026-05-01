@@ -402,10 +402,9 @@ export function buildSyntheticCapabilities(tools: ToolInfo[]): AdcpCapabilities 
  * check to avoid mis-promoting genuinely empty / null responses.
  */
 export function looksLikeV3Capabilities(data: unknown): boolean {
-  if (!data || typeof data !== 'object' || Array.isArray(data)) return false;
-  const obj = data as Record<string, unknown>;
-  if (obj.adcp && typeof obj.adcp === 'object') return true;
-  if (Array.isArray(obj.supported_protocols)) return true;
+  if (!isPlainObject(data)) return false;
+  if (isPlainObject(data.adcp)) return true;
+  if (Array.isArray(data.supported_protocols)) return true;
   const v3Blocks = [
     'account',
     'media_buy',
@@ -416,7 +415,11 @@ export function looksLikeV3Capabilities(data: unknown): boolean {
     'sponsored_intelligence',
     'compliance_testing',
   ] as const;
-  return v3Blocks.some(block => obj[block] && typeof obj[block] === 'object');
+  return v3Blocks.some(block => isPlainObject(data[block]));
+}
+
+function isPlainObject(value: unknown): value is Record<string, unknown> {
+  return value !== null && typeof value === 'object' && !Array.isArray(value);
 }
 
 /**

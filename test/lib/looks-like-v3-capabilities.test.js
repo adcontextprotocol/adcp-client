@@ -4,7 +4,7 @@
 
 const { describe, it } = require('node:test');
 const assert = require('node:assert/strict');
-const { looksLikeV3Capabilities } = require('../../dist/lib/utils/capabilities');
+const { looksLikeV3Capabilities, parseCapabilitiesResponse } = require('../../dist/lib/utils/capabilities');
 
 describe('looksLikeV3Capabilities', () => {
   describe('returns true for v3-shaped responses', () => {
@@ -105,6 +105,42 @@ describe('looksLikeV3Capabilities', () => {
 
     it('rejects adcp when null (defensive)', () => {
       assert.equal(looksLikeV3Capabilities({ adcp: null }), false);
+    });
+
+    it('rejects adcp when array (typeof object would otherwise pass)', () => {
+      assert.equal(looksLikeV3Capabilities({ adcp: [] }), false);
+    });
+
+    it('rejects v3 block when array (typeof object would otherwise pass)', () => {
+      assert.equal(looksLikeV3Capabilities({ media_buy: [] }), false);
+    });
+  });
+
+  describe('parser handoff — when heuristic returns true, downstream callers must see version: v3', () => {
+    // Regression for the bug code-reviewer caught on PR #1201:
+    // parseCapabilitiesResponse defaults majorVersions: [2] when response.adcp
+    // is missing. SingleAgentClient.getCapabilities forces version: 'v3' after
+    // parse when the heuristic confirmed v3-shape; this test pins the bug at
+    // the parser layer so future contributors don't accidentally remove the
+    // override and re-introduce v2 mis-classification.
+
+    it('parser returns version: v2 when only supported_protocols is present (the bug)', () => {
+      // This is the specific failure mode — the parser alone does NOT know
+      // about the heuristic. Callers that rely on parser-only output for
+      // version detection see v2, not v3. Documents the constraint that
+      // motivated the override in SingleAgentClient.getCapabilities.
+      const parsed = parseCapabilitiesResponse({ supported_protocols: ['signals'] });
+      assert.equal(parsed.version, 'v2');
+      assert.deepStrictEqual(parsed.majorVersions, [2]);
+    });
+
+    it('parser returns version: v3 when adcp.major_versions is explicit', () => {
+      const parsed = parseCapabilitiesResponse({
+        adcp: { major_versions: [3] },
+        supported_protocols: ['signals'],
+      });
+      assert.equal(parsed.version, 'v3');
+      assert.deepStrictEqual(parsed.majorVersions, [3]);
     });
   });
 });
