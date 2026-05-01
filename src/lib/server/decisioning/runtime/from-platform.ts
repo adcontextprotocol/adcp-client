@@ -764,7 +764,7 @@ export function createAdcpServerFromPlatform<P extends DecisioningPlatform<any, 
   const hasAccountProjection = requireOperatorAuth === true || (supportedBillings?.length ?? 0) > 0;
   const accountOverrides: Partial<NonNullable<GetAdCPCapabilitiesResponse['account']>> = {
     ...(requireOperatorAuth === true && { require_operator_auth: true }),
-    ...(supportedBillings?.length && { supported_billing: [...supportedBillings] }),
+    supported_billing: supportedBillings?.length ? [...supportedBillings] : [],
   };
 
   // Compliance-testing scenarios projection. Adopters who claim the

@@ -285,6 +285,23 @@ describe('Capability projections — declarative capability blocks on Decisionin
     assert.deepStrictEqual(account.supported_billing, ['operator']);
   });
 
+  it('requireOperatorAuth:true without supportedBillings emits supported_billing:[] — regression #1186', async () => {
+    // When the account block is projected (because requireOperatorAuth is true)
+    // but supportedBillings is not set, the wire account object must still carry
+    // supported_billing: [] so schema validation passes. Pre-fix, the field was
+    // omitted entirely, causing a cascade of storyboard failures.
+    const server = createAdcpServerFromPlatform(basePlatform({ requireOperatorAuth: true }), {
+      name: 'h',
+      version: '0.0.1',
+      validation: { requests: 'off', responses: 'strict' },
+    });
+    const result = await dispatchCapabilities(server);
+    assert.ok(!result.isError, `schema validation must pass: ${JSON.stringify(result.content)}`);
+    const account = result.structuredContent?.account;
+    assert.ok(account, 'account block must be present when requireOperatorAuth is set');
+    assert.deepStrictEqual(account.supported_billing, []);
+  });
+
   it('omitting all three leaves get_adcp_capabilities unchanged (no empty media_buy block)', async () => {
     const server = createAdcpServerFromPlatform(basePlatform(), {
       name: 'h',
