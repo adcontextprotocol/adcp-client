@@ -1280,6 +1280,61 @@ describe('AccountStore optional methods (v1.0 gap-fill for rc.1)', () => {
     assert.strictEqual(lastSeenExpiresAt, 1800000000000, 'expiresAt is reachable on retry call');
   });
 
+  it('refreshToken hook receives Account with adopter ctx_metadata typed (#1168)', async () => {
+    // Sentinel for #1168 — RefreshConfig is parametric over TCtxMeta.
+    // The adopter's refreshToken impl reads Account.ctx_metadata fields
+    // directly (e.g., the upstream refresh-token cached on the account).
+    // Before #1168, RefreshConfig.account was Account<unknown>, so this
+    // access compiled but adopters lost type safety on field names.
+    // After #1168, the type flows through projectSync → runWithTokenRefresh
+    // → the hook signature.
+    const { AdcpError } = require('../dist/lib/server/decisioning/async-outcome.js');
+    let seenUpstreamRefreshToken;
+    const platform = buildPlatform({
+      accounts: {
+        resolve: async () => ({
+          id: 'acc_typed',
+          name: 'Acme',
+          status: 'active',
+          // Adopter's typed metadata shape — refreshToken hook reads
+          // upstreamRefreshToken from this without a cast.
+          ctx_metadata: { upstreamRefreshToken: 'rt_abc123', upstreamCustomerId: 'cust_42' },
+          authInfo: { kind: 'oauth', token: 'access_old' },
+        }),
+        getAccountFinancials: async (req, ctx) => {
+          if (ctx.account.authInfo.token === 'access_old') {
+            throw new AdcpError('AUTH_REQUIRED', { message: 'expired', recovery: 'correctable' });
+          }
+          return {
+            account: { account_id: 'acc_typed' },
+            currency: 'USD',
+            period: { start: '2026-04-01', end: '2026-04-30' },
+            timezone: 'America/New_York',
+            spend: { total_spend: 1, media_buy_count: 1 },
+          };
+        },
+        refreshToken: async account => {
+          // Adopter reads typed ctx_metadata directly. Before #1168 this
+          // was effectively `(account.ctx_metadata as Record<string, unknown>).upstreamRefreshToken`
+          // because TCtxMeta collapsed to unknown at the framework boundary.
+          seenUpstreamRefreshToken = account.ctx_metadata.upstreamRefreshToken;
+          return { token: `access_new_for_${account.ctx_metadata.upstreamCustomerId}` };
+        },
+      },
+    });
+    const server = createAdcpServerFromPlatform(platform, {
+      name: 'gap2-typed',
+      version: '0.0.1',
+      validation: { requests: 'off', responses: 'off' },
+    });
+    const result = await server.dispatchTestRequest({
+      method: 'tools/call',
+      params: { name: 'get_account_financials', arguments: { account: { account_id: 'acc_typed' } } },
+    });
+    assert.notStrictEqual(result.isError, true, JSON.stringify(result.structuredContent));
+    assert.strictEqual(seenUpstreamRefreshToken, 'rt_abc123', 'refresh hook read typed ctx_metadata field');
+  });
+
   it('getAccountFinancials does not retry on non-AUTH errors (#1145)', async () => {
     // Refresh hook is reactive ONLY to AUTH_REQUIRED. INVALID_REQUEST,
     // PERMISSION_DENIED, etc. flow through unchanged — refresh is a
