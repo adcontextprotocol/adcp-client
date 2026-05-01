@@ -1,5 +1,5 @@
-import { normalizePreviewCreativeResponse } from '../../utils/preview-normalizer';
-import type { PreviewCreativeRequest, PreviewCreativeResponse } from '../../types/v2-5';
+import { normalizePreviewCreativeResponse } from '../../../utils/preview-normalizer';
+import type { PreviewCreativeRequest, PreviewCreativeResponse } from '../../../types/v2-5';
 import type { AdapterPair } from './types';
 
 export const previewCreativeAdapter: AdapterPair<

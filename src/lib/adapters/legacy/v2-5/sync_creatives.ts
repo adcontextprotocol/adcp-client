@@ -1,5 +1,5 @@
-import { adaptSyncCreativesRequestForV2 } from '../../utils/sync-creatives-adapter';
-import type { SyncCreativesRequest, SyncCreativesResponse } from '../../types/v2-5';
+import { adaptSyncCreativesRequestForV2 } from '../../../utils/sync-creatives-adapter';
+import type { SyncCreativesRequest, SyncCreativesResponse } from '../../../types/v2-5';
 import type { AdapterPair } from './types';
 
 /**

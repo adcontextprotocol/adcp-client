@@ -1,5 +1,5 @@
-import { adaptGetProductsRequestForV2, normalizeGetProductsResponse } from '../../utils/pricing-adapter';
-import type { GetProductsRequest, GetProductsResponse } from '../../types/v2-5';
+import { adaptGetProductsRequestForV2, normalizeGetProductsResponse } from '../../../utils/pricing-adapter';
+import type { GetProductsRequest, GetProductsResponse } from '../../../types/v2-5';
 import type { AdapterPair } from './types';
 
 /**

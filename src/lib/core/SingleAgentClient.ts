@@ -120,18 +120,9 @@ import {
   listDeclaredFeatures,
   TASK_FEATURE_MAP,
 } from '../utils/capabilities';
-import {
-  adaptCreateMediaBuyRequestForV2,
-  adaptUpdateMediaBuyRequestForV2,
-  normalizeMediaBuyResponse,
-} from '../utils/creative-adapter';
-import { adaptSyncCreativesRequestForV2 } from '../utils/sync-creatives-adapter';
-import { normalizeFormatsResponse } from '../utils/format-renders';
-import { normalizePreviewCreativeResponse } from '../utils/preview-normalizer';
-import { normalizeGetProductsResponse, adaptGetProductsRequestForV2 } from '../utils/pricing-adapter';
 import { normalizeRequestParams } from '../utils/request-normalizer';
 import { validateUserAgent } from '../utils/validate-user-agent';
-import { getV3ToV25Adapter } from '../adapters/v3-to-v2-5';
+import { getV25Adapter } from '../adapters/legacy/v2-5';
 
 /**
  * Error class for v3 feature compatibility issues
@@ -1271,12 +1262,13 @@ export class SingleAgentClient {
     let adapted = params;
 
     if (version !== 'v3') {
-      // Dispatch through the v3 → v2.5 adapter registry. Per-tool pairs
-      // live in `src/lib/adapters/v3-to-v2-5/<tool>.ts`. Tools without a
+      // Dispatch through the legacy v2.5 adapter registry. Per-tool pairs
+      // live in `src/lib/adapters/legacy/v2-5/<tool>.ts`. Tools without a
       // registered pair (or pairs whose request side is pass-through)
-      // leave `adapted` unchanged. Adding v2.6 / v3.1 in the future
-      // means adding a sibling registry, not editing this dispatch.
-      const pair = getV3ToV25Adapter(taskType);
+      // leave `adapted` unchanged. Adding a future legacy version means
+      // adding a sibling `legacy/<version>/` directory, not editing
+      // this dispatch.
+      const pair = getV25Adapter(taskType);
       if (pair) adapted = pair.adaptRequest(params);
     }
 
@@ -1361,10 +1353,10 @@ export class SingleAgentClient {
    * Converts v2 responses to v3 structure for consistent API surface.
    */
   private normalizeResponseToV3(taskType: string, data: any): any {
-    // Dispatch through the v3 → v2.5 adapter registry. The pair's
+    // Dispatch through the legacy v2.5 adapter registry. The pair's
     // optional `normalizeResponse` runs when present; otherwise the
     // response is passed through unchanged.
-    const pair = getV3ToV25Adapter(taskType);
+    const pair = getV25Adapter(taskType);
     if (pair?.normalizeResponse) return pair.normalizeResponse(data);
     return data;
   }

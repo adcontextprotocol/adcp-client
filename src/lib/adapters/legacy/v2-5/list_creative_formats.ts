@@ -1,5 +1,5 @@
-import { normalizeFormatsResponse } from '../../utils/format-renders';
-import type { ListCreativeFormatsRequest, ListCreativeFormatsResponse } from '../../types/v2-5';
+import { normalizeFormatsResponse } from '../../../utils/format-renders';
+import type { ListCreativeFormatsRequest, ListCreativeFormatsResponse } from '../../../types/v2-5';
 import type { AdapterPair } from './types';
 
 /**

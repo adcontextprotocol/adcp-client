@@ -1,5 +1,5 @@
-import { adaptUpdateMediaBuyRequestForV2, normalizeMediaBuyResponse } from '../../utils/creative-adapter';
-import type { UpdateMediaBuyRequest, UpdateMediaBuyResponse } from '../../types/v2-5';
+import { adaptUpdateMediaBuyRequestForV2, normalizeMediaBuyResponse } from '../../../utils/creative-adapter';
+import type { UpdateMediaBuyRequest, UpdateMediaBuyResponse } from '../../../types/v2-5';
 import type { AdapterPair } from './types';
 
 export const updateMediaBuyAdapter: AdapterPair<unknown, UpdateMediaBuyRequest, UpdateMediaBuyResponse, unknown> = {
