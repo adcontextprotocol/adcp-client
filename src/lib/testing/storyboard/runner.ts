@@ -1092,13 +1092,14 @@ async function executeStoryboardPass(
         // — already handled by phase-level cascade, `oauth_not_advertised`
         // — phase-absent path) deliberately don't trip the flag.
         if (step.stateful && isMissingStateSkipReason(result.skip_reason)) {
-          // Exception: the spec defines sync_accounts ↔ list_accounts as mutually
-          // exclusive substitutes. Explicit-mode adopters (require_operator_auth: true)
-          // use list_accounts instead of sync_accounts to establish account state.
-          // When sync_accounts skips not_applicable AND list_accounts is advertised,
-          // state WILL materialize via list_accounts — don't cascade-skip it as if
-          // state never materialized. If list_accounts is also missing, the normal
-          // missing_tool cascade fires on that step instead.
+          // Exception: for account-state establishment specifically, sync_accounts
+          // and list_accounts are spec-defined mode substitutes. Explicit-mode
+          // adopters (require_operator_auth: true) use list_accounts instead of
+          // sync_accounts to establish account state; sync_accounts is simply not
+          // applicable to them. When sync_accounts skips not_applicable AND
+          // list_accounts is in the agent's tool list, state WILL materialize via
+          // list_accounts — don't cascade-skip it. If list_accounts is also missing,
+          // the normal missing_tool cascade fires on that step instead.
           const isSyncAccountsSubstitution =
             step.task === 'sync_accounts' &&
             result.skip_reason === 'not_applicable' &&
