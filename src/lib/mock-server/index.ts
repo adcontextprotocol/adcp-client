@@ -40,9 +40,7 @@ export async function bootMockServer(options: MockServerOptions): Promise<MockSe
       };
     }
     default:
-      throw new Error(
-        `Unknown mock-server specialism: "${options.specialism}". Supported: signal-marketplace.`
-      );
+      throw new Error(`Unknown mock-server specialism: "${options.specialism}". Supported: signal-marketplace.`);
   }
 }
 

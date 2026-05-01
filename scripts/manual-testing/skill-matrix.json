@@ -15,7 +15,11 @@
     { "skill": "skills/build-governance-agent/SKILL.md", "storyboard": "property_lists" },
     { "skill": "skills/build-retail-media-agent/SKILL.md", "storyboard": "sales_catalog_driven" },
     { "skill": "skills/build-si-agent/SKILL.md", "storyboard": "si_baseline" },
-    { "skill": "skills/build-signals-agent/SKILL.md", "storyboard": "signal_marketplace", "upstream": "signal-marketplace" },
+    {
+      "skill": "skills/build-signals-agent/SKILL.md",
+      "storyboard": "signal_marketplace",
+      "upstream": "signal-marketplace"
+    },
     { "skill": "skills/build-signals-agent/SKILL.md", "storyboard": "signal_owned" }
   ]
 }
