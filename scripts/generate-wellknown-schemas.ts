@@ -26,14 +26,39 @@ function getLatestCacheDir(): string {
   if (!existsSync(SCHEMA_CACHE_DIR)) {
     throw new Error('Schema cache directory not found. Run "npm run sync-schemas" first.');
   }
-  const versions = readdirSync(SCHEMA_CACHE_DIR)
+  // Restrict to MAJOR.MINOR.PATCH-shaped directories. Legacy aliases
+  // (`v2.5`, `v2.6`) and the `latest` symlink would otherwise win the
+  // descending alphabetical sort because `v` > `3` lexically — well-known
+  // schemas (`brand.json`, `adagents.json`) live only in the primary AdCP
+  // version cache, so picking the v2.5 bundle would fail with "brand.json
+  // not found." Sort by major/minor/patch numerically; the newest stable
+  // (or prerelease) wins.
+  const semverDirs = readdirSync(SCHEMA_CACHE_DIR)
+    .filter(f => /^\d+\.\d+\.\d+(?:-[\w.-]+)?$/.test(f))
     .filter(f => statSync(path.join(SCHEMA_CACHE_DIR, f)).isDirectory())
-    .sort()
-    .reverse();
-  if (versions.length === 0) {
-    throw new Error('No cached schema versions found.');
+    .map(name => {
+      const m = name.match(/^(\d+)\.(\d+)\.(\d+)(?:-(.+))?$/)!;
+      return {
+        name,
+        major: parseInt(m[1]!, 10),
+        minor: parseInt(m[2]!, 10),
+        patch: parseInt(m[3]!, 10),
+        prerelease: m[4] ?? '',
+      };
+    })
+    .sort((a, b) => {
+      if (a.major !== b.major) return b.major - a.major;
+      if (a.minor !== b.minor) return b.minor - a.minor;
+      if (a.patch !== b.patch) return b.patch - a.patch;
+      // Stable beats prerelease at the same numeric version.
+      if (a.prerelease === '' && b.prerelease !== '') return -1;
+      if (a.prerelease !== '' && b.prerelease === '') return 1;
+      return b.prerelease.localeCompare(a.prerelease);
+    });
+  if (semverDirs.length === 0) {
+    throw new Error('No semver-shaped schema versions found in cache.');
   }
-  return path.join(SCHEMA_CACHE_DIR, versions[0]);
+  return path.join(SCHEMA_CACHE_DIR, semverDirs[0]!.name);
 }
 
 function loadCachedSchema(schemaRef: string): any {
