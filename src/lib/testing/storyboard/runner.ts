@@ -2015,6 +2015,20 @@ async function executeStep(
   // when individual builders or sample_request YAML omit brand.
   request = applyBrandInvariant(request, options, effectiveStep.task);
 
+  // Per-run sandbox-bypass hint (#841). When the operator passes
+  // `--no-sandbox` (or sets `disable_sandbox: true` programmatically), the
+  // runner stamps `ext.adcp.disable_sandbox: true` on every outgoing
+  // request. Adopters that read this field bypass their internal sandbox
+  // routing — env-var fallbacks, brand-domain heuristics, fixture
+  // substitutes — and exercise their real adapter path. Agents that
+  // don't recognize the field ignore it (per spec, `ext` is accepted
+  // without error and not echoed). Gated on the schema check that
+  // `applyBrandInvariant` uses for `account` and `brand` so tools whose
+  // `additionalProperties: false` schema would reject `ext` aren't broken.
+  if (options.disable_sandbox === true) {
+    request = applyDisableSandboxHint(request, effectiveStep.task);
+  }
+
   // Mutating AdCP requests require idempotency_key per spec. Storyboard
   // yamls generally omit it so authors don't have to remember it on every
   // mutating step — mint one here on the runner's behalf, matching how a
@@ -2869,6 +2883,49 @@ export function applyBrandInvariant(
     result.account = resolveAccount(options);
   }
   return result;
+}
+
+/**
+ * Inject `ext.adcp.disable_sandbox: true` into the outgoing request when the
+ * operator passed `--no-sandbox` (or `disable_sandbox: true` programmatically).
+ * Issue #841.
+ *
+ * `ext` is the spec-blessed channel for read-by-agent extensions and is
+ * accepted-without-error on every tool, so the schema check is conservative
+ * — only inject when the tool's request schema permits a top-level `ext`
+ * field. Tools with `additionalProperties: false` that don't list `ext`
+ * would fail strict AJV validation otherwise.
+ *
+ * Merging strategy: preserve any existing `ext.adcp` block the storyboard
+ * fixture or builder authored (e.g. vendor extensions a future scenario
+ * might exercise). The injected `disable_sandbox` flag rides alongside
+ * those rather than overwriting them.
+ */
+export function applyDisableSandboxHint(request: Record<string, unknown>, taskName?: string): Record<string, unknown> {
+  if (taskName && !schemaAllowsTopLevelField(taskName, 'ext')) return request;
+
+  const existingExt = request.ext;
+  const existingExtObj =
+    existingExt != null && typeof existingExt === 'object' && !Array.isArray(existingExt)
+      ? (existingExt as Record<string, unknown>)
+      : {};
+
+  const existingAdcpExt = existingExtObj.adcp;
+  const existingAdcpExtObj =
+    existingAdcpExt != null && typeof existingAdcpExt === 'object' && !Array.isArray(existingAdcpExt)
+      ? (existingAdcpExt as Record<string, unknown>)
+      : {};
+
+  return {
+    ...request,
+    ext: {
+      ...existingExtObj,
+      adcp: {
+        ...existingAdcpExtObj,
+        disable_sandbox: true,
+      },
+    },
+  };
 }
 
 /**

@@ -1212,10 +1212,13 @@ RUN OPTIONS (full assessment):
   --file PATH         Run an ad-hoc storyboard YAML (spec evolution)
   --timeout SECONDS   Timeout in seconds (default: 120)
   --brief TEXT        Custom brief for product discovery
-  --no-sandbox        Force account.sandbox=false on every request. The
-                      default leaves sandbox unset (spec-equivalent to false),
-                      but agents that branch on field PRESENCE behave
-                      differently from agents that branch on VALUE.
+  --no-sandbox        Force production-path responses (#841). Sets
+                      account.sandbox=false on every request AND stamps
+                      ext.adcp.disable_sandbox=true to signal adopters
+                      to bypass internal sandbox routing (env-var
+                      fallbacks, brand-domain heuristics, fixture
+                      substitutes). Agents that don't recognize the
+                      ext.adcp.disable_sandbox field ignore it.
 
 WEBHOOK OPTIONS:
   --webhook-receiver [MODE]       Host an ephemeral receiver so expect_webhook*
@@ -1680,7 +1683,7 @@ async function handleStoryboardRun(args) {
       resolvedOauthClientCredentials,
     }),
     ...(webhookReceiverOpts ?? {}),
-    ...(opts.noSandbox && { sandbox: false }),
+    ...(opts.noSandbox && { sandbox: false, disable_sandbox: true }),
   };
 
   const restoreLogs = jsonOutput ? captureStdoutLogs() : null;
@@ -2360,7 +2363,7 @@ async function handleLocalAgentStoryboardRun(modulePath, args, opts) {
     result = await runAgainstLocalAgent({
       createAgent,
       storyboards: storyboardsSpec,
-      ...(opts.noSandbox && { runStoryboardOptions: { sandbox: false } }),
+      ...(opts.noSandbox && { runStoryboardOptions: { sandbox: false, disable_sandbox: true } }),
       onStoryboardComplete:
         jsonOutput || format === 'junit'
           ? undefined
@@ -2671,7 +2674,7 @@ async function handleMultiInstanceStoryboardRun(args, opts, urls) {
     ...(opts.allowHttp && { allow_http: true }),
     multi_instance_strategy: strategy,
     ...(webhookReceiverOpts ?? {}),
-    ...(opts.noSandbox && { sandbox: false }),
+    ...(opts.noSandbox && { sandbox: false, disable_sandbox: true }),
   };
 
   const restoreLogs = jsonOutput ? captureStdoutLogs() : null;
@@ -2838,7 +2841,7 @@ async function runFullAssessment(agentArg, rawArgs, parsedOpts) {
     ...(authOption && { auth: authOption }),
     ...(opts.allowHttp && { allow_http: true }),
     ...(webhookReceiverOpts ?? {}),
-    ...(opts.noSandbox && { sandbox: false }),
+    ...(opts.noSandbox && { sandbox: false, disable_sandbox: true }),
   };
 
   if (!opts.jsonOutput) {

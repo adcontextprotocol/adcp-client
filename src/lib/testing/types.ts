@@ -166,6 +166,20 @@ export interface TestOptions {
   // sandbox: true. For explicit accounts, discovers sandbox accounts via list_accounts.
   sandbox?: boolean;
   /**
+   * When true, the runner injects `ext.adcp.disable_sandbox: true` on every
+   * outgoing request, signaling the agent under test to bypass any internal
+   * sandbox routing (env-var fallbacks, brand-domain heuristics, fixture
+   * substitutes) and exercise its real adapter path. Distinct from `sandbox`
+   * (which sets `account.sandbox: false` — a value, not a routing hint).
+   *
+   * Honored by adopters who explicitly read `ext.adcp.disable_sandbox`.
+   * Agents that don't recognize the field ignore it (per spec, `ext` is
+   * accepted-without-error). The pair (sandbox=false + disable_sandbox=true)
+   * is the strongest "production path only" signal the runner can send;
+   * `--no-sandbox` on `adcp storyboard run` sets both. Issue #841.
+   */
+  disable_sandbox?: boolean;
+  /**
    * Fictional-entity test-kit data loaded from `test-kits/<name>.yaml`.
    * Storyboard phases may skip based on fields here (e.g. `skip_if: "!test_kit.auth.api_key"`).
    */
