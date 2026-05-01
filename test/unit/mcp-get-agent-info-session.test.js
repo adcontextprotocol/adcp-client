@@ -54,7 +54,9 @@ async function listToolsWithSessionRetry(mcpClient, connectMCP, connectOptions, 
 }
 
 describe('getAgentInfo: StreamableHTTP session retry', () => {
-  const noopConnect = async () => { throw new Error('should not reconnect'); };
+  const noopConnect = async () => {
+    throw new Error('should not reconnect');
+  };
 
   test('returns tools on first try when listTools succeeds', async () => {
     const mockTools = { tools: [{ name: 'get_adcp_capabilities' }] };
@@ -188,30 +190,34 @@ describe('getAgentInfo: StreamableHTTP session retry', () => {
   test('does not retry on 401 StreamableHTTPError (auth failure)', async () => {
     let connectCalled = false;
     const mcpClient = {
-      listTools: async () => { throw new StreamableHTTPError(401, 'Unauthorized'); },
+      listTools: async () => {
+        throw new StreamableHTTPError(401, 'Unauthorized');
+      },
       close: async () => {},
     };
-    const connectMCP = async () => { connectCalled = true; return { client: null }; };
+    const connectMCP = async () => {
+      connectCalled = true;
+      return { client: null };
+    };
 
-    await assert.rejects(
-      () => listToolsWithSessionRetry(mcpClient, connectMCP, {}),
-      { message: 'Unauthorized' }
-    );
+    await assert.rejects(() => listToolsWithSessionRetry(mcpClient, connectMCP, {}), { message: 'Unauthorized' });
     assert.strictEqual(connectCalled, false, '401 should not trigger reconnect');
   });
 
   test('does not retry on 403 StreamableHTTPError (authorization failure)', async () => {
     let connectCalled = false;
     const mcpClient = {
-      listTools: async () => { throw new StreamableHTTPError(403, 'Forbidden'); },
+      listTools: async () => {
+        throw new StreamableHTTPError(403, 'Forbidden');
+      },
       close: async () => {},
     };
-    const connectMCP = async () => { connectCalled = true; return { client: null }; };
+    const connectMCP = async () => {
+      connectCalled = true;
+      return { client: null };
+    };
 
-    await assert.rejects(
-      () => listToolsWithSessionRetry(mcpClient, connectMCP, {}),
-      { message: 'Forbidden' }
-    );
+    await assert.rejects(() => listToolsWithSessionRetry(mcpClient, connectMCP, {}), { message: 'Forbidden' });
     assert.strictEqual(connectCalled, false, '403 should not trigger reconnect');
   });
 
@@ -220,11 +226,15 @@ describe('getAgentInfo: StreamableHTTP session retry', () => {
     const secondErr = new StreamableHTTPError(400, 'Missing session ID again');
 
     const mcpClient = {
-      listTools: async () => { throw firstErr; },
+      listTools: async () => {
+        throw firstErr;
+      },
       close: async () => {},
     };
     const retryClient = {
-      listTools: async () => { throw secondErr; },
+      listTools: async () => {
+        throw secondErr;
+      },
       close: async () => {},
     };
     const connectMCP = async () => ({ client: retryClient });

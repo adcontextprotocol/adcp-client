@@ -736,7 +736,11 @@ export class SingleAgentClient {
       `Failed to discover MCP endpoint. Tried:\n` +
         uniqueUrls.map((url, i) => `  ${i + 1}. ${url}`).join('\n') +
         '\n' +
-        `None responded to MCP protocol.`
+        `None responded to MCP protocol.\n` +
+        `Hint: this usually means \`agent_uri\` does not include the MCP endpoint path. ` +
+        `The SDK only probes \`/\`, \`/mcp\`, and \`/mcp/\` automatically. ` +
+        `If your server exposes MCP at a different path (e.g. \`/api/mcp\`, \`/adcp/mcp\`), ` +
+        `register that exact path as \`agent_uri\`.`
     );
   }
 

@@ -18,3 +18,6 @@ Also:
 - New `mcp_transport?: 'streamable_http' | 'sse'` field on `AgentConfig` for
   future caller-side transport hints (matches the `mcp_transport` registry field
   from adcp#3066 Option B); active wiring in the `callMCPTool` path is a follow-up
+- `discoverMCPEndpoint` now appends an actionable hint when all candidates 404
+  with no 401: points operators to register the exact MCP path as `agent_uri`
+  instead of the host root (closes #1234)
