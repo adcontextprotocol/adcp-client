@@ -69,7 +69,10 @@ describe('A2A agent-card discovery — maxResponseBytes', () => {
         A2AClient.fromCardUrl(`${baseUrl}/.well-known/agent.json`, { fetchImpl: wrappedFetch })
       ),
       err => {
-        assert.ok(err instanceof ResponseTooLargeError, `expected ResponseTooLargeError, got ${err?.constructor?.name}`);
+        assert.ok(
+          err instanceof ResponseTooLargeError,
+          `expected ResponseTooLargeError, got ${err?.constructor?.name}`
+        );
         assert.strictEqual(err.code, 'RESPONSE_TOO_LARGE');
         assert.strictEqual(err.limit, 64 * 1024);
         // Server emits Content-Length, so the pre-check trips before any
