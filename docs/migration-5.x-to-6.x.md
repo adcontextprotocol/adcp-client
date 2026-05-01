@@ -446,6 +446,23 @@ createAdcpServerFromPlatform(platform, {
   or pin the consumer-side `zod` to `<4.3.0` until you've audited
   affected schemas. Not an SDK bug — flagging here so adopters
   migrating off 5.x see the symptom in context.
+- **`Format['assets']` is narrower in 6.0 — bare casts from
+  `Record<string, unknown>[]` no longer compile.** v5 accepted
+  `assets as Format['assets']` from any record-shape; v6's
+  `(BaseIndividualAsset | RepeatableGroupAsset)[]` is tight enough
+  that TypeScript flags the cast as "neither type sufficiently
+  overlaps with the other." Two ways out:
+  - Refactor the converter to return the typed shape directly
+    (read the `BaseIndividualAsset` / `RepeatableGroupAsset` exports
+    from `@adcp/sdk`, build into them rather than into
+    `Record<string, unknown>`). This is the long-term cleaner path.
+  - Mechanical: change `as Format['assets']` to
+    `as unknown as Format['assets']`. Compiles. Only meaningful if
+    your converter has been correct on shape all along — which it
+    likely has, since the wire-level shape didn't change between
+    5.x and 6.0.
+  Only adopters with their own v4/v5-era asset-converter helpers
+  hit this; SDK-typed call sites already use the narrowed shape.
 
 ## Auto-hydration error contract
 
