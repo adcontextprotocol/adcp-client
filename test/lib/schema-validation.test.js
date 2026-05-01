@@ -442,23 +442,19 @@ describe('schema-driven validation', () => {
       assert.strictEqual(modes.requests, 'warn');
     });
 
-    test('responses default to strict in non-production', () => {
+    test('responses default to warn regardless of NODE_ENV', () => {
       const prev = process.env.NODE_ENV;
-      process.env.NODE_ENV = 'development';
       try {
-        const modes = resolveValidationModes();
-        assert.strictEqual(modes.responses, 'strict');
-      } finally {
-        process.env.NODE_ENV = prev;
-      }
-    });
-
-    test('responses default to warn in production', () => {
-      const prev = process.env.NODE_ENV;
-      process.env.NODE_ENV = 'production';
-      try {
-        const modes = resolveValidationModes();
-        assert.strictEqual(modes.responses, 'warn');
+        for (const env of ['development', 'test', 'production', undefined]) {
+          if (env === undefined) delete process.env.NODE_ENV;
+          else process.env.NODE_ENV = env;
+          const modes = resolveValidationModes();
+          assert.strictEqual(
+            modes.responses,
+            'warn',
+            `expected warn under NODE_ENV=${env ?? 'unset'}, got ${modes.responses}`
+          );
+        }
       } finally {
         process.env.NODE_ENV = prev;
       }
