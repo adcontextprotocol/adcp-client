@@ -28,7 +28,8 @@ after(() => {
 });
 
 const lib = require('../dist/lib/index.js');
-const { serve, createAdcpServer: _createAdcpServer } = lib;
+const { serve } = lib;
+const { createAdcpServer: _createAdcpServer } = require('../dist/lib/server/legacy/v5/index.js');
 const { createA2AAdapter } = require('../dist/lib/server/a2a-adapter');
 const { InMemoryStateStore } = require('../dist/lib/server/state-store');
 

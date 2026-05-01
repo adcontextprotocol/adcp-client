@@ -1159,6 +1159,14 @@ export class SingleAgentClient {
     const serverVersion = await this.detectServerVersion();
     const adaptedParams = await this.adaptRequestForServerVersion(taskType, normalizedParams);
 
+    // Symmetric to the pre-adapter v3 pass above: when the adapter
+    // rewrote the request for a v2 server, warn-validate the adapted
+    // shape against the cached v2.5 schema bundle. Surfaces drift
+    // between what the adapter emits and what a v2.5 server expects.
+    if (serverVersion === 'v2') {
+      this.executor.validateAdaptedRequestAgainstV2(taskType, adaptedParams);
+    }
+
     const result = await this.executor.executeTask<T>(
       agent,
       taskType,
@@ -2135,6 +2143,12 @@ export class SingleAgentClient {
     // fields like buying_mode when talking to v2 agents).
     const serverVersion = await this.detectServerVersion();
     const adaptedParams = await this.adaptRequestForServerVersion(taskName, normalizedParams);
+
+    // Symmetric warn-only post-adapter pass against the v2.5 schema bundle.
+    // Surfaces drift between adapter output and v2.5 wire shape.
+    if (serverVersion === 'v2') {
+      this.executor.validateAdaptedRequestAgainstV2(taskName, adaptedParams);
+    }
 
     const result = await this.executor.executeTask<T>(
       agent,

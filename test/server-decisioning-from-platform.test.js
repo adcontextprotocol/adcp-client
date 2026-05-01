@@ -611,6 +611,30 @@ describe('HITL dual-method dispatch — *Task variants', () => {
     assert.strictEqual(finalSlow.result.media_buy_id, 'mb_hitl_slow');
   });
 
+  it('hand-rolled `{status:"submitted", task_id}` from createMediaBuy is rejected with a clear error pointing at ctx.handoffToTask', async () => {
+    // Guards the most common LLM-scaffolded mistake: returning a bare
+    // submitted-shape envelope instead of `ctx.handoffToTask(fn)`. The
+    // framework owns the submitted envelope; an adopter that hand-rolls
+    // it skips the task registry — the buyer ends up polling a task_id
+    // the framework never registered. Fail loudly at dispatch.
+    const platform = buildHitlPlatform({
+      createMediaBuy: async () => ({ status: 'submitted', task_id: 'tk_hand_rolled_xyz' }),
+    });
+    const server = createAdcpServerFromPlatform(platform, {
+      name: 'guard',
+      version: '0.0.1',
+      validation: { requests: 'off', responses: 'off' },
+    });
+    const result = await dispatchCreate(server);
+    // Errors thrown inside the handler bubble up as the framework's
+    // generic SERVICE_UNAVAILABLE envelope; the message itself lands in
+    // the server log. We assert on the error envelope + that the message
+    // referenced `handoffToTask`.
+    assert.strictEqual(result.isError, true);
+    const text = JSON.stringify(result);
+    assert.match(text, /handoffToTask/, 'error message must point at ctx.handoffToTask');
+  });
+
   it('createMediaBuy handoff throwing AdcpError records terminal failed with structured fields', async () => {
     const platform = buildHitlPlatform({
       createMediaBuy: async (req, ctx) =>
@@ -690,20 +714,19 @@ describe('NODE_ENV gate on default in-memory task registry', () => {
   }
 
   function withEnv(env, fn) {
-    const prev = process.env.NODE_ENV;
-    const prevAck = process.env.ADCP_DECISIONING_ALLOW_INMEMORY_TASKS;
-    if (env.NODE_ENV === undefined) delete process.env.NODE_ENV;
-    else process.env.NODE_ENV = env.NODE_ENV;
-    if (env.ADCP_DECISIONING_ALLOW_INMEMORY_TASKS === undefined)
-      delete process.env.ADCP_DECISIONING_ALLOW_INMEMORY_TASKS;
-    else process.env.ADCP_DECISIONING_ALLOW_INMEMORY_TASKS = env.ADCP_DECISIONING_ALLOW_INMEMORY_TASKS;
+    const prev = {};
+    for (const k of Object.keys(env)) {
+      prev[k] = process.env[k];
+      if (env[k] === undefined) delete process.env[k];
+      else process.env[k] = env[k];
+    }
     try {
       fn();
     } finally {
-      if (prev === undefined) delete process.env.NODE_ENV;
-      else process.env.NODE_ENV = prev;
-      if (prevAck === undefined) delete process.env.ADCP_DECISIONING_ALLOW_INMEMORY_TASKS;
-      else process.env.ADCP_DECISIONING_ALLOW_INMEMORY_TASKS = prevAck;
+      for (const k of Object.keys(env)) {
+        if (prev[k] === undefined) delete process.env[k];
+        else process.env[k] = prev[k];
+      }
     }
   }
 
@@ -758,25 +781,42 @@ describe('NODE_ENV gate on default in-memory task registry', () => {
   });
 
   it('NODE_ENV=production WITH ADCP_DECISIONING_ALLOW_INMEMORY_TASKS=1 → allows (with documented data-loss tradeoff)', () => {
-    withEnv({ NODE_ENV: 'production', ADCP_DECISIONING_ALLOW_INMEMORY_TASKS: '1' }, () => {
-      assert.doesNotThrow(() =>
-        createAdcpServerFromPlatform(emptyPlatform(), {
-          name: 't',
-          version: '0',
-          validation: { requests: 'off', responses: 'off' },
-        })
-      );
-    });
+    // The 6.0.1 stateStore gate is parallel to the task-registry gate.
+    // Both have their own ADCP_DECISIONING_ALLOW_INMEMORY_* ack flag. A
+    // production deployment that opts into in-memory tasks AND in-memory
+    // state must set both — they're separate footguns with separate
+    // recoveries.
+    withEnv(
+      {
+        NODE_ENV: 'production',
+        ADCP_DECISIONING_ALLOW_INMEMORY_TASKS: '1',
+        ADCP_DECISIONING_ALLOW_INMEMORY_STATE: '1',
+      },
+      () => {
+        assert.doesNotThrow(() =>
+          createAdcpServerFromPlatform(emptyPlatform(), {
+            name: 't',
+            version: '0',
+            validation: { requests: 'off', responses: 'off' },
+          })
+        );
+      }
+    );
   });
 
   it('explicit taskRegistry provided → no NODE_ENV check', () => {
     const { createInMemoryTaskRegistry } = require('../dist/lib/server/decisioning/runtime/task-registry');
+    const { InMemoryStateStore } = require('../dist/lib/server/state-store');
     withEnv({ NODE_ENV: 'production' }, () => {
       assert.doesNotThrow(() =>
         createAdcpServerFromPlatform(emptyPlatform(), {
           name: 't',
           version: '0',
           taskRegistry: createInMemoryTaskRegistry(),
+          // Explicit stateStore opt-in mirrors the explicit-taskRegistry
+          // pattern this test exercises — both opt-outs have to be
+          // exercised together for the production smoke check.
+          stateStore: new InMemoryStateStore(),
           validation: { requests: 'off', responses: 'off' },
         })
       );

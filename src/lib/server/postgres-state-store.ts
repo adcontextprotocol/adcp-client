@@ -9,7 +9,7 @@
  * @example
  * ```typescript
  * import { Pool } from 'pg';
- * import { PostgresStateStore, createAdcpServer, serve } from '@adcp/sdk';
+ * import { PostgresStateStore, createAdcpServer, serve } from '@adcp/sdk/server/legacy/v5';
  *
  * const pool = new Pool({ connectionString: process.env.DATABASE_URL });
  * const stateStore = new PostgresStateStore(pool);

@@ -28,7 +28,7 @@ const { describe, test } = require('node:test');
 const assert = require('node:assert/strict');
 
 const { runAgainstLocalAgent } = require('../../dist/lib/testing/index.js');
-const { createAdcpServer } = require('../../dist/lib/server/index.js');
+const { createAdcpServer } = require('../../dist/lib/server/legacy/v5/index.js');
 
 // Two-step storyboard: discover → activate. Matches the shape #862 / #870
 // describe: step 1 writes `first_signal_pricing_option_id` via

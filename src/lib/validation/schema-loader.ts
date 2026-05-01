@@ -335,13 +335,30 @@ function ensureInit(version: string): LoaderState {
  */
 function ensureCoreLoaded(s: LoaderState): void {
   if (s.coreLoaded) return;
-  const toolFiles = new Set(s.fileIndex.values());
+  // Tool RESPONSE files only — those need lazy compile through `getValidator`
+  // so `relaxResponseRoot` can apply. Tool REQUEST files and unclassified
+  // fragments are safe to pre-register: requests don't need root-level
+  // relaxation, and fragments registered here are exactly what cross-tool
+  // `$ref`s expect to find by `$id`.
+  //
+  // Why this matters: bundles whose source tree doesn't include a `bundled/`
+  // pre-resolved subtree (e.g. v2.5, where the spec ships flat schemas with
+  // unresolved `$ref`s) classify fragments like `media-buy/package-request.json`
+  // as tool `package::request` via the filename-suffix heuristic in
+  // `buildFileIndex`. Skipping all tool files would leave that fragment
+  // unregistered, so a later compile of `create_media_buy` fails on
+  // `MissingRefError: can't resolve /schemas/media-buy/package-request.json`.
+  const responseToolFiles = new Set<string>();
+  for (const [key, file] of s.fileIndex) {
+    if (key.endsWith('::request')) continue;
+    responseToolFiles.add(file);
+  }
   for (const entry of readdirSync(s.root, { withFileTypes: true })) {
     if (!entry.isDirectory()) continue;
     if (entry.name === 'bundled') continue;
     const abs = path.join(s.root, entry.name);
     for (const file of walkJsonFiles(abs)) {
-      if (toolFiles.has(file)) continue;
+      if (responseToolFiles.has(file)) continue;
       const schema = loadJson(file);
       if (typeof schema.$id === 'string' && !s.ajv.getSchema(schema.$id)) {
         s.ajv.addSchema(schema);

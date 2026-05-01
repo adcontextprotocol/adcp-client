@@ -85,6 +85,8 @@ const server = createAdcpServerFromPlatform(new MySeller(), {
 
 The `createAdcpServerFromPlatform` path wraps a typed `DecisioningPlatform` with compile-time specialism enforcement (claim `sales-non-guaranteed`, miss a required `sales.*` method, fail compile), ctx_metadata round-trip + auto-hydration, idempotency-principal synthesis, status mappers, and webhook auto-emit. **Reach for the lower-level `createAdcpServer` from `@adcp/sdk/server/legacy/v5` only when you need fine control over individual handlers, are mid-migration from a v5 codebase, or have custom tools the platform interface doesn't yet model.**
 
+> **On a hydration miss, the framework leaves the hydrated field undefined and runs the handler anyway** — the cache is a hint, not source-of-truth. Your handler keeps its existence check (`patch.media_buy ?? (await db.findMediaBuy(id))`) and throws a typed `MediaBuyNotFoundError` / `PackageNotFoundError` / `ProductNotFoundError` from `@adcp/sdk/server` when both the hydrate and the DB-fallback come up empty. Full rationale in [Auto-hydration error contract](../../docs/migration-5.x-to-6.x.md#auto-hydration-error-contract).
+
 If a specialism's storyboard doesn't exercise one of these tools, the tool is **not optional** — the storyboard is just focused elsewhere (e.g. `sales-social` covers audience sync + DPA + events; the media buy flow itself is covered by `sales-non-guaranteed` or `sales-guaranteed` which you also claim). See § [Tools and Required Response Shapes](#tools-and-required-response-shapes) below for the exact response shape each tool must return.
 
 ## Specialisms This Skill Covers

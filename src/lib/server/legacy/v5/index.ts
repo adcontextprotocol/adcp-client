@@ -32,12 +32,15 @@
  * @public
  */
 
-export {
-  createAdcpServer,
-  requireSessionKey,
-  ADCP_PRE_TRANSPORT,
-  ADCP_SIGNED_REQUESTS_STATE,
-} from '../../create-adcp-server';
+// `createAdcpServer` is the v5 entry point that was previously at the
+// top-level `@adcp/sdk/server` export. It now lives only here.
+export { createAdcpServer } from '../../create-adcp-server';
+
+// Re-export everything else from `@adcp/sdk/server` so a v5 adopter's
+// migration path is a single-line import swap:
+//   from '@adcp/sdk/server'  →  from '@adcp/sdk/server/legacy/v5'
+// without splitting destructured imports across two paths.
+export * from '../..';
 
 export type {
   AdcpServerConfig,

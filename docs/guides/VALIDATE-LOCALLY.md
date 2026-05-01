@@ -7,7 +7,7 @@ If you're writing a server-side AdCP agent, the minimum loop you want is: **chan
 ```ts
 // tests/compliance.test.ts
 import { runAgainstLocalAgent } from '@adcp/sdk/testing';
-import { createAdcpServer, InMemoryStateStore } from '@adcp/sdk/server';
+import { createAdcpServer, InMemoryStateStore } from '@adcp/sdk/server/legacy/v5';
 
 const stateStore = new InMemoryStateStore();
 

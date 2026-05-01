@@ -12,10 +12,10 @@ const {
   SingleAgentClient,
   AgentClient,
   ADCPMultiAgentClient,
-  createAdcpServer,
   parseAdcpMajorVersion,
   resolveAdcpVersion,
 } = require('../../dist/lib/index.js');
+const { createAdcpServer } = require('../../dist/lib/server/legacy/v5/index.js');
 
 const TEST_AGENT = {
   id: 'test-agent',

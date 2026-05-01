@@ -1,6 +1,6 @@
 {
   "name": "@adcp/sdk",
-  "version": "5.25.1",
+  "version": "6.1.0",
   "description": "AdCP SDK — client, server, and compliance harnesses for the AdContext Protocol (MCP + A2A)",
   "workspaces": [
     ".",
@@ -178,12 +178,12 @@
   ],
   "scripts": {
     "prepare": "node scripts/install-hooks.js 2>/dev/null || true",
-    "prepublishOnly": "npm run clean && npm run sync-schemas && (test -f src/lib/types/tools.generated.ts || npm run generate-types) && npm run build:lib && node --test-timeout=60000 --test-force-exit --test test/lib/adcp-client.test.js test/lib/validation.test.js test/lib/zod-schemas.test.js",
+    "prepublishOnly": "npm run clean && npm run sync-schemas:all && (test -f src/lib/types/tools.generated.ts || npm run generate-types) && npm run build:lib && node --test-timeout=60000 --test-force-exit --test test/lib/adcp-client.test.js test/lib/validation.test.js test/lib/zod-schemas.test.js",
     "build": "npm run build:lib",
     "build:lib": "npm run sync-version && tsc --project tsconfig.lib.json && tsx scripts/copy-schemas-to-dist.ts",
     "build:test-agents": "npm run build:lib && tsc -p test-agents/tsconfig.json --rootDir test-agents",
-    "test": "node --test-timeout=60000 --test-force-exit --test test/*.test.js test/lib/*.test.js",
-    "test:lib": "node --test-timeout=60000 --test-force-exit --test test/lib/*.test.js",
+    "test": "NODE_ENV=test node --test-timeout=60000 --test-force-exit --test test/*.test.js test/lib/*.test.js",
+    "test:lib": "NODE_ENV=test node --test-timeout=60000 --test-force-exit --test test/lib/*.test.js",
     "test:e2e": "node test/e2e/adcp-e2e.test.js",
     "test:protocols": "node test/run-protocol-tests.js",
     "changeset": "changeset",
@@ -196,6 +196,8 @@
     "test:protocol-comparison": "node test/utils/comprehensive-protocol-comparison.js",
     "test:status-report": "node test/utils/final-status-report.js",
     "sync-schemas": "tsx scripts/sync-schemas.ts",
+    "sync-schemas:v2.5": "tsx scripts/sync-v2-5-schemas.ts",
+    "sync-schemas:all": "npm run sync-schemas && npm run sync-schemas:v2.5",
     "schema-diff": "tsx scripts/schema-diff.ts",
     "generate-types": "tsx scripts/generate-types.ts && tsx scripts/generate-enum-arrays.ts",
     "generate-registry-types": "tsx scripts/generate-registry-types.ts",
@@ -271,7 +273,8 @@
     "@a2a-js/sdk": "^0.3.4",
     "@modelcontextprotocol/sdk": "^1.17.5",
     "@opentelemetry/api": "^1.0.0",
-    "pg": "^8.0.0"
+    "pg": "^8.0.0",
+    "zod": "^4.1.5"
   },
   "peerDependenciesMeta": {
     "@opentelemetry/api": {

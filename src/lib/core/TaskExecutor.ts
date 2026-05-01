@@ -342,6 +342,23 @@ export class TaskExecutor {
   }
 
   /**
+   * After `adaptRequestForServerVersion` has rewritten a v3 request into v2
+   * wire format, validate the adapted shape against the cached v2.5 schema
+   * bundle. Always warn-only — adapter bugs shouldn't break user requests,
+   * and the v3 pre-send pass already vouched for the user-facing input.
+   * This pass exists to surface drift between what the adapter emits and
+   * what a v2.5 server expects on the wire (primarily as CI signal via the
+   * adapter-conformance test suite).
+   *
+   * Skips silently for tasks without a v2.5 schema or when the v2.5 bundle
+   * isn't cached. Caller is responsible for gating on `serverVersion === 'v2'`
+   * so v3-targeted traffic doesn't pay the validation cost.
+   */
+  validateAdaptedRequestAgainstV2(taskName: string, adaptedParams: unknown, debugLogs?: any[]): void {
+    validateOutgoingRequest(taskName, adaptedParams, 'warn', debugLogs, 'v2.5');
+  }
+
+  /**
    * Generate webhook URL for protocol-level webhook support
    */
   /**

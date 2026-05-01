@@ -30,6 +30,7 @@
  */
 
 import { spawn, spawnSync, type ChildProcess } from 'node:child_process';
+import { createWriteStream } from 'node:fs';
 import { mkdtemp, readFile, writeFile, rm, stat, chmod, symlink } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
@@ -47,6 +48,13 @@ interface Args {
    * install across many pairs — the template's node_modules is valid for
    * every harness run since the deps are fixed (@adcp/sdk + tsx). */
   sharedNodeModules?: string;
+  /** When set, capture Claude's full stream-json transcript (thinking,
+   * tool calls, partial messages) to this path. Used for diagnostic
+   * reruns when a pair times out or fails — lets us read what the LLM
+   * was producing when the wall hit. Switches the `claude` invocation
+   * to `--output-format stream-json --verbose` and tees stdout to the
+   * file (also still inherits to terminal so live watchers see it). */
+  transcriptPath?: string;
 }
 
 const REPO_ROOT = resolve(__dirname, '..', '..');
@@ -62,6 +70,7 @@ function parseArgs(argv: string[]): Args {
     else if (a === '--timeout-ms') out.timeoutMs = Number(argv[++i]);
     else if (a === '--keep') out.keep = true;
     else if (a === '--shared-node-modules') out.sharedNodeModules = argv[++i];
+    else if (a === '--transcript') out.transcriptPath = resolve(argv[++i]);
     else if (a === '--help' || a === '-h') {
       printUsage();
       process.exit(0);
@@ -83,7 +92,8 @@ function printUsage(): void {
   [--work-dir <path>] \\
   [--timeout-ms 600000] \\
   [--keep] \\
-  [--shared-node-modules <path>]`
+  [--shared-node-modules <path>] \\
+  [--transcript <path>]`
   );
 }
 
@@ -105,22 +115,25 @@ ${skill}
 The current working directory already has a \`package.json\` with \`@adcp/sdk\` installed via \`npm install\`. Do NOT touch package.json or run npm install — deps are ready.
 
 1. Write \`server.ts\` that:
-   - Uses \`createAdcpServer\` from \`@adcp/sdk/server\`.
+   - Builds an AdCP server using whichever entry point the skill above prescribes. The two valid choices in v6.0:
+     * **\`createAdcpServerFromPlatform\` from \`@adcp/sdk/server\`** — the v6 typed-platform path. Preferred when the skill shows a \`class implements DecisioningPlatform\` example.
+     * **\`createAdcpServer\` from \`@adcp/sdk/server/legacy/v5\`** — the v5 escape hatch (handler-bag config). Use this when the skill explicitly imports from \`@adcp/sdk/server/legacy/v5\` (SI agent, brand-rights, etc.) or when no v6 specialism exists for the surface you're building.
+     * Do NOT import \`createAdcpServer\` from \`@adcp/sdk\` or \`@adcp/sdk/server\` — it was removed from those paths in v6.0.
    - Implements handlers minimally sufficient to pass \`${storyboardId}\`.
-   - If the storyboard grades outbound webhooks, generate an Ed25519 keypair at startup and pass \`webhooks: { signerKey }\` to \`createAdcpServer\`. Call \`ctx.emitWebhook\` on completion.
+   - If the storyboard grades outbound webhooks, generate an Ed25519 keypair at startup and pass \`webhooks: { signerKey }\` through to the constructor. Call \`ctx.emitWebhook\` on completion.
    - Binds MCP over HTTP on port **${port}** exactly (the harness connects to \`http://127.0.0.1:${port}/mcp\`).
-   - Uses \`serve()\` from \`@adcp/sdk/server\` and wires authentication with the harness key below.
+   - Uses \`serve()\` and wires authentication with the harness key below.
 
-**Authentication (non-negotiable, overrides any conflicting guidance from the skill above).** The harness grader authenticates with a static API key. Wire it exactly like this:
+**Authentication (non-negotiable, overrides any conflicting guidance from the skill above).** The harness grader authenticates with a static API key. The auth wiring is identical for v5 and v6 paths — pick the matching import path:
 
 \`\`\`ts
-import { serve, createAdcpServer, verifyApiKey, type ServeContext } from '@adcp/sdk/server';
+// v6 path (createAdcpServerFromPlatform):
+import { serve, verifyApiKey } from '@adcp/sdk/server';
 
-function createAgent(_ctx: ServeContext) {
-  return createAdcpServer({ /* your handlers here */ });
-}
+// v5 escape hatch (createAdcpServer):
+// import { serve, verifyApiKey } from '@adcp/sdk/server/legacy/v5';
 
-serve(createAgent, {
+serve(() => /* createAdcpServerFromPlatform(platform, opts) OR createAdcpServer(config) */, {
   authenticate: verifyApiKey({
     keys: { 'sk_harness_do_not_use_in_prod': { principal: 'compliance-runner' } },
   }),
@@ -190,17 +203,42 @@ async function bootstrapWorkspace(dir: string, port: number, sharedNodeModules?:
   if (npm.status !== 0) throw new Error(`npm install failed in ${dir}`);
 }
 
-async function runClaude(prompt: string, cwd: string, timeoutMs: number): Promise<void> {
+async function runClaude(prompt: string, cwd: string, timeoutMs: number, transcriptPath?: string): Promise<void> {
   log(`invoking claude in ${cwd}`);
   const promptPath = join(cwd, '.harness-prompt.md');
   await writeFile(promptPath, prompt, 'utf8');
   await new Promise<void>((resolveFn, reject) => {
     // `--dangerously-skip-permissions` is required for unattended runs —
     // the alternative is the harness pausing on every tool call.
-    const p = spawn('claude', ['-p', `Follow the instructions in ${promptPath}.`, '--dangerously-skip-permissions'], {
-      cwd,
-      stdio: ['ignore', 'inherit', 'inherit'],
-    });
+    //
+    // Transcript mode: when `transcriptPath` is set, switch to
+    // `--output-format stream-json --verbose --include-partial-messages`
+    // and tee Claude's stdout (one JSON event per line) to the file
+    // while still inheriting to the terminal so a live watcher can
+    // follow along. Used for diagnostic reruns of pairs that timed out
+    // in the matrix — lets us read what the LLM was producing when the
+    // wall hit.
+    const args = [
+      '-p',
+      `Follow the instructions in ${promptPath}.`,
+      '--dangerously-skip-permissions',
+      ...(transcriptPath ? ['--output-format', 'stream-json', '--verbose', '--include-partial-messages'] : []),
+    ];
+    const stdio: ('ignore' | 'inherit' | 'pipe')[] = transcriptPath
+      ? ['ignore', 'pipe', 'inherit']
+      : ['ignore', 'inherit', 'inherit'];
+    const p = spawn('claude', args, { cwd, stdio });
+    if (transcriptPath && p.stdout) {
+      // Tee: write each chunk to the transcript file AND to the parent
+      // stdout so the terminal still shows progress live. Append-mode so
+      // a single transcriptPath can capture multiple invocations.
+      const file = createWriteStream(transcriptPath, { flags: 'a' });
+      p.stdout.on('data', chunk => {
+        file.write(chunk);
+        process.stdout.write(chunk);
+      });
+      p.on('exit', () => file.end());
+    }
     const t = setTimeout(() => {
       p.kill('SIGTERM');
       reject(new Error(`claude timed out after ${timeoutMs}ms`));
@@ -222,18 +260,45 @@ async function startAgent(cwd: string, port: number): Promise<ChildProcess> {
   // the prompt. Kill anything listening on the target port before we start
   // ours — otherwise bash start.sh crashes EADDRINUSE.
   await killPort(port);
-  const child = spawn('bash', [startSh], { cwd, stdio: ['ignore', 'inherit', 'inherit'] });
+  // `NODE_ENV=development` is mandatory for v6 agents — `createAdcpServerFromPlatform`
+  // refuses to mint a default in-memory task registry outside `{test,development}`
+  // (see `from-platform.ts:buildDefaultTaskRegistry`). Without this, every v6
+  // agent crashes at boot with a TaskRegistry error, `serve()` returns 500
+  // from the factory-throw branch, and the grader maps the non-200 to
+  // `auth_required` — empirically flagged by matrix v2/v3 where the SI agent
+  // (v5 path, no TaskRegistry) passed but every v6 agent reported as auth.
+  // `validation: 'strict'` for both sides also matches the harness's intent.
+  const child = spawn('bash', [startSh], {
+    cwd,
+    stdio: ['ignore', 'inherit', 'inherit'],
+    env: { ...process.env, NODE_ENV: 'development' },
+  });
   child.on('error', err => log(`[agent] spawn error: ${err.message}`));
   return child;
 }
 
 async function killPort(port: number): Promise<void> {
+  // Two-stage cleanup. (1) Kill anything `lsof` says is listening — the
+  // direct case. (2) Kill any orphaned `npm exec tsx server.ts` whose cwd
+  // is a stale `adcp-agent-*` workspace, since those routinely hold
+  // harness ports across matrix runs and a parent `pkill` against
+  // `compliance:skill-matrix` doesn't propagate to grandchild tsx
+  // processes. Without (2), the next matrix pair binds an already-held
+  // port → crash at startup → harness's `waitForPort` succeeds against
+  // the OLD agent → grader gets misleading 401/timeout from the wrong
+  // process. We hit this empirically running v2 of the post-ship matrix.
   // `lsof -ti` + kill -9 is the portable-enough approach on macOS + Linux.
   // On Windows this would be different; the harness is macOS/Linux-only.
-  const res = spawnSync('bash', ['-c', `lsof -ti tcp:${port} | xargs -r kill -9`], { stdio: 'ignore' });
-  void res;
+  spawnSync('bash', ['-c', `lsof -ti tcp:${port} | xargs -r kill -9`], { stdio: 'ignore' });
+  // Stage 2: sweep any zombie tsx running an `adcp-agent-*` workspace.
+  // pgrep matches on cmdline; xargs -r is GNU-specific but BSD pgrep on
+  // macOS supports `-f` (full cmdline match). The harness is mac+linux-only
+  // so we accept the BSD/GNU split here.
+  spawnSync('bash', ['-c', `pgrep -f 'tsx.*adcp-agent-[A-Za-z0-9]+' | xargs kill -9 2>/dev/null || true`], {
+    stdio: 'ignore',
+  });
   // Brief wait so the kernel reaps the socket before we try to bind.
-  await new Promise(r => setTimeout(r, 300));
+  await new Promise(r => setTimeout(r, 500));
 }
 
 async function waitForPort(host: string, port: number, timeoutMs: number): Promise<void> {
@@ -322,7 +387,12 @@ async function main(): Promise<void> {
   let agent: ChildProcess | undefined;
   try {
     await bootstrapWorkspace(workDir, args.port, args.sharedNodeModules);
-    await runClaude(buildPrompt(skillContent, args.storyboard, args.port, skillDir), workDir, args.timeoutMs);
+    await runClaude(
+      buildPrompt(skillContent, args.storyboard, args.port, skillDir),
+      workDir,
+      args.timeoutMs,
+      args.transcriptPath
+    );
 
     log(`starting agent`);
     agent = await startAgent(workDir, args.port);
