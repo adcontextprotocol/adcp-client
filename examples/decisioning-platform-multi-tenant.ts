@@ -43,13 +43,35 @@ import { ProgrammaticSeller } from './decisioning-platform-programmatic';
 const TENANT_KEYS: Record<string, TenantSigningKey> = {
   acme_tv: {
     keyId: 'acme_tv-2026-04',
-    publicJwk: { kty: 'RSA', n: 'pub_modulus_acme', e: 'AQAB' },
-    privateJwk: { kty: 'RSA', n: 'pub_modulus_acme', e: 'AQAB', d: 'priv_exp_acme' },
+    publicJwk: {
+      kty: 'OKP',
+      crv: 'Ed25519',
+      x: 'PLACEHOLDER_ACME_PUBLIC',
+      adcp_use: 'webhook-signing',
+    } as JsonWebKey,
+    privateJwk: {
+      kty: 'OKP',
+      crv: 'Ed25519',
+      x: 'PLACEHOLDER_ACME_PUBLIC',
+      d: 'PLACEHOLDER_ACME_PRIVATE',
+      adcp_use: 'webhook-signing',
+    } as JsonWebKey,
   },
   zenith_programmatic: {
     keyId: 'zenith-2026-04',
-    publicJwk: { kty: 'RSA', n: 'pub_modulus_zenith', e: 'AQAB' },
-    privateJwk: { kty: 'RSA', n: 'pub_modulus_zenith', e: 'AQAB', d: 'priv_exp_zenith' },
+    publicJwk: {
+      kty: 'OKP',
+      crv: 'Ed25519',
+      x: 'PLACEHOLDER_ZENITH_PUBLIC',
+      adcp_use: 'webhook-signing',
+    } as JsonWebKey,
+    privateJwk: {
+      kty: 'OKP',
+      crv: 'Ed25519',
+      x: 'PLACEHOLDER_ZENITH_PUBLIC',
+      d: 'PLACEHOLDER_ZENITH_PRIVATE',
+      adcp_use: 'webhook-signing',
+    } as JsonWebKey,
   },
 };
 

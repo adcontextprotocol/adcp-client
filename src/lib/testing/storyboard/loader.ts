@@ -65,6 +65,7 @@ export function validateStoryboardShape(storyboard: Storyboard): void {
       resolveContributesShorthand(storyboard.id, phase, step);
       validateFixtureForMutatingStep(storyboard.id, phase, step);
       validateContextOutputs(storyboard.id, phase, step);
+      validatePeerSubstitutesFor(storyboard.id, phase, step);
     }
   }
 }
@@ -137,6 +138,60 @@ function validateContextOutputs(
         `[${storyboardId}] phase '${phase.id}' step '${step.id}': context_outputs entry ` +
           `'${output.key}' has unknown generate value '${output.generate}'. ` +
           `Supported: 'uuid_v4', 'opaque_id'.`
+      );
+    }
+  }
+}
+
+/**
+ * Authoring-time validation for `peer_substitutes_for` (#1144). The runner
+ * treats the field as same-phase-only and substitution-only-when-stateful;
+ * surface those constraints at parse time so storyboard authors see typos
+ * and cross-phase references on build, not as a silent no-rescue at run
+ * time.
+ *
+ * Rules:
+ *   - Each target must reference a step that exists in the same phase.
+ *   - A step cannot substitute for itself.
+ *   - The substitute step itself must be `stateful: true` — non-stateful
+ *     passes don't establish state per the cascade contract.
+ *   - The target step must be `stateful: true` — non-stateful targets
+ *     don't participate in cascade gating, so a substitution declaration
+ *     would be a no-op.
+ */
+function validatePeerSubstitutesFor(
+  storyboardId: string,
+  phase: Storyboard['phases'][number],
+  step: Storyboard['phases'][number]['steps'][number]
+): void {
+  if (step.peer_substitutes_for === undefined) return;
+  const targets = Array.isArray(step.peer_substitutes_for) ? step.peer_substitutes_for : [step.peer_substitutes_for];
+  if (!step.stateful) {
+    throw new Error(
+      `[${storyboardId}] phase '${phase.id}' step '${step.id}': peer_substitutes_for is only legal on stateful steps`
+    );
+  }
+  const phaseStepIds = new Map(phase.steps.map(s => [s.id, s]));
+  for (const target of targets) {
+    if (typeof target !== 'string' || target.length === 0) {
+      throw new Error(
+        `[${storyboardId}] phase '${phase.id}' step '${step.id}': peer_substitutes_for entries must be non-empty strings`
+      );
+    }
+    if (target === step.id) {
+      throw new Error(
+        `[${storyboardId}] phase '${phase.id}' step '${step.id}': peer_substitutes_for cannot reference itself`
+      );
+    }
+    const targetStep = phaseStepIds.get(target);
+    if (!targetStep) {
+      throw new Error(
+        `[${storyboardId}] phase '${phase.id}' step '${step.id}': peer_substitutes_for target '${target}' is not a step in this phase (same-phase only)`
+      );
+    }
+    if (!targetStep.stateful) {
+      throw new Error(
+        `[${storyboardId}] phase '${phase.id}' step '${step.id}': peer_substitutes_for target '${target}' must be stateful`
       );
     }
   }

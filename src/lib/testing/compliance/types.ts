@@ -27,7 +27,20 @@ export type ComplianceTrack =
   | 'error_handling' // Error response structure and transport compliance
   | 'brand'; // Brand identity, rights licensing, creative approval
 
-export type TrackStatus = 'pass' | 'fail' | 'skip' | 'partial';
+/**
+ * Per-track compliance verdict.
+ *
+ * - `pass` — every observation-based assertion observed at least one
+ *   resource and nothing failed.
+ * - `silent` — every observation-based assertion ran with zero
+ *   observations and nothing failed. The track is wired but its
+ *   lifecycle protections were not exercised this run, so it has
+ *   nothing to attest. Distinct from `pass` (real protection was
+ *   validated) and `skip` (the track did not run). Companion to
+ *   adcontextprotocol/adcp#2834 on the grader side.
+ * - `fail` / `partial` / `skip` — unchanged.
+ */
+export type TrackStatus = 'pass' | 'fail' | 'skip' | 'partial' | 'silent';
 
 export type OverallStatus = 'passing' | 'failing' | 'partial' | 'auth_required' | 'unreachable';
 
@@ -112,6 +125,13 @@ export interface ComplianceSummary {
   tracks_failed: number;
   tracks_skipped: number;
   tracks_partial: number;
+  /**
+   * Tracks where every observation-based invariant ran but observed
+   * zero lifecycle resources — wired but not exercised. Counted
+   * separately from `tracks_passed` so dashboards can avoid
+   * over-crediting silent tracks as real protection.
+   */
+  tracks_silent: number;
   /** One-line status */
   headline: string;
   /** Total storyboard steps executed (per the runner-output contract). */

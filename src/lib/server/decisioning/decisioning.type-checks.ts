@@ -52,9 +52,10 @@ function _adcp_error_accepts_unknown_code(): AdcpError {
   });
 }
 
-function _adcp_error_missing_recovery_fails(): AdcpError {
-  // @ts-expect-error — `recovery` is required on AdcpError options.
-  return new AdcpError('TERMS_REJECTED', { message: 'forgot recovery' });
+function _adcp_error_recovery_optional_defaults_from_code(): AdcpError {
+  // `recovery` is now optional — defaults to getErrorRecovery(code) for
+  // standard codes (here: TERMS_REJECTED → 'correctable' per the spec).
+  return new AdcpError('TERMS_REJECTED', { message: 'omitted recovery — spec default applies' });
 }
 
 // AdcpError is throwable from any specialism method.
@@ -231,7 +232,7 @@ export const _references = [
   _adcp_error_minimum,
   _adcp_error_full_fields,
   _adcp_error_accepts_unknown_code,
-  _adcp_error_missing_recovery_fails,
+  _adcp_error_recovery_optional_defaults_from_code,
   _adcp_error_throw_pattern,
   _check_sales_only,
   _check_creative_template,

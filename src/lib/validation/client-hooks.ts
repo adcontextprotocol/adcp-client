@@ -10,33 +10,32 @@ import { buildValidationError } from './schema-errors';
 export type ValidationMode = 'strict' | 'warn' | 'off';
 
 export interface ValidationHookConfig {
-  /** Validate outgoing requests. Default: strict in dev/test, warn in prod. */
+  /** Validate outgoing requests. Default: `warn` everywhere. */
   requests?: ValidationMode;
-  /** Validate incoming responses. Default: strict in dev/test, warn in prod. */
+  /** Validate incoming responses. Default: `warn` everywhere. */
   responses?: ValidationMode;
-}
-
-function defaultResponseMode(): ValidationMode {
-  // Responses have been validated strictly by default since the SDK shipped
-  // Zod validation; preserve that in dev/test and soften to warn in prod.
-  return process.env.NODE_ENV === 'production' ? 'warn' : 'strict';
 }
 
 /**
  * Resolve the effective request/response modes.
  *
- * Response default: strict in dev/test, warn in prod (preserves the
- * existing `strictSchemaValidation` contract).
+ * Both default to `warn` everywhere — buyers get drift surfaced through
+ * `result.debug_logs` without losing the response payload to a strict
+ * rejection. v2.5 sellers in particular ship enough legacy drift
+ * (envelope nulls, optional-required fields, enum mismatches) that
+ * strict-by-default leaves callers staring at "0 products" with no
+ * useful signal. Buyers and harnesses that want hard-stop behavior
+ * (conformance suites, third-party validators) opt into strict via
+ * `validation: { responses: 'strict' }` — explicit config always wins.
  *
- * Request default: `warn` everywhere. Strict-by-default would break
- * existing callers that intentionally send partial payloads (error-path
- * tests, exploratory probes) — storyboards and third-party clients that
- * want hard-stop enforcement should set `requests: 'strict'` explicitly.
+ * This is the **client-side** default. `createAdcpServer` keeps its
+ * stricter dev/test handler-validation contract — that catches our own
+ * handler bugs, which strict mode is genuinely good at.
  */
 export function resolveValidationModes(config?: ValidationHookConfig): Required<ValidationHookConfig> {
   return {
     requests: config?.requests ?? 'warn',
-    responses: config?.responses ?? defaultResponseMode(),
+    responses: config?.responses ?? 'warn',
   };
 }
 

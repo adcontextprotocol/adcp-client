@@ -16,6 +16,7 @@ import { withSpan, injectTraceHeaders } from '../observability/tracing';
 import { buildAgentSigningFetch, signingContextStorage, type AgentSigningContext } from '../signing/client';
 import { redactIdempotencyKeyInArgs } from '../utils/idempotency';
 import { wrapFetchWithCapture } from './rawResponseCapture';
+import { wrapFetchWithSizeLimit } from './responseSizeLimit';
 
 // Re-export for convenience
 export { UnauthorizedError };
@@ -311,13 +312,18 @@ async function connectMCPWithFallbackImpl(
   label = 'connection'
 ): Promise<MCPClient> {
   const signingContext = signingContextStorage.getStore();
+  // Wrap order (innermost → outermost): network → size-limit → signing → capture.
+  // Size-limit applies to the raw network response so signing/capture see a
+  // bounded body (capture clones via `response.clone()`, which would otherwise
+  // buffer a hostile reply in memory).
+  const sizeLimited = wrapFetchWithSizeLimit((input, init) => fetch(input as any, init));
   const baseFetch: typeof fetch = signingContext
     ? (buildAgentSigningFetch({
-        upstream: (input, init) => fetch(input as any, init),
+        upstream: sizeLimited,
         signing: signingContext.signing,
         getCapability: signingContext.getCapability,
       }) as typeof fetch)
-    : (input, init) => fetch(input as any, init);
+    : sizeLimited;
   const transportOptions: StreamableHTTPClientTransportOptions = {
     requestInit: { headers: authHeaders },
     fetch: wrapFetchWithCapture(baseFetch),
@@ -649,14 +655,16 @@ export async function connectMCP(options: {
 
   // RFC 9421 signing — wrap the transport's fetch so the signer sees the final
   // headers the SDK assembled (including any OAuth-issued Authorization) and
-  // decides per outbound request whether to sign.
+  // decides per outbound request whether to sign. Size-limit sits innermost so
+  // the response body is bounded before signing/capture observe it.
+  const sizeLimited = wrapFetchWithSizeLimit((input, init) => fetch(input as string | URL, init));
   const signedFetch: typeof fetch = signingContext
     ? (buildAgentSigningFetch({
-        upstream: (input, init) => fetch(input as string | URL, init),
+        upstream: sizeLimited,
         signing: signingContext.signing,
         getCapability: signingContext.getCapability,
       }) as typeof fetch)
-    : (input, init) => fetch(input as string | URL, init);
+    : sizeLimited;
   transportOptions.fetch = wrapFetchWithCapture(signedFetch);
 
   const transport = new StreamableHTTPClientTransport(baseUrl, transportOptions);

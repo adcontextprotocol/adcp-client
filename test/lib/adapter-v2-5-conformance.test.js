@@ -85,11 +85,17 @@ const FIXTURES = {
       idempotency_key: '33333333-3333-3333-3333-333333333333',
     },
     expected_failures: {
-      // adcontextprotocol/adcp-client#1116 — adapter is a thin
-      // prefix-stripper, leaks v3 manifest shape to v2.5's
-      // single-asset-payload oneOf.
+      // FOLLOW-UP: #1118's "manifest flatten" claim that v2.5 expects a
+      // single-asset payload is contradicted by the v2.5 schema cache —
+      // `creative-asset.json` declares `assets` as an object with
+      // patternProperties keyed by asset role (i.e., the same role-keyed
+      // manifest shape v3 uses). Post-#1118 the adapter emits a flat
+      // shape that fails v2.5 validation on every flat field. Either the
+      // schema needs updating or the flatten needs reverting; tracking in
+      // a follow-up issue. This fixture pins the current failure surface
+      // so further drift is loud.
       issue: 'adcontextprotocol/adcp-client#1116',
-      pointers: ['/creatives/0/assets/video'],
+      pointers: ['/creatives/0/assets/asset_type'],
     },
   },
 };
