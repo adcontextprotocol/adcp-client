@@ -98,6 +98,7 @@ import {
 import { isLikelyPrivateUrl } from '../net';
 import { discoverAuthorizationRequirements, NeedsAuthorizationError } from '../auth/oauth/authorization-required';
 import { discoverOAuthMetadata } from '../auth/oauth/discovery';
+import type { OAuthClientProvider } from '@modelcontextprotocol/sdk/client/auth.js';
 import type { InputHandler, TaskOptions, TaskResult, ConversationConfig, TaskInfo } from './ConversationTypes';
 import type { Activity, AsyncHandlerConfig, WebhookMetadata } from './AsyncHandler';
 import { AsyncHandler } from './AsyncHandler';
@@ -2665,9 +2666,12 @@ export class SingleAgentClient {
       // Route through connectMCPWithFallback so SSE-only servers work.
       // Both static bearer and saved OAuth tokens flow through the
       // fallback-capable path — SSEClientTransport accepts authProvider too.
+      // NOTE: OAuth + SSE-only public server is a known unsupported combination.
+      // SSEClientTransport's mid-stream re-auth (UnauthorizedError during a live
+      // SSE stream) is not yet handled here. Tracked as a follow-on to #1233.
       const { connectMCPWithFallback } = await import('../protocols/mcp');
       const mcpUrl = new URL(agent.agent_uri);
-      let authProvider: Parameters<typeof connectMCPWithFallback>[4] = undefined;
+      let authProvider: OAuthClientProvider | undefined;
       let authHeaders: Record<string, string> = {};
 
       if (this.normalizedAgent.oauth_tokens) {
