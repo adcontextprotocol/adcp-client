@@ -39,6 +39,46 @@ function urlOfInput(input: RequestInfo | URL): string {
 }
 
 /**
+ * Strip the search component from a URL before storing it on
+ * `ResponseTooLargeError`. Some agents publish manifests with auth tokens
+ * in the query string (`?api_key=…`); without redaction those land in
+ * `err.message`, `err.details.url`, and downstream log sinks.
+ *
+ * Returns the input unchanged when it can't be parsed (relative paths,
+ * non-URL inputs from custom test stubs) — the alternative is throwing,
+ * which would mask the original `ResponseTooLargeError`.
+ */
+function redactUrlForError(url: string): string {
+  try {
+    const parsed = new URL(url);
+    parsed.search = '';
+    return parsed.toString();
+  } catch {
+    return url;
+  }
+}
+
+/**
+ * Force `Accept-Encoding: identity` on outgoing requests when the size cap
+ * is active. Without this, undici sets `Accept-Encoding: gzip, deflate, br`
+ * by default and decompresses the body before our counter sees it — a
+ * hostile vendor can ship a 5 KB gzip blob that decompresses to GBs and
+ * costs the attacker nothing for asymmetric CPU burn before the cap fires.
+ * Forcing identity removes the asymmetry: the bomb has to be sent on the
+ * wire at full size, where `Content-Length` pre-check catches it.
+ *
+ * No-op when the caller already set their own `Accept-Encoding` (signing
+ * fetch may need a specific value to keep the signed bytes stable).
+ */
+function withIdentityEncoding(init: RequestInit | undefined): RequestInit {
+  const headers = new Headers(init?.headers);
+  if (!headers.has('accept-encoding')) {
+    headers.set('accept-encoding', 'identity');
+  }
+  return { ...(init ?? {}), headers };
+}
+
+/**
  * Wrap a fetch implementation so its responses honor the size cap from the
  * active `responseSizeLimitStorage` slot. Pass-through when no slot is set.
  *
@@ -53,8 +93,8 @@ export function wrapFetchWithSizeLimit(upstream: typeof fetch): typeof fetch {
     const slot = responseSizeLimitStorage.getStore();
     if (!slot) return upstream(input, init);
 
-    const response = await upstream(input, init);
-    return enforceSizeLimit(response, slot.maxResponseBytes, urlOfInput(input));
+    const response = await upstream(input, withIdentityEncoding(init));
+    return enforceSizeLimit(response, slot.maxResponseBytes, redactUrlForError(urlOfInput(input)));
   };
   return wrapped;
 }

@@ -503,14 +503,21 @@ async function rethrowAsNeedsAuthorization(err: unknown, agentUrl: string): Prom
 }
 
 /**
- * Simple factory functions for protocol-specific clients
+ * Simple factory functions for protocol-specific clients.
+ *
+ * Both factories accept a `transport` argument that flows through to the
+ * size-cap surface so callers reaching the factory exports honor the same
+ * `maxResponseBytes` contract as `ProtocolClient.callTool`. Without it,
+ * the factories would silently bypass the cap, which the public API
+ * (`TransportOptions`) implies they honor.
  */
 export const createMCPClient = (
   agentUrl: string,
   authToken?: string,
   headers?: Record<string, string>,
   serverVersion?: 'v2' | 'v3',
-  adcpVersion?: string
+  adcpVersion?: string,
+  transport?: TransportOptions
 ) => {
   // Validate the pin at factory time so a typo surfaces here rather than at
   // first call. `buildVersionEnvelope` throws via `resolveWireMajor` on bad
@@ -518,13 +525,15 @@ export const createMCPClient = (
   const versionEnvelope = buildVersionEnvelope(adcpVersion, serverVersion);
   return {
     callTool: (toolName: string, args: Record<string, unknown>, debugLogs?: DebugLogEntry[]) =>
-      callMCPToolWithTasks(
-        agentUrl,
-        toolName,
-        applyVersionEnvelope(args, versionEnvelope),
-        authToken,
-        debugLogs,
-        headers
+      withResponseSizeLimit(transport?.maxResponseBytes, () =>
+        callMCPToolWithTasks(
+          agentUrl,
+          toolName,
+          applyVersionEnvelope(args, versionEnvelope),
+          authToken,
+          debugLogs,
+          headers
+        )
       ),
   };
 };
@@ -534,19 +543,22 @@ export const createA2AClient = (
   authToken?: string,
   headers?: Record<string, string>,
   serverVersion?: 'v2' | 'v3',
-  adcpVersion?: string
+  adcpVersion?: string,
+  transport?: TransportOptions
 ) => {
   const versionEnvelope = buildVersionEnvelope(adcpVersion, serverVersion);
   return {
     callTool: (toolName: string, parameters: Record<string, unknown>, debugLogs?: DebugLogEntry[]) =>
-      callA2ATool(
-        agentUrl,
-        toolName,
-        applyVersionEnvelope(parameters, versionEnvelope),
-        authToken,
-        debugLogs,
-        undefined,
-        headers
+      withResponseSizeLimit(transport?.maxResponseBytes, () =>
+        callA2ATool(
+          agentUrl,
+          toolName,
+          applyVersionEnvelope(parameters, versionEnvelope),
+          authToken,
+          debugLogs,
+          undefined,
+          headers
+        )
       ),
   };
 };
