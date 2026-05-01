@@ -1021,7 +1021,7 @@ function removeNumberedTypeDuplicatesOnce(
   return { result, collapsed: numberedTypes, mismatched };
 }
 
-function removeNumberedTypeDuplicates(typeDefinitions: string): string {
+export function removeNumberedTypeDuplicates(typeDefinitions: string): string {
   // Iterate: a first-pass mismatch is often caused by nested numbered references
   // (e.g. CatalogFieldMapping2 references ExtensionObject32; once ExtensionObject32
   // is collapsed to ExtensionObject, CatalogFieldMapping2's body matches the base).
@@ -1045,7 +1045,7 @@ function removeNumberedTypeDuplicates(typeDefinitions: string): string {
 }
 
 // Helper function to filter duplicate type definitions properly
-function filterDuplicateTypeDefinitions(typeDefinitions: string, generatedTypes: Set<string>): string {
+export function filterDuplicateTypeDefinitions(typeDefinitions: string, generatedTypes: Set<string>): string {
   const lines = typeDefinitions.split('\n');
   const outputLines: string[] = [];
   let currentTypeDefinition: string[] = [];

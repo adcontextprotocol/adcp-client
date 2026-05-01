@@ -22,7 +22,7 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'fs';
 import path from 'path';
 import { compile } from 'json-schema-to-typescript';
 import { removeArrayLengthConstraints } from './schema-utils';
-import { enforceStrictSchema } from './generate-types';
+import { enforceStrictSchema, removeNumberedTypeDuplicates } from './generate-types';
 
 const REPO_ROOT = path.join(__dirname, '..');
 const V25_CACHE_DIR = path.join(REPO_ROOT, 'schemas/cache/v2.5');
@@ -365,7 +365,13 @@ async function main(): Promise<void> {
 
   // Drop the wrapper type — it's an implementation detail for the codegen.
   const wrapperPattern = /export interface AdCPV25Tools \{[\s\S]*?\n\}\n*/;
-  const body = compiled.replace(wrapperPattern, '').trim();
+  let body = compiled.replace(wrapperPattern, '').trim();
+
+  // json-schema-to-typescript emits Foo, Foo1, Foo2 for the same enum/type when
+  // it's referenced from multiple places. Collapse the numbered duplicates
+  // back to the canonical name so downstream code (and autocomplete) sees one
+  // export per concept.
+  body = removeNumberedTypeDuplicates(body);
 
   const banner = `// AdCP v2.5 tool request/response types — DO NOT EDIT
 // Generated from schemas/cache/v2.5/ via scripts/generate-v2-5-types.ts

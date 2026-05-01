@@ -133,68 +133,9 @@ export type CoBrandingRequirement = 'required' | 'optional' | 'none';
  */
 export type LandingPageRequirement = 'any' | 'retailer_site_only' | 'must_include_retailer';
 /**
- * High-level categories for creative formats based on media type and delivery channel. Describes WHERE and HOW a creative displays, not what content it contains.
- */
-export type FormatCategory1 = 'audio' | 'video' | 'display' | 'native' | 'dooh' | 'rich_media' | 'universal';
-/**
- * Types of content that can be used as creative assets. Describes what KIND of content an asset contains (image, video, code, etc.), not where it displays.
- */
-export type AssetContentType1 =
-  | 'image'
-  | 'video'
-  | 'audio'
-  | 'text'
-  | 'markdown'
-  | 'html'
-  | 'css'
-  | 'javascript'
-  | 'vast'
-  | 'daast'
-  | 'promoted_offerings'
-  | 'url'
-  | 'webhook';
-/**
- * High-level categories for creative formats based on media type and delivery channel. Describes WHERE and HOW a creative displays, not what content it contains.
- */
-export type FormatCategory2 = 'audio' | 'video' | 'display' | 'native' | 'dooh' | 'rich_media' | 'universal';
-/**
  * Types of parameters that template formats accept in format_id objects to create parameterized format identifiers
  */
 export type FormatIDParameter = 'dimensions' | 'duration';
-/**
- * Types of content that can be used as creative assets. Describes what KIND of content an asset contains (image, video, code, etc.), not where it displays.
- */
-export type AssetContentType2 =
-  | 'image'
-  | 'video'
-  | 'audio'
-  | 'text'
-  | 'markdown'
-  | 'html'
-  | 'css'
-  | 'javascript'
-  | 'vast'
-  | 'daast'
-  | 'promoted_offerings'
-  | 'url'
-  | 'webhook';
-/**
- * Types of content that can be used as creative assets. Describes what KIND of content an asset contains (image, video, code, etc.), not where it displays.
- */
-export type AssetContentType3 =
-  | 'image'
-  | 'video'
-  | 'audio'
-  | 'text'
-  | 'markdown'
-  | 'html'
-  | 'css'
-  | 'javascript'
-  | 'vast'
-  | 'daast'
-  | 'promoted_offerings'
-  | 'url'
-  | 'webhook';
 /**
  * Capabilities supported by creative agents for format handling
  */
@@ -243,7 +184,7 @@ export type VASTAsset =
        * Inline VAST XML content
        */
       content: string;
-      vast_version?: VASTVersion1;
+      vast_version?: VASTVersion;
       /**
        * Whether VPAID (Video Player-Ad Interface Definition) is supported
        */
@@ -282,10 +223,6 @@ export type VASTTrackingEvent =
   | 'playerExpand'
   | 'playerCollapse';
 /**
- * VAST specification version
- */
-export type VASTVersion1 = '2.0' | '3.0' | '4.0' | '4.1' | '4.2';
-/**
  * DAAST (Digital Audio Ad Serving Template) tag for third-party audio ad serving
  */
 export type DAASTAsset =
@@ -321,7 +258,7 @@ export type DAASTAsset =
        * Inline DAAST XML content
        */
       content: string;
-      daast_version?: DAASTVersion1;
+      daast_version?: DAASTVersion;
       /**
        * Expected audio duration in milliseconds (if known)
        */
@@ -355,21 +292,9 @@ export type DAASTTrackingEvent =
   | 'mute'
   | 'unmute';
 /**
- * DAAST specification version
- */
-export type DAASTVersion1 = '1.0' | '1.1';
-/**
- * Brand information manifest containing assets, themes, and guidelines. Can be provided inline or as a URL reference to a hosted manifest.
- */
-export type BrandManifestReference1 = BrandManifest | string;
-/**
  * Type of URL asset: 'clickthrough' for user click destination (landing page), 'tracker_pixel' for impression/event tracking via HTTP request (fires GET, expects pixel/204 response), 'tracker_script' for measurement SDKs that must load as <script> tag (OMID verification, native event trackers using method:2)
  */
 export type URLAssetType = 'clickthrough' | 'tracker_pixel' | 'tracker_script';
-/**
- * Brand information manifest serving as the namespace and identity for this media buy. Provides brand context, assets, and product catalog. Can be provided inline or as a URL reference to a hosted manifest. Can be cached and reused across multiple requests.
- */
-export type BrandManifestReference2 = BrandManifest | string;
 /**
  * Campaign start timing: 'asap' or ISO 8601 date-time
  */
@@ -399,10 +324,6 @@ export type CreativeAction = 'created' | 'updated' | 'unchanged' | 'failed' | 'd
  */
 export type CreativeStatus = 'processing' | 'approved' | 'rejected' | 'pending_review';
 /**
- * Status of a creative asset
- */
-export type CreativeStatus1 = 'processing' | 'approved' | 'rejected' | 'pending_review';
-/**
  * Field to sort by
  */
 export type CreativeSortField =
@@ -416,14 +337,6 @@ export type CreativeSortField =
  * Sort direction
  */
 export type SortDirection = 'asc' | 'desc';
-/**
- * Sort direction for list queries
- */
-export type SortDirection1 = 'asc' | 'desc';
-/**
- * Status of a creative asset
- */
-export type CreativeStatus2 = 'processing' | 'approved' | 'rejected' | 'pending_review';
 /**
  * Sub-asset for multi-asset creative formats, including carousel images and native ad template variables
  */
@@ -491,7 +404,7 @@ export type UpdateMediaBuyRequest = {
   packages?: {
     [k: string]: unknown | undefined;
   }[];
-  push_notification_config?: PushNotificationConfig1;
+  push_notification_config?: PushNotificationConfig;
   context?: ContextObject;
   ext?: ExtensionObject;
 } & UpdateMediaBuyRequest1;
@@ -510,10 +423,6 @@ export type MediaBuyStatus = 'pending_activation' | 'active' | 'paused' | 'compl
  * Pricing model used for this media buy
  */
 export type PricingModel = 'cpm' | 'vcpm' | 'cpc' | 'cpcv' | 'cpv' | 'cpp' | 'flat_rate';
-/**
- * The pricing model used for this package (e.g., cpm, cpcv, cpp). Indicates how the package is billed and which metrics are most relevant for optimization.
- */
-export type PricingModel1 = 'cpm' | 'vcpm' | 'cpc' | 'cpcv' | 'cpv' | 'cpp' | 'flat_rate';
 /**
  * Request payload for provide_performance_feedback task
  */
@@ -608,8 +517,8 @@ export type PreviewCreativeRequest =
        * Discriminator indicating this is a single preview request
        */
       request_type: 'single';
-      format_id: FormatID10;
-      creative_manifest: CreativeManifest2;
+      format_id: FormatID;
+      creative_manifest: CreativeManifest;
       /**
        * Array of input sets for generating multiple preview variants. Each input set defines macros and context values for one preview rendering. If not provided, creative agent will generate default previews.
        */
@@ -646,8 +555,8 @@ export type PreviewCreativeRequest =
        * Array of preview requests (1-50 items). Each follows the single request structure.
        */
       requests: {
-        format_id: FormatID11;
-        creative_manifest: CreativeManifest3;
+        format_id: FormatID;
+        creative_manifest: CreativeManifest;
         /**
          * Array of input sets for generating multiple preview variants
          */
@@ -671,9 +580,9 @@ export type PreviewCreativeRequest =
          * Specific template ID for custom format rendering
          */
         template_id?: string;
-        output_format?: PreviewOutputFormat1;
+        output_format?: PreviewOutputFormat;
       }[];
-      output_format?: PreviewOutputFormat2;
+      output_format?: PreviewOutputFormat;
       context?: ContextObject;
       ext?: ExtensionObject;
     };
@@ -681,14 +590,6 @@ export type PreviewCreativeRequest =
  * Output format for previews. 'url' returns preview_url (iframe-embeddable URL), 'html' returns preview_html (raw HTML for direct embedding). Default: 'url' for backward compatibility.
  */
 export type PreviewOutputFormat = 'url' | 'html';
-/**
- * Output format for this preview. 'url' returns preview_url, 'html' returns preview_html.
- */
-export type PreviewOutputFormat1 = 'url' | 'html';
-/**
- * Default output format for all requests in this batch. Individual requests can override this. 'url' returns preview_url (iframe-embeddable URL), 'html' returns preview_html (raw HTML for direct embedding).
- */
-export type PreviewOutputFormat2 = 'url' | 'html';
 /**
  * Response containing preview links for one or more creatives. Format matches the request: single preview response for single requests, batch results for batch requests.
  */
@@ -876,10 +777,6 @@ export type Destination =
  */
 export type SignalCatalogType = 'marketplace' | 'custom' | 'owned';
 /**
- * Types of signal catalogs available for audience targeting
- */
-export type SignalCatalogType1 = 'marketplace' | 'custom' | 'owned';
-/**
  * A signal deployment to a specific deployment target with activation status and key
  */
 export type Deployment =
@@ -927,7 +824,7 @@ export type Deployment =
        * Whether signal is currently active on this deployment
        */
       is_live: boolean;
-      activation_key?: ActivationKey1;
+      activation_key?: ActivationKey;
       /**
        * Estimated time to activate if not live, or to complete activation if in progress
        */
@@ -941,34 +838,6 @@ export type Deployment =
  * The key to use for targeting. Only present if is_live=true AND requester has access to this deployment.
  */
 export type ActivationKey =
-  | {
-      /**
-       * Segment ID based targeting
-       */
-      type: 'segment_id';
-      /**
-       * The platform-specific segment identifier to use in campaign targeting
-       */
-      segment_id: string;
-    }
-  | {
-      /**
-       * Key-value pair based targeting
-       */
-      type: 'key_value';
-      /**
-       * The targeting parameter key
-       */
-      key: string;
-      /**
-       * The targeting parameter value
-       */
-      value: string;
-    };
-/**
- * The key to use for targeting. Only present if is_live=true AND requester has access to this deployment.
- */
-export type ActivationKey1 =
   | {
       /**
        * Segment ID based targeting
@@ -1390,7 +1259,7 @@ export interface Product {
    * Optional standard visual card (300x400px) for displaying this product in user interfaces. Can be rendered via preview_creative or pre-generated.
    */
   product_card?: {
-    format_id: FormatID1;
+    format_id: FormatID;
     /**
      * Asset manifest for rendering the card, structure defined by the format
      */
@@ -1400,7 +1269,7 @@ export interface Product {
    * Optional detailed card with carousel and full specifications. Provides rich product presentation similar to media kit pages.
    */
   product_card_detailed?: {
-    format_id: FormatID2;
+    format_id: FormatID;
     /**
      * Asset manifest for rendering the detailed card, structure defined by the format
      */
@@ -1849,56 +1718,6 @@ export interface CreativePolicy {
   templates_available: boolean;
 }
 /**
- * Structured format identifier with agent URL and format name. Can reference: (1) a concrete format with fixed dimensions (id only), (2) a template format without parameters (id only), or (3) a template format with parameters (id + dimensions/duration). Template formats accept parameters in format_id while concrete formats have fixed dimensions in their definition. Parameterized format IDs create unique, specific format variants.
- */
-export interface FormatID1 {
-  /**
-   * URL of the agent that defines this format (e.g., 'https://creatives.adcontextprotocol.org' for standard formats, or 'https://publisher.com/.well-known/adcp/sales' for custom formats)
-   */
-  agent_url: string;
-  /**
-   * Format identifier within the agent's namespace (e.g., 'display_static', 'video_hosted', 'audio_standard'). When used alone, references a template format. When combined with dimension/duration fields, creates a parameterized format ID for a specific variant.
-   */
-  id: string;
-  /**
-   * Width in pixels for visual formats. When specified, height must also be specified. Both fields together create a parameterized format ID for dimension-specific variants.
-   */
-  width?: number;
-  /**
-   * Height in pixels for visual formats. When specified, width must also be specified. Both fields together create a parameterized format ID for dimension-specific variants.
-   */
-  height?: number;
-  /**
-   * Duration in milliseconds for time-based formats (video, audio). When specified, creates a parameterized format ID. Omit to reference a template format without parameters.
-   */
-  duration_ms?: number;
-}
-/**
- * Structured format identifier with agent URL and format name. Can reference: (1) a concrete format with fixed dimensions (id only), (2) a template format without parameters (id only), or (3) a template format with parameters (id + dimensions/duration). Template formats accept parameters in format_id while concrete formats have fixed dimensions in their definition. Parameterized format IDs create unique, specific format variants.
- */
-export interface FormatID2 {
-  /**
-   * URL of the agent that defines this format (e.g., 'https://creatives.adcontextprotocol.org' for standard formats, or 'https://publisher.com/.well-known/adcp/sales' for custom formats)
-   */
-  agent_url: string;
-  /**
-   * Format identifier within the agent's namespace (e.g., 'display_static', 'video_hosted', 'audio_standard'). When used alone, references a template format. When combined with dimension/duration fields, creates a parameterized format ID for a specific variant.
-   */
-  id: string;
-  /**
-   * Width in pixels for visual formats. When specified, height must also be specified. Both fields together create a parameterized format ID for dimension-specific variants.
-   */
-  width?: number;
-  /**
-   * Height in pixels for visual formats. When specified, width must also be specified. Both fields together create a parameterized format ID for dimension-specific variants.
-   */
-  height?: number;
-  /**
-   * Duration in milliseconds for time-based formats (video, audio). When specified, creates a parameterized format ID. Omit to reference a template format without parameters.
-   */
-  duration_ms?: number;
-}
-/**
  * Standard error structure for task-specific errors and warnings
  */
 export interface Error {
@@ -1935,11 +1754,11 @@ export interface ListCreativeFormatsRequest {
    * Return only these specific format IDs (e.g., from get_products response)
    */
   format_ids?: FormatID[];
-  type?: FormatCategory1;
+  type?: FormatCategory;
   /**
    * Filter to formats that include these asset types. For third-party tags, search for 'html' or 'javascript'. E.g., ['image', 'text'] returns formats with images and text, ['javascript'] returns formats accepting JavaScript tags.
    */
-  asset_types?: AssetContentType1[];
+  asset_types?: AssetContentType[];
   /**
    * Maximum width in pixels (inclusive). Returns formats where ANY render has width <= this value. For multi-render formats, matches if at least one render fits.
    */
@@ -2003,7 +1822,7 @@ export interface ListCreativeFormatsResponse {
  * Represents a creative format with its requirements
  */
 export interface Format {
-  format_id: FormatID3;
+  format_id: FormatID;
   /**
    * Human-readable format name
    */
@@ -2020,7 +1839,7 @@ export interface Format {
    * Optional URL to showcase page with examples and interactive demos of this format
    */
   example_url?: string;
-  type: FormatCategory2;
+  type: FormatCategory;
   /**
    * List of parameters this format accepts in format_id. Template formats define which parameters (dimensions, duration, etc.) can be specified when instantiating the format. Empty or omitted means this is a concrete format with fixed parameters.
    */
@@ -2049,7 +1868,7 @@ export interface Format {
          * Unique identifier for this asset. Creative manifests MUST use this exact value as the key in the assets object.
          */
         asset_id: string;
-        asset_type: AssetContentType2;
+        asset_type: AssetContentType;
         /**
          * Optional descriptive label for this asset's purpose (e.g., 'hero_image', 'logo'). Not used for referencing assets in manifests—use asset_id instead. This field is for human-readable documentation and UI display only.
          */
@@ -2088,7 +1907,7 @@ export interface Format {
            * Identifier for this asset within the group
            */
           asset_id: string;
-          asset_type: AssetContentType3;
+          asset_type: AssetContentType;
           /**
            * Optional descriptive label for this asset's purpose (e.g., 'hero_image', 'logo'). Not used for referencing assets in manifests—use asset_id instead. This field is for human-readable documentation and UI display only.
            */
@@ -2120,7 +1939,7 @@ export interface Format {
    * Optional standard visual card (300x400px) for displaying this format in user interfaces. Can be rendered via preview_creative or pre-generated.
    */
   format_card?: {
-    format_id: FormatID4;
+    format_id: FormatID;
     /**
      * Asset manifest for rendering the card, structure defined by the format
      */
@@ -2130,87 +1949,12 @@ export interface Format {
    * Optional detailed card with carousel and full specifications. Provides rich format documentation similar to ad spec pages.
    */
   format_card_detailed?: {
-    format_id: FormatID5;
+    format_id: FormatID;
     /**
      * Asset manifest for rendering the detailed card, structure defined by the format
      */
     manifest: {};
   };
-}
-/**
- * Structured format identifier with agent URL and format name. Can reference: (1) a concrete format with fixed dimensions (id only), (2) a template format without parameters (id only), or (3) a template format with parameters (id + dimensions/duration). Template formats accept parameters in format_id while concrete formats have fixed dimensions in their definition. Parameterized format IDs create unique, specific format variants.
- */
-export interface FormatID3 {
-  /**
-   * URL of the agent that defines this format (e.g., 'https://creatives.adcontextprotocol.org' for standard formats, or 'https://publisher.com/.well-known/adcp/sales' for custom formats)
-   */
-  agent_url: string;
-  /**
-   * Format identifier within the agent's namespace (e.g., 'display_static', 'video_hosted', 'audio_standard'). When used alone, references a template format. When combined with dimension/duration fields, creates a parameterized format ID for a specific variant.
-   */
-  id: string;
-  /**
-   * Width in pixels for visual formats. When specified, height must also be specified. Both fields together create a parameterized format ID for dimension-specific variants.
-   */
-  width?: number;
-  /**
-   * Height in pixels for visual formats. When specified, width must also be specified. Both fields together create a parameterized format ID for dimension-specific variants.
-   */
-  height?: number;
-  /**
-   * Duration in milliseconds for time-based formats (video, audio). When specified, creates a parameterized format ID. Omit to reference a template format without parameters.
-   */
-  duration_ms?: number;
-}
-/**
- * Structured format identifier with agent URL and format name. Can reference: (1) a concrete format with fixed dimensions (id only), (2) a template format without parameters (id only), or (3) a template format with parameters (id + dimensions/duration). Template formats accept parameters in format_id while concrete formats have fixed dimensions in their definition. Parameterized format IDs create unique, specific format variants.
- */
-export interface FormatID4 {
-  /**
-   * URL of the agent that defines this format (e.g., 'https://creatives.adcontextprotocol.org' for standard formats, or 'https://publisher.com/.well-known/adcp/sales' for custom formats)
-   */
-  agent_url: string;
-  /**
-   * Format identifier within the agent's namespace (e.g., 'display_static', 'video_hosted', 'audio_standard'). When used alone, references a template format. When combined with dimension/duration fields, creates a parameterized format ID for a specific variant.
-   */
-  id: string;
-  /**
-   * Width in pixels for visual formats. When specified, height must also be specified. Both fields together create a parameterized format ID for dimension-specific variants.
-   */
-  width?: number;
-  /**
-   * Height in pixels for visual formats. When specified, width must also be specified. Both fields together create a parameterized format ID for dimension-specific variants.
-   */
-  height?: number;
-  /**
-   * Duration in milliseconds for time-based formats (video, audio). When specified, creates a parameterized format ID. Omit to reference a template format without parameters.
-   */
-  duration_ms?: number;
-}
-/**
- * Structured format identifier with agent URL and format name. Can reference: (1) a concrete format with fixed dimensions (id only), (2) a template format without parameters (id only), or (3) a template format with parameters (id + dimensions/duration). Template formats accept parameters in format_id while concrete formats have fixed dimensions in their definition. Parameterized format IDs create unique, specific format variants.
- */
-export interface FormatID5 {
-  /**
-   * URL of the agent that defines this format (e.g., 'https://creatives.adcontextprotocol.org' for standard formats, or 'https://publisher.com/.well-known/adcp/sales' for custom formats)
-   */
-  agent_url: string;
-  /**
-   * Format identifier within the agent's namespace (e.g., 'display_static', 'video_hosted', 'audio_standard'). When used alone, references a template format. When combined with dimension/duration fields, creates a parameterized format ID for a specific variant.
-   */
-  id: string;
-  /**
-   * Width in pixels for visual formats. When specified, height must also be specified. Both fields together create a parameterized format ID for dimension-specific variants.
-   */
-  width?: number;
-  /**
-   * Height in pixels for visual formats. When specified, width must also be specified. Both fields together create a parameterized format ID for dimension-specific variants.
-   */
-  height?: number;
-  /**
-   * Duration in milliseconds for time-based formats (video, audio). When specified, creates a parameterized format ID. Omit to reference a template format without parameters.
-   */
-  duration_ms?: number;
 }
 /**
  * Request parameters for creating a media buy
@@ -2224,7 +1968,7 @@ export interface CreateMediaBuyRequest {
    * Array of package configurations
    */
   packages: PackageRequest[];
-  brand_manifest: BrandManifestReference2;
+  brand_manifest: BrandManifestReference;
   /**
    * Purchase order number for tracking
    */
@@ -2380,7 +2124,7 @@ export interface CreativeAsset {
    * Human-readable creative name
    */
   name: string;
-  format_id: FormatID6;
+  format_id: FormatID;
   /**
    * Assets required by the format, keyed by asset_role
    */
@@ -2437,31 +2181,6 @@ export interface CreativeAsset {
    * Optional array of placement IDs where this creative should run when uploading via create_media_buy or update_media_buy. References placement_id values from the product's placements array. If omitted, creative runs on all placements. Only used during upload to media buy - not stored in creative library.
    */
   placement_ids?: string[];
-}
-/**
- * Structured format identifier with agent URL and format name. Can reference: (1) a concrete format with fixed dimensions (id only), (2) a template format without parameters (id only), or (3) a template format with parameters (id + dimensions/duration). Template formats accept parameters in format_id while concrete formats have fixed dimensions in their definition. Parameterized format IDs create unique, specific format variants.
- */
-export interface FormatID6 {
-  /**
-   * URL of the agent that defines this format (e.g., 'https://creatives.adcontextprotocol.org' for standard formats, or 'https://publisher.com/.well-known/adcp/sales' for custom formats)
-   */
-  agent_url: string;
-  /**
-   * Format identifier within the agent's namespace (e.g., 'display_static', 'video_hosted', 'audio_standard'). When used alone, references a template format. When combined with dimension/duration fields, creates a parameterized format ID for a specific variant.
-   */
-  id: string;
-  /**
-   * Width in pixels for visual formats. When specified, height must also be specified. Both fields together create a parameterized format ID for dimension-specific variants.
-   */
-  width?: number;
-  /**
-   * Height in pixels for visual formats. When specified, width must also be specified. Both fields together create a parameterized format ID for dimension-specific variants.
-   */
-  height?: number;
-  /**
-   * Duration in milliseconds for time-based formats (video, audio). When specified, creates a parameterized format ID. Omit to reference a template format without parameters.
-   */
-  duration_ms?: number;
 }
 /**
  * Image asset with URL and dimensions
@@ -2591,7 +2310,7 @@ export interface JavaScriptAsset {
  * Complete offering specification combining brand manifest, product selectors, and asset filters. Provides all context needed for creative generation about what is being promoted.
  */
 export interface PromotedOfferings {
-  brand_manifest: BrandManifestReference1;
+  brand_manifest: BrandManifestReference;
   product_selectors?: PromotedProducts;
   /**
    * Inline offerings for campaigns without a product catalog. Each offering has a name, description, and associated assets.
@@ -2980,7 +2699,7 @@ export interface CreativeFilters {
   /**
    * Filter by multiple creative statuses
    */
-  statuses?: CreativeStatus1[];
+  statuses?: CreativeStatus[];
   /**
    * Filter by creative tags (all tags must match)
    */
@@ -3063,7 +2782,7 @@ export interface ListCreativesResponse {
      */
     sort_applied?: {
       field?: string;
-      direction?: SortDirection1;
+      direction?: SortDirection;
     };
   };
   /**
@@ -3103,8 +2822,8 @@ export interface ListCreativesResponse {
      * Human-readable creative name
      */
     name: string;
-    format_id: FormatID7;
-    status: CreativeStatus2;
+    format_id: FormatID;
+    status: CreativeStatus;
     /**
      * When the creative was uploaded to the library
      */
@@ -3237,57 +2956,6 @@ export interface ListCreativesResponse {
   };
   context?: ContextObject;
   ext?: ExtensionObject;
-}
-/**
- * Structured format identifier with agent URL and format name. Can reference: (1) a concrete format with fixed dimensions (id only), (2) a template format without parameters (id only), or (3) a template format with parameters (id + dimensions/duration). Template formats accept parameters in format_id while concrete formats have fixed dimensions in their definition. Parameterized format IDs create unique, specific format variants.
- */
-export interface FormatID7 {
-  /**
-   * URL of the agent that defines this format (e.g., 'https://creatives.adcontextprotocol.org' for standard formats, or 'https://publisher.com/.well-known/adcp/sales' for custom formats)
-   */
-  agent_url: string;
-  /**
-   * Format identifier within the agent's namespace (e.g., 'display_static', 'video_hosted', 'audio_standard'). When used alone, references a template format. When combined with dimension/duration fields, creates a parameterized format ID for a specific variant.
-   */
-  id: string;
-  /**
-   * Width in pixels for visual formats. When specified, height must also be specified. Both fields together create a parameterized format ID for dimension-specific variants.
-   */
-  width?: number;
-  /**
-   * Height in pixels for visual formats. When specified, width must also be specified. Both fields together create a parameterized format ID for dimension-specific variants.
-   */
-  height?: number;
-  /**
-   * Duration in milliseconds for time-based formats (video, audio). When specified, creates a parameterized format ID. Omit to reference a template format without parameters.
-   */
-  duration_ms?: number;
-}
-/**
- * Optional webhook configuration for async update notifications. Publisher will send webhook when update completes if operation takes longer than immediate response time.
- */
-export interface PushNotificationConfig1 {
-  /**
-   * Webhook endpoint URL for task status notifications
-   */
-  url: string;
-  /**
-   * Optional client-provided token for webhook validation. Echoed back in webhook payload to validate request authenticity.
-   */
-  token?: string;
-  /**
-   * Authentication configuration for webhook delivery (A2A-compatible)
-   */
-  authentication: {
-    /**
-     * Array of authentication schemes. Supported: ['Bearer'] for simple token auth, ['HMAC-SHA256'] for signature verification (recommended for production)
-     */
-    schemes: AuthenticationScheme[];
-    /**
-     * Credentials for authentication. For Bearer: token sent in Authorization header. For HMAC-SHA256: shared secret used to generate signature. Minimum 32 characters. Exchanged out-of-band during onboarding.
-     */
-    credentials: string;
-  };
 }
 /**
  * Success response - media buy updated successfully
@@ -3463,7 +3131,7 @@ export interface GetMediaBuyDeliveryResponse {
        * Delivery pace (1.0 = on track, <1.0 = behind, >1.0 = ahead)
        */
       pacing_index?: number;
-      pricing_model: PricingModel1;
+      pricing_model: PricingModel;
       /**
        * The pricing rate for this package in the specified currency. For fixed-rate pricing, this is the agreed rate (e.g., CPM rate of 12.50 means $12.50 per 1,000 impressions). For auction-based pricing, this represents the effective rate based on actual delivery.
        */
@@ -3711,7 +3379,7 @@ export interface BuildCreativeRequest {
    */
   message?: string;
   creative_manifest?: CreativeManifest;
-  target_format_id: FormatID9;
+  target_format_id: FormatID;
   context?: ContextObject;
   ext?: ExtensionObject;
 }
@@ -3719,7 +3387,7 @@ export interface BuildCreativeRequest {
  * Creative manifest to transform or generate from. For pure generation, this should include the target format_id and any required input assets (e.g., promoted_offerings for generative formats). For transformation (e.g., resizing, reformatting), this is the complete creative to adapt.
  */
 export interface CreativeManifest {
-  format_id: FormatID8;
+  format_id: FormatID;
   /**
    * Product name or offering being advertised. Maps to promoted_offerings in create_media_buy request to associate creative with the product being promoted.
    */
@@ -3749,31 +3417,6 @@ export interface CreativeManifest {
       | PromotedOfferings;
   };
   ext?: ExtensionObject;
-}
-/**
- * Structured format identifier with agent URL and format name. Can reference: (1) a concrete format with fixed dimensions (id only), (2) a template format without parameters (id only), or (3) a template format with parameters (id + dimensions/duration). Template formats accept parameters in format_id while concrete formats have fixed dimensions in their definition. Parameterized format IDs create unique, specific format variants.
- */
-export interface FormatID8 {
-  /**
-   * URL of the agent that defines this format (e.g., 'https://creatives.adcontextprotocol.org' for standard formats, or 'https://publisher.com/.well-known/adcp/sales' for custom formats)
-   */
-  agent_url: string;
-  /**
-   * Format identifier within the agent's namespace (e.g., 'display_static', 'video_hosted', 'audio_standard'). When used alone, references a template format. When combined with dimension/duration fields, creates a parameterized format ID for a specific variant.
-   */
-  id: string;
-  /**
-   * Width in pixels for visual formats. When specified, height must also be specified. Both fields together create a parameterized format ID for dimension-specific variants.
-   */
-  width?: number;
-  /**
-   * Height in pixels for visual formats. When specified, width must also be specified. Both fields together create a parameterized format ID for dimension-specific variants.
-   */
-  height?: number;
-  /**
-   * Duration in milliseconds for time-based formats (video, audio). When specified, creates a parameterized format ID. Omit to reference a template format without parameters.
-   */
-  duration_ms?: number;
 }
 /**
  * Webhook for server-side dynamic content rendering (DCO)
@@ -3813,71 +3456,11 @@ export interface WebhookAsset {
   };
 }
 /**
- * Structured format identifier with agent URL and format name. Can reference: (1) a concrete format with fixed dimensions (id only), (2) a template format without parameters (id only), or (3) a template format with parameters (id + dimensions/duration). Template formats accept parameters in format_id while concrete formats have fixed dimensions in their definition. Parameterized format IDs create unique, specific format variants.
- */
-export interface FormatID9 {
-  /**
-   * URL of the agent that defines this format (e.g., 'https://creatives.adcontextprotocol.org' for standard formats, or 'https://publisher.com/.well-known/adcp/sales' for custom formats)
-   */
-  agent_url: string;
-  /**
-   * Format identifier within the agent's namespace (e.g., 'display_static', 'video_hosted', 'audio_standard'). When used alone, references a template format. When combined with dimension/duration fields, creates a parameterized format ID for a specific variant.
-   */
-  id: string;
-  /**
-   * Width in pixels for visual formats. When specified, height must also be specified. Both fields together create a parameterized format ID for dimension-specific variants.
-   */
-  width?: number;
-  /**
-   * Height in pixels for visual formats. When specified, width must also be specified. Both fields together create a parameterized format ID for dimension-specific variants.
-   */
-  height?: number;
-  /**
-   * Duration in milliseconds for time-based formats (video, audio). When specified, creates a parameterized format ID. Omit to reference a template format without parameters.
-   */
-  duration_ms?: number;
-}
-/**
  * Success response - creative manifest generated successfully
  */
 export interface BuildCreativeSuccess {
-  creative_manifest: CreativeManifest1;
+  creative_manifest: CreativeManifest;
   context?: ContextObject;
-  ext?: ExtensionObject;
-}
-/**
- * The generated or transformed creative manifest
- */
-export interface CreativeManifest1 {
-  format_id: FormatID8;
-  /**
-   * Product name or offering being advertised. Maps to promoted_offerings in create_media_buy request to associate creative with the product being promoted.
-   */
-  promoted_offering?: string;
-  /**
-   * Map of asset IDs to actual asset content. Each key MUST match an asset_id from the format's assets_required array (e.g., 'banner_image', 'clickthrough_url', 'video_file', 'vast_tag'). The asset_id is the technical identifier used to match assets to format requirements.
-   *
-   * IMPORTANT: Creative manifest validation MUST be performed in the context of the format specification. The format defines what type each asset_id should be, which eliminates any validation ambiguity.
-   */
-  assets: {
-    /**
-     * This interface was referenced by `undefined`'s JSON-Schema definition
-     * via the `patternProperty` "^[a-z0-9_]+$".
-     */
-    [k: string]:
-      | ImageAsset
-      | VideoAsset
-      | AudioAsset
-      | VASTAsset
-      | TextAsset
-      | URLAsset
-      | HTMLAsset
-      | JavaScriptAsset
-      | WebhookAsset
-      | CSSAsset
-      | DAASTAsset
-      | PromotedOfferings;
-  };
   ext?: ExtensionObject;
 }
 /**
@@ -3889,126 +3472,6 @@ export interface BuildCreativeError {
    */
   errors: Error[];
   context?: ContextObject;
-  ext?: ExtensionObject;
-}
-/**
- * Structured format identifier with agent URL and format name. Can reference: (1) a concrete format with fixed dimensions (id only), (2) a template format without parameters (id only), or (3) a template format with parameters (id + dimensions/duration). Template formats accept parameters in format_id while concrete formats have fixed dimensions in their definition. Parameterized format IDs create unique, specific format variants.
- */
-export interface FormatID10 {
-  /**
-   * URL of the agent that defines this format (e.g., 'https://creatives.adcontextprotocol.org' for standard formats, or 'https://publisher.com/.well-known/adcp/sales' for custom formats)
-   */
-  agent_url: string;
-  /**
-   * Format identifier within the agent's namespace (e.g., 'display_static', 'video_hosted', 'audio_standard'). When used alone, references a template format. When combined with dimension/duration fields, creates a parameterized format ID for a specific variant.
-   */
-  id: string;
-  /**
-   * Width in pixels for visual formats. When specified, height must also be specified. Both fields together create a parameterized format ID for dimension-specific variants.
-   */
-  width?: number;
-  /**
-   * Height in pixels for visual formats. When specified, width must also be specified. Both fields together create a parameterized format ID for dimension-specific variants.
-   */
-  height?: number;
-  /**
-   * Duration in milliseconds for time-based formats (video, audio). When specified, creates a parameterized format ID. Omit to reference a template format without parameters.
-   */
-  duration_ms?: number;
-}
-/**
- * Complete creative manifest with all required assets (including promoted_offerings if required by the format)
- */
-export interface CreativeManifest2 {
-  format_id: FormatID8;
-  /**
-   * Product name or offering being advertised. Maps to promoted_offerings in create_media_buy request to associate creative with the product being promoted.
-   */
-  promoted_offering?: string;
-  /**
-   * Map of asset IDs to actual asset content. Each key MUST match an asset_id from the format's assets_required array (e.g., 'banner_image', 'clickthrough_url', 'video_file', 'vast_tag'). The asset_id is the technical identifier used to match assets to format requirements.
-   *
-   * IMPORTANT: Creative manifest validation MUST be performed in the context of the format specification. The format defines what type each asset_id should be, which eliminates any validation ambiguity.
-   */
-  assets: {
-    /**
-     * This interface was referenced by `undefined`'s JSON-Schema definition
-     * via the `patternProperty` "^[a-z0-9_]+$".
-     */
-    [k: string]:
-      | ImageAsset
-      | VideoAsset
-      | AudioAsset
-      | VASTAsset
-      | TextAsset
-      | URLAsset
-      | HTMLAsset
-      | JavaScriptAsset
-      | WebhookAsset
-      | CSSAsset
-      | DAASTAsset
-      | PromotedOfferings;
-  };
-  ext?: ExtensionObject;
-}
-/**
- * Structured format identifier with agent URL and format name. Can reference: (1) a concrete format with fixed dimensions (id only), (2) a template format without parameters (id only), or (3) a template format with parameters (id + dimensions/duration). Template formats accept parameters in format_id while concrete formats have fixed dimensions in their definition. Parameterized format IDs create unique, specific format variants.
- */
-export interface FormatID11 {
-  /**
-   * URL of the agent that defines this format (e.g., 'https://creatives.adcontextprotocol.org' for standard formats, or 'https://publisher.com/.well-known/adcp/sales' for custom formats)
-   */
-  agent_url: string;
-  /**
-   * Format identifier within the agent's namespace (e.g., 'display_static', 'video_hosted', 'audio_standard'). When used alone, references a template format. When combined with dimension/duration fields, creates a parameterized format ID for a specific variant.
-   */
-  id: string;
-  /**
-   * Width in pixels for visual formats. When specified, height must also be specified. Both fields together create a parameterized format ID for dimension-specific variants.
-   */
-  width?: number;
-  /**
-   * Height in pixels for visual formats. When specified, width must also be specified. Both fields together create a parameterized format ID for dimension-specific variants.
-   */
-  height?: number;
-  /**
-   * Duration in milliseconds for time-based formats (video, audio). When specified, creates a parameterized format ID. Omit to reference a template format without parameters.
-   */
-  duration_ms?: number;
-}
-/**
- * Complete creative manifest with all required assets
- */
-export interface CreativeManifest3 {
-  format_id: FormatID8;
-  /**
-   * Product name or offering being advertised. Maps to promoted_offerings in create_media_buy request to associate creative with the product being promoted.
-   */
-  promoted_offering?: string;
-  /**
-   * Map of asset IDs to actual asset content. Each key MUST match an asset_id from the format's assets_required array (e.g., 'banner_image', 'clickthrough_url', 'video_file', 'vast_tag'). The asset_id is the technical identifier used to match assets to format requirements.
-   *
-   * IMPORTANT: Creative manifest validation MUST be performed in the context of the format specification. The format defines what type each asset_id should be, which eliminates any validation ambiguity.
-   */
-  assets: {
-    /**
-     * This interface was referenced by `undefined`'s JSON-Schema definition
-     * via the `patternProperty` "^[a-z0-9_]+$".
-     */
-    [k: string]:
-      | ImageAsset
-      | VideoAsset
-      | AudioAsset
-      | VASTAsset
-      | TextAsset
-      | URLAsset
-      | HTMLAsset
-      | JavaScriptAsset
-      | WebhookAsset
-      | CSSAsset
-      | DAASTAsset
-      | PromotedOfferings;
-  };
   ext?: ExtensionObject;
 }
 /**
@@ -4153,7 +3616,7 @@ export interface GetSignalsResponse {
      * Detailed signal description
      */
     description: string;
-    signal_type: SignalCatalogType1;
+    signal_type: SignalCatalogType;
     /**
      * Name of the data provider
      */
