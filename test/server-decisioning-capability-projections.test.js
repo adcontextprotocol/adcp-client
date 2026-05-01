@@ -285,6 +285,47 @@ describe('Capability projections — declarative capability blocks on Decisionin
     assert.deepStrictEqual(account.supported_billing, ['operator']);
   });
 
+  it("explicit resolution without supportedBillings emits account.supported_billing: ['agent'] default (regression test for #1186)", async () => {
+    // Schema requires supported_billing (minItems: 1) on every emitted
+    // account block. Pre-fix, v6 dropped the field when supportedBillings
+    // was undefined → capabilities response failed schema validation →
+    // storyboard runner auto-downgraded to v2 fallback, cascading errors
+    // into every downstream step. Default ['agent'] matches the platform
+    // interface contract documented at capabilities.ts:130.
+    const platform = basePlatform(); // no supportedBillings
+    platform.accounts.resolution = 'explicit';
+    const server = createAdcpServerFromPlatform(platform, {
+      name: 'h',
+      version: '0.0.1',
+      validation: { requests: 'off', responses: 'off' },
+    });
+    const result = await dispatchCapabilities(server);
+    const account = result.structuredContent?.account;
+    assert.ok(account, 'account block projected (explicit resolution)');
+    assert.strictEqual(account.require_operator_auth, true);
+    assert.deepStrictEqual(
+      account.supported_billing,
+      ['agent'],
+      'supported_billing must be present and non-empty on every emitted account block'
+    );
+  });
+
+  it("requireOperatorAuth=true without supportedBillings emits account.supported_billing: ['agent'] default (regression test for #1186)", async () => {
+    // Same regression as above, triggered via explicit requireOperatorAuth
+    // rather than accounts.resolution.
+    const platform = basePlatform({ requireOperatorAuth: true });
+    const server = createAdcpServerFromPlatform(platform, {
+      name: 'h',
+      version: '0.0.1',
+      validation: { requests: 'off', responses: 'off' },
+    });
+    const result = await dispatchCapabilities(server);
+    const account = result.structuredContent?.account;
+    assert.ok(account, 'account block projected');
+    assert.strictEqual(account.require_operator_auth, true);
+    assert.deepStrictEqual(account.supported_billing, ['agent']);
+  });
+
   it('omitting all three leaves get_adcp_capabilities unchanged (no empty media_buy block)', async () => {
     const server = createAdcpServerFromPlatform(basePlatform(), {
       name: 'h',
