@@ -95,14 +95,14 @@ export class CreativeNotFoundError extends AdcpError {
 
 // ---------------------------------------------------------------------------
 // Resource-unavailable family — id is right but state precludes use.
-// `recovery: 'terminal'` for sold-out / unavailable; buyer needs to choose
-// something else.
+// `recovery: 'correctable'` per the spec — buyer should pick a different
+// product, not retry. (Matches `STANDARD_ERROR_CODES.PRODUCT_UNAVAILABLE`.)
 // ---------------------------------------------------------------------------
 
 export class ProductUnavailableError extends AdcpError {
   constructor(productId: string, opts: CommonOpts = {}) {
     super('PRODUCT_UNAVAILABLE', {
-      recovery: 'terminal',
+      recovery: 'correctable',
       message: opts.message ?? `Product unavailable (sold out / no inventory): ${productId}`,
       field: 'product_id',
       ...(opts.suggestion !== undefined && { suggestion: opts.suggestion }),
@@ -274,8 +274,11 @@ export class ServiceUnavailableError extends AdcpError {
 
 export class UnsupportedFeatureError extends AdcpError {
   constructor(feature: string, opts: CommonOpts = {}) {
+    // `recovery: 'correctable'` per the spec — buyer should check
+    // `get_adcp_capabilities` and remove the unsupported field, not give up.
+    // (Matches `STANDARD_ERROR_CODES.UNSUPPORTED_FEATURE`.)
     super('UNSUPPORTED_FEATURE', {
-      recovery: 'terminal',
+      recovery: 'correctable',
       message: opts.message ?? `Feature not supported: ${feature}.`,
       ...(opts.suggestion !== undefined && { suggestion: opts.suggestion }),
       details: { ...(opts.details ?? {}), feature },

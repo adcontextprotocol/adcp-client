@@ -60,7 +60,8 @@ describe('Typed AdcpError subclasses — code + recovery shape', () => {
   it('ProductUnavailableError', () => {
     const e = new ProductUnavailableError('prod_sold');
     assert.equal(e.code, 'PRODUCT_UNAVAILABLE');
-    assert.equal(e.recovery, 'terminal');
+    // Spec says correctable (buyer picks a different product), not terminal.
+    assert.equal(e.recovery, 'correctable');
     assert.match(e.message, /sold out/);
   });
 
@@ -146,7 +147,9 @@ describe('Typed AdcpError subclasses — code + recovery shape', () => {
   it('UnsupportedFeatureError carries feature in details', () => {
     const e = new UnsupportedFeatureError('rfc_9421_signing');
     assert.equal(e.code, 'UNSUPPORTED_FEATURE');
-    assert.equal(e.recovery, 'terminal');
+    // Spec says correctable (buyer checks get_adcp_capabilities and removes
+    // the unsupported field), not terminal.
+    assert.equal(e.recovery, 'correctable');
     assert.equal(e.details.feature, 'rfc_9421_signing');
   });
 
