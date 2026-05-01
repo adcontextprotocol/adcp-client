@@ -1000,6 +1000,98 @@ async function resolveAgent(agentArg, authToken, protocolFlag, jsonOutput) {
   };
 }
 
+async function handleMockServerCommand(args) {
+  if (args.length === 0 || args.includes('--help') || args.includes('-h')) {
+    console.log(`
+Mock upstream-platform server (compliance fixture)
+
+USAGE:
+  adcp mock-server <specialism> [--port N] [--api-key KEY]
+
+ARGUMENTS:
+  <specialism>       Which upstream platform shape to boot. Supported:
+                       signal-marketplace   CDP/DMP-shaped audience marketplace
+                                            (LiveRamp/Lotame/Oracle Data Cloud
+                                            family). Multi-operator API key
+                                            pattern; X-Operator-Id required.
+                       creative-template    Celtra/Innovid-shaped creative
+                                            platform with async renders.
+                                            Workspace-scoped paths; multi-stage
+                                            polling (queued → running → complete).
+
+OPTIONS:
+  --port N           Listen port. Default: 4500.
+  --api-key KEY      Override the static bearer credential. Defaults to a
+                     stable test key printed at boot.
+
+NOTES:
+  These mock servers represent the *upstream* platform an adopter wraps,
+  not the AdCP agent the adopter exposes. Use them as the input to a
+  skill-matrix run: hand Claude the OpenAPI spec + the AdCP SKILL.md +
+  a target storyboard, let Claude generate the wrapper, then grade.
+
+  See: src/lib/mock-server/<specialism>/openapi.yaml
+`);
+    process.exit(args.length === 0 ? 2 : 0);
+  }
+
+  const specialism = args[0];
+  let port = 4500;
+  let apiKey;
+  for (let i = 1; i < args.length; i++) {
+    if (args[i] === '--port') {
+      port = Number(args[++i]);
+      if (!Number.isFinite(port) || port <= 0) {
+        console.error(`ERROR: --port must be a positive integer\n`);
+        process.exit(2);
+      }
+    } else if (args[i] === '--api-key') {
+      apiKey = args[++i];
+      if (apiKey === undefined || apiKey === '' || apiKey.startsWith('--')) {
+        console.error(`ERROR: --api-key requires a value\n`);
+        process.exit(2);
+      }
+    } else {
+      console.error(`ERROR: unknown option: ${args[i]}\n`);
+      process.exit(2);
+    }
+  }
+
+  let bootMockServer;
+  try {
+    ({ bootMockServer } = require('../dist/lib/mock-server/index.js'));
+  } catch (err) {
+    console.error(
+      `ERROR: mock-server module not found in dist/. Run \`npm run build\` first.\n  underlying: ${err?.message ?? err}\n`
+    );
+    process.exit(1);
+  }
+
+  let handle;
+  try {
+    handle = await bootMockServer({ specialism, port, apiKey });
+  } catch (err) {
+    console.error(`ERROR: ${err?.message ?? err}\n`);
+    process.exit(1);
+  }
+
+  console.log(handle.summary());
+  console.log('');
+  console.log('Press Ctrl+C to shut down.');
+
+  const shutdown = async signal => {
+    console.error(`\nReceived ${signal}, shutting down...`);
+    try {
+      await handle.close();
+    } catch (err) {
+      console.error(`shutdown error: ${err?.message ?? err}`);
+    }
+    process.exit(0);
+  };
+  process.on('SIGINT', () => shutdown('SIGINT'));
+  process.on('SIGTERM', () => shutdown('SIGTERM'));
+}
+
 async function handleComplyCommand(args) {
   // 'adcp comply' is an alias for 'adcp storyboard run'
   if (!args.includes('--json') && !args.includes('--help') && !args.includes('-h')) {
@@ -1037,6 +1129,8 @@ COMMANDS:
   comply <agent> [options]    DEPRECATED — use "storyboard run" instead
   test <agent> [scenario]     Run individual test scenarios (legacy)
   registry <command>          Brand/property registry lookups
+  mock-server <specialism>    Boot a fake upstream platform fixture for
+                              skill-matrix testing
 
   Run 'adcp <command> --help' for details on each command.
 
@@ -3302,6 +3396,11 @@ async function main() {
 
   if (args[0] === 'check-network') {
     await handleCheckNetworkCommand(args.slice(1));
+    return;
+  }
+
+  if (args[0] === 'mock-server') {
+    await handleMockServerCommand(args.slice(1));
     return;
   }
 

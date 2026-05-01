@@ -381,6 +381,48 @@ export function buildSyntheticCapabilities(tools: ToolInfo[]): AdcpCapabilities 
 }
 
 /**
+ * Heuristic: does this `get_adcp_capabilities` response look v3-shaped?
+ *
+ * Used by callers (e.g. SingleAgentClient.getCapabilities) when the response
+ * fails strict schema validation but is structurally non-empty. The question
+ * the heuristic answers is "is this a v3 agent with a wire-shape bug, or a
+ * v2 agent that happens to advertise the tool?". Falling back to v2 in the
+ * former case masks the original bug behind cascading v2.5-schema-not-found
+ * errors; treating it as v3 surfaces the wire-shape bug at its source.
+ *
+ * Affirmative v3 signals (any one is enough):
+ *   - `adcp` block (only v3 servers carry the `{ major_versions, idempotency, ... }` envelope)
+ *   - `supported_protocols` array (v3-only top-level field)
+ *   - any v3 protocol-level capability block (`media_buy`, `signals`, `creative`, `brand`,
+ *     `governance`, `sponsored_intelligence`, `compliance_testing`, `account`)
+ *
+ * v2 servers don't expose `get_adcp_capabilities` at all (the tool itself is
+ * a v3-only addition), so reaching this function with a non-empty payload
+ * already strongly implies v3 — but we belt-and-suspenders the structural
+ * check to avoid mis-promoting genuinely empty / null responses.
+ */
+export function looksLikeV3Capabilities(data: unknown): boolean {
+  if (!isPlainObject(data)) return false;
+  if (isPlainObject(data.adcp)) return true;
+  if (Array.isArray(data.supported_protocols)) return true;
+  const v3Blocks = [
+    'account',
+    'media_buy',
+    'signals',
+    'creative',
+    'brand',
+    'governance',
+    'sponsored_intelligence',
+    'compliance_testing',
+  ] as const;
+  return v3Blocks.some(block => isPlainObject(data[block]));
+}
+
+function isPlainObject(value: unknown): value is Record<string, unknown> {
+  return value !== null && typeof value === 'object' && !Array.isArray(value);
+}
+
+/**
  * Parse a get_adcp_capabilities response into normalized form
  */
 export function parseCapabilitiesResponse(response: any): AdcpCapabilities {

@@ -1,5 +1,47 @@
 # Changelog
 
+## 6.5.0
+
+### Minor Changes
+
+- e114e3a: Reverts #1142, removing `storyboardContext?: StoryboardContext` from `AssertionContext` and the per-step / final-step shallow-copy threading in the runner.
+
+  The field was preemptive surface with no consumer. None of the bundled invariants (`status.monotonic`, `idempotency.conflict_no_payload_leak`, `context.no_secret_echo`, `governance.denial_blocks_mutation`) read it; programmatic assertions already accumulate cross-step state through `ctx.state` (which is exactly how `status.monotonic`'s `history` works). Issue #1140 was about YAML validators (the `check:` clause), not assertion handlers — that scope is fully covered by #1141 (`field_less_than` / `field_equals_context` reading from `ValidationContext.storyboardContext`). The asymmetry is correct: declarative validators need context exposure, imperative assertions don't.
+
+  Custom invariants that need cross-step state should continue using `ctx.state` (set in `onStart`, mutated in `onStep`, read in `onEnd`).
+
+  Breaking-shape change to a public optional field, shipped as minor while 6.x is still in its breaking phase. Window-of-removal is hours old — the field landed in 6.4.0, no docs advertised it, no third-party consumer has had time to depend on it.
+
+## 6.4.1
+
+### Patch Changes
+
+- 4fada67: `executeTask` now returns a structured `TaskResult` instead of throwing for pre-flight errors (fixes #1148).
+
+  **Symptom:** `agent.executeTask('list_authorized_properties', {})` against a v2.5 MCP seller threw `TypeError: Cannot read properties of undefined (reading 'status')` instead of returning `{ success: false, status: 'failed', error: '...' }`.
+
+  **Root cause:** `SingleAgentClient.executeTask` (the public generic path used for tasks without a named wrapper) had no top-level try/catch. Pre-flight steps — feature validation, endpoint discovery, schema validation, version detection, and request adaptation — could escape as raw exceptions. The internal `TaskExecutor.executeTask` already wraps network-layer errors; `SingleAgentClient` had no matching safety net for the steps it runs before delegating to the executor.
+
+  `list_authorized_properties` is the common trigger because it has no named helper method on `AgentClient` (deprecated in favour of `get_adcp_capabilities`) so all callers go through `executeTask`. On a v2.5 MCP seller, the response shape is unexpected and a TypeError escapes during pre-flight processing.
+
+  **Fix:** Wrap the full `SingleAgentClient.executeTask` body in a try/catch. Structured protocol errors that carry typed fields callers use for recovery decisions are rethrown: `AuthenticationRequiredError` (and its subclass `NeedsAuthorizationError`), `TaskTimeoutError`, `VersionUnsupportedError`, and `FeatureUnsupportedError`. Unexpected errors (TypeErrors, schema-parser panics, etc.) are converted to `{ success: false, status: 'failed', error: message }` envelopes matching the declared return type `Promise<TaskResult<T>>`. The fluent `.match()` method works correctly on error envelopes via `attachMatch`.
+
+  Callers that followed the TypeScript return type and checked `result.success` / `result.status` are unaffected. Callers that relied on `executeTask` throwing for non-protocol pre-flight errors will now receive a structured failure envelope instead — which is the correct behaviour per the declared type.
+
+- 49a6ec3: Fix storyboard runner cascade over-firing for sole-stateful-step phases (adcp-client#1144).
+
+  The F6 cascade-skip fix (6.1.0) deferred `not_applicable` cascade decisions to phase end, checking whether any peer stateful step established substitute state. This worked for snap (`sync_accounts: not_applicable` + `list_accounts: passes`) but still cascaded for adapters with a single stateful step in the phase and no peer-substitute (citrusad, amazon, criteo, google showing `1/9/0` on `sales_social`).
+
+  The cascade now only fires when the phase contained **other stateful peer steps** that could have established substitute state but didn't. When the `not_applicable` step is the sole stateful step in the phase, no cascade fires — the platform manages state implicitly through a different model, which is valid per AdCP protocol semantics.
+
+- f397f9e: Fix v2.5 response validator spuriously rejecting null on optional envelope fields.
+
+  v2.5 sellers built on Pydantic commonly emit `errors: null`, `context: null`, and `ext: null` to signal "nothing here" rather than omitting the key. After #1137 pinned `validateResponseSchema` to the detected server version, Ajv correctly validated these responses against the v2.5 schema — but the v2.5 schemas declare those fields as `type: 'array'` or `type: 'object'` without a `null` union, so every such response failed with `/errors: must be array; /context: must be object; /ext: must be object`.
+
+  The fix adds a `stripEnvelopeNulls` pre-processing step inside `validateResponse` that strips top-level optional fields whose value is `null` but whose declared schema type is not nullable. Gated to v2.x schema bundles only — in v3, `errors` is a required field on failure branches and must not be silently dropped.
+
+  Surfaced against Wonderstruck (v2.5 MCP) by `scripts/smoke-wonderstruck-v2-5.ts` (issue #1149).
+
 ## 6.4.0
 
 ### Minor Changes

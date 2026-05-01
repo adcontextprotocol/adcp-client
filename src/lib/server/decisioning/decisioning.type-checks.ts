@@ -142,6 +142,26 @@ function _account_typed_meta_rejects_wrong_field(account: Account<GAMAccountMeta
   return account.ctx_metadata.googleAdvertiserId;
 }
 
+// ── refreshToken hook receives Account<TCtxMeta> typed (#1168) ───────────
+
+// Adopter declares an AccountStore for their typed metadata. The
+// `refreshToken` hook signature inherits TCtxMeta so the hook reads
+// adopter-typed fields off `account.ctx_metadata` without casts.
+function _refresh_token_typed_meta(): NonNullable<AccountStore<GAMAccountMeta>['refreshToken']> {
+  return async (account, _reason) => {
+    // Compile-time assertion: account.ctx_metadata.networkId is reachable.
+    const networkId: string = account.ctx_metadata.networkId;
+    return { token: `refreshed_for_${networkId}` };
+  };
+}
+
+function _refresh_token_typed_meta_rejects_wrong_field(): NonNullable<AccountStore<GAMAccountMeta>['refreshToken']> {
+  return async (account, _reason) => {
+    // @ts-expect-error — `googleAdvertiserId` doesn't exist on GAMAccountMeta.
+    return { token: `refreshed_for_${account.ctx_metadata.googleAdvertiserId}` };
+  };
+}
+
 // ── AccountNotFoundError is a class adopters can throw from resolve() ─
 
 function _account_not_found_throw_pattern(): Promise<Account<GAMAccountMeta> | null> {
@@ -243,6 +263,8 @@ export const _references = [
   _check_audience_sync,
   _account_with_typed_meta,
   _account_typed_meta_rejects_wrong_field,
+  _refresh_token_typed_meta,
+  _refresh_token_typed_meta_rejects_wrong_field,
   _account_not_found_throw_pattern,
   _account_store_resolution_implicit,
   _account_store_resolution_derived,

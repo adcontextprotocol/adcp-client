@@ -99,7 +99,7 @@ async function startRegressedA2aFixture() {
           artifacts: [
             {
               artifactId: 'a',
-              parts: [{ kind: 'data', data: { adcp_version: '3.0.0', supported_protocols: ['media-buy'], tools: [] } }],
+              parts: [{ kind: 'data', data: { adcp_version: '3.0.0', supported_protocols: ['media_buy'], tools: [] } }],
             },
           ],
         },

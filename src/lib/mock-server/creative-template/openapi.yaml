@@ -1,0 +1,307 @@
+openapi: 3.1.0
+info:
+  title: Creative Template Platform API
+  version: '3.0.0'
+  description: |
+    HTTP API for a fictional creative-template platform — Celtra/Innovid/AudioStack-shaped
+    upstream that defines templates and transforms input assets into rendered creatives
+    (HTML tags, JS tags, VAST XML).
+
+    Workspace-scoped via the URL path (different multi-tenant flavor from
+    signal-marketplace's X-Operator-Id header — exercises the SDK's ability
+    to handle path-based principal mapping). Renders are async: the adapter
+    submits a render, then polls the render endpoint until status reaches
+    `complete` (or `failed`).
+
+    This is a fixture for compliance testing; the seed templates and
+    workspace IDs are stable across boots.
+
+servers:
+  - url: http://127.0.0.1:{port}/v3
+    variables:
+      port:
+        default: '4501'
+        description: Port the mock-server boots on (override with --port)
+
+components:
+  securitySchemes:
+    bearerApiKey:
+      type: http
+      scheme: bearer
+      description: |
+        Customer-level credential, shared across all workspaces owned by that
+        customer. Workspace scoping happens via the URL path
+        (`/v3/workspaces/{workspace_id}/...`).
+
+  schemas:
+    Template:
+      type: object
+      required: [template_id, name, channel, output_kind, slots]
+      properties:
+        template_id:
+          type: string
+          description: |
+            Stable upstream identifier for the template. Maps to AdCP
+            `format.format_id` (rename only — direct projection).
+          example: 'tpl_celtra_display_medrec_v2'
+        name:
+          type: string
+          example: 'Display Medium Rectangle (300x250)'
+        description: { type: string }
+        channel:
+          type: string
+          enum: [display, video, audio, ctv, native]
+          description: |
+            Top-level channel class. AdCP `format.channel` is similar but uses
+            slightly different vocabulary (e.g. AdCP says "olv" for online video);
+            adapter must translate.
+        dimensions:
+          type: object
+          description: Present for display/native templates.
+          properties:
+            width: { type: integer }
+            height: { type: integer }
+        duration_seconds:
+          type: object
+          description: Present for video/audio/ctv templates.
+          properties:
+            min: { type: integer }
+            max: { type: integer }
+        output_kind:
+          type: string
+          enum: [html_tag, javascript_tag, vast_xml]
+          description: |
+            What the rendered output will be. AdCP creative_manifest carries
+            this implicitly via the asset's mime_type — adapter translates.
+        slots:
+          type: array
+          description: |
+            Assets the template expects as inputs. AdCP `format.assets` has a
+            similar shape but uses `asset_role` instead of `slot_id`.
+          items: { $ref: '#/components/schemas/TemplateSlot' }
+        sample_inputs:
+          type: object
+          description: Optional sample asset URLs for quick testing.
+
+    TemplateSlot:
+      type: object
+      required: [slot_id, asset_type, required]
+      properties:
+        slot_id: { type: string, example: 'image' }
+        asset_type:
+          type: string
+          enum: [image, video, audio, text, click_url]
+        required: { type: boolean }
+        constraints:
+          type: object
+          description: |
+            Per-slot constraints — min/max dimensions, allowed mime types,
+            character limits for text, etc.
+          additionalProperties: true
+
+    RenderRequest:
+      type: object
+      required: [template_id, inputs, mode]
+      properties:
+        template_id: { type: string }
+        inputs:
+          type: array
+          description: Inline assets — caller passes URLs/text/etc. directly.
+          items: { $ref: '#/components/schemas/RenderInput' }
+        brand_kit:
+          type: object
+          description: |
+            Inline brand declaration (colors, fonts, logos). Real platforms
+            often have a separate /brand-kits resource the caller looks up
+            and references; this fixture accepts the brand kit inline to
+            stay storyboard-aligned (AdCP build_creative carries brand
+            inline via `brand_card`).
+          additionalProperties: true
+        mode:
+          type: string
+          enum: [preview, build]
+          description: |
+            `preview` → returns a preview URL (suitable for AdCP
+            preview_creative). `build` → returns the full rendered tag
+            ready for trafficking.
+        client_request_id:
+          type: string
+          description: |
+            Idempotency key. Re-sending the same client_request_id with the
+            same body returns the existing render rather than creating a
+            new one. Mismatched body returns 409.
+
+    RenderInput:
+      type: object
+      required: [slot_id, asset_type]
+      properties:
+        slot_id: { type: string }
+        asset_type:
+          type: string
+          enum: [image, video, audio, text, click_url]
+        url: { type: string, format: uri }
+        text: { type: string }
+        width: { type: integer }
+        height: { type: integer }
+        mime_type: { type: string }
+
+    Render:
+      type: object
+      required: [render_id, status, template_id, mode, created_at]
+      properties:
+        render_id: { type: string, example: 'rnd_01J...' }
+        status:
+          type: string
+          enum: [queued, running, complete, failed]
+        template_id: { type: string }
+        mode:
+          type: string
+          enum: [preview, build]
+        output:
+          type: object
+          description: Populated when status=complete.
+          properties:
+            tag_html: { type: string, description: 'HTML serving tag for output_kind=html_tag templates.' }
+            tag_javascript: { type: string, description: 'JavaScript serving tag for output_kind=javascript_tag.' }
+            vast_xml: { type: string, description: 'VAST XML for video/audio/ctv templates.' }
+            preview_url:
+              type: string
+              format: uri
+              description: 'Hosted preview URL — present for mode=preview, also present on mode=build for QA.'
+            assets:
+              type: array
+              description: 'Rendered output assets (e.g., the final 300x250 image with brand applied).'
+              items:
+                type: object
+                additionalProperties: true
+        error:
+          type: object
+          description: Populated when status=failed.
+          properties:
+            code: { type: string }
+            message: { type: string }
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+
+    Error:
+      type: object
+      required: [code, message]
+      properties:
+        code: { type: string }
+        message: { type: string }
+        request_id: { type: string }
+
+security:
+  - bearerApiKey: []
+
+paths:
+  /workspaces/{workspace_id}/templates:
+    get:
+      summary: List templates available in this workspace
+      operationId: listTemplates
+      parameters:
+        - in: path
+          name: workspace_id
+          required: true
+          schema: { type: string }
+        - in: query
+          name: channel
+          schema: { type: string, enum: [display, video, audio, ctv, native] }
+      responses:
+        '200':
+          description: Templates visible to this workspace.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [templates]
+                properties:
+                  templates:
+                    type: array
+                    items: { $ref: '#/components/schemas/Template' }
+        '401': { description: Missing/invalid bearer credential. }
+        '404': { description: Unknown workspace. }
+
+  /workspaces/{workspace_id}/templates/{template_id}:
+    get:
+      summary: Fetch a single template by id (full slot detail)
+      operationId: getTemplate
+      parameters:
+        - in: path
+          name: workspace_id
+          required: true
+          schema: { type: string }
+        - in: path
+          name: template_id
+          required: true
+          schema: { type: string }
+      responses:
+        '200':
+          description: Template detail.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Template' }
+        '401': { description: Missing/invalid bearer credential. }
+        '404': { description: Workspace or template not found. }
+
+  /workspaces/{workspace_id}/renders:
+    post:
+      summary: Submit an async render
+      operationId: createRender
+      parameters:
+        - in: path
+          name: workspace_id
+          required: true
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/RenderRequest' }
+      responses:
+        '202':
+          description: Render accepted. Initial status is `queued`. Poll the GET endpoint until status is `complete` or `failed`.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Render' }
+        '200':
+          description: Idempotent replay — returns the existing render for this client_request_id.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Render' }
+        '400':
+          description: Bad request — missing required fields, invalid template_id, etc.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '401': { description: Missing/invalid bearer credential. }
+        '404': { description: Workspace or template not found. }
+        '409':
+          description: |
+            Idempotency conflict — `client_request_id` was previously used with
+            a different body. Use a fresh idempotency key for distinct requests.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+
+  /workspaces/{workspace_id}/renders/{render_id}:
+    get:
+      summary: Poll render status
+      operationId: getRender
+      parameters:
+        - in: path
+          name: workspace_id
+          required: true
+          schema: { type: string }
+        - in: path
+          name: render_id
+          required: true
+          schema: { type: string }
+      responses:
+        '200':
+          description: Render detail.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Render' }
+        '401': { description: Missing/invalid bearer credential. }
+        '404': { description: Render not found in this workspace. }

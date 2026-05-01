@@ -111,10 +111,11 @@ import {
 import * as crypto from 'crypto';
 
 // v3.0 compatibility utilities
-import type { AdcpCapabilities, ToolInfo, FeatureName } from '../utils/capabilities';
+import type { AdcpCapabilities, AdcpMajorVersion, ToolInfo, FeatureName } from '../utils/capabilities';
 import {
   buildSyntheticCapabilities,
   augmentCapabilitiesFromTools,
+  looksLikeV3Capabilities,
   parseCapabilitiesResponse,
   resolveFeature,
   listDeclaredFeatures,
@@ -2808,6 +2809,40 @@ export class SingleAgentClient {
 
         if (result.success && result.data) {
           this.cachedCapabilities = augmentCapabilitiesFromTools(parseCapabilitiesResponse(result.data), tools);
+          this.maybeWarnV2Sunset(this.cachedCapabilities);
+          return this.cachedCapabilities;
+        }
+        // Tightened v2 fallback (issue #1189). When `result.success` is false
+        // but `result.data` is structurally v3-shaped, the agent is a v3 agent
+        // with a wire-shape bug — typically a single failed schema validation
+        // on `get_adcp_capabilities`. Falling back to v2 in this case masks
+        // the original bug behind cascading "AdCP schema data for version v2.5
+        // not found" errors that nobody can debug. Parse the data anyway,
+        // surface the validation failure loudly, and continue with the
+        // v3 capabilities the agent actually returned.
+        //
+        // Override `version`/`majorVersions` after parse: when the response
+        // doesn't carry an explicit `adcp.major_versions` block (one of the
+        // valid v3-shape signals), `parseCapabilitiesResponse` defaults
+        // majorVersions to [2] which would re-classify a known-v3 response
+        // as v2 downstream. The heuristic established v3-shape; honor that.
+        // CodeQL: deliberately omit `result.error` from the log (matches the
+        // existing fallback log below) — it can carry transport-level agent
+        // identifiers that flow through the clear-text-logging tracker.
+        if (result.data && looksLikeV3Capabilities(result.data)) {
+          console.warn(
+            `[AdCP] Agent "${this.agent.id}" returned a get_adcp_capabilities response that ` +
+              `failed validation, but the response is structurally v3-shaped. Treating as v3 ` +
+              `(the agent has a wire-shape bug — that's the thing to fix).`,
+            { hasError: !!result.error, hasData: !!result.data }
+          );
+          const parsed = parseCapabilitiesResponse(result.data);
+          const v3Capabilities: AdcpCapabilities = {
+            ...parsed,
+            version: 'v3',
+            majorVersions: parsed.majorVersions.includes(3) ? parsed.majorVersions : ([3] as AdcpMajorVersion[]),
+          };
+          this.cachedCapabilities = augmentCapabilitiesFromTools(v3Capabilities, tools);
           this.maybeWarnV2Sunset(this.cachedCapabilities);
           return this.cachedCapabilities;
         }
