@@ -107,3 +107,63 @@ describe('SingleAgentClient.requireSupportedMajor with synthetic capabilities (i
     await assert.rejects(() => client.requireSupportedMajor('test'), VersionUnsupportedError);
   });
 });
+
+describe('SingleAgentClient.maybeWarnSyntheticV3 — one-time warning when checks skipped', () => {
+  function captureWarnings() {
+    const captured = [];
+    const original = console.warn;
+    console.warn = (...args) => {
+      captured.push(args.map(a => (typeof a === 'string' ? a : JSON.stringify(a))).join(' '));
+    };
+    return {
+      get calls() {
+        return captured;
+      },
+      restore() {
+        console.warn = original;
+      },
+    };
+  }
+
+  it('emits exactly one warning when requireSupportedMajor accepts synthetic v3', async () => {
+    const warn = captureWarnings();
+    try {
+      const client = new SingleAgentClient(stubAgent);
+      client.cachedCapabilities = buildSyntheticV3Capabilities([{ name: 'get_adcp_capabilities' }]);
+
+      await client.requireSupportedMajor('test');
+      await client.requireSupportedMajor('test');
+      await client.requireSupportedMajor('test');
+
+      const synthV3Warns = warn.calls.filter(c => c.includes('synthetic') && c.includes('v3-only'));
+      assert.equal(synthV3Warns.length, 1, 'synthetic-v3 warning must fire once per client');
+      assert.match(synthV3Warns[0], /idempotency-TTL/);
+      assert.match(synthV3Warns[0], /report.*operator/i);
+    } finally {
+      warn.restore();
+    }
+  });
+
+  it('does NOT warn for real v3 capabilities passing the check', async () => {
+    const warn = captureWarnings();
+    try {
+      const client = new SingleAgentClient(stubAgent);
+      client.cachedCapabilities = {
+        version: 'v3',
+        majorVersions: [3],
+        protocols: ['media_buy'],
+        features: {},
+        extensions: [],
+        _synthetic: false,
+        idempotency: { replayTtlSeconds: 86400 },
+      };
+
+      await client.requireSupportedMajor('test');
+
+      const synthV3Warns = warn.calls.filter(c => c.includes('synthetic'));
+      assert.equal(synthV3Warns.length, 0, 'real v3 caps must not trigger the synthetic-v3 warning');
+    } finally {
+      warn.restore();
+    }
+  });
+});

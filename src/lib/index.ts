@@ -971,6 +971,7 @@ export {
 //   - `SingleAgentClient#requireV3()` / `AgentClient#requireV3()` — runtime gate
 export {
   buildSyntheticCapabilities,
+  buildSyntheticV3Capabilities,
   parseCapabilitiesResponse,
   supportsV3,
   supportsProtocol,
