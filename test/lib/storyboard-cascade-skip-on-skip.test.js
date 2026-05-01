@@ -1124,6 +1124,200 @@ describe('runStoryboard: F6 round-2 — cascade survives phase boundaries', () =
   });
 });
 
+describe('runStoryboard: capability-aware cascade (adcp-client#1169)', () => {
+  // When a phase's stateful cascade trips, downstream stateful steps
+  // should be classified by their intrinsic skip-eligibility BEFORE the
+  // cascade reason is applied:
+  //   - task not in agentTools → missing_tool (passed: true, benign)
+  //   - task in agentTools     → prerequisite_failed (passed: false, genuine cascade)
+  let agent;
+
+  afterEach(async () => {
+    if (agent) await stopAgent(agent);
+    agent = undefined;
+    await closeMCPConnections().catch(() => {});
+  });
+
+  test('cascade-skipped step with un-advertised task gets missing_tool (not prerequisite_failed)', async () => {
+    // Phase 1: sync_setup fails (stateful). Phase 2: sync_creatives is
+    // stateful but NOT in agentTools. Before fix: phase-2 step gets
+    // prerequisite_failed (passed: false). After fix: phase-2 step gets
+    // missing_tool (passed: true) — the agent never claimed this surface.
+    agent = await startFakeAgent();
+    const storyboard = storyboardWithPhases([
+      {
+        id: 'setup',
+        title: 'setup (fails)',
+        steps: [
+          {
+            id: 'setup',
+            title: 'setup step (fails)',
+            task: '__test_fail',
+            stateful: true,
+            auth: 'none',
+            sample_request: {},
+          },
+        ],
+      },
+      {
+        id: 'creative_push',
+        title: 'creative push',
+        steps: [
+          {
+            id: 'sync_creatives',
+            title: 'sync_creatives (not advertised)',
+            task: 'sync_creatives',
+            stateful: true,
+            auth: 'none',
+            sample_request: {},
+          },
+        ],
+      },
+    ]);
+    // sync_creatives is NOT in agentTools — independently missing_tool.
+    const ADVERTISED = ['__test_fail', 'get_adcp_capabilities'];
+    const result = await runStoryboard([agent.url], storyboard, {
+      protocol: 'mcp',
+      allow_http: true,
+      agentTools: ADVERTISED,
+      _profile: { name: 'fake', tools: ADVERTISED.map(name => ({ name })) },
+    });
+    const setupStep = result.phases[0].steps[0];
+    const creativeStep = result.phases[1].steps[0];
+
+    assert.ok(!setupStep.skipped, 'setup step ran (not cascade-skipped)');
+    assert.ok(!setupStep.passed, 'setup step failed (trips statefulFailed)');
+    // Capability-aware cascade: sync_creatives not advertised → missing_tool
+    assert.strictEqual(creativeStep.skipped, true, 'creative step skipped');
+    assert.strictEqual(
+      creativeStep.skip_reason,
+      'missing_tool',
+      'skip reason is missing_tool (not prerequisite_failed)'
+    );
+    assert.strictEqual(creativeStep.passed, true, 'missing_tool skip is a passing skip');
+    assert.match(creativeStep.skip.detail ?? '', /sync_creatives/, 'detail names the un-advertised tool');
+  });
+
+  test('cascade-skipped step with advertised task still gets prerequisite_failed', async () => {
+    // Upstream fails. Downstream task IS advertised. The cascade should
+    // still fire with prerequisite_failed — the fix must not suppress
+    // genuine cascades where the agent has the tool but state never
+    // materialized.
+    agent = await startFakeAgent();
+    const storyboard = storyboardWithPhases([
+      {
+        id: 'setup',
+        title: 'setup (fails)',
+        steps: [
+          {
+            id: 'setup',
+            title: 'setup step (fails)',
+            task: '__test_fail',
+            stateful: true,
+            auth: 'none',
+            sample_request: {},
+          },
+        ],
+      },
+      {
+        id: 'consume',
+        title: 'consume state',
+        steps: [
+          {
+            id: 'assert',
+            title: 'assert (advertised)',
+            task: '__test_assert',
+            stateful: true,
+            auth: 'none',
+            sample_request: {},
+          },
+        ],
+      },
+    ]);
+    // __test_assert IS in agentTools — genuine cascade should fire.
+    const ADVERTISED = ['__test_fail', '__test_assert', 'get_adcp_capabilities'];
+    const result = await runStoryboard([agent.url], storyboard, {
+      protocol: 'mcp',
+      allow_http: true,
+      agentTools: ADVERTISED,
+      _profile: { name: 'fake', tools: ADVERTISED.map(name => ({ name })) },
+    });
+    const setupStep = result.phases[0].steps[0];
+    const assertStep = result.phases[1].steps[0];
+
+    assert.ok(!setupStep.passed, 'setup failed');
+    assert.strictEqual(assertStep.skipped, true, 'assert cascade-skipped');
+    assert.strictEqual(assertStep.skip_reason, 'prerequisite_failed', 'advertised task still gets prerequisite_failed');
+    assert.strictEqual(assertStep.passed, false, 'prerequisite_failed is a failing skip');
+  });
+
+  test('$test_kit.* step: resolved task checked against agentTools, not template string', async () => {
+    // Regression guard for the blocker identified in pre-implementation
+    // review: the tool-advertisement check must use resolveTaskName(),
+    // not step.task, so $test_kit.* steps are checked against the
+    // concrete resolved name. Without the resolveTaskName() call, the
+    // template string "$test_kit...." would never be in agentTools and
+    // every $test_kit.* step would incorrectly become missing_tool.
+    //
+    // This test verifies that a $test_kit.* step whose task_default IS
+    // in agentTools still receives prerequisite_failed (not missing_tool)
+    // when upstream state never materialized.
+    agent = await startFakeAgent();
+    const storyboard = storyboardWithPhases([
+      {
+        id: 'setup',
+        title: 'setup (fails)',
+        steps: [
+          {
+            id: 'setup',
+            title: 'setup step (fails)',
+            task: '__test_fail',
+            stateful: true,
+            auth: 'none',
+            sample_request: {},
+          },
+        ],
+      },
+      {
+        id: 'consume',
+        title: 'consume state (test-kit step)',
+        steps: [
+          {
+            id: 'testkit_step',
+            title: 'test-kit resolved step (advertised via task_default)',
+            task: '$test_kit.nonexistent.path',
+            task_default: '__test_assert',
+            stateful: true,
+            auth: 'none',
+            sample_request: {},
+          },
+        ],
+      },
+    ]);
+    // __test_assert IS in agentTools. The cascade must not misclassify
+    // the $test_kit.* step as missing_tool just because the template
+    // string isn't in agentTools.
+    const ADVERTISED = ['__test_fail', '__test_assert', 'get_adcp_capabilities'];
+    const result = await runStoryboard([agent.url], storyboard, {
+      protocol: 'mcp',
+      allow_http: true,
+      agentTools: ADVERTISED,
+      _profile: { name: 'fake', tools: ADVERTISED.map(name => ({ name })) },
+    });
+    const setupStep = result.phases[0].steps[0];
+    const testkitStep = result.phases[1].steps[0];
+
+    assert.ok(!setupStep.passed, 'setup failed');
+    assert.strictEqual(testkitStep.skipped, true, 'test-kit step cascade-skipped');
+    // Resolved task (__test_assert) IS advertised → genuine cascade, not missing_tool.
+    assert.strictEqual(
+      testkitStep.skip_reason,
+      'prerequisite_failed',
+      '$test_kit.* step with advertised task_default still gets prerequisite_failed'
+    );
+  });
+});
+
 describe('runStoryboard: #1161 phase.depends_on cascade scoping', () => {
   let agent;
 

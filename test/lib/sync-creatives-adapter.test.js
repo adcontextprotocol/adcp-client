@@ -90,120 +90,68 @@ describe('adaptSyncCreativesRequestForV2 — status → approved mapping', () =>
   });
 });
 
-describe('adaptSyncCreativesRequestForV2 — manifest flattening (single-role)', () => {
-  function singleRoleCase(role, assetPayload) {
-    const input = {
-      ...BASE_REQUEST,
-      creatives: [{ creative_id: 'cre-1', assets: { [role]: assetPayload } }],
+describe('adaptSyncCreativesRequestForV2 — assets pass-through', () => {
+  test('single-role manifest passes through as manifest, with v3 asset_type discriminator stripped', () => {
+    // v2.5 uses the role key (`video`) as the asset-shape discriminator;
+    // v3's `asset_type: 'video'` field on the inner value is meaningless
+    // to v2.5 and triggers oneOf ambiguity. The adapter strips it; the
+    // role-keyed manifest shape itself is preserved.
+    const manifest = {
+      video: {
+        asset_type: 'video',
+        url: 'https://example.com/video.mp4',
+        width: 1920,
+        height: 1080,
+        duration_ms: 30000,
+      },
     };
-    const result = adaptSyncCreativesRequestForV2(input);
-    assert.deepStrictEqual(result.creatives[0].assets, assetPayload, `${role} asset is flattened correctly`);
-    assert.strictEqual(result.creatives[0].creative_id, 'cre-1', 'creative_id is preserved');
-  }
-
-  test('video asset is flattened', () =>
-    singleRoleCase('video', {
-      asset_type: 'video',
-      url: 'https://example.com/video.mp4',
-      width: 1920,
-      height: 1080,
-      duration_ms: 30000,
-    }));
-
-  test('image asset is flattened', () =>
-    singleRoleCase('image', {
-      asset_type: 'image',
-      url: 'https://example.com/img.png',
-      width: 300,
-      height: 250,
-    }));
-
-  test('audio asset is flattened', () =>
-    singleRoleCase('audio', {
-      asset_type: 'audio',
-      url: 'https://example.com/audio.mp3',
-      duration_ms: 15000,
-    }));
-
-  test('VAST asset is flattened', () =>
-    singleRoleCase('vast', {
-      asset_type: 'vast',
-      url: 'https://example.com/vast.xml',
-    }));
-
-  test('text asset is flattened', () =>
-    singleRoleCase('headline', {
-      asset_type: 'text',
-      text: 'Buy now',
-    }));
-
-  test('html asset is flattened', () =>
-    singleRoleCase('body', {
-      asset_type: 'html',
-      html: '<div>Ad</div>',
-    }));
-});
-
-describe('adaptSyncCreativesRequestForV2 — manifest flattening (multi-role)', () => {
-  test('multi-role manifest: only primary (first) role is forwarded', () => {
-    const videoAsset = { asset_type: 'video', url: 'https://example.com/v.mp4' };
-    const bannerAsset = { asset_type: 'image', url: 'https://example.com/banner.png', width: 300, height: 250 };
+    const expected = {
+      video: {
+        url: 'https://example.com/video.mp4',
+        width: 1920,
+        height: 1080,
+        duration_ms: 30000,
+      },
+    };
     const result = adaptSyncCreativesRequestForV2({
       ...BASE_REQUEST,
-      creatives: [{ creative_id: 'cre-1', assets: { video: videoAsset, companion: bannerAsset } }],
+      creatives: [{ creative_id: 'cre-1', assets: manifest }],
     });
-    assert.strictEqual(result.creatives.length, 1, 'only one creative entry emitted');
-    assert.deepStrictEqual(result.creatives[0].assets, videoAsset, 'primary role asset is used');
-    assert.strictEqual(result.creatives[0].creative_id, 'cre-1', 'original creative_id preserved');
+    assert.deepStrictEqual(result.creatives[0].assets, expected, 'manifest preserved, asset_type stripped');
+    assert.strictEqual(result.creatives[0].creative_id, 'cre-1', 'creative_id preserved');
   });
 
-  test('multi-role with same asset_type: no phantom creative_id collision', () => {
-    // Two roles both have asset_type: 'image' — ensures no creative_id--image collision
-    const hero = { asset_type: 'image', url: 'https://example.com/hero.png', width: 1200, height: 628 };
-    const thumb = { asset_type: 'image', url: 'https://example.com/thumb.png', width: 300, height: 250 };
+  test('multi-role manifest preserves all roles, strips asset_type from each', () => {
+    const manifest = {
+      video: { asset_type: 'video', url: 'https://example.com/v.mp4' },
+      companion: { asset_type: 'image', url: 'https://example.com/banner.png', width: 300, height: 250 },
+    };
+    const expected = {
+      video: { url: 'https://example.com/v.mp4' },
+      companion: { url: 'https://example.com/banner.png', width: 300, height: 250 },
+    };
     const result = adaptSyncCreativesRequestForV2({
       ...BASE_REQUEST,
-      creatives: [{ creative_id: 'cre-1', assets: { hero, thumbnail: thumb } }],
+      creatives: [{ creative_id: 'cre-1', assets: manifest }],
     });
-    assert.strictEqual(result.creatives.length, 1);
-    assert.deepStrictEqual(result.creatives[0].assets, hero);
-    assert.strictEqual(result.creatives[0].creative_id, 'cre-1');
+    assert.deepStrictEqual(result.creatives[0].assets, expected, 'all roles preserved, asset_type stripped');
+    assert.strictEqual(result.creatives.length, 1, 'one-to-one creative mapping');
   });
 
-  test('batch with mixed single-role and multi-role creatives: output array length matches input', () => {
+  test('batch of creatives: output length matches input', () => {
     const result = adaptSyncCreativesRequestForV2({
       ...BASE_REQUEST,
       creatives: [
         { creative_id: 'cre-a', assets: { video: { asset_type: 'video', url: 'https://example.com/a.mp4' } } },
         {
           creative_id: 'cre-b',
-          assets: {
-            image: { asset_type: 'image', url: 'https://example.com/b.png', width: 300, height: 250 },
-            companion: { asset_type: 'image', url: 'https://example.com/c.png', width: 728, height: 90 },
-          },
+          assets: { image: { asset_type: 'image', url: 'https://example.com/b.png', width: 300, height: 250 } },
         },
       ],
     });
-    // flatMap must not be accidentally used; output is one-to-one with input
     assert.strictEqual(result.creatives.length, 2);
     assert.ok(!Array.isArray(result.creatives[0]), 'elements are not nested arrays');
     assert.ok(!Array.isArray(result.creatives[1]), 'elements are not nested arrays');
-  });
-
-  test('non-asset-first role: primary selection skips to first entry with asset_type', () => {
-    // { thumbnail: {width, height} } has no asset_type — would forward a broken payload
-    // if the adapter picked entries[0] blindly. The fix finds the first asset-bearing entry.
-    const videoAsset = { asset_type: 'video', url: 'https://example.com/v.mp4' };
-    const result = adaptSyncCreativesRequestForV2({
-      ...BASE_REQUEST,
-      creatives: [
-        {
-          creative_id: 'cre-1',
-          assets: { thumbnail: { width: 100, height: 100 }, video: videoAsset },
-        },
-      ],
-    });
-    assert.deepStrictEqual(result.creatives[0].assets, videoAsset, 'first asset_type-bearing role is used');
   });
 });
 
@@ -225,12 +173,11 @@ describe('adaptSyncCreativesRequestForV2 — edge cases', () => {
     assert.deepStrictEqual(result.creatives[0].assets, flat);
   });
 
-  test('empty manifest object: passed through as empty object (not flattened)', () => {
+  test('empty object assets: passed through as empty object', () => {
     const result = adaptSyncCreativesRequestForV2({
       ...BASE_REQUEST,
       creatives: [{ creative_id: 'cre-1', assets: {} }],
     });
-    // isManifestShape({}) returns false; empty object passes through verbatim
     assert.deepStrictEqual(result.creatives[0].assets, {});
   });
 

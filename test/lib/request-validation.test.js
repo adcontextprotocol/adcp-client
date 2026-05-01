@@ -1057,11 +1057,15 @@ describe('strict request validation against v2 servers', () => {
     assert.ok(call, 'sync_creatives should have reached the protocol layer');
     assert.strictEqual(call.args.account, undefined, 'account is stripped by the v2 adapter');
     assert.ok(Array.isArray(call.args.creatives) && call.args.creatives.length === 1, 'creatives are preserved');
-    // Manifest must be flattened: v2 expects a single asset payload, not { role: payload }
+    // Manifest is preserved (v2.5 uses the same role-keyed shape as v3),
+    // but the inner v3 `asset_type` discriminator is stripped — v2.5
+    // discriminates by the role key, not by an embedded asset_type, and
+    // leaving it in produces ambiguous oneOf matches at strict v2.5
+    // sellers.
     assert.deepStrictEqual(
       call.args.creatives[0].assets,
-      { asset_type: 'video', url: 'https://example.com/video.mp4', width: 1920, height: 1080, duration_ms: 30000 },
-      'v3 manifest assets are flattened to a single v2 asset payload'
+      { video: { url: 'https://example.com/video.mp4', width: 1920, height: 1080, duration_ms: 30000 } },
+      'v3 manifest preserved, asset_type stripped'
     );
   });
 

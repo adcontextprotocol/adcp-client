@@ -9,35 +9,44 @@
  *   - `account` / `adcp_major_version` — stripped (v3-only top-level fields)
  *   - `catalogs` per creative — stripped (v3-only)
  *   - `status` enum ('approved' | 'rejected') → `approved` boolean
- *   - `assets` as a role-keyed manifest ({ video: { asset_type, url, … } })
- *     → flattened to a single v2 asset payload (`oneOf` discriminated by
- *     `asset_type`). The primary (first) role is forwarded; remaining roles
- *     are dropped with a console.warn naming the discarded roles. To preserve
- *     all roles, connect to a v3 server.
- *   - `assets` already flat (has `asset_type` at top level) — passed through
- *     unchanged.
+ *   - `assets` — role-keyed manifest passed through, but the inner
+ *     `asset_type` discriminator is stripped from each role's value. v3
+ *     uses `asset_type` as the asset-shape discriminator (the const
+ *     embedded in the asset). v2.5 uses the role KEY as the discriminator
+ *     (the manifest property name); each variant in v2.5's `oneOf` does
+ *     not declare `asset_type`. Leaving it in produces ambiguous oneOf
+ *     matches against v2.5 sellers that strict-validate on extras.
  *   - No `assets` field — omitted.
  *
  * @internal Not part of the public @adcp/sdk API surface.
  */
 
 /**
- * Returns true for a v3 role-keyed manifest ({ role: AssetInstance, … }).
- * Returns false for a flat v2 asset payload (has top-level `asset_type`),
- * for an empty object, or for any non-plain-object value.
+ * Strip the v3 `asset_type` discriminator from each role's asset value.
+ * v2.5 uses the role key as the discriminator — `asset_type` is a v3-only
+ * field that confuses v2.5 oneOf validation. Pass through anything that
+ * isn't a plain object (defensive — fixtures and tests sometimes use
+ * synthesized non-object values).
  */
-function isManifestShape(assets: unknown): boolean {
-  if (typeof assets !== 'object' || assets === null || Array.isArray(assets)) return false;
-  if ('asset_type' in assets) return false; // already a flat single-asset payload
-  const values = Object.values(assets as object);
-  // Empty object is not a manifest — treat as pass-through
-  return values.some(v => typeof v === 'object' && v !== null && 'asset_type' in v);
+function stripAssetTypeFromManifest(assets: unknown): unknown {
+  if (typeof assets !== 'object' || assets === null || Array.isArray(assets)) return assets;
+  const out: Record<string, unknown> = {};
+  for (const [role, value] of Object.entries(assets as Record<string, unknown>)) {
+    if (typeof value === 'object' && value !== null && !Array.isArray(value)) {
+      const { asset_type: _ignored, ...rest } = value as Record<string, unknown>;
+      out[role] = rest;
+    } else {
+      out[role] = value;
+    }
+  }
+  return out;
 }
 
 /**
  * Adapt a single creative for a v2 server.
  * Strips v3-only fields, converts `status` enum → `approved` boolean,
- * and flattens a manifest-shaped `assets` to a single v2 asset payload.
+ * and strips the v3 `asset_type` discriminator from each role's asset
+ * (v2.5 discriminates by role key, not by an embedded `asset_type`).
  */
 function adaptCreativeForV2(creative: any): any {
   const { catalogs, status, assets, ...rest } = creative;
@@ -53,42 +62,10 @@ function adaptCreativeForV2(creative: any): any {
   // Any other status value (or absent) — omit approved entirely
 
   if (assets === undefined) {
-    // v3 schema marks assets as required, but guard defensively for any
-    // typed as any that arrives without the field
     return base;
   }
 
-  if (!isManifestShape(assets)) {
-    // Already a flat asset payload (has asset_type at top level), an empty
-    // object, or an unrecognised shape — pass through verbatim and let the
-    // server's response validation surface any mismatch
-    return { ...base, assets };
-  }
-
-  // Manifest: { role: AssetInstance, … }
-  // isManifestShape guarantees at least one entry with asset_type, but the first
-  // entry may be a non-asset role (e.g. metadata). Pick the first entry whose
-  // value actually carries asset_type so the forwarded payload is always valid.
-  const entries = Object.entries(assets as Record<string, unknown>);
-  const primary = entries.find(([, v]) => typeof v === 'object' && v !== null && 'asset_type' in v);
-
-  if (!primary) {
-    // All roles are malformed — pass through verbatim, let the server reject
-    return { ...base, assets };
-  }
-
-  const [primaryRole, primaryAsset] = primary;
-  const assetRoles = entries.map(([r]) => r);
-
-  if (assetRoles.length > 1) {
-    console.warn(
-      `[AdCP] sync_creatives: creative "${base.creative_id}" has multiple asset roles ` +
-        `(${assetRoles.join(', ')}); only "${primaryRole}" will be sent to v2 server. ` +
-        `Upgrade to a v3 server to preserve all roles.`
-    );
-  }
-
-  return { ...base, assets: primaryAsset };
+  return { ...base, assets: stripAssetTypeFromManifest(assets) };
 }
 
 /**

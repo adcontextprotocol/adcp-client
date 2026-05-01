@@ -333,3 +333,4 @@ Look for messages like:
 - [MCP Specification](https://spec.modelcontextprotocol.io)
 - [A2A Protocol Documentation](https://github.com/AgentProtocol/A2A)
 - [AdCP Specification](https://github.com/adcontextprotocol/adcp)
+- [Wire-version compat playbook](./WIRE-VERSION-COMPAT.md) — orthogonal but commonly conflated with transport differences. Read this if you're touching how the SDK adapts requests/responses across AdCP major versions (v3 ↔ v2.5), not just MCP vs A2A.

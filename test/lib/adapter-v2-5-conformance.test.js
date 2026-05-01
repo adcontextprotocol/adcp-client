@@ -85,17 +85,21 @@ const FIXTURES = {
       idempotency_key: '33333333-3333-3333-3333-333333333333',
     },
     expected_failures: {
-      // FOLLOW-UP: #1118's "manifest flatten" claim that v2.5 expects a
-      // single-asset payload is contradicted by the v2.5 schema cache —
-      // `creative-asset.json` declares `assets` as an object with
-      // patternProperties keyed by asset role (i.e., the same role-keyed
-      // manifest shape v3 uses). Post-#1118 the adapter emits a flat
-      // shape that fails v2.5 validation on every flat field. Either the
-      // schema needs updating or the flatten needs reverting; tracking in
-      // a follow-up issue. This fixture pins the current failure surface
-      // so further drift is loud.
-      issue: 'adcontextprotocol/adcp-client#1116',
-      pointers: ['/creatives/0/assets/asset_type'],
+      // v2.5 SCHEMA-SIDE BUG: `creative-asset.json` declares each role's
+      // value as `oneOf [Image|Video|Audio|Text|HTML|...]` with no
+      // discriminator and `additionalProperties: true` on each variant.
+      // ImageAsset and VideoAsset both require `url`, `width`, `height`
+      // (only) — so a value carrying any of those three matches BOTH and
+      // oneOf fails. The shape we emit (manifest preserved, asset_type
+      // stripped per #1173) is spec-correct against the schema source;
+      // the upstream schema simply can't disambiguate this position
+      // until 2.5-maintenance lands a discriminator (or switches to
+      // `anyOf`). Tracked at adcontextprotocol/adcp-client#1173. The
+      // adapter's previous flatten satisfied a different broken interp
+      // (Wonderstruck-shaped flat payload), and is wrong against every
+      // other v2.5 seller.
+      issue: 'adcontextprotocol/adcp-client#1173',
+      pointers: ['/creatives/0/assets/video'],
     },
   },
 };

@@ -28,6 +28,7 @@
 
 import {
   AdcpError,
+  DEFAULT_REPORTING_CAPABILITIES,
   publishStatusChange,
   type DecisioningPlatform,
   type SalesPlatform,
@@ -135,14 +136,7 @@ export class BroadcastTvSeller implements DecisioningPlatform<BroadcastTvConfig,
             format_ids: [{ id: 'video_30s', agent_url: 'https://example.com/broadcast-creative-agent/mcp' }],
             delivery_type: 'guaranteed',
             publisher_properties: [{ publisher_domain: 'broadcast.example.com', selection_type: 'all' }],
-            reporting_capabilities: {
-              available_reporting_frequencies: ['daily'],
-              expected_delay_minutes: 240,
-              timezone: 'UTC',
-              supports_webhooks: false,
-              available_metrics: [],
-              date_range_support: 'date_range',
-            },
+            reporting_capabilities: DEFAULT_REPORTING_CAPABILITIES,
             pricing_options: [
               {
                 pricing_option_id: 'cpm_42_00',
