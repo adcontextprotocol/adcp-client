@@ -319,6 +319,15 @@ export interface SingleAgentClientConfig extends ConversationConfig {
   };
   /** Governance configuration for buyer-side campaign governance */
   governance?: import('./GovernanceTypes').GovernanceConfig;
+  /**
+   * Transport-level safeguards. Applies to every call this client dispatches
+   * unless overridden at call time.
+   *
+   * Set `maxResponseBytes` when crawling untrusted agents (registries,
+   * federated discovery layers) to prevent a hostile vendor from buffering
+   * a large reply before any application-layer schema validation runs.
+   */
+  transport?: import('../protocols').TransportOptions;
 }
 
 /**
@@ -428,6 +437,7 @@ export class SingleAgentClient {
       onActivity: config.onActivity,
       governance: config.governance,
       adcpVersion: this.resolvedAdcpVersion,
+      transport: config.transport,
     });
 
     // Create async handler if handlers are provided
