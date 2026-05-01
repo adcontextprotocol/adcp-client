@@ -1161,10 +1161,13 @@ export class SingleAgentClient {
 
     // Symmetric to the pre-adapter v3 pass above: when the adapter
     // rewrote the request for a v2 server, warn-validate the adapted
-    // shape against the cached v2.5 schema bundle. Surfaces drift
-    // between what the adapter emits and what a v2.5 server expects.
+    // shape against the cached v2.5 schema bundle. Drift gets collected
+    // here and merged into result.metadata.debug_logs after executeTask
+    // returns — without that merge the warning would silently drop on
+    // the floor and adapter drift would land in production unnoticed.
+    const v25DriftLogs: any[] = [];
     if (serverVersion === 'v2') {
-      this.executor.validateAdaptedRequestAgainstV2(taskType, adaptedParams);
+      this.executor.validateAdaptedRequestAgainstV2(taskType, adaptedParams, v25DriftLogs);
     }
 
     const result = await this.executor.executeTask<T>(
@@ -1175,6 +1178,14 @@ export class SingleAgentClient {
       options,
       serverVersion
     );
+
+    // Merge collected drift into the executor's debug_logs so adopters
+    // reading result.debug_logs see post-adapter v2.5 warnings alongside
+    // the executor's own logs.
+    if (v25DriftLogs.length > 0) {
+      const existing = (result.debug_logs as any[] | undefined) ?? [];
+      (result as { debug_logs?: any[] }).debug_logs = [...existing, ...v25DriftLogs];
+    }
 
     // Normalize response to v3 format
     if (result.success && result.data) {
@@ -2145,9 +2156,11 @@ export class SingleAgentClient {
     const adaptedParams = await this.adaptRequestForServerVersion(taskName, normalizedParams);
 
     // Symmetric warn-only post-adapter pass against the v2.5 schema bundle.
-    // Surfaces drift between adapter output and v2.5 wire shape.
+    // Drift gets surfaced via result.metadata.debug_logs so adapter
+    // regressions in production aren't silently swallowed.
+    const v25DriftLogs: any[] = [];
     if (serverVersion === 'v2') {
-      this.executor.validateAdaptedRequestAgainstV2(taskName, adaptedParams);
+      this.executor.validateAdaptedRequestAgainstV2(taskName, adaptedParams, v25DriftLogs);
     }
 
     const result = await this.executor.executeTask<T>(
@@ -2158,6 +2171,11 @@ export class SingleAgentClient {
       options,
       serverVersion
     );
+
+    if (v25DriftLogs.length > 0) {
+      const existing = (result.debug_logs as any[] | undefined) ?? [];
+      (result as { debug_logs?: any[] }).debug_logs = [...existing, ...v25DriftLogs];
+    }
 
     // Normalize response to v3 format for consistent API surface
     if (result.success && result.data) {
