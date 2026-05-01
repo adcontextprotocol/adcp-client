@@ -12,31 +12,24 @@ export type ValidationMode = 'strict' | 'warn' | 'off';
 export interface ValidationHookConfig {
   /** Validate outgoing requests. Default: strict in dev/test, warn in prod. */
   requests?: ValidationMode;
-  /** Validate incoming responses. Default: strict in dev/test, warn in prod. */
+  /** Validate incoming responses. Default: warn everywhere. Use `'strict'` to hard-fail on drift (e.g. conformance runner, CI). */
   responses?: ValidationMode;
-}
-
-function defaultResponseMode(): ValidationMode {
-  // Responses have been validated strictly by default since the SDK shipped
-  // Zod validation; preserve that in dev/test and soften to warn in prod.
-  return process.env.NODE_ENV === 'production' ? 'warn' : 'strict';
 }
 
 /**
  * Resolve the effective request/response modes.
  *
- * Response default: strict in dev/test, warn in prod (preserves the
- * existing `strictSchemaValidation` contract).
- *
- * Request default: `warn` everywhere. Strict-by-default would break
- * existing callers that intentionally send partial payloads (error-path
- * tests, exploratory probes) — storyboards and third-party clients that
- * want hard-stop enforcement should set `requests: 'strict'` explicitly.
+ * Both default to `warn` everywhere. Strict-by-default would break callers
+ * that legitimately send partial payloads or receive v2.x responses that
+ * don't satisfy 100% of the current schema — the client can't control what
+ * a third-party seller sends back. Set `responses: 'strict'` (or
+ * `requests: 'strict'`) explicitly when you want hard-stop enforcement,
+ * e.g. the storyboard runner or a CI smoke test.
  */
 export function resolveValidationModes(config?: ValidationHookConfig): Required<ValidationHookConfig> {
   return {
     requests: config?.requests ?? 'warn',
-    responses: config?.responses ?? defaultResponseMode(),
+    responses: config?.responses ?? 'warn',
   };
 }
 

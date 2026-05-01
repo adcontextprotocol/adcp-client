@@ -145,7 +145,7 @@ export function createTestClient(agentUrl: string, protocol: 'mcp' | 'a2a' = 'mc
 
   const multiClient = new ADCPMultiAgentClient([agentConfig], {
     headers,
-    validation: { logSchemaViolations: false },
+    validation: { logSchemaViolations: false, responses: 'strict' },
     ...(options.userAgent && { userAgent: options.userAgent }),
   });
 

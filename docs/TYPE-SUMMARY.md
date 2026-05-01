@@ -18,6 +18,11 @@ interface AgentConfig {
   headers?: Record<string, string>;
 }
 
+interface ValidationHookConfig {
+  requests?: 'strict' | 'warn' | 'off';  // default: 'warn'
+  responses?: 'strict' | 'warn' | 'off'; // default: 'warn' — use 'strict' in conformance CI
+}
+
 interface TaskResult<T = any> {
   success: boolean;
   status: 'completed' | 'deferred' | 'submitted' | 'input-required'
