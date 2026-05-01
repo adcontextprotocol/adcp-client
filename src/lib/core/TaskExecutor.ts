@@ -301,6 +301,11 @@ export class TaskExecutor {
        * truth for both validation and wire-level major.
        */
       adcpVersion?: string;
+      /**
+       * Transport-level safeguards applied to every call this executor
+       * dispatches. Per-call options can override individual fields.
+       */
+      transport?: import('../protocols').TransportOptions;
     } = {}
   ) {
     this.responseParser = new ProtocolResponseParser();
@@ -562,6 +567,7 @@ export class TaskExecutor {
         serverVersion,
         session: { contextId: options.contextId, taskId: options.taskId },
         adcpVersion: this.config.adcpVersion,
+        transport: options.transport ?? this.config.transport,
       });
 
       // Emit protocol_response activity
@@ -1304,6 +1310,7 @@ export class TaskExecutor {
       {
         serverVersion: this.lastKnownServerVersion,
         adcpVersion: this.config.adcpVersion,
+        transport: this.config.transport,
       }
     )) as Record<string, unknown>;
     return (response.tasks as TaskInfo[]) || [];
@@ -1360,6 +1367,7 @@ export class TaskExecutor {
       {
         serverVersion: this.lastKnownServerVersion,
         adcpVersion: this.config.adcpVersion,
+        transport: this.config.transport,
       }
     )) as Record<string, unknown>;
     // We don't run `extractResponseData` here: that helper's
@@ -1535,6 +1543,7 @@ export class TaskExecutor {
         debugLogs,
         serverVersion: this.lastKnownServerVersion,
         adcpVersion: this.config.adcpVersion,
+        transport: this.config.transport,
       }
     );
 

@@ -1,5 +1,297 @@
 # Changelog
 
+## 6.2.0
+
+### Minor Changes
+
+- 3ba9466: Ship `BuyerRetryPolicy` + `decideRetry` — operator-grade per-code retry semantics for buyer agents. Closes #1152.
+
+  The 6.3.0 recovery-classification fix corrected 12 typed-error classes from `terminal` → `correctable` per the AdCP spec. That's spec-correct, but it surfaced a real adoption gap: a naive buyer agent that just reads `error.recovery === 'correctable'` and retries-with-tweaks will spin on `POLICY_VIOLATION` (looks like governance evasion), hammer SSO endpoints on `AUTH_REQUIRED` (revoked vs missing creds), and re-call with the same `idempotency_key` after correcting the payload (which makes the seller's replay window dedupe ignore the new request).
+
+  `decideRetry(error, ctx?)` translates an `AdcpStructuredError` into a `RetryDecision` discriminated by `action`:
+  - **`retry`** — server-side transients (`RATE_LIMITED`, `SERVICE_UNAVAILABLE`, `CONFLICT`). Caller replays with the SAME `idempotency_key` after `delayMs` (honors `error.retry_after` when present, else exponential backoff).
+  - **`mutate-and-retry`** — buyer-fixable (`*_NOT_FOUND` re-discover, `BUDGET_TOO_LOW` adjust, `TERMS_REJECTED` re-quote, `UNSUPPORTED_FEATURE` drop the field). Caller applies the correction then mints a FRESH `idempotency_key`.
+  - **`escalate`** — surface to a human. Includes the four spec-`correctable`-but-operator-human-escalate codes (`POLICY_VIOLATION`, `COMPLIANCE_UNSATISFIED`, `GOVERNANCE_DENIED`, `AUTH_REQUIRED`), out-of-band transients (`GOVERNANCE_UNAVAILABLE`, `CAMPAIGN_SUSPENDED`), terminal codes, attempt-cap exhaustion, and unknown vendor codes.
+
+  ```ts
+  import { decideRetry } from '@adcp/sdk';
+
+  const decision = decideRetry(error, { attempt });
+
+  if (decision.action === 'retry') {
+    await sleep(decision.delayMs);
+    return callAgent({ idempotency_key: previousKey, ... }); // SAME key
+  }
+  if (decision.action === 'mutate-and-retry') {
+    // Apply seller correction (decision.field, decision.suggestion)
+    // and mint a fresh idempotency_key.
+    return callAgent({ idempotency_key: crypto.randomUUID(), ...corrected });
+  }
+  throw new EscalationRequired(decision.reason, decision.message);
+  ```
+
+  For per-code overrides, instantiate `BuyerRetryPolicy` directly:
+
+  ```ts
+  const policy = new BuyerRetryPolicy({
+    overrides: {
+      POLICY_VIOLATION: () => ({ action: 'mutate-and-retry', ... }), // verticals where auto-tweak IS appropriate
+    },
+    unknownCode: 'mutate', // non-standard codes mutate-and-retry instead of escalating (default: escalate)
+  });
+  ```
+
+  Default policy diverges from the spec's `recovery` field for the codes called out in #1153 — operator-grade defaults, not just a 3-class enum reflection.
+
+  **Safety guards baked into the defaults:**
+  - **`IDEMPOTENCY_EXPIRED` → escalate (`idempotency_check_required`)**, NOT auto-retry. The spec explicitly warns: if the prior call may have succeeded, the buyer MUST do a natural-key check before minting a new key. Otherwise this is exactly how double-creation happens. This is a financial-liability default — adopters with a registered natural-key resolver can override per-code.
+  - **Exponential backoff capped at 3600s.** Without it, attempt 10 with a 1s base would sleep ~17 minutes (longer than most agent task budgets); attempt 30 → ~16 days. The cap mirrors the spec's `retry_after` range.
+  - **Mutate-and-retry includes a 125–250ms jitter** (50–100% of a 250ms base). Without it, fleet operators running thousands of campaigns all hit the seller in lockstep after a correlated storm (e.g., `PROPOSAL_EXPIRED` across the fleet at midnight UTC). The jitter de-correlates without changing semantics.
+  - **Compile-time coverage** — `DEFAULT_CODE_POLICY: Record<ErrorCode, CodePolicy>` (not `Partial`), so adding a code to the spec's `ErrorCodeValues` without a policy entry fails typecheck. The runtime drift test is belt-and-suspenders.
+  - **`overrides` accepts both `Partial<Record<ErrorCode, ...>>` (typo-safe for standard codes) and `Record<string, ...>` (for vendor codes)** — the union catches misspellings on standard codes at compile time without locking out vendor extensions.
+
+  `attemptCap` raised to 3 for the `*_NOT_FOUND` redirect family and `TERMS_REJECTED` / `REQUOTE_REQUIRED` requote family — most buyers cache one stale ID and need one re-discovery, but ramped-pacing scenarios can cycle 2–3 times as the catalog rotates.
+
+  `ACCOUNT_AMBIGUOUS` is `escalate (auth)` — spec says "pass explicit account_id" but the agent typically doesn't have the right ID cached without going back to `list_accounts`; escalating with the seller's hint is more honest than burning a guaranteed-wrong replay.
+
+  Adopters using the existing `isRetryable()` / `getRetryDelay()` helpers in `@adcp/sdk` continue to work — `decideRetry` is additive.
+
+- 07ebd34: **Behavior change for `getErrorRecovery()` callers and adopters using typed-error classes.** Three error codes had wrong recovery classifications in the SDK; this release corrects them to match the AdCP 3.0 spec. If you wired retry/escalation logic on the buggy classifications, your branches will fire differently after this lands. See "Recovery-classification bugs" below.
+
+  Fix `StandardErrorCode` drift against the AdCP error-code enum.
+
+  `StandardErrorCode` (in `src/lib/types/error-codes.ts`) was hand-maintained and had drifted to 28 codes against the spec's 45. Codegen produces the full set in `enums.generated.ts` `ErrorCodeValues`, but nothing tied that to the hand-rolled union. Each PR added the codes it personally needed and walked away — when AdCP 3.0 GA added 17 new codes (`TERMS_REJECTED`, `GOVERNANCE_DENIED`, `PERMISSION_DENIED`, `CREATIVE_DEADLINE_EXCEEDED`, `IO_REQUIRED`, `REQUOTE_REQUIRED`, `CAMPAIGN_SUSPENDED`, `GOVERNANCE_UNAVAILABLE`, `SESSION_NOT_FOUND`, `SESSION_TERMINATED`, `PLAN_NOT_FOUND`, `PROPOSAL_NOT_COMMITTED`, `CREATIVE_NOT_FOUND`, `SIGNAL_NOT_FOUND`, `REFERENCE_NOT_FOUND`, `PRODUCT_EXPIRED`, `VERSION_UNSUPPORTED`), they never landed in the SDK's strongly-typed handle.
+
+  Three layers of defense, applied in order:
+  1. **Type derivation.** `StandardErrorCode` is now `(typeof ErrorCodeValues)[number]` — physically tied to the generated enum. The hand-rolled string-literal union is gone.
+  2. **Compile-time completeness.** `STANDARD_ERROR_CODES satisfies Record<StandardErrorCode, ErrorCodeInfo>` — adding a code to the spec without filling in a description and recovery row will fail typecheck.
+  3. **Runtime drift guard.** A new test (`test/lib/standard-error-codes-drift.test.js`) asserts `Object.keys(STANDARD_ERROR_CODES).sort()` deep-equals `[...ErrorCodeValues].sort()` and that every entry has a valid `transient | correctable | terminal` classification. Belt-and-suspenders for the type derivation: if someone ever breaks the derivation by re-hand-typing the union, the test still fires.
+
+  **Recovery-classification bugs surfaced by the audit and corrected to match the spec:**
+
+  | Code                  | Was           | Now (spec-correct) | Buyer impact                                                                                                           |
+  | --------------------- | ------------- | ------------------ | ---------------------------------------------------------------------------------------------------------------------- |
+  | `CONFLICT`            | `correctable` | `transient`        | Concurrent-modification retry was being treated as a buyer-correctable error; should retry with current state instead. |
+  | `PRODUCT_UNAVAILABLE` | `transient`   | `correctable`      | Sold-out / no-longer-available was being retried in a loop; should pick a different product instead.                   |
+  | `UNSUPPORTED_FEATURE` | `terminal`    | `correctable`      | Unsupported field was treated as fatal; should check `get_adcp_capabilities` and remove the unsupported field instead. |
+
+  `ProductUnavailableError` and `UnsupportedFeatureError` (in `src/lib/server/decisioning/errors-typed.ts`) are also updated from `terminal` → `correctable` to match. The `CONFLICT` change is `STANDARD_ERROR_CODES`-only — no typed-error class for that code yet.
+
+  Adopters using `getErrorRecovery()` to drive retry logic will now branch correctly per the spec. If you were depending on the buggy classifications you'll need to update — the new behavior is what the spec required all along. Spec source: `schemas/cache/3.0.0/enums/error-code.json` `enumDescriptions`.
+
+  **Known scope gap (follow-up):** the broader typed-error class hierarchy in `errors-typed.ts` has additional recovery-classification drift beyond these three codes (e.g., `MediaBuyNotFoundError` is `terminal` but spec says `correctable`). Tracked at adcontextprotocol/adcp-client#1136 — those classes will be aligned once a forcing function is added (likely defaulting `recovery` from `getErrorRecovery(code)` when not specified).
+
+  Bumps `STANDARD_ERROR_CODES` from 28 → 45 entries with descriptions condensed from the spec's `enumDescriptions` block. Agents using `getErrorRecovery(code)` now classify the 17 previously-unknown codes correctly instead of returning `undefined`.
+
+  No breaking change: existing call sites that passed standard codes to `adcpError(...)` continue to compile (the union widened, didn't narrow). Call sites that passed non-standard codes still go through the `(string & {})` overload.
+
+- cee3450: Add `transport.maxResponseBytes` for hostile-vendor protection. Closes adcontextprotocol/adcp-client#1167.
+
+  `@adcp/sdk` builds the underlying MCP / A2A transport's `fetch` internally, so callers had no seam to inject a size-bounded fetch. That's a real DoS surface against any code crawling untrusted agents (registries, federated discovery, monitoring tools): a hostile vendor publishing a 200 MB JSON-RPC reply gets fully buffered before any application-layer schema validation runs. The 10s default timeout doesn't mitigate — 200 MB at datacenter speeds arrives well under the limit.
+
+  ```ts
+  const client = new ADCPMultiAgentClient([{ id: 'vendor', agent_uri, protocol: 'mcp' }], {
+    userAgent: 'AAO-Discovery/1.0',
+    transport: { maxResponseBytes: 1_048_576 }, // 1 MB cap on every call
+  });
+
+  // Per-call override beats the constructor default — for agents that
+  // legitimately publish large catalogs (`list_creative_formats` on a
+  // generative seller, `list_properties` on a publisher with 50K URLs).
+  const formats = await client.agent('vendor').listCreativeFormats(
+    {
+      /* ... */
+    },
+    undefined,
+    { transport: { maxResponseBytes: 16 * 1_048_576 } }
+  );
+  ```
+
+  When the cap is exceeded, the SDK throws `ResponseTooLargeError` (code `RESPONSE_TOO_LARGE`, extends `ADCPError`). The error carries `limit`, `bytesRead`, `url`, and — when the cap was tripped on a `Content-Length` pre-check — `declaredContentLength`. Recovery is `terminal` from the SDK's view: replaying against the same agent will hit the same cap. The buyer's options are to widen the cap per-call when the agent's payload is legitimately large, or to flag the agent as misbehaving.
+
+  **Why a typed knob, not a `fetchOverride`.** Callers composing their own size cap with the SDK's existing `wrapFetchWithCapture`, RFC 9421 signing fetch, and OAuth fetch wrappers is a footgun — the wrap order matters and isn't obvious from the public API. `maxResponseBytes` is a single-purpose ergonomic with a clear contract; future hardening (DNS-rebind defense, scheme allow-list) can add similar typed knobs without callers rewriting their fetch.
+
+  **How it works.** `wrapFetchWithSizeLimit` is installed as the innermost transport wrapper for both MCP and A2A — closer to the network than capture / signing — so the diagnostic capture wrapper reads a size-limited body and can't blow memory through `Response.clone()`. Pre-cancels when `Content-Length` exceeds the cap; otherwise streams through a counting `TransformStream` that errors at the cap boundary. The active cap is read from `responseSizeLimitStorage` (AsyncLocalStorage), so cached MCP / A2A connections don't need to rebuild — the cap lives on the request, not on the transport.
+
+  **Default is no cap.** Buyers in trusted relationships keep their existing payload sizes; only the registry-crawl / federated-discovery use cases need to set this. When set, per-call `transport.maxResponseBytes` (in `TaskOptions`) overrides the constructor's `transport.maxResponseBytes` (in `SingleAgentClientConfig`).
+
+  **Surface area.** New exports: `TransportOptions`, `ResponseTooLargeError`. New fields: `SingleAgentClientConfig.transport`, `TaskOptions.transport`, `CallToolOptions.transport`, `transport` argument on `createMCPClient` / `createA2AClient` factories. No breaking changes to existing fields.
+
+  **Defense detail (post-review hardening).**
+  - **Forces `Accept-Encoding: identity` when the cap is active** so a hostile vendor can't ship a 5 KB gzip blob that decompresses to GBs and burn asymmetric CPU before the streaming counter trips. Without this, undici's default `Accept-Encoding: gzip, deflate, br` lets the cap count post-decompression bytes only. Forcing identity moves the bomb to the network where the `Content-Length` pre-check catches it. The header is only set when no caller value is present — signing fetches that need a stable signed-bytes shape can override.
+  - **Strips the search component from `ResponseTooLargeError.url`.** Some agents publish manifests with auth tokens in the query string (`?api_key=…`); without redaction those land in `err.message`, `err.details.url`, and any downstream log sinks. The error stores the path-only form for diagnostics.
+  - **`createMCPClient` / `createA2AClient` factory exports honor the same cap.** They accept a `transport` argument and wrap with `withResponseSizeLimit`, matching the contract the public `TransportOptions` type implies. Without this, callers reaching the factory exports would silently bypass the cap.
+
+  **Known gaps tracked as follow-ups (not blocking this ship).**
+  - OAuth client-credentials token endpoint (`exchangeClientCredentials`) uses raw fetch and bypasses the cap. Pre-existing surface, not a regression from this change. Tracked separately.
+  - The cap applies to MCP's long-lived side-channel `GET` for server-initiated messages; the doc warning ("leave unset for long-lived buyer sessions") is the current mitigation. A finer-grained per-response scope is a follow-up.
+  - OAuth metadata discovery (`/.well-known/oauth-authorization-server`) doesn't flow through the wrapped fetch — `discoverOAuthMetadata` uses raw fetch. Same DoS surface, separate fix.
+
+- ec58c8f: **Behavior change for `getErrorRecovery()` callers and adopters using typed-error classes.** Closes #1136.
+
+  Recovery classifications across the typed-error class hierarchy in `src/lib/server/decisioning/errors-typed.ts` were hardcoded and had drifted from the AdCP 3.0 spec. The 6.2.0 release fixed three classifications in `STANDARD_ERROR_CODES` (`CONFLICT`, `PRODUCT_UNAVAILABLE`, `UNSUPPORTED_FEATURE`); the remaining ~12 typed-error classes still hardcoded wrong recovery values. This release:
+  1. **Makes `AdcpError.recovery` optional.** The constructor now defaults `recovery` from `getErrorRecovery(code)` when omitted (and to `'correctable'` for non-standard `(string & {})` codes). Adopters who want to override per-instance still pass `recovery` explicitly.
+  2. **Drops the hardcoded `recovery` field from every typed-error class.** All ~20 classes inherit recovery from the spec via the new default. Same for the `validationError` and `upstreamError` factory helpers.
+  3. **Adds a drift guard test.** `every typed-error class recovery matches getErrorRecovery(code)` — if anyone re-introduces a hardcoded `recovery` that diverges from the spec, this fires.
+
+  **Recovery values that change as a result** (these were the spec-conformant values all along; the typed classes were wrong):
+
+  | Class / code                                            | Was        | Now (spec-correct) |
+  | ------------------------------------------------------- | ---------- | ------------------ |
+  | `PackageNotFoundError` (`PACKAGE_NOT_FOUND`)            | `terminal` | `correctable`      |
+  | `MediaBuyNotFoundError` (`MEDIA_BUY_NOT_FOUND`)         | `terminal` | `correctable`      |
+  | `ProductNotFoundError` (`PRODUCT_NOT_FOUND`)            | `terminal` | `correctable`      |
+  | `CreativeNotFoundError` (`CREATIVE_NOT_FOUND`)          | `terminal` | `correctable`      |
+  | `CreativeRejectedError` (`CREATIVE_REJECTED`)           | `terminal` | `correctable`      |
+  | `IdempotencyConflictError` (`IDEMPOTENCY_CONFLICT`)     | `terminal` | `correctable`      |
+  | `InvalidStateError` (`INVALID_STATE`)                   | `terminal` | `correctable`      |
+  | `AuthRequiredError` (`AUTH_REQUIRED`)                   | `terminal` | `correctable`      |
+  | `PermissionDeniedError` (`PERMISSION_DENIED`)           | `terminal` | `correctable`      |
+  | `ComplianceUnsatisfiedError` (`COMPLIANCE_UNSATISFIED`) | `terminal` | `correctable`      |
+  | `GovernanceDeniedError` (`GOVERNANCE_DENIED`)           | `terminal` | `correctable`      |
+  | `PolicyViolationError` (`POLICY_VIOLATION`)             | `terminal` | `correctable`      |
+
+  `BudgetTooLowError` (`correctable`), `BudgetExhaustedError` (`terminal`), `RateLimitedError` (`transient`), `ServiceUnavailableError` (`transient`), `ProductUnavailableError` and `UnsupportedFeatureError` (both `correctable` after 6.2.0), `InvalidRequestError` and `BackwardsTimeRangeError` (both `correctable`) were already spec-correct and continue to behave the same.
+
+  **Architectural payoff:** there's now exactly one source of truth for recovery semantics — `STANDARD_ERROR_CODES`, which derives from the generated `ErrorCodeValues`. Adding a code to the spec lights up everywhere; changing a recovery value lights up everywhere. The drift mechanism that produced 6.2.0's three corrections (and this release's twelve) is closed.
+
+  **No source-compatibility break:** existing call sites that pass `recovery` explicitly continue to compile and behave the same. Adopters using `getErrorRecovery()` to drive retry logic will see corrected branch behavior — buyers should retry / pick alternative products / check capabilities for these correctable errors instead of giving up.
+
+- 73fd41c: Adds TypeScript request/response interfaces for the AdCP v2.5 wire shape, importable via `@adcp/sdk/types/v2-5`. This unlocks compile-time type safety on adapter code that maps between v3 and v2.5 — a v3→v2 wire-format bug that previously surfaced only at runtime via the warn-only validation pass now becomes a TypeScript error at the adapter signature.
+
+  `scripts/generate-v2-5-types.ts` (`npm run generate-types:v2.5`) compiles every v2.5 tool's request and response schema as a single mega-schema with shared `definitions`, then runs `json-schema-to-typescript` once. The mega-schema approach naturally deduplicates shared types (e.g. `BrandID`, `FormatID`, `AssetContentType`) instead of producing per-tool copies that collide at the type level.
+
+  Output lands at `src/lib/types/v2-5/tools.generated.ts` and is checked in (parallel to `src/lib/types/tools.generated.ts` for v3). CI's "Validate generated files in sync" step runs both v3 and v2.5 generation, so a forgotten regeneration after a schema refresh fails the build before it ships. The generator pulls from `schemas/cache/v2.5/`, populated by `npm run sync-schemas:v2.5`.
+
+  Consumers can import the v2.5 surface as a namespace:
+
+  ```ts
+  import * as V25 from '@adcp/sdk/types/v2-5';
+  const req: V25.CreateMediaBuyRequest = ...;
+  ```
+
+  Or by name:
+
+  ```ts
+  import type { CreateMediaBuyRequest } from '@adcp/sdk/types/v2-5';
+  ```
+
+  13 tools across the media-buy, creative, and signals protocols ship with both Request and Response interfaces (26 entry-point types). Foundation for the upcoming adapter-registry refactor where adapter signatures become `(req: V3Request) => V25Request` and the buyer_ref-shaped bug becomes a compile error.
+
+  The `enforceStrictSchema` helper from the existing v3 generator is now exported so the v2.5 generator can apply the same JSON-Schema preprocessing (strip `additionalProperties: true`, drop `if/then/else` conditionals, recurse into combinators). No v3 behavior change.
+
+- 73e722a: Consolidates the v2.5 wire-compat dispatch into a typed registry pattern. Each AdCP tool that needs translation between the SDK's v3 surface and a v2.5 seller now has a per-tool `AdapterPair<V3Req, V25Req, V25Res, V3Res>` module under `src/lib/adapters/legacy/v2-5/`. `SingleAgentClient.adaptRequestForServerVersion` and `normalizeResponseToV3` dispatch through `getV25Adapter(taskName)` instead of carrying tool-specific switch arms.
+
+  Six pairs land in this PR: `get_products`, `create_media_buy`, `update_media_buy`, `sync_creatives`, `list_creative_formats`, `preview_creative`. The pairs wrap the existing scattered helpers (`adaptGetProductsRequestForV2`, `adaptCreateMediaBuyRequestForV2`, `normalizeMediaBuyResponse`, etc.) unchanged — wire-level behavior is identical and pinned by a regression suite that diffs registry output vs direct-helper output for every pair. The underlying logic stays in `utils/*-adapter.ts` files until each pair gets a focused per-tool refactor (e.g. `#1116` for sync_creatives).
+
+  Naming intentionally matches `legacy/<seller-version>/`, NOT `<sdk-version>-to-<seller-version>/`. Real ad-tech compat layers carry **N=1 active legacy shim with a deprecation runway** (OpenRTB, Prebid, GAM all behave this way). Encoding a `v3-to-v2-5/` matrix would commit the codebase to a layout nobody will staff. When the SDK pin moves from v3 to v4 in the future, `legacy/v2-5/` continues to hold the v2.5 compat shim and a sibling `legacy/v3/` joins for v3 sellers — the directory tree expresses "exceptional, time-boxed compat" rather than encoding a buyer-version axis.
+
+  No public API change. The existing `adaptGetProductsRequestForV2` / etc. functions are still exported from `utils/*-adapter.ts` (no rename, no signature change) for any downstream caller using them directly. The registry is purely a centralized dispatch wrapper, not a migration of the helper code.
+
+- df91b27: Client-side response validation now defaults to `warn` everywhere — previously `strict` in dev/test, `warn` only in production. Drift surfaces through `result.debug_logs` and the response payload reaches the caller; the task no longer fails just because a seller's response missed an optional schema constraint.
+
+  **Why.** With #1137's version-pinned validator, a v2.5 seller's perfectly valid v2.5-shaped response is now correctly validated against the v2.5 schema — but v2.5 schemas have wider drift tolerance (envelope nulls, optional-but-required-in-schema fields like `pricing_options`, enum mismatches) than the modern v3 spec. Strict-by-default in dev/test meant integration tests against legitimate v2.5 sellers turned every minor schema gap into a hard failure with `result.data` thrown away — leaving callers staring at "0 products" with no useful signal. `warn` keeps the data flowing and surfaces the drift through the existing `debug_logs` channel that #1133 wired up.
+
+  **Server-side unchanged.** `createAdcpServer` still defaults its handler-side validation to `strict` in dev/test/CI. That catches our own handler-output bugs, which strict mode is genuinely good at — distinct from the client-side concern of "seller wrote a slightly off-spec response."
+
+  **Opt back in.** Buyers who want hard-stop response validation (conformance harnesses, third-party validators, paranoid CI runs) pass `validation: { responses: 'strict' }` explicitly:
+
+  ```ts
+  new AgentClient({
+    agent_uri: '...',
+    validation: { responses: 'strict' },
+  });
+  ```
+
+  Closes adcontextprotocol/adcp-client#1150.
+
+### Patch Changes
+
+- df6f509: `skills/call-adcp-agent/SKILL.md` — worked example for `decideRetry`.
+
+  Closes the documentation gap left over from #1156 (the `BuyerRetryPolicy` helper). The skill now shows adopters end-to-end how to wire `decideRetry` into a buyer agent retry loop — including the same-vs-fresh `idempotency_key` rule, jitter on mutate-and-retry, and per-vertical overrides via `BuyerRetryPolicy`.
+
+  Two code blocks added:
+  1. **Default usage** — `decideRetry(error, { attempt })` with `switch`-style branching on the discriminated `RetryDecision`. Shows TypeScript narrowing each branch (delay only on retry, field/suggestion only on mutate-and-retry, message only on escalate) so adopters can't accidentally hold the same `idempotency_key` after a payload mutation.
+  2. **Per-vertical override** — `BuyerRetryPolicy` instantiation pattern with a `CREATIVE_REJECTED` override demonstrating how a creative-template platform can convert format-mismatch rejections to in-loop mutate-and-retry while keeping brand-safety rejections as escalate.
+
+  Skills are bundled with the npm package, so this is a publishable change.
+
+- c68231a: Stop trying to publish `@adcp/client` (the deprecated compat shim).
+
+  Background: `@adcp/client` was the legacy package name; v6.0 renamed it to `@adcp/sdk` and the shim re-exported the new package. The 6.0.0 publish attempt left `@adcp/client@6.0.0`'s npm version slot in a "burned" state (visibility removed but slot reserved), so every subsequent release workflow fails with `Cannot publish over previously published version "6.0.0"` — even though the SDK publish succeeds. The release workflow then exits with code 1 because of the shim failure, even on otherwise-clean releases.
+
+  Two surgical changes to stop the bleeding:
+  1. **`packages/client-shim/package.json` → `private: true`.** Source stays in-tree for historical reference; npm publish flow now ignores the package entirely.
+  2. **`.changeset/config.json`**: removed the `@adcp/sdk ↔ @adcp/client` linked-version pair (forced lock-step bumps that the npm registry rejected) and added `@adcp/client` to the `ignore` list so changesets stops generating release entries for it.
+
+  Operator action (not part of this PR): run `npm deprecate @adcp/client "Renamed to @adcp/sdk in v6.0. Install @adcp/sdk@^6.1.0 instead."` to land a deprecation banner on the existing `@adcp/client` versions still on npm. Adopters with stale lockfiles get a one-line nudge to migrate.
+
+  After this lands, the next release-PR's workflow run will publish `@adcp/sdk` cleanly without trying to touch `@adcp/client`.
+
+- 6f324de: Collapse the second hand-rolled error-code source.
+
+  `KNOWN_ERROR_CODES` in `src/lib/server/decisioning/async-outcome.ts` was a parallel hand-maintained array of error codes — same shape of bug as the `StandardErrorCode` drift fixed in 6.2.0, just one file over. The author had even left a `TODO(6.0): generate this from schemas/cache/<version>/enums/error-code.json` flag for future-self.
+
+  Now derived from the generated `ErrorCodeValues` (and `ErrorCode` aliases `StandardErrorCode`), so:
+  - New codes added to the spec light up everywhere downstream — typo warn, autocomplete, the `ErrorCode` union — without a hand-edit.
+  - The two error-code "sources of truth" are now one source.
+  - Warn message reports the count from the array rather than a stale hardcoded "45".
+
+  No behavior change at the type or runtime layer; the array contains the same 45 codes it did before, just sourced from codegen now.
+
+- 3770916: Seller skill (`skills/build-seller-agent/SKILL.md` and `specialisms/sales-guaranteed.md`) — behavioral coverage gaps surfaced by the v4 storyboard matrix run (#1120):
+  1. **Minimum tool surface callout.** Documents the exact set of tools `sales-guaranteed` storyboards expect — adopters who skipped `list_accounts` or `list_creative_formats` were getting cascade-skips with `skip_reason: missing_tool` instead of useful diagnostics.
+  2. **Error-code matrix on `create_media_buy` / `update_media_buy`.** Spec-defined rejections (`TERMS_REJECTED`, `PRODUCT_NOT_FOUND`, `BUDGET_TOO_LOW`, `INVALID_REQUEST`, `MEDIA_BUY_NOT_FOUND`, `PACKAGE_NOT_FOUND`) now appear in one place with the wire-correct `adcpError(...)` shape.
+  3. **State-machine logic in the `update_media_buy` example.** `pending_creatives` is a transient state — when `creative_assignments` arrive the buy advances to `pending_start` (start_time in future) or `active` (start_time now/past). The pre-fix example only handled `paused ↔ active`, so storyboards depending on creative-attachment transitions failed.
+  4. **`property_list` / `collection_list` live inside `targeting_overlay`.** Per `/schemas/latest/core/package.json`, these are nested under `targeting_overlay`, not flat on `Package`. The skill now teaches the spec-correct path and flags the known storyboard discrepancy (some grader checks the flat path) so adopters don't chase a phantom bug.
+
+  Skills are bundled with the npm package (`files: ["skills/**/*"]`), so this is a publishable change.
+
+- cf7654b: `skills/call-adcp-agent/SKILL.md` and `docs/guides/BUILD-AN-AGENT.md` — callout block for the four spec-`correctable`-but-operator-human-escalate codes.
+
+  Surfaced during the recovery-classification audit closing #1136 and shipping in 6.3.0. Spec recovery is `correctable` for `POLICY_VIOLATION`, `COMPLIANCE_UNSATISFIED`, `GOVERNANCE_DENIED`, and `AUTH_REQUIRED`, but the operator semantic is human-in-loop:
+  - `POLICY_VIOLATION` / `COMPLIANCE_UNSATISFIED` / `GOVERNANCE_DENIED` are commercial-relationship signals. Auto-mutating creative, targeting, or budget and resubmitting looks like evasion to a seller's governance reviewer. Naive LLM agent loops that read `error.recovery === 'correctable'` and retry-with-tweaks will produce bad outcomes (and potentially get the buyer flagged).
+  - `AUTH_REQUIRED` conflates missing creds (genuinely correctable — re-handshake) with revoked / expired creds (operator must rotate). Until [adcontextprotocol/adcp#3730](https://github.com/adcontextprotocol/adcp/issues/3730) splits this into `auth_missing` + `auth_invalid`, treat as escalate-after-one-attempt to avoid retry storms on revoked keys.
+
+  The skill now teaches: spec recovery is `correctable`, operator behavior is human-in-loop. Read `error.message` + `error.suggestion`, surface to the user, don't loop.
+
+  Closes #1153. Companion to #1152 (the future `BuyerRetryPolicy` helper which will operationalize these defaults in code rather than docs).
+
+  Skills are bundled with the npm package (`files: ["skills/**/*"]`), so this is a publishable change.
+
+- a6865c3: Fix `adaptSyncCreativesRequestForV2` to flatten v3 manifest assets to v2.5 single-asset payload.
+
+  `adaptSyncCreativesRequestForV2` previously leaked the v3 `assets` manifest shape (`{ role: { asset_type, url, … } }`) through to v2.5 servers unchanged. v2.5's `creative-asset.json` schema expects a single asset payload discriminated by `asset_type`; every adapted creative therefore failed the `oneOf` check and was rejected by strict v2.5 sellers.
+
+  The adapter now detects manifest-shaped `assets` (a role-keyed object whose values carry `asset_type`) and extracts the primary (first) role's payload as the v2 asset. Multi-role manifests emit a `console.warn` naming the dropped roles; single-role manifests are silently flattened. Already-flat assets (top-level `asset_type` present) pass through unchanged.
+
+  Covers image, video, audio, VAST, text, and HTML asset variants per the v2.5 test plan.
+
+- 73fd41c: Drift from the warn-only post-adapter v2.5 validation pass now surfaces via `result.debug_logs` instead of dropping silently on the floor. Before this change, `validateAdaptedRequestAgainstV2` ran on every v2-detected request but the `SingleAgentClient` call sites passed no `debugLogs` array — the warning entries had nowhere to go and adapter regressions could land in production unnoticed until a v2 seller reported a wire-shape rejection.
+
+  `SingleAgentClient.executeAndHandle` and `SingleAgentClient.executeTask` now collect drift entries into a local array, then merge them into `result.debug_logs` after `executor.executeTask` returns. Adopters reading `result.debug_logs` see post-adapter v2.5 warnings alongside the executor's own logs, so a malformed adapted shape becomes a debuggable signal instead of an invisible bug.
+
+  No public API change. The `executor.validateAdaptedRequestAgainstV2(taskName, params, debugLogs?)` seam already accepted an optional `debugLogs` parameter — only the call sites changed.
+
+  **Drop-on-error semantics.** Drift is merged into `result.debug_logs` only after `executor.executeTask` returns. If the executor throws before producing a result, drift collected pre-call is dropped — the executor owns the result envelope and the merge happens once we have one in hand. This matches the executor's own debug-log behavior, which is also tied to a successful return.
+
+  Closes the observability hole the v2.5-foundation PR (`#1121`) deliberately deferred. Lays the groundwork for the broader compatibility-matrix work that needs reliable drift signal across version pairs.
+
+- 995de01: Two bugs that silently broke every v3 buyer calling a v2.5 seller, surfaced by smoke-testing against the live Wonderstruck v2.5 sales agent.
+
+  **1. `brand_manifest` → `brand` aliasing dropped a string into an object slot.** `SingleAgentClient`'s field-stripping path renamed `brand_manifest` (URL string from the v2 adapter) back to `brand` whenever the agent's tool schema declared `brand` — without checking the destination's declared type. v2.5 sellers declare `brand` as a `BrandReference` object (`anyOf [object_with_required_domain, null]`). The string landed in the object slot and Wonderstruck rejected with `Input should be a valid dictionary or instance of BrandReference [type=model_type, input_value='https://wonderstruck.fm', input_type=str]`.
+
+  The fix adds a `valueMatchesSchemaType` helper that introspects the destination's declared shape (recursing into `anyOf` / `oneOf`) and only applies the alias when the value's runtime type is compatible. Legacy v2 sellers that declared `brand` as `type: 'string'` still get the URL routed correctly; v2.5 sellers with object-typed `brand` slots get the v3 brand object passed through unchanged (or stripped, depending on the rest of the schema).
+
+  **2. Response validation pinned to v3 even when targeting v2 sellers.** `TaskExecutor.validateResponseSchema` always passed `this.config.adcpVersion` (the SDK-pinned v3) to `validateIncomingResponse`. v2.5 sellers correctly returned v2.5-shaped responses; the SDK falsely rejected them as malformed v3 with errors like `pricing_options must NOT have fewer than 1 items` and `reporting_capabilities required`. The seller wasn't broken — the SDK was validating against the wrong schema.
+
+  The fix derives the validation version from `lastKnownServerVersion`: when the agent is v2-detected, validate against `'v2.5'`; otherwise the SDK-pinned default. Symmetric to the post-adapter request pass added in #1121.
+
+  Together these unblock real-world traffic to v2.5 sellers. Without them, every v3 buyer using `getProducts` against a v2.5 agent failed at one of the two points: the request was rejected (bug 1), or the response was reported as malformed (bug 2). Drift between v2.5 spec and seller behavior still surfaces via `result.debug_logs` (per #1133), so adopters can see real seller deviations without the SDK conflating them with version-mismatch artifacts.
+
+  Surfaced by `scripts/smoke-wonderstruck-v2-5.ts`. Five additional issues filed for follow-up: capability-detection against v2.5 returning a non-v3 shape (#23 in tracker), `supported_macros` `oneOf` cascade in `list_creative_formats` (#24), `list_authorized_properties` undefined-return (#25).
+
 ## 6.1.0
 
 ### Minor Changes

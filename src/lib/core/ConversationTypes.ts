@@ -157,6 +157,13 @@ export interface TaskOptions {
    * @internal Do not set in production buyer code.
    */
   skipIdempotencyAutoInject?: boolean;
+  /**
+   * Transport-level safeguards for this call. Overrides the matching field
+   * on the client constructor's `transport` option. Use to lift or tighten
+   * `maxResponseBytes` per call when an agent legitimately publishes large
+   * catalogs (e.g., `list_creative_formats` on a generative seller).
+   */
+  transport?: import('../protocols').TransportOptions;
 }
 
 /**

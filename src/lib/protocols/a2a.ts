@@ -13,6 +13,7 @@ import { isAgentCardPath, buildCardUrls } from '../utils/a2a-discovery';
 import { buildAgentSigningFetch, signingContextStorage, type AgentSigningContext } from '../signing/client';
 import { redactIdempotencyKeyInArgs } from '../utils/idempotency';
 import { wrapFetchWithCapture } from './rawResponseCapture';
+import { wrapFetchWithSizeLimit } from './responseSizeLimit';
 
 if (!A2AClient) {
   throw new Error('A2A SDK client is required. Please install @a2a-js/sdk');
@@ -125,6 +126,10 @@ function buildFetchImpl(authToken: string | undefined) {
   // with a different context.
   const signingContext = signingContextStorage.getStore();
 
+  // Innermost wrapper: enforce response body size cap from the active
+  // `responseSizeLimitStorage` slot. Pass-through when no slot is set.
+  const networkFetch = wrapFetchWithSizeLimit((input, init) => fetch(input as any, init));
+
   // Inner fetch handles auth/header injection and 401 detection. If the
   // agent has request-signing configured, we wrap it with the AdCP signing
   // fetch so the signature covers the exact bytes we're about to send (auth
@@ -177,7 +182,7 @@ function buildFetchImpl(authToken: string | undefined) {
       ),
     });
 
-    const response = await fetch(url, { ...options, headers });
+    const response = await networkFetch(url as any, { ...options, headers });
 
     if (response.status === 401 && context) {
       context.got401Ref.value = true;
