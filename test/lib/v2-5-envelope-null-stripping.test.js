@@ -15,8 +15,12 @@ const { hasSchemaBundle } = require('../../dist/lib/validation/schema-loader');
 const V2_5_AVAILABLE = hasSchemaBundle('v2.5');
 const V3_AVAILABLE = hasSchemaBundle('3.0');
 
-// Minimal valid get_products response shape (v2.5 and v3 share the top-level
-// products array; the fields below satisfy the v2.5 response schema).
+// Minimal valid get_products response shape that satisfies the v2.5 response
+// schema. The fields below match the upstream `dist/schemas/2.5.3` requirements:
+//   - product.json — `delivery_measurement` is REQUIRED at the top of every product
+//   - pricing-options/cpm-fixed-option.json — `is_fixed: true` is the const
+//     discriminator that picks the cpm-fixed variant out of the pricing_options
+//     `oneOf`. Without it the value matches multiple variants ambiguously.
 function minimalGetProductsResponse(overrides = {}) {
   return {
     products: [
@@ -27,12 +31,14 @@ function minimalGetProductsResponse(overrides = {}) {
         publisher_properties: [{ publisher_domain: 'example.com', selection_type: 'all' }],
         format_ids: [],
         delivery_type: 'guaranteed',
+        delivery_measurement: { provider: 'first-party' },
         pricing_options: [
           {
             pricing_option_id: 'po-1',
             pricing_model: 'cpm',
             rate: 10,
             currency: 'USD',
+            is_fixed: true,
           },
         ],
         reporting_capabilities: {
