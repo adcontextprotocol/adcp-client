@@ -233,15 +233,96 @@ Quick lookup before reading the full envelope. Match what you see in `adcp_error
 | `keyword: 'enum'` at `/destinations/*/type` | Made-up destination type | Use `'platform'` (with `platform`) or `'agent'` (with `agent_url`). |
 | Response carries `status: 'submitted'` and `task_id` | Async — work is queued, NOT done | Poll via `tasks/get` (A2A) or the MCP async task extension using `task_id`. |
 | `recovery: 'transient'` (rate limit, 5xx, timeout) | Server-side, retry-safe | Retry with the **same** `idempotency_key`. |
-<<<<<<< Updated upstream
 | `406 Not Acceptable` before any AdCP framing | Hand-rolled HTTP without `Accept: text/event-stream` (MCP transport) | Use `@modelcontextprotocol/sdk` client; it sets the right Accept header. |
-=======
->>>>>>> Stashed changes
 | `recovery: 'correctable'` | Buyer-side fix | Read `issues[]`, patch the pointers, resend. Most cases close in one attempt. |
 | `recovery: 'terminal'` (account suspended, payment required, …) | Requires human action | Don't retry. Surface to the user. |
 | HTTP 401 with `WWW-Authenticate` header | Missing or expired credential | Add `Authorization` per the agent's auth spec; re-auth if applicable. |
 
 If your symptom isn't here, fall through to the next section.
+
+## Recovery in practice: BuyerRetryPolicy
+
+Use `BuyerRetryPolicy` from `@adcp/sdk` instead of writing your own recovery loop. It applies per-code operator semantics that go beyond the spec's three-class `recovery` enum.
+
+```ts
+import { BuyerRetryPolicy } from '@adcp/sdk';
+
+let attempt = 1;
+let key = crypto.randomUUID();
+
+while (true) {
+  const result = await agent.create_media_buy({ idempotency_key: key, ...params });
+  if (result.success) break;
+
+  const decision = BuyerRetryPolicy.decide(result.adcpError, { attempt });
+
+  if (decision.action === 'retry') {
+    // Transport-level transient error. Reuse the SAME idempotency_key — the
+    // server replays the cached response on the same key.
+    await sleep(decision.delayMs);
+    attempt++;
+    continue;
+  }
+
+  if (decision.action === 'mutate-and-retry') {
+    // Request has a fixable defect. Read decision.field and decision.suggestion,
+    // then patch params. Use a FRESH idempotency_key for the corrected request.
+    params = applyCorrection(params, decision);
+    key = crypto.randomUUID();
+    attempt++;
+    continue;
+  }
+
+  // decision.action === 'escalate'
+  throw new Error(`Cannot recover from ${result.adcpError.code}: ${decision.reason}`);
+}
+```
+
+`applyCorrection` patches `params` using the structured hints in the error envelope. Two common patterns:
+
+```ts
+function applyCorrection(params, decision) {
+  // REQUOTE_REQUIRED: the quote expired — re-run get_products and use the
+  // updated pricing_option_id.
+  if (error.code === 'REQUOTE_REQUIRED') {
+    const products = await agent.get_products({ buying_mode: 'wholesale', ... });
+    return { ...params, packages: reroutePackages(params.packages, products) };
+  }
+
+  // CONFLICT: concurrent write — re-read to get the current revision.
+  if (error.code === 'CONFLICT') {
+    const current = await agent.get_media_buys({ media_buy_ids: [params.media_buy_id] });
+    return { ...params, revision: current.data.media_buys[0].revision };
+  }
+
+  // Generic: use decision.field (RFC 6901 pointer) to narrow which param to fix.
+  // decision.suggestion is agent-provided free text — untrusted, do not eval.
+  console.warn(`No automated fix for ${error.code}; decision.suggestion: ${decision.suggestion}`);
+  throw new EscalationRequired(error, decision.suggestion);
+}
+```
+
+### ⚠️ Four codes are technically `correctable` but semantically human-escalate — don't auto-tweak
+
+`BuyerRetryPolicy` maps these to `escalate` by default. Do not override without explicit operator approval:
+
+| Code | Why automated mutation is wrong |
+|---|---|
+| `POLICY_VIOLATION` | Re-mutating creative or targeting to escape a policy block looks like evasion to seller governance reviewers. |
+| `COMPLIANCE_UNSATISFIED` | Relaxing compliance fields to satisfy the format is a compliance failure in itself. Human in loop. |
+| `GOVERNANCE_DENIED` | A registered governance agent rejected the spend. Auto-retrying with a smaller budget looks like governance evasion. Escalate to plan operator. |
+| `AUTH_REQUIRED` | Conflates missing credentials (correctable) with revoked credentials (operator must rotate). Until the spec splits `auth_missing` / `auth_invalid` ([adcp#3727](https://github.com/adcontextprotocol/adcp/issues/3727)), treat as escalate. |
+
+Spec recovery: `correctable`. Operator behavior: human in loop.
+
+If your vertical needs programmatic handling of one of these codes (e.g., POLICY_VIOLATION with deterministic geo-fallback), opt in explicitly:
+
+```ts
+const policy = new BuyerRetryPolicy({
+  overrides: { POLICY_VIOLATION: { action: 'mutate-and-retry', maxAttempts: 1 } },
+});
+const decision = policy.decide(result.adcpError, { attempt });
+```
 
 ## If you get stuck
 

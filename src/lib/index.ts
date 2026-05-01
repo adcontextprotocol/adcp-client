@@ -692,6 +692,13 @@ export type {
 
 // ====== ERROR HANDLING & RETRY ======
 export { isRetryable, getRetryDelay } from './utils/retry';
+export { BuyerRetryPolicy } from './utils/buyer-retry-policy';
+export type {
+  RetryDecision,
+  RetryContext,
+  RetryCodeOverride,
+  BuyerRetryPolicyOptions,
+} from './utils/buyer-retry-policy';
 
 // Public API: use these for programmatic error handling
 export {

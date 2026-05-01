@@ -524,6 +524,17 @@ return adcpError('ACCOUNT_SUSPENDED', 'Contact support');
 
 See `docs/llms.txt` for the full error code table with recovery classifications.
 
+**Four `correctable` codes require human escalation on the buyer side.** Buyer agents using `BuyerRetryPolicy` (from `@adcp/sdk`) will not auto-retry these — they require operator action:
+
+| Code | Operator semantic |
+|---|---|
+| `POLICY_VIOLATION` | Content/targeting violates seller policy; auto-mutation looks like evasion |
+| `COMPLIANCE_UNSATISFIED` | Compliance section of brief can't be satisfied automatically |
+| `GOVERNANCE_DENIED` | Registered governance agent denied the spend; escalate to plan operator |
+| `AUTH_REQUIRED` | Credential rotation may be required; not a simple retry |
+
+Return these codes with clear `message` fields so buyers can surface them to operators.
+
 ### Storyboards
 
 The `storyboards/` directory contains YAML files that define exactly what tool call sequences a buyer agent will make against your server. Each storyboard includes phases, steps, sample requests/responses, and validation rules.
