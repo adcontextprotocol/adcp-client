@@ -5,6 +5,7 @@
  */
 
 import { validateRequest, validateResponse, formatIssues, type ValidationOutcome } from './schema-validator';
+import { SchemaBundleNotFoundError } from './schema-loader';
 import { buildValidationError } from './schema-errors';
 
 export type ValidationMode = 'strict' | 'warn' | 'off';
@@ -57,11 +58,30 @@ function logWarning(debugLogs: DebugLogEntry[] | undefined, taskName: string, ou
   });
 }
 
+function logSchemaBundleMissing(
+  debugLogs: DebugLogEntry[] | undefined,
+  taskName: string,
+  direction: 'request' | 'response'
+): void {
+  if (!debugLogs) return;
+  debugLogs.push({
+    type: 'warning',
+    message:
+      `Schema bundle unavailable for ${taskName} ${direction} validation — skipping. ` +
+      `Run \`npm run sync-schemas\` and \`npm run build:lib\` to populate schemas.`,
+    timestamp: new Date().toISOString(),
+  });
+}
+
 /**
  * Run request validation per the configured mode.
  * - `off`: no-op (true).
- * - `warn`: log to debug + continue (true).
+ * - `warn`: log to debug + continue (true). When the schema bundle is missing,
+ *   logs a warning and skips rather than throwing — "surface drift if you can"
+ *   is the intent, not "block on missing infrastructure."
  * - `strict`: throw `ValidationError` with JSON Pointer to the first bad field.
+ *   When the schema bundle is missing, re-throws so hard-stop callers get the
+ *   clear error they opted into.
  *
  * `version` selects which AdCP version's schema bundle to validate against;
  * defaults to the SDK-pinned `ADCP_VERSION`. Pass the per-instance value from
@@ -75,7 +95,16 @@ export function validateOutgoingRequest(
   version?: string
 ): ValidationOutcome | undefined {
   if (mode === 'off') return undefined;
-  const outcome = validateRequest(taskName, params, version);
+  let outcome: ValidationOutcome;
+  try {
+    outcome = validateRequest(taskName, params, version);
+  } catch (err) {
+    if (err instanceof SchemaBundleNotFoundError && mode === 'warn') {
+      logSchemaBundleMissing(debugLogs, taskName, 'request');
+      return undefined;
+    }
+    throw err;
+  }
   if (outcome.valid) return outcome;
   if (mode === 'warn') {
     logWarning(debugLogs, taskName, outcome);
@@ -88,10 +117,13 @@ export function validateOutgoingRequest(
  * Run response validation per the configured mode.
  * - `off`: no-op (valid).
  * - `warn`: log + return invalid outcome so the caller can surface details.
+ *   When the schema bundle is missing, logs a warning and returns valid rather
+ *   than throwing.
  * - `strict`: return the invalid outcome so the caller fails the task.
- * Does NOT throw — matches the existing response-side contract where a
- * validation failure turns a task into `status: 'failed'` rather than
- * raising out of the SDK.
+ *   When the schema bundle is missing, re-throws.
+ * Does NOT throw on validation failures — matches the existing response-side
+ * contract where a validation failure turns a task into `status: 'failed'`
+ * rather than raising out of the SDK.
  */
 export function validateIncomingResponse(
   taskName: string,
@@ -101,7 +133,16 @@ export function validateIncomingResponse(
   version?: string
 ): ValidationOutcome {
   if (mode === 'off') return { valid: true, issues: [], variant: 'sync' };
-  const outcome = validateResponse(taskName, data, version);
+  let outcome: ValidationOutcome;
+  try {
+    outcome = validateResponse(taskName, data, version);
+  } catch (err) {
+    if (err instanceof SchemaBundleNotFoundError && mode === 'warn') {
+      logSchemaBundleMissing(debugLogs, taskName, 'response');
+      return { valid: true, issues: [], variant: 'sync' };
+    }
+    throw err;
+  }
   if (!outcome.valid && mode === 'warn') {
     logWarning(debugLogs, taskName, outcome);
   }

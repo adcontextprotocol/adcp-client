@@ -23,6 +23,21 @@ import { ConfigurationError } from '../errors';
 export type ResponseVariant = 'sync' | 'submitted' | 'working' | 'input-required';
 export type Direction = 'request' | ResponseVariant;
 
+/**
+ * Thrown by `resolveSchemaRoot` when the schema bundle for the requested
+ * AdCP version is not present in either the dist build or the source-tree
+ * cache. Distinct from `ConfigurationError` (bad version format) so callers
+ * can differentiate "schemas not populated" (infrastructure gap, warn-safe)
+ * from "version string is garbage" (programmer error, always re-throw).
+ */
+export class SchemaBundleNotFoundError extends Error {
+  readonly code = 'SCHEMA_BUNDLE_NOT_FOUND';
+  constructor(message: string) {
+    super(message);
+    this.name = 'SchemaBundleNotFoundError';
+  }
+}
+
 interface LoadedSchema {
   $id?: string;
   [k: string]: unknown;
@@ -142,7 +157,7 @@ function resolveSchemaRoot(version: string): string {
     if (cached.length > 0) return path.join(cacheRoot, cached[0]!.name);
   }
 
-  throw new Error(
+  throw new SchemaBundleNotFoundError(
     `AdCP schema data for version "${version}" not found. ` +
       `Looked for bundle key "${key}" in ${distCandidate}, exact path ${exactCandidate}, ` +
       `and the latest-patch fallback in ${cacheRoot}. ` +

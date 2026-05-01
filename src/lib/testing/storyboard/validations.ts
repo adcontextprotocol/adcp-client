@@ -11,6 +11,7 @@
 import { TOOL_RESPONSE_SCHEMAS } from '../../utils/response-schemas';
 import { TRANSPORT_SUFFIX_REGEX } from '../../utils/a2a-discovery';
 import { validateResponse, type ValidationIssue } from '../../validation/schema-validator';
+import { SchemaBundleNotFoundError } from '../../validation/schema-loader';
 import { ADCP_VERSION } from '../../version';
 import type { TaskResult } from '../types';
 import type {
@@ -388,7 +389,13 @@ function validateResponseSchema(
  * outside the `bundled/` tree the loader walks today).
  */
 function computeStrictVerdict(taskName: string, payload: unknown): StrictValidationVerdict | undefined {
-  const outcome = validateResponse(taskName, payload);
+  let outcome: ReturnType<typeof validateResponse>;
+  try {
+    outcome = validateResponse(taskName, payload);
+  } catch (err) {
+    if (err instanceof SchemaBundleNotFoundError) return undefined;
+    throw err;
+  }
   // `variant: 'skipped'` means no AJV validator compiled for this task (no
   // strictness signal to emit); treat the same as "no AJV schema available".
   if (outcome.variant === 'skipped') return undefined;
