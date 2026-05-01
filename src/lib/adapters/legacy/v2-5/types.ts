@@ -18,7 +18,7 @@
  * The current cut wraps the existing scattered adapter functions
  * unchanged so we can ship the registry shape without regressions; the
  * underlying logic stays in `utils/*-adapter.ts` files until each pair
- * gets a focused per-tool refactor (e.g. `#1116` for sync_creatives).
+ * gets a focused per-tool refactor.
  */
 
 export interface AdapterPair<TReq3 = unknown, TReq25 = unknown, TRes25 = unknown, TRes3 = unknown> {
