@@ -2211,18 +2211,25 @@ export class SingleAgentClient {
 
       return result;
     } catch (error) {
-      // Auth and timeout errors are established throws that callers handle
-      // explicitly (e.g. NeedsAuthorizationError triggers OAuth flows).
-      // Rethrow them so callers' existing catch sites continue to work.
-      if (error instanceof AuthenticationRequiredError || error instanceof TaskTimeoutError) {
+      // Structured protocol errors carry typed fields (reason, actualVersion,
+      // unsupportedFeatures, …) that callers use for recovery decisions. Auth
+      // and timeout errors trigger OAuth flows / cancellation. All four are
+      // established throws — rethrow so callers' existing catch sites work.
+      if (
+        error instanceof AuthenticationRequiredError ||
+        error instanceof TaskTimeoutError ||
+        error instanceof VersionUnsupportedError ||
+        error instanceof FeatureUnsupportedError
+      ) {
         throw error;
       }
-      // All other pre-flight errors (feature validation, schema validation,
-      // version detection, request adaptation) surface as structured TaskResult
-      // rather than raw exceptions — matching the declared return type and the
-      // contract the internal executor already upholds for network-layer errors.
+      // Unexpected pre-flight errors (e.g. a TypeError from response parsing
+      // during version detection) surface as a structured TaskResult rather
+      // than escaping as raw exceptions — matching the declared return type
+      // and the contract the internal executor already upholds for network
+      // errors. attachMatch ensures the fluent .match() API works on this path.
       const errorMessage = error instanceof Error ? error.message : String(error);
-      return {
+      return attachMatch({
         success: false as const,
         status: 'failed' as const,
         error: errorMessage,
@@ -2241,7 +2248,7 @@ export class SingleAgentClient {
         },
         conversation: [],
         debug_logs: [],
-      };
+      });
     }
   }
 

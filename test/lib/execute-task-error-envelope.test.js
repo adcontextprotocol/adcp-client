@@ -5,20 +5,24 @@
  * returning a structured TaskResult.
  *
  * Root cause: SingleAgentClient.executeTask (public) had no top-level
- * try/catch, so pre-flight errors (feature validation, endpoint discovery,
- * schema validation, version detection, request adaptation) escaped as raw
- * exceptions rather than being wrapped in a TaskResult envelope.
+ * try/catch, so pre-flight errors escaped as raw exceptions rather than
+ * being wrapped in a TaskResult envelope.
  *
  * Fix: wrap the entire method body in try/catch; rethrow
- * AuthenticationRequiredError and TaskTimeoutError (established throws that
- * callers handle explicitly), convert everything else to
- * { success: false, status: 'failed' }.
+ * AuthenticationRequiredError, TaskTimeoutError, VersionUnsupportedError,
+ * and FeatureUnsupportedError (structured protocol errors callers handle
+ * explicitly), convert unexpected errors to { success: false, status: 'failed' }.
  */
 
 const { test, describe } = require('node:test');
 const assert = require('node:assert');
 
-const { AdCPClient, AuthenticationRequiredError } = require('../../dist/lib/index.js');
+const {
+  AdCPClient,
+  AuthenticationRequiredError,
+  VersionUnsupportedError,
+  FeatureUnsupportedError,
+} = require('../../dist/lib/index.js');
 
 // Minimal v2-style capabilities that satisfy cachedCapabilities type checks.
 const V2_CAPABILITIES = {
@@ -56,7 +60,7 @@ function makeAgentClient(agentId = 'wonderstruck') {
 }
 
 describe('executeTask error envelope (issue #1148)', () => {
-  test('returns structured TaskResult instead of throwing when a pre-flight step throws', async () => {
+  test('returns structured TaskResult instead of throwing when a pre-flight step throws unexpectedly', async () => {
     const { agent, inner } = makeAgentClient();
 
     // Simulate the v2.5 seller scenario: detectServerVersion throws a TypeError
@@ -89,12 +93,13 @@ describe('executeTask error envelope (issue #1148)', () => {
     assert.strictEqual(result.metadata.taskName, 'list_authorized_properties');
     assert.ok(Array.isArray(result.conversation), 'conversation must be an array');
     assert.ok(Array.isArray(result.debug_logs), 'debug_logs must be an array');
+    // fluent .match() must work on the error envelope (attachMatch coverage)
+    assert.ok(typeof result.match === 'function', 'result.match must be a function');
   });
 
   test('auth errors still propagate as throws (backward-compat for OAuth flows)', async () => {
     const { agent, inner } = makeAgentClient('seller-auth');
 
-    // Simulate a 401 coming back during endpoint discovery.
     const originalDetect = inner.detectServerVersion.bind(inner);
     inner.detectServerVersion = async () => {
       throw new AuthenticationRequiredError('https://seller.wonderstruck.example/mcp', undefined);
@@ -107,6 +112,54 @@ describe('executeTask error envelope (issue #1148)', () => {
           assert.ok(
             err instanceof AuthenticationRequiredError,
             `expected AuthenticationRequiredError, got ${err?.constructor?.name}: ${err?.message}`
+          );
+          return true;
+        }
+      );
+    } finally {
+      inner.detectServerVersion = originalDetect;
+    }
+  });
+
+  test('VersionUnsupportedError still propagates as throw (structured fields must not be swallowed)', async () => {
+    const { agent, inner } = makeAgentClient('seller-version');
+
+    const originalDetect = inner.detectServerVersion.bind(inner);
+    inner.detectServerVersion = async () => {
+      throw new VersionUnsupportedError('create_media_buy', 'synthetic', 'v2', 'https://seller.example/mcp');
+    };
+
+    try {
+      await assert.rejects(
+        () => agent.executeTask('create_media_buy', { idempotency_key: 'k1' }),
+        err => {
+          assert.ok(
+            err instanceof VersionUnsupportedError,
+            `expected VersionUnsupportedError, got ${err?.constructor?.name}`
+          );
+          return true;
+        }
+      );
+    } finally {
+      inner.detectServerVersion = originalDetect;
+    }
+  });
+
+  test('FeatureUnsupportedError still propagates as throw (structured fields must not be swallowed)', async () => {
+    const { agent, inner } = makeAgentClient('seller-feature');
+
+    const originalDetect = inner.detectServerVersion.bind(inner);
+    inner.detectServerVersion = async () => {
+      throw new FeatureUnsupportedError(['propertyListFiltering'], [], 'seller-feature');
+    };
+
+    try {
+      await assert.rejects(
+        () => agent.executeTask('list_authorized_properties', {}),
+        err => {
+          assert.ok(
+            err instanceof FeatureUnsupportedError,
+            `expected FeatureUnsupportedError, got ${err?.constructor?.name}`
           );
           return true;
         }
