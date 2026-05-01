@@ -148,28 +148,28 @@ describe('runStoryboard: F6 cascade-skip on missing-state stateful skip', () => 
     assert.match(assertStep.skip.detail ?? '', /state never materialized/);
   });
 
-  test('cascade-skip on not_applicable WHEN no stateful peer establishes state: cascade fires across phases', async () => {
-    // F9 introduced not_applicable for sync_accounts in explicit mode.
-    // adcp-client#1005 round-9 refined the cascade: not_applicable is
-    // semantically "this path doesn't apply" rather than "state never
-    // materialized" — the storyboard may carry a peer step (e.g.
-    // list_accounts) that establishes equivalent state. The cascade
-    // should fire ONLY when no such peer succeeded in the same phase.
+  test('sole stateful step not_applicable → no cascade (platform has no peer-substitute)', async () => {
+    // adcp-client#1144: the F6/round-9 fix deferred not_applicable cascade
+    // to phase end, but still fired the cascade when no peer-substitute
+    // established state. This is wrong for platforms like citrusad, amazon,
+    // criteo, and google that manage accounts implicitly — they have a
+    // single stateful step in account_setup (sync_accounts), return
+    // not_applicable, and have no list_accounts peer. Cascading on the
+    // sole stateful step incorrectly collapsed every downstream step to
+    // prerequisite_failed (the 1/9/0 pattern across 13 adapters).
     //
-    // This test isolates the no-substitute case: sync_accounts skips
-    // not_applicable in phase 1 with no peer, downstream stateful step
-    // sits in phase 2. The phase-end cascade resolution should promote
-    // the deferred trigger and the phase-2 step should cascade-skip
-    // with prerequisite_failed.
+    // With this fix: if the phase has ONLY ONE stateful step and it returns
+    // not_applicable, the cascade does NOT fire. The platform is legitimately
+    // choosing a different account model; downstream steps should run.
     agent = await startFakeAgent();
     const storyboard = storyboardWithPhases([
       {
         id: 'account_setup',
-        title: 'account setup (sync only)',
+        title: 'account setup (sole stateful step)',
         steps: [
           {
             id: 'sync',
-            title: 'sync_accounts setup',
+            title: 'sync_accounts (not applicable — no peer)',
             task: 'sync_accounts',
             stateful: true,
             auth: 'none',
@@ -183,7 +183,7 @@ describe('runStoryboard: F6 cascade-skip on missing-state stateful skip', () => 
         steps: [
           {
             id: 'assert',
-            title: 'assert against synced state',
+            title: 'assert against state',
             task: '__test_assert',
             stateful: true,
             auth: 'none',
@@ -200,8 +200,6 @@ describe('runStoryboard: F6 cascade-skip on missing-state stateful skip', () => 
       _profile: {
         name: 'fake',
         tools: ADVERTISED.map(name => ({ name })),
-        // require_operator_auth: true triggers the F9 not_applicable
-        // gate on sync_accounts.
         raw_capabilities: { account: { require_operator_auth: true } },
       },
     });
@@ -209,10 +207,110 @@ describe('runStoryboard: F6 cascade-skip on missing-state stateful skip', () => 
     const assertStep = result.phases[1].steps[0];
     assert.strictEqual(syncStep.skipped, true);
     assert.strictEqual(syncStep.skip_reason, 'not_applicable');
-    assert.strictEqual(assertStep.skipped, true, 'cascade fires when no stateful peer established state');
+    // No cascade — the sole stateful step returned not_applicable (no peers
+    // could have established substitute state), so the runner treats this
+    // phase as "platform-legitimately-not-applicable" and lets downstream
+    // steps proceed.
+    assert.ok(!assertStep.skipped, 'downstream step runs — no cascade for sole not_applicable');
+    assert.strictEqual(assertStep.passed, true);
+  });
+
+  test('not_applicable + peer stateful step fails hard → cascade fires (peers existed but none established state)', async () => {
+    // adcp-client#1144: the sole-step exception does NOT apply when there
+    // are multiple stateful steps in the phase. If sync_accounts returns
+    // not_applicable AND list_accounts (a peer) also returns not_applicable,
+    // the phase had a possible substitute path but neither step established
+    // state — the cascade must fire so downstream phases don't run against
+    // absent state.
+    //
+    // The fake agent answers sync_accounts with { ok: true } (passes) by
+    // default, so we use __test_fail as a stand-in for the peer step that
+    // returns not_applicable-equivalent failure to ensure the phase doesn't
+    // establish stateful state through the peer. Actually, for not_applicable
+    // we need the runner to see not_applicable on the peer too — use a
+    // second sync_accounts call (the fake agent answers it ok, so the
+    // peer PASSES). To force the cascade, we need both to fail to establish
+    // state. Instead, construct a case where BOTH stateful steps skip as
+    // not_applicable: use sync_accounts twice with different ids.
+    //
+    // Simplest repro: phase has two stateful steps, the second is missing_tool
+    // (agent doesn't advertise it) — this trips the hard cascade immediately
+    // via isHardMissingStateSkipReason, which is orthogonal. Instead, confirm
+    // via a direct storyboard shape: if the peer exists but passes, no cascade
+    // (already tested above). If the peer exists and also returns not_applicable,
+    // cascade fires. We simulate this by advertising NEITHER step so both get
+    // missing_tool — but that tests missing_tool, not not_applicable.
+    //
+    // The cleanest test: phase has sync_accounts (→ not_applicable) and
+    // __test_fail (→ hard fail). Hard fail on a stateful peer trips
+    // statefulFailed directly, so the phase-end block defers to it. Result:
+    // cascade still fires, but via statefulFailed from the peer failure, not
+    // the phasePendingNotApplicable path. This verifies that a peer failure
+    // still cascades even when sync_accounts was not_applicable.
+    agent = await startFakeAgent();
+    const storyboard = storyboardWithPhases([
+      {
+        id: 'account_setup',
+        title: 'account setup (two stateful steps, peer fails)',
+        steps: [
+          {
+            id: 'sync',
+            title: 'sync_accounts (not_applicable)',
+            task: 'sync_accounts',
+            stateful: true,
+            auth: 'none',
+            sample_request: { accounts: [] },
+          },
+          {
+            id: 'peer',
+            title: 'peer stateful step (fails)',
+            task: '__test_fail',
+            stateful: true,
+            auth: 'none',
+            sample_request: {},
+          },
+        ],
+      },
+      {
+        id: 'consume',
+        title: 'consume account state',
+        steps: [
+          {
+            id: 'assert',
+            title: 'assert against state',
+            task: '__test_assert',
+            stateful: true,
+            auth: 'none',
+            sample_request: {},
+          },
+        ],
+      },
+    ]);
+    const ADVERTISED = ['sync_accounts', '__test_fail', '__test_assert', 'get_adcp_capabilities'];
+    const result = await runStoryboard([agent.url], storyboard, {
+      protocol: 'mcp',
+      allow_http: true,
+      agentTools: ADVERTISED,
+      _profile: {
+        name: 'fake',
+        tools: ADVERTISED.map(name => ({ name })),
+        raw_capabilities: { account: { require_operator_auth: true } },
+      },
+    });
+    const syncStep = result.phases[0].steps[0];
+    const peerStep = result.phases[0].steps[1];
+    const assertStep = result.phases[1].steps[0];
+    assert.strictEqual(syncStep.skipped, true);
+    assert.strictEqual(syncStep.skip_reason, 'not_applicable');
+    // Peer step failed hard (not skipped). Runner step results use
+    // `skipped: true` / `passed: true` as affirmative flags; absence
+    // (undefined) is the failure/non-skip state.
+    assert.ok(!peerStep.skipped, 'peer step ran (not cascade-skipped)');
+    assert.ok(!peerStep.passed, 'peer step failed');
+    // Cascade fires — phase had stateful peers but none established state
+    // (the peer failed, triggering statefulFailed before phase-end resolution).
+    assert.strictEqual(assertStep.skipped, true, 'cascade fires when peers existed but none established state');
     assert.strictEqual(assertStep.skip_reason, 'prerequisite_failed');
-    assert.match(assertStep.skip.detail ?? '', /not_applicable/);
-    assert.match(assertStep.skip.detail ?? '', /prior stateful step "sync"/);
   });
 
   test('not_applicable + stateful peer passes in SAME phase → no cascade (substitute established state)', async () => {
@@ -355,13 +453,16 @@ describe('runStoryboard: F6 cascade-skip on missing-state stateful skip', () => 
     assert.ok(!audienceStep.skipped, 'no cascade — peer passed earlier in phase');
   });
 
-  test('not_applicable + non-stateful peer that passes does NOT cancel the deferred cascade', async () => {
-    // The substitute signal is a passing *stateful* peer — non-stateful
-    // peers explicitly do not establish state per the storyboard's own
-    // declaration. A storyboard that pairs a stateful not_applicable
-    // step with a non-stateful peer that runs successfully should still
-    // cascade-skip downstream stateful steps, because the phase did not
-    // establish state via any stateful path.
+  test('not_applicable + non-stateful peer: downstream runs (sole-stateful-step rule, adcp-client#1144)', async () => {
+    // adcp-client#1144: when sync_accounts is the ONLY stateful step in the
+    // phase and it returns not_applicable, the cascade does NOT fire —
+    // the platform manages accounts implicitly and downstream steps should
+    // run. Non-stateful peers are irrelevant to the cascade decision:
+    // they don't establish state (by storyboard declaration), and their
+    // presence doesn't change whether there are peer STATEFUL substitutes
+    // that could have established state. The sole-stateful-step rule
+    // therefore applies regardless of how many non-stateful peers the
+    // phase contains.
     agent = await startFakeAgent();
     const storyboard = storyboardWithPhases([
       {
@@ -419,10 +520,12 @@ describe('runStoryboard: F6 cascade-skip on missing-state stateful skip', () => 
     assert.strictEqual(syncStep.skip_reason, 'not_applicable');
     assert.ok(!observeStep.skipped, 'non-stateful peer runs');
     assert.strictEqual(observeStep.passed, true);
-    // Cascade still fires because no *stateful* peer established state.
-    assert.strictEqual(audienceStep.skipped, true, 'cascade fires — non-stateful pass does not establish state');
-    assert.strictEqual(audienceStep.skip_reason, 'prerequisite_failed');
-    assert.match(audienceStep.skip.detail ?? '', /not_applicable/);
+    // No cascade — sync_accounts is the sole stateful step in the phase.
+    // The sole-stateful-step rule (adcp-client#1144) treats not_applicable
+    // on the only stateful step as "platform doesn't use this pathway" and
+    // lets downstream steps run. Non-stateful peers are irrelevant.
+    assert.ok(!audienceStep.skipped, 'no cascade — sole stateful step returned not_applicable');
+    assert.strictEqual(audienceStep.passed, true);
   });
 
   test('not_applicable + later real failure in same phase: real failure wins the diagnostic', async () => {

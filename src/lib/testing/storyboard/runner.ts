@@ -983,6 +983,15 @@ async function executeStoryboardPass(
     // when a step with `peer_substitutes_for: X` passes — every X in its
     // declaration list lands here.
     const phaseRescuedTargets = new Set<string>();
+    // Stateful step IDs in the phase. Used at phase end to decide whether
+    // a deferred not_applicable trigger should cascade: if the sole stateful
+    // step in the phase returned not_applicable AND there were no peers that
+    // could have established substitute state, the cascade should NOT fire —
+    // the platform simply doesn't use that pathway, which is valid. Only when
+    // peer-stateful steps existed (and none established state) do we promote
+    // the pending trigger to a hard cascade. Computed eagerly at phase
+    // initialization so it's always available when the resolution block runs.
+    const phaseStatefulStepIds = phase.steps.filter(s => s.stateful).map(s => s.id);
     // PRM presence-probe state (adcp-client#677). `phaseAbsent` flips when
     // /.well-known/oauth-protected-resource returns 404 — subsequent steps
     // in this phase cascade-skip instead of failing their http_status:200
@@ -1160,18 +1169,6 @@ async function executeStoryboardPass(
       }
       stepResults.push(result);
       priorStepResults.set(step.id, result);
-
-      // Thread accumulated cross-step context into each assertion context
-      // before onStep fires. `context` here is the accumulated state from
-      // all prior steps (updated at the bottom of this loop); assertions
-      // read it via ctx.storyboardContext to implement cross-step comparison
-      // validators (adcp-client#1140, Option 2 / context-outputs style).
-      // Each assertion gets its own shallow copy so a mutating handler
-      // doesn't corrupt the view seen by subsequent assertions in the same
-      // step, or the live accumulator seen by subsequent steps.
-      for (const spec of assertions) {
-        assertionContexts.get(spec.id)!.storyboardContext = { ...context };
-      }
 
       // Fire per-step assertions. Each result is appended to the step's
       // `validations[]` under `check: "assertion"` so existing UI renders
@@ -1364,16 +1361,28 @@ async function executeStoryboardPass(
 
     // Phase-end cascade resolution for deferred `not_applicable` triggers.
     // If a stateful step skipped not_applicable earlier in this phase and
-    // no stateful peer subsequently passed, the substitute path failed to
-    // establish state — promote to a hard cascade so downstream phases
-    // skip cleanly instead of running against absent state. A peer that
+    // no stateful peer subsequently passed, we MAY promote to a hard cascade
+    // so downstream phases skip cleanly instead of running against absent state.
+    //
+    // Cascade fires ONLY when there was at least one other stateful step in
+    // the phase that could have served as a substitute — i.e. the phase had
+    // peer steps, but none of them established state (#1146). A peer that
     // passed (e.g. `list_accounts` substituting for an explicit-mode
     // `sync_accounts`) cancels the trigger entirely. A peer that *failed*
-    // already tripped `statefulFailed` at the failure site with the
+    // already tripped this phase's cascade at the failure site with the
     // worse-diagnostic real-failure message; we defer to that and don't
     // overwrite.
+    //
+    // When the not_applicable step was the SOLE stateful step in the phase
+    // (no peers existed at all), the cascade does NOT fire. That platform
+    // simply doesn't use this sync pathway — which is valid. Cascading on a
+    // sole not_applicable would incorrectly penalise adapters that manage
+    // state implicitly and have no list_accounts peer (adcp-client#1146).
     if (phasePendingNotApplicable && !phaseEstablishedStatefulState && !phaseStatefulCascades.has(phase.id)) {
-      phaseStatefulCascades.set(phase.id, phasePendingNotApplicable);
+      const hadStatefulPeers = phaseStatefulStepIds.some(id => id !== phasePendingNotApplicable!.stepId);
+      if (hadStatefulPeers) {
+        phaseStatefulCascades.set(phase.id, phasePendingNotApplicable);
+      }
     }
 
     // Phase-end cascade resolution for deferred `missing_tool` triggers
@@ -1430,12 +1439,6 @@ async function executeStoryboardPass(
     countedAsFailed
   );
   skippedCount += branchSetDelta.skippedDelta;
-
-  // Update assertion contexts with the final accumulated context so onEnd
-  // handlers see the full run's context (not just through the penultimate step).
-  for (const spec of assertions) {
-    assertionContexts.get(spec.id)!.storyboardContext = { ...context };
-  }
 
   // Fire storyboard-scoped assertions. These observe the full run and can
   // emit `scope: "storyboard"` findings that flip `overall_passed` without

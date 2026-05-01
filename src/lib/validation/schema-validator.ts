@@ -7,6 +7,7 @@
 
 import type { ErrorObject } from 'ajv';
 import { getValidator, type Direction, type ResponseVariant } from './schema-loader';
+import { parseAdcpMajorVersion } from '../version';
 
 /**
  * One variant of a `oneOf` / `anyOf` that the caller's payload could have
@@ -410,6 +411,48 @@ export function validateRequest(toolName: string, payload: unknown, version?: st
 }
 
 /**
+ * Strip top-level optional fields whose value is `null` but whose declared
+ * schema type is not nullable (`type` does not include `'null'`).
+ *
+ * Applies only when validating against a v2.x schema bundle. v2.5 sellers
+ * (Pydantic-origin) commonly emit `errors: null`, `context: null`, `ext: null`
+ * to signal "nothing here" rather than omitting the key. The v2.5 schemas
+ * don't include `null` in those types, so Ajv spuriously rejects them.
+ *
+ * Gated to v2.x only — in v3, `errors` is a required field on failure
+ * branches, and silently stripping it across all versions would mask real
+ * bugs in v3 seller responses.
+ *
+ * Returns a shallow clone with the offending keys removed, or the original
+ * object unchanged if nothing was stripped. Safe to pass to an Ajv validator:
+ * Ajv 8 (without `removeAdditional`/`useDefaults`/`coerceTypes`) does not
+ * mutate its input.
+ */
+function stripEnvelopeNulls(payload: unknown, schema: unknown): unknown {
+  if (payload == null || typeof payload !== 'object' || Array.isArray(payload)) return payload;
+  const s = schema as Record<string, unknown> | null;
+  if (!s) return payload;
+  const properties = s.properties as Record<string, unknown> | undefined;
+  if (!properties) return payload;
+  const required = new Set<string>(Array.isArray(s.required) ? (s.required as string[]) : []);
+  const payloadObj = payload as Record<string, unknown>;
+  let cloned: Record<string, unknown> | null = null;
+  for (const [key, value] of Object.entries(payloadObj)) {
+    if (value !== null) continue;
+    if (required.has(key)) continue;
+    const propSchema = properties[key] as Record<string, unknown> | undefined;
+    if (!propSchema) continue;
+    const type = propSchema.type;
+    const isNullable = type === 'null' || (Array.isArray(type) && (type as string[]).includes('null'));
+    if (!isNullable) {
+      if (!cloned) cloned = { ...payloadObj };
+      delete cloned[key];
+    }
+  }
+  return cloned ?? payload;
+}
+
+/**
  * Select the response variant by payload shape (per issue #688: choose by
  * `status` field, not just the tool name). Matches the AdCP 3.0 async
  * contract: `submitted`, `working`, `input-required`, and the sync
@@ -440,14 +483,19 @@ export function validateResponse(toolName: string, payload: unknown, version?: s
   // in-band marker without a dedicated variant schema.
   const effective = validator ?? (variant !== 'sync' ? getValidator(toolName, 'sync', version) : undefined);
   if (!effective) return OK;
-  const valid = effective(payload) as boolean;
+  const rootSchema = (effective as { schema?: unknown }).schema;
+  // v2.x sellers (Pydantic-origin) emit optional envelope fields as null instead
+  // of omitting them. Strip before Ajv to avoid spurious type errors on `errors`,
+  // `context`, and `ext`. Gated to v2.x only — see stripEnvelopeNulls JSDoc.
+  const isV2Bundle = version != null && parseAdcpMajorVersion(version) === 2;
+  const normalizedPayload = isV2Bundle ? stripEnvelopeNulls(payload, rootSchema) : payload;
+  const valid = effective(normalizedPayload) as boolean;
   const usedVariant: Direction = validator ? variant : 'sync';
   const variantFallback = !validator && variant !== 'sync';
   const fallbackFields: Pick<ValidationOutcome, 'variant_fallback_applied' | 'requested_variant'> = variantFallback
     ? { variant_fallback_applied: true, requested_variant: variant }
     : {};
   if (valid) return { valid: true, issues: [], variant: usedVariant, ...fallbackFields };
-  const rootSchema = (effective as { schema?: unknown }).schema;
   const compacted = compactUnionErrors(effective.errors ?? [], rootSchema);
   return {
     valid: false,
