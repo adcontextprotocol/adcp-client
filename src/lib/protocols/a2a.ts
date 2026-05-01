@@ -12,7 +12,7 @@ import { withSpan, injectTraceHeaders } from '../observability/tracing';
 import { isAgentCardPath, buildCardUrls } from '../utils/a2a-discovery';
 import { buildAgentSigningFetch, signingContextStorage, type AgentSigningContext } from '../signing/client';
 import { redactIdempotencyKeyInArgs } from '../utils/idempotency';
-import { wrapFetchWithCapture } from './rawResponseCapture';
+import { wrapFetchWithCapture, rawResponseCaptureStorage } from './rawResponseCapture';
 import { wrapFetchWithSizeLimit } from './responseSizeLimit';
 
 if (!A2AClient) {
@@ -342,7 +342,33 @@ async function callA2AToolImpl(
       skill: toolName,
     });
 
+    const sendStartedAt = Date.now();
     const messageResponse = await client.sendMessage(requestPayload);
+
+    // If a raw-response capture slot is active (storyboard runner's
+    // `withRawResponseCapture` wraps each step), inject a synthetic
+    // POST capture from the SDK response so `parseLastA2aMessageSendCapture`
+    // can extract the envelope for A2A-envelope-only validators
+    // (`a2a_submitted_artifact`, `a2a_context_continuity`). This guards
+    // against A2A SDK versions that route `sendMessage` through an
+    // internal transport that bypasses the provided `fetchImpl`.
+    const captureSlot = rawResponseCaptureStorage.getStore();
+    if (captureSlot != null && messageResponse != null) {
+      const msgAny = messageResponse as Record<string, unknown>;
+      const body = msgAny['jsonrpc'] === '2.0'
+        ? JSON.stringify(messageResponse)
+        : JSON.stringify({ jsonrpc: '2.0', id: null, result: msgAny['result'] ?? messageResponse });
+      captureSlot.captures.push({
+        url: agentUrl,
+        method: 'POST',
+        status: 200,
+        headers: {},
+        body,
+        latencyMs: Date.now() - sendStartedAt,
+        timestamp: new Date(sendStartedAt).toISOString(),
+        bodyTruncated: false,
+      });
+    }
 
     debugLogs.push({
       type: messageResponse?.error ? 'error' : 'success',
