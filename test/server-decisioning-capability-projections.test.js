@@ -285,7 +285,7 @@ describe('Capability projections — declarative capability blocks on Decisionin
     assert.deepStrictEqual(account.supported_billing, ['operator']);
   });
 
-  it('explicit resolution without supportedBillings emits account.supported_billing: [\'agent\'] default (regression test for #1186)', async () => {
+  it("explicit resolution without supportedBillings emits account.supported_billing: ['agent'] default (regression test for #1186)", async () => {
     // Schema requires supported_billing (minItems: 1) on every emitted
     // account block. Pre-fix, v6 dropped the field when supportedBillings
     // was undefined → capabilities response failed schema validation →
@@ -310,7 +310,7 @@ describe('Capability projections — declarative capability blocks on Decisionin
     );
   });
 
-  it('requireOperatorAuth=true without supportedBillings emits account.supported_billing: [\'agent\'] default (regression test for #1186)', async () => {
+  it("requireOperatorAuth=true without supportedBillings emits account.supported_billing: ['agent'] default (regression test for #1186)", async () => {
     // Same regression as above, triggered via explicit requireOperatorAuth
     // rather than accounts.resolution.
     const platform = basePlatform({ requireOperatorAuth: true });
