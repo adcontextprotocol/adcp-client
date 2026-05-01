@@ -31,9 +31,8 @@
 
 import { spawn, spawnSync, type ChildProcess } from 'node:child_process';
 import { createWriteStream } from 'node:fs';
-import { mkdtemp, readFile, writeFile, rm, stat, chmod, symlink } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
-import { dirname, join, resolve } from 'node:path';
+import { mkdir, readFile, writeFile, rm, stat, chmod, symlink } from 'node:fs/promises';
+import { dirname, join, resolve, basename } from 'node:path';
 import { connect } from 'node:net';
 
 interface Args {
@@ -43,6 +42,19 @@ interface Args {
   workDir?: string;
   timeoutMs: number;
   keep: boolean;
+  /** Lifecycle stage. `run` (default) does build → claude → verify in one
+   * process — the matrix-driver path. `build` writes the workspace +
+   * prompt and (unless `--no-claude`) invokes claude, then exits before
+   * the agent ever boots. `verify` requires `--work-dir` pointing at an
+   * already-built workspace and runs only `start.sh` → grader → traffic
+   * check. Splitting these makes harness iteration cheap: one slow build
+   * pass produces a workspace; subsequent verify passes are ~30s each. */
+  mode: 'run' | 'build' | 'verify';
+  /** Build-mode only: skip the `claude -p` invocation and print the
+   * recommended command instead. Use this when running claude yourself
+   * top-level (interactive Claude Code session) so you avoid the
+   * subprocess/pty quirks of nesting claude inside `tsx`. */
+  noClaude: boolean;
   /** When set, skip `npm install` and symlink `node_modules` from this path
    * instead. Matrix driver uses this to amortize the ~15-30s per-workspace
    * install across many pairs — the template's node_modules is valid for
@@ -67,7 +79,7 @@ interface Args {
 const REPO_ROOT = resolve(__dirname, '..', '..');
 
 function parseArgs(argv: string[]): Args {
-  const out: Partial<Args> = { port: 4200, timeoutMs: 600_000, keep: false };
+  const out: Partial<Args> = { port: 4200, timeoutMs: 600_000, keep: false, mode: 'run', noClaude: false };
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
     if (a === '--skill') out.skill = argv[++i];
@@ -80,6 +92,14 @@ function parseArgs(argv: string[]): Args {
     else if (a === '--transcript') out.transcriptPath = resolve(argv[++i]);
     else if (a === '--upstream') out.upstream = argv[++i];
     else if (a === '--upstream-port') out.upstreamPort = Number(argv[++i]);
+    else if (a === '--mode') {
+      const m = argv[++i];
+      if (m !== 'run' && m !== 'build' && m !== 'verify') {
+        console.error(`--mode must be one of: run, build, verify (got: ${m})`);
+        process.exit(2);
+      }
+      out.mode = m;
+    } else if (a === '--no-claude') out.noClaude = true;
     else if (a === '--help' || a === '-h') {
       printUsage();
       process.exit(0);
@@ -87,6 +107,10 @@ function parseArgs(argv: string[]): Args {
   }
   if (!out.skill || !out.storyboard) {
     printUsage();
+    process.exit(2);
+  }
+  if (out.mode === 'verify' && !out.workDir) {
+    console.error(`--mode verify requires --work-dir <path to existing workspace>`);
     process.exit(2);
   }
   return out as Args;
@@ -104,7 +128,18 @@ function printUsage(): void {
   [--shared-node-modules <path>] \\
   [--transcript <path>] \\
   [--upstream <specialism>] \\
-  [--upstream-port 4300]`
+  [--upstream-port 4300] \\
+  [--mode run|build|verify] \\
+  [--no-claude]
+
+Modes:
+  run     (default) build workspace, invoke claude, run grader + traffic.
+  build   build workspace + prompt, optionally invoke claude, exit.
+          Use --no-claude to skip the claude subprocess; the harness will
+          print the recommended \`claude -p ...\` command for you to run
+          top-level instead.
+  verify  --work-dir is mandatory; skip claude and bootstrap, run grader
+          + traffic against an already-built workspace.`
   );
 }
 
@@ -411,9 +446,20 @@ function runGrader(url: string, storyboardId: string): { passed: boolean; raw: s
     {
       encoding: 'utf8',
       timeout: 120_000,
+      // spawnSync's default maxBuffer is 1 MiB. The storyboard runner with
+      // --json emits per-step `observation_data` (full HTTP transcripts);
+      // large storyboards (e.g. sales_social) blow past 1 MiB and the
+      // overflow returns res.stdout='' which the harness then misreads as
+      // "grader produced no output → treat as fail". Cap at 50 MiB —
+      // generous enough for any current or near-future storyboard.
+      maxBuffer: 50 * 1024 * 1024,
     }
   );
   const raw = (res.stdout ?? '') + (res.stderr ?? '');
+  log(
+    `grader: status=${res.status} signal=${res.signal} error=${res.error?.message ?? '-'} ` +
+      `stdout=${(res.stdout ?? '').length}b stderr=${(res.stderr ?? '').length}b`
+  );
   let passed = false;
   try {
     const parsed = JSON.parse(res.stdout);
@@ -526,13 +572,27 @@ function expectedHitsForSpecialism(specialism: string): string[] {
   }
 }
 
+/** Default workspace location: `.context/matrix/<slug>-<ts>/` under repo
+ * root. We deliberately avoid `os.tmpdir()` because (a) macOS sandboxed
+ * tools can't read `/var/folders` so `--keep` is unhelpful for inspection,
+ * and (b) `pgrep -f 'adcp-agent-...'` zombie cleanup needs a stable name
+ * pattern. Slug includes the skill+storyboard so concurrent matrix workers
+ * don't collide and `ls .context/matrix/` is browsable. */
+function defaultWorkspaceDir(skill: string, storyboard: string): string {
+  const slug = `${basename(dirname(skill))}-${storyboard.replace(/[^A-Za-z0-9]+/g, '-')}`;
+  const ts = new Date().toISOString().replace(/[:.]/g, '-');
+  return resolve(REPO_ROOT, `.context/matrix/adcp-agent-${slug}-${ts}`);
+}
+
 async function main(): Promise<void> {
   const args = parseArgs(process.argv.slice(2));
   const skillPath = resolve(args.skill);
   const skillContent = await readFile(skillPath, 'utf8');
   const skillDir = dirname(skillPath);
-  const workDir = args.workDir ? resolve(args.workDir) : await mkdtemp(join(tmpdir(), 'adcp-agent-'));
+  const workDir = args.workDir ? resolve(args.workDir) : defaultWorkspaceDir(args.skill, args.storyboard);
+  await mkdir(workDir, { recursive: true });
 
+  log(`mode: ${args.mode}`);
   log(`workspace: ${workDir}`);
   log(`skill: ${args.skill}`);
   log(`storyboard: ${args.storyboard}`);
@@ -546,9 +606,12 @@ async function main(): Promise<void> {
       const upstreamPort = args.upstreamPort ?? args.port + 100;
       upstream = await bootUpstreamForHarness(args.upstream, upstreamPort);
     }
-    await bootstrapWorkspace(workDir, args.port, args.sharedNodeModules);
-    await runClaude(
-      buildPrompt(
+
+    // Build phase — bootstrap workspace + write prompt + (optionally)
+    // invoke claude. Skipped in verify mode.
+    if (args.mode !== 'verify') {
+      await bootstrapWorkspace(workDir, args.port, args.sharedNodeModules);
+      const prompt = buildPrompt(
         skillContent,
         args.storyboard,
         args.port,
@@ -563,12 +626,38 @@ async function main(): Promise<void> {
               principalAdcpFields: upstream.principalAdcpFields,
             }
           : undefined
-      ),
-      workDir,
-      args.timeoutMs,
-      args.transcriptPath
-    );
+      );
+      const promptPath = join(workDir, '.harness-prompt.md');
+      await writeFile(promptPath, prompt, 'utf8');
 
+      if (args.mode === 'build' && args.noClaude) {
+        // Print the recommended top-level claude invocation so the
+        // operator can run it themselves without nesting claude inside
+        // tsx — sidesteps the subprocess-pty quirks that flake the
+        // matrix runner.
+        process.stdout.write(
+          `\nWorkspace ready. Run claude top-level:\n\n` +
+            `  cd ${workDir}\n` +
+            `  claude -p "Follow the instructions in ${promptPath}." --dangerously-skip-permissions\n\n` +
+            `Then verify with:\n\n` +
+            `  tsx ${join(REPO_ROOT, 'scripts/manual-testing/agent-skill-storyboard.ts')} \\\n` +
+            `    --mode verify --work-dir ${workDir} \\\n` +
+            `    --skill ${args.skill} --storyboard ${args.storyboard} \\\n` +
+            `    --port ${args.port}` +
+            (args.upstream ? ` \\\n    --upstream ${args.upstream}` : '') +
+            `\n\n`
+        );
+      } else {
+        await runClaude(prompt, workDir, args.timeoutMs, args.transcriptPath);
+      }
+
+      if (args.mode === 'build') {
+        log(`build complete; workspace at ${workDir}`);
+        process.exit(0);
+      }
+    }
+
+    // Verify phase — boot the agent, run grader, run traffic check.
     log(`starting agent`);
     agent = await startAgent(workDir, args.port);
     await waitForPort('127.0.0.1', args.port, 30_000);
@@ -627,8 +716,13 @@ async function main(): Promise<void> {
         log(`upstream close error: ${(err as Error)?.message ?? err}`);
       }
     }
-    if (!args.keep && !args.workDir) {
-      await rm(workDir, { recursive: true, force: true });
+    // Don't auto-cleanup verify-mode workspaces (operator owns them) or
+    // explicitly --keep workspaces. In run mode, default-named workspaces
+    // under `.context/matrix/` are cheap to leave around — `--keep` is
+    // now effectively the default. Operator cleans `.context/matrix/`
+    // when they want to.
+    if (!args.keep && !args.workDir && args.mode === 'run') {
+      log(`keeping workspace at ${workDir} (under .context/matrix/; clean manually)`);
     } else {
       log(`keeping workspace at ${workDir}`);
     }

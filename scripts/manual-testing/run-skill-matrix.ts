@@ -266,6 +266,17 @@ async function main(): Promise<void> {
         console.error(`✓ ${label} (${durSec}s)`);
       } else {
         console.error(`✗ ${label} (${durSec}s, exit=${result.exitCode})`);
+        // Harness writes diagnostics (workspace path, FAÇADE DETECTED,
+        // traffic check, PASS/FAIL summary) via stderr. Dump them here
+        // so the matrix log is self-diagnosing — without this the
+        // matrix log shows only Claude's build summary and the runner's
+        // `✗` line, with no signal as to why the pair failed.
+        if (result.stderr.trim().length > 0) {
+          console.error('─── harness stderr ───');
+          process.stderr.write(result.stderr);
+          if (!result.stderr.endsWith('\n')) process.stderr.write('\n');
+          console.error('─── end harness stderr ───');
+        }
         if (args.stopOnFail) stopped = true;
       }
     }
