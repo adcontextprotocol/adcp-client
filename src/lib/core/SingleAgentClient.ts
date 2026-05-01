@@ -114,6 +114,7 @@ import * as crypto from 'crypto';
 import type { AdcpCapabilities, AdcpMajorVersion, ToolInfo, FeatureName } from '../utils/capabilities';
 import {
   buildSyntheticCapabilities,
+  buildSyntheticV3Capabilities,
   augmentCapabilitiesFromTools,
   looksLikeV3Capabilities,
   parseCapabilitiesResponse,
@@ -2846,22 +2847,26 @@ export class SingleAgentClient {
           this.maybeWarnV2Sunset(this.cachedCapabilities);
           return this.cachedCapabilities;
         }
-        // Log when executeTask returns but success is false — this causes
-        // the server to be treated as v2 even though it advertises
-        // get_adcp_capabilities, which will trigger v2 field adapters.
-        // We deliberately omit `result.data` from the log: it can carry
-        // OAuth metadata that flowed through `agent.oauth_client_credentials`,
-        // and CodeQL traces clear-text logging when it appears here. The
-        // shape booleans + status are enough to triage the v2 fallback.
+        // The call returned non-success and the response wasn't even
+        // structurally v3-shaped (so the heuristic above didn't catch it),
+        // OR data is missing entirely. The agent still advertises the
+        // v3-only `get_adcp_capabilities` tool, so it's verifiably v3 —
+        // synthesize v3 capabilities from the tool list and continue
+        // (issue #1217). Falling back to v2 here cascades into "AdCP
+        // schema data for version v2.5 not found" errors that obscure
+        // the real bug (the broken capabilities response).
+        //
+        // We deliberately omit `result.data` and `result.error` from the
+        // log: they can carry OAuth metadata or transport-level identifiers
+        // (CodeQL clear-text-logging tracker). Shape booleans + status are
+        // enough to triage.
         console.warn(
           `[AdCP] Agent "${this.agent.id}" advertises get_adcp_capabilities but the call ` +
-            `returned non-success — falling back to v2 synthetic capabilities. ` +
-            `This may cause v2 field adapters to run against a v3 server.`,
+            `returned non-success and the response is not v3-shaped — treating as v3 (synthetic) ` +
+            `since the agent has the v3-only discovery tool. Fix the agent's ` +
+            `get_adcp_capabilities handler to surface the real failure.`,
           {
             success: result.success,
-            // result.error is a string error message; we don't include its full
-            // text because it can carry agent identifiers from transport-level
-            // failures, but presence/absence is useful for triage.
             hasError: !!result.error,
             hasData: !!result.data,
           }
@@ -2875,18 +2880,27 @@ export class SingleAgentClient {
         }
         console.warn(
           `[AdCP] Agent "${this.agent.id}" advertises get_adcp_capabilities but the call ` +
-            `threw — falling back to v2 synthetic capabilities. ` +
-            `This may cause v2 field adapters to run against a v3 server. ` +
+            `threw — treating as v3 (synthetic) since the agent has the v3-only ` +
+            `discovery tool. Fix the agent's get_adcp_capabilities handler to ` +
+            `surface the real failure. ` +
             `Error: ${error instanceof Error ? error.message : String(error)}`
         );
       }
+
+      // Synthesize v3 capabilities from the tool list. Reached only when
+      // the executor returned non-v3-shaped data, OR threw a non-auth
+      // non-timeout error. The agent's v3-only tool list is the affirmative
+      // signal that it's v3 even though we couldn't read details.
+      this.cachedCapabilities = augmentCapabilitiesFromTools(buildSyntheticV3Capabilities(tools), tools);
+      this.maybeWarnV2Sunset(this.cachedCapabilities);
+      return this.cachedCapabilities;
     }
 
-    // Build synthetic capabilities from tool list (v2)
+    // No get_adcp_capabilities tool — the agent is verifiably v2 (the tool
+    // is v3-only). Synthesize v2 capabilities from the tool list.
     console.warn(
-      `[AdCP] Agent "${this.agent.id}" detected as v2` +
-        (hasCapabilitiesTool ? ' (has get_adcp_capabilities tool but call failed)' : '') +
-        `. Tools: [${tools.map(t => t.name).join(', ')}]`
+      `[AdCP] Agent "${this.agent.id}" detected as v2 (no get_adcp_capabilities tool). ` +
+        `Tools: [${tools.map(t => t.name).join(', ')}]`
     );
     this.cachedCapabilities = buildSyntheticCapabilities(tools);
     return this.cachedCapabilities;
@@ -3042,9 +3056,19 @@ export class SingleAgentClient {
     if (this.isV2Allowed()) return;
     const capabilities = await this.getCapabilities();
 
-    if (capabilities._synthetic) {
+    // Synthetic + v2: no `get_adcp_capabilities` tool — we can't confirm the
+    // agent supports our version, throw so the caller fails loud rather than
+    // silently sending v2-adapted requests to an unknown agent.
+    // Synthetic + v3: the tool was present but the call failed — the agent
+    // is verifiably v3 (it advertises the v3-only discovery tool). Skip the
+    // detail-level checks (supportedVersions, majorVersions, idempotency
+    // TTL) since we couldn't read those fields; we know the spec requires
+    // v3 to support idempotency, just can't confirm the TTL until the
+    // capabilities endpoint is fixed (#1217).
+    if (capabilities._synthetic && capabilities.version !== 'v3') {
       throw new VersionUnsupportedError(taskType, 'synthetic', capabilities.version, this.agent.agent_uri);
     }
+    if (capabilities._synthetic) return;
     // Prefer release-precision matching when the seller advertises
     // `supported_versions` (AdCP 3.1+ per spec PR `adcontextprotocol/adcp#3493`).
     // Fall back to the deprecated integer `major_versions` for legacy 3.0
