@@ -8,4 +8,6 @@ Drift from the warn-only post-adapter v2.5 validation pass now surfaces via `res
 
 No public API change. The `executor.validateAdaptedRequestAgainstV2(taskName, params, debugLogs?)` seam already accepted an optional `debugLogs` parameter — only the call sites changed.
 
+**Drop-on-error semantics.** Drift is merged into `result.debug_logs` only after `executor.executeTask` returns. If the executor throws before producing a result, drift collected pre-call is dropped — the executor owns the result envelope and the merge happens once we have one in hand. This matches the executor's own debug-log behavior, which is also tied to a successful return.
+
 Closes the observability hole the v2.5-foundation PR (`#1121`) deliberately deferred. Lays the groundwork for the broader compatibility-matrix work that needs reliable drift signal across version pairs.
