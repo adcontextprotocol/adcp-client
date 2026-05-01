@@ -762,9 +762,18 @@ export function createAdcpServerFromPlatform<P extends DecisioningPlatform<any, 
   const requireOperatorAuth = platform.capabilities.requireOperatorAuth ?? platform.accounts.resolution === 'explicit';
   const supportedBillings = platform.capabilities.supportedBillings;
   const hasAccountProjection = requireOperatorAuth === true || (supportedBillings?.length ?? 0) > 0;
+  // Schema requires `supported_billing` (minItems: 1) whenever the account
+  // block is emitted. Default to ['agent'] when adopters don't declare —
+  // matches the documented platform interface default at
+  // `capabilities.ts:130` ("Defaults to ['agent'] when omitted"). v6 was
+  // dropping the field on undefined which failed schema validation; v5's
+  // `?? []` would also fail (minItems: 1). 'agent' (agent consolidates
+  // billing) is the least-surprising default for non-media-buy specialisms.
   const accountOverrides: Partial<NonNullable<GetAdCPCapabilitiesResponse['account']>> = {
     ...(requireOperatorAuth === true && { require_operator_auth: true }),
-    ...(supportedBillings?.length && { supported_billing: [...supportedBillings] }),
+    ...(hasAccountProjection && {
+      supported_billing: supportedBillings?.length ? [...supportedBillings] : ['agent'],
+    }),
   };
 
   // Compliance-testing scenarios projection. Adopters who claim the
