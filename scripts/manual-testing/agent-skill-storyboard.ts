@@ -58,7 +58,7 @@ interface Args {
   /** When set, boot a mock upstream platform of this specialism flavor
    * before handing the workspace to Claude. Claude wraps the upstream as
    * an AdCP agent rather than inventing the platform layer from scratch.
-   * Currently supported: `signal-marketplace`. */
+   * Currently supported: `signal-marketplace`, `creative-template`. */
   upstream?: string;
   /** Port for the mock upstream server; defaults to `port + 100`. */
   upstreamPort?: number;

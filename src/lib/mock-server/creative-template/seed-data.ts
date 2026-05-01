@@ -77,10 +77,11 @@ export const TEMPLATES: MockTemplate[] = [
   {
     template_id: 'tpl_celtra_display_leaderboard_v2',
     name: 'Display Leaderboard (728x90)',
-    description: 'Standard IAB leaderboard with brand-aware text overlay and CTA.',
+    description:
+      'Standard IAB leaderboard with brand-aware text overlay and CTA. JS tag output (carries impression macros, viewability shims, MRAID/SafeFrame hooks per IAB OpenRTB 2.6 §3.2.4).',
     channel: 'display',
     dimensions: { width: 728, height: 90 },
-    output_kind: 'html_tag',
+    output_kind: 'javascript_tag',
     slots: [
       {
         slot_id: 'image',
@@ -110,10 +111,10 @@ export const TEMPLATES: MockTemplate[] = [
   {
     template_id: 'tpl_celtra_mobile_banner_v2',
     name: 'Mobile Banner (320x50)',
-    description: 'Standard IAB mobile banner.',
+    description: 'Standard IAB mobile banner. JS tag output for in-app/MRAID compatibility.',
     channel: 'display',
     dimensions: { width: 320, height: 50 },
-    output_kind: 'html_tag',
+    output_kind: 'javascript_tag',
     slots: [
       {
         slot_id: 'image',

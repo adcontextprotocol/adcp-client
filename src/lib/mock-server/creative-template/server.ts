@@ -247,7 +247,12 @@ function handleGetRender(renderId: string, ctx: HandlerCtx, ws: MockWorkspace, r
   // Auto-promote queued → running on first poll, running → complete on second.
   // Real platforms render in seconds-to-minutes; the mock simulates a fast
   // async with two state transitions to exercise polling without making the
-  // matrix run drag.
+  // matrix run drag. The `else if` chain means a `complete` render is a
+  // terminal state — subsequent polls return the same complete render
+  // without further mutation. Callers serializing polls (one GET at a time)
+  // observe each transition exactly once; concurrent polls in flight will
+  // both see the post-transition state, which is fine for a fixture but
+  // means the matrix harness should not race polls against itself.
   const template = ctx.templates.find(t => t.template_id === render.template_id);
   if (render.status === 'queued') {
     render.status = 'running';

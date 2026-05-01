@@ -283,6 +283,95 @@ describe('mock-server creative-template', () => {
     assert.equal(body.code, 'template_not_found');
   });
 
+  it('keeps `complete` as a terminal state — subsequent polls do not mutate output', async () => {
+    // Regression for the auto-promote chain: an `else if` ladder means
+    // `complete` does NOT advance to anything else. Pin this so a future
+    // contributor adding a new state can't accidentally promote past
+    // complete (e.g., complete → archived).
+    const auth = {
+      Authorization: `Bearer ${DEFAULT_API_KEY}`,
+      'Content-Type': 'application/json',
+    };
+    const create = await fetch(`${handle.url}/v3/workspaces/ws_acme_studio/renders`, {
+      method: 'POST',
+      headers: auth,
+      body: JSON.stringify({
+        template_id: 'tpl_celtra_display_medrec_v2',
+        mode: 'build',
+        inputs: [
+          { slot_id: 'image', asset_type: 'image', url: 'https://example.test/i.jpg' },
+          { slot_id: 'headline', asset_type: 'text', text: 'h' },
+          { slot_id: 'cta', asset_type: 'text', text: 'c' },
+          { slot_id: 'click_through', asset_type: 'click_url', url: 'https://example.test' },
+        ],
+        client_request_id: 'terminal-state-test',
+      }),
+    });
+    const renderId = (await create.json()).render_id;
+    // Walk through queued → running → complete
+    await fetch(`${handle.url}/v3/workspaces/ws_acme_studio/renders/${renderId}`, {
+      headers: { Authorization: `Bearer ${DEFAULT_API_KEY}` },
+    });
+    const completeRes = await fetch(`${handle.url}/v3/workspaces/ws_acme_studio/renders/${renderId}`, {
+      headers: { Authorization: `Bearer ${DEFAULT_API_KEY}` },
+    });
+    const completeBody = await completeRes.json();
+    assert.equal(completeBody.status, 'complete');
+    const firstUpdated = completeBody.updated_at;
+    const firstOutput = JSON.stringify(completeBody.output);
+
+    // Two more polls — should still be complete with same output.
+    for (let i = 0; i < 2; i++) {
+      const pollRes = await fetch(`${handle.url}/v3/workspaces/ws_acme_studio/renders/${renderId}`, {
+        headers: { Authorization: `Bearer ${DEFAULT_API_KEY}` },
+      });
+      const pollBody = await pollRes.json();
+      assert.equal(pollBody.status, 'complete', 'status remains complete after additional polls');
+      assert.equal(pollBody.updated_at, firstUpdated, 'updated_at does not advance once complete');
+      assert.equal(JSON.stringify(pollBody.output), firstOutput, 'output is stable once complete');
+    }
+  });
+
+  it('isolates client_request_id across workspaces — same key in different workspaces produces distinct renders', async () => {
+    // Documents that the `${workspace_id}::${key}` keying scheme keeps two
+    // workspaces' idempotency tables independent. Important: real customers
+    // sharing a single API key across workspaces (different teams) commonly
+    // reuse simple ids like 'q3-launch-spot' across teams and would not
+    // expect collisions.
+    const sharedKey = 'shared-key-cross-ws';
+    const body = (workspace, hint) => ({
+      template_id: 'tpl_celtra_display_medrec_v2',
+      mode: 'build',
+      inputs: [
+        { slot_id: 'image', asset_type: 'image', url: `https://example.test/${hint}.jpg` },
+        { slot_id: 'headline', asset_type: 'text', text: 'h' },
+        { slot_id: 'cta', asset_type: 'text', text: 'c' },
+        { slot_id: 'click_through', asset_type: 'click_url', url: 'https://example.test' },
+      ],
+      client_request_id: sharedKey,
+    });
+    const auth = {
+      Authorization: `Bearer ${DEFAULT_API_KEY}`,
+      'Content-Type': 'application/json',
+    };
+    const acmeRes = await fetch(`${handle.url}/v3/workspaces/ws_acme_studio/renders`, {
+      method: 'POST',
+      headers: auth,
+      body: JSON.stringify(body('ws_acme_studio', 'acme')),
+    });
+    assert.equal(acmeRes.status, 202);
+    // Summit can use the same client_request_id without collision.
+    const summitRes = await fetch(`${handle.url}/v3/workspaces/ws_summit_studio/renders`, {
+      method: 'POST',
+      headers: auth,
+      body: JSON.stringify(body('ws_summit_studio', 'summit')),
+    });
+    assert.equal(summitRes.status, 202, 'cross-workspace replay is independent — should NOT 409');
+    const acmeRenderId = (await acmeRes.json()).render_id;
+    const summitRenderId = (await summitRes.json()).render_id;
+    assert.notEqual(acmeRenderId, summitRenderId, 'distinct render_ids across workspaces');
+  });
+
   it('reports unified principal-mapping shape on the boot handle', async () => {
     assert.ok(Array.isArray(handle.principalMapping));
     assert.ok(handle.principalMapping.length >= 2);
