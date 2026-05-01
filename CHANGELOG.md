@@ -1,5 +1,153 @@
 # Changelog
 
+## 6.6.0
+
+### Minor Changes
+
+- a5da93e: feat(cli): `adcp mock-server creative-template` — second specialism in the matrix v2 family
+
+  Adds a Celtra/Innovid/AudioStack-shaped creative platform mock alongside the existing `signal-marketplace` mock. Different multi-tenant pattern (URL-path workspace scoping vs the signals mock's `X-Operator-Id` header), different gotcha (async render lifecycle: `queued → running → complete` via polling).
+
+  Headline characteristics:
+  - **Workspace-scoped paths**: `/v3/workspaces/{workspace_id}/...`. Two seeded workspaces (`ws_acme_studio` for `acmeoutdoor.example`, `ws_summit_studio` for `summit-media.example`) with overlapping template visibility — Acme has 4 templates including video preroll; Summit has 3 display-only templates.
+  - **Async render pipeline**: `POST /renders` returns 202 with `status: queued`; subsequent GETs progress through `running` → `complete` (or `failed`). Adapters have to poll, not assume sync. Idempotent on `client_request_id` per workspace, with 409 on body mismatch.
+  - **Templates as upstream-flavored format catalog**: 4 seeded templates (300x250 medrec, 728x90 leaderboard, 320x50 mobile banner, 15s video preroll). Slot definitions use upstream vocabulary (`slot_id`) rather than AdCP's `asset_role` so the adapter does the projection.
+  - **Synthetic output**: rendered HTML / JavaScript / VAST XML by `output_kind`. Plausible-looking but not real — the matrix tests adapter projection, not actual creative rendering.
+
+  Refactors `MockServerHandle` to expose a unified `principalMapping` + `principalScope` shape so the matrix harness can build prompts for either specialism without specialism-specific seed-data introspection. Both signals (`account.operator` → `X-Operator-Id`) and creative-template (`account.advertiser` → `path /v3/workspaces/...`) flow through the same adapter prompt template.
+
+  The matrix harness's `bootUpstreamForHarness` now consumes the unified handle shape; `skill-matrix.json` adds `upstream: "creative-template"` to the build-creative-agent × creative_template pair.
+
+  Run with:
+
+  ```bash
+  npx @adcp/sdk mock-server creative-template --port 4501
+  # or as part of the skill-matrix:
+  npm run compliance:skill-matrix -- --filter creative_template
+  ```
+
+  12 new smoke tests in `test/lib/mock-server/creative-template.test.js` cover auth gating, workspace scoping, channel filtering, render lifecycle, idempotency replay, 409 on body mismatch, cross-workspace isolation, malformed JSON / unknown template error paths, VAST output for video templates, and the unified principal-mapping handle shape.
+
+  Refs adcontextprotocol/adcp-client#1155.
+
+- ec19514: feat(cli): `adcp mock-server <specialism>` boots a fake upstream platform fixture for skill-matrix testing
+
+  Adds `npx @adcp/sdk mock-server signal-marketplace` (currently the only specialism), which boots a CDP/DMP-shaped HTTP server modeled on LiveRamp / Lotame / Oracle Data Cloud. The mock represents the _upstream platform an adopter wraps_, not an AdCP-shaped agent — it has its own native API (cohorts/destinations/activations rather than signals/deployments) so skill-matrix runs test whether Claude can map an unfamiliar upstream to AdCP using the SDK + skill, not whether Claude can invent a decisioning platform from scratch.
+
+  Headline characteristics of the `signal-marketplace` mock:
+  - **Multi-operator API key pattern** — single `Authorization: Bearer <api_key>` shared across operator seats; per-request `X-Operator-Id` header determines cohort visibility, pricing, and activation scope. Real signal marketplaces all work this way; the mock surfaces the question "where does the SDK want me to put the principal-to-operator mapping?" as a real adopter would surface it.
+  - **Two seeded operators** with overlapping cohort visibility — `op_pinnacle` (4 cohorts, all data providers) vs `op_summit` (2 Trident cohorts, +$1 CPM premium rate card). Forces the adapter to genuinely thread the operator from the AdCP `account.operator` field through to the upstream API or fail with empty/wrong data.
+  - **Activation lifecycle state machine** — DSP/CTV destinations start `pending`, advance through `in_progress` → `active` on poll; agent destinations are synchronously `active` on create. Idempotent on `client_request_id` per operator (different operators using the same key are independent).
+  - **Cross-operator isolation** — fetching another operator's activation returns 403 instead of 404 to prevent existence-oracle probing.
+
+  The matrix harness (`scripts/manual-testing/agent-skill-storyboard.ts`, `run-skill-matrix.ts`) now accepts an optional `upstream` field per pair in `skill-matrix.json`. When set, it boots the mock-server before handing the workspace to Claude and surfaces the OpenAPI spec path + operator mapping table to Claude in the build prompt.
+
+  Run with:
+
+  ```bash
+  npx @adcp/sdk mock-server signal-marketplace --port 4500
+  # or as part of the skill-matrix:
+  npm run compliance:skill-matrix -- --filter signal-marketplace
+  ```
+
+  Files added:
+  - `src/lib/mock-server/index.ts` — specialism dispatcher
+  - `src/lib/mock-server/signal-marketplace/openapi.yaml` — upstream API spec
+  - `src/lib/mock-server/signal-marketplace/seed-data.ts` — operators, cohorts, destinations
+  - `src/lib/mock-server/signal-marketplace/server.ts` — HTTP handlers
+  - `test/lib/mock-server/signal-marketplace.test.js` — 8 smoke tests covering auth, operator scoping, pricing overrides, activation lifecycle, cross-operator isolation
+  - `bin/adcp.js` — `mock-server` subcommand routing
+
+  Background and design rationale: adcontextprotocol/adcp-client#1155.
+
+- 245089d: Storyboard runner: per-phase cascade scoping via `phase.depends_on` (#1161).
+
+  Stateful cascade is now scoped per-phase rather than per-storyboard. Phases declare which prior phases they actually depend on for state; only those phases tripping their cascade gates the current phase's stateful steps. Independent phases run normally even when other phases tripped.
+
+  **Field shape**: `phase.depends_on?: string[]` on `StoryboardPhase`. Default semantics (field absent) preserves the storyboard-scope behavior — implicit "depends on all prior phases." Backward-compatible with every existing storyboard, including the F6 round-2 cross-phase pattern (`signal_marketplace/governance_denied`).
+
+  **Two new modes**:
+  - `depends_on: []` declares the phase independent. Runs even if every prior phase tripped its cascade. Use for phases whose state derives from the request body alone (e.g., `audience_sync` carrying its own account ref via `brand`+`operator`) rather than from prior-phase state.
+  - `depends_on: ['phase_id', ...]` declares targeted dependencies. Only the named phases gate this phase's cascade; other tripped phases are irrelevant.
+
+  **Within-phase cascade preserved**: stateful steps later in a phase still cascade-skip when an earlier stateful step in the same phase trips. Intra-phase state dependency is a storyboard authoring intent that `depends_on` (which scopes inter-phase cascade) doesn't override.
+
+  **Loader validation**: forward references, self-references, and unknown phase IDs in `depends_on` fail loud at parse time. Empty list (`[]`) is legal.
+
+  **Companion spec issue**: needs to be filed at `adcontextprotocol/adcp` to add the field to the storyboard schema and audit each specialism storyboard for which phases are functionally independent (notably `sales-social` where `audience_sync` / `creative_push` / `event_setup` / `event_logging` / `financials` are arguably independent of `account_setup` for explicit-mode platforms — the citrusad-shape 1/9/0 case).
+
+  Diagnostic improvement: cascade-detail messages now reference the trigger from the specific dependency phase rather than a storyboard-scope first-trip, so reports show which dependency actually gated the skip.
+
+### Patch Changes
+
+- 84e25f1: fix(types): add `'advertiser'` to `DecisioningCapabilities.supportedBillings`
+
+  The `billing-party` schema enum allows `'operator' | 'agent' | 'advertiser'`, but the TypeScript type only declared the first two. Adopters building platforms that bill advertisers directly (Google Ads direct, Meta direct, retail-media-adjacent) could not declare this billing model via the typed interface. The runtime projection (`from-platform.ts`) already passes the value through verbatim, so this is a type-only fix.
+
+- 49747d5: feat(server): catalog-backed auto-seed for comply_test_controller
+
+  When `createAdcpServerFromPlatform` is called with `complyTest` and a sales
+  platform that wires `getProducts`, but without explicit `seed.product` or
+  `seed.pricing_option` adapters, the framework now auto-derives those adapters
+  from an in-memory store and wires a `testController` bridge so seeded products
+  appear in `get_products` responses on sandbox requests.
+
+  This removes the footgun where LLM-generated platforms fail comply storyboards
+  because the slim skill guide doesn't mention that `seed_product` requires an
+  explicit adapter. Publishers wiring `getProducts` now get free comply-sandbox
+  seeding without writing any seed adapter code.
+
+  The store is keyed by `account.account_id` so two sandbox accounts on the
+  same server (multi-tenant TenantRegistry hosts, or single-tenant servers with
+  multiple sandbox accounts) never share a seed namespace. Adopters who need
+  tighter scoping (per-session, per-brand) wire `bridgeFromSessionStore`
+  explicitly.
+
+  Explicit `seed.product` / `seed.pricing_option` adapters and explicit
+  `testController` bridges always take priority — the auto-seed is only applied
+  when neither is present.
+
+- 14f011c: fix(server): default `account.supported_billing` to `['agent']` in `createAdcpServerFromPlatform`
+
+  When the v6 framework emits the `account` block in `get_adcp_capabilities` (because the platform declares `requireOperatorAuth: true` or `accounts.resolution: 'explicit'`), the schema requires `account.supported_billing` to be present with `minItems: 1`. The framework was spreading the field conditionally (`...(supportedBillings?.length && { supported_billing: [...] })`), which dropped the field entirely when adopters didn't declare `supportedBillings`. The capabilities response then failed schema validation.
+
+  Worse, downstream tooling (storyboard runner) auto-downgrades agents to "v2 synthetic capabilities" when capabilities probe fails, which cascades into every subsequent step erroring with "AdCP schema data for version v2.5 not found." One missing field collapsed entire storyboard runs.
+
+  Fix: when emitting the `account` block, always include `supported_billing`, defaulting to `['agent']` when adopters don't declare. `'agent'` (agent consolidates billing) matches the platform-interface contract documented at `src/lib/server/decisioning/capabilities.ts:130` ("Defaults to `['agent']` when omitted") and is the least-surprising default for non-media-buy specialisms (signals/creative/governance/etc.).
+
+  Surfaced empirically by the matrix v2 mock-server run on adcontextprotocol/adcp-client#1185. Closes adcontextprotocol/adcp-client#1186.
+
+  Adopters declaring `supportedBillings: ['operator', 'agent']` (or any non-empty subset) are unaffected — the projection still flows their declared values. Only adopters who omitted the field were exposed to the schema-validation regression; those will now pass with the spec-correct `['agent']` default.
+
+  Related upstream issue: adcontextprotocol/adcp#3746 (make `supported_billing` conditional on `supported_protocols.includes('media_buy')` at the schema level — the principled fix). This SDK change is the defensive default until the spec change lands.
+
+- 27bd79d: fix(client): don't downgrade obvious v3 agents to v2 on a single capabilities-validation failure
+
+  `SingleAgentClient.getCapabilities()` had a coarse v2-fallback heuristic: if `get_adcp_capabilities` was advertised but the call returned `success: false` for any reason, fall back to v2 synthetic capabilities. That's wrong when the agent is clearly a v3 agent that just has a wire-shape bug (e.g., a single missing required field that fails strict schema validation but otherwise returns a fully v3-shaped response).
+
+  When the fallback fired, the SDK marked the agent as v2.5, downstream tooling asked for v2.5 schemas (not shipped — only 3.0.x is bundled), and every subsequent step errored with `"AdCP schema data for version v2.5 not found"`. One missing field cascaded into total storyboard failure with errors that had nothing to do with the original problem.
+
+  Fix: tighten the fallback heuristic. When `result.success === false` but `result.data` is **structurally v3-shaped**, parse it anyway, surface the validation failure loudly, and continue with v3 capabilities. The agent has a wire-shape bug to fix; downgrading to v2 hides that.
+
+  The new `looksLikeV3Capabilities()` helper (exported from `@adcp/sdk` via `src/lib/utils/capabilities.ts`) checks for affirmative v3 signals:
+  - Presence of the `adcp` envelope block
+  - Presence of `supported_protocols` (v3-only top-level field)
+  - Presence of any v3 protocol-level capability block (`account`, `media_buy`, `signals`, `creative`, `brand`, `governance`, `sponsored_intelligence`, `compliance_testing`)
+
+  Empty / null / non-object responses still fall back to v2 (the existing heuristic — preserved). v2 agents that genuinely don't have any v3 surface in their response continue to be detected correctly.
+
+  Surfaced empirically by the matrix v2 mock-server run on adcontextprotocol/adcp-client#1185, where Claude built a v3 signals agent with a single missing field (`account.supported_billing`) that the runner's old fallback turned into a cascade of confusing v2.5 errors. Closes adcontextprotocol/adcp-client#1189.
+
+  Pairs with the related v6 framework default fix (#1198 / #1186 — default `supported_billing: ['agent']`). With both fixes, the most common cause of the cascade is gone (#1198), and the runner stops compounding any remaining cause into a confusing v2.5 failure (#1189). Each change stands alone; together they remove one of the gnarliest brittleness patterns in the matrix harness.
+
+- 53adf51: Decisioning: `RefreshConfig` propagates `TCtxMeta` to refresh hooks (#1168).
+
+  `AccountStore.refreshToken` is documented as receiving `Account<TCtxMeta>`, but the framework's internal `RefreshConfig` boxed the account through `Account<unknown>`, collapsing the parameterization at the `runWithTokenRefresh` boundary. Adopter hooks reading `account.ctx_metadata.upstreamRefreshToken` (etc.) saw `unknown` instead of their typed shape — the access compiled, but typo protection didn't surface.
+
+  Parameterized `RefreshConfig<TCtxMeta>` and threaded the generic through `runWithTokenRefresh<TCtxMeta, T>` and `projectSync<TResult, TWire, TCtxMeta>`. TypeScript now infers `TCtxMeta` from the dispatch site (`accounts.refreshToken.bind(accounts)` carries the AccountStore generic through), so adopter `refreshToken` impls receive a properly-typed Account.
+
+  Defaults to `unknown` for call sites that don't thread the generic — backward-compatible. Surfaced by code-reviewer on adcp-client#1165's review pass.
+
 ## 6.5.0
 
 ### Minor Changes
