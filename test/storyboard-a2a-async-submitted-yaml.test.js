@@ -292,7 +292,7 @@ describe(
                       kind: 'data',
                       data: {
                         adcp_version: '3.0.0',
-                        supported_protocols: ['media-buy'],
+                        supported_protocols: ['media_buy'],
                         tools: [{ name: 'create_media_buy' }, { name: 'get_products' }],
                       },
                     },

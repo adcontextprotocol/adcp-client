@@ -388,7 +388,13 @@ function validateResponseSchema(
  * outside the `bundled/` tree the loader walks today).
  */
 function computeStrictVerdict(taskName: string, payload: unknown): StrictValidationVerdict | undefined {
-  const outcome = validateResponse(taskName, payload);
+  let outcome: ReturnType<typeof validateResponse>;
+  try {
+    outcome = validateResponse(taskName, payload);
+  } catch {
+    // Schema bundle not loaded (e.g. CI without sync-schemas). No AJV signal.
+    return undefined;
+  }
   // `variant: 'skipped'` means no AJV validator compiled for this task (no
   // strictness signal to emit); treat the same as "no AJV schema available".
   if (outcome.variant === 'skipped') return undefined;
@@ -1521,9 +1527,12 @@ function validateA2AContextContinuity(validation: StoryboardValidation, ctx: Val
     observations: [observation],
   });
 
-  if (!current)
+  if (!current) {
     return passResult('a2a_envelope_not_captured: skipped on non-A2A transport (or capture-bypassing dispatch path)');
-  if (!prior) return passResult('first_a2a_step: no prior A2A envelope to compare against; skipped');
+  }
+  if (!prior) {
+    return passResult('first_a2a_step: no prior A2A envelope to compare against; skipped');
+  }
   if (current.envelope.error !== undefined || prior.envelope.error !== undefined) {
     return passResult('jsonrpc_error_envelope: skipped — continuity is undefined for transport-rejected calls');
   }

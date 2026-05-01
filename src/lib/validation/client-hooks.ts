@@ -75,7 +75,23 @@ export function validateOutgoingRequest(
   version?: string
 ): ValidationOutcome | undefined {
   if (mode === 'off') return undefined;
-  const outcome = validateRequest(taskName, params, version);
+  let outcome: ValidationOutcome;
+  try {
+    outcome = validateRequest(taskName, params, version);
+  } catch (err) {
+    // Schema bundle missing (e.g. schemas not synced in CI). In strict mode
+    // re-throw so misconfigured environments fail loudly; in warn mode treat
+    // as non-fatal so the call proceeds without validation coverage.
+    if (mode === 'strict') throw err;
+    if (debugLogs) {
+      debugLogs.push({
+        type: 'warning',
+        message: `Request validation skipped for ${taskName}: ${err instanceof Error ? err.message : String(err)}`,
+        timestamp: new Date().toISOString(),
+      });
+    }
+    return undefined;
+  }
   if (outcome.valid) return outcome;
   if (mode === 'warn') {
     logWarning(debugLogs, taskName, outcome);
