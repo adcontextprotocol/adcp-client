@@ -498,7 +498,7 @@ describe('runStoryboard: F6 cascade-skip on missing-state stateful skip', () => 
     assert.doesNotMatch(
       audienceStep.skip.detail ?? '',
       /not_applicable/,
-      'detail must reference the real failure, not the earlier not_applicable trigger',
+      'detail must reference the real failure, not the earlier not_applicable trigger'
     );
   });
 

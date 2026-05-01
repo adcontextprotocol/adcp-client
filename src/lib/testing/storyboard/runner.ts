@@ -166,9 +166,7 @@ function buildSkip(reason: RunnerSkipReason, detail?: string): { reason: RunnerS
  * therefore defers `not_applicable`'s cascade decision to phase end —
  * see `phasePendingNotApplicable` handling in the phase loop.
  */
-function isHardMissingStateSkipReason(
-  reason: RunnerSkipReason | RunnerDetailedSkipReason | undefined,
-): boolean {
+function isHardMissingStateSkipReason(reason: RunnerSkipReason | RunnerDetailedSkipReason | undefined): boolean {
   return reason === 'missing_tool' || reason === 'missing_test_controller';
 }
 
@@ -899,7 +897,8 @@ async function executeStoryboardPass(
     // if any stateful step in this phase passed, the substitute did
     // its job and we don't trip. If none did, we promote the pending
     // trigger to a hard cascade so downstream phases skip cleanly.
-    let phasePendingNotApplicable: { stepId: string; reason: RunnerSkipReason | RunnerDetailedSkipReason } | null = null;
+    let phasePendingNotApplicable: { stepId: string; reason: RunnerSkipReason | RunnerDetailedSkipReason } | null =
+      null;
     let phaseEstablishedStatefulState = false;
     // PRM presence-probe state (adcp-client#677). `phaseAbsent` flips when
     // /.well-known/oauth-protected-resource returns 404 — subsequent steps
