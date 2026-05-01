@@ -127,9 +127,12 @@ export interface DecisioningCapabilities<TConfig = unknown> {
    * Billing parties this platform supports. `'operator'` = retail-media model
    * (Criteo, Amazon — operator pays the publisher and bills the brand).
    * `'agent'` = pass-through model (buyer's agent settles directly with the
-   * platform). Defaults to `['agent']` when omitted.
+   * platform). `'advertiser'` = seller invoices the advertiser directly,
+   * bypassing operator settlement (Google Ads direct, Meta direct,
+   * retail-media-adjacent platforms where the brand is the direct contractual
+   * counterparty). Defaults to `['agent']` when omitted.
    */
-  supportedBillings?: ReadonlyArray<'operator' | 'agent'>;
+  supportedBillings?: ReadonlyArray<'operator' | 'agent' | 'advertiser'>;
 
   /**
    * If true, this platform refuses transactions without an authenticated
