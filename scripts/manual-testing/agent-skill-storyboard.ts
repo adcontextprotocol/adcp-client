@@ -428,9 +428,7 @@ function runGrader(url: string, storyboardId: string): { passed: boolean; raw: s
         passed = true;
       } else if (parsed.overall_status === 'partial' && stepsFailed === 0 && tracksFailed === 0) {
         passed = true;
-        log(
-          `grader returned overall_status=partial with no failed steps/tracks — treating as pass (issue #1209)`
-        );
+        log(`grader returned overall_status=partial with no failed steps/tracks — treating as pass (issue #1209)`);
       } else {
         passed = false;
       }
