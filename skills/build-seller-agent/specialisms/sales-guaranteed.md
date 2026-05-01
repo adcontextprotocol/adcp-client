@@ -30,8 +30,7 @@ createMediaBuy: async (params, ctx) => {
     product_id: pkg.product_id,
     pricing_option_id: pkg.pricing_option_id,
     budget: pkg.budget,
-    property_list: pkg.property_list,     // persist inventory-list refs verbatim
-    collection_list: pkg.collection_list,
+    targeting_overlay: pkg.targeting_overlay, // persists property_list / collection_list verbatim
     creative_assignments: pkg.creative_assignments ?? [],
   }));
   const buy = {
@@ -45,7 +44,9 @@ createMediaBuy: async (params, ctx) => {
 },
 ```
 
-**`get_media_buys` must echo `packages[].property_list` / `collection_list`.** The `inventory_list_targeting` baseline scenarios call `create_media_buy` with list references, then call `get_media_buys` expecting those same `list_id` values to appear at `media_buys[].packages[].property_list.list_id` / `.collection_list.list_id`. Persist verbatim, echo verbatim. `update_media_buy` should merge new list refs without dropping prior ones.
+**`get_media_buys` must echo `packages[].targeting_overlay.property_list` / `.collection_list`.** Per the AdCP types, `property_list` and `collection_list` live inside `TargetingOverlay`, not directly on `Package` (see `/schemas/latest/core/package.json` and `/schemas/latest/core/targeting.json`). The `inventory_list_targeting` baseline scenarios send list refs at `packages[].targeting_overlay.{property_list,collection_list}`; `get_media_buys` must echo them back at the same nested path. Persist the full `targeting_overlay` verbatim; echo verbatim. `update_media_buy` should merge new targeting overlays without dropping prior refs.
+
+**State transition: `pending_creatives → pending_start / active`.** When `update_media_buy` attaches `creative_assignments` to a buy in `pending_creatives` status, the buy MUST advance: `pending_start` if `start_time` is in the future, `active` if `start_time` is now or past. See the `updateMediaBuy` state-machine logic in `../SKILL.md` § update_media_buy.
 
 **Task envelope — when IO signing is required.** Use `registerAdcpTaskTool` from `@adcp/sdk/server` so `tasks/get` returns the completion artifact:
 

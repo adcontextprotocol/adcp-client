@@ -41,6 +41,11 @@ Every sales-_ specialism (including `sales-social`, `sales-broadcast-tv`, `sales
 | `list_creatives`         | Read the creative library back with pagination                                     | `sales.listCreatives`    |
 | `get_media_buy_delivery` | Delivery + spend reporting with `reporting_period`, per-package billing rows       | `sales.getMediaBuyDelivery` |
 
+> **`sales-guaranteed` minimum tool surface** — register ALL of these or storyboard scenarios will cascade-skip with `skip_reason: missing_tool`:
+> `get_adcp_capabilities`, `sync_accounts`, `list_accounts`, `get_products`, `list_creative_formats`, `create_media_buy`, `update_media_buy`, `get_media_buys`, `sync_creatives`, `get_media_buy_delivery`
+>
+> (`list_creatives` is optional — only required if the seller hosts its own creative library; creative-agent delegates omit it)
+
 **Minimum platform skeleton** — every sales-\* seller starts here, then adds specialism-specific behavior on top:
 
 ```ts
@@ -522,7 +527,17 @@ productsResponse({
 
 **`create_media_buy`** — `CreateMediaBuyRequestSchema.shape`
 
-Validate the request before creating the buy. Return an error response (not `adcpError`) when business validation fails:
+Return `adcpError(...)` for all business validation failures. Error-code matrix — all spec-defined rejections on `create_media_buy` / `update_media_buy`:
+
+| Tool | Condition | Code |
+| --- | --- | --- |
+| `create_media_buy` | `performance_standards` or `measurement_terms` on a package are unacceptable | `adcpError('TERMS_REJECTED', { message: '...' })` |
+| `create_media_buy` | `product_id` on a package not in catalog | `adcpError('PRODUCT_NOT_FOUND', { field: 'packages[N].product_id' })` |
+| `create_media_buy` | product exists but inventory sold out / unavailable for the requested flight | `adcpError('PRODUCT_UNAVAILABLE', { field: 'packages[N].product_id' })` |
+| `create_media_buy` | budget below the product's floor price | `adcpError('BUDGET_TOO_LOW', { message: '...' })` |
+| `create_media_buy` | reversed dates, schema violation | `adcpError('INVALID_REQUEST', { message: '...' })` |
+| `update_media_buy` | `media_buy_id` not found | `adcpError('MEDIA_BUY_NOT_FOUND', { field: 'media_buy_id' })` |
+| `update_media_buy` | `package_id` within a valid buy not found | `adcpError('PACKAGE_NOT_FOUND', { field: 'package_id' })` |
 
 ```
 // Success — revision, confirmed_at, and valid_actions are auto-set:
@@ -900,7 +915,7 @@ import {
   type SalesPlatform,
   type AccountStore,
 } from '@adcp/sdk/server';
-import type { ServeContext } from '@adcp/sdk';
+import type { ServeContext, MediaBuyStatus } from '@adcp/sdk';
 
 // Publisher-typed metadata blob round-tripped via Account.ctx_metadata.
 // Whatever shape your adapter wants — the SDK doesn't inspect it.
@@ -1032,11 +1047,28 @@ class MySeller implements DecisioningPlatform<{}, MySellerMeta> {
       // wholesale. The patch carries envelope fields (idempotency_key,
       // context) that have no business in your domain state. Spreading
       // them pollutes `get_media_buys` responses and breaks dedup.
-      const updated = { ...existing, status: patch.paused === true ? 'paused' : 'active' };
+
+      // State machine: creative_assignments arriving advances pending_creatives.
+      // pending_creatives → pending_start (start_time in future) or active (start_time now/past).
+      let status = existing.status as MediaBuyStatus;
+      if (patch.paused === true) {
+        status = 'paused';
+      } else if (
+        status === 'pending_creatives' &&
+        (patch.packages ?? []).some((p: { creative_assignments?: unknown[] }) =>
+          (p.creative_assignments ?? []).length > 0)
+      ) {
+        const startTime = existing.start_time ? new Date(existing.start_time as string) : null;
+        status = startTime && startTime > new Date() ? 'pending_start' : 'active';
+      } else if (patch.paused === false && status === 'paused') {
+        status = 'active';
+      }
+
+      const updated = { ...existing, status };
       await ctx.store.put('media_buys', mediaBuyId, updated);
       return {
         media_buy_id: mediaBuyId,
-        status: updated.status as 'paused' | 'active',
+        status: updated.status as MediaBuyStatus,
         // `affected_packages` is `Package[]` (per `/schemas/latest/core/package.json`)
         // — objects with at minimum `package_id`. Don't return bare strings;
         // the update-media-buy-response oneOf discriminates against them and
@@ -1103,8 +1135,9 @@ Key points:
 3. Response builders are auto-applied — just return the data
 4. Use `ctx.store` for state — persists across stateless HTTP requests
 5. Set `sandbox: true` on all mock/demo responses
-6. Use `adcpError()` for business validation failures
+6. Use `adcpError()` for business validation failures — see the error-code matrix in § create_media_buy above
 7. Use `as const` on string literal arrays and union-typed fields in product definitions — TypeScript infers `string[]` from `['display', 'olv']` but the SDK requires specific union types like `MediaChannel[]`. Apply `as const` to `channels`, `delivery_type`, `selection_type`, and `pricing_model` values.
+8. `pending_creatives` is a transient state — `update_media_buy` MUST advance it to `pending_start` or `active` when `creative_assignments` arrive (see state-machine logic in § update_media_buy above)
 
 ## Governance
 
