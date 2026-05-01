@@ -533,6 +533,7 @@ Return `adcpError(...)` for all business validation failures. Error-code matrix 
 | --- | --- | --- |
 | `create_media_buy` | `performance_standards` or `measurement_terms` on a package are unacceptable | `adcpError('TERMS_REJECTED', { message: '...' })` |
 | `create_media_buy` | `product_id` on a package not in catalog | `adcpError('PRODUCT_NOT_FOUND', { field: 'packages[N].product_id' })` |
+| `create_media_buy` | product exists but inventory sold out / unavailable for the requested flight | `adcpError('PRODUCT_UNAVAILABLE', { field: 'packages[N].product_id' })` |
 | `create_media_buy` | budget below the product's floor price | `adcpError('BUDGET_TOO_LOW', { message: '...' })` |
 | `create_media_buy` | reversed dates, schema violation | `adcpError('INVALID_REQUEST', { message: '...' })` |
 | `update_media_buy` | `media_buy_id` not found | `adcpError('MEDIA_BUY_NOT_FOUND', { field: 'media_buy_id' })` |
@@ -914,7 +915,7 @@ import {
   type SalesPlatform,
   type AccountStore,
 } from '@adcp/sdk/server';
-import type { ServeContext } from '@adcp/sdk';
+import type { ServeContext, MediaBuyStatus } from '@adcp/sdk';
 
 // Publisher-typed metadata blob round-tripped via Account.ctx_metadata.
 // Whatever shape your adapter wants — the SDK doesn't inspect it.
@@ -1049,7 +1050,7 @@ class MySeller implements DecisioningPlatform<{}, MySellerMeta> {
 
       // State machine: creative_assignments arriving advances pending_creatives.
       // pending_creatives → pending_start (start_time in future) or active (start_time now/past).
-      let status = existing.status as string;
+      let status = existing.status as MediaBuyStatus;
       if (patch.paused === true) {
         status = 'paused';
       } else if (
@@ -1057,7 +1058,7 @@ class MySeller implements DecisioningPlatform<{}, MySellerMeta> {
         (patch.packages ?? []).some((p: { creative_assignments?: unknown[] }) =>
           (p.creative_assignments ?? []).length > 0)
       ) {
-        const startTime = existing.start_time ? new Date(existing.start_time) : null;
+        const startTime = existing.start_time ? new Date(existing.start_time as string) : null;
         status = startTime && startTime > new Date() ? 'pending_start' : 'active';
       } else if (patch.paused === false && status === 'paused') {
         status = 'active';
@@ -1067,7 +1068,7 @@ class MySeller implements DecisioningPlatform<{}, MySellerMeta> {
       await ctx.store.put('media_buys', mediaBuyId, updated);
       return {
         media_buy_id: mediaBuyId,
-        status: updated.status as string,
+        status: updated.status as MediaBuyStatus,
         // `affected_packages` is `Package[]` (per `/schemas/latest/core/package.json`)
         // — objects with at minimum `package_id`. Don't return bare strings;
         // the update-media-buy-response oneOf discriminates against them and

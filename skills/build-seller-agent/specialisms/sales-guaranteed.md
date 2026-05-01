@@ -44,9 +44,7 @@ createMediaBuy: async (params, ctx) => {
 },
 ```
 
-**`get_media_buys` must echo `packages[].targeting_overlay.property_list` / `.collection_list`.** Per the AdCP types, `property_list` and `collection_list` live inside `TargetingOverlay`, not directly on `Package`. The `inventory_list_targeting` baseline scenarios send list refs at `packages[].targeting_overlay.{property_list,collection_list}` and then call `get_media_buys` expecting those same `list_id` values at `media_buys[].packages[].targeting_overlay.property_list.list_id`. Persist the full `targeting_overlay` verbatim; echo verbatim. `update_media_buy` should merge new targeting overlays without dropping prior refs.
-
-> **Note:** There is a known storyboard grader discrepancy — the `inventory_list_targeting` scenarios may check `media_buys[].packages[].property_list` (flat on Package) rather than the spec-correct `packages[].targeting_overlay.property_list` path. If you see `context_value_rejected` on this scenario after implementing the correct nested path, the storyboard is the bug — track adcontextprotocol/adcp for the upstream fix.
+**`get_media_buys` must echo `packages[].targeting_overlay.property_list` / `.collection_list`.** Per the AdCP types, `property_list` and `collection_list` live inside `TargetingOverlay`, not directly on `Package` (see `/schemas/latest/core/package.json` and `/schemas/latest/core/targeting.json`). The `inventory_list_targeting` baseline scenarios send list refs at `packages[].targeting_overlay.{property_list,collection_list}`; `get_media_buys` must echo them back at the same nested path. Persist the full `targeting_overlay` verbatim; echo verbatim. `update_media_buy` should merge new targeting overlays without dropping prior refs.
 
 **State transition: `pending_creatives → pending_start / active`.** When `update_media_buy` attaches `creative_assignments` to a buy in `pending_creatives` status, the buy MUST advance: `pending_start` if `start_time` is in the future, `active` if `start_time` is now or past. See the `updateMediaBuy` state-machine logic in `../SKILL.md` § update_media_buy.
 
