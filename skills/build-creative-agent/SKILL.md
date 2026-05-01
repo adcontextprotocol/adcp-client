@@ -93,6 +93,26 @@ What happens when a creative is synced:
 > **Cross-cutting pitfalls matrix runs keep catching:**
 >
 > - **Declare `capabilities.specialisms: ['creative-ad-server'] as const` (or `'creative-template'` / `'creative-generative'`) on the `DecisioningPlatform` you pass to `createAdcpServerFromPlatform`.** Value is `string[]` of enum ids (not `[{id, version}]`). Agents that don't declare their specialism fail the grader with "No applicable tracks found" even if every tool works — tracks are gated on the specialism claim.
+> - **`list_creative_formats` response — each `Format` MUST have strict-shape `renders[]` and `assets[]`** (matrix v2 PR #1207 keeps catching this).
+>   - `renders[i]` requires `role` (string) PLUS exactly one of `dimensions: { width, height }` (object — NOT `{ width, height }` inline at the render root) OR `parameters_from_format_id: true`.
+>   - `assets[i]` requires the **discriminator quartet**: `item_type: 'individual' as const` + `asset_id` + `asset_type` (`'image'`/`'video'`/`'audio'`/`'text'`/`'click_url'`/`'html'`) + `required: boolean`. Missing any of these fails strict validation with `must match exactly one schema in oneOf`.
+>
+>   ```ts
+>   // ✗ WRONG — passes lenient mode but fails strict (the actual mistake matrix v2 catches)
+>   { format_id, renders: [{ width: 300, height: 250 }],
+>     assets: [{ asset_id: 'image', required: true }] }
+>
+>   // ✓ RIGHT — passes strict
+>   { format_id,
+>     renders: [{ role: 'primary', dimensions: { width: 300, height: 250 } }],
+>     assets: [{
+>       item_type: 'individual' as const,
+>       asset_id: 'image',
+>       asset_type: 'image',
+>       required: true,
+>       accepted_media_types: ['image/jpeg', 'image/png'],
+>     }] }
+>   ```
 > - `build_creative` response is `{ creative_manifest: { format_id, assets } }` (single) or `{ creative_manifests: [...] }` (multi). Platform-native fields at the top level (`tag_url`, `creative_id`, `media_type`) are **invalid** — use `buildCreativeResponse({ creative_manifest })` / `buildCreativeMultiResponse({ creative_manifests })` from `@adcp/sdk/server` to lock the shape at compile time.
 > - Each asset in `creative_manifest.assets` requires an `asset_type` discriminator. Use the typed factories (`imageAsset`, `videoAsset`, `audioAsset`, `htmlAsset`, `urlAsset`, `textAsset`) so the discriminator is injected for you; a plain `{ serving_tag: { content: '<vast>...' } }` fails validation.
 > - `preview_creative` renders have the same pattern — each `renders[]` entry is a oneOf on `output_format`. Use `urlRender({...})`, `htmlRender({...})`, or `bothRender({...})` to inject the discriminator and require the matching `preview_url` / `preview_html` field automatically.
@@ -105,7 +125,7 @@ What happens when a creative is synced:
 | Tool                    | Handler                        | Contract (field list)                                                 | Gotchas                                                                                                                                                                                                                              |
 | ----------------------- | ------------------------------ | --------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
 | `get_adcp_capabilities` | auto-generated                 | n/a                                                                   | Do not register manually.                                                                                                                                                                                                            |
-| `list_creative_formats` | `creative.listCreativeFormats` | [`#list_creative_formats`](../../docs/llms.txt#list_creative_formats) | Each `renders[]` entry MUST have `role` + exactly one of `dimensions` (object) OR `parameters_from_format_id: true`. `{width, height}` shorthand fails — wrap in `dimensions`.                                                       |
+| `list_creative_formats` | `creative.listCreativeFormats` | [`#list_creative_formats`](../../docs/llms.txt#list_creative_formats) | Each `renders[]` entry MUST have `role` + exactly one of `dimensions` (object) OR `parameters_from_format_id: true` — `{width, height}` shorthand fails. Each `assets[]` entry MUST have `item_type: 'individual' as const` + `asset_id` + `asset_type` (image/video/audio/text/click_url/html) + `required: boolean`. See the strict-shape callout above the table. |
 | `sync_creatives`        | `creative.syncCreatives`       | [`#sync_creatives`](../../docs/llms.txt#sync_creatives)               | Echo `creative_id`; `action` ∈ `created \| updated \| unchanged \| failed \| deleted`.                                                                                                                                               |
 | `list_creatives`        | `creative.listCreatives`       | [`#list_creatives`](../../docs/llms.txt#list_creatives)               | Honor `args.filters?.format_ids` when present. `created_date` + `updated_date` on each row are required ISO timestamps.                                                                                                              |
 | `preview_creative`      | `creative.previewCreative`     | [`#preview_creative`](../../docs/llms.txt#preview_creative)           | `renders[].output_format` is a discriminator — use `urlRender({...})`, `htmlRender({...})`, or `bothRender({...})` so the discriminator is injected and the required `preview_url`/`preview_html` field is enforced at compile time. |
