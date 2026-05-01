@@ -503,9 +503,9 @@ export interface AgentConfig {
    * Matches the `mcp_transport` registry field in adcp#3066 (Option B) so
    * AAO-provided hints can be forwarded here directly.
    *
-   * @remarks Field is defined on the type; active wiring for the standard
-   * `callMCPTool` path is a follow-up. Currently only affects the session-
-   * retry guard in `getAgentInfo()`. See adcp-client#1231.
+   * @remarks Field is declared for forward compatibility; no active wiring yet.
+   * Both the `callMCPTool` and `getAgentInfo()` paths will respect this hint
+   * in a follow-up. See adcp-client#1231.
    */
   mcp_transport?: 'streamable_http' | 'sse';
 
