@@ -52,13 +52,8 @@ const FIXTURES = {
       end_time: '2027-12-31T23:59:59Z',
       idempotency_key: '11111111-1111-1111-1111-111111111111',
     },
-    expected_failures: {
-      // adcontextprotocol/adcp-client#1115 — adapter should derive buyer_ref
-      // from idempotency_key (top-level + per-package). Until then the
-      // adapter omits buyer_ref and v2.5 rejects the request.
-      issue: 'adcontextprotocol/adcp-client#1115',
-      pointers: ['/buyer_ref', '/packages/0/buyer_ref'],
-    },
+    // Was a known-drift fixture against #1115 until that adapter learned to
+    // derive buyer_ref from idempotency_key (top-level + per-package).
   },
   update_media_buy: {
     adapter: adaptUpdateMediaBuyRequestForV2,
