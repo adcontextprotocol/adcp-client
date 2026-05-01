@@ -89,9 +89,28 @@ export const getProductsAdapter: AdapterPair<
 
 `SingleAgentClient.adaptRequestForServerVersion` and `normalizeResponseToV3` dispatch through `getV25Adapter(taskType)` rather than carrying tool-specific switch statements. Adding or removing a per-tool pair doesn't touch the dispatch.
 
+**Asymmetry caveat.** The `AdapterPair` shape assumes symmetric translation, but cross-version reality is often asymmetric:
+
+- **Lossy fields** — proposal-mode `create_media_buy` is one such case (the type comment in `legacy/v2-5/types.ts` calls out that `adaptRequest` may throw for v3 inputs the v2 wire can't represent).
+- **Direction inversion for newer-than-pin sellers** — when the SDK pin is v3 and the seller is v4, `adaptRequest: TReq3 → TReq4` would have to *synthesize* fields the buyer didn't send. That direction usually isn't viable; the current SDK rejects v4+ sellers as `unsupported` and asks adopters to upgrade the SDK rather than try to forward-pad.
+- **New tools in newer versions** — there's no v3 surface for them, so neither registry direction can carry them. Surface as a typed `unsupported_in_legacy` rather than silent drop.
+
+When a future `AdapterPair` needs to declare lossiness, add a third optional method to `types.ts`:
+
+```ts
+export interface AdapterPair<...> {
+  toolName: string;
+  adaptRequest(req: TReq3): TReq25;
+  normalizeResponse?(res: TRes25): TRes3;
+  unsupported?(req: TReq3): UnsupportedReason | null; // null = supported
+}
+```
+
+The dispatch checks `unsupported(req)` first and surfaces a typed `ADCPError` rather than handing a malformed payload to the seller. Don't add this until a real case needs it — the v2.5 shim's `throw` from `adaptRequest` is good enough today.
+
 ### Version-pinned validation
 
-`TaskExecutor.validateResponseSchema` validates against the version the seller actually spoke, derived from `lastKnownServerVersion` (set by `detectServerVersion`). Without this, a v2.5 seller's perfectly valid v2.5-shaped response would be rejected as malformed v3. See `TaskExecutor.ts` line ~1835:
+`TaskExecutor.validateResponseSchema` validates against the version the seller actually spoke, derived from `lastKnownServerVersion` (set by `detectServerVersion`). Without this, a v2.5 seller's perfectly valid v2.5-shaped response would be rejected as malformed v3. See the `validateResponseSchema` method (line ~1844):
 
 ```ts
 const validationVersion = this.lastKnownServerVersion === 'v2' ? 'v2.5' : this.config.adcpVersion;
@@ -213,7 +232,14 @@ export const getProductsAdapter: AdapterPair<
 };
 ```
 
-The actual adapter logic lives in `src/lib/utils/*-adapter.ts` (existing v2 helpers) or a new `src/lib/utils/<tool>-adapter-v<X>.ts` for the new version. The registry is a wrapper layer — it doesn't own the translation logic.
+**Where the translation logic lives — read carefully.** The existing files in `src/lib/utils/` (`pricing-adapter.ts`, `creative-adapter.ts`, `sync-creatives-adapter.ts`) carry **v2.5-specific** logic despite their unversioned names. They were written before the registry existed and the names predate the multi-version reality.
+
+For any new wire version, **do not branch the existing v2.5 helpers**. Either:
+
+1. **Recommended:** create a new `src/lib/utils/<tool>-adapter-v<X>.ts` per tool. The registry pair imports from there. Keeps each version's translation isolated.
+2. **Acceptable for trivial deltas:** the per-tool registry module (`legacy/<version>/<tool>.ts`) inlines the translation directly, with no `utils/` helper. Reasonable when the v3 → v<X> mapping is two field renames.
+
+`utils/*-adapter.ts` may eventually get renamed to `utils/*-adapter-v2-5.ts` when the rename is cheaper than the rename-debt; until then, treat the unversioned names as v2.5-locked. The registry is a wrapper layer — it doesn't own the translation logic, but it does own which version's logic each tool routes through.
 
 `index.ts`:
 
@@ -240,38 +266,80 @@ export function listV<X>AdapterTools(): string[] {
 
 ### 5. Wire the dispatch
 
-`SingleAgentClient.adaptRequestForServerVersion` currently has:
+Two pieces: the **detection signal** (how do we know what version the seller speaks) and the **registry selection** (which adapter table do we route through).
+
+**Detection signal.** Prefer the authoritative channel:
+
+1. **`get_adcp_capabilities.adcp_version`** when the seller exposes it. AdCP 3.0+ sellers declare their version explicitly in the capabilities response — this is the channel new versions should use first.
+2. **`tools/list` shape sniffing** as fallback only, for sellers that predate `get_adcp_capabilities`. v2.5 sellers fall here today; v4+ should not.
+
+`detectServerVersion` currently returns `'v2' | 'v3'` from `tools/list` sniffing. Extend it to:
 
 ```ts
-if (version !== 'v3') {
-  const pair = getV25Adapter(taskType);
-  if (pair) adapted = pair.adaptRequest(params);
+type DetectedVersion = 'v2' | 'v3' | 'v4';
+
+private async detectServerVersion(): Promise<DetectedVersion> {
+  // Prefer the declared channel.
+  const caps = await this.cachedCapabilities();
+  if (caps?.adcp_version) {
+    return parseAdcpMajor(caps.adcp_version); // 'v2' | 'v3' | 'v4'
+  }
+  // Fall back to tools/list shape sniffing for legacy sellers.
+  return this.sniffFromTools();
 }
 ```
 
-Generalize to dispatch on the detected version:
+Pre-v4 sellers without `get_adcp_capabilities` keep the shape-sniff path. Don't add tool-name string matches as primary detection for new versions — that's the OpenRTB "extension sniffing" trap.
+
+**Registry selection.** Replace the `if (version !== 'v3')` block in `adaptRequestForServerVersion` with a map:
 
 ```ts
-const adapter = selectAdapterRegistry(version);    // returns getV25Adapter | getV3Adapter | undefined
+type AdapterLookup = (toolName: string) => AdapterPair | undefined;
+
+const REGISTRY_BY_VERSION: ReadonlyMap<DetectedVersion, AdapterLookup> = new Map([
+  ['v2', getV25Adapter],
+  // ['v3', getV3Adapter],   // when SDK pin moves to v4
+]);
+
+function selectAdapterRegistry(version: DetectedVersion): AdapterLookup | undefined {
+  return REGISTRY_BY_VERSION.get(version);
+}
+
+// dispatch:
+const adapter = selectAdapterRegistry(version);
 if (adapter) {
   const pair = adapter(taskType);
   if (pair) adapted = pair.adaptRequest(params);
 }
 ```
 
-`detectServerVersion` returns `'v2' | 'v3'` today — extend the discriminator to whatever new versions you're supporting (probably `'v2' | 'v3' | 'v4'`). Keep the discriminator narrow — version detection is a string match against the seller's `tools/list`, not a semver parse.
+`selectAdapterRegistry` does not exist yet — introduce it in this step. The current SDK pin (`'v3'` today) is **not** in the map: direct calls don't need adaptation. When the pin moves, the previous pin's lookup joins the map.
 
 Mirror the change in `normalizeResponseToV3` (or rename to `normalizeResponseToCurrent` if the SDK pin moves above v3).
 
 ### 6. Wire validation pinning
 
-`TaskExecutor.validateResponseSchema` derives `validationVersion` from `lastKnownServerVersion`:
+`TaskExecutor.validateResponseSchema` derives `validationVersion` from `lastKnownServerVersion`. Today:
 
 ```ts
 const validationVersion = this.lastKnownServerVersion === 'v2' ? 'v2.5' : this.config.adcpVersion;
 ```
 
-Extend this to map every legacy version to its bundle key. The map should mirror `selectAdapterRegistry` from step 5 — version detected → schema bundle to validate against. Don't fall back to `this.config.adcpVersion` for unknown versions; that's how we ended up with v3 schemas rejecting v2.5 responses pre-#1137.
+Extend to a map. Don't keep the binary-version ternary — silent fall-through to `this.config.adcpVersion` for unknown versions is exactly how we ended up with v3 schemas rejecting v2.5 responses pre-#1137:
+
+```ts
+const SCHEMA_BUNDLE_BY_VERSION: ReadonlyMap<DetectedVersion, string> = new Map([
+  ['v2', 'v2.5'],
+  // ['v3', '3.0.1'],   // when SDK pin moves to v4 and v3 becomes legacy
+]);
+
+const validationVersion =
+  this.lastKnownServerVersion
+    ? (SCHEMA_BUNDLE_BY_VERSION.get(this.lastKnownServerVersion) ?? this.config.adcpVersion)
+    : this.config.adcpVersion;
+```
+
+The map mirrors `REGISTRY_BY_VERSION` from step 5 — every detected version that needs adaptation also needs its own validation bundle. The current SDK pin is not in either map (current-pin sellers validate against `this.config.adcpVersion` directly). The fall-through stays defensive: if a future detection bug returns a version we don't have a bundle for, we validate against the SDK pin rather than crash.
 
 ### 7. Conformance fixtures
 
@@ -296,6 +364,13 @@ Copy `scripts/smoke-wonderstruck-v2-5.ts` to `scripts/smoke-<seller>-v<version>.
 
 The smoke is a developer tool, not a test — keep it under `scripts/` (excluded from `package.json#files`).
 
+**No live seller running the new version yet?** This is the common case for forward-version compat (e.g. v4 sellers don't exist yet when you're staging the SDK pin move). Two options, in order of preference:
+
+1. **Stand up a mock server using `createAdcpServer`** that publishes the new version's tool surface. Drop it under `test/fixtures/mock-v<X>-server.ts` — the existing `test/fixtures/` directory holds similar agent fixtures and the registry tests pull from there. Wire the smoke at `process.env.MOCK_SELLER_URL` so it can run against either a real or fake seller. The mock doesn't need to be production-quality; it needs to publish the right `tools/list` shape and accept your adapted requests without 500ing.
+2. **Round-trip the adapter against the schema bundle** instead of an HTTP server. The conformance test (step 7) already does this on the request side; extend it to also validate that round-tripping a synthesized response through `normalizeResponse` produces a v3-shape that passes v3 schema validation. Catches type-level drift without needing a live seller.
+
+(1) catches transport bugs (auth headers, MCP `structuredContent` parsing) that (2) misses. Use both when you can; (2) alone if you're early.
+
 ### 9. Changeset + PR
 
 ```sh
@@ -310,19 +385,53 @@ Pick `minor` for adding a new legacy compat layer (additive). Description should
 
 PR body should reference this playbook so reviewers can verify each step landed.
 
+### Time estimate
+
+Realistic for one focused contributor:
+
+- **~1 week** with a known-good live seller of the target version (most of the time goes to per-tool adapter logic and conformance fixtures).
+- **~2 weeks** without a live seller (mock server build adds ~3 days; the longer feedback loop of "ship adapter → wait for next dogfood" adds the rest).
+
+If it's taking longer than that, the per-tool deltas between SDK pin and target version are bigger than they look — pause and re-scope before grinding through. v2.5 → v3 had four tools that needed real adaptation (get_products, create_media_buy, sync_creatives, list_creative_formats) and roughly two that were prefix-strip-only. v4 → v3 may differ.
+
+### Anti-patterns
+
+What gets caught in code review every time:
+
+- **Don't branch the existing v2.5 helpers** in `utils/*-adapter.ts` to also handle v4. Each version gets its own translation logic — see step 4. Branching means a v2.5 fix risks regressing v4 and vice versa.
+- **Don't skip step 6** (validation pinning). The temptation is "the SDK pin works as a default and the seller might be close enough" — that's how we ended up rejecting valid v2.5 responses pre-#1137. Always pin validation to the detected version.
+- **Don't share conformance fixtures across versions.** Each `legacy/<version>/` gets its own `adapter-v<version>-conformance.test.js`. Sharing fixtures couples the test to the lower-common-denominator and the failure mode confuses reviewers.
+- **Don't bump `ADCP_VERSION` (the SDK pin) in the same PR as adding a legacy shim.** Two separate concerns — one is "we now support the new pin," the other is "we keep supporting the old pin underneath." Reviewing them together obscures both.
+- **Don't omit the `removeNumberedTypeDuplicates` codegen pass.** `json-schema-to-typescript` emits `Foo`, `Foo1`, `Foo2` for re-referenced enums. The dedupe is in `scripts/generate-types.ts` and shared with v2.5 codegen — call it from your new generator. Skipping it produces autocomplete confusion that won't surface until adopters import the types.
+- **Don't bypass `_provenance.json`.** The schema cache is reproducible because we pin the source SHA + sha256. Stripping that for "convenience" defeats CI determinism.
+
 ## N=1 vs N×M
 
 The directory tree is `legacy/v2-5/`, not `v3-to-v2-5/`. That's intentional and worth understanding before extending it.
 
-A full `(SDK_version × seller_version)` matrix would be N×M files for N SDK versions × M seller versions, with corresponding test coverage. In practice nobody staffs that. Look at OpenRTB, Prebid, GAM — each maintains exactly one active legacy compat layer with a deprecation runway, then drops it when adoption is below the support floor.
+A full `(SDK_version × seller_version)` matrix would be N×M files for N SDK versions × M seller versions, with corresponding test coverage. **We choose N=1 because we don't have the staffing for N×M, not because the industry has converged on one shim.** Ad-tech precedent is mixed:
 
-This SDK follows the same pattern:
+- OpenRTB carries 2.x and 3.0 simultaneously and IAB still publishes both — adoption never displaced 2.5/2.6 the way a clean N=1 model assumes.
+- Prebid.js maintains multiple OpenRTB version mappings concurrently and supports first-price/second-price legacy modes well past their stated deprecation runways.
+- GAM (closed, vendor-controlled) does deprecate aggressively on a major-version cadence — closer to N=1 in practice but not directly comparable to an open protocol.
+
+So the engineering policy is "one active legacy shim with a deprecation runway," not "everyone in ad-tech does this." This SDK's pattern:
 
 - **Today:** SDK pinned to v3, one legacy shim for v2.5, no shim for v3 (it's the pin).
-- **When SDK moves to v4:** the v2.5 shim sunsets (deprecation notice + version), a new v3 shim joins. Two active legacy shims briefly, dropping back to one when v2.5 hits end-of-support.
-- **What we don't do:** maintain v2.5 + v3 + v4 + v5 simultaneously. Adopters who need ancient compat pin to an older SDK major.
+- **When SDK moves to v4:** the v2.5 shim sunsets, a new v3 shim joins. Two active legacy shims briefly, dropping back to one when v2.5 hits end-of-support.
+- **Deprecation runway:** one major-version overlap **or** 12 months from end-of-support announcement, whichever is longer. Adopters who need ancient compat pin to an older SDK major.
+- **What we don't do:** maintain v2.5 + v3 + v4 + v5 simultaneously.
 
-The directory tree (`legacy/<seller-version>/`) reflects this: the SDK's current pin is implicit and the only thing on disk is the exceptional, time-boxed compat work. If we ever staff a true matrix, the tree shape changes; until then, encoding one would be larping.
+The directory tree (`legacy/<seller-version>/`) reflects this: the SDK's current pin is implicit and the only thing on disk is the exceptional, time-boxed compat work. If we ever staff a true matrix, the tree shape changes; until then, encoding one would be larping a maintenance burden nobody will own.
+
+### Sunsetting a shim
+
+When a shim hits end-of-support:
+
+1. **Announce in CHANGELOG** — one major-version (or 12 months, whichever longer) before deletion. Tell adopters which SDK version drops it.
+2. **Switch detection to typed rejection.** `detectServerVersion` returns the version, but the dispatch in `adaptRequestForServerVersion` returns a `VERSION_UNSUPPORTED` `ADCPError` instead of routing through the deleted registry. Adopters get a typed error, not a silent no-op.
+3. **Delete the directory.** `src/lib/adapters/legacy/<version>/`, `src/lib/types/<version-dir>/`, `schemas/cache/<version>/`, `scripts/sync-<version>-schemas.ts`, `scripts/generate-<version>-types.ts`, the conformance + registry tests, the smoke harness.
+4. **Bump the major.** Removing a legacy shim is a breaking change for any adopter still talking to that version. Land it on a major-version bump with a clear migration note pointing at the older SDK pin.
 
 ## Compatibility today
 
