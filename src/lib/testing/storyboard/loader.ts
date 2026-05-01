@@ -58,6 +58,7 @@ export function loadStoryboardFile(filePath: string): Storyboard {
  * `contributes_to`) and is idempotent on already-validated inputs.
  */
 export function validateStoryboardShape(storyboard: Storyboard): void {
+  validatePhaseDependsOn(storyboard);
   for (const phase of storyboard.phases) {
     validateBranchSet(storyboard.id, phase);
     if (!phase.steps) continue;
@@ -67,6 +68,46 @@ export function validateStoryboardShape(storyboard: Storyboard): void {
       validateContextOutputs(storyboard.id, phase, step);
       validatePeerSubstitutesFor(storyboard.id, phase, step);
     }
+  }
+}
+
+/**
+ * Authoring-time validation for `phase.depends_on` (#1161). Each entry
+ * must reference a phase declared earlier in the storyboard. Forward
+ * references and self-references fail loud at parse time so authoring
+ * mistakes (typos, reorderings) don't degrade silently into "phase
+ * always runs" / "phase always cascades."
+ *
+ * Rules:
+ *   - Empty list (`depends_on: []`) is legal — it declares an
+ *     independent phase. No further validation needed.
+ *   - Each non-empty entry must be a non-empty string.
+ *   - Each entry must reference a phase that appears EARLIER in the
+ *     `storyboard.phases[]` array (forward references are rejected).
+ *   - A phase cannot depend on itself.
+ */
+function validatePhaseDependsOn(storyboard: Storyboard): void {
+  const phaseIdsSeen = new Set<string>();
+  for (const phase of storyboard.phases) {
+    if (phase.depends_on !== undefined) {
+      if (!Array.isArray(phase.depends_on)) {
+        throw new Error(`[${storyboard.id}] phase '${phase.id}': depends_on must be an array of phase ids`);
+      }
+      for (const dep of phase.depends_on) {
+        if (typeof dep !== 'string' || dep.length === 0) {
+          throw new Error(`[${storyboard.id}] phase '${phase.id}': depends_on entries must be non-empty strings`);
+        }
+        if (dep === phase.id) {
+          throw new Error(`[${storyboard.id}] phase '${phase.id}': depends_on cannot reference itself`);
+        }
+        if (!phaseIdsSeen.has(dep)) {
+          throw new Error(
+            `[${storyboard.id}] phase '${phase.id}': depends_on '${dep}' is not a phase declared earlier in this storyboard (forward and unknown references are rejected)`
+          );
+        }
+      }
+    }
+    phaseIdsSeen.add(phase.id);
   }
 }
 

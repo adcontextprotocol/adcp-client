@@ -1228,9 +1228,9 @@ describe('runStoryboard: F6 round-2 — cascade survives phase boundaries', () =
 });
 
 describe('runStoryboard: capability-aware cascade (adcp-client#1169)', () => {
-  // When statefulFailed is true, downstream stateful steps should be
-  // classified by their intrinsic skip-eligibility BEFORE the cascade
-  // reason is applied:
+  // When a phase's stateful cascade trips, downstream stateful steps
+  // should be classified by their intrinsic skip-eligibility BEFORE the
+  // cascade reason is applied:
   //   - task not in agentTools → missing_tool (passed: true, benign)
   //   - task in agentTools     → prerequisite_failed (passed: false, genuine cascade)
   let agent;
@@ -1389,7 +1389,7 @@ describe('runStoryboard: capability-aware cascade (adcp-client#1169)', () => {
             id: 'testkit_step',
             title: 'test-kit resolved step (advertised via task_default)',
             task: '$test_kit.nonexistent.path',
-            task_default: '__test_assert', // resolves to __test_assert (IS advertised)
+            task_default: '__test_assert',
             stateful: true,
             auth: 'none',
             sample_request: {},
@@ -1418,5 +1418,523 @@ describe('runStoryboard: capability-aware cascade (adcp-client#1169)', () => {
       'prerequisite_failed',
       '$test_kit.* step with advertised task_default still gets prerequisite_failed'
     );
+  });
+});
+
+describe('runStoryboard: #1161 phase.depends_on cascade scoping', () => {
+  let agent;
+
+  afterEach(async () => {
+    if (agent) await stopAgent(agent);
+    agent = undefined;
+    await closeMCPConnections().catch(() => {});
+  });
+
+  test('depends_on: [] — independent phase runs even when prior phase tripped cascade', async () => {
+    // The citrusad-shape case (#1161): account_setup phase trips
+    // missing_tool; audience_sync is functionally independent (carries
+    // its own account ref via brand+operator). Declaring `depends_on: []`
+    // on audience_sync lets it run instead of cascade-skipping.
+    agent = await startFakeAgent();
+    const storyboard = storyboardWithPhases([
+      {
+        id: 'account_setup',
+        title: 'account setup (will trip)',
+        steps: [
+          {
+            id: 'sync',
+            title: 'sync_accounts (missing)',
+            task: 'sync_accounts',
+            stateful: true,
+            auth: 'none',
+            sample_request: {},
+          },
+        ],
+      },
+      {
+        id: 'audience_sync',
+        title: 'audience sync (independent)',
+        depends_on: [],
+        steps: [
+          {
+            id: 'sync_aud',
+            title: 'sync audiences',
+            task: '__test_setup',
+            stateful: true,
+            auth: 'none',
+            sample_request: {},
+          },
+        ],
+      },
+    ]);
+    // sync_accounts not advertised — phase 1 trips. __test_setup is
+    // advertised — phase 2 should run normally because it declares
+    // independence.
+    const ADVERTISED = ['__test_setup', 'get_adcp_capabilities'];
+    const result = await runStoryboard([agent.url], storyboard, {
+      protocol: 'mcp',
+      allow_http: true,
+      agentTools: ADVERTISED,
+      _profile: { name: 'fake', tools: ADVERTISED.map(name => ({ name })) },
+    });
+    const syncStep = result.phases[0].steps[0];
+    const audStep = result.phases[1].steps[0];
+    assert.strictEqual(syncStep.skip_reason, 'missing_tool', 'phase 1 tripped');
+    assert.notStrictEqual(audStep.skipped, true, 'phase 2 ran (depends_on: [] = independent)');
+    assert.strictEqual(audStep.passed, true);
+  });
+
+  test('depends_on: ["specific_phase"] — cascades only when that phase tripped', async () => {
+    // Targeted dependency: phase 3 depends only on phase 1 (not phase 2).
+    // Phase 2 trips cascade, but phase 3 should still run because it
+    // doesn't depend on phase 2.
+    agent = await startFakeAgent();
+    const storyboard = storyboardWithPhases([
+      {
+        id: 'account_setup',
+        title: 'account setup (passes)',
+        steps: [
+          {
+            id: 'sync',
+            title: 'sync accounts',
+            task: '__test_setup',
+            stateful: true,
+            auth: 'none',
+            sample_request: {},
+          },
+        ],
+      },
+      {
+        id: 'audience_sync',
+        title: 'audience sync (will trip)',
+        steps: [
+          {
+            id: 'aud',
+            title: 'sync audiences (missing)',
+            task: 'sync_audiences',
+            stateful: true,
+            auth: 'none',
+            sample_request: {},
+          },
+        ],
+      },
+      {
+        id: 'creative_push',
+        title: 'creative push (depends only on account_setup)',
+        depends_on: ['account_setup'],
+        steps: [
+          {
+            id: 'cre',
+            title: 'sync creatives',
+            task: '__test_assert',
+            stateful: true,
+            auth: 'none',
+            sample_request: {},
+          },
+        ],
+      },
+    ]);
+    const ADVERTISED = ['__test_setup', '__test_assert', 'get_adcp_capabilities'];
+    const result = await runStoryboard([agent.url], storyboard, {
+      protocol: 'mcp',
+      allow_http: true,
+      agentTools: ADVERTISED,
+      _profile: { name: 'fake', tools: ADVERTISED.map(name => ({ name })) },
+    });
+    const phase1 = result.phases[0].steps[0];
+    const phase2 = result.phases[1].steps[0];
+    const phase3 = result.phases[2].steps[0];
+    assert.strictEqual(phase1.passed, true, 'account_setup passes');
+    assert.strictEqual(phase2.skip_reason, 'missing_tool', 'audience_sync tripped');
+    // creative_push depends only on account_setup, not audience_sync.
+    assert.notStrictEqual(phase3.skipped, true, 'creative_push runs (deps on account_setup which passed)');
+    assert.strictEqual(phase3.passed, true);
+  });
+
+  test('depends_on default (undefined) preserves all-prior-phases cascade — F6 round-2 still works', async () => {
+    // Backward-compat guard: storyboards without `depends_on` keep the
+    // legacy "depend on every prior phase" semantics. The F6 round-2
+    // cross-phase pattern (signal_marketplace/governance_denied) MUST
+    // continue to cascade without YAML changes.
+    agent = await startFakeAgent();
+    const storyboard = storyboardWithPhases([
+      {
+        id: 'phase_1_trip',
+        title: 'phase 1 (trips)',
+        steps: [
+          {
+            id: 'setup',
+            title: 'setup (missing)',
+            task: 'sync_governance',
+            stateful: true,
+            auth: 'none',
+            sample_request: {},
+          },
+        ],
+      },
+      {
+        id: 'phase_2',
+        title: 'phase 2 (default depends_on — implicit "all prior")',
+        steps: [
+          {
+            id: 'consume',
+            title: 'consume',
+            task: '__test_assert',
+            stateful: true,
+            auth: 'none',
+            sample_request: {},
+          },
+        ],
+      },
+    ]);
+    const ADVERTISED = ['__test_assert', 'get_adcp_capabilities'];
+    const result = await runStoryboard([agent.url], storyboard, {
+      protocol: 'mcp',
+      allow_http: true,
+      agentTools: ADVERTISED,
+      _profile: { name: 'fake', tools: ADVERTISED.map(name => ({ name })) },
+    });
+    const phase2 = result.phases[1].steps[0];
+    // Legacy default: implicit "all prior" → phase 2 cascade-skips.
+    assert.strictEqual(phase2.skipped, true, 'default depends_on = all prior, cascade fires');
+    assert.strictEqual(phase2.skip_reason, 'prerequisite_failed');
+  });
+
+  test('depends_on rejects forward references at parse time', async () => {
+    agent = await startFakeAgent();
+    const storyboard = storyboardWithPhases([
+      {
+        id: 'first',
+        title: 'first (declares forward dep on later)',
+        depends_on: ['later'],
+        steps: [
+          {
+            id: 'a',
+            title: 'a',
+            task: '__test_setup',
+            stateful: true,
+            auth: 'none',
+            sample_request: {},
+          },
+        ],
+      },
+      {
+        id: 'later',
+        title: 'later phase',
+        steps: [
+          {
+            id: 'b',
+            title: 'b',
+            task: '__test_setup',
+            stateful: true,
+            auth: 'none',
+            sample_request: {},
+          },
+        ],
+      },
+    ]);
+    await assert.rejects(
+      runStoryboard([agent.url], storyboard, {
+        protocol: 'mcp',
+        allow_http: true,
+        agentTools: ['__test_setup', 'get_adcp_capabilities'],
+        _profile: { name: 'fake', tools: [{ name: '__test_setup' }, { name: 'get_adcp_capabilities' }] },
+      }),
+      /depends_on 'later' is not a phase declared earlier/
+    );
+  });
+
+  test('depends_on rejects self-reference at parse time', async () => {
+    agent = await startFakeAgent();
+    const storyboard = storyboardWithPhases([
+      {
+        id: 'self_ref',
+        title: 'self-referential phase',
+        depends_on: ['self_ref'],
+        steps: [
+          {
+            id: 'a',
+            title: 'a',
+            task: '__test_setup',
+            stateful: true,
+            auth: 'none',
+            sample_request: {},
+          },
+        ],
+      },
+    ]);
+    await assert.rejects(
+      runStoryboard([agent.url], storyboard, {
+        protocol: 'mcp',
+        allow_http: true,
+        agentTools: ['__test_setup', 'get_adcp_capabilities'],
+        _profile: { name: 'fake', tools: [{ name: '__test_setup' }, { name: 'get_adcp_capabilities' }] },
+      }),
+      /depends_on cannot reference itself/
+    );
+  });
+
+  test('depends_on rejects unknown phase ids at parse time', async () => {
+    agent = await startFakeAgent();
+    const storyboard = storyboardWithPhases([
+      {
+        id: 'first',
+        title: 'first',
+        steps: [
+          {
+            id: 'a',
+            title: 'a',
+            task: '__test_setup',
+            stateful: true,
+            auth: 'none',
+            sample_request: {},
+          },
+        ],
+      },
+      {
+        id: 'second',
+        title: 'second (depends on nonexistent)',
+        depends_on: ['nonexistent_phase'],
+        steps: [
+          {
+            id: 'b',
+            title: 'b',
+            task: '__test_setup',
+            stateful: true,
+            auth: 'none',
+            sample_request: {},
+          },
+        ],
+      },
+    ]);
+    await assert.rejects(
+      runStoryboard([agent.url], storyboard, {
+        protocol: 'mcp',
+        allow_http: true,
+        agentTools: ['__test_setup', 'get_adcp_capabilities'],
+        _profile: { name: 'fake', tools: [{ name: '__test_setup' }, { name: 'get_adcp_capabilities' }] },
+      }),
+      /depends_on 'nonexistent_phase' is not a phase declared earlier/
+    );
+  });
+
+  test('three-phase transitive: A trips, B independent runs, C depends_on:[B] runs (A irrelevant to C)', async () => {
+    // Lock in transitive intent: depends_on is direct, not transitive.
+    // A trips. B declares depends_on: [] and runs clean. C depends only
+    // on B (which passed). C should run even though A — an upstream of
+    // B in declaration order — tripped. This is the per-phase scoping
+    // contract: each phase's gate is exactly its declared deps, no
+    // implicit transitive closure.
+    agent = await startFakeAgent();
+    const storyboard = storyboardWithPhases([
+      {
+        id: 'A',
+        title: 'A (trips)',
+        steps: [
+          {
+            id: 'a',
+            title: 'A step (missing)',
+            task: 'sync_accounts',
+            stateful: true,
+            auth: 'none',
+            sample_request: {},
+          },
+        ],
+      },
+      {
+        id: 'B',
+        title: 'B (independent)',
+        depends_on: [],
+        steps: [
+          {
+            id: 'b',
+            title: 'B step',
+            task: '__test_setup',
+            stateful: true,
+            auth: 'none',
+            sample_request: {},
+          },
+        ],
+      },
+      {
+        id: 'C',
+        title: 'C (depends only on B)',
+        depends_on: ['B'],
+        steps: [
+          {
+            id: 'c',
+            title: 'C step',
+            task: '__test_assert',
+            stateful: true,
+            auth: 'none',
+            sample_request: {},
+          },
+        ],
+      },
+    ]);
+    const ADVERTISED = ['__test_setup', '__test_assert', 'get_adcp_capabilities'];
+    const result = await runStoryboard([agent.url], storyboard, {
+      protocol: 'mcp',
+      allow_http: true,
+      agentTools: ADVERTISED,
+      _profile: { name: 'fake', tools: ADVERTISED.map(name => ({ name })) },
+    });
+    const a = result.phases[0].steps[0];
+    const b = result.phases[1].steps[0];
+    const c = result.phases[2].steps[0];
+    assert.strictEqual(a.skip_reason, 'missing_tool', 'A tripped');
+    assert.strictEqual(b.passed, true, 'B ran cleanly (independent)');
+    assert.strictEqual(c.passed, true, 'C ran cleanly (its dep B passed; A irrelevant)');
+  });
+
+  test('peer_substitutes_for × depends_on compose: substitute rescues within-phase even when depends_on declared', async () => {
+    // Sentinel for the #1144 + #1161 interaction. peer_substitutes_for
+    // is intra-phase; depends_on is inter-phase. They occupy different
+    // layers and should compose: a phase declaring `depends_on: ['X']`
+    // and containing a `peer_substitutes_for` rescue still rescues
+    // within-phase regardless of X's state.
+    agent = await startFakeAgent();
+    const storyboard = storyboardWithPhases([
+      {
+        id: 'upstream_dep',
+        title: 'upstream phase (passes)',
+        steps: [
+          {
+            id: 'up',
+            title: 'upstream',
+            task: '__test_setup',
+            stateful: true,
+            auth: 'none',
+            sample_request: {},
+          },
+        ],
+      },
+      {
+        id: 'account_setup',
+        title: 'account setup with substitution + targeted deps',
+        depends_on: ['upstream_dep'],
+        steps: [
+          {
+            id: 'sync',
+            title: 'sync_accounts (missing)',
+            task: 'sync_accounts',
+            stateful: true,
+            auth: 'none',
+            sample_request: {},
+          },
+          {
+            id: 'list',
+            title: 'list_accounts (declared substitute)',
+            task: '__test_setup',
+            stateful: true,
+            peer_substitutes_for: 'sync',
+            auth: 'none',
+            sample_request: {},
+          },
+        ],
+      },
+    ]);
+    const ADVERTISED = ['__test_setup', 'get_adcp_capabilities'];
+    const result = await runStoryboard([agent.url], storyboard, {
+      protocol: 'mcp',
+      allow_http: true,
+      agentTools: ADVERTISED,
+      _profile: { name: 'fake', tools: ADVERTISED.map(name => ({ name })) },
+    });
+    const up = result.phases[0].steps[0];
+    const [syncStep, listStep] = result.phases[1].steps;
+    assert.strictEqual(up.passed, true, 'upstream passed');
+    assert.strictEqual(syncStep.skip_reason, 'missing_tool', 'sync skipped missing_tool');
+    assert.strictEqual(listStep.passed, true, 'list (substitute) passed — phase 2 not cascade-tripped');
+  });
+
+  test('depends_on: <non-array> rejected at parse time (string instead of array)', async () => {
+    agent = await startFakeAgent();
+    const storyboard = storyboardWithPhases([
+      {
+        id: 'first',
+        title: 'first',
+        steps: [
+          {
+            id: 'a',
+            title: 'a',
+            task: '__test_setup',
+            stateful: true,
+            auth: 'none',
+            sample_request: {},
+          },
+        ],
+      },
+      {
+        id: 'second',
+        title: 'second (string instead of array)',
+        depends_on: 'first',
+        steps: [
+          {
+            id: 'b',
+            title: 'b',
+            task: '__test_setup',
+            stateful: true,
+            auth: 'none',
+            sample_request: {},
+          },
+        ],
+      },
+    ]);
+    await assert.rejects(
+      runStoryboard([agent.url], storyboard, {
+        protocol: 'mcp',
+        allow_http: true,
+        agentTools: ['__test_setup', 'get_adcp_capabilities'],
+        _profile: { name: 'fake', tools: [{ name: '__test_setup' }, { name: 'get_adcp_capabilities' }] },
+      }),
+      /depends_on must be an array of phase ids/
+    );
+  });
+
+  test('within-phase cascade still fires regardless of depends_on (intra-phase state dependency)', async () => {
+    // depends_on scopes INTER-phase cascade. Within a single phase,
+    // stateful steps later in the phase still depend on stateful steps
+    // earlier in the same phase by storyboard authoring intent — that
+    // can't be opted out of with depends_on.
+    agent = await startFakeAgent();
+    const storyboard = storyboardWithPhases([
+      {
+        id: 'lonely',
+        title: 'single independent phase with intra-phase cascade',
+        depends_on: [],
+        steps: [
+          {
+            id: 'setup',
+            title: 'setup (missing)',
+            task: 'sync_accounts',
+            stateful: true,
+            auth: 'none',
+            sample_request: {},
+          },
+          {
+            id: 'consume',
+            title: 'consume earlier state',
+            task: '__test_assert',
+            stateful: true,
+            auth: 'none',
+            sample_request: {},
+          },
+        ],
+      },
+    ]);
+    const ADVERTISED = ['__test_assert', 'get_adcp_capabilities'];
+    const result = await runStoryboard([agent.url], storyboard, {
+      protocol: 'mcp',
+      allow_http: true,
+      agentTools: ADVERTISED,
+      _profile: { name: 'fake', tools: ADVERTISED.map(name => ({ name })) },
+    });
+    const [setupStep, consumeStep] = result.phases[0].steps;
+    assert.strictEqual(setupStep.skip_reason, 'missing_tool');
+    // Within-phase cascade: consume cascades regardless of depends_on
+    // because setup is in the SAME phase.
+    assert.strictEqual(consumeStep.skipped, true, 'within-phase cascade fires');
+    assert.strictEqual(consumeStep.skip_reason, 'prerequisite_failed');
   });
 });

@@ -198,6 +198,39 @@ export interface StoryboardPhase {
   /** When true, the phase is allowed to be skipped without failing the storyboard. */
   optional?: boolean;
   /**
+   * Phases this phase depends on for stateful cascade purposes (#1161).
+   *
+   * When ANY listed phase tripped its stateful cascade (a stateful step
+   * failed or skipped for a missing-state reason), every stateful step in
+   * THIS phase cascade-skips with `prerequisite_failed`. When all listed
+   * phases passed their stateful steps, this phase runs normally even if
+   * other unrelated phases tripped — the runner treats independent phases
+   * independently.
+   *
+   * **Default semantics (field absent or undefined): "all prior phases."**
+   * Backward-compatible with the storyboard-scope cascade behavior that
+   * predates #1161 — every phase implicitly depends on every prior phase.
+   * The F6 round-2 cross-phase pattern (e.g. `signal_marketplace/
+   * governance_denied`: setup in phases 1-2, consumption in phase 3) is
+   * preserved without YAML changes.
+   *
+   * **Independent phase: `depends_on: []`** — explicitly declares this
+   * phase has no upstream dependencies and will run even if every prior
+   * phase tripped its cascade. Use for phases whose state derives from
+   * the request body alone (e.g., `audience_sync` carrying its own
+   * account ref via brand+operator) rather than from prior phase state.
+   *
+   * **Targeted dependency: `depends_on: ['phase_id', ...]`** — only the
+   * named phases gate this phase's cascade. Other phases tripping is
+   * irrelevant.
+   *
+   * Listed phase IDs MUST exist in the same storyboard and MUST be
+   * declared earlier in the `phases[]` array (forward references and
+   * self-references are rejected at parse time). Empty list is legal and
+   * means "no dependencies."
+   */
+  depends_on?: string[];
+  /**
    * Skip expression evaluated against the runtime context. Current grammar:
    *   - `"!test_kit.auth.api_key"` — true when field is missing/falsy
    *   - `"test_kit.auth.api_key"`  — true when field is present/truthy
