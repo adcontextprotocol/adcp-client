@@ -118,7 +118,13 @@ function buildPrompt(
     url: string;
     apiKey: string;
     openapiPath: string;
-    operatorMapping: Array<{ adcp_operator: string; upstream_operator_id: string }>;
+    principalScope: string;
+    principalMapping: Array<{
+      adcpField: string;
+      adcpValue: string;
+      upstreamField: string;
+      upstreamValue: string;
+    }>;
   }
 ): string {
   const upstreamSection = upstream
@@ -126,24 +132,24 @@ function buildPrompt(
 
 ## The upstream platform you're wrapping
 
-You are NOT inventing a decisioning/signal platform from scratch. The adopter brings an existing upstream platform and you are writing the AdCP wrapper around it.
+You are NOT inventing a decisioning/signal/creative platform from scratch. The adopter brings an existing upstream platform and you are writing the AdCP wrapper around it.
 
 The upstream platform is running locally as a fixture. Treat it exactly as you would the adopter's real platform — call its HTTP API to fetch state and post mutations.
 
 **Base URL**: ${upstream.url}
 **OpenAPI spec** (read this first): ${upstream.openapiPath}
 
-**Authentication** (every outbound request must carry both):
+**Authentication**:
 - \`Authorization: Bearer ${upstream.apiKey}\` — the customer-level API key
-- \`X-Operator-Id: <upstream operator id>\` — the operator seat. Different operators see different cohorts/destinations and have different rate cards. **Omitting this header returns 403.**
+- Per-tenant scope: ${upstream.principalScope}
 
-**Operator mapping**: the AdCP request you receive will carry \`account.operator: "<adcp-operator>"\`. You must translate that to the upstream operator id when calling the upstream API:
+**Principal mapping**: the AdCP request you receive will carry an identifier (e.g., \`account.operator\` or \`account.advertiser\`). You must translate that to the upstream tenant identifier when calling the upstream API:
 
-${upstream.operatorMapping.map(m => `- AdCP \`account.operator: "${m.adcp_operator}"\`  →  upstream \`X-Operator-Id: ${m.upstream_operator_id}\``).join('\n')}
+${upstream.principalMapping.map(m => `- AdCP \`${m.adcpField}: "${m.adcpValue}"\`  →  upstream \`${m.upstreamField}: ${m.upstreamValue}\``).join('\n')}
 
 The mapping table above is fixed seed data for this fixture; in production this would be a config file or DB lookup. Hard-code it for the test (a Map literal in your adapter is fine).
 
-If a buyer's \`account.operator\` value isn't in your mapping, return an appropriate AdCP error rather than calling upstream with no/wrong operator.
+If a buyer's principal value isn't in your mapping, return an appropriate AdCP error rather than calling upstream with no/wrong tenant scope.
 `
     : '';
 
@@ -421,19 +427,21 @@ function log(msg: string): void {
   process.stderr.write(`[harness] ${msg}\n`);
 }
 
-async function bootUpstreamForHarness(
-  specialism: string,
-  port: number
-): Promise<
-  | {
-      url: string;
-      apiKey: string;
-      openapiPath: string;
-      operatorMapping: Array<{ adcp_operator: string; upstream_operator_id: string }>;
-      close: () => Promise<void>;
-    }
-  | undefined
-> {
+interface UpstreamHandle {
+  url: string;
+  apiKey: string;
+  openapiPath: string;
+  principalScope: string;
+  principalMapping: Array<{
+    adcpField: string;
+    adcpValue: string;
+    upstreamField: string;
+    upstreamValue: string;
+  }>;
+  close: () => Promise<void>;
+}
+
+async function bootUpstreamForHarness(specialism: string, port: number): Promise<UpstreamHandle | undefined> {
   // Use the compiled dist/ entry point so the harness doesn't depend on tsx
   // resolution from a child process. Same path the CLI uses. If dist/ is
   // missing (contributor forgot `npm run build`), surface the same friendly
@@ -443,14 +451,13 @@ async function bootUpstreamForHarness(
   let bootMockServer: (opts: { specialism: string; port: number }) => Promise<{
     url: string;
     apiKey: string;
+    principalScope: string;
+    principalMapping: UpstreamHandle['principalMapping'];
     close: () => Promise<void>;
   }>;
-  let seed: { OPERATORS: Array<{ adcp_operator: string; operator_id: string }> };
   try {
     // eslint-disable-next-line @typescript-eslint/no-var-requires
     ({ bootMockServer } = require(resolve(REPO_ROOT, 'dist/lib/mock-server/index.js')));
-    // eslint-disable-next-line @typescript-eslint/no-var-requires
-    seed = require(resolve(REPO_ROOT, `dist/lib/mock-server/${specialism}/seed-data.js`));
   } catch (err) {
     log(
       `mock-server module not found in dist/. Run \`npm run build\` first.\n` +
@@ -460,16 +467,13 @@ async function bootUpstreamForHarness(
   }
   const handle = await bootMockServer({ specialism, port });
   const openapiPath = resolve(REPO_ROOT, `src/lib/mock-server/${specialism}/openapi.yaml`);
-  const operatorMapping = seed.OPERATORS.map(op => ({
-    adcp_operator: op.adcp_operator,
-    upstream_operator_id: op.operator_id,
-  }));
   log(`upstream mock-server (${specialism}) up on ${handle.url}`);
   return {
     url: handle.url,
     apiKey: handle.apiKey,
     openapiPath,
-    operatorMapping,
+    principalScope: handle.principalScope,
+    principalMapping: handle.principalMapping,
     close: handle.close,
   };
 }
@@ -507,7 +511,8 @@ async function main(): Promise<void> {
               url: upstream.url,
               apiKey: upstream.apiKey,
               openapiPath: upstream.openapiPath,
-              operatorMapping: upstream.operatorMapping,
+              principalScope: upstream.principalScope,
+              principalMapping: upstream.principalMapping,
             }
           : undefined
       ),
