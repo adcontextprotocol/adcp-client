@@ -731,12 +731,20 @@ export class SingleAgentClient {
       throw new AuthenticationRequiredError(providedUri, oauthMetadata || undefined);
     }
 
-    // None worked and no 401 - generic discovery failure
+    // None worked and no 401 - generic discovery failure.
+    // The most common cause is `agent_uri` pointing at the host root when the
+    // MCP endpoint lives at a non-standard path; the SDK only auto-probes `/`,
+    // `/mcp`, and `/mcp/`. Surface that hint so operators can fix the
+    // registration instead of debugging transport.
     throw new Error(
       `Failed to discover MCP endpoint. Tried:\n` +
         uniqueUrls.map((url, i) => `  ${i + 1}. ${url}`).join('\n') +
         '\n' +
-        `None responded to MCP protocol.`
+        `None responded to MCP protocol.\n\n` +
+        `Hint: this usually means agent_uri does not include the MCP endpoint path. ` +
+        `The SDK only probes /, /mcp, and /mcp/ automatically. ` +
+        `If your server exposes MCP at a different path (e.g. /api/mcp, /v1/mcp), ` +
+        `register that exact path as agent_uri.`
     );
   }
 
