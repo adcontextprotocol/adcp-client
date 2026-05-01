@@ -31,6 +31,8 @@ async function listToolsWithSessionRetry(mcpClient, connectMCP, connectOptions, 
     toolsList = await mcpClient.listTools();
   } catch (sessionErr) {
     if (!(sessionErr instanceof StreamableHTTPError)) throw sessionErr;
+    // Auth/authz failures won't be fixed by reconnecting — fast-fail
+    if (sessionErr.code === 401 || sessionErr.code === 403) throw sessionErr;
     logs.push({
       type: 'info',
       message: `MCP: getAgentInfo StreamableHTTP session error (${sessionErr.code}), reconnecting`,
@@ -39,6 +41,11 @@ async function listToolsWithSessionRetry(mcpClient, connectMCP, connectOptions, 
     const { client: retryClient } = await connectMCP(connectOptions);
     try {
       toolsList = await retryClient.listTools();
+    } catch (retryErr) {
+      if (retryErr instanceof Error && sessionErr instanceof Error) {
+        retryErr.cause = sessionErr;
+      }
+      throw retryErr;
     } finally {
       retryClient.close().catch(() => {});
     }
@@ -47,6 +54,8 @@ async function listToolsWithSessionRetry(mcpClient, connectMCP, connectOptions, 
 }
 
 describe('getAgentInfo: StreamableHTTP session retry', () => {
+  const noopConnect = async () => { throw new Error('should not reconnect'); };
+
   test('returns tools on first try when listTools succeeds', async () => {
     const mockTools = { tools: [{ name: 'get_adcp_capabilities' }] };
     const mcpClient = {
@@ -54,7 +63,7 @@ describe('getAgentInfo: StreamableHTTP session retry', () => {
       close: async () => {},
     };
 
-    const result = await listToolsWithSessionRetry(mcpClient, null, {});
+    const result = await listToolsWithSessionRetry(mcpClient, noopConnect, {});
     assert.deepStrictEqual(result, mockTools);
   });
 
@@ -174,6 +183,60 @@ describe('getAgentInfo: StreamableHTTP session retry', () => {
     assert.strictEqual(logs.length, 1);
     assert.ok(logs[0].message.includes('reconnecting'), 'log should mention reconnecting');
     assert.ok(logs[0].message.includes('400'), 'log should include the status code');
+  });
+
+  test('does not retry on 401 StreamableHTTPError (auth failure)', async () => {
+    let connectCalled = false;
+    const mcpClient = {
+      listTools: async () => { throw new StreamableHTTPError(401, 'Unauthorized'); },
+      close: async () => {},
+    };
+    const connectMCP = async () => { connectCalled = true; return { client: null }; };
+
+    await assert.rejects(
+      () => listToolsWithSessionRetry(mcpClient, connectMCP, {}),
+      { message: 'Unauthorized' }
+    );
+    assert.strictEqual(connectCalled, false, '401 should not trigger reconnect');
+  });
+
+  test('does not retry on 403 StreamableHTTPError (authorization failure)', async () => {
+    let connectCalled = false;
+    const mcpClient = {
+      listTools: async () => { throw new StreamableHTTPError(403, 'Forbidden'); },
+      close: async () => {},
+    };
+    const connectMCP = async () => { connectCalled = true; return { client: null }; };
+
+    await assert.rejects(
+      () => listToolsWithSessionRetry(mcpClient, connectMCP, {}),
+      { message: 'Forbidden' }
+    );
+    assert.strictEqual(connectCalled, false, '403 should not trigger reconnect');
+  });
+
+  test('chains original sessionErr as .cause when retry also fails', async () => {
+    const firstErr = new StreamableHTTPError(400, 'Missing session ID');
+    const secondErr = new StreamableHTTPError(400, 'Missing session ID again');
+
+    const mcpClient = {
+      listTools: async () => { throw firstErr; },
+      close: async () => {},
+    };
+    const retryClient = {
+      listTools: async () => { throw secondErr; },
+      close: async () => {},
+    };
+    const connectMCP = async () => ({ client: retryClient });
+
+    let thrown;
+    try {
+      await listToolsWithSessionRetry(mcpClient, connectMCP, {});
+    } catch (e) {
+      thrown = e;
+    }
+    assert.strictEqual(thrown, secondErr);
+    assert.strictEqual(thrown.cause, firstErr, 'retry error should have original as .cause');
   });
 
   test('connectOptions are forwarded to the retry connectMCP call', async () => {

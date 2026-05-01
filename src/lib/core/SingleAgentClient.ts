@@ -2681,6 +2681,9 @@ export class SingleAgentClient {
           // "Missing session ID" if the initial session negotiation didn't
           // complete cleanly. Re-initialize with a fresh connection and retry once.
           if (!(sessionErr instanceof StreamableHTTPError)) throw sessionErr;
+          // Auth/authz failures won't be fixed by reconnecting — fast-fail, matching
+          // the guard in withCachedConnection (mcp.ts).
+          if (sessionErr.code === 401 || sessionErr.code === 403) throw sessionErr;
           debugLogs.push({
             type: 'info',
             message: `MCP: getAgentInfo StreamableHTTP session error (${sessionErr.code}), reconnecting`,
@@ -2689,6 +2692,11 @@ export class SingleAgentClient {
           const { client: retryClient } = await connectMCP(connectOptions);
           try {
             toolsList = await retryClient.listTools();
+          } catch (retryErr) {
+            if (retryErr instanceof Error && sessionErr instanceof Error) {
+              (retryErr as Error & { cause?: unknown }).cause = sessionErr;
+            }
+            throw retryErr;
           } finally {
             retryClient.close().catch(() => {});
           }
