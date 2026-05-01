@@ -1256,6 +1256,14 @@ components:
           type: integer
         tracks_partial:
           type: integer
+        tracks_silent:
+          type: integer
+          description: |-
+            Tracks where every observation-based invariant ran but observed
+            zero lifecycle resources — wired but not exercised. Counted
+            separately from `tracks_passed` so dashboards can avoid
+            over-crediting silent tracks as real protection. Optional for
+            back-compat with runs persisted before SDK 6.4.
         tracks_json: {}
         total_duration_ms:
           type:
