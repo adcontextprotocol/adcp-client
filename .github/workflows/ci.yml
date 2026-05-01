@@ -70,6 +70,9 @@ jobs:
       - name: Build library
         run: npm run build:lib
 
+      - name: Adopter type-check (catch d.ts leaks)
+        run: npm run check:adopter-types
+
       - name: Typecheck examples
         run: npm run typecheck:examples
 

@@ -27,7 +27,6 @@ export interface ExtractedAdcpError {
 }
 
 /**
- * @internal
  * Extract an AdCP error from an MCP tool response.
  *
  * Detection order (per transport error mapping spec):
@@ -97,7 +96,6 @@ export function extractAdcpErrorFromMcp(
 }
 
 /**
- * @internal
  * Extract an AdCP error from a JSON-RPC transport error.
  * Checks error.data.adcp_error for structured transport-level errors
  * (e.g., -32029 rate limit from infrastructure).

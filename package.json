@@ -223,6 +223,7 @@
     "compliance:skill-matrix": "tsx scripts/manual-testing/run-skill-matrix.ts",
     "typecheck:skill-examples": "tsx scripts/typecheck-skill-examples.ts",
     "check:skill-sync": "tsx scripts/check-skill-sync.ts",
+    "check:adopter-types": "tsx scripts/check-adopter-types.ts",
     "sync-version": "tsx scripts/sync-version.ts",
     "validate-schemas": "tsx scripts/validate-schemas.ts",
     "lint": "eslint 'src/lib/testing/**/*.ts'",
