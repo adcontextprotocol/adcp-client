@@ -957,6 +957,23 @@ registerOnce('status.monotonic', {
     if (observations.length === 0) return [];
     return [{ passed: true, description, step_id: stepResult.step_id }];
   },
+  // Emit a run-level summary so the track rollup can distinguish
+  // "wired and exercised" (history.size > 0) from "wired but never
+  // observed a lifecycle resource" (history.size === 0). The latter
+  // demotes the track to TrackStatus: 'silent' even though every step
+  // and every per-step assertion record passed. Companion to
+  // adcontextprotocol/adcp#2834.
+  onEnd: ctx => {
+    const history = ctx.state.history as Map<string, MonotonicState> | undefined;
+    const observation_count = history?.size ?? 0;
+    return [
+      {
+        passed: true,
+        description: 'Resource statuses transition only along spec lifecycle edges',
+        observation_count,
+      },
+    ];
+  },
 });
 
 // Tiny type-safety helpers for the extractors above.

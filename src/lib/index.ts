@@ -241,6 +241,7 @@ export {
   VersionUnsupportedError,
   IdempotencyConflictError,
   IdempotencyExpiredError,
+  ResponseTooLargeError,
   adcpErrorToTypedError,
   isADCPError,
   isErrorOfType,
@@ -836,7 +837,7 @@ export {
   closeMCPConnections,
   bundleSupportsAdcpVersionField,
 } from './protocols';
-export type { CallToolOptions } from './protocols';
+export type { CallToolOptions, TransportOptions } from './protocols';
 
 // ====== RESPONSE UTILITIES ======
 // Public utilities for working with AdCP responses

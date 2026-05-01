@@ -231,6 +231,7 @@ describe('a2a_context_continuity (runner integration, #962)', () => {
         protocol: 'a2a',
         allow_http: true,
         invariants: DISABLE_DEFAULT_INVARIANTS,
+        validation: { responses: 'strict' },
       });
       const followUp = result.phases.flatMap(p => p.steps).find(s => s.step_id === 'second_send');
       assert.ok(followUp, 'follow-up step ran');

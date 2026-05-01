@@ -731,7 +731,16 @@ async function executeStoryboardPass(
   // or skipped to materialize state, every downstream stateful step
   // stays cascade-skipped regardless of which phase it lives in.
   let statefulFailed = false;
-  let statefulSkipTrigger: { stepId: string; reason: RunnerSkipReason | RunnerDetailedSkipReason } | null = null;
+  // `substitution_chain` is set when the trigger came from a
+  // deferred-and-unrescued `peer_substitutes_for` declaration (#1144) so
+  // the cascade-detail message can name the substitute(s) that didn't
+  // pass. Absent for the immediate-trip path and the legacy any-peer
+  // not_applicable path.
+  let statefulSkipTrigger: {
+    stepId: string;
+    reason: RunnerSkipReason | RunnerDetailedSkipReason;
+    substitution_chain?: string;
+  } | null = null;
   // Step results whose failures the main loop added to failedCount. The
   // branch-set post-pass decrements only for entries that were actually
   // counted, so an optional phase that hit `presenceDetected` (a PRM 2xx
@@ -888,18 +897,55 @@ async function executeStoryboardPass(
     // cross-phase setup → assertion patterns. See declaration site for
     // the rationale (signal_marketplace/governance_denied story).
     //
-    // Phase-scoped substitution tracking (adcp-client#1005, round-9).
-    // A `not_applicable` skip on a stateful step doesn't mean state
-    // never materialized — it means *this* path doesn't apply, and the
-    // storyboard may have a peer step (e.g. `list_accounts` paired
-    // with `sync_accounts`) that establishes equivalent state. We
-    // record the trigger and defer the cascade decision to phase end:
-    // if any stateful step in this phase passed, the substitute did
-    // its job and we don't trip. If none did, we promote the pending
-    // trigger to a hard cascade so downstream phases skip cleanly.
+    // Phase-scoped substitution tracking (adcp-client#1005, round-9; #1144).
+    //
+    // Two deferral paths:
+    //   1. `not_applicable` on a stateful step (any-peer rescue) — preserved
+    //      from the F6 fix. Rescued by ANY passing stateful step in the
+    //      phase. Backward-compatible with storyboards that haven't adopted
+    //      explicit substitution declarations.
+    //   2. `missing_tool` / `missing_test_controller` on a stateful step
+    //      WITH a declared substitute peer (`peer_substitutes_for`) in the
+    //      same phase. Rescued ONLY when the declared substitute actually
+    //      passes. Without a declaration, hard-missing reasons trip the
+    //      cascade immediately as before.
+    //
+    // Path (2) is opt-in via storyboard YAML: a substitute step declares
+    // `peer_substitutes_for: <target_step_id>` to assert that its passing
+    // establishes equivalent state. Phase membership alone is NOT treated
+    // as substitutability — explicit declaration is required.
     let phasePendingNotApplicable: { stepId: string; reason: RunnerSkipReason | RunnerDetailedSkipReason } | null =
       null;
     let phaseEstablishedStatefulState = false;
+    // Path (2): index of declared substitutions for this phase. Map keys
+    // are target step IDs (the steps being substituted FOR); values are the
+    // step IDs that declared the substitution. Built once per phase from
+    // each step's `peer_substitutes_for` field.
+    const phaseSubstitutes = new Map<string, string[]>();
+    for (const declaringStep of phase.steps) {
+      const decl = declaringStep.peer_substitutes_for;
+      if (decl === undefined) continue;
+      const targets = Array.isArray(decl) ? decl : [decl];
+      for (const target of targets) {
+        const arr = phaseSubstitutes.get(target) ?? [];
+        arr.push(declaringStep.id);
+        phaseSubstitutes.set(target, arr);
+      }
+    }
+    // Path (2) state. `phasePendingMissingTool` is the deferred-cascade
+    // trigger for a stateful step that skipped with a hard-missing reason
+    // AND has at least one declared substitute in this phase. Only the
+    // first such trigger is recorded — the cascade-detail message
+    // references the leftmost step.
+    let phasePendingMissingTool: {
+      stepId: string;
+      reason: RunnerSkipReason | RunnerDetailedSkipReason;
+      substitutes: string[];
+    } | null = null;
+    // Targets actually rescued by a passing declared substitute. Populated
+    // when a step with `peer_substitutes_for: X` passes — every X in its
+    // declaration list lands here.
+    const phaseRescuedTargets = new Set<string>();
     // PRM presence-probe state (adcp-client#677). `phaseAbsent` flips when
     // /.well-known/oauth-protected-resource returns 404 — subsequent steps
     // in this phase cascade-skip instead of failing their http_status:200
@@ -1026,7 +1072,9 @@ async function executeStoryboardPass(
           continue;
         }
         const detail = statefulSkipTrigger
-          ? `Skipped: prior stateful step "${statefulSkipTrigger.stepId}" skipped (${statefulSkipTrigger.reason}); state never materialized.`
+          ? statefulSkipTrigger.substitution_chain
+            ? `Skipped: prior stateful step "${statefulSkipTrigger.stepId}" skipped (${statefulSkipTrigger.reason}); ${statefulSkipTrigger.substitution_chain}; state never materialized.`
+            : `Skipped: prior stateful step "${statefulSkipTrigger.stepId}" skipped (${statefulSkipTrigger.reason}); state never materialized.`
           : 'Skipped: prior stateful step failed.';
         stepResults.push({
           storyboard_id: storyboard.id,
@@ -1157,13 +1205,30 @@ async function executeStoryboardPass(
         // path) deliberately don't trip the flag.
         if (step.stateful) {
           if (isHardMissingStateSkipReason(result.skip_reason)) {
-            statefulFailed = true;
-            // Record provenance for the cascade detail message. First trip
-            // wins — subsequent triggers don't overwrite, since the cascade
-            // text references the originating diagnostic (the leftmost
-            // missing-state stateful step in the phase).
-            if (statefulSkipTrigger === null) {
-              statefulSkipTrigger = { stepId: step.id, reason: result.skip_reason ?? 'missing_tool' };
+            // Hard-missing skip on a stateful step. Defer the cascade only
+            // when a peer in this phase has declared
+            // `peer_substitutes_for: <this_step_id>` — that peer's pass
+            // establishes equivalent state. Without a declaration,
+            // missing_tool / missing_test_controller trips the cascade
+            // immediately (existing behavior).
+            const substitutes = phaseSubstitutes.get(step.id);
+            if (substitutes && substitutes.length > 0) {
+              if (phasePendingMissingTool === null) {
+                phasePendingMissingTool = {
+                  stepId: step.id,
+                  reason: result.skip_reason ?? 'missing_tool',
+                  substitutes,
+                };
+              }
+            } else {
+              statefulFailed = true;
+              // Record provenance for the cascade detail message. First trip
+              // wins — subsequent triggers don't overwrite, since the cascade
+              // text references the originating diagnostic (the leftmost
+              // missing-state stateful step in the phase).
+              if (statefulSkipTrigger === null) {
+                statefulSkipTrigger = { stepId: step.id, reason: result.skip_reason ?? 'missing_tool' };
+              }
             }
           } else if (result.skip_reason === 'not_applicable') {
             // Defer cascade decision until end of phase. Applies the
@@ -1198,6 +1263,17 @@ async function executeStoryboardPass(
         // the deferred cascade should NOT fire at phase end.
         if (step.stateful) {
           phaseEstablishedStatefulState = true;
+          // Path (2) rescue tracking: a passing step that declared
+          // `peer_substitutes_for: X` rescues X. Recorded against every
+          // declared target so phase-end resolution sees the target as
+          // covered even if its skip arrives later in the loop.
+          const decl = step.peer_substitutes_for;
+          if (decl !== undefined) {
+            const targets = Array.isArray(decl) ? decl : [decl];
+            for (const target of targets) {
+              phaseRescuedTargets.add(target);
+            }
+          }
         }
       } else {
         phasePassed = false;
@@ -1242,6 +1318,27 @@ async function executeStoryboardPass(
       statefulFailed = true;
       if (statefulSkipTrigger === null) {
         statefulSkipTrigger = phasePendingNotApplicable;
+      }
+    }
+
+    // Phase-end cascade resolution for deferred `missing_tool` triggers
+    // (#1144). A stateful step that skipped with a hard-missing reason
+    // and had at least one declared substitute (`peer_substitutes_for`)
+    // was deferred above. If none of the declared substitutes passed,
+    // the substitution path failed to establish state — promote to a
+    // hard cascade with a detail message that names the substitute(s)
+    // tried so adopters reading the report see the substitution chain
+    // rather than a bare `missing_tool` cascade origin.
+    if (phasePendingMissingTool && !phaseRescuedTargets.has(phasePendingMissingTool.stepId) && !statefulFailed) {
+      statefulFailed = true;
+      if (statefulSkipTrigger === null) {
+        const subs = phasePendingMissingTool.substitutes;
+        const subsList = subs.length === 1 ? `"${subs[0]}"` : subs.map(s => `"${s}"`).join(', ');
+        statefulSkipTrigger = {
+          stepId: phasePendingMissingTool.stepId,
+          reason: phasePendingMissingTool.reason,
+          substitution_chain: `declared substitute ${subsList} did not pass`,
+        };
       }
     }
 

@@ -27,6 +27,8 @@
 import type { DecisioningPlatform, RequiredPlatformsFor, RequiredCapabilitiesFor } from './platform';
 import type { DecisioningAdcpServer, CreateAdcpServerFromPlatformOptions } from './runtime/from-platform';
 import { createAdcpServerFromPlatform } from './runtime/from-platform';
+import type { SignerKey } from '../../signing/signer';
+import type { AdcpJsonWebKey } from '../../signing/types';
 
 // ---------------------------------------------------------------------------
 // Public types
@@ -38,9 +40,31 @@ export interface TenantSigningKey {
   /**
    * JWK form of the public key. MUST appear in the JWKS at
    * `{agentUrl}/.well-known/brand.json` for the tenant to validate.
+   *
+   * **`adcp_use` requirement.** The JWK MUST carry
+   * `adcp_use: "webhook-signing"` for the registry to auto-wire this
+   * key into outbound webhook signing. Per AdCP, request-signing and
+   * webhook-signing keys MUST be distinct (key-purpose discriminator,
+   * adcp#2423) — a key intended for inbound request-signature
+   * verification CANNOT double as a webhook-signing key. If you have
+   * both purposes, register two tenants OR wire the request-signing
+   * verifier separately on `serverOptions.signedRequests` and put only
+   * the webhook-signing key on `signingKey`.
+   *
+   * Set with: `publicJwk: { ...jwk, adcp_use: 'webhook-signing' }`.
+   * `createSelfSignedTenantKey()` sets it for you.
    */
   publicJwk: JsonWebKey;
-  /** Private JWK used to sign outbound responses (RFC 9421). */
+  /**
+   * Private JWK used to sign outbound webhooks (RFC 9421). MUST carry
+   * `adcp_use: "webhook-signing"`. The registry's `buildServer` plumbs
+   * this into `serverOptions.webhooks.signerKey` automatically — set
+   * the key once on `signingKey` and outbound webhook deliveries are
+   * RFC 9421-signed by default. Adopters who want a different webhook
+   * key (or don't want auto-wiring) explicitly set
+   * `serverOptions.webhooks.signerKey` / `signerProvider`; the explicit
+   * config wins and auto-wiring is skipped.
+   */
   privateJwk: JsonWebKey;
 }
 
@@ -91,8 +115,30 @@ export interface TenantConfig<P extends DecisioningPlatform = DecisioningPlatfor
    * field via the `jwksUrl` argument on `JwksValidator.validate`.
    */
   jwksUrl?: string;
-  /** Signing keypair for RFC 9421 response signing. */
-  signingKey: TenantSigningKey;
+  /**
+   * Signing keypair for RFC 9421 response signing. **Optional in 3.x;
+   * mandated in 4.0.**
+   *
+   * When set, the registry validates `publicJwk` appears in the tenant's
+   * published JWKS at `{agentUrl}/.well-known/brand.json` (or `jwksUrl`
+   * if overridden) before transitioning the tenant to `healthy`.
+   *
+   * When omitted, JWKS validation is skipped entirely — the tenant
+   * transitions directly from `pending` to `healthy` on register(), with
+   * `reason: 'unsigned (no signingKey)'`. AdCP 3.x treats request signing
+   * as optional, so adopters spiking the SDK before standing up KMS or
+   * publishing brand.json can ship without signing material. Buyers MUST
+   * NOT break when an agent doesn't sign in 3.x — that's covered by the
+   * "tolerate Signature headers" baseline regardless of whether the
+   * agent itself signs.
+   *
+   * For local dev with signing enabled, pair `createSelfSignedTenantKey()`
+   * (generates an Ed25519 keypair) with `createNoopJwksValidator()`
+   * (skips the brand.json roundtrip in dev/test). Production adopters
+   * keep the default validator and publish the public half via
+   * brand.json.
+   */
+  signingKey?: TenantSigningKey;
   /** The DecisioningPlatform impl for this tenant. */
   platform: P &
     RequiredPlatformsFor<P['capabilities']['specialisms'][number]> &
@@ -390,6 +436,171 @@ function isMatchingKey(jwk: unknown, expected: JsonWebKey, expectedKid: string):
 }
 
 // ---------------------------------------------------------------------------
+// Self-signed key + no-op validator helpers (3.x adoption ergonomics)
+// ---------------------------------------------------------------------------
+
+/**
+ * Generate an Ed25519 keypair suitable for `TenantConfig.signingKey`.
+ *
+ * Convenience for adopters spiking the SDK before standing up KMS or
+ * publishing brand.json. AdCP 3.x treats request signing as optional, so
+ * `TenantConfig.signingKey` is itself optional — but adopters who DO
+ * want to exercise the signing path (storyboards, signed-requests
+ * grader, end-to-end tests) need a working key without the operational
+ * lift of a real KMS.
+ *
+ * Pair with `createNoopJwksValidator()` to skip the brand.json
+ * roundtrip in dev/test, OR publish the returned `publicJwk` at
+ * `{agentUrl}/.well-known/brand.json` (under `jwks.keys[]`) and use the
+ * default validator unchanged.
+ *
+ * **Production**: don't generate signing material in-process. Adopt a
+ * KMS-backed loader (HashiCorp Vault, AWS KMS, GCP Secret Manager) — a
+ * process compromise leaks an in-memory privateJwk and the only remedy
+ * is rotation across every counterparty cache.
+ *
+ * @param opts.keyId Optional `kid` for the key. Defaults to a
+ *   timestamped value (`self-signed-{ISO date}`). Stable across restarts
+ *   only if you pass a stable `keyId`.
+ */
+export async function createSelfSignedTenantKey(opts?: { keyId?: string }): Promise<TenantSigningKey> {
+  // Lazy import — `jose` is a runtime dep, but the import-cost is real
+  // and most adopters never call this. Keep the registry's hot path
+  // (register / resolve) free of jose.
+  const { generateKeyPair, exportJWK } = await import('jose');
+  const { publicKey, privateKey } = await generateKeyPair('EdDSA', { crv: 'Ed25519', extractable: true });
+  const rawPublic = (await exportJWK(publicKey)) as JsonWebKey;
+  const rawPrivate = (await exportJWK(privateKey)) as JsonWebKey;
+  const keyId = opts?.keyId ?? `self-signed-${new Date().toISOString().slice(0, 10)}`;
+  // Tag both halves with `adcp_use: "webhook-signing"`. The registry's
+  // auto-wire path requires this tag (assertWebhookSigningUse below);
+  // setting it on the helper output means adopters get a working
+  // signing posture out of the box.
+  const publicJwk: JsonWebKey = { ...rawPublic, adcp_use: 'webhook-signing' } as JsonWebKey;
+  const privateJwk: JsonWebKey = { ...rawPrivate, adcp_use: 'webhook-signing' } as JsonWebKey;
+  return { keyId, publicJwk, privateJwk };
+}
+
+/**
+ * No-op JWKS validator that always returns `{ ok: true }`. Use ONLY in
+ * dev/test when you've set `signingKey` (e.g., via
+ * `createSelfSignedTenantKey()`) but haven't published brand.json yet —
+ * this skips the JWKS roundtrip so tenants reach `healthy` without a
+ * real `/.well-known/brand.json` endpoint.
+ *
+ * **Refuses to construct outside `NODE_ENV` ∈ {`'test'`, `'development'`}**
+ * unless the operator sets `ADCP_NOOP_JWKS_ACK=1` to explicitly
+ * acknowledge the risk. Mirrors the `idempotency: 'disabled'` allowlist
+ * pattern — `NODE_ENV` defaults to unset in raw Lambda / custom
+ * containers / many K8s deployments, so a `=== 'production'` check
+ * would no-op in exactly the environments where a silent skip-validation
+ * start is most dangerous.
+ *
+ * The ack value MUST be the literal string `'1'`. Truthy lookalikes
+ * (`'true'`, `'yes'`) intentionally don't satisfy the gate to prevent
+ * copy-paste typos.
+ *
+ * In production, leave the registry's default validator wired and
+ * publish brand.json. Or omit `signingKey` entirely (`TenantConfig`
+ * makes it optional in 3.x), which skips JWKS validation without
+ * needing this helper.
+ */
+export function createNoopJwksValidator(): JwksValidator {
+  const env = process.env.NODE_ENV;
+  const acknowledged = process.env.ADCP_NOOP_JWKS_ACK === '1';
+  const isAllowlistedDevEnv = env === 'test' || env === 'development';
+  if (!isAllowlistedDevEnv && !acknowledged) {
+    throw new Error(
+      'createNoopJwksValidator: refuses to construct with NODE_ENV=' +
+        (env === undefined ? '<unset>' : JSON.stringify(env)) +
+        '. The no-op validator skips JWKS verification, so a tenant whose published brand.json does not actually ' +
+        'contain the configured signingKey would reach `healthy` and serve unverifiable signed responses. ' +
+        'The SDK only allows it under NODE_ENV=test or NODE_ENV=development by default. Either: ' +
+        '(a) use the default validator (createDefaultJwksValidator) and publish a real brand.json, ' +
+        '(b) omit signingKey from TenantConfig — JWKS validation is skipped entirely for unsigned tenants in 3.x, ' +
+        '(c) set NODE_ENV=test or NODE_ENV=development if this is a dev-only environment, or ' +
+        '(d) set ADCP_NOOP_JWKS_ACK=1 to explicitly acknowledge the risk for non-standard environments.'
+    );
+  }
+  // eslint-disable-next-line no-console
+  console.warn(
+    '[adcp] createNoopJwksValidator: JWKS validation is DISABLED for this registry. ' +
+      'Tenants will reach `healthy` without a brand.json roundtrip. Use only in dev/test.'
+  );
+  return {
+    async validate(): Promise<JwksValidationResult> {
+      return { ok: true };
+    },
+  };
+}
+
+// ---------------------------------------------------------------------------
+// Webhook auto-wire — convert TenantSigningKey to a SignerKey the framework's
+// webhook emitter understands. Strict on `adcp_use` per AdCP key-purpose
+// discriminator (adcp#2423).
+// ---------------------------------------------------------------------------
+
+/**
+ * Derive the RFC 9421 signing algorithm from JWK shape. AdCP webhook
+ * signing supports Ed25519 (kty=OKP, crv=Ed25519) and ECDSA P-256
+ * (kty=EC, crv=P-256). Anything else throws — RSA / EC P-384 / etc.
+ * are not in the AdCP signing-algorithm set.
+ */
+function deriveSigningAlg(jwk: JsonWebKey): 'ed25519' | 'ecdsa-p256-sha256' {
+  if (jwk.kty === 'OKP' && jwk.crv === 'Ed25519') return 'ed25519';
+  if (jwk.kty === 'EC' && jwk.crv === 'P-256') return 'ecdsa-p256-sha256';
+  throw new Error(
+    `TenantConfig.signingKey: unsupported JWK shape kty=${JSON.stringify(jwk.kty)} crv=${JSON.stringify(jwk.crv)}. ` +
+      'AdCP RFC 9421 webhook signing requires Ed25519 (kty=OKP, crv=Ed25519) or ECDSA P-256 (kty=EC, crv=P-256). ' +
+      'See `docs/guides/SIGNING-GUIDE.md` for key-generation recipes.'
+  );
+}
+
+/**
+ * Enforce AdCP key-purpose discriminator: a key wired into webhook
+ * signing MUST carry `adcp_use: "webhook-signing"`. Throws with a
+ * remediation-pointing error otherwise. Called only when auto-wiring
+ * fires (signingKey set + serverOptions.webhooks.signerKey unset);
+ * adopters who want different keys per purpose wire them explicitly
+ * and bypass this check.
+ */
+function assertWebhookSigningUse(key: TenantSigningKey): void {
+  const publicUse = (key.publicJwk as Record<string, unknown>).adcp_use;
+  const privateUse = (key.privateJwk as Record<string, unknown>).adcp_use;
+  if (publicUse !== 'webhook-signing') {
+    throw new Error(
+      `TenantConfig.signingKey: publicJwk.adcp_use must be 'webhook-signing' for the registry's webhook auto-wire path. ` +
+        `Got ${publicUse === undefined ? '<unset>' : JSON.stringify(publicUse)}. ` +
+        'Per AdCP, request-signing and webhook-signing keys MUST be distinct (key-purpose discriminator, adcp#2423). ' +
+        'Either: (a) tag this key with `adcp_use: "webhook-signing"` if it IS the webhook-signing key, ' +
+        '(b) mint a separate webhook-signing key and put the request-signing key on serverOptions.signedRequests instead, or ' +
+        '(c) wire `serverOptions.webhooks.signerKey` explicitly — the explicit config bypasses auto-wiring.'
+    );
+  }
+  if (privateUse !== 'webhook-signing') {
+    throw new Error(
+      `TenantConfig.signingKey: privateJwk.adcp_use must be 'webhook-signing' (same purpose as publicJwk). ` +
+        `Got ${privateUse === undefined ? '<unset>' : JSON.stringify(privateUse)}.`
+    );
+  }
+}
+
+/**
+ * Convert `TenantSigningKey` to the framework-internal `SignerKey`
+ * shape consumed by the webhook emitter. Field-name shift: the
+ * `TenantSigningKey` surface uses `keyId` (camelCase, adopter-facing);
+ * `SignerKey` uses `keyid` (lowercase, RFC 9421 wire term).
+ */
+function tenantKeyToSignerKey(key: TenantSigningKey): SignerKey {
+  const alg = deriveSigningAlg(key.publicJwk);
+  return {
+    keyid: key.keyId,
+    alg,
+    privateKey: key.privateJwk as AdcpJsonWebKey,
+  };
+}
+
+// ---------------------------------------------------------------------------
 // Registry implementation
 // ---------------------------------------------------------------------------
 
@@ -522,6 +733,29 @@ export function createTenantRegistry(opts: TenantRegistryOptions): TenantRegistr
       ...opts.defaultServerOptions,
       ...config.serverOptions,
     };
+    // Auto-wire `signingKey` into webhook emission. Adopters set the key
+    // once on TenantConfig and outbound webhook deliveries are RFC
+    // 9421-signed by default. Skip when:
+    //   - signingKey is omitted (3.x unsigned path), or
+    //   - the adopter has already wired their own webhook signer on
+    //     serverOptions.webhooks (explicit config wins — adopters with
+    //     KMS-backed signing or distinct webhook keys per tenant pass
+    //     through unaffected).
+    // Strict on `adcp_use`: the JWK MUST carry `adcp_use:
+    // "webhook-signing"` per AdCP key-purpose discriminator (adcp#2423).
+    // Throws at register() time with a remediation-pointing error rather
+    // than silently no-op'ing the auto-wire.
+    if (
+      config.signingKey &&
+      merged.webhooks?.signerKey === undefined &&
+      merged.webhooks?.signerProvider === undefined
+    ) {
+      assertWebhookSigningUse(config.signingKey);
+      merged.webhooks = {
+        ...(merged.webhooks ?? {}),
+        signerKey: tenantKeyToSignerKey(config.signingKey),
+      };
+    }
     return createAdcpServerFromPlatform(config.platform, merged);
   }
 
@@ -531,6 +765,23 @@ export function createTenantRegistry(opts: TenantRegistryOptions): TenantRegistr
       throw new Error(`runValidation: tenant '${tenantId}' not registered`);
     }
     const [canonicalUrl, allUrls] = resolveTenantUrls(entry.config);
+    // Unsigned tenant — adopter chose to ship without signing in 3.x.
+    // Skip JWKS validation entirely; tenant goes straight to healthy.
+    // `buildServer` short-circuits the webhook auto-wire on the same
+    // condition (signingKey is undefined), so the tenant emits unsigned
+    // webhooks too — consistent posture across JWKS and signing.
+    if (!entry.config.signingKey) {
+      const status: TenantStatus = {
+        tenantId,
+        agentUrl: canonicalUrl,
+        agentUrls: allUrls,
+        health: 'healthy',
+        reason: 'unsigned (no signingKey)',
+        lastCheckedAt: new Date().toISOString(),
+      };
+      entry.status = status;
+      return status;
+    }
     // Multi-URL tenants validate every URL independently. Aliases share the
     // signing key; if an alias publishes a brand.json that doesn't include
     // the key (DNS hijack, operator misconfig, stale mirror), traffic to
