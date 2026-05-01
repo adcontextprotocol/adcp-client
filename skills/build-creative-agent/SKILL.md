@@ -186,6 +186,7 @@ Minimal `tsconfig.json`:
     "module": "Node16",
     "moduleResolution": "Node16",
     "strict": true,
+    "esModuleInterop": true,
     "skipLibCheck": true,
     "outDir": "dist"
   }
