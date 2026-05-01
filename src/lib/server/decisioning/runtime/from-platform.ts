@@ -769,6 +769,9 @@ export function createAdcpServerFromPlatform<P extends DecisioningPlatform<any, 
   // dropping the field on undefined which failed schema validation; v5's
   // `?? []` would also fail (minItems: 1). 'agent' (agent consolidates
   // billing) is the least-surprising default for non-media-buy specialisms.
+  // An adopter passing supportedBillings: [] also lands in the default
+  // branch — the closed enum has no semantic meaning for empty, and
+  // emitting an empty array would fail schema regardless.
   const accountOverrides: Partial<NonNullable<GetAdCPCapabilitiesResponse['account']>> = {
     ...(requireOperatorAuth === true && { require_operator_auth: true }),
     ...(hasAccountProjection && {
