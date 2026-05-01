@@ -155,12 +155,29 @@ export interface TransportOptions {
    * with `ResponseTooLargeError`. When unset, the SDK does not impose a cap —
    * matches the underlying MCP / A2A transport defaults.
    *
-   * Set this when crawling untrusted agents (registries, federated discovery
-   * layers, monitoring tools) to prevent a hostile vendor from buffering a
-   * large reply before any application-layer schema validation runs. Counted
-   * across response chunks; pre-cancels when `Content-Length` exceeds the cap.
+   * Set this when crawling **untrusted** agents (registries, federated
+   * discovery layers, monitoring tools) to prevent a hostile vendor from
+   * buffering a large reply before any application-layer schema validation
+   * runs. Counted across response chunks; pre-cancels when `Content-Length`
+   * exceeds the cap. Applies to A2A agent-card discovery
+   * (`/.well-known/agent.json`) on the same call as well.
    *
-   * Per-call override beats the value set on the client constructor.
+   * Per-call override (`TaskOptions.transport.maxResponseBytes`) beats the
+   * value set on the client constructor (`SingleAgentClientConfig.transport`).
+   *
+   * @remarks
+   * **Leave unset for long-lived buyer sessions.** When set, the cap applies
+   * to every fetch in the call's ALS scope — including any side-channel
+   * `GET` the MCP transport opens for server-initiated messages. Long-lived
+   * connections that legitimately stream more cumulative bytes than the cap
+   * will be torn down. The option is intended for one-shot discovery / crawl
+   * paths where the response is bounded by definition.
+   *
+   * @remarks
+   * Future hardening knobs (DNS-rebind defense, scheme allow-list, request
+   * timeout overrides) will land here as additional fields rather than
+   * forcing callers to compose their own `fetch` — wrap order with the SDK's
+   * existing signing / capture wrappers is non-obvious and a footgun.
    */
   maxResponseBytes?: number;
 }

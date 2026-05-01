@@ -66,9 +66,12 @@ function enforceSizeLimit(response: Response, maxBytes: number, url: string): Re
   // below is the authoritative enforcement.
   const declared = parseContentLength(response.headers.get('content-length'));
   if (declared !== undefined && declared > maxBytes) {
-    response.body?.cancel().catch(() => {
-      /* socket already closed by transport */
-    });
+    // Best-effort cancel so the runtime can release the socket. We swallow
+    // any rejection because the typed `ResponseTooLargeError` below is the
+    // signal the caller acts on — a `cancel()` rejection here would only
+    // happen if the body stream is already errored / locked, in which case
+    // the socket is already on its way down and there's nothing to recover.
+    response.body?.cancel().catch(() => {});
     throw new ResponseTooLargeError(maxBytes, 0, url, declared);
   }
 
