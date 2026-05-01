@@ -342,6 +342,7 @@ describe(
           protocol: 'a2a',
           allow_http: true,
           invariants: DISABLE_DEFAULT_INVARIANTS,
+          validation: { responses: 'strict' },
         });
         const a2aCheck = result.validations.find(v => v.check === 'a2a_submitted_artifact');
         assert.ok(a2aCheck, 'a2a_submitted_artifact ran');
