@@ -1,5 +1,10 @@
 import { bootCreativeTemplate } from './creative-template/server';
 import { DEFAULT_API_KEY as CREATIVE_TEMPLATE_DEFAULT_API_KEY, WORKSPACES } from './creative-template/seed-data';
+import { bootSalesGuaranteed } from './sales-guaranteed/server';
+import {
+  DEFAULT_API_KEY as SALES_GUARANTEED_DEFAULT_API_KEY,
+  NETWORKS as SALES_GUARANTEED_NETWORKS,
+} from './sales-guaranteed/seed-data';
 import { bootSalesSocial } from './sales-social/server';
 import { ADVERTISERS, OAUTH_CLIENTS } from './sales-social/seed-data';
 import { bootSignalMarketplace } from './signal-marketplace/server';
@@ -138,9 +143,29 @@ export async function bootMockServer(options: MockServerOptions): Promise<MockSe
         })),
       };
     }
+    case 'sales-guaranteed': {
+      const { url, close } = await bootSalesGuaranteed({
+        port: options.port,
+        apiKey: options.apiKey,
+      });
+      const apiKey = options.apiKey ?? SALES_GUARANTEED_DEFAULT_API_KEY;
+      return {
+        url,
+        auth: { kind: 'static_bearer', apiKey },
+        close,
+        summary: () => formatSalesGuaranteedSummary(url, apiKey),
+        principalScope: 'X-Network-Code header (required on every request)',
+        principalMapping: SALES_GUARANTEED_NETWORKS.map(net => ({
+          adcpField: 'account.publisher',
+          adcpValue: net.adcp_publisher,
+          upstreamField: 'X-Network-Code',
+          upstreamValue: net.network_code,
+        })),
+      };
+    }
     default:
       throw new Error(
-        `Unknown mock-server specialism: "${options.specialism}". Supported: signal-marketplace, creative-template, sales-social.`
+        `Unknown mock-server specialism: "${options.specialism}". Supported: signal-marketplace, creative-template, sales-social, sales-guaranteed.`
       );
   }
 }
@@ -225,5 +250,41 @@ function formatSalesSocialSummary(url: string, client: { client_id: string; clie
     `  POST   ${url}/v1.3/advertiser/{advertiser_id}/creative/create`,
     `  POST   ${url}/v1.3/advertiser/{advertiser_id}/pixel/create`,
     `  POST   ${url}/v1.3/advertiser/{advertiser_id}/event/track                  (CAPI)`,
+  ].join('\n');
+}
+
+function formatSalesGuaranteedSummary(url: string, apiKey: string): string {
+  const networkLines = SALES_GUARANTEED_NETWORKS.map(
+    net => `  ${net.network_code}  →  AdCP account.publisher: "${net.adcp_publisher}"`
+  ).join('\n');
+  return [
+    `Mock guaranteed-sales platform (GAM-flavored) running at ${url}`,
+    ``,
+    `Auth:`,
+    `  Authorization: Bearer ${apiKey}`,
+    `  X-Network-Code: <network_code> (required on every call)`,
+    ``,
+    `Network mapping:`,
+    networkLines,
+    ``,
+    `OpenAPI spec: src/lib/mock-server/sales-guaranteed/openapi.yaml`,
+    `Key routes:`,
+    `  GET    ${url}/v1/inventory                                                # ad units`,
+    `  GET    ${url}/v1/products                                                 # productized inventory`,
+    `  GET    ${url}/v1/orders                                                   # list orders`,
+    `  POST   ${url}/v1/orders                                                   # create (returns pending_approval + task_id)`,
+    `  GET    ${url}/v1/orders/{order_id}                                        # poll order status`,
+    `  POST   ${url}/v1/orders/{order_id}/lineitems                              # add line items`,
+    `  POST   ${url}/v1/orders/{order_id}/lineitems/{li}/creative-attach         # attach creative`,
+    `  GET    ${url}/v1/orders/{order_id}/delivery                               # delivery reporting`,
+    `  POST   ${url}/v1/orders/{order_id}/conversions                            # CAPI delivery validation`,
+    `  GET    ${url}/v1/tasks/{task_id}                                          # poll approval task`,
+    `  GET    ${url}/v1/creatives                                                # list creatives`,
+    `  POST   ${url}/v1/creatives                                                # upload creative`,
+    ``,
+    `Order state machine: draft → pending_approval → approved → delivering → completed`,
+    `Approval is async: POST /orders returns pending_approval + approval_task_id;`,
+    `poll /tasks/{id} (mock auto-promotes submitted → working → completed after 2 polls)`,
+    `or poll /orders/{id} directly to detect transition.`,
   ].join('\n');
 }
