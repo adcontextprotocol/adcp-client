@@ -513,6 +513,86 @@ For adopters running behind an egress proxy that already enforces the SSRF polic
 
 `createPinAndBindFetch` is generic and not webhook-specific — wire it anywhere you make outbound calls to a URL you don't fully trust.
 
+### Multi-tenant: signing key on `TenantConfig` (auto-wired)
+
+When you're hosting many tenants with `createTenantRegistry`, set the webhook signing key once on `TenantConfig.signingKey` — the registry plumbs it into the tenant's webhook emitter automatically so you don't have to wire `serverOptions.webhooks.signerKey` per tenant.
+
+```typescript
+import { createTenantRegistry } from '@adcp/sdk/server';
+
+const registry = createTenantRegistry({
+  defaultServerOptions: { name: 'multi-tenant-host', version: '1.0.0' },
+});
+
+registry.register('acme', {
+  agentUrl: 'https://acme.example.com',
+  signingKey: {
+    keyId: 'acme-2026-05',
+    publicJwk: { ...acmePublicJwk, adcp_use: 'webhook-signing' },
+    privateJwk: { ...acmePrivateJwk, adcp_use: 'webhook-signing' },
+  },
+  platform: acmePlatform,
+});
+```
+
+The registry validates two things for you:
+
+1. **JWKS publication.** `publicJwk` MUST appear in the tenant's brand.json at `{agentUrl}/.well-known/brand.json` — the registry fetches it on register() and refuses traffic to tenants whose key isn't published (default validator).
+2. **Key purpose.** Both halves of the key MUST carry `adcp_use: "webhook-signing"`. Mismatched or missing `adcp_use` throws at register() with a remediation hint, citing adcp#2423 (key-purpose discriminator).
+
+Adopters wiring KMS-backed signing or a distinct webhook key per tenant set `serverOptions.webhooks.signerKey` / `signerProvider` explicitly — the explicit config wins and auto-wiring is skipped.
+
+### Self-signed dev path
+
+Production needs a published brand.json at `{agentUrl}/.well-known/brand.json` with the public key under `jwks.keys[]`. Dev / sandbox / fast-iteration loops don't have that yet, but adopters still want to exercise the signing pipeline locally. Two helpers cover the gap:
+
+```typescript
+import {
+  createTenantRegistry,
+  createSelfSignedTenantKey,
+  createNoopJwksValidator,
+} from '@adcp/sdk/server';
+
+// 1. Generate an Ed25519 keypair tagged adcp_use: 'webhook-signing'.
+//    No KMS, no JWKS publication — keypair lives in-process.
+const key = await createSelfSignedTenantKey({ keyId: 'dev-key-1' });
+
+// 2. Skip the brand.json roundtrip with the no-op validator.
+//    REFUSES to construct outside NODE_ENV ∈ {test, development} unless
+//    you set ADCP_NOOP_JWKS_ACK=1 — keeps prod safe by default.
+const registry = createTenantRegistry({
+  jwksValidator: createNoopJwksValidator(),
+  defaultServerOptions: { name: 'dev', version: '0.0.0' },
+});
+
+// 3. Register and go. The auto-wire still fires; webhooks are
+//    RFC 9421-signed with `key`, validation against brand.json is
+//    skipped, tenant reaches `healthy` immediately.
+registry.register('dev-tenant', {
+  agentUrl: 'https://dev-tenant.localhost',
+  signingKey: key,
+  platform: yourPlatform,
+});
+```
+
+Promotion path to production: replace `createNoopJwksValidator()` with the default (just remove the `jwksValidator` line), publish the public half of `key` at `{agentUrl}/.well-known/brand.json` under `jwks.keys[]` with `adcp_use: "webhook-signing"`, swap the in-memory key for a KMS-backed `SigningProvider` wired on `serverOptions.webhooks.signerProvider` for tenants where the in-process risk profile isn't acceptable.
+
+### Unsigned tenants (3.x optional path)
+
+AdCP 3.x classifies request signing as optional but recommended. Adopters spiking the SDK before standing up KMS or publishing brand.json can omit `signingKey` entirely:
+
+```typescript
+registry.register('not-signing-yet', {
+  agentUrl: 'https://later.example.com',
+  // signingKey omitted — JWKS validation skipped, webhook auto-wire
+  // skipped, tenant goes straight to `healthy` with
+  // reason: 'unsigned (no signingKey)'. Outbound webhooks are unsigned.
+  platform: yourPlatform,
+});
+```
+
+AdCP 4.0 will mandate `signingKey`; until then this is a soft launch path. Buyers MUST NOT break when an agent doesn't sign in 3.x — the "tolerate Signature headers regardless" baseline applies whether or not the agent signs (CLAUDE.md § Protocol-Wide Requirements).
+
 ## Step 7: Declare the Capability
 
 If your seller agent verifies inbound signatures, declare `request_signing` in your capabilities so buyers know to sign:
