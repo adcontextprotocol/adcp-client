@@ -94,6 +94,11 @@ function isPrivateAddress(url: URL): boolean {
   return false;
 }
 
+// If a future caller threads OAuth (`authProvider`) through `withCachedConnection`,
+// add an OAuth-identity dimension to this key (e.g. provider's `client_id` or
+// agent.id) so two distinct identities at the same `agentUrl` with no static
+// token don't collide on the cached connection. Today no caller does — OAuth
+// stays out of the cache.
 function connectionCacheKey(agentUrl: string, authToken?: string, signingCacheKey?: string): string {
   const base = authToken
     ? `${agentUrl}::${createHash('sha256').update(authToken).digest('hex').slice(0, 16)}`
@@ -290,6 +295,12 @@ export interface MCPConnectionResult {
  * Auth: pass either `authHeaders` (static token) or `options.authProvider` (OAuth).
  * The provider is forwarded to both StreamableHTTP and SSE transports so OAuth
  * works through the SSE fallback as well.
+ *
+ * OAuth interactive flows: unlike `connectMCP`, this helper does NOT attach
+ * the failing `transport`/`client` to a thrown `UnauthorizedError`. Callers
+ * that need to complete a server-initiated OAuth flow via `transport.finishAuth(code)`
+ * should use `connectMCP` directly. Non-interactive providers (saved-token
+ * refresh, client-credentials) work fine here.
  */
 export async function connectMCPWithFallback(
   url: URL,

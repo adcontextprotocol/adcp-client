@@ -23,6 +23,7 @@ const http = require('node:http');
 
 const { AdCPClient } = require('../../dist/lib/index.js');
 const { closeMCPConnections } = require('../../dist/lib/protocols');
+const { connectMCPWithFallback } = require('../../dist/lib/protocols/mcp.js');
 
 let server;
 let baseUrl;
@@ -125,10 +126,67 @@ describe('getAgentInfo() — connectMCPWithFallback wiring (#1233)', () => {
       info.tools.map(t => t.name).sort(),
       ['get_adcp_capabilities', 'get_products']
     );
-    // 1 init from discovery + 1 failed init + 1 retry init from getAgentInfo.
-    // If the SDK regresses to connectMCP (no retry), initCount lands at 2 and
-    // getAgentInfo throws — caught by this assertion.
-    assert.strictEqual(initCount, 3, `expected 3 initialize calls (discovery + fail + retry), got ${initCount}`);
+    // The server returns 400 on the second initialize. Reaching listTools
+    // requires the retry-on-StreamableHTTPError path to succeed — which only
+    // exists in connectMCPWithFallback, not connectMCP. The exact count
+    // depends on discovery internals; the behavior assertion (tools returned)
+    // is what pins the fix.
+    assert.ok(initCount >= 2, `expected at least 2 initialize calls, got ${initCount}`);
+  });
+});
+
+describe('connectMCPWithFallback — SSE fallback fires for non-private addresses (#1233)', () => {
+  // The isPrivateAddress() gate skips SSE fallback for loopback to surface
+  // StreamableHTTP failures locally. To pin SSE-fallback behavior we mock
+  // global fetch and use a public-looking URL so the gate doesn't fire.
+  // We don't need the SSE handshake to complete — we only need to confirm
+  // a GET was issued after the POST failed, which is the signal that the
+  // SSE transport was constructed and tried.
+  it('falls back to SSE GET after StreamableHTTP POST fails on a public URL', async () => {
+    const originalFetch = globalThis.fetch;
+    let postCount = 0;
+    let getCount = 0;
+    globalThis.fetch = async (input, init) => {
+      const url = typeof input === 'string' ? input : input?.url ?? input?.toString();
+      const method = (init?.method ?? 'GET').toUpperCase();
+      if (method === 'POST') {
+        postCount++;
+        return new Response('not found', { status: 404, headers: { 'content-type': 'application/json' } });
+      }
+      getCount++;
+      // Returning 404 on GET means SSE also fails — that's fine. We're only
+      // checking that the SSE GET was issued, proving the fallback path ran.
+      return new Response('not found', { status: 404, headers: { 'content-type': 'text/plain' } });
+    };
+    try {
+      await assert.rejects(
+        connectMCPWithFallback(new URL('https://agent.example.test/mcp'), {}, [], 'sse-fallback-pin'),
+        () => true
+      );
+      assert.ok(postCount >= 1, `expected at least 1 POST (StreamableHTTP), got ${postCount}`);
+      assert.ok(getCount >= 1, `expected at least 1 GET (SSE fallback), got ${getCount}`);
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+
+  it('does NOT fall back to SSE for loopback addresses (gate preserved)', async () => {
+    const originalFetch = globalThis.fetch;
+    let getCount = 0;
+    globalThis.fetch = async (input, init) => {
+      const method = (init?.method ?? 'GET').toUpperCase();
+      if (method === 'GET') getCount++;
+      return new Response('not found', { status: 404 });
+    };
+    try {
+      await assert.rejects(
+        connectMCPWithFallback(new URL('http://127.0.0.1:1/mcp'), {}, [], 'loopback-no-sse'),
+        () => true
+      );
+      assert.strictEqual(getCount, 0, 'SSE fallback must not fire for loopback addresses');
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
   });
 });
 
@@ -157,7 +215,7 @@ describe('discoverMCPEndpoint — wrong-path hint (#1234)', () => {
             /Hint:.*agent_uri.*does not include the MCP endpoint path/i,
             `expected wrong-path hint in: ${err.message}`
           );
-          assert.match(err.message, /\/api\/mcp|\/adcp\/mcp/, 'expected example paths in hint');
+          assert.match(err.message, /\/api\/mcp|\/v1\/mcp/, 'expected example paths in hint');
           return true;
         }
       );

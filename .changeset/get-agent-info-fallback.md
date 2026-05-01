@@ -4,7 +4,7 @@
 
 fix(client): getAgentInfo() now uses the same StreamableHTTP-then-SSE fallback as every other code path
 
-`SingleAgentClient.getAgentInfo()` previously routed its post-discovery `listTools` connection through `connectMCP`, which has no retry on `StreamableHTTPError` and no SSE fallback. Every other production path (`callMCPTool`, `mcp-tasks`) goes through `connectMCPWithFallback`, which retries once on transient session errors and falls back to `SSEClientTransport` for non-401 failures.
+`SingleAgentClient.getAgentInfo()` previously routed its post-discovery `listTools` connection through `connectMCP`, which has no retry on `StreamableHTTPError` and no SSE fallback. Every other production path (`callMCPTool`, `mcp-tasks`) goes through `connectMCPWithFallback`, which retries once on `StreamableHTTPError` (covers stale-session 400s per MCP SDK #1852) and falls back to `SSEClientTransport` for non-401 failures on public addresses.
 
 The asymmetry surfaced as `getAgentInfo()` failing on flaky StreamableHTTP servers where the comply suite kept working. After this change, both code paths behave identically.
 
