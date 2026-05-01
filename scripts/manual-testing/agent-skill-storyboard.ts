@@ -453,7 +453,7 @@ async function bootUpstreamForHarness(
     seed = require(resolve(REPO_ROOT, `dist/lib/mock-server/${specialism}/seed-data.js`));
   } catch (err) {
     log(
-      `[harness] mock-server module not found in dist/. Run \`npm run build\` first.\n` +
+      `mock-server module not found in dist/. Run \`npm run build\` first.\n` +
         `  underlying: ${(err as Error)?.message ?? err}`
     );
     throw new Error(`mock-server (${specialism}) not built; run \`npm run build\``);

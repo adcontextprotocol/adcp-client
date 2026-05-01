@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: Cohort Marketplace API
-  version: "2.0.0"
+  version: '2.0.0'
   description: |
     HTTP API for a fictional signal/audience marketplace platform. Models a
     LiveRamp / Lotame / Oracle Data Cloud-shaped upstream that aggregates
@@ -17,7 +17,7 @@ servers:
   - url: http://127.0.0.1:{port}/v2
     variables:
       port:
-        default: "4500"
+        default: '4500'
         description: Port the mock-server boots on (override with --port)
 
 components:
@@ -42,12 +42,26 @@ components:
   schemas:
     Cohort:
       type: object
-      required: [cohort_id, name, category, member_count, total_universe, freshness_days, activation_status, data_provider_domain, data_provider_id, data_provider_name, pricing, value_type]
+      required:
+        [
+          cohort_id,
+          name,
+          category,
+          member_count,
+          total_universe,
+          freshness_days,
+          activation_status,
+          data_provider_domain,
+          data_provider_id,
+          data_provider_name,
+          pricing,
+          value_type,
+        ]
       properties:
         cohort_id:
           type: string
           description: Stable upstream identifier. NOT the same as the marketplace agent's signal_agent_segment_id.
-          example: "up_trident_likely_ev_buyers"
+          example: 'up_trident_likely_ev_buyers'
         name: { type: string }
         description: { type: string }
         category:
@@ -70,11 +84,11 @@ components:
         data_provider_domain:
           type: string
           description: Domain of the upstream data provider — flows directly to AdCP signal_id.data_provider_domain.
-          example: "tridentauto.example"
+          example: 'tridentauto.example'
         data_provider_id:
           type: string
           description: Data-provider-internal ID for this cohort.
-          example: "likely_ev_buyers"
+          example: 'likely_ev_buyers'
         data_provider_name:
           type: string
           description: |
@@ -82,7 +96,7 @@ components:
             to AdCP `signal_id.data_provider` (required by signals response
             schema). Without this field, adapters have to fabricate the value
             from the domain, which trains the wrong reflex.
-          example: "Trident Auto Insights"
+          example: 'Trident Auto Insights'
         value_type:
           type: string
           enum: [binary, numeric, categorical]
@@ -99,7 +113,7 @@ components:
         pricing:
           type: array
           description: Operator-specific rate card. Different operators see different prices on the same cohort.
-          items: { $ref: "#/components/schemas/PricingTier" }
+          items: { $ref: '#/components/schemas/PricingTier' }
         metadata:
           type: object
           additionalProperties: true
@@ -110,7 +124,7 @@ components:
       type: object
       required: [pricing_id, model, currency]
       properties:
-        pricing_id: { type: string, example: "tier_trident_evb_cpm_op_pinnacle" }
+        pricing_id: { type: string, example: 'tier_trident_evb_cpm_op_pinnacle' }
         model:
           type: string
           enum: [cpm]
@@ -118,7 +132,7 @@ components:
         cpm_amount:
           type: number
           description: Cost per mille in `currency`. Required when model=cpm.
-        currency: { type: string, example: "USD" }
+        currency: { type: string, example: 'USD' }
         minimum_spend:
           type: number
           description: Optional floor; operator must commit to at least this spend per activation.
@@ -127,7 +141,7 @@ components:
       type: object
       required: [destination_id, name, platform_type, integration]
       properties:
-        destination_id: { type: string, example: "dest_ttd_main" }
+        destination_id: { type: string, example: 'dest_ttd_main' }
         name: { type: string }
         platform_type:
           type: string
@@ -155,10 +169,10 @@ components:
       type: object
       required: [activation_id, cohort_id, destination_id, status, created_at]
       properties:
-        activation_id: { type: string, example: "act_01J9X..." }
+        activation_id: { type: string, example: 'act_01J9X...' }
         cohort_id: { type: string }
         destination_id: { type: string }
-        pricing_id: { type: string, description: "Which PricingTier was committed." }
+        pricing_id: { type: string, description: 'Which PricingTier was committed.' }
         status:
           type: string
           enum: [pending, in_progress, active, failed, expired]
@@ -219,7 +233,7 @@ paths:
       summary: List cohorts visible to {operator}
       operationId: listCohorts
       parameters:
-        - $ref: "#/components/parameters/OperatorId"
+        - $ref: '#/components/parameters/OperatorId'
         - in: query
           name: category
           schema:
@@ -233,7 +247,7 @@ paths:
           schema: { type: string }
           description: Free-text search across name + description.
       responses:
-        "200":
+        '200':
           description: Cohorts visible to this operator. Empty array if none.
           content:
             application/json:
@@ -243,38 +257,38 @@ paths:
                 properties:
                   cohorts:
                     type: array
-                    items: { $ref: "#/components/schemas/Cohort" }
-        "401": { description: Missing/invalid bearer credential. }
-        "403": { description: Unknown operator. }
+                    items: { $ref: '#/components/schemas/Cohort' }
+        '401': { description: Missing/invalid bearer credential. }
+        '403': { description: Unknown operator. }
 
   /cohorts/{cohort_id}:
     get:
       summary: Fetch cohort detail (with operator-scoped pricing)
       operationId: getCohort
       parameters:
-        - $ref: "#/components/parameters/OperatorId"
+        - $ref: '#/components/parameters/OperatorId'
         - in: path
           name: cohort_id
           required: true
           schema: { type: string }
       responses:
-        "200":
+        '200':
           description: Cohort detail.
           content:
             application/json:
-              schema: { $ref: "#/components/schemas/Cohort" }
-        "401": { description: Missing/invalid bearer credential. }
-        "403": { description: Unknown operator OR cohort visible to other operators only. }
-        "404": { description: Cohort does not exist. }
+              schema: { $ref: '#/components/schemas/Cohort' }
+        '401': { description: Missing/invalid bearer credential. }
+        '403': { description: Unknown operator OR cohort visible to other operators only. }
+        '404': { description: Cohort does not exist. }
 
   /destinations:
     get:
       summary: List activation destinations available to {operator}
       operationId: listDestinations
       parameters:
-        - $ref: "#/components/parameters/OperatorId"
+        - $ref: '#/components/parameters/OperatorId'
       responses:
-        "200":
+        '200':
           description: Destinations.
           content:
             application/json:
@@ -284,57 +298,65 @@ paths:
                 properties:
                   destinations:
                     type: array
-                    items: { $ref: "#/components/schemas/Destination" }
-        "401": { description: Missing/invalid bearer credential. }
-        "403": { description: Unknown operator. }
+                    items: { $ref: '#/components/schemas/Destination' }
+        '401': { description: Missing/invalid bearer credential. }
+        '403': { description: Unknown operator. }
 
   /activations:
     post:
       summary: Create an activation (push cohort to destination)
       operationId: createActivation
       parameters:
-        - $ref: "#/components/parameters/OperatorId"
+        - $ref: '#/components/parameters/OperatorId'
       requestBody:
         required: true
         content:
           application/json:
-            schema: { $ref: "#/components/schemas/ActivationRequest" }
+            schema: { $ref: '#/components/schemas/ActivationRequest' }
       responses:
-        "201":
+        '201':
           description: Activation created. status will be `pending` initially for DSP destinations and `active` immediately for agent destinations.
           content:
             application/json:
-              schema: { $ref: "#/components/schemas/Activation" }
-        "200":
+              schema: { $ref: '#/components/schemas/Activation' }
+        '200':
           description: Idempotent replay — returns the existing activation for this client_request_id.
           content:
             application/json:
-              schema: { $ref: "#/components/schemas/Activation" }
-        "400":
+              schema: { $ref: '#/components/schemas/Activation' }
+        '400':
           description: Bad request — missing required fields, invalid pricing_id for cohort, etc.
           content:
             application/json:
-              schema: { $ref: "#/components/schemas/Error" }
-        "401": { description: Missing/invalid bearer credential. }
-        "403": { description: Unknown operator OR cohort/destination not visible to this operator. }
-        "404": { description: Cohort or destination does not exist. }
+              schema: { $ref: '#/components/schemas/Error' }
+        '401': { description: Missing/invalid bearer credential. }
+        '403': { description: Unknown operator OR cohort/destination not visible to this operator. }
+        '404': { description: Cohort or destination does not exist. }
+        '409':
+          description: |
+            Idempotency conflict — `client_request_id` was previously used with
+            a different `(cohort_id, destination_id, pricing_id)` tuple. Use a
+            fresh idempotency key for distinct requests.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
 
   /activations/{activation_id}:
     get:
       summary: Fetch activation status
       operationId: getActivation
       parameters:
-        - $ref: "#/components/parameters/OperatorId"
+        - $ref: '#/components/parameters/OperatorId'
         - in: path
           name: activation_id
           required: true
           schema: { type: string }
       responses:
-        "200":
+        '200':
           description: Activation detail.
           content:
             application/json:
-              schema: { $ref: "#/components/schemas/Activation" }
-        "401": { description: Missing/invalid bearer credential. }
-        "403": { description: Activation belongs to a different operator. }
-        "404": { description: Activation does not exist. }
+              schema: { $ref: '#/components/schemas/Activation' }
+        '401': { description: Missing/invalid bearer credential. }
+        '403': { description: Activation belongs to a different operator. }
+        '404': { description: Activation does not exist. }
