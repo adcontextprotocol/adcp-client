@@ -116,6 +116,26 @@ describe('field_less_than', () => {
     assert.strictEqual(result.passed, false);
     assert.ok(result.error.includes('path'));
   });
+
+  it('treats explicit undefined in context as absent (context_key_absent)', () => {
+    const ctx = makeCtx({ data: { cpm: 5 }, storyboardContext: { floor_cpm: undefined } });
+    const [result] = runValidations(
+      [{ check: 'field_less_than', path: 'cpm', context_key: 'floor_cpm', description: 'test' }],
+      ctx
+    );
+    assert.strictEqual(result.passed, true, 'undefined context value should yield context_key_absent pass');
+    assert.ok(Array.isArray(result.observations));
+    assert.ok(result.observations[0].includes('context_key_absent'));
+  });
+
+  it('when both context_key and value are set, context_key takes precedence', () => {
+    // context_key: 'floor_cpm' = 20; value = 100; field = 30 → should compare against 20, not 100
+    const [result] = runValidations(
+      [{ check: 'field_less_than', path: 'cpm', context_key: 'floor_cpm', value: 100, description: 'test' }],
+      makeCtx({ data: { cpm: 30 }, storyboardContext: { floor_cpm: 20 } })
+    );
+    assert.strictEqual(result.passed, false, 'context_key comparand (20) should win over literal value (100)');
+  });
 });
 
 // ────────────────────────────────────────────────────────────

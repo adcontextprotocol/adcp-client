@@ -1945,13 +1945,14 @@ function resolveContextComparand(
       observation: `context_key_absent: storyboardContext not available for key "${validation.context_key}"`,
     };
   }
-  if (!(validation.context_key in ctx.storyboardContext)) {
+  const ctxValue = ctx.storyboardContext[validation.context_key];
+  if (!(validation.context_key in ctx.storyboardContext) || ctxValue === undefined) {
     return {
       found: false,
       observation: `context_key_absent: key "${validation.context_key}" not found in storyboard context (prior step may have been skipped)`,
     };
   }
-  return { found: true, value: ctx.storyboardContext[validation.context_key] };
+  return { found: true, value: ctxValue };
 }
 
 function validateFieldLessThan(validation: StoryboardValidation, ctx: ValidationContext): ValidationResult {
@@ -2092,7 +2093,7 @@ function validateFieldEqualsContext(validation: StoryboardValidation, ctx: Valid
     passed: false,
     description: validation.description,
     path: validation.path,
-    error: `Expected ${JSON.stringify(expected)} (from context["${validation.context_key}"]); got ${JSON.stringify(actual)}`,
+    error: `Expected ${JSON.stringify(expected)} (from context["${validation.context_key}"]); got ${JSON.stringify(actual ?? null)}`,
     json_pointer: pointer,
     expected,
     actual: actual ?? null,
