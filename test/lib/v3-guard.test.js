@@ -53,11 +53,31 @@ describe('SingleAgentClient.requireV3 — corroborated check', () => {
     );
   });
 
-  test('rejects synthetic capabilities even when v3 is claimed', async () => {
+  test('accepts synthetic v3 capabilities (issue #1217 — v3-only tool is affirmative evidence)', async () => {
+    // The agent had `get_adcp_capabilities` (v3-only) in its tool list but
+    // the call failed. Synthetic v3 caps are produced from the tool list as
+    // the verifiable-v3 fallback. requireV3 accepts these silently (with a
+    // one-time warn fired by maybeWarnSyntheticV3) rather than the prior
+    // hard-reject — the agent IS v3, we just couldn't read details. The
+    // strict accessors (getIdempotencyReplayTtlSeconds, etc.) still throw
+    // when called, surfacing the broken caps endpoint at use-site.
     const client = clientWithCapabilities({
       version: 'v3',
       majorVersions: [3],
       idempotency,
+      _synthetic: true,
+    });
+    await client.requireV3('sync_creatives');
+    // No throw = pass.
+  });
+
+  test('still rejects synthetic v2 capabilities (no v3-only tool in tools/list)', async () => {
+    // The synthetic-v3 escape hatch is gated on version === 'v3'. A synthetic
+    // v2 capabilities object (no get_adcp_capabilities tool present) still
+    // fails loudly — that's the case we genuinely don't know the version for.
+    const client = clientWithCapabilities({
+      version: 'v2',
+      majorVersions: [2],
       _synthetic: true,
     });
     await assert.rejects(
