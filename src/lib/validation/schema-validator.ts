@@ -73,6 +73,17 @@ export interface ValidationIssue {
    * branch detail.
    */
   allowedValues?: readonly unknown[];
+  /**
+   * When `keyword === 'oneOf'` or `'anyOf'` and the compaction logic
+   * identified a best-match branch (fewest residual errors after
+   * discriminator collapse), the zero-based index of that branch in
+   * the schema's `oneOf`/`anyOf` array. Absent when no branch selection
+   * occurred or the issue is not a union type.
+   *
+   * Pairs with `variants[]` — the entry at `variants[selected_branch_index]`
+   * is the branch the payload appeared to be targeting.
+   */
+  selected_branch_index?: number;
 }
 
 export interface ValidationOutcome {
@@ -80,6 +91,13 @@ export interface ValidationOutcome {
   issues: ValidationIssue[];
   /** Which schema variant was selected — useful for logging/debugging. */
   variant: Direction | 'skipped';
+  /**
+   * The `$id` of the root schema validated against (e.g.
+   * `/schemas/3.0.4/core/activation-key.json`). Absent when the
+   * schema has no `$id` or no schema was resolved. Useful for
+   * cross-referencing validation failures against the spec.
+   */
+  schema_id?: string;
   /**
    * True when the response's `status` field named an async variant
    * (`submitted` / `working` / `input-required`) but no compiled schema
@@ -192,8 +210,12 @@ function resolveSchemaPath(rootSchema: unknown, schemaPath: string): unknown {
  *     user's discriminator value satisfied wins over a sibling whose
  *     discriminator they violated. Drop the rest.
  */
-function compactUnionErrors(errors: readonly ErrorObject[], rootSchema: unknown): ErrorObject[] {
-  if (errors.length === 0) return [...errors];
+function compactUnionErrors(
+  errors: readonly ErrorObject[],
+  rootSchema: unknown
+): { errors: ErrorObject[]; selectedBranch: Map<ErrorObject, number> } {
+  const selectedBranch = new Map<ErrorObject, number>();
+  if (errors.length === 0) return { errors: [...errors], selectedBranch };
 
   // Pre-bucket once so each error is scanned a constant number of times even
   // when a malicious or pathological payload pushes Ajv to emit thousands of
@@ -358,9 +380,15 @@ function compactUnionErrors(errors: readonly ErrorObject[], rootSchema: unknown)
     for (const [idx, residual] of residualByVariant) {
       if (idx !== bestIdx) for (const e of residual) dropped.add(e);
     }
+    // Record which branch was selected for this union root so callers can
+    // surface it on the emitted ValidationIssue as selected_branch_index.
+    // Only record when the root itself survives (not dropped by anyZeroResidual).
+    if (bestIdx >= 0 && !dropped.has(root)) {
+      selectedBranch.set(root, bestIdx);
+    }
   }
 
-  return [...errors.filter(e => !dropped.has(e)), ...added];
+  return { errors: [...errors.filter(e => !dropped.has(e)), ...added], selectedBranch };
 }
 
 /**
@@ -402,10 +430,22 @@ export function validateRequest(toolName: string, payload: unknown, version?: st
   const valid = validator(payload) as boolean;
   if (valid) return { valid: true, issues: [], variant: 'request' };
   const rootSchema = (validator as { schema?: unknown }).schema;
-  const compacted = compactUnionErrors(validator.errors ?? [], rootSchema);
+  const schemaId =
+    rootSchema != null && typeof rootSchema === 'object'
+      ? ((rootSchema as { $id?: string }).$id ?? undefined)
+      : undefined;
+  const { errors: compacted, selectedBranch } = compactUnionErrors(validator.errors ?? [], rootSchema);
   return {
     valid: false,
-    issues: compacted.map(formatIssue).map(i => enrichWithVariants(i, rootSchema)),
+    schema_id: schemaId,
+    issues: compacted.map(err => {
+      const issue = formatIssue(err);
+      const branchIdx = selectedBranch.get(err);
+      return enrichWithVariants(
+        branchIdx !== undefined ? { ...issue, selected_branch_index: branchIdx } : issue,
+        rootSchema
+      );
+    }),
     variant: 'request',
   };
 }
@@ -496,10 +536,22 @@ export function validateResponse(toolName: string, payload: unknown, version?: s
     ? { variant_fallback_applied: true, requested_variant: variant }
     : {};
   if (valid) return { valid: true, issues: [], variant: usedVariant, ...fallbackFields };
-  const compacted = compactUnionErrors(effective.errors ?? [], rootSchema);
+  const schemaId =
+    rootSchema != null && typeof rootSchema === 'object'
+      ? ((rootSchema as { $id?: string }).$id ?? undefined)
+      : undefined;
+  const { errors: compacted, selectedBranch } = compactUnionErrors(effective.errors ?? [], rootSchema);
   return {
     valid: false,
-    issues: compacted.map(formatIssue).map(i => enrichWithVariants(i, rootSchema)),
+    schema_id: schemaId,
+    issues: compacted.map(err => {
+      const issue = formatIssue(err);
+      const branchIdx = selectedBranch.get(err);
+      return enrichWithVariants(
+        branchIdx !== undefined ? { ...issue, selected_branch_index: branchIdx } : issue,
+        rootSchema
+      );
+    }),
     variant: usedVariant,
     ...fallbackFields,
   };
