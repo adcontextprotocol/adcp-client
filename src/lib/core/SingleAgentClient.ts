@@ -742,9 +742,10 @@ export class SingleAgentClient {
         '\n' +
         `None responded to MCP protocol.\n\n` +
         `Hint: this usually means agent_uri does not include the MCP endpoint path. ` +
-        `The SDK only probes /, /mcp, and /mcp/ automatically. ` +
-        `If your server exposes MCP at a different path (e.g. /api/mcp, /v1/mcp), ` +
-        `register that exact path as agent_uri.`
+        `The SDK auto-appends /mcp and /mcp/ (plus a trailing-slash variant) ` +
+        `to the provided path. If your server exposes MCP at a different path ` +
+        `(e.g. /api/mcp, /v1/mcp) or uses legacy SSE at /sse, register that ` +
+        `exact path as agent_uri.`
     );
   }
 
