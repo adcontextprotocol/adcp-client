@@ -123,6 +123,75 @@ interface ToolDefinition {
 }
 
 /**
+ * Rewrite a discriminated `oneOf` whose branches are bare `required` + `not.required`
+ * mutual-exclusion clauses into explicit closed shapes. Without this, json-schema-to-typescript
+ * sees a branch with no own `properties`/`type` and falls back to
+ * `{ [k: string]: unknown | undefined }`, which is incompatible with closed-shape values
+ * returned by typed builders (e.g. `displayRender({...})` cannot satisfy
+ * `Format.renders[number]`'s loose first variant). See adcp-client#1325.
+ *
+ * Applies only when the parent `items`-style schema has:
+ *   - a sibling `properties` map declaring the candidate fields
+ *   - every `oneOf` branch shaped as `{ required: [X], not: { required: [Y] } }`
+ *     with no own `properties`/`type`/`$ref`
+ *
+ * Each branch is rewritten to inline the parent's properties (minus those the
+ * branch's `not.required` excludes), with the branch's own `required` items
+ * added to the parent's `required`. The original `oneOf` is retained but each
+ * branch is now a complete closed shape — jsts emits a clean union.
+ *
+ * Idempotent: a second pass over a transformed branch (which now has its own
+ * `properties`) is a no-op because the predicate above no longer matches.
+ */
+function tightenMutualExclusionOneOf(schema: any): any {
+  if (!schema || typeof schema !== 'object' || Array.isArray(schema)) return schema;
+  if (!schema.oneOf || !Array.isArray(schema.oneOf)) return schema;
+  if (!schema.properties || typeof schema.properties !== 'object') return schema;
+
+  const parentProps = schema.properties as Record<string, any>;
+  const parentRequired: string[] = Array.isArray(schema.required) ? [...schema.required] : [];
+
+  const isMutualExclusionBranch = (branch: any): boolean => {
+    if (!branch || typeof branch !== 'object') return false;
+    if (branch.type || branch.$ref || branch.oneOf || branch.anyOf || branch.allOf) {
+      return false;
+    }
+    if (!Array.isArray(branch.required) || branch.required.length === 0) return false;
+    if (!branch.not || typeof branch.not !== 'object') return false;
+    if (!Array.isArray(branch.not.required) || branch.not.required.length === 0) return false;
+    // Branch may declare its own `properties` (typically to assert `const` on
+    // the discriminator field) — we'll merge those in.
+    return true;
+  };
+
+  if (!schema.oneOf.every(isMutualExclusionBranch)) return schema;
+
+  const rewritten = schema.oneOf.map((branch: any) => {
+    const branchRequired: string[] = branch.required;
+    const forbidden: string[] = branch.not.required;
+    const branchOwnProps: Record<string, any> =
+      branch.properties && typeof branch.properties === 'object' ? branch.properties : {};
+    const newProperties: Record<string, any> = {};
+    for (const [key, prop] of Object.entries(parentProps)) {
+      if (forbidden.includes(key)) continue;
+      // Branch's own property override (e.g. `{const: true}`) wins over parent's.
+      newProperties[key] = branchOwnProps[key] ?? prop;
+    }
+    // Branch-only fields that the parent didn't declare.
+    for (const [key, prop] of Object.entries(branchOwnProps)) {
+      if (!(key in newProperties)) newProperties[key] = prop;
+    }
+    return {
+      type: 'object',
+      properties: newProperties,
+      required: Array.from(new Set([...parentRequired, ...branchRequired])),
+    };
+  });
+
+  return { ...schema, oneOf: rewritten };
+}
+
+/**
  * Recursively remove additionalProperties: true from schema to enforce strict typing
  * This prevents [k: string]: unknown in generated TypeScript types
  *
@@ -133,6 +202,12 @@ export function enforceStrictSchema(schema: any): any {
   if (!schema || typeof schema !== 'object') {
     return schema;
   }
+
+  // Rewrite mutual-exclusion `oneOf` patterns (e.g. Format.renders[]) into
+  // explicit closed-shape branches before any further processing — see
+  // {@link tightenMutualExclusionOneOf}. Idempotent on already-rewritten
+  // branches.
+  schema = tightenMutualExclusionOneOf(schema);
 
   // Create a shallow copy
   const strictSchema = { ...schema };
