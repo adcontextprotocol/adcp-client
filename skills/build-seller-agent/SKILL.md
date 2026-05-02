@@ -412,6 +412,7 @@ Non-guaranteed buys are always instant confirmation.
 > - `get_media_buy_delivery /reporting_period/start` and `/end` are ISO 8601 **date-time** strings (`YYYY-MM-DDTHH:MM:SS.sssZ` via `new Date().toISOString()`), not date-only. A mock that returns `'2026-04-21'` fails the format check in GA.
 > - `get_media_buys /media_buys[i]` rows require **`media_buy_id`, `status`, `currency`, `total_budget`, `packages`**. When you persist a buy in `create_media_buy`, save `currency` and `total_budget` so the `get_media_buys` response can echo them verbatim — reconstructing later drops one of the required fields in ~every Claude build we've tested.
 > - `sync_accounts` response: each row in `accounts[]` requires **`action: 'created' | 'updated' | 'unchanged' | 'failed'`** (not just `account_id`, `status`). Compare to sync_creatives — same pattern. Omitting `action` fails schema validation at `/accounts/0/action` and blocks every downstream stateful step in the storyboard. Type your row array as `SyncAccountsResponseRow[]` (exported from `@adcp/sdk`) to catch the missing-`action` drift at compile time instead of runtime.
+> - **`resolveAccount` return shape requires `authInfo: AuthPrincipal`.** The field is required by the `Account` type even though the framework strips it before emitting on the wire. Omitting it passes runtime but fails `tsc --strict`. Use `authInfo: { kind: 'public' }` for dev/compliance-mode auto-materialized accounts with no real auth principal; use `ctx?.authInfo ?? { kind: 'public' }` when `serve({ authenticate })` is configured.
 
 **`get_adcp_capabilities`** — register first, empty `{}` schema
 
@@ -891,7 +892,7 @@ function createAgent({ taskStore }: ServeContext) {
         // In production, replace with a real lookup against your tenant
         // registry — returning null here for unknown tenants is correct
         // and will (correctly) surface ACCOUNT_NOT_FOUND to the buyer.
-        return { brand: ref.brand.domain, operator: ref.operator };
+        return { brand: ref.brand.domain, operator: ref.operator, authInfo: { kind: 'public' } };
       }
       return null;
     },
