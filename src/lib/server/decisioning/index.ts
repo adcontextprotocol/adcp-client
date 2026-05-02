@@ -106,6 +106,7 @@ export type {
   BuyerAgentStatus,
   BuyerAgentRegistry as BuyerAgentRegistryProtocol,
   BuyerAgentResolveInput,
+  BuyerAgentCacheOptions,
   AdcpCredential,
   ResolveBuyerAgentByAgentUrl,
   ResolveBuyerAgentByCredential,

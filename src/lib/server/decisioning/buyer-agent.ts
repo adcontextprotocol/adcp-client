@@ -443,6 +443,184 @@ export function mixed(opts: {
   };
 }
 
+// ---------------------------------------------------------------------------
+// Caching decorator — Phase 1 Stage 5 of #1269
+// ---------------------------------------------------------------------------
+
+/**
+ * Options for {@link cached}.
+ *
+ * @public
+ */
+export interface BuyerAgentCacheOptions {
+  /**
+   * TTL (seconds) for successful resolutions. Default: 60.
+   *
+   * Adopters whose registry sits in front of a Postgres / external lookup
+   * benefit from caching for the request lifecycle of a single buyer's
+   * traffic burst. Long TTLs (several minutes) are appropriate for
+   * stable agent records; short TTLs (a few seconds) for rapidly-mutating
+   * relationships (suspension flags, billing-capability changes).
+   *
+   * Status changes propagate within `ttlSeconds` of the seller flipping
+   * the agent's row in their store — adopters needing instant
+   * propagation either set a short TTL or invalidate the cache out-of-
+   * band when they mutate.
+   */
+  ttlSeconds?: number;
+
+  /**
+   * TTL (seconds) for `null` returns (negative cache). Default: 0
+   * (don't cache nulls). A freshly onboarded agent is recognized within
+   * one request when nulls aren't cached; sellers willing to delay
+   * recognition by N seconds in exchange for fewer DB hits set this to
+   * a small positive value.
+   */
+  cacheNullsTtlSeconds?: number;
+
+  /**
+   * Maximum cache entries before LRU eviction. Default: 10000.
+   * The cache is bounded so a malicious or misconfigured caller spamming
+   * unique credentials (e.g., random api keys probing the seller's
+   * onboarding surface) can't exhaust memory.
+   */
+  maxSize?: number;
+
+  /** Override clock for deterministic tests. Returns ms since epoch. */
+  now?: () => number;
+}
+
+interface CacheEntry {
+  value: BuyerAgent | null;
+  expiresAtMs: number;
+}
+
+/**
+ * Compute a cache key from a credential. Returns null when the
+ * credential is undefined — uncacheable, falls through to the inner
+ * registry on each call. Keys are namespaced by kind so an api_key
+ * `key_id` value can never collide with an http_sig `keyid` value or
+ * an oauth `client_id`. Note that `key_id` is already a stable hash
+ * (Stage 3); using it as a cache key is safe.
+ */
+function cacheKeyForCredential(credential: AdcpCredential | undefined): string | null {
+  if (credential === undefined) return null;
+  switch (credential.kind) {
+    case 'http_sig':
+      return `http_sig:${credential.agent_url}`;
+    case 'api_key':
+      return `api_key:${credential.key_id}`;
+    case 'oauth':
+      return `oauth:${credential.client_id}`;
+  }
+}
+
+/**
+ * Wrap a {@link BuyerAgentRegistry} with TTL-based result caching and
+ * concurrent-resolve coalescing. Adopters whose `resolveByAgentUrl` /
+ * `resolveByCredential` hit a database or external service compose
+ * the cache via:
+ *
+ * ```ts
+ * const registry = BuyerAgentRegistry.cached(
+ *   BuyerAgentRegistry.signingOnly({
+ *     resolveByAgentUrl: async url => db.findBuyerAgent(url),
+ *   }),
+ *   { ttlSeconds: 60 }
+ * );
+ * ```
+ *
+ * Cache properties:
+ * - **TTL-bounded.** Entries expire after `ttlSeconds` (default 60).
+ *   Negative cache (null returns) is opt-in via `cacheNullsTtlSeconds`.
+ * - **LRU-evicted.** Bounded to `maxSize` entries (default 10000).
+ *   Oldest-accessed entry evicts on overflow.
+ * - **Concurrent-resolve coalesced.** N parallel `resolve()` calls on
+ *   the same key produce ONE upstream invocation. Subsequent callers
+ *   await the in-flight promise — important when the seller front-ends
+ *   a slow upstream and a buyer burst arrives.
+ * - **Per-kind cache keys.** Keys are namespaced (`http_sig:`,
+ *   `api_key:`, `oauth:`) so cross-kind collisions cannot leak an agent
+ *   resolved through one credential type to a different type.
+ * - **Skips uncacheable inputs.** When the credential is undefined,
+ *   `resolve()` falls through to the inner registry on each call —
+ *   adopters wiring custom auth without `credential` synthesis (Stage 3
+ *   migration cycle) see no behavior change.
+ *
+ * Mirrors the `AsyncCachingJwksResolver` over `JwksResolver` pattern
+ * already in `src/lib/signing/`.
+ *
+ * @public
+ */
+export function cached(inner: BuyerAgentRegistry, options: BuyerAgentCacheOptions = {}): BuyerAgentRegistry {
+  if (typeof inner !== 'object' || inner === null || typeof inner.resolve !== 'function') {
+    throw new TypeError('BuyerAgentRegistry.cached: `inner` must be a BuyerAgentRegistry');
+  }
+  const ttlMs = (options.ttlSeconds ?? 60) * 1000;
+  const nullsTtlMs = (options.cacheNullsTtlSeconds ?? 0) * 1000;
+  const maxSize = options.maxSize ?? 10000;
+  const now = options.now ?? Date.now;
+
+  if (ttlMs <= 0) throw new RangeError('BuyerAgentRegistry.cached: ttlSeconds must be > 0');
+  if (nullsTtlMs < 0) throw new RangeError('BuyerAgentRegistry.cached: cacheNullsTtlSeconds must be >= 0');
+  if (maxSize < 1) throw new RangeError('BuyerAgentRegistry.cached: maxSize must be >= 1');
+
+  // Map iteration order is insertion order, so re-inserting on hit
+  // gives us LRU-on-access semantics for free.
+  const cache = new Map<string, CacheEntry>();
+  const inFlight = new Map<string, Promise<BuyerAgent | null>>();
+
+  return {
+    async resolve(authInfo) {
+      const key = cacheKeyForCredential(authInfo.credential);
+      if (key === null) {
+        // Uncacheable input — pass through. Adopters wiring custom
+        // auth that hasn't migrated to `credential` synthesis see
+        // every call hit the inner resolver.
+        return inner.resolve(authInfo);
+      }
+
+      const entry = cache.get(key);
+      if (entry !== undefined && now() < entry.expiresAtMs) {
+        // LRU touch: re-insert so this entry becomes the most-recent.
+        cache.delete(key);
+        cache.set(key, entry);
+        return entry.value;
+      }
+      if (entry !== undefined) {
+        // Expired — drop before refetch.
+        cache.delete(key);
+      }
+
+      // Coalesce concurrent resolves: subsequent callers on the same
+      // key await the existing in-flight promise rather than firing
+      // their own upstream lookup.
+      const existing = inFlight.get(key);
+      if (existing !== undefined) return existing;
+
+      const promise = (async () => {
+        const value = await inner.resolve(authInfo);
+        const entryTtlMs = value === null ? nullsTtlMs : ttlMs;
+        if (entryTtlMs > 0) {
+          cache.set(key, { value, expiresAtMs: now() + entryTtlMs });
+          while (cache.size > maxSize) {
+            const oldestKey = cache.keys().next().value;
+            if (oldestKey === undefined) break;
+            cache.delete(oldestKey);
+          }
+        }
+        return value;
+      })();
+      inFlight.set(key, promise);
+      try {
+        return await promise;
+      } finally {
+        inFlight.delete(key);
+      }
+    },
+  };
+}
+
 /**
  * Factory namespace mirroring the documented surface from #1269. Adopters
  * import the namespace and call `BuyerAgentRegistry.signingOnly({...})`,
@@ -454,4 +632,5 @@ export const BuyerAgentRegistry = {
   signingOnly,
   bearerOnly,
   mixed,
+  cached,
 };
