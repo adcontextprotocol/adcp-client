@@ -66,7 +66,7 @@ import type { DecisioningPlatform, RequiredPlatformsFor, RequiredCapabilitiesFor
 import type { ComplianceTestingCapabilities } from '../capabilities';
 import type { Account, ResolvedAuthInfo, ResolveContext } from '../account';
 import { AccountNotFoundError, toWireAccount, toWireSyncAccountRow } from '../account';
-import type { BuyerAgent } from '../buyer-agent';
+import type { BuyerAgent, BuyerAgentRegistry } from '../buyer-agent';
 import { AdcpError, type AdcpStructuredError } from '../async-outcome';
 import type { CreativeBuilderPlatform } from '../specialisms/creative';
 import type { CreativeAdServerPlatform } from '../specialisms/creative-ad-server';
@@ -1141,7 +1141,7 @@ export function createAdcpServerFromPlatform<P extends DecisioningPlatform<any, 
     ),
     customTools: {
       ...opts.customTools,
-      tasks_get: buildTasksGetTool(platform, taskRegistry),
+      tasks_get: buildTasksGetTool(platform, taskRegistry, platform.agentRegistry),
     },
   };
 
@@ -1283,7 +1283,11 @@ export function createAdcpServerFromPlatform<P extends DecisioningPlatform<any, 
  * (`resolution: 'derived'`) get scoping for free via the auth-derived
  * resolver.
  */
-function buildTasksGetTool<P extends DecisioningPlatform<any, any>>(platform: P, taskRegistry: TaskRegistry) {
+function buildTasksGetTool<P extends DecisioningPlatform<any, any>>(
+  platform: P,
+  taskRegistry: TaskRegistry,
+  agentRegistry: BuyerAgentRegistry | undefined
+) {
   const inputShape = {
     // Cap task_id length: framework-issued task ids are
     // `task_<UUIDv4>` = 41 chars. Cap at 128 so a malicious buyer can't
@@ -1328,9 +1332,51 @@ function buildTasksGetTool<P extends DecisioningPlatform<any, any>>(platform: P,
       extra: { authInfo?: ResolvedAuthInfo }
     ) => {
       const ref = args.account;
+      // Resolve the buyer agent (when an `agentRegistry` is configured) so
+      // adopters' `accounts.resolve` impl sees `ctx.agent` — same contract as
+      // every other AccountStore method. Bypasses the dispatcher's
+      // resolution-and-status-enforcement seam at
+      // `create-adcp-server.ts:2748-2832` deliberately:
+      //
+      //   - **Status enforcement is intentionally skipped on tasks_get
+      //     polls.** A buyer agent suspended AFTER kicking off an HITL task
+      //     must still be able to learn the task's terminal state — refusing
+      //     the poll would strand work with no visibility. Hard-cutoff
+      //     sellers implement that policy inside their `accounts.resolve`
+      //     or downstream by reading `ctx.agent.status` themselves.
+      //   - **Registry failures don't break the poll.** A transient registry
+      //     error during a read poll falls through to `agent: undefined`;
+      //     adopters who require a resolved agent for tenant scoping can
+      //     return null from their `accounts.resolve` and the existing
+      //     ACCOUNT_NOT_FOUND surface fires.
+      let agent: BuyerAgent | undefined;
+      if (agentRegistry !== undefined) {
+        try {
+          const resolved = await agentRegistry.resolve({
+            ...(extra?.authInfo?.credential !== undefined && { credential: extra.authInfo.credential }),
+            ...(extra?.authInfo?.extra !== undefined && { extra: extra.authInfo.extra }),
+          });
+          if (resolved != null) {
+            // Mirror the dispatcher's freeze contract: lock the resolved
+            // record (and `billing_capabilities` Set if present) so adopter
+            // code cannot mutate shared registry state across requests.
+            // See `create-adcp-server.ts:2762-2779` for the full rationale.
+            if (!Object.isFrozen(resolved)) {
+              if (resolved.billing_capabilities instanceof Set) {
+                Object.freeze(resolved.billing_capabilities);
+              }
+              Object.freeze(resolved);
+            }
+            agent = resolved;
+          }
+        } catch {
+          // swallow per the policy above — agent stays undefined
+        }
+      }
       const resolveCtx = {
         ...(extra?.authInfo !== undefined && { authInfo: extra.authInfo }),
         toolName: 'tasks_get',
+        ...(agent !== undefined && { agent }),
       };
       let resolvedAccountId: string | undefined;
       if (ref) {
