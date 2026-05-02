@@ -137,9 +137,13 @@ describe('examples/decisioning-platform-multi-tenant-db — behavior', () => {
     ];
 
     for (const row of rows) {
-      await registry.register(row.id, { agentUrl: row.agentUrl, platform: minimalPlatform() }, {
-        awaitFirstValidation: true,
-      });
+      await registry.register(
+        row.id,
+        { agentUrl: row.agentUrl, platform: minimalPlatform() },
+        {
+          awaitFirstValidation: true,
+        }
+      );
     }
 
     for (const row of rows) {
@@ -156,9 +160,13 @@ describe('examples/decisioning-platform-multi-tenant-db — behavior', () => {
   it('concurrent recheck — deduplicates in-flight validation calls', async () => {
     const { registry, validatorCallCount } = buildTestRegistry();
 
-    await registry.register('tenant_a', { agentUrl: 'https://a.example.com', platform: minimalPlatform() }, {
-      awaitFirstValidation: true,
-    });
+    await registry.register(
+      'tenant_a',
+      { agentUrl: 'https://a.example.com', platform: minimalPlatform() },
+      {
+        awaitFirstValidation: true,
+      }
+    );
 
     const beforeCount = validatorCallCount();
 
@@ -167,11 +175,7 @@ describe('examples/decisioning-platform-multi-tenant-db — behavior', () => {
     // third arrive, they await the same promise. If the first settles before
     // the third fires, a second validation runs (hence "at most two" not
     // "exactly one").
-    await Promise.all([
-      registry.recheck('tenant_a'),
-      registry.recheck('tenant_a'),
-      registry.recheck('tenant_a'),
-    ]);
+    await Promise.all([registry.recheck('tenant_a'), registry.recheck('tenant_a'), registry.recheck('tenant_a')]);
 
     const addedCalls = validatorCallCount() - beforeCount;
     // The SDK clears entry.pending in a `finally` block (tenant-registry.ts),
