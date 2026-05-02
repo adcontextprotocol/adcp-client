@@ -197,6 +197,18 @@ function _signals_only_capabilities_compiles(): DecisioningCapabilities {
   };
 }
 
+// Negative: channels rejects values outside the MediaChannel union.
+function _channels_rejects_unknown_channel(): Pick<DecisioningCapabilities, 'channels'> {
+  // @ts-expect-error — 'billboard' is not a known MediaChannel value.
+  return { channels: ['billboard'] as const };
+}
+
+// Negative: pricingModels rejects values outside the PricingModel union.
+function _pricing_models_rejects_unknown_model(): Pick<DecisioningCapabilities, 'pricingModels'> {
+  // @ts-expect-error — 'rev_share' is not a known PricingModel value.
+  return { pricingModels: ['rev_share'] as const };
+}
+
 // ── DecisioningCapabilities.supportedBillings is a closed enum ────────
 
 function _capabilities_supported_billings_operator(): Pick<DecisioningCapabilities, 'supportedBillings'> {
@@ -289,6 +301,8 @@ function _define_audience_platform_rejects_wrong_shape() {
 // Reference all symbols once so eslint-disable is targeted.
 export const _references = [
   _signals_only_capabilities_compiles,
+  _channels_rejects_unknown_channel,
+  _pricing_models_rejects_unknown_model,
   _adcp_error_minimum,
   _adcp_error_full_fields,
   _adcp_error_accepts_unknown_code,

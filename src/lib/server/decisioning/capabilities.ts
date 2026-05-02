@@ -53,6 +53,10 @@ export interface DecisioningCapabilities<TConfig = unknown> {
    * `property-lists`, `collection-lists`, `content-standards`), creative-only
    * (`creative-ad-server`, `creative-template`, `creative-generative`), and
    * brand (`brand-rights`) platforms.
+   *
+   * **Required at runtime for media-buy platforms.** `validatePlatform` (called
+   * by `createAdcpServerFromPlatform`) throws `PlatformConfigError` when any
+   * `sales-*` specialism is claimed and this field is absent.
    */
   channels?: readonly MediaChannel[];
 
@@ -61,8 +65,12 @@ export interface DecisioningCapabilities<TConfig = unknown> {
    *
    * Omit for non-media-buy platforms — they don't sell ad inventory and have no
    * channel-level pricing to declare. For signals platforms specifically, pricing
-   * is declared per-signal in `pricing_options[]` instead. Same non-media-buy
-   * specialism set as `channels` above.
+   * is declared per-signal in the signal descriptor's `pricing_options[]` instead.
+   * Same non-media-buy specialism set as `channels` above.
+   *
+   * **Required at runtime for media-buy platforms.** `validatePlatform` (called
+   * by `createAdcpServerFromPlatform`) throws `PlatformConfigError` when any
+   * `sales-*` specialism is claimed and this field is absent.
    */
   pricingModels?: readonly PricingModel[];
 
