@@ -48,6 +48,17 @@ interface ValidatorIssue {
  * exposes a callable property matching `methodName`. Returns true on first
  * match. The platform layout is adopter-controlled — we look across every
  * field rather than mapping tool→field upfront.
+ *
+ * **Top-level functions on the platform root are NOT searched.** The SDK
+ * convention is sub-platform fields (`{ sales: SalesPlatform, accounts:
+ * AccountsPlatform, ... }`), and a future adopter who tries
+ * `{ getProducts: () => ... }` directly on the root would get a confusing
+ * warning. If that pattern needs supporting, extend the loop to also check
+ * `typeof (platform as any)[methodName] === 'function'` — but the
+ * non-conventional layout test (`single mega-platform exposes all methods`
+ * in `validate-specialisms.test.js`) already covers the alternative
+ * single-field-of-everything pattern, which is the legitimate flat-layout
+ * case adopters might choose.
  */
 function hasMethodAnywhere(platform: unknown, methodName: string): boolean {
   if (!platform || typeof platform !== 'object') return false;

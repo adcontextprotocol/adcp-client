@@ -33,8 +33,8 @@ describe('toolNameToMethodName: snake_case → camelCase', () => {
   it('handles three-word', () => {
     assert.equal(toolNameToMethodName('provide_performance_feedback'), 'providePerformanceFeedback');
   });
-  it('preserves an already-camelCase name', () => {
-    assert.equal(toolNameToMethodName('foo'), 'foo');
+  it('preserves an already-camelCase name (no-op)', () => {
+    assert.equal(toolNameToMethodName('getProducts'), 'getProducts');
   });
 });
 
