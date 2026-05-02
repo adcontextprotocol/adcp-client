@@ -482,6 +482,16 @@ export type StoryboardValidationCheck =
   | 'envelope_field_value_or_absent'
   | 'field_value'
   | 'field_value_or_absent'
+  // Wildcard-aware membership check. `path` may include `[*]` segments that
+  // expand to every array element via `resolvePathAll`. Passes when ANY
+  // resolved value matches `value` (or any of `allowed_values`). Lets
+  // storyboards assert presence of an expected entry inside an unordered
+  // array without hardcoding a positional index — e.g.,
+  // `creatives[0].errors[*].code = PROVENANCE_DISCLOSURE_MISSING` passes
+  // regardless of cascade ordering or co-emitted errors. When the path has
+  // no wildcard segments this reduces to scalar equality / array membership
+  // depending on what the path resolves to.
+  | 'field_contains'
   | 'status_code'
   | 'error_code'
   // HTTP-probe checks (for raw_probe tasks)
