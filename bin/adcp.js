@@ -1560,6 +1560,13 @@ async function handleStoryboardRun(args) {
     return handleMultiInstanceStoryboardRun(args, opts, extraUrls);
   }
 
+  // Multi-agent routing (#1066): per-specialism map dispatched per tool.
+  // Mutually exclusive with --url (replica round-robin) — different concept.
+  const agentsRouting = parseAgentsMapArgs(args);
+  if (agentsRouting) {
+    return handleAgentsRoutedStoryboardRun(args, opts, agentsRouting);
+  }
+
   const agentArg = positionalArgs[0];
   const storyboardId = positionalArgs[1];
 
@@ -1577,7 +1584,8 @@ async function handleStoryboardRun(args) {
     console.error(
       'Usage: adcp storyboard run <agent> [storyboard_id|--file path] [options]\n' +
         '  Local agent: adcp storyboard run --local-agent <module> [storyboard_id|bundle_id]\n' +
-        '  Multi-instance: adcp storyboard run --url <url1> --url <url2> <storyboard_id|bundle_id>'
+        '  Multi-instance: adcp storyboard run --url <url1> --url <url2> <storyboard_id|bundle_id>\n' +
+        '  Multi-agent:   adcp storyboard run --agents-map ./agents.yaml <storyboard_id|bundle_id>'
     );
     process.exit(2);
   }
@@ -2301,6 +2309,149 @@ function extractRepeatedUrlFlags(args) {
 }
 
 /**
+ * Parse per-specialism agent routing flags (#1066):
+ *   --agents-map <path>       — YAML or JSON file mapping key → AgentEntry
+ *   --agent <key>=<url>       — repeatable inline entry (overrides file entry)
+ *   --default-agent <key>     — fallback for unmapped tools (e.g. comply_test_controller)
+ *
+ * Returns `null` when none are supplied. When at least one is, the storyboard
+ * runner is invoked with `options.agents` (and optional `default_agent`)
+ * instead of a positional URL. URL validation matches `extractRepeatedUrlFlags`.
+ */
+function parseAgentsMapArgs(args) {
+  const fileIdx = args.indexOf('--agents-map');
+  const inlineIdx = args.indexOf('--agent');
+  const defaultIdx = args.indexOf('--default-agent');
+  // Env var fallback (`ADCP_AGENTS_MAP=./agents.yaml`) for CI matrices that
+  // prefer env injection over file-mount or argv plumbing. CLI flags
+  // override the env var when both are set.
+  const envMap = process.env.ADCP_AGENTS_MAP;
+  if (fileIdx === -1 && inlineIdx === -1 && defaultIdx === -1 && !envMap) return null;
+
+  const allowHttp = args.includes('--allow-http');
+  const agents = {};
+
+  const effectiveFilePath = fileIdx !== -1 ? args[fileIdx + 1] : envMap;
+  if (effectiveFilePath !== undefined) {
+    const filePath = effectiveFilePath;
+    if (!filePath || (fileIdx !== -1 && filePath.startsWith('--'))) {
+      console.error('ERROR: --agents-map (or ADCP_AGENTS_MAP) requires a file path');
+      process.exit(2);
+    }
+    let raw;
+    try {
+      raw = require('fs').readFileSync(filePath, 'utf8');
+    } catch (err) {
+      console.error(`ERROR: failed to read ${filePath}: ${err.message}`);
+      process.exit(2);
+    }
+    let parsed;
+    try {
+      // Lazy-load yaml — already a dep of @adcp/sdk via the storyboard loader.
+      const { parse } = require('yaml');
+      parsed = parse(raw);
+    } catch (err) {
+      console.error(`ERROR: failed to parse ${filePath} as YAML/JSON: ${err.message}`);
+      process.exit(2);
+    }
+    if (!parsed || typeof parsed !== 'object') {
+      console.error(`ERROR: ${filePath} must contain an object with an \`agents:\` map`);
+      process.exit(2);
+    }
+    const mapBlock = parsed.agents ?? parsed;
+    if (typeof mapBlock !== 'object' || Array.isArray(mapBlock)) {
+      console.error(`ERROR: ${filePath} \`agents\` must be an object keyed by agent name`);
+      process.exit(2);
+    }
+    for (const [key, entry] of Object.entries(mapBlock)) {
+      if (!entry || typeof entry !== 'object') {
+        console.error(`ERROR: ${filePath} agents.${key} must be an object with at least \`url\``);
+        process.exit(2);
+      }
+      const { url } = entry;
+      if (typeof url !== 'string' || !url) {
+        console.error(`ERROR: ${filePath} agents.${key} missing \`url\``);
+        process.exit(2);
+      }
+      validateAgentEntryUrl(url, allowHttp, `agents.${key}.url`);
+      agents[key] = { ...entry, url };
+    }
+    if (parsed.default_agent && !args.includes('--default-agent')) {
+      // Honor file-level default_agent unless CLI overrides it.
+      args = [...args, '--default-agent', parsed.default_agent];
+    }
+  }
+
+  // Repeated `--agent key=url` flags. Each occurrence overrides the
+  // corresponding key from --agents-map so callers can swap one tenant on the
+  // command line without rewriting the file.
+  for (let i = 0; i < args.length; i++) {
+    if (args[i] !== '--agent') continue;
+    const raw = args[i + 1];
+    if (!raw || raw.startsWith('--')) {
+      console.error('ERROR: --agent requires <key>=<url>');
+      process.exit(2);
+    }
+    const eq = raw.indexOf('=');
+    if (eq <= 0) {
+      console.error(`ERROR: --agent expects <key>=<url> (got "${raw}")`);
+      process.exit(2);
+    }
+    const key = raw.slice(0, eq);
+    const url = raw.slice(eq + 1);
+    validateAgentEntryUrl(url, allowHttp, `--agent ${key}`);
+    agents[key] = { ...(agents[key] ?? {}), url };
+  }
+
+  if (Object.keys(agents).length === 0) {
+    console.error('ERROR: no agents declared. Use --agents-map and/or --agent <key>=<url>.');
+    process.exit(2);
+  }
+
+  let defaultAgent;
+  // Re-read defaultIdx since we may have appended a synthetic flag from the file.
+  const finalDefaultIdx = args.lastIndexOf('--default-agent');
+  if (finalDefaultIdx !== -1) {
+    defaultAgent = args[finalDefaultIdx + 1];
+    if (!defaultAgent || defaultAgent.startsWith('--')) {
+      console.error('ERROR: --default-agent requires a key value');
+      process.exit(2);
+    }
+    if (!(defaultAgent in agents)) {
+      console.error(
+        `ERROR: --default-agent "${defaultAgent}" is not in the agents map. ` +
+          `Available keys: ${Object.keys(agents).join(', ')}`
+      );
+      process.exit(2);
+    }
+  }
+
+  return defaultAgent ? { agents, default_agent: defaultAgent } : { agents };
+}
+
+function validateAgentEntryUrl(raw, allowHttp, label) {
+  let parsed;
+  try {
+    parsed = new URL(raw);
+  } catch {
+    console.error(`ERROR: ${label} is not a valid URL: ${raw}`);
+    process.exit(2);
+  }
+  if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
+    console.error(`ERROR: ${label} must be http(s); got ${parsed.protocol}`);
+    process.exit(2);
+  }
+  if (parsed.protocol === 'http:' && !allowHttp) {
+    console.error(`ERROR: ${label} uses http:// — pass --allow-http for local dev`);
+    process.exit(2);
+  }
+  if (parsed.username || parsed.password) {
+    console.error(`ERROR: ${label} must not contain credentials (user:pass@). Pass tokens via --auth.`);
+    process.exit(2);
+  }
+}
+
+/**
  * Run a storyboard (or bundle) in multi-instance mode. Each step round-robins
  * across the supplied URLs. Positional agent is disallowed — --url is the
  * multi-instance path; positional is the single-instance path.
@@ -2760,6 +2911,268 @@ async function handleMultiInstanceStoryboardRun(args, opts, urls) {
     const hintTail = totals.hints > 0 ? ` · ${totals.hints} hint${totals.hints === 1 ? '' : 's'}` : '';
     console.log(
       `${overallIcon} ${totals.passed} passed, ${totals.failed} failed, ${totals.skipped} skipped (${totals.duration}ms)${passSuffix}${hintTail}`
+    );
+  }
+
+  process.exit(hadFailure ? 3 : 0);
+}
+
+/**
+ * Run a storyboard (or bundle) against a per-specialism agent map (#1066).
+ * Each step's tool is routed to the tenant that claims its protocol via
+ * `get_adcp_capabilities`; tools without a unique claimant fall through to
+ * `--default-agent`, or fail-fast with `unroutable_task`.
+ *
+ * Capability-driven full assessment is intentionally not supported here —
+ * the assessment dispatches via `comply()` which expects a single agent.
+ * Storyboard ID, bundle ID, or `--file` is required.
+ */
+async function handleAgentsRoutedStoryboardRun(args, opts, routing) {
+  const { authToken, protocolFlag, jsonOutput, dryRun, positionalArgs, file: filePath, format } = opts;
+
+  const webhookAutoTunnel = args.includes('--webhook-receiver-auto-tunnel');
+  const webhookReceiverBase = extractWebhookReceiverOptions(args);
+  validateAutoTunnelArgs(args, webhookReceiverBase);
+
+  // Strip per-flag values that may have leaked into positionals via parseAgentOptions.
+  const reservedFlags = new Set([
+    ...Object.values(routing.agents).map(e => e.url),
+    ...Object.entries(routing.agents).map(([k, e]) => `${k}=${e.url}`),
+  ]);
+  if (routing.default_agent) reservedFlags.add(routing.default_agent);
+  const cleanPositional = positionalArgs.filter(p => !reservedFlags.has(p));
+  const firstPositional = cleanPositional[0];
+  if (firstPositional && (firstPositional.startsWith('http://') || firstPositional.startsWith('https://'))) {
+    console.error(
+      'ERROR: Cannot combine a positional agent URL with --agents-map / --agent. ' +
+        'The agents map is authoritative for routing.'
+    );
+    process.exit(2);
+  }
+
+  const storyboardId = firstPositional;
+  if (filePath && storyboardId) {
+    console.error('ERROR: Cannot combine a storyboard ID with --file. Use one or the other.');
+    process.exit(2);
+  }
+  if (!filePath && !storyboardId) {
+    console.error(
+      'ERROR: Multi-agent routing requires a storyboard ID, bundle ID, or --file. ' +
+        'Capability-driven full assessment is not yet routing-aware.'
+    );
+    process.exit(2);
+  }
+
+  const { loadStoryboardFile, runStoryboard, getComplianceStoryboardById, loadBundleStoryboards, findBundleById } =
+    await import('../dist/lib/testing/storyboard/index.js');
+
+  const storyboards = [];
+  if (filePath) {
+    try {
+      storyboards.push(loadStoryboardFile(filePath));
+    } catch (err) {
+      console.error(`Failed to load storyboard from ${filePath}: ${err.message}`);
+      process.exit(2);
+    }
+  } else {
+    const bundle = findBundleById(storyboardId);
+    if (bundle) {
+      const bundleStoryboards = loadBundleStoryboards(storyboardId);
+      if (!bundleStoryboards || bundleStoryboards.length === 0) {
+        console.error(`ERROR: Bundle "${storyboardId}" is empty.`);
+        process.exit(2);
+      }
+      storyboards.push(...bundleStoryboards);
+    } else {
+      const sb = getComplianceStoryboardById(storyboardId);
+      if (!sb) {
+        console.error(
+          `ERROR: Unknown storyboard or bundle ID: ${storyboardId}\n` + `Run 'adcp storyboard list' to see all options.`
+        );
+        process.exit(2);
+      }
+      storyboards.push(sb);
+    }
+  }
+
+  // Detect protocol from the first agent. Multi-agent topologies typically
+  // share the same transport (the prod test-agent uses MCP across all 6
+  // tenants), so one probe is representative. Per-agent transport overrides
+  // via `agents.<key>.transport` are honored downstream by the routing
+  // context's per-agent options view.
+  let protocol = protocolFlag;
+  if (!protocol) {
+    const firstUrl = Object.values(routing.agents)[0].url;
+    if (!jsonOutput) console.error('Auto-detecting protocol from first agent...');
+    try {
+      protocol = await detectProtocol(firstUrl);
+      if (!jsonOutput) console.error(`Detected protocol: ${protocol.toUpperCase()}\n`);
+    } catch (err) {
+      console.error(`ERROR: Failed to detect protocol: ${err.message}`);
+      process.exit(1);
+    }
+  }
+
+  await loadInvariantModules(args);
+
+  const totalSteps = storyboards.reduce(
+    (sum, sb) => sum + sb.phases.reduce((phaseSum, p) => phaseSum + p.steps.length, 0),
+    0
+  );
+
+  if (!jsonOutput) {
+    console.error(`Multi-agent storyboard run (${Object.keys(routing.agents).length} agents):`);
+    for (const [key, entry] of Object.entries(routing.agents)) {
+      const defaultMarker = key === routing.default_agent ? ' (default)' : '';
+      console.error(`  ${key}${defaultMarker}: ${entry.url}`);
+    }
+    console.error(`  Protocol: ${protocol.toUpperCase()}`);
+    console.error(`  Storyboards: ${storyboards.map(s => s.id).join(', ')}`);
+    console.error(`  Total steps: ${totalSteps}`);
+    if (opts.noSandbox) {
+      console.error(`  Run mode: production (account.sandbox=false on every request)`);
+    }
+    console.error('');
+  }
+
+  if (dryRun) {
+    // Routing decisions need agent capabilities — discovery hasn't run yet.
+    // Print the topology and step list rather than per-step assignments.
+    if (jsonOutput) {
+      await writeJsonOutput({
+        agents: routing.agents,
+        default_agent: routing.default_agent,
+        protocol,
+        preview: true,
+        storyboards: storyboards.map(sb => ({
+          storyboard_id: sb.id,
+          storyboard_title: sb.title,
+          steps: sb.phases
+            .flatMap(p => p.steps)
+            .map(s => ({ step_id: s.id, task: s.task, agent_override: s.agent ?? null })),
+        })),
+      });
+    } else {
+      for (const sb of storyboards) {
+        console.log(`\n${sb.title} (${sb.id})`);
+        console.log('═'.repeat(50));
+        for (const phase of sb.phases) {
+          console.log(`\n── Phase: ${phase.title} ──`);
+          for (const step of phase.steps) {
+            const tag = step.agent ? ` → agent: ${step.agent}` : '';
+            console.log(`  ${step.id}: ${step.title} → ${step.task}${tag}`);
+          }
+        }
+      }
+      console.log(`\n${totalSteps} step(s) would be routed at run time. Use without --dry-run to execute.`);
+    }
+    return;
+  }
+
+  const webhookReceiverOpts = webhookAutoTunnel
+    ? await resolveWebhookReceiverOptions(args, { jsonOutput })
+    : webhookReceiverBase;
+
+  const runOptions = {
+    protocol,
+    ...(authToken ? { auth: { type: 'bearer', token: authToken } } : {}),
+    ...(opts.allowHttp && { allow_http: true }),
+    agents: routing.agents,
+    ...(routing.default_agent ? { default_agent: routing.default_agent } : {}),
+    ...(webhookReceiverOpts ?? {}),
+    ...(opts.noSandbox && { sandbox: false, disable_sandbox: true }),
+  };
+
+  const restoreLogs = jsonOutput ? captureStdoutLogs() : null;
+  const results = [];
+  let hadFailure = false;
+  try {
+    for (const sb of storyboards) {
+      // First arg is empty per #1066 contract — agents map is authoritative.
+      const result = await runStoryboard('', sb, runOptions);
+      results.push(result);
+      if (!result.overall_passed) hadFailure = true;
+    }
+  } finally {
+    if (restoreLogs) restoreLogs();
+  }
+
+  if (format === 'junit') {
+    process.stdout.write(formatStoryboardResultsAsJUnit(results));
+    process.exit(hadFailure ? 3 : 0);
+  }
+
+  if (jsonOutput) {
+    await writeJsonOutput(
+      results.length === 1
+        ? results[0]
+        : {
+            agents: routing.agents,
+            default_agent: routing.default_agent,
+            storyboards: results,
+            overall_passed: !hadFailure,
+          }
+    );
+  } else {
+    const SKIP_ICONS = {
+      missing_tool: '🔧',
+      missing_test_controller: '🔧',
+      not_applicable: '⏭️',
+      no_phases: '⏭️',
+      prerequisite_failed: '⏭️',
+      unsatisfied_contract: '⏭️',
+    };
+    const SKIP_LABELS = {
+      missing_tool: ' [missing tool]',
+      missing_test_controller: ' [needs test controller]',
+      not_applicable: ' [not applicable]',
+      no_phases: ' [no phases]',
+      prerequisite_failed: ' [prerequisite failed]',
+      unsatisfied_contract: ' [contract out of scope]',
+    };
+    for (const result of results) {
+      console.log(`\n${result.storyboard_title} (${result.storyboard_id})`);
+      console.log('═'.repeat(50));
+      for (const phase of result.phases) {
+        console.log(`\n── Phase: ${phase.phase_title} ──────────────────────────────`);
+        for (const step of phase.steps) {
+          const icon = step.skipped ? (SKIP_ICONS[step.skip_reason] ?? '⏭️') : step.passed ? '✅' : '❌';
+          const skipLabel = SKIP_LABELS[step.skip_reason] ?? '';
+          // Tag each step with the agent key (looked up from agent_map) so
+          // routing decisions are visible in the human-readable output.
+          let agentTag = '';
+          if (step.agent_url && result.agent_map) {
+            const key = Object.entries(result.agent_map).find(([, url]) => url === step.agent_url)?.[0];
+            if (key) agentTag = `[${key}] `;
+          }
+          console.log(`\n${icon} ${agentTag}${step.title}${skipLabel} (${step.duration_ms}ms)`);
+          console.log(`   Task: ${step.task}`);
+          if (step.error) console.log(`   Error: ${step.error}`);
+          for (const v of step.validations) {
+            const vIcon = v.passed ? '✅' : '❌';
+            console.log(`   ${vIcon} ${v.description}`);
+            if (v.error) console.log(`      ${v.error}`);
+            if (v.warning) console.log(`      ⚠️  ${v.warning}`);
+          }
+          printStepHints(step.hints);
+        }
+      }
+    }
+    console.log(`\n${'─'.repeat(50)}`);
+    const totals = results.reduce(
+      (acc, r) => ({
+        passed: acc.passed + r.passed_count,
+        failed: acc.failed + r.failed_count,
+        skipped: acc.skipped + r.skipped_count,
+        duration: acc.duration + r.total_duration_ms,
+        hints: acc.hints + countHintsInResult(r),
+      }),
+      { passed: 0, failed: 0, skipped: 0, duration: 0, hints: 0 }
+    );
+    const overallIcon = !hadFailure ? '✅' : '❌';
+    const hintTail = totals.hints > 0 ? ` · ${totals.hints} hint${totals.hints === 1 ? '' : 's'}` : '';
+    console.log(
+      `${overallIcon} ${totals.passed} passed, ${totals.failed} failed, ${totals.skipped} skipped (${totals.duration}ms) across ${Object.keys(routing.agents).length} agents${hintTail}`
     );
   }
 
