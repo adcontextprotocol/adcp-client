@@ -173,11 +173,7 @@ describe('curated validation hints (issue #1309)', () => {
       unknown_field: { should: 'reject' },
     });
     for (const issue of outcome.issues) {
-      assert.strictEqual(
-        issue.hint,
-        undefined,
-        `unrelated issue picked up a hint: ${issue.pointer} → ${issue.hint}`
-      );
+      assert.strictEqual(issue.hint, undefined, `unrelated issue picked up a hint: ${issue.pointer} → ${issue.hint}`);
     }
   });
 

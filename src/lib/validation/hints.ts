@@ -159,7 +159,7 @@ const RULES: readonly HintRule[] = [
   {
     keyword: 'additionalProperties',
     pointerPattern: /(^|\/)account$/,
-    hint: '`account` is a discriminated union. Pick ONE variant: `{ account_id }` or `{ brand, operator }`. Don\'t merge fields across variants.',
+    hint: "`account` is a discriminated union. Pick ONE variant: `{ account_id }` or `{ brand, operator }`. Don't merge fields across variants.",
   },
   // 7. format_id — always an object.
   {
