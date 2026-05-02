@@ -1,7 +1,7 @@
 # Ad Context Protocol (AdCP)
 
-> Generated at: 2026-05-01
-> Library: @adcp/sdk v6.1.0
+> Generated at: 2026-05-02
+> Library: @adcp/sdk v6.6.0
 > AdCP major version: 3
 > Canonical URL: https://adcontextprotocol.github.io/adcp-client/llms.txt
 

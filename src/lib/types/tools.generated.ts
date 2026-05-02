@@ -2538,7 +2538,7 @@ export interface Error {
    */
   message: string;
   /**
-   * Field path associated with the error (e.g., 'packages[0].targeting')
+   * Field path associated with the error in JSONPath-lite format (e.g., 'packages[0].targeting'). When `issues[]` is also present, sellers MUST set this to `issues[0].pointer` translated from RFC 6901 to JSONPath-lite (e.g., '/packages/0/targeting' → 'packages[0].targeting') so pre-3.1 consumers reading `field` only get deterministic behavior. Will be deprecated in a future major version in favor of `issues[].pointer`.
    */
   field?: string;
   /**
@@ -2550,7 +2550,28 @@ export interface Error {
    */
   retry_after?: number;
   /**
-   * Additional task-specific error details
+   * Structured list of validation failures. Primary use is `VALIDATION_ERROR`, where multi-field rejections are common and `field` (singular) cannot carry the full pointer map. MAY appear on other error codes that reject multiple fields at once. When `issues` is present, sellers MUST also populate `field` from `issues[0]` for backward compatibility with pre-3.1 consumers that read `field` only — translating the RFC 6901 `pointer` format to the JSONPath-lite format `field` uses (e.g., `/packages/0/targeting` → `packages[0].targeting`). MUST (not SHOULD) so consumers reading `field` get deterministic behavior across sellers — the cost is one line of dual-write per seller; the cost of SHOULD is a long tail of seller-A-vs-seller-B inconsistency. Future major versions will deprecate `field` in favor of `issues[].pointer`.
+   */
+  issues?: {
+    /**
+     * RFC 6901 JSON Pointer to the offending field in the request payload (e.g., '/packages/0/targeting/geo_countries/2'). Format chosen to match Ajv's native validation output (`instancePath`); standardized and unambiguous on keys containing `/` or `~`. NOTE: this differs from the legacy top-level `field` which uses JSONPath-lite (`packages[0].targeting.geo_countries[2]`). When sellers populate `field` from `issues[0].pointer` for backward compatibility (see `field` description), they MUST translate the format — `/packages/0/x` → `packages[0].x`. Future major versions will deprecate `field` in favor of `issues[].pointer`.
+     */
+    pointer: string;
+    /**
+     * Human-readable description of why this specific field was rejected.
+     */
+    message: string;
+    /**
+     * Schema keyword that rejected the payload, drawn from the JSON Schema vocabulary (e.g., 'required', 'type', 'format', 'enum', 'pattern', 'minimum', 'maxLength'). Matches the keyword names emitted by JSON Schema validators (Ajv, jsonschema, etc.) so agents can pattern-match on rejection class without parsing message text. Implementers SHOULD use the validator's native keyword name; do not invent custom values here.
+     */
+    keyword: string;
+    /**
+     * Optional. Path inside the schema that rejected the payload (e.g., '#/properties/packages/items/properties/targeting/oneOf/1'). Sellers SHOULD NOT emit on production-facing endpoints — `schemaPath` leaks which `oneOf` branch the validator selected before semantic rejection, which is a probe oracle for adversarial callers crafting payloads against polymorphic unions. Sellers MAY emit in dev/sandbox modes where the diagnostic value outweighs the fingerprinting risk.
+     */
+    schemaPath?: string;
+  }[];
+  /**
+   * Additional task-specific error details. Sellers MAY mirror `issues[]` here as `details.issues` for backward compatibility with pre-3.1 consumers reading from `details`; new consumers SHOULD prefer the top-level `issues` field.
    */
   details?: {};
   /**
@@ -3452,6 +3473,27 @@ export type DevicePlatform =
  */
 export type DeviceType = 'desktop' | 'mobile' | 'tablet' | 'ctv' | 'dooh' | 'unknown';
 /**
+ * Canonical union of all asset variant schemas. Referenced from creative-asset.json and creative-manifest.json to ensure a single named type is emitted by schema-to-TypeScript tooling. Add new asset types here and to the creative/asset-types registry.
+ *
+ * This interface was referenced by `undefined`'s JSON-Schema definition
+ * via the `patternProperty` "^[a-z0-9_]+$".
+ */
+export type AssetVariant =
+  | ImageAsset
+  | VideoAsset
+  | AudioAsset
+  | VASTAsset
+  | TextAsset
+  | URLAsset
+  | HTMLAsset
+  | JavaScriptAsset
+  | WebhookAsset
+  | CSSAsset
+  | DAASTAsset
+  | MarkdownAsset
+  | BriefAsset
+  | CatalogAsset;
+/**
  * IPTC-aligned classification of AI involvement in producing this content
  */
 export type DigitalSourceType =
@@ -3577,7 +3619,7 @@ export type VASTTrackingEvent =
   | 'measurableImpression'
   | 'viewableImpression';
 /**
- * Type of URL asset: 'clickthrough' for user click destination (landing page), 'tracker_pixel' for impression/event tracking via HTTP request (fires GET, expects pixel/204 response), 'tracker_script' for measurement SDKs that must load as <script> tag (OMID verification, native event trackers using method:2)
+ * Mechanism a receiver uses to invoke this URL (distinct from purpose, which lives in `url-asset-requirements.role`): `clickthrough` for user click destination (landing page), `tracker_pixel` for impression/event tracking via HTTP request (fires GET, expects pixel/204 response), `tracker_script` for measurement SDKs that must load as a <script> tag (OMID verification, native event trackers using method:2). SHOULD be present on every URL asset; senders that omit it force the receiver into the role-based fallback described in this schema's top-level description.
  */
 export type URLAssetType = 'clickthrough' | 'tracker_pixel' | 'tracker_script';
 /**
@@ -4208,25 +4250,7 @@ export interface CreativeAsset {
    * Assets required by the format, keyed by asset_id. Each asset value carries an `asset_type` discriminator that selects the matching asset schema.
    */
   assets: {
-    /**
-     * This interface was referenced by `undefined`'s JSON-Schema definition
-     * via the `patternProperty` "^[a-z0-9_]+$".
-     */
-    [k: string]:
-      | ImageAsset
-      | VideoAsset
-      | AudioAsset
-      | VASTAsset
-      | TextAsset
-      | URLAsset
-      | HTMLAsset
-      | JavaScriptAsset
-      | WebhookAsset
-      | CSSAsset
-      | DAASTAsset
-      | MarkdownAsset
-      | BriefAsset
-      | CatalogAsset;
+    [k: string]: AssetVariant | undefined;
   };
   /**
    * Preview contexts for generative formats - defines what scenarios to generate previews for
@@ -4609,7 +4633,7 @@ export interface TextAsset {
   provenance?: Provenance;
 }
 /**
- * URL reference asset
+ * URL reference asset. `url_type` declares the mechanism a receiver uses to invoke the URL (clickthrough vs. tracker_pixel vs. tracker_script) and is distinct from the URL's purpose, which the format declares in `url-asset-requirements.role` (clickthrough, landing_page, impression_tracker, click_tracker, viewability_tracker, third_party_tracker). Senders SHOULD include `url_type` on every URL asset. When `url_type` is absent, receivers SHOULD fall back to the format's `url-asset-requirements.role` per this mapping: clickthrough/landing_page → `clickthrough`; impression_tracker/click_tracker → `tracker_pixel`; viewability_tracker → `tracker_script` (OMID and equivalent verification SDKs require a <script> tag — firing them as a pixel produces no measurement); third_party_tracker → no safe fallback (mechanism is integration-specific — DV/IAS ship both pixel and script forms — receivers MAY reject or warn). When neither `url_type` nor a format-side `role` is available, receivers MUST NOT silently pick a mechanism; they SHOULD reject the manifest. Note: VAST/DAAST tag URLs are not URL assets — use `asset_type: "vast"` (or the dedicated tracker types pending RFC #2915), not `asset_type: "url"` with a tracker_pixel mechanism.
  */
 export interface URLAsset {
   /**
@@ -7718,25 +7742,7 @@ export interface CreativeManifest {
    * Each asset value carries an `asset_type` discriminator (image, video, audio, vast, daast, text, markdown, url, html, css, webhook, javascript, brief, catalog) that selects the matching asset schema. Validators with OpenAPI-style discriminator support use `asset_type` to report errors against only the selected branch instead of all branches.
    */
   assets: {
-    /**
-     * This interface was referenced by `undefined`'s JSON-Schema definition
-     * via the `patternProperty` "^[a-z0-9_]+$".
-     */
-    [k: string]:
-      | ImageAsset
-      | VideoAsset
-      | AudioAsset
-      | VASTAsset
-      | TextAsset
-      | URLAsset
-      | HTMLAsset
-      | JavaScriptAsset
-      | WebhookAsset
-      | CSSAsset
-      | DAASTAsset
-      | MarkdownAsset
-      | BriefAsset
-      | CatalogAsset;
+    [k: string]: AssetVariant | undefined;
   };
   /**
    * Rights constraints attached to this creative. Each entry represents constraints from a single rights holder. A creative may combine multiple rights constraints (e.g., talent likeness + music license). For v1, rights constraints are informational metadata — the buyer/orchestrator manages creative lifecycle against these terms.
@@ -8789,25 +8795,7 @@ export interface ListCreativesResponse {
      * Assets for this creative, keyed by asset_id. Each asset value carries an `asset_type` discriminator that selects the matching asset schema.
      */
     assets?: {
-      /**
-       * This interface was referenced by `undefined`'s JSON-Schema definition
-       * via the `patternProperty` "^[a-z0-9_]+$".
-       */
-      [k: string]:
-        | ImageAsset
-        | VideoAsset
-        | AudioAsset
-        | VASTAsset
-        | TextAsset
-        | URLAsset
-        | HTMLAsset
-        | JavaScriptAsset
-        | WebhookAsset
-        | CSSAsset
-        | DAASTAsset
-        | MarkdownAsset
-        | BriefAsset
-        | CatalogAsset;
+      [k: string]: AssetVariant | undefined;
     };
     /**
      * User-defined tags for organization and searchability
