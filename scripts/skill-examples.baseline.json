@@ -16,6 +16,11 @@
   },
   {
     "source": "skills/build-creative-agent/SKILL.md",
+    "errorCode": "TS18048",
+    "messagePrefix": "'ref' is possibly 'undefined'."
+  },
+  {
+    "source": "skills/build-creative-agent/SKILL.md",
     "errorCode": "TS2304",
     "messagePrefix": "Cannot find name 'createAgent'."
   },
@@ -61,8 +66,93 @@
   },
   {
     "source": "skills/build-creative-agent/SKILL.md",
+    "errorCode": "TS2305",
+    "messagePrefix": "Module '\"@adcp/sdk/server\"' has no exported member 'urlRender'."
+  },
+  {
+    "source": "skills/build-creative-agent/SKILL.md",
+    "errorCode": "TS2322",
+    "messagePrefix": "Type '() => Promise<{ items: never[]; nextCursor: null; }>' is not assignable to"
+  },
+  {
+    "source": "skills/build-creative-agent/SKILL.md",
+    "errorCode": "TS2322",
+    "messagePrefix": "Type '() => Promise<{ ok: boolean; items: never[]; }>' is not assignable to type"
+  },
+  {
+    "source": "skills/build-creative-agent/SKILL.md",
+    "errorCode": "TS2322",
+    "messagePrefix": "Type '(params: BuildCreativeRequest, ctx: Ctx<Record<string, unknown>>) => Promi"
+  },
+  {
+    "source": "skills/build-creative-agent/SKILL.md",
+    "errorCode": "TS2322",
+    "messagePrefix": "Type '(params: CreativeAsset[], ctx: Ctx<Record<string, unknown>>) => Promise<{ "
+  },
+  {
+    "source": "skills/build-creative-agent/SKILL.md",
+    "errorCode": "TS2322",
+    "messagePrefix": "Type 'Promise<{ id: string; operator: string; ctx_metadata: {}; }>' is not assig"
+  },
+  {
+    "source": "skills/build-creative-agent/SKILL.md",
+    "errorCode": "TS2339",
+    "messagePrefix": "Property 'creatives' does not exist on type 'CreativeAsset[]'."
+  },
+  {
+    "source": "skills/build-creative-agent/SKILL.md",
+    "errorCode": "TS2339",
+    "messagePrefix": "Property 'name' does not exist on type 'CreativeManifest'."
+  },
+  {
+    "source": "skills/build-creative-agent/SKILL.md",
     "errorCode": "TS2339",
     "messagePrefix": "Property 'sandbox' does not exist on type '{}'."
+  },
+  {
+    "source": "skills/build-creative-agent/SKILL.md",
+    "errorCode": "TS2339",
+    "messagePrefix": "Property 'store' does not exist on type 'Ctx<Record<string, unknown>>'."
+  },
+  {
+    "source": "skills/build-creative-agent/SKILL.md",
+    "errorCode": "TS2339",
+    "messagePrefix": "Property 'store' does not exist on type 'Ctx<Record<string, unknown>>'."
+  },
+  {
+    "source": "skills/build-creative-agent/SKILL.md",
+    "errorCode": "TS2339",
+    "messagePrefix": "Property 'store' does not exist on type 'Ctx<Record<string, unknown>>'."
+  },
+  {
+    "source": "skills/build-creative-agent/SKILL.md",
+    "errorCode": "TS2339",
+    "messagePrefix": "Property 'store' does not exist on type 'Ctx<Record<string, unknown>>'."
+  },
+  {
+    "source": "skills/build-creative-agent/SKILL.md",
+    "errorCode": "TS2339",
+    "messagePrefix": "Property 'store' does not exist on type 'Ctx<Record<string, unknown>>'."
+  },
+  {
+    "source": "skills/build-creative-agent/SKILL.md",
+    "errorCode": "TS7006",
+    "messagePrefix": "Parameter 'c' implicitly has an 'any' type."
+  },
+  {
+    "source": "skills/build-creative-agent/SKILL.md",
+    "errorCode": "TS7006",
+    "messagePrefix": "Parameter 'c' implicitly has an 'any' type."
+  },
+  {
+    "source": "skills/build-creative-agent/SKILL.md",
+    "errorCode": "TS7006",
+    "messagePrefix": "Parameter 'ctx' implicitly has an 'any' type."
+  },
+  {
+    "source": "skills/build-creative-agent/SKILL.md",
+    "errorCode": "TS7006",
+    "messagePrefix": "Parameter 'params' implicitly has an 'any' type."
   },
   {
     "source": "skills/build-decisioning-creative-template/SKILL.md",
