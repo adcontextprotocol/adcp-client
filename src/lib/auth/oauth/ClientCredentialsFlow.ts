@@ -33,6 +33,7 @@ import type { AgentOAuthClientCredentials } from '../../types/adcp';
 import type { OAuthConfigStorage } from './types';
 import { resolveSecret } from './secret-resolver';
 import { isLikelyPrivateUrl } from '../../net';
+import { wrapFetchWithSizeLimit } from '../../protocols/responseSizeLimit';
 
 /** Max length we'll echo from an AS-supplied error description into errors. */
 const MAX_AS_ERROR_LENGTH = 200;
@@ -192,7 +193,10 @@ export async function exchangeClientCredentials(
   credentials: AgentOAuthClientCredentials,
   options: ExchangeClientCredentialsOptions = {}
 ): Promise<AgentOAuthTokens> {
-  const fetchImpl = options.fetch ?? fetch;
+  // Wrap with the response-size-limit guard so a hostile token endpoint
+  // can't buffer-bomb on every refresh. Pass-through when no
+  // `withResponseSizeLimit` slot is active. (#1175)
+  const fetchImpl = wrapFetchWithSizeLimit(options.fetch ?? fetch);
   const timeoutMs = options.timeoutMs ?? 30_000;
 
   validateTokenEndpoint(credentials.token_endpoint, { allowPrivateIp: options.allowPrivateIp });
