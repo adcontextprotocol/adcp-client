@@ -925,6 +925,11 @@ export function createAdcpServerFromPlatform<P extends DecisioningPlatform<any, 
     ...opts,
     ...(autoSeedStore != null && { testController: makeAutoSeedBridge(autoSeedStore) }),
     ...(projectedCapabilitiesConfig != null && { capabilities: projectedCapabilitiesConfig }),
+    // Buyer-agent registry (Phase 1 of #1269). Threaded through from the
+    // platform so the v5 dispatcher can call `agentRegistry.resolve()` on
+    // every request and populate `ctx.agent`. When the platform omits the
+    // field, the v5 surface stays unchanged.
+    ...(platform.agentRegistry !== undefined && { agentRegistry: platform.agentRegistry }),
     // Pool-derived stores override the spread above when adopters supplied
     // `pool` but no explicit per-store opt. Explicit values still win.
     ...(effectiveIdempotency !== undefined && { idempotency: effectiveIdempotency }),
@@ -949,6 +954,7 @@ export function createAdcpServerFromPlatform<P extends DecisioningPlatform<any, 
         const account = await platform.accounts.resolve(ref, {
           ...(ctx.authInfo !== undefined && { authInfo: ctx.authInfo }),
           toolName: ctx.toolName,
+          ...(ctx.agent !== undefined && { agent: ctx.agent }),
         });
         resolved = account != null;
         resolvedAccountId = account?.id;
@@ -996,6 +1002,7 @@ export function createAdcpServerFromPlatform<P extends DecisioningPlatform<any, 
         const account = await platform.accounts.resolve(undefined, {
           ...(ctx.authInfo !== undefined && { authInfo: ctx.authInfo }),
           toolName: ctx.toolName,
+          ...(ctx.agent !== undefined && { agent: ctx.agent }),
         });
         resolved = account != null;
         resolvedAccountId = account?.id;

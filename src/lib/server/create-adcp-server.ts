@@ -54,6 +54,7 @@ import {
 import { createTaskCapableServer } from './tasks';
 import type { TaskStore, TaskMessageQueue } from './tasks';
 import { adcpError } from './errors';
+import type { BuyerAgent, BuyerAgentRegistry } from './decisioning/buyer-agent';
 import { ADCP_ERROR_FIELD_ALLOWLIST } from './envelope-allowlist';
 import { InMemoryStateStore } from './state-store';
 import type { AdcpStateStore } from './state-store';
@@ -332,6 +333,15 @@ const noopLogger: AdcpLogger = {
  */
 export interface HandlerContext<TAccount = unknown> {
   account?: TAccount;
+  /**
+   * Resolved buyer agent for this request, populated by `BuyerAgentRegistry`
+   * when an `agentRegistry` is configured on the server (Phase 1 of #1269).
+   * Carries the durable commercial relationship — status, billing
+   * capabilities, default account terms — distinct from the per-request
+   * credential. Undefined when no registry is configured OR when the
+   * registry returned `null` for the request's credential.
+   */
+  agent?: BuyerAgent;
   /** Session scoping key derived from the request. Populated when `resolveSessionKey` is configured. */
   sessionKey?: string;
   /** State store for persisting domain objects (media buys, accounts, creatives). */
@@ -370,6 +380,8 @@ export interface SessionKeyContext<TAccount = unknown> {
   toolName: AdcpServerToolName;
   params: Record<string, unknown>;
   account?: TAccount;
+  /** Resolved buyer agent (Phase 1 of #1269), when `agentRegistry` is configured. */
+  agent?: BuyerAgent;
 }
 
 /**
@@ -389,6 +401,15 @@ export interface ResolveAccountContext {
    * MCP request. Undefined when no `authenticate` is configured on `serve()`.
    */
   authInfo?: HandlerContext['authInfo'];
+  /**
+   * Resolved buyer agent (Phase 1 of #1269), when an `agentRegistry` is
+   * configured on the server. Adopters whose `accounts.resolve` shape varies
+   * with the buyer agent's commercial relationship (e.g., agency-mediated
+   * vs. direct billing) read it here without re-resolving from `authInfo`.
+   * Undefined when no registry is configured OR when the registry returned
+   * null for the request's credential.
+   */
+  agent?: BuyerAgent;
 }
 
 /**
@@ -1183,6 +1204,34 @@ export interface AdcpServerConfig<TAccount = unknown> {
    * don't need tenant scoping (publisher-wide format catalogs).
    */
   resolveAccountFromAuth?: (ctx: ResolveAccountContext) => Promise<TAccount | null>;
+
+  /**
+   * Buyer-agent identity registry — Phase 1 of #1269. Optional. When
+   * configured, framework calls `agentRegistry.resolve(authInfo)` once per
+   * request after `authInfo` is populated and before `resolveAccount`. The
+   * resolved {@link BuyerAgent} is threaded through `ctx.agent` to
+   * `resolveAccount`, `resolveAccountFromAuth`, `resolveSessionKey`, and
+   * the specialism handlers.
+   *
+   * Adopters construct via {@link BuyerAgentRegistry.signingOnly},
+   * {@link BuyerAgentRegistry.bearerOnly}, or {@link BuyerAgentRegistry.mixed}.
+   * When omitted, `ctx.agent` stays `undefined` and the framework's request
+   * flow is unchanged — strict opt-in.
+   *
+   * Behavior:
+   * - Registry returns a `BuyerAgent` → framework freezes the record (and
+   *   its `billing_capabilities` Set) and sets `ctx.agent`.
+   * - Registry returns `null` → `ctx.agent` stays undefined; dispatch
+   *   continues. Status enforcement (`suspended`/`blocked`) and per-agent
+   *   billing rejection are Stage 4 / Phase 2 work.
+   * - Registry throws → framework returns `SERVICE_UNAVAILABLE`. Inner
+   *   error logged server-side.
+   *
+   * Phase 1 ships the seam; the framework consumes the resolved record but
+   * does not yet enforce billing capabilities or status. Phase 2 (#1292)
+   * wires those once the SDK pin moves to AdCP 3.1.
+   */
+  agentRegistry?: BuyerAgentRegistry;
 
   /**
    * Derive a session-scoping key from the request. Populates `ctx.sessionKey`
@@ -2315,6 +2364,7 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
     resolveAccount,
     resolveAccountFromAuth,
     resolveSessionKey,
+    agentRegistry,
     exposeErrorDetails = process.env.NODE_ENV !== 'production',
     stateStore = DEFAULT_STATE_STORE,
     logger = noopLogger,
@@ -2657,6 +2707,55 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
           return response;
         };
 
+        // --- Buyer-agent registry resolution (Phase 1 of #1269) ---
+        // Runs after `authInfo` is populated and before account resolution
+        // so adopters' `resolveAccount` callbacks see `ctx.agent`. The
+        // registry receives the legacy `ResolvedAuthInfo` shape; Stage 3
+        // wires the kind-discriminated `credential` field that the
+        // factory functions route on. Until then, all factories return
+        // null for `credential === undefined`, so the seam is structurally
+        // present but functionally inert until adopters wire credential
+        // synthesis themselves (or wait for Stage 3).
+        //
+        // Phase 1 does NOT enforce status (suspended/blocked → 403) or
+        // billing capability — those land in Stage 4 and Phase 2 (#1292).
+        if (agentRegistry !== undefined) {
+          try {
+            const resolved = await agentRegistry.resolve({
+              ...(ctx.authInfo?.extra !== undefined && { extra: ctx.authInfo.extra }),
+            });
+            if (resolved !== null) {
+              // Shallow-freeze the resolved record so downstream code cannot
+              // accidentally mutate `status`, `agent_url`, or other own
+              // properties. NOTE: `Object.freeze` on the `billing_capabilities`
+              // Set locks the Set object's own properties but does NOT
+              // protect the internal `[[SetData]]` slot — `.add()` /
+              // `.delete()` / `.clear()` still mutate. `ReadonlySet` is a
+              // TypeScript-only contract; adopters constructing a Set MUST
+              // NOT rely on freeze preventing membership changes at runtime.
+              // Phase 2's billing-capability check only reads via `.has()`,
+              // so adopter mis-mutation would only affect the same request's
+              // own logic — no cross-request leak.
+              if (!Object.isFrozen(resolved)) {
+                if (resolved.billing_capabilities instanceof Set) {
+                  Object.freeze(resolved.billing_capabilities);
+                }
+                Object.freeze(resolved);
+              }
+              ctx.agent = resolved;
+            }
+          } catch (err) {
+            const reason = err instanceof Error ? err.message : String(err);
+            logger.error('Buyer-agent registry resolution failed', { tool: toolName, error: reason });
+            return finalize(
+              adcpError('SERVICE_UNAVAILABLE', {
+                message: 'Buyer-agent registry resolution failed',
+                ...(exposeErrorDetails && { details: { reason } }),
+              })
+            );
+          }
+        }
+
         const toolIsMutating = isMutatingTask(toolName);
 
         // Field-disagreement detection per spec PR `adcontextprotocol/adcp#3493`:
@@ -2787,6 +2886,7 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
             const account = await resolveAccount(params.account, {
               toolName: toolName as AdcpServerToolName,
               authInfo: ctx.authInfo,
+              ...(ctx.agent !== undefined && { agent: ctx.agent }),
             });
             if (account == null) {
               logger.warn('Account not found', { tool: toolName, account: params.account });
@@ -2820,6 +2920,7 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
             const account = await resolveAccountFromAuth({
               toolName: toolName as AdcpServerToolName,
               authInfo: ctx.authInfo,
+              ...(ctx.agent !== undefined && { agent: ctx.agent }),
             });
             if (account != null) ctx.account = account;
           } catch (err) {
@@ -2841,6 +2942,7 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
               toolName: toolName as AdcpServerToolName,
               params,
               account: ctx.account,
+              ...(ctx.agent !== undefined && { agent: ctx.agent }),
             });
             if (sessionKey !== undefined) ctx.sessionKey = sessionKey;
           } catch (err) {

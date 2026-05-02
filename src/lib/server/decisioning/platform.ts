@@ -12,6 +12,7 @@
 
 import type { DecisioningCapabilities, BrandCapabilities } from './capabilities';
 import type { Account, AccountStore } from './account';
+import type { BuyerAgentRegistry } from './buyer-agent';
 import type { StatusMappers } from './status-mappers';
 import type { SalesPlatform } from './specialisms/sales';
 import type { CreativeBuilderPlatform } from './specialisms/creative';
@@ -68,6 +69,23 @@ export interface DecisioningPlatform<TConfig = unknown, TCtxMeta = Record<string
 
   /** Account model + tenant resolution. */
   accounts: AccountStore<TCtxMeta>;
+
+  /**
+   * Buyer-agent identity registry — Phase 1 of #1269. Optional. When
+   * configured, framework calls `agentRegistry.resolve(authInfo)` once per
+   * request before `accounts.resolve` and threads the resolved record
+   * through `ctx.agent` to specialism handlers.
+   *
+   * Adopters construct via {@link BuyerAgentRegistry.signingOnly},
+   * {@link BuyerAgentRegistry.bearerOnly}, or {@link BuyerAgentRegistry.mixed}
+   * depending on their authentication posture. When omitted, `ctx.agent`
+   * is always undefined and the framework's request flow is unchanged.
+   *
+   * Phase 2 (#1292) wires framework-level billing-capability enforcement
+   * against `BuyerAgent.billing_capabilities` and emits the AdCP-3.1
+   * billing error codes. Phase 1 ships the surface and resolution only.
+   */
+  agentRegistry?: BuyerAgentRegistry;
 
   /**
    * Native-status mappers (account, mediaBuy, creative, plan).
