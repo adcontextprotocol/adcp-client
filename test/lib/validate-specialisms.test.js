@@ -8,10 +8,14 @@
  * Spec reference: `manifest.json`'s `SPECIALISM_REQUIRED_TOOLS` (derived in
  * `manifest.generated.ts`); the validator looks up the per-specialism tool
  * list and checks `platform.{any-field}.{snakeToCamelCase(tool)}` exists
- * as a function. "Any field" is intentional — required tools span platform
- * fields (`sync_accounts` lives on `accounts`, not on `sales`), and
- * pinning ownership upfront would either need a per-tool field map or
- * cause false-positives on legitimate alternative layouts.
+ * as a function.
+ *
+ * Note on synthetic test data: AdCP 3.0.4 ships every specialism with an
+ * empty `required_tools` field, so the manifest-derived
+ * `SPECIALISM_REQUIRED_TOOLS` lookup is empty. Tests inject synthetic data
+ * via the validator's optional `requiredToolsLookup` parameter so the
+ * validator's behavior can be exercised regardless of whether the spec
+ * has populated authoritative required-tools lists yet.
  */
 
 const { describe, it } = require('node:test');
@@ -22,6 +26,22 @@ const {
   toolNameToMethodName,
   formatSpecialismIssue,
 } = require('../../dist/lib/server/decisioning/validate-specialisms');
+
+// Synthetic per-specialism required-tools lookup. Mirrors what the spec
+// would populate in manifest.specialisms[*].required_tools once authors
+// commit to canonical lists. Used here purely for test isolation.
+const SYNTHETIC_REQUIREMENTS = {
+  'sales-non-guaranteed': [
+    'create_media_buy',
+    'get_media_buy_delivery',
+    'get_media_buys',
+    'get_products',
+    'sync_accounts',
+    'sync_creatives',
+    'update_media_buy',
+  ],
+  'signal-owned': ['activate_signal', 'get_signals'],
+};
 
 describe('toolNameToMethodName: snake_case → camelCase', () => {
   it('handles single-word', () => {
@@ -41,13 +61,11 @@ describe('toolNameToMethodName: snake_case → camelCase', () => {
 describe('validateSpecialismRequiredTools', () => {
   it('returns no issues when no specialisms are declared', () => {
     const platform = { sales: { getProducts: () => null } };
-    assert.deepEqual(validateSpecialismRequiredTools(platform, undefined), []);
-    assert.deepEqual(validateSpecialismRequiredTools(platform, []), []);
+    assert.deepEqual(validateSpecialismRequiredTools(platform, undefined, SYNTHETIC_REQUIREMENTS), []);
+    assert.deepEqual(validateSpecialismRequiredTools(platform, [], SYNTHETIC_REQUIREMENTS), []);
   });
 
   it('returns no issues when every required method exists somewhere on the platform', () => {
-    // sales-non-guaranteed requires: create_media_buy, get_media_buy_delivery,
-    // get_media_buys, get_products, sync_accounts, sync_creatives, update_media_buy
     const platform = {
       sales: {
         getProducts: () => null,
@@ -59,14 +77,20 @@ describe('validateSpecialismRequiredTools', () => {
       },
       accounts: { syncAccounts: () => null },
     };
-    assert.deepEqual(validateSpecialismRequiredTools(platform, ['sales-non-guaranteed']), []);
+    assert.deepEqual(
+      validateSpecialismRequiredTools(platform, ['sales-non-guaranteed'], SYNTHETIC_REQUIREMENTS),
+      []
+    );
   });
 
   it('flags missing methods with specialism + tool + method names', () => {
-    // sales-non-guaranteed declared but no methods exist
     const platform = { sales: {} };
-    const issues = validateSpecialismRequiredTools(platform, ['sales-non-guaranteed']);
-    assert.equal(issues.length, 7); // 7 required tools per manifest
+    const issues = validateSpecialismRequiredTools(
+      platform,
+      ['sales-non-guaranteed'],
+      SYNTHETIC_REQUIREMENTS
+    );
+    assert.equal(issues.length, 7);
     const methods = issues.map(i => i.method).sort();
     assert.deepEqual(methods, [
       'createMediaBuy',
@@ -85,8 +109,7 @@ describe('validateSpecialismRequiredTools', () => {
   });
 
   it('finds methods on any platform field — adopter layout is flexible', () => {
-    // "Cross-cutting" placement: syncAccounts on accounts, the rest on sales.
-    // The validator's hasMethodAnywhere semantic accepts this.
+    // Cross-cutting placement: syncAccounts on accounts, the rest on sales.
     const platform = {
       sales: {
         getProducts: () => null,
@@ -98,11 +121,13 @@ describe('validateSpecialismRequiredTools', () => {
       },
       accounts: { syncAccounts: () => null },
     };
-    assert.deepEqual(validateSpecialismRequiredTools(platform, ['sales-non-guaranteed']), []);
+    assert.deepEqual(
+      validateSpecialismRequiredTools(platform, ['sales-non-guaranteed'], SYNTHETIC_REQUIREMENTS),
+      []
+    );
   });
 
   it('alternative non-conventional layout: single mega-platform exposes all methods', () => {
-    // Adopter chose to put everything on one field. The validator doesn't care.
     const platform = {
       everything: {
         getProducts: () => null,
@@ -114,30 +139,52 @@ describe('validateSpecialismRequiredTools', () => {
         syncAccounts: () => null,
       },
     };
-    assert.deepEqual(validateSpecialismRequiredTools(platform, ['sales-non-guaranteed']), []);
+    assert.deepEqual(
+      validateSpecialismRequiredTools(platform, ['sales-non-guaranteed'], SYNTHETIC_REQUIREMENTS),
+      []
+    );
   });
 
-  it('silently passes specialisms not present in SPECIALISM_REQUIRED_TOOLS', () => {
-    // Manifest doesn't enumerate this; treat as no-op.
+  it('silently passes specialisms not present in the lookup', () => {
+    // 'signed-requests' is not a per-specialism required-tools spec entry.
     const platform = { sales: {} };
-    assert.deepEqual(validateSpecialismRequiredTools(platform, ['signed-requests']), []);
+    assert.deepEqual(
+      validateSpecialismRequiredTools(platform, ['signed-requests'], SYNTHETIC_REQUIREMENTS),
+      []
+    );
   });
 
   it('aggregates issues across multiple specialisms', () => {
     const platform = { sales: { getProducts: () => null } };
-    const issues = validateSpecialismRequiredTools(platform, ['sales-non-guaranteed', 'signal-owned']);
+    const issues = validateSpecialismRequiredTools(
+      platform,
+      ['sales-non-guaranteed', 'signal-owned'],
+      SYNTHETIC_REQUIREMENTS
+    );
     const specialisms = new Set(issues.map(i => i.specialism));
     assert.deepEqual([...specialisms].sort(), ['sales-non-guaranteed', 'signal-owned']);
   });
 
   it('handles a non-object platform gracefully', () => {
-    // Defensive: validator shouldn't throw on undefined / null / primitive.
-    assert.doesNotThrow(() => validateSpecialismRequiredTools(null, ['sales-non-guaranteed']));
-    assert.doesNotThrow(() => validateSpecialismRequiredTools(undefined, ['sales-non-guaranteed']));
-    assert.doesNotThrow(() => validateSpecialismRequiredTools(42, ['sales-non-guaranteed']));
-    // Each call should return issues for every required tool since no methods are reachable.
-    const issues = validateSpecialismRequiredTools(null, ['sales-non-guaranteed']);
+    assert.doesNotThrow(() =>
+      validateSpecialismRequiredTools(null, ['sales-non-guaranteed'], SYNTHETIC_REQUIREMENTS)
+    );
+    assert.doesNotThrow(() =>
+      validateSpecialismRequiredTools(undefined, ['sales-non-guaranteed'], SYNTHETIC_REQUIREMENTS)
+    );
+    assert.doesNotThrow(() =>
+      validateSpecialismRequiredTools(42, ['sales-non-guaranteed'], SYNTHETIC_REQUIREMENTS)
+    );
+    const issues = validateSpecialismRequiredTools(null, ['sales-non-guaranteed'], SYNTHETIC_REQUIREMENTS);
     assert.ok(issues.length > 0);
+  });
+
+  it('default lookup (manifest-derived SPECIALISM_REQUIRED_TOOLS) is no-op in 3.0.4', () => {
+    // Sanity: when callers don't pass a custom lookup, the manifest's empty
+    // `required_tools` makes this a true no-op in 3.0.4. Activates when the
+    // spec populates the field in a future release.
+    const platform = { sales: {} };
+    assert.deepEqual(validateSpecialismRequiredTools(platform, ['sales-non-guaranteed']), []);
   });
 });
 
