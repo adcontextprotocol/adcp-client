@@ -47,15 +47,22 @@ export interface DecisioningCapabilities<TConfig = unknown> {
   /**
    * Channels this platform sells.
    *
-   * Omit for signals-only platforms — they don't sell media channels.
+   * Omit for non-media-buy platforms — they don't sell ad inventory and have no
+   * channels to declare. Applies to signals (`signal-marketplace`, `signal-owned`),
+   * governance (`governance-spend-authority`, `governance-delivery-monitor`,
+   * `property-lists`, `collection-lists`, `content-standards`), creative-only
+   * (`creative-ad-server`, `creative-template`, `creative-generative`), and
+   * brand (`brand-rights`) platforms.
    */
   channels?: readonly MediaChannel[];
 
   /**
    * Pricing models this platform supports.
    *
-   * Omit for signals-only platforms — signal pricing is declared per-signal
-   * in `pricing_options[]`, not here.
+   * Omit for non-media-buy platforms — they don't sell ad inventory and have no
+   * channel-level pricing to declare. For signals platforms specifically, pricing
+   * is declared per-signal in `pricing_options[]` instead. Same non-media-buy
+   * specialism set as `channels` above.
    */
   pricingModels?: readonly PricingModel[];
 
