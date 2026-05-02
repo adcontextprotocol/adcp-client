@@ -5,32 +5,35 @@ When one process hosts many publishers (typical SaaS deployment), use `createTen
 ```ts
 import { createTenantRegistry, serve } from '@adcp/sdk/server';
 
-// 1. Create the registry (once, at startup)
-const registry = createTenantRegistry({
-  defaultServerOptions: {
-    name: 'my-multi-tenant-host',
-    version: '1.0.0',
-    validation: { requests: 'strict', responses: 'strict' },
-  },
-  // jwksValidator: createNoopJwksValidator()  // dev/test only — skip brand.json roundtrip
-  autoValidate: true,
-});
+async function bootstrap() {
+  // 1. Create the registry (once, at startup)
+  const registry = createTenantRegistry({
+    defaultServerOptions: {
+      name: 'my-multi-tenant-host',
+      version: '1.0.0',
+      validation: { requests: 'strict', responses: 'strict' },
+    },
+    // jwksValidator: createNoopJwksValidator()  // dev/test only — skip brand.json roundtrip
+    autoValidate: true,
+  });
 
-// 2. Register each tenant explicitly (call register() once per tenant)
-//    Load config from your DB, KMS, etc. at startup.
-await registry.register('tenant_a', {
-  agentUrl: 'https://tenant-a.example.com',
-  platform: new MyPlatform(await loadTenantConfig('tenant_a')),
-  signingKey: await loadSigningKeyFromKms('tenant_a'),  // optional in 3.x; required in 4.0
-  label: 'Tenant A',
-}, { awaitFirstValidation: true });
+  // 2. Register each tenant explicitly (call register() once per tenant)
+  //    Load config from your DB, KMS, etc. at startup.
+  const tenantAConfig = await loadTenant('tenant_a');
+  await registry.register('tenant_a', {
+    agentUrl: 'https://tenant-a.example.com',
+    platform: new MyPlatform(tenantAConfig),
+    // signingKey: await loadSigningKeyFromKms('tenant_a'),  // optional in 3.x; required in 4.0
+    label: 'Tenant A',
+  }, { awaitFirstValidation: true });
 
-// 3. Wire into serve() — resolve the tenant per request by host
-serve(ctx => {
-  const resolved = registry.resolveByHost(ctx.host);
-  if (!resolved) throw new Error(`unknown host: ${ctx.host}`);
-  return resolved.server;
-}, { port: process.env.PORT });
+  // 3. Wire into serve() — resolve the tenant per request by host
+  serve(ctx => {
+    const resolved = registry.resolveByHost(ctx.host);
+    if (!resolved) throw new Error(`unknown host: ${ctx.host}`);
+    return resolved.server;
+  }, { port: process.env.PORT });
+}
 ```
 
 ## Per-tenant health
@@ -50,27 +53,35 @@ Register a new tenant without restarting (e.g., admin-save webhook):
 
 ```ts
 // POST /admin/tenants/:tenantId/activate  (gate with mTLS or signed admin token)
-await registry.register(tenantId, {
-  agentUrl: row.agentUrl,
-  platform: new MyPlatform(await loadTenantConfig(tenantId)),
-}, { awaitFirstValidation: true });
+async function activateTenant(tenantId: string, row: { agentUrl: string }) {
+  const cfg = await loadTenant(tenantId);
+  await registry.register(tenantId, {
+    agentUrl: row.agentUrl,
+    platform: new MyPlatform(cfg),
+  }, { awaitFirstValidation: true });
+}
 ```
 
 Re-validate JWKS after key rotation (**zero traffic gap**):
 
 ```ts
 // POST /admin/tenants/:tenantId/recheck
-const status = await registry.recheck(tenantId);
-// status.health transitions: disabled → healthy (if brand.json now matches)
+async function recheckTenant(tenantId: string) {
+  const status = await registry.recheck(tenantId);
+  // status.health transitions: disabled → healthy (if brand.json now matches)
+  return status;
+}
 ```
 
 Update platform config (unregister → re-register, **brief ~503 gap**):
 
 ```ts
 // ⚠️  resolveByHost returns null between these two calls (~<10ms for in-process)
-registry.unregister(tenantId);
-await registry.register(tenantId, { agentUrl, platform: new MyPlatform(newConfig) },
-  { awaitFirstValidation: true });
+async function updateTenant(tenantId: string, agentUrl: string, newConfig: unknown) {
+  registry.unregister(tenantId);
+  await registry.register(tenantId, { agentUrl, platform: new MyPlatform(newConfig) },
+    { awaitFirstValidation: true });
+}
 ```
 
 Remove a tenant — `resolveByHost` returns null immediately:
