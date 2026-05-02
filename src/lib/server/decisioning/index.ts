@@ -163,7 +163,7 @@ export type { ContentStandardsPlatform } from './specialisms/content-standards';
 
 export type { PropertyListsPlatform, CollectionListsPlatform } from './specialisms/lists';
 
-export type { SalesPlatform } from './specialisms/sales';
+export type { SalesPlatform, SalesCorePlatform, SalesIngestionPlatform } from './specialisms/sales';
 
 export type { AudiencePlatform, Audience, SyncAudiencesRow, AudienceStatus } from './specialisms/audiences';
 
@@ -275,6 +275,8 @@ export type { RequestShape } from './helpers';
 export {
   definePlatform,
   defineSalesPlatform,
+  defineSalesCorePlatform,
+  defineSalesIngestionPlatform,
   defineAudiencePlatform,
   defineSignalsPlatform,
   defineCreativeBuilderPlatform,

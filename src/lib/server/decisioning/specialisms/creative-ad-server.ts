@@ -123,4 +123,15 @@ export interface CreativeAdServerPlatform<TCtxMeta = Record<string, unknown>> {
    * via `publishStatusChange` when fresh reports are available.
    */
   getCreativeDelivery(filter: GetCreativeDeliveryRequest, ctx: Ctx<TCtxMeta>): Promise<GetCreativeDeliveryResponse>;
+
+  /**
+   * Format catalog. Same shape as `SalesPlatform.listCreativeFormats` —
+   * ad servers expose what formats their library supports so buyers can
+   * size brief / asset combinations against the platform before pushing.
+   * Optional; adopters who delegate format definitions to external
+   * `creative_agents` declared in capabilities can omit.
+   *
+   * ⚠️  NO-ACCOUNT TOOL — see {@link CreativeBuilderPlatform.listCreativeFormats}.
+   */
+  listCreativeFormats?(req: ListCreativeFormatsRequest, ctx: Ctx<TCtxMeta>): Promise<ListCreativeFormatsResponse>;
 }

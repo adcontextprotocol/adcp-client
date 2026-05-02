@@ -45,7 +45,7 @@
 
 import type { DecisioningPlatform } from './platform';
 import type { ComplianceTestingCapabilities } from './capabilities';
-import type { SalesPlatform } from './specialisms/sales';
+import type { SalesPlatform, SalesCorePlatform, SalesIngestionPlatform } from './specialisms/sales';
 import type { AudiencePlatform } from './specialisms/audiences';
 import type { SignalsPlatform } from './specialisms/signals';
 import type { CreativeBuilderPlatform } from './specialisms/creative';
@@ -118,6 +118,88 @@ export function definePlatform<TConfig = unknown, TCtxMeta = Record<string, unkn
 export function defineSalesPlatform<TCtxMeta = Record<string, unknown>>(
   platform: SalesPlatform<TCtxMeta>
 ): SalesPlatform<TCtxMeta> {
+  // Identity helper — return type matches the input parameter type.
+  //
+  // **Post-#1341 caveat.** `SalesPlatform` methods are now optional
+  // individually, so this helper's return type is effectively all-optional
+  // even when the adopter passes all five core methods. Adopters claiming
+  // a sales specialism with `RequiredPlatformsFor<S>`-narrowed core methods
+  // (`sales-guaranteed`, `sales-non-guaranteed`, `sales-broadcast-tv`,
+  // `sales-catalog-driven`) need the closed shape on the way out — this
+  // helper doesn't preserve it. Two ways to keep the per-specialism type
+  // narrowing under #1341:
+  //
+  //   1. Drop `defineSalesPlatform` and write the platform field with an
+  //      explicit `: SalesCorePlatform<Meta> & SalesIngestionPlatform<Meta>`
+  //      annotation. The TS compiler flows the contextual type into the
+  //      literal and `RequiredPlatformsFor<S>` enforcement holds.
+  //   2. Use the new {@link defineSalesCorePlatform} for the core methods
+  //      and {@link defineSalesIngestionPlatform} for ingestion methods,
+  //      spreading both onto the `sales` field.
+  //
+  // Pure source-compat for adopters claiming `sales-social` (ingestion-only)
+  // who don't need the per-specialism core narrowing — the helper still
+  // pins TCtxMeta on the parameter so handler `ctx` is typed correctly.
+  return platform;
+}
+
+/**
+ * Type-level identity for the **core** sales surface — bidding +
+ * media-buy lifecycle (`getProducts`, `createMediaBuy`, `updateMediaBuy`,
+ * `getMediaBuyDelivery`, `getMediaBuys`). Use when claiming `sales-non-
+ * guaranteed` / `sales-guaranteed` / `sales-broadcast-tv` /
+ * `sales-catalog-driven` and you want compile-time enforcement of the
+ * lifecycle methods without dragging in optional ingestion methods.
+ *
+ * Pair with {@link defineSalesIngestionPlatform} when also implementing
+ * ingestion surfaces (sync_creatives, log_event, etc.) — spread the two
+ * onto the platform's `sales` field.
+ *
+ * @example
+ * ```ts
+ * sales: { ...defineSalesCorePlatform<MyMeta>({
+ *   getProducts: async (req, ctx) => { ... },
+ *   createMediaBuy: async (req, ctx) => { ... },
+ *   updateMediaBuy: async (id, patch, ctx) => { ... },
+ *   getMediaBuyDelivery: async (filter, ctx) => { ... },
+ *   getMediaBuys: async (req, ctx) => { ... },
+ * }) },
+ * ```
+ */
+export function defineSalesCorePlatform<TCtxMeta = Record<string, unknown>>(
+  platform: SalesCorePlatform<TCtxMeta>
+): SalesCorePlatform<TCtxMeta> {
+  return platform;
+}
+
+/**
+ * Type-level identity for the **ingestion** sales surface — sync surfaces
+ * (`syncCreatives`, `syncCatalogs`, `syncEventSources`, `logEvent`) +
+ * read/feedback (`listCreativeFormats`, `listCreatives`,
+ * `providePerformanceFeedback`). Walled-garden specialisms whose value
+ * surface is asset push (Meta CAPI, Snap CAPI, retail-media catalogs)
+ * use this without claiming the core media-buy lifecycle. Every method
+ * is optional individually — implement what your specialism's storyboard
+ * exercises.
+ *
+ * Use this when claiming `sales-social` (no `sales-non-guaranteed`)
+ * or composing `audience-sync` ingestion onto a non-media-buy seller.
+ * Adopters who also accept inbound media buys spread
+ * {@link defineSalesCorePlatform}'s output alongside.
+ *
+ * @example
+ * ```ts
+ * // Pure sales-social adopter — no media buys, just events + creatives.
+ * sales: defineSalesIngestionPlatform<SocialMeta>({
+ *   syncCreatives: async (creatives, ctx) => { ... },
+ *   syncEventSources: async (req, ctx) => { ... },
+ *   logEvent: async (req, ctx) => { ... },
+ * }),
+ * ```
+ */
+export function defineSalesIngestionPlatform<TCtxMeta = Record<string, unknown>>(
+  platform: SalesIngestionPlatform<TCtxMeta>
+): SalesIngestionPlatform<TCtxMeta> {
   return platform;
 }
 

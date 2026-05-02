@@ -2968,115 +2968,132 @@ function buildMediaBuyHandlers<P extends DecisioningPlatform<any, any>>(
   const sales = platform.sales;
   if (!sales) return undefined;
 
+  // Core lifecycle methods are optional on the SalesPlatform interface
+  // (#1341) — the per-specialism mapping in `RequiredPlatformsFor<S>`
+  // enforces "you claimed `sales-non-guaranteed`, therefore you must
+  // implement getProducts" at the type level, while specialisms whose
+  // upstream owns bidding (`sales-social`) skip them entirely. The
+  // dispatcher mirrors that with conditional spreads — we don't register
+  // a wire handler when the platform method is absent, so the merge seam
+  // (`opts.mediaBuy.X`) can supply it OR the framework returns
+  // `METHOD_NOT_FOUND` from `tools/list` for the unsupported tool.
   return {
-    getProducts: async (params, ctx) => {
-      const reqCtx = ctxFor(ctx);
-      return projectSync(
-        async () => {
-          const result = await sales.getProducts(params, reqCtx);
-          // Auto-store products: persist each Product's wire shape +
-          // ctx_metadata so subsequent createMediaBuy / updateMediaBuy
-          // calls referencing product_id can hydrate the full Product
-          // automatically (publisher sees `req.packages[i].product`).
-          await autoStoreResources(
-            ctxMetadataStore,
-            reqCtx.account?.id,
-            'product',
-            (result as { products?: readonly unknown[] })?.products,
-            'product_id',
-            logger
-          );
-          return result;
-        },
-        r => r
-      );
-    },
+    ...(sales.getProducts && {
+      getProducts: async (params, ctx) => {
+        const reqCtx = ctxFor(ctx);
+        return projectSync(
+          async () => {
+            const result = await sales.getProducts!(params, reqCtx);
+            // Auto-store products: persist each Product's wire shape +
+            // ctx_metadata so subsequent createMediaBuy / updateMediaBuy
+            // calls referencing product_id can hydrate the full Product
+            // automatically (publisher sees `req.packages[i].product`).
+            await autoStoreResources(
+              ctxMetadataStore,
+              reqCtx.account?.id,
+              'product',
+              (result as { products?: readonly unknown[] })?.products,
+              'product_id',
+              logger
+            );
+            return result;
+          },
+          r => r
+        );
+      },
+    }),
 
-    createMediaBuy: async (params, ctx) => {
-      const reqCtx = ctxFor(ctx);
-      // Auto-hydrate: walk `params.packages`, attach the full Product object
-      // (including `ctx_metadata`) at `pkg.product`. Publisher reads
-      // `pkg.product.format_ids`, `pkg.product.ctx_metadata?.gam?.ad_unit_ids`
-      // directly — no separate lookup, no boilerplate.
-      await hydratePackagesWithProducts(
-        ctxMetadataStore,
-        reqCtx.account?.id,
-        (params as { packages?: unknown[] })?.packages,
-        logger
-      );
-      return projectSync(
-        async () => {
-          const push = extractPushConfig(params, logger, { allowPrivateWebhookUrls: pushOpts.allowPrivateWebhookUrls });
-          const result = await sales.createMediaBuy(params, reqCtx);
-          return routeIfHandoff(
-            taskRegistry,
-            {
-              tool: 'create_media_buy',
-              accountId: reqCtx.account.id,
-              pushNotificationUrl: push.url,
-              pushNotificationToken: push.token,
-              emitWebhook: taskWebhookEmit ?? ctx.emitWebhook,
-              autoEmitCompletion: pushOpts.autoEmitCompletionWebhooks,
-              observability,
-              logger,
-            },
-            result,
-            r => r // identity projection for createMediaBuy
-          );
-        },
-        r => r
-      );
-    },
-
-    updateMediaBuy: async (params, ctx) => {
-      const reqCtx = ctxFor(ctx);
-      // `media_buy_id` is required on the wire schema, but `validation: 'off'`
-      // mode skips the schema parse — guard at the seam so platform code can
-      // trust the value rather than re-checking. Also catches buyers calling
-      // with the param missing under an off-spec server config.
-      const { media_buy_id } = params;
-      if (!media_buy_id) {
-        return adcpError('INVALID_REQUEST', {
-          message: 'update_media_buy requires media_buy_id',
-          field: 'media_buy_id',
-        });
-      }
-      // Auto-hydrate: attach the full MediaBuy (wire shape + ctx_metadata)
-      // at `req.media_buy`. Publisher reads `req.media_buy.ctx_metadata?.gam`
-      // directly — no separate lookup. Misses are silent; publisher falls
-      // back to its own DB. Schema-driven via `x-entity` (#1109).
-      await hydrateForTool(ctxMetadataStore, reqCtx.account?.id, 'update_media_buy', params, logger);
-      return projectSync(
-        async () => {
-          const push = extractPushConfig(params, logger, {
-            allowPrivateWebhookUrls: pushOpts.allowPrivateWebhookUrls,
-          });
-          const result = await sales.updateMediaBuy(media_buy_id, params, reqCtx);
-          // F12 sync auto-emit. updateMediaBuy is sync-only on the
-          // platform interface (no TaskHandoff arm — spec response
-          // doesn't include Submitted), so we don't route through
-          // routeIfHandoff. Fire-and-forget to keep slowloris webhook
-          // receivers from blocking the sync response.
-          if (pushOpts.autoEmitCompletionWebhooks && push.url) {
-            const emitOpts = {
-              tool: 'update_media_buy' as const,
-              accountId: reqCtx.account.id,
-              pushNotificationUrl: push.url,
-              ...(push.token !== undefined && { pushNotificationToken: push.token }),
-              emitWebhook: taskWebhookEmit ?? ctx.emitWebhook,
-              ...(observability && { observability }),
-              logger,
-            };
-            void emitSyncCompletionWebhook(emitOpts, result).catch((err: unknown) => {
-              const msg = err instanceof Error ? err.message : String(err);
-              logger.warn(`[adcp/decisioning] sync completion webhook background-error: ${msg}`);
+    ...(sales.createMediaBuy && {
+      createMediaBuy: async (params, ctx) => {
+        const reqCtx = ctxFor(ctx);
+        // Auto-hydrate: walk `params.packages`, attach the full Product object
+        // (including `ctx_metadata`) at `pkg.product`. Publisher reads
+        // `pkg.product.format_ids`, `pkg.product.ctx_metadata?.gam?.ad_unit_ids`
+        // directly — no separate lookup, no boilerplate.
+        await hydratePackagesWithProducts(
+          ctxMetadataStore,
+          reqCtx.account?.id,
+          (params as { packages?: unknown[] })?.packages,
+          logger
+        );
+        return projectSync(
+          async () => {
+            const push = extractPushConfig(params, logger, {
+              allowPrivateWebhookUrls: pushOpts.allowPrivateWebhookUrls,
             });
-          }
-          return result;
-        },
-        r => r
-      );
-    },
+            const result = await sales.createMediaBuy!(params, reqCtx);
+            return routeIfHandoff(
+              taskRegistry,
+              {
+                tool: 'create_media_buy',
+                accountId: reqCtx.account.id,
+                pushNotificationUrl: push.url,
+                pushNotificationToken: push.token,
+                emitWebhook: taskWebhookEmit ?? ctx.emitWebhook,
+                autoEmitCompletion: pushOpts.autoEmitCompletionWebhooks,
+                observability,
+                logger,
+              },
+              result,
+              r => r // identity projection for createMediaBuy
+            );
+          },
+          r => r
+        );
+      },
+    }),
+
+    ...(sales.updateMediaBuy && {
+      updateMediaBuy: async (params, ctx) => {
+        const reqCtx = ctxFor(ctx);
+        // `media_buy_id` is required on the wire schema, but `validation: 'off'`
+        // mode skips the schema parse — guard at the seam so platform code can
+        // trust the value rather than re-checking. Also catches buyers calling
+        // with the param missing under an off-spec server config.
+        const { media_buy_id } = params;
+        if (!media_buy_id) {
+          return adcpError('INVALID_REQUEST', {
+            message: 'update_media_buy requires media_buy_id',
+            field: 'media_buy_id',
+          });
+        }
+        // Auto-hydrate: attach the full MediaBuy (wire shape + ctx_metadata)
+        // at `req.media_buy`. Publisher reads `req.media_buy.ctx_metadata?.gam`
+        // directly — no separate lookup. Misses are silent; publisher falls
+        // back to its own DB. Schema-driven via `x-entity` (#1109).
+        await hydrateForTool(ctxMetadataStore, reqCtx.account?.id, 'update_media_buy', params, logger);
+        return projectSync(
+          async () => {
+            const push = extractPushConfig(params, logger, {
+              allowPrivateWebhookUrls: pushOpts.allowPrivateWebhookUrls,
+            });
+            const result = await sales.updateMediaBuy!(media_buy_id, params, reqCtx);
+            // F12 sync auto-emit. updateMediaBuy is sync-only on the
+            // platform interface (no TaskHandoff arm — spec response
+            // doesn't include Submitted), so we don't route through
+            // routeIfHandoff. Fire-and-forget to keep slowloris webhook
+            // receivers from blocking the sync response.
+            if (pushOpts.autoEmitCompletionWebhooks && push.url) {
+              const emitOpts = {
+                tool: 'update_media_buy' as const,
+                accountId: reqCtx.account.id,
+                pushNotificationUrl: push.url,
+                ...(push.token !== undefined && { pushNotificationToken: push.token }),
+                emitWebhook: taskWebhookEmit ?? ctx.emitWebhook,
+                ...(observability && { observability }),
+                logger,
+              };
+              void emitSyncCompletionWebhook(emitOpts, result).catch((err: unknown) => {
+                const msg = err instanceof Error ? err.message : String(err);
+                logger.warn(`[adcp/decisioning] sync completion webhook background-error: ${msg}`);
+              });
+            }
+            return result;
+          },
+          r => r
+        );
+      },
+    }),
 
     syncCreatives: async (params, ctx) => {
       const reqCtx = ctxFor(ctx);
@@ -3110,13 +3127,15 @@ function buildMediaBuyHandlers<P extends DecisioningPlatform<any, any>>(
       );
     },
 
-    getMediaBuyDelivery: async (params, ctx) => {
-      const reqCtx = ctxFor(ctx);
-      return projectSync(
-        () => sales.getMediaBuyDelivery(params, reqCtx),
-        actuals => actuals
-      );
-    },
+    ...(sales.getMediaBuyDelivery && {
+      getMediaBuyDelivery: async (params, ctx) => {
+        const reqCtx = ctxFor(ctx);
+        return projectSync(
+          () => sales.getMediaBuyDelivery!(params, reqCtx),
+          actuals => actuals
+        );
+      },
+    }),
 
     // Optional methods — return UNSUPPORTED_FEATURE when the platform omits
     // them. Adopters that haven't migrated to the v6 platform interface for

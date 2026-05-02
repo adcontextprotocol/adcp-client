@@ -31,7 +31,8 @@ import {
   DEFAULT_REPORTING_CAPABILITIES,
   publishStatusChange,
   type DecisioningPlatform,
-  type SalesPlatform,
+  type SalesCorePlatform,
+  type SalesIngestionPlatform,
   type AccountStore,
   type SyncCreativesRow,
 } from '@adcp/sdk/server';
@@ -107,7 +108,7 @@ export class BroadcastTvSeller implements DecisioningPlatform<BroadcastTvConfig,
     },
   };
 
-  sales: SalesPlatform<BroadcastTvMeta> = {
+  sales: SalesCorePlatform<BroadcastTvMeta> & SalesIngestionPlatform<BroadcastTvMeta> = {
     /**
      * Sync catalog read. Returns the affiliate's standing packages —
      * primetime daypart, sports tentpoles, etc. Brief-based proposal

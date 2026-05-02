@@ -103,6 +103,55 @@ describe('schema-validator — oneOf cascade compaction (#1111)', () => {
     assert.ok(enumIssue, `pricing_model collapse must survive: ${JSON.stringify(out.issues, null, 2)}`);
   });
 
+  // #1337 — Success/Error oneOf where the Error variant has a `not` clause
+  // forbidding the Success variant's required fields. A payload that's
+  // SHAPED like Success but missing some required fields should surface the
+  // Success-variant residuals — NOT the unactionable "must NOT be valid"
+  // (variant 1 not-clause failure) plus "must have required property
+  // 'errors'" (variant 1 required-clause failure).
+  it("near-miss Success payload surfaces Success-variant residuals, not Error variant's not-clause failure", () => {
+    // get_account_financials response — Success requires
+    //   { account, period, currency, timezone, spend, ... }
+    // Error has a not-clause forbidding those fields and requires
+    //   { errors[] }
+    // This payload is shaped like Success but missing currency + timezone.
+    const payload = {
+      account: { account_id: 'acc_123' },
+      period: { start: '2026-01-01', end: '2026-01-31' },
+      spend: { total: 1000, currency: 'USD' },
+    };
+    const out = validateResponse('get_account_financials', payload);
+    assert.equal(out.valid, false);
+
+    // Pre-fix: the issues pointed at the Error variant's `not` clause
+    // (`#/oneOf/1/not`) and Error's missing `errors` field. Post-fix: the
+    // Success variant's missing-required diagnostics survive instead.
+    const successResiduals = out.issues.filter(
+      i => i.keyword === 'required' && i.schemaPath && i.schemaPath.includes('/oneOf/0/')
+    );
+    assert.ok(
+      successResiduals.length >= 2,
+      `expected ≥2 Success-variant required-field residuals, got ${out.issues.length} issue(s): ` +
+        JSON.stringify(out.issues, null, 2)
+    );
+
+    // No `not`-keyword issue should leak through — that's the diagnostic the
+    // adopter can't act on.
+    const notIssue = out.issues.find(i => i.keyword === 'not');
+    assert.equal(notIssue, undefined, `not-clause failure must be filtered: ${JSON.stringify(notIssue)}`);
+
+    // The Error variant's "missing errors" should NOT be the surfaced diagnosis
+    // (it's a side-effect of the variant being unreachable).
+    const errorMisroute = out.issues.find(
+      i => i.keyword === 'required' && i.pointer === '/errors' && i.schemaPath?.includes('/oneOf/1/')
+    );
+    assert.equal(
+      errorMisroute,
+      undefined,
+      `Error-variant residual must be filtered when Success is the obvious near-miss: ${JSON.stringify(errorMisroute)}`
+    );
+  });
+
   it('two independent oneOf failures stay independent (instancePath scoping)', () => {
     const p1 = makeProduct();
     p1.pricing_options[0].pricing_model = 'totally_made_up';

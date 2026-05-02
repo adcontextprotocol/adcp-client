@@ -43,7 +43,8 @@ import {
   createAdcpServerFromPlatform,
   DEFAULT_REPORTING_CAPABILITIES,
   type DecisioningPlatform,
-  type SalesPlatform,
+  type SalesCorePlatform,
+  type SalesIngestionPlatform,
   type AccountStore,
   type AdcpStructuredError,
   type SyncCreativesRow,
@@ -226,7 +227,7 @@ export class MockHybridSeller implements DecisioningPlatform<MockSellerConfig, M
   statusMappers = {};
   accounts = makeAccounts();
 
-  sales: SalesPlatform<MockSellerMeta> = {
+  sales: SalesCorePlatform<MockSellerMeta> & SalesIngestionPlatform<MockSellerMeta> = {
     getProducts: SHARED_GET_PRODUCTS,
 
     /**

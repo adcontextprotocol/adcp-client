@@ -111,11 +111,6 @@
   },
   {
     "source": "skills/build-decisioning-platform/advanced/REFERENCE.md",
-    "errorCode": "TS1360",
-    "messagePrefix": "Type '{ getProducts: (req: GetProductsRequest, ctx: Ctx<Record<string, unknown>>"
-  },
-  {
-    "source": "skills/build-decisioning-platform/advanced/REFERENCE.md",
     "errorCode": "TS2322",
     "messagePrefix": "Type 'Promise<{ id: string; name: string; status: \"active\"; metadata: {}; authIn"
   },
@@ -207,6 +202,11 @@
   {
     "source": "skills/build-generative-seller-agent/SKILL.md",
     "errorCode": "TS2322",
+    "messagePrefix": "Type '() => Promise<{ deliveries: never[]; }>' is not assignable to type '(filte"
+  },
+  {
+    "source": "skills/build-generative-seller-agent/SKILL.md",
+    "errorCode": "TS2322",
     "messagePrefix": "Type '() => Promise<{ items: never[]; nextCursor: null; }>' is not assignable to"
   },
   {
@@ -223,11 +223,6 @@
     "source": "skills/build-generative-seller-agent/SKILL.md",
     "errorCode": "TS2322",
     "messagePrefix": "Type '(req: PreviewCreativeRequest, ctx: NoAccountCtx<Record<string, unknown>>) "
-  },
-  {
-    "source": "skills/build-generative-seller-agent/SKILL.md",
-    "errorCode": "TS2322",
-    "messagePrefix": "Type 'Promise<{ deliveries: never[]; }>' is not assignable to type 'Promise<GetM"
   },
   {
     "source": "skills/build-generative-seller-agent/SKILL.md",
@@ -407,6 +402,11 @@
   {
     "source": "skills/build-retail-media-agent/SKILL.md",
     "errorCode": "TS2322",
+    "messagePrefix": "Type '() => Promise<{ deliveries: never[]; }>' is not assignable to type '(filte"
+  },
+  {
+    "source": "skills/build-retail-media-agent/SKILL.md",
+    "errorCode": "TS2322",
     "messagePrefix": "Type '() => Promise<{ items: never[]; nextCursor: null; }>' is not assignable to"
   },
   {
@@ -427,17 +427,17 @@
   {
     "source": "skills/build-retail-media-agent/SKILL.md",
     "errorCode": "TS2322",
-    "messagePrefix": "Type 'Promise<{ deliveries: never[]; }>' is not assignable to type 'Promise<GetM"
-  },
-  {
-    "source": "skills/build-retail-media-agent/SKILL.md",
-    "errorCode": "TS2322",
     "messagePrefix": "Type 'Promise<{ id: string; operator: string; ctx_metadata: {}; }>' is not assig"
   },
   {
     "source": "skills/build-retail-media-agent/SKILL.md",
     "errorCode": "TS2339",
     "messagePrefix": "Property 'store' does not exist on type 'Ctx<Record<string, unknown>>'."
+  },
+  {
+    "source": "skills/build-retail-media-agent/SKILL.md",
+    "errorCode": "TS2345",
+    "messagePrefix": "Argument of type 'MyRetailMedia' is not assignable to parameter of type 'MyRetai"
   },
   {
     "source": "skills/build-seller-agent/deployment.md",
@@ -702,6 +702,16 @@
   {
     "source": "skills/build-seller-agent/SKILL.md",
     "errorCode": "TS2322",
+    "messagePrefix": "Type '() => Promise<{ deliveries: never[]; }>' is not assignable to type '(filte"
+  },
+  {
+    "source": "skills/build-seller-agent/SKILL.md",
+    "errorCode": "TS2322",
+    "messagePrefix": "Type '() => Promise<{ deliveries: never[]; }>' is not assignable to type '(filte"
+  },
+  {
+    "source": "skills/build-seller-agent/SKILL.md",
+    "errorCode": "TS2322",
     "messagePrefix": "Type '() => Promise<{ items: never[]; nextCursor: null; }>' is not assignable to"
   },
   {
@@ -752,27 +762,12 @@
   {
     "source": "skills/build-seller-agent/SKILL.md",
     "errorCode": "TS2322",
-    "messagePrefix": "Type '{ kid: string; alg: string; adcp_use: string; key_ops: string[]; crv?: str"
-  },
-  {
-    "source": "skills/build-seller-agent/SKILL.md",
-    "errorCode": "TS2322",
     "messagePrefix": "Type 'CreateMediaBuyRequest' is not assignable to type 'Record<string, unknown>'"
   },
   {
     "source": "skills/build-seller-agent/SKILL.md",
     "errorCode": "TS2322",
     "messagePrefix": "Type 'CreateMediaBuyRequest' is not assignable to type 'Record<string, unknown>'"
-  },
-  {
-    "source": "skills/build-seller-agent/SKILL.md",
-    "errorCode": "TS2322",
-    "messagePrefix": "Type 'Promise<{ deliveries: never[]; }>' is not assignable to type 'Promise<GetM"
-  },
-  {
-    "source": "skills/build-seller-agent/SKILL.md",
-    "errorCode": "TS2322",
-    "messagePrefix": "Type 'Promise<{ deliveries: never[]; }>' is not assignable to type 'Promise<GetM"
   },
   {
     "source": "skills/build-seller-agent/SKILL.md",
@@ -833,6 +828,21 @@
     "source": "skills/build-seller-agent/SKILL.md",
     "errorCode": "TS2345",
     "messagePrefix": "Argument of type '{ field: string; }' is not assignable to parameter of type 'Ad"
+  },
+  {
+    "source": "skills/build-seller-agent/SKILL.md",
+    "errorCode": "TS2345",
+    "messagePrefix": "Argument of type 'MySeller' is not assignable to parameter of type 'MySeller & {"
+  },
+  {
+    "source": "skills/build-seller-agent/SKILL.md",
+    "errorCode": "TS2345",
+    "messagePrefix": "Argument of type 'RegulatedPublisher' is not assignable to parameter of type 'Re"
+  },
+  {
+    "source": "skills/build-seller-agent/SKILL.md",
+    "errorCode": "TS2345",
+    "messagePrefix": "Argument of type 'WebhookSeller' is not assignable to parameter of type 'Webhook"
   },
   {
     "source": "skills/build-seller-agent/SKILL.md",
