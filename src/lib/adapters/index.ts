@@ -10,6 +10,7 @@
  * - PropertyListAdapter: Manage buyer-defined property lists
  * - ProposalManager: Generate and refine media plan proposals
  * - SISessionManager: Handle Sponsored Intelligence conversational sessions
+ * - InMemoryImplicitAccountStore: AccountStore for resolution: 'implicit' platforms
  */
 
 // Content Standards
@@ -63,3 +64,10 @@ export {
   SIErrorCodes,
   defaultSISessionManager,
 } from './si-session-manager';
+
+// Implicit Account Store (resolution: 'implicit')
+export {
+  InMemoryImplicitAccountStore,
+  defaultImplicitKeyFn,
+  type ImplicitAccountStoreOptions,
+} from './implicit-account-store';

@@ -396,7 +396,11 @@ export interface AccountStore<TCtxMeta = Record<string, unknown>> {
    * ```ts
    * resolve: async (ref, ctx) => {
    *   if (ref?.account_id) return await this.db.findById(ref.account_id);
-   *   const platformAcct = await myUpstream.findByOAuthClient(ctx?.authInfo?.clientId);
+   *   const cred = ctx?.authInfo?.credential;
+   *   const clientKey = cred?.kind === 'oauth' ? cred.client_id
+   *     : cred?.kind === 'api_key' ? cred.key_id
+   *     : undefined;
+   *   const platformAcct = clientKey ? await myUpstream.findByClientKey(clientKey) : null;
    *   return platformAcct ? this.toAccount(platformAcct) : null;
    * }
    * ```

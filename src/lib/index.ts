@@ -1158,6 +1158,10 @@ export {
   type CommittedCheckRequest,
   GovernanceAdapterErrorCodes,
   isGovernanceAdapterError,
+  // Implicit Account Store (resolution: 'implicit')
+  InMemoryImplicitAccountStore,
+  defaultImplicitKeyFn,
+  type ImplicitAccountStoreOptions,
 } from './adapters';
 
 // ====== BACKWARD COMPATIBILITY & ENVIRONMENT LOADING ======
