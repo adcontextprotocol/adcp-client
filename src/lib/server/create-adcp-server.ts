@@ -3024,6 +3024,39 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
           }
         }
 
+        // --- Sandbox-only enforcement (Phase 1.5 of #1269) ---
+        // Runs after account resolution so we can compare the resolved
+        // account's `sandbox` flag against the agent's `sandbox_only`
+        // capability. Account-less tools (provide_performance_feedback,
+        // list_creative_formats, etc.) pass the gate — they don't
+        // operate on a specific account, so the sandbox/production axis
+        // doesn't apply.
+        //
+        // Defense-in-depth for test agents (CI runners, internal QA
+        // agents, partner pre-prod environments): if a sandbox-only
+        // agent's credential leaks, blast radius is bounded to sandbox
+        // accounts. Production agents leave `sandbox_only` unset.
+        // Strict-by-default: any non-Account shape (legacy v5 adopters,
+        // bespoke account types) lacking the `sandbox` field reads as
+        // `undefined !== true → reject`. That's correct: a sandbox-only
+        // agent operating against an unknown-shape account is the
+        // case where rejection is the safe default — adopters who want
+        // to opt in either flip the agent's `sandbox_only` off or
+        // populate `sandbox: true` on their resolved account.
+        if (
+          ctx.agent?.sandbox_only === true &&
+          ctx.account !== undefined &&
+          (ctx.account as { sandbox?: boolean }).sandbox !== true
+        ) {
+          return finalize(
+            adcpError('PERMISSION_DENIED', {
+              message: 'Buyer agent is sandbox-only; this request targets a non-sandbox account.',
+              recovery: 'terminal',
+              details: { scope: 'agent', reason: 'sandbox-only' },
+            })
+          );
+        }
+
         // --- Session key resolution ---
         if (resolveSessionKey) {
           try {
