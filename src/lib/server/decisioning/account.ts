@@ -13,12 +13,16 @@
  */
 
 import type {
+  Account as WireAccount,
   BrandReference,
   AccountReference,
   ReportUsageRequest,
   ReportUsageResponse,
   GetAccountFinancialsRequest,
   GetAccountFinancialsSuccess,
+  BusinessEntity,
+  PaymentTerms,
+  AccountScope,
 } from '../../types/tools.generated';
 import type { CursorPage, CursorRequest } from './pagination';
 
@@ -70,6 +74,41 @@ export interface Account<TCtxMeta = Record<string, unknown>> {
    * assert the right party is billed.
    */
   billing?: { invoicedTo: 'agent' | 'operator' | BrandReference };
+
+  /**
+   * Business entity details for the party responsible for payment.
+   *
+   * `billing_entity.bank` is write-only per the AdCP spec — the framework
+   * strips it in `toWireAccount` before emitting on the wire. Adopters may
+   * populate it internally (e.g., after receiving it from a buyer request),
+   * but it will never reach the wire response.
+   */
+  billing_entity?: BusinessEntity;
+
+  /** Offline reporting delivery bucket. Verbatim pass-through to the wire. */
+  reporting_bucket?: WireAccount['reporting_bucket'];
+
+  /** Rate card identifier applied to this account. */
+  rate_card?: string;
+
+  /** Payment terms for this account. */
+  payment_terms?: PaymentTerms;
+
+  /** Maximum outstanding balance allowed. */
+  credit_limit?: { amount: number; currency: string };
+
+  /** Setup instructions shown when status is `'pending_approval'`. */
+  setup?: WireAccount['setup'];
+
+  /** How the seller scoped this billing account relative to operator/brand dimensions. */
+  account_scope?: AccountScope;
+
+  /**
+   * Governance agent endpoints registered on this account. Credential fields
+   * within each entry are write-only per the spec and are not echoed in
+   * responses.
+   */
+  governance_agents?: WireAccount['governance_agents'];
 
   /**
    * Adapter-internal opaque state. Framework doesn't read this; **stripped
@@ -382,8 +421,6 @@ export type AdcpAccountStatus =
 // Wire projection — strip framework-internal fields before emit
 // ---------------------------------------------------------------------------
 
-import type { Account as WireAccount } from '../../types/tools.generated';
-
 /**
  * Project a framework `Account<TCtxMeta>` to the wire `Account` shape.
  *
@@ -412,6 +449,27 @@ export function toWireAccount<TCtxMeta>(account: Account<TCtxMeta>): WireAccount
     // (Amazon DSP-shaped flow), which projects to `'advertiser'`.
     const t = account.billing.invoicedTo;
     wire.billing = typeof t === 'string' ? t : 'advertiser';
+  }
+  if (account.billing_entity !== undefined) {
+    // `bank` is write-only per the AdCP spec: MUST NOT be echoed in responses.
+    const { bank: _bank, ...rest } = account.billing_entity;
+    wire.billing_entity = rest as BusinessEntity;
+  }
+  if (account.reporting_bucket !== undefined) wire.reporting_bucket = account.reporting_bucket;
+  if (account.rate_card !== undefined) wire.rate_card = account.rate_card;
+  if (account.payment_terms !== undefined) wire.payment_terms = account.payment_terms;
+  if (account.credit_limit !== undefined) wire.credit_limit = account.credit_limit;
+  if (account.setup !== undefined) wire.setup = account.setup;
+  if (account.account_scope !== undefined) wire.account_scope = account.account_scope;
+  if (account.governance_agents !== undefined) wire.governance_agents = account.governance_agents;
+
+  if (process.env.NODE_ENV !== 'production') {
+    // Safety net: catches future refactors that assign billing_entity directly
+    // without stripping bank. Dead code under the current destructure, but
+    // protects against someone switching to a shallower copy.
+    if (wire.billing_entity !== undefined && 'bank' in wire.billing_entity) {
+      throw new Error('toWireAccount: billing_entity.bank present after strip — invariant violated');
+    }
   }
   return wire;
 }
