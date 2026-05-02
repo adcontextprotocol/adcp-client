@@ -278,11 +278,11 @@ export interface MCPConnectionResult {
  *
  * Strategy:
  *  1. Try StreamableHTTPClientTransport.
- *  2. If a 404 StreamableHTTPError is returned (stale session), retry once with a
- *     fresh StreamableHTTP connection — the server supports the protocol, the
- *     session just expired.
+ *  2. On any transient connect failure (generic Error, McpError, or StreamableHTTPError),
+ *     retry once with a fresh StreamableHTTP connection. Auth failures (401) are excluded —
+ *     a retry is pointless and wastes a round-trip.
  *  3. If a 401 is returned, throw immediately — auth failure is transport-agnostic.
- *  4. For any other error, fall back to SSEClientTransport with the same headers.
+ *  4. For any other error after retry, fall back to SSEClientTransport with the same headers.
  *
  * The returned client is connected and ready for use. Callers are responsible for
  * calling client.close() when done.
@@ -367,27 +367,32 @@ async function connectMCPWithFallbackImpl(
       error,
     });
 
-    // Stale/expired session — retry StreamableHTTP with a fresh connection.
-    // 404 = session not found (per MCP spec), 400 = "Session not found" (SDK #1852),
-    // other StreamableHTTPError codes may also indicate session issues.
-    // Always retry StreamableHTTP before falling back to SSE.
-    if (error instanceof StreamableHTTPError) {
+    // Retry StreamableHTTP once on any transient connect failure — network blips,
+    // JSON parse errors on half-buffered responses, and mid-handshake proxy
+    // disconnects all surface as generic Error or McpError, not StreamableHTTPError.
+    // Auth failures are the only class where retry is pointless and wasteful.
+    if (!is401Error(error)) {
       debugLogs.push({
         type: 'info',
-        message: `MCP: Session error (${error.code}) detected, retrying StreamableHTTP for ${label}`,
+        message: `MCP: Transient connect error (${errorClass}) detected, retrying StreamableHTTP for ${label}`,
         timestamp: new Date().toISOString(),
       });
+      const retryClient = new MCPClient({ name: 'AdCP-Client', version: '1.0.0' });
       try {
-        const client = new MCPClient({ name: 'AdCP-Client', version: '1.0.0' });
-        await client.connect(new StreamableHTTPClientTransport(url, transportOptions));
+        await retryClient.connect(new StreamableHTTPClientTransport(url, transportOptions));
         trackStreamableHTTPUrl(url.toString());
         debugLogs.push({
           type: 'success',
           message: `MCP: Connected via StreamableHTTP (retry) for ${label}`,
           timestamp: new Date().toISOString(),
         });
-        return client;
+        return retryClient;
       } catch (retryError) {
+        try {
+          await retryClient.close();
+        } catch {
+          /* ignore */
+        }
         debugLogs.push({
           type: 'error',
           message: `MCP: StreamableHTTP retry also failed for ${label}: ${retryError instanceof Error ? retryError.message : String(retryError)}`,
