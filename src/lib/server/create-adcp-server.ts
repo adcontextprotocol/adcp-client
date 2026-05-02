@@ -56,6 +56,7 @@ import type { TaskStore, TaskMessageQueue } from './tasks';
 import { adcpError } from './errors';
 import type { BuyerAgent, BuyerAgentRegistry } from './decisioning/buyer-agent';
 import type { ResolvedAuthInfo } from './decisioning/account';
+import { redactCredentialPatterns } from './redact';
 import { ADCP_ERROR_FIELD_ALLOWLIST } from './envelope-allowlist';
 import { InMemoryStateStore } from './state-store';
 import type { AdcpStateStore } from './state-store';
@@ -2788,6 +2789,34 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
               // OAuth credentials get a registry-resolved `ctx.agent` but
               // NO verified `agent_url` — that's correct: bearer auth
               // doesn't prove the agent_url cryptographically.
+
+              // --- Status enforcement (Stage 4 of #1269) ---
+              // Reject new requests from `suspended` / `blocked` agents
+              // with PERMISSION_DENIED + `details.scope: 'agent'`.
+              // In-flight tasks owned by a now-suspended agent are NOT
+              // retroactively cancelled — this seam runs once per
+              // synchronous request, not on `tasks_get` polls or
+              // background webhook deliveries. Sellers who need hard
+              // cutoff implement that in their platform method via
+              // `BuyerAgent.status` checks (the resolved record is
+              // available on every method that takes ctx.agent).
+              //
+              // Phase 2 (#1292) may swap to upstream `AGENT_SUSPENDED` /
+              // `AGENT_BLOCKED` codes if those land via separate spec PR;
+              // until then, `PERMISSION_DENIED + scope:'agent'` carries
+              // the structured signal a buyer can dispatch on without
+              // parsing prose.
+              if (resolved.status === 'suspended' || resolved.status === 'blocked') {
+                return finalize(
+                  adcpError('PERMISSION_DENIED', {
+                    message:
+                      resolved.status === 'suspended'
+                        ? 'Buyer agent is suspended. Contact the seller to restore access.'
+                        : 'Buyer agent is blocked.',
+                    details: { scope: 'agent', status: resolved.status },
+                  })
+                );
+              }
             }
           } catch (err) {
             const reason = err instanceof Error ? err.message : String(err);
@@ -2795,7 +2824,7 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
             return finalize(
               adcpError('SERVICE_UNAVAILABLE', {
                 message: 'Buyer-agent registry resolution failed',
-                ...(exposeErrorDetails && { details: { reason } }),
+                ...(exposeErrorDetails && { details: { reason: redactCredentialPatterns(reason) } }),
               })
             );
           }
@@ -2950,7 +2979,7 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
             return finalize(
               adcpError('SERVICE_UNAVAILABLE', {
                 message: 'Account resolution failed',
-                ...(exposeErrorDetails && { details: { reason } }),
+                ...(exposeErrorDetails && { details: { reason: redactCredentialPatterns(reason) } }),
               })
             );
           }
@@ -2974,7 +3003,7 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
             return finalize(
               adcpError('SERVICE_UNAVAILABLE', {
                 message: 'Account resolution failed',
-                ...(exposeErrorDetails && { details: { reason } }),
+                ...(exposeErrorDetails && { details: { reason: redactCredentialPatterns(reason) } }),
               })
             );
           }
@@ -2996,7 +3025,7 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
             return finalize(
               adcpError('SERVICE_UNAVAILABLE', {
                 message: 'Session key resolution failed',
-                ...(exposeErrorDetails && { details: { reason } }),
+                ...(exposeErrorDetails && { details: { reason: redactCredentialPatterns(reason) } }),
               })
             );
           }
@@ -3118,7 +3147,7 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
             return finalize(
               adcpError('SERVICE_UNAVAILABLE', {
                 message: 'Idempotency check failed',
-                ...(exposeErrorDetails && { details: { reason } }),
+                ...(exposeErrorDetails && { details: { reason: redactCredentialPatterns(reason) } }),
               })
             );
           }
@@ -3388,9 +3417,11 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
               // of diagnostic time on the matrix harness — dev callers want
               // the real reason at the call site, not hidden in server logs.
               message: exposeErrorDetails
-                ? `Tool ${toolName} handler threw: ${reason}`
+                ? `Tool ${toolName} handler threw: ${redactCredentialPatterns(reason)}`
                 : `Tool ${toolName} encountered an internal error`,
-              ...(exposeErrorDetails && { details: { reason, handler: handlerKey } }),
+              ...(exposeErrorDetails && {
+                details: { reason: redactCredentialPatterns(reason), handler: handlerKey },
+              }),
             })
           );
         }
