@@ -22,7 +22,7 @@ const SCHEMA_CACHE_DIR = path.join(ROOT, 'schemas/cache/latest');
 const INDEX_PATH = path.join(SCHEMA_CACHE_DIR, 'index.json');
 const LLMS_TXT_PATH = path.join(ROOT, 'docs/llms.txt');
 const TYPE_SUMMARY_PATH = path.join(ROOT, 'docs/TYPE-SUMMARY.md');
-const ERROR_CODES_PATH = path.join(ROOT, 'src/lib/types/error-codes.ts');
+const MANIFEST_PATH = path.join(SCHEMA_CACHE_DIR, 'manifest.json');
 const COMPLIANCE_CACHE_DIR = path.join(ROOT, 'compliance/cache/latest');
 const CLI_PATH = path.join(ROOT, 'bin/adcp.js');
 
@@ -295,17 +295,32 @@ interface ErrorCodeEntry {
 }
 
 function parseErrorCodes(): ErrorCodeEntry[] {
-  if (!existsSync(ERROR_CODES_PATH)) return [];
-  const src = readFileSync(ERROR_CODES_PATH, 'utf8');
-
-  const entries: ErrorCodeEntry[] = [];
-  // Match: CODE: { description: '...' or "...", recovery: '...' }
-  const re = /(\w+):\s*\{\s*description:\s*(?:'([^']+)'|"([^"]+)"),\s*recovery:\s*'(\w+)'/g;
-  let m: RegExpExecArray | null;
-  while ((m = re.exec(src)) !== null) {
-    entries.push({ code: m[1], description: m[2] || m[3], recovery: m[4] as any });
+  // AdCP 3.0.4 (adcp#3738) ships a `manifest.json` that's the canonical
+  // source for error codes. Sourcing here matches `STANDARD_ERROR_CODES` —
+  // both derive from the same artifact, so docs and runtime stay aligned.
+  if (!existsSync(MANIFEST_PATH)) return [];
+  let manifest: { error_codes?: Record<string, { description?: string; recovery?: string }> };
+  try {
+    manifest = JSON.parse(readFileSync(MANIFEST_PATH, 'utf8'));
+  } catch (err) {
+    // Surface a parse failure rather than silently emitting docs without an
+    // error-code section. CI's agent-docs-in-sync check will catch the empty
+    // section, but the warning aids debugging when running locally.
+    console.warn(
+      `⚠️  Failed to parse ${MANIFEST_PATH}: ${(err as Error).message}. ` +
+        `Error-code section will be empty. Re-run \`npm run sync-schemas\` to refresh the cache.`
+    );
+    return [];
   }
-  return entries;
+  const codes = manifest.error_codes;
+  if (!codes) return [];
+  return Object.entries(codes)
+    .map(([code, info]) => ({
+      code,
+      description: info?.description ?? '',
+      recovery: (info?.recovery as ErrorCodeEntry['recovery']) ?? 'transient',
+    }))
+    .sort((a, b) => a.code.localeCompare(b.code));
 }
 
 // ---------------------------------------------------------------------------
