@@ -51,9 +51,7 @@ const {
 describe('capabilities.ts: tool arrays drift against manifest.json', () => {
   it('every tool in every *_TOOLS array exists in the manifest', () => {
     if (!existsSync(MANIFEST_PATH)) {
-      throw new Error(
-        `Manifest not found at ${MANIFEST_PATH}. Run \`npm run sync-schemas\` first.`
-      );
+      throw new Error(`Manifest not found at ${MANIFEST_PATH}. Run \`npm run sync-schemas\` first.`);
     }
     const manifest = JSON.parse(readFileSync(MANIFEST_PATH, 'utf8'));
     const manifestTools = new Set(Object.keys(manifest.tools));
