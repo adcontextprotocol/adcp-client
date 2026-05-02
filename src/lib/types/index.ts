@@ -256,6 +256,37 @@ export type {
   SITerminateSessionResponse,
 } from './tools.generated';
 
+// Brand rights — identity discovery + licensing for branded inventory.
+// `creative_approval` is webhook-only (not an MCP/A2A tool) — types
+// re-exported for adopters wiring their own HTTP receiver.
+export type {
+  GetBrandIdentityRequest,
+  GetBrandIdentityResponse,
+  GetBrandIdentitySuccess,
+  GetRightsRequest,
+  GetRightsResponse,
+  GetRightsSuccess,
+  AcquireRightsRequest,
+  AcquireRightsResponse,
+  AcquireRightsAcquired,
+  AcquireRightsPendingApproval,
+  AcquireRightsRejected,
+  AcquireRightsError,
+  UpdateRightsRequest,
+  UpdateRightsResponse,
+  UpdateRightsSuccess,
+  UpdateRightsError,
+  CreativeApprovalRequest,
+  CreativeApprovalResponse,
+  CreativeApproved,
+  CreativeRejected,
+  CreativePendingReview,
+  CreativeApprovalError,
+  RightsTerms,
+  RightsConstraint,
+  GenerationCredential,
+} from './core.generated';
+
 // Strict format asset slot types (hand-authored — the codegen drops the
 // discriminated per-asset-type branches of Format.assets[]).
 export * from './format-asset-slots';

@@ -3315,8 +3315,14 @@ function buildBrandRightsHandlers<P extends DecisioningPlatform<any, any>>(
     // (the spec doesn't define a polling tool for `acquire_rights`).
     acquireRights: async (params, ctx) => {
       const reqCtx = ctxFor(ctx);
-      // Auto-hydrate `req.rights` from the prior getRights catalog entry.
-      // Publisher reads selected pricing option + ctx_metadata directly.
+      // Auto-hydrate the rights catalog entry as `params.rights`. Adopters
+      // read the selected pricing option + ctx_metadata directly off it.
+      // NOTE: the destination field name is `rights` (plural) here for
+      // historical reasons; `updateRights` below uses `rights_grant`
+      // because the wire payloads model different things — acquire takes
+      // an offering selection, update modifies an existing grant. Don't
+      // unify these without a deprecation cycle: handlers read this
+      // field, so renaming is wire-visible adopter behavior.
       await hydrateSingleResource(
         ctxMetadataStore,
         reqCtx.account?.id,
@@ -3328,6 +3334,31 @@ function buildBrandRightsHandlers<P extends DecisioningPlatform<any, any>>(
       );
       return projectSync(
         () => br.acquireRights(params, reqCtx),
+        r => r
+      );
+    },
+    // `update_rights` modifies an existing grant. The framework hydrates
+    // the grant record from `req.rights_id` so the implementation reads
+    // the resolved state from `ctx.store` (or as `params.rights_grant`
+    // — see field-name divergence note on `acquireRights` above; this
+    // tool attaches under `rights_grant` because the wire payload has
+    // no `rights` field). Async delivery — when the change requires
+    // rights-holder counter-signature — rides the buyer's
+    // `push_notification_config` webhook; the immediate response carries
+    // `implementation_date: null` to signal pending state.
+    updateRights: async (params, ctx) => {
+      const reqCtx = ctxFor(ctx);
+      await hydrateSingleResource(
+        ctxMetadataStore,
+        reqCtx.account?.id,
+        'rights_grant',
+        (params as { rights_id?: string }).rights_id,
+        'rights_grant',
+        params,
+        logger
+      );
+      return projectSync(
+        () => br.updateRights(params, reqCtx),
         r => r
       );
     },

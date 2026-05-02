@@ -297,7 +297,11 @@ export const TRUSTED_MATCH_TOOLS = ['context_match', 'identity_match'] as const;
 
 export const COMPLIANCE_TOOLS = ['comply_test_controller'] as const;
 
-export const BRAND_RIGHTS_TOOLS = ['get_brand_identity', 'get_rights', 'acquire_rights'] as const;
+// `creative_approval` is intentionally absent — it's webhook-only (the buyer
+// POSTs to the `approval_webhook` URL returned by `acquire_rights`), not an
+// MCP/A2A tool the seller exposes. Adopters wire it via their HTTP server
+// using `BrandRightsPlatform.reviewCreativeApproval`.
+export const BRAND_RIGHTS_TOOLS = ['get_brand_identity', 'get_rights', 'acquire_rights', 'update_rights'] as const;
 
 export const EVENT_TRACKING_TOOLS = ['sync_event_sources', 'log_event'] as const;
 
