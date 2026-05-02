@@ -36,11 +36,7 @@ const UPSTREAM_PORT = 41500;
 const ADCP_AUTH_TOKEN = 'sk_harness_do_not_use_in_prod';
 const UPSTREAM_API_KEY = 'mock_signal_market_key_do_not_use_in_prod';
 
-const EXPECTED_ROUTES = [
-  'GET /_lookup/operator',
-  'GET /v2/cohorts',
-  'POST /v2/activations',
-];
+const EXPECTED_ROUTES = ['GET /_lookup/operator', 'GET /v2/cohorts', 'POST /v2/activations'];
 
 function waitForPort(host, port, timeoutMs) {
   const { connect } = require('node:net');
@@ -71,9 +67,12 @@ describe('examples/hello_seller_adapter_signal_marketplace', () => {
         'tsc',
         '--noEmit',
         EXAMPLE_FILE,
-        '--target', 'ES2022',
-        '--module', 'commonjs',
-        '--moduleResolution', 'node',
+        '--target',
+        'ES2022',
+        '--module',
+        'commonjs',
+        '--moduleResolution',
+        'node',
         '--esModuleInterop',
         '--skipLibCheck',
         '--strict',
@@ -83,13 +82,9 @@ describe('examples/hello_seller_adapter_signal_marketplace', () => {
         '--noFallthroughCasesInSwitch',
         '--noPropertyAccessFromIndexSignature',
       ],
-      { cwd: REPO_ROOT, encoding: 'utf8', timeout: 120_000 },
+      { cwd: REPO_ROOT, encoding: 'utf8', timeout: 120_000 }
     );
-    assert.equal(
-      res.status,
-      0,
-      `tsc reported errors:\n${(res.stdout || '') + (res.stderr || '')}`,
-    );
+    assert.equal(res.status, 0, `tsc reported errors:\n${(res.stdout || '') + (res.stderr || '')}`);
   });
 
   // -------------------------------------------------------------------------
@@ -108,22 +103,18 @@ describe('examples/hello_seller_adapter_signal_marketplace', () => {
     // Boot the example as a child process — it calls `serve()` at module
     // load and runs forever. Async spawn keeps the test's event loop alive
     // (same lesson as #1250's runGrader fix: spawnSync would deadlock).
-    agent = spawn(
-      'npx',
-      ['tsx', EXAMPLE_FILE],
-      {
-        cwd: REPO_ROOT,
-        env: {
-          ...process.env,
-          PORT: String(AGENT_PORT),
-          UPSTREAM_URL: mockHandle.url,
-          UPSTREAM_API_KEY,
-          ADCP_AUTH_TOKEN,
-          NODE_ENV: 'development',
-        },
-        stdio: ['ignore', 'pipe', 'pipe'],
+    agent = spawn('npx', ['tsx', EXAMPLE_FILE], {
+      cwd: REPO_ROOT,
+      env: {
+        ...process.env,
+        PORT: String(AGENT_PORT),
+        UPSTREAM_URL: mockHandle.url,
+        UPSTREAM_API_KEY,
+        ADCP_AUTH_TOKEN,
+        NODE_ENV: 'development',
       },
-    );
+      stdio: ['ignore', 'pipe', 'pipe'],
+    });
     // Drain stdio so the kernel pipe buffers don't fill and block the child.
     agent.stdout.on('data', () => {});
     agent.stderr.on('data', () => {});
@@ -144,8 +135,7 @@ describe('examples/hello_seller_adapter_signal_marketplace', () => {
     assert.equal(
       grader.summary.steps_failed,
       0,
-      `storyboard reported ${grader.summary.steps_failed} failed steps:\n` +
-        formatFailures(grader),
+      `storyboard reported ${grader.summary.steps_failed} failed steps:\n` + formatFailures(grader)
     );
     // Allow `partial` overall_status when no steps failed — that's the
     // runner's "silent track" classification (issue #1209). What we
@@ -161,7 +151,7 @@ describe('examples/hello_seller_adapter_signal_marketplace', () => {
     assert.deepEqual(
       missing,
       [],
-      `These upstream routes had zero hits — the adapter is a façade for them:\n  ${missing.join('\n  ')}\n\nFull traffic:\n${JSON.stringify(traffic, null, 2)}`,
+      `These upstream routes had zero hits — the adapter is a façade for them:\n  ${missing.join('\n  ')}\n\nFull traffic:\n${JSON.stringify(traffic, null, 2)}`
     );
   });
 });
@@ -189,7 +179,7 @@ function runGrader(agentUrl, storyboardId) {
       {
         cwd: REPO_ROOT,
         stdio: ['ignore', 'pipe', 'pipe'],
-      },
+      }
     );
     const out = [];
     const err = [];
@@ -204,8 +194,8 @@ function runGrader(agentUrl, storyboardId) {
       } catch (e) {
         reject(
           new Error(
-            `grader stdout was not parseable JSON (storyboard=${storyboardId}):\n${stdout.slice(0, 500)}\n\nstderr: ${Buffer.concat(err).toString('utf8').slice(0, 500)}`,
-          ),
+            `grader stdout was not parseable JSON (storyboard=${storyboardId}):\n${stdout.slice(0, 500)}\n\nstderr: ${Buffer.concat(err).toString('utf8').slice(0, 500)}`
+          )
         );
       }
     });
@@ -219,7 +209,9 @@ function formatFailures(grader) {
     if (!node || typeof node !== 'object') return;
     if (node.passed === false && !node.skipped) {
       const detail = node.details || node.error || '';
-      failed.push(`  ✗ ${node.task || '?'} — ${node.step || node.step_id || '?'}\n      ${String(detail).slice(0, 200)}`);
+      failed.push(
+        `  ✗ ${node.task || '?'} — ${node.step || node.step_id || '?'}\n      ${String(detail).slice(0, 200)}`
+      );
     }
     for (const k of Object.keys(node)) {
       const v = node[k];
