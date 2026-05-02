@@ -27,9 +27,9 @@ your backend client, and run `adcp storyboard run` to validate.
   Port 3003.
 
   ```bash
-  npx tsx examples/hello_seller_adapter_governance.ts
-  ADCP_SANDBOX=1 adcp storyboard run http://127.0.0.1:3003/mcp governance_spend_authority --auth sk_harness_do_not_use_in_prod
-  ADCP_SANDBOX=1 adcp storyboard run http://127.0.0.1:3003/mcp property_lists --auth sk_harness_do_not_use_in_prod
+  ADCP_SANDBOX=1 npx tsx examples/hello_seller_adapter_governance.ts
+  adcp storyboard run http://127.0.0.1:3003/mcp governance_spend_authority --auth sk_harness_do_not_use_in_prod
+  adcp storyboard run http://127.0.0.1:3003/mcp property_lists --auth sk_harness_do_not_use_in_prod
   ```
 
 ### Basic Usage

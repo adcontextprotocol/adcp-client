@@ -11,10 +11,10 @@
  * production to get persistence across restarts and multi-instance safety.
  *
  * Demo (no upstream backend needed):
- *   npx tsx examples/hello_seller_adapter_governance.ts
- *   ADCP_SANDBOX=1 adcp storyboard run http://127.0.0.1:3003/mcp governance_spend_authority \
+ *   ADCP_SANDBOX=1 npx tsx examples/hello_seller_adapter_governance.ts
+ *   adcp storyboard run http://127.0.0.1:3003/mcp governance_spend_authority \
  *     --auth sk_harness_do_not_use_in_prod
- *   ADCP_SANDBOX=1 adcp storyboard run http://127.0.0.1:3003/mcp property_lists \
+ *   adcp storyboard run http://127.0.0.1:3003/mcp property_lists \
  *     --auth sk_harness_do_not_use_in_prod
  *
  * Production:
@@ -242,12 +242,22 @@ class GovernanceAdapter implements DecisioningPlatform<Record<string, never>> {
           status: 'conditions' as const,
           plan_id: req.plan_id,
           explanation: 'Approved with conditions — spend approaching plan ceiling',
+          // FIXME(adopter): AdCP 3.0 GA requires governance_context to be a compact
+          // JWS (sign with your server key). A plain string will be rejected by
+          // conformant buyers. See AdCP spec §governance_context.
           governance_context: `plan:${req.plan_id}:check:${checkId}`,
+          findings: [
+            {
+              category_id: 'near_ceiling',
+              severity: 'warning' as const,
+              explanation: 'Spend exceeds 80% of remaining authority',
+            },
+          ],
           conditions: [
             {
-              field: 'reporting',
-              reason: 'Spend exceeds 80% of remaining authority',
-              required_value: 'weekly_pacing_report',
+              field: 'packages[0].reporting_frequency',
+              reason: 'Spend exceeds 80% of remaining authority — weekly pacing report required',
+              required_value: 'weekly',
             },
           ],
         };
@@ -259,6 +269,9 @@ class GovernanceAdapter implements DecisioningPlatform<Record<string, never>> {
         status: 'approved' as const,
         plan_id: req.plan_id,
         explanation: 'Within spending authority',
+        // FIXME(adopter): AdCP 3.0 GA requires governance_context to be a compact
+        // JWS (sign with your server key). A plain string will be rejected by
+        // conformant buyers. See AdCP spec §governance_context.
         governance_context: `plan:${req.plan_id}:check:${checkId}`,
       };
     },
