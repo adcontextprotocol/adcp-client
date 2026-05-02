@@ -253,6 +253,7 @@
     "ci:pre-push": "npm run ci:schema-check && npm run ci:quick",
     "hooks:install": "node scripts/install-hooks.js",
     "hooks:uninstall": "rm -f .git/hooks/pre-push",
+    "hello-cluster": "tsx examples/hello-cluster.ts",
     "registry:cron": "tsx src/registry/cron.ts",
     "registry:validate-all": "tsx src/registry/cron.ts --all",
     "registry:validate-pending": "tsx src/registry/cron.ts --pending",

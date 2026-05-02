@@ -20,7 +20,8 @@
     "examples/decisioning-platform-broadcast-tv.ts",
     "examples/decisioning-platform-identity-graph.ts",
     "examples/decisioning-platform-multi-tenant.ts",
-    "examples/decisioning-platform-programmatic.ts"
+    "examples/decisioning-platform-programmatic.ts",
+    "examples/hello-cluster.ts"
   ],
   "exclude": ["node_modules", "dist"]
 }
