@@ -64,7 +64,7 @@ import {
 } from '../../create-adcp-server';
 import type { DecisioningPlatform, RequiredPlatformsFor, RequiredCapabilitiesFor } from '../platform';
 import type { Account, ResolvedAuthInfo } from '../account';
-import { AccountNotFoundError, toWireAccount } from '../account';
+import { AccountNotFoundError, toWireAccount, toWireSyncAccountRow } from '../account';
 import { AdcpError, type AdcpStructuredError } from '../async-outcome';
 import type { CreativeBuilderPlatform } from '../specialisms/creative';
 import type { CreativeAdServerPlatform } from '../specialisms/creative-ad-server';
@@ -3361,7 +3361,7 @@ function buildAccountHandlers<P extends DecisioningPlatform<any, any>>(
       const refs = (params.accounts ?? []) as AccountReference[];
       return projectSync(
         () => accounts.upsert!(refs),
-        rows => ({ accounts: rows })
+        rows => ({ accounts: rows.map(toWireSyncAccountRow) })
       );
     };
   }
