@@ -181,10 +181,14 @@ export interface BuyerAgent {
  */
 export interface BuyerAgentResolveInput {
   /**
-   * The kind-discriminated credential proven on the request. When absent
-   * (legacy adopters whose `authenticate()` returns the pre-migration
-   * shape), the registry falls back to a synthesized `oauth`-shaped
-   * credential built from the legacy `clientId` / `scopes` / `token` / etc.
+   * The kind-discriminated credential proven on the request. Stage 3 of
+   * the Phase 1 implementation will populate this from the verifier
+   * (`http_sig`) or from the legacy `ResolvedAuthInfo` shape (`api_key` /
+   * `oauth`); until then, callers pass it through directly when available.
+   *
+   * When absent, the registry's `resolve` returns `null` — the legacy-
+   * shape synthesis lands in Stage 3 alongside the `ResolvedAuthInfo`
+   * migration shim, not Stage 1.
    */
   readonly credential?: AdcpCredential;
 
@@ -245,15 +249,35 @@ export type ResolveBuyerAgentByAgentUrl = (agent_url: string) => Promise<BuyerAg
  * raw credential and returns the seller's record (or `null` for
  * unrecognized credentials).
  *
+ * **Implementations MUST switch on `credential.kind`** and reject (return
+ * `null`) on any kind they don't explicitly recognize. A naive
+ * `WHERE token = $1` lookup against an api-key table would otherwise mis-
+ * resolve when handed an `http_sig` credential whose `keyid` happens to
+ * collide with an existing api-key value — the credential variants share
+ * no key namespace, and the registry MUST NOT bridge them.
+ *
  * **Credential exposure.** This callback receives unredacted credential
  * payloads (token, key_id, client_id). Adopters MUST NOT log raw credential
  * values. The framework redacts credential payloads in any log line emitted
- * from registry-resolution code; adopter implementations are expected to
- * do the same (or to use prepared-statement parameters that don't log).
+ * from registry-resolution code (Stage 4); adopter implementations are
+ * expected to do the same (or to use prepared-statement parameters that
+ * don't log).
  *
  * @public
  */
 export type ResolveBuyerAgentByCredential = (credential: AdcpCredential) => Promise<BuyerAgent | null>;
+
+/**
+ * Belt-and-suspenders check that an `http_sig` credential carries a non-
+ * empty `agent_url`. A misbehaving authenticator could produce `kind:
+ * 'http_sig'` without populating the verified URL — without this guard, the
+ * registry would pass `undefined` (or `''`) to the adopter's resolver and
+ * silently get back `null`. Caller is responsible for the kind dispatch;
+ * this function only validates the http_sig payload shape.
+ */
+function isVerifiedHttpSigPayload(credential: { agent_url?: string }): credential is { agent_url: string } {
+  return typeof credential.agent_url === 'string' && credential.agent_url.length > 0;
+}
 
 /**
  * Construct a signing-only `BuyerAgentRegistry`. Bearer/API-key/OAuth
@@ -274,6 +298,7 @@ export function signingOnly(opts: { resolveByAgentUrl: ResolveBuyerAgentByAgentU
     async resolve(authInfo) {
       const credential = authInfo.credential;
       if (credential === undefined || credential.kind !== 'http_sig') return null;
+      if (!isVerifiedHttpSigPayload(credential)) return null;
       return resolveByAgentUrl(credential.agent_url);
     },
   };
@@ -333,6 +358,12 @@ export function mixed(opts: {
       const credential = authInfo.credential;
       if (credential === undefined) return null;
       if (credential.kind === 'http_sig') {
+        // Reject a malformed `http_sig` credential here rather than falling
+        // through to resolveByCredential. Otherwise `mixed` would be strictly
+        // weaker than signingOnly: an authenticator that produces an
+        // http_sig-shaped credential without a verified agent_url could
+        // bypass signed-path enforcement by routing through the bearer table.
+        if (!isVerifiedHttpSigPayload(credential)) return null;
         return resolveByAgentUrl(credential.agent_url);
       }
       return resolveByCredential(credential);

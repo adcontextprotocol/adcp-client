@@ -96,6 +96,38 @@ describe('BuyerAgentRegistry.signingOnly', () => {
     });
     await assert.rejects(registry.resolve({ credential: sigCredential() }), /upstream DB outage/);
   });
+
+  it('rejects malformed http_sig credentials (missing agent_url)', async () => {
+    let invoked = false;
+    const registry = BuyerAgentRegistry.signingOnly({
+      resolveByAgentUrl: async () => {
+        invoked = true;
+        return sampleAgent();
+      },
+    });
+    // A misbehaving authenticator could produce kind: 'http_sig' without
+    // populating agent_url. Without the runtime guard, the registry would
+    // silently pass `undefined` to the resolver and the underlying DB
+    // query would return null — a quiet shape failure.
+    const result = await registry.resolve({
+      credential: { kind: 'http_sig', keyid: 'kid-1', verified_at: 1 },
+    });
+    assert.equal(result, null);
+    assert.equal(invoked, false);
+  });
+
+  it('rejects http_sig credentials with empty agent_url', async () => {
+    let invoked = false;
+    const registry = BuyerAgentRegistry.signingOnly({
+      resolveByAgentUrl: async () => {
+        invoked = true;
+        return sampleAgent();
+      },
+    });
+    const result = await registry.resolve({ credential: sigCredential({ agent_url: '' }) });
+    assert.equal(result, null);
+    assert.equal(invoked, false);
+  });
 });
 
 describe('BuyerAgentRegistry.bearerOnly', () => {
@@ -224,6 +256,31 @@ describe('BuyerAgentRegistry.mixed', () => {
       () => BuyerAgentRegistry.mixed({ resolveByCredential: async () => null }),
       /resolveByAgentUrl must be a function/
     );
+  });
+
+  it('rejects malformed http_sig credentials without falling through to resolveByCredential', async () => {
+    // Defense against authenticator bugs: a malformed http_sig credential
+    // must not bypass signed-path enforcement by routing through the bearer
+    // table. mixed registry's malformed-http_sig handling matches
+    // signingOnly's (return null), not bearerOnly's (would let it through).
+    let signedInvoked = false;
+    let bearerInvoked = false;
+    const registry = BuyerAgentRegistry.mixed({
+      resolveByAgentUrl: async () => {
+        signedInvoked = true;
+        return sampleAgent();
+      },
+      resolveByCredential: async () => {
+        bearerInvoked = true;
+        return sampleAgent();
+      },
+    });
+    const result = await registry.resolve({
+      credential: { kind: 'http_sig', keyid: 'kid-1', verified_at: 1 },
+    });
+    assert.equal(result, null);
+    assert.equal(signedInvoked, false);
+    assert.equal(bearerInvoked, false, 'malformed http_sig must NOT fall through to the bearer path');
   });
 });
 
