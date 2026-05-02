@@ -18,6 +18,7 @@ import './default-invariants';
 // Types
 export type {
   A2ATaskEnvelope,
+  AgentEntry,
   Storyboard,
   StoryboardInvariants,
   StoryboardInvariantsObject,

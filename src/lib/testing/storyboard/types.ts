@@ -330,6 +330,16 @@ export interface StoryboardStep {
   task: string;
   /** Fallback task name when `task` is a `$test_kit.*` reference that resolves to null/undefined. */
   task_default?: string;
+  /**
+   * Routing override for multi-agent runs (`StoryboardRunOptions.agents`).
+   * When set, must reference a key in the agents map; the runner sends this
+   * step to that agent regardless of `TASK_FEATURE_MAP` resolution. Use only
+   * when a tool's specialism is claimed by multiple agents in the map and
+   * the default conflict-resolution can't pick one — e.g., `sync_creatives`
+   * between sales and creative tenants. Ignored when `agents` is unset.
+   * Adcp-client#1066.
+   */
+  agent?: string;
   schema_ref?: string;
   response_schema_ref?: string;
   doc_ref?: string;
@@ -811,6 +821,23 @@ export type StoryboardContext = Record<string, unknown>;
 // Options
 // ────────────────────────────────────────────────────────────
 
+/**
+ * One agent in a per-specialism routing map. Used by `runStoryboard()` when
+ * a storyboard spans tools that live on different tenants (e.g. signals at
+ * `/signals`, governance at `/governance`). Per-agent auth is required from
+ * day one — production multi-tenant deployments almost always use per-tenant
+ * credentials. When `auth` is omitted on an entry, `StoryboardRunOptions.auth`
+ * applies as the default. Adcp-client#1066.
+ */
+export interface AgentEntry {
+  /** MCP or A2A endpoint URL for this agent. */
+  url: string;
+  /** Per-agent auth override; falls back to `StoryboardRunOptions.auth` when absent. */
+  auth?: TestOptions['auth'];
+  /** Per-agent transport override; defaults to `StoryboardRunOptions.protocol`. */
+  transport?: 'mcp' | 'a2a';
+}
+
 export interface StoryboardRunOptions extends TestOptions {
   /** Initial context (e.g., from a previous step invocation) */
   context?: StoryboardContext;
@@ -899,6 +926,36 @@ export interface StoryboardRunOptions extends TestOptions {
    *    scaling requirement. See docs/guides/MULTI-INSTANCE-TESTING.md.
    */
   multi_instance_strategy?: 'round-robin' | 'multi-pass';
+  /**
+   * Per-specialism agent routing map. When set, each step's tool name
+   * (`StoryboardStep.task`) is resolved to the agent that claims its
+   * specialism via `TASK_FEATURE_MAP` × per-agent `get_adcp_capabilities`.
+   * An optional explicit `StoryboardStep.agent` override takes precedence.
+   *
+   * Mutually exclusive with `multi_instance_strategy` (which is replica
+   * round-robin, a different concept) and with the legacy `_client`
+   * override (single client cannot serve multiple agents). Both
+   * combinations throw at `runStoryboard()` entry.
+   *
+   * Discovery is parallel across all agents at storyboard start; any agent
+   * whose discovery fails causes the whole storyboard to fail (not skip),
+   * because a topology with one broken tenant is a hard misconfiguration,
+   * not a per-step skip condition.
+   *
+   * Multi-claim conflicts (two agents claim the same specialism) fail-fast
+   * at discovery time and require either removing one from the map or
+   * resolving each affected step with an explicit `agent:` override.
+   *
+   * Adcp-client#1066.
+   */
+  agents?: Record<string, AgentEntry>;
+  /**
+   * Fallback agent key (must be present in `agents`) for tasks with no entry
+   * in `TASK_FEATURE_MAP` — e.g., `comply_test_controller`, future tasks
+   * shipped before the SDK adds them to the map. When omitted, unmapped
+   * tasks fail-fast with `unroutable_task`.
+   */
+  default_agent?: string;
   /**
    * Host an ephemeral webhook receiver during the run so `expect_webhook*`
    * pseudo-steps can observe outbound webhooks from the agent under test.
@@ -1638,6 +1695,14 @@ export interface StoryboardResult {
   agent_urls?: string[];
   /** Distribution strategy used across agent_urls. Absent in single-URL mode. */
   multi_instance_strategy?: 'round-robin' | 'multi-pass';
+  /**
+   * Per-specialism routing map (#1066). Echoes `StoryboardRunOptions.agents`
+   * resolved to `{ key: url }` so JUnit/CI consumers and bug reports show
+   * the topology this run executed against. Absent when not in routed mode.
+   * Each `StoryboardStepResult.agent_url` echoes the URL of the routed
+   * agent for that step.
+   */
+  agent_map?: Record<string, string>;
   overall_passed: boolean;
   /**
    * Phases from the first pass. In `multi-pass` mode see `passes` for the full
