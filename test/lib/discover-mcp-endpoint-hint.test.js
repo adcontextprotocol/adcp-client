@@ -24,9 +24,7 @@ describe('discoverMCPEndpoint — wrong-path hint (#1234)', () => {
     const baseUrl = `http://127.0.0.1:${port}`;
 
     try {
-      const client = new AdCPClient([
-        { id: 'no-mcp', name: 'no-mcp', protocol: 'mcp', agent_uri: baseUrl },
-      ]);
+      const client = new AdCPClient([{ id: 'no-mcp', name: 'no-mcp', protocol: 'mcp', agent_uri: baseUrl }]);
 
       await assert.rejects(
         () => client.agent('no-mcp').getAgentInfo(),

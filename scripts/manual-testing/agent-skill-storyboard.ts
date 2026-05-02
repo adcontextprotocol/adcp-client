@@ -411,9 +411,34 @@ function runGrader(url: string, storyboardId: string): { passed: boolean; raw: s
     {
       encoding: 'utf8',
       timeout: 120_000,
+      // Close stdin so the child doesn't stall on TTY/stdin probing — without
+      // this, spawnSync's default ('pipe') hands the child an open never-
+      // written stdin pipe, on which some library the CLI loads stalls. Direct
+      // shell invocation works because the child inherits the parent's TTY
+      // (issue #1237).
+      stdio: ['ignore', 'pipe', 'pipe'],
+      // Bump from the 1 MiB default. A passing webhook-bundle JSON report
+      // approaches that on its own; on overflow, spawnSync kills with SIGTERM
+      // and returns *truncated* stdout — which would silently mis-grade as
+      // fail (JSON.parse trips on the truncation).
+      maxBuffer: 16 * 1024 * 1024,
     }
   );
   const raw = (res.stdout ?? '') + (res.stderr ?? '');
+  // Use ETIMEDOUT, not `signal === 'SIGTERM'`, to identify the timeout path.
+  // Node sets `error.code === 'ETIMEDOUT'` only when `options.timeout` fires;
+  // `signal === 'SIGTERM'` would also match Ctrl-C, OOM, external kill, or
+  // maxBuffer overflow — none of which deserve the "timed out" message. This
+  // also distinguishes the diagnostic from maxBuffer overflow, which has its
+  // own error code (`ERR_CHILD_PROCESS_STDIO_MAXBUFFER`).
+  if ((res as { error?: NodeJS.ErrnoException }).error?.code === 'ETIMEDOUT') {
+    log(
+      `grader: subprocess timed out after 120s (storyboard=${storyboardId}). ` +
+        `This is a harness-level kill, not an agent conformance failure. ` +
+        `To debug, run the grader directly: ` +
+        `node bin/adcp.js storyboard run ${url} ${storyboardId} --json --allow-http --auth sk_harness_do_not_use_in_prod --webhook-receiver`
+    );
+  }
   let passed = false;
   try {
     const parsed = JSON.parse(res.stdout);
