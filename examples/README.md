@@ -4,6 +4,13 @@ This directory contains practical examples of how to use the `@adcp/sdk` library
 
 ## Examples
 
+### Hello Adapters
+
+Minimal worked-example adapters that bridge an upstream platform to AdCP. Fork one, swap the upstream client, keep the AdCP-facing methods.
+
+- **`hello_seller_adapter_signal_marketplace.ts`** — signals adapter (`signal-marketplace` specialism, storyboard: `signal_marketplace`)
+- **`hello_seller_adapter_creative.ts`** — creative adapter (`creative-template` specialism, storyboard: `creative_template`)
+
 ### Basic Usage
 
 - **`basic-mcp.ts`** - Simple MCP protocol client usage
