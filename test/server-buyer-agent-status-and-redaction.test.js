@@ -133,7 +133,7 @@ describe('Stage 4 — status enforcement', () => {
     assert.equal(handlerInvoked, false, 'handler MUST NOT run for suspended agent');
   });
 
-  it('blocked agent → 403 PERMISSION_DENIED with details.status=blocked', async () => {
+  it('blocked agent → 403 PERMISSION_DENIED with details.status=blocked AND recovery=terminal', async () => {
     const platform = buildPlatform({
       agentRegistry: BuyerAgentRegistry.signingOnly({
         resolveByAgentUrl: async () => sampleAgent({ status: 'blocked' }),
@@ -153,6 +153,29 @@ describe('Stage 4 — status enforcement', () => {
     assert.equal(result.isError, true);
     assert.equal(result.structuredContent.adcp_error.code, 'PERMISSION_DENIED');
     assert.equal(result.structuredContent.adcp_error.details.status, 'blocked');
+    // Blocked is terminal — buyers MUST NOT auto-retry; recovery dispatches
+    // correctly without parsing details.status.
+    assert.equal(result.structuredContent.adcp_error.recovery, 'terminal');
+  });
+
+  it('suspended agent → recovery=transient (re-onboarding may resolve)', async () => {
+    const platform = buildPlatform({
+      agentRegistry: BuyerAgentRegistry.signingOnly({
+        resolveByAgentUrl: async () => sampleAgent({ status: 'suspended' }),
+      }),
+    });
+    const server = createAdcpServerFromPlatform(platform, {
+      name: 'spike',
+      version: '0.0.1',
+      validation: { requests: 'off', responses: 'off' },
+    });
+    const result = await dispatchWithAuthInfo(server, {
+      token: 'sig-tok',
+      clientId: 'signing:kid',
+      scopes: [],
+      extra: { credential: sigCredential() },
+    });
+    assert.equal(result.structuredContent.adcp_error.recovery, 'transient');
   });
 
   it('status enforcement runs BEFORE accounts.resolve (no tenant lookup wasted)', async () => {
@@ -182,6 +205,55 @@ describe('Stage 4 — status enforcement', () => {
       extra: { credential: sigCredential() },
     });
     assert.equal(accountResolveInvoked, false, 'accounts.resolve MUST NOT run when agent is suspended');
+  });
+
+  it('handler that started under an active agent completes even if registry flips to suspended mid-flight', async () => {
+    // The seam runs once per dispatch. A long-running handler that
+    // started while the agent was active completes successfully — the
+    // status enforcement is at request entry, not retroactive.
+    let registryStatus = 'active';
+    let handlerCompleted = false;
+    const platform = buildPlatform({
+      sales: {
+        getProducts: async () => {
+          // Simulate the agent flipping to suspended while the handler
+          // is mid-flight. On a real adopter this would be a separate
+          // request mutating the agent record in the seller's DB.
+          registryStatus = 'suspended';
+          handlerCompleted = true;
+          return { products: [] };
+        },
+        createMediaBuy: async () => ({ media_buy_id: 'mb_1' }),
+        updateMediaBuy: async () => ({ media_buy_id: 'mb_1' }),
+        syncCreatives: async () => [],
+        getMediaBuyDelivery: async () => ({ media_buys: [] }),
+      },
+      agentRegistry: BuyerAgentRegistry.signingOnly({
+        resolveByAgentUrl: async () => sampleAgent({ status: registryStatus }),
+      }),
+    });
+    const server = createAdcpServerFromPlatform(platform, {
+      name: 'spike',
+      version: '0.0.1',
+      validation: { requests: 'off', responses: 'off' },
+    });
+    const result = await dispatchWithAuthInfo(server, {
+      token: 'sig-tok',
+      clientId: 'signing:kid',
+      scopes: [],
+      extra: { credential: sigCredential() },
+    });
+    assert.notStrictEqual(result.isError, true, JSON.stringify(result.structuredContent));
+    assert.equal(handlerCompleted, true, 'handler MUST complete despite mid-flight status flip');
+    // The NEXT request — fired after the flip — sees suspended and is rejected.
+    const nextResult = await dispatchWithAuthInfo(server, {
+      token: 'sig-tok',
+      clientId: 'signing:kid',
+      scopes: [],
+      extra: { credential: sigCredential() },
+    });
+    assert.equal(nextResult.isError, true);
+    assert.equal(nextResult.structuredContent.adcp_error.details.status, 'suspended');
   });
 
   it('null registry result (no recognized agent) does NOT trigger status enforcement', async () => {
@@ -261,6 +333,29 @@ describe('Stage 4 — credential pattern redaction (redactCredentialPatterns)', 
   it('redacts in JSON-shaped error messages (common adopter format)', () => {
     const out = redactCredentialPatterns('upstream API: {"error":"unauthorized","token":"abc123def456ghijkl"}');
     assert.equal(out.includes('abc123def456ghijkl'), false, `secret not redacted: ${out}`);
+  });
+
+  it('redacts the bare `key=...` form (most common credential shape in upstream errors)', () => {
+    // Code-reviewer flagged: previous `CREDENTIAL_LABEL` had `api_key` /
+    // `key_id` / `signing_key` but missed bare `key=value`. Added `key`
+    // to the alternation.
+    const out = redactCredentialPatterns('upstream rejected: key=mySecretValue');
+    assert.match(out, /key=<redacted>/);
+    assert.equal(out.includes('mySecretValue'), false);
+  });
+
+  it('redacts URL-embedded basic-auth credentials', () => {
+    // Security-reviewer flagged: `https://user:pass@host/` shape was
+    // not covered by any of the 4 original patterns. Added URL pattern.
+    const out = redactCredentialPatterns('failed to GET https://service:s3cr3tValue@vendor.example/lookup');
+    assert.match(out, /https:\/\/service:<redacted>@vendor\.example/);
+    assert.equal(out.includes('s3cr3tValue'), false);
+  });
+
+  it('redacts multiple credentials on the same line', () => {
+    const out = redactCredentialPatterns('auth: token=foo123bar secret=baz456qux');
+    assert.equal(out.includes('foo123bar'), false);
+    assert.equal(out.includes('baz456qux'), false);
   });
 });
 

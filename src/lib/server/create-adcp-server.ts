@@ -2807,12 +2807,23 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
               // the structured signal a buyer can dispatch on without
               // parsing prose.
               if (resolved.status === 'suspended' || resolved.status === 'blocked') {
+                // `PERMISSION_DENIED`'s spec-default `recovery` is
+                // `correctable`, but the agent-status semantics are
+                // different per status:
+                //   - `'suspended'` is transient: re-onboarding /
+                //     contacting the seller may restore access.
+                //   - `'blocked'` is terminal: a buyer agent that's
+                //     been permanently denied SHOULD NOT loop.
+                // Setting recovery explicitly per status lets buyers
+                // dispatch retry-vs-escalate without parsing
+                // `details.status` prose.
                 return finalize(
                   adcpError('PERMISSION_DENIED', {
                     message:
                       resolved.status === 'suspended'
                         ? 'Buyer agent is suspended. Contact the seller to restore access.'
                         : 'Buyer agent is blocked.',
+                    recovery: resolved.status === 'suspended' ? 'transient' : 'terminal',
                     details: { scope: 'agent', status: resolved.status },
                   })
                 );
