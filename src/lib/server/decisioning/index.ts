@@ -132,6 +132,11 @@ export type {
 // Top-level platform + compile-time capability enforcement
 export type { DecisioningPlatform, RequiredPlatformsFor, RequiredCapabilitiesFor } from './platform';
 
+// Method-level composition (closes #1314) — wrap individual platform methods
+// with `before` / `after` hooks for short-circuit + enrichment patterns.
+export { composeMethod } from './compose';
+export type { ComposeHooks, ComposeShortCircuit } from './compose';
+
 // Specialism interfaces (v1.0)
 export type {
   CreativeBuilderPlatform,
