@@ -376,15 +376,35 @@ export interface AccountStore<TCtxMeta = Record<string, unknown>> {
    * **Optional.** Stateless platforms (creative-template, signal-marketplace
    * proxies) that don't manage account lifecycle can omit this; framework
    * surfaces `UNSUPPORTED_FEATURE` to buyers calling `sync_accounts`.
+   *
+   * `ctx.authInfo` carries the caller's authenticated principal (when
+   * `serve({ authenticate })` is wired); `ctx.agent` carries the resolved
+   * `BuyerAgent` record (when an `agentRegistry` is configured). Adopters
+   * implementing principal-keyed gates (e.g., per-buyer-agent
+   * `BILLING_NOT_PERMITTED_FOR_AGENT` on the spec's billing surfaces) read
+   * the principal here — same threading as `accounts.resolve`.
+   *
+   * **Prefer `ctx.agent` over `ctx.authInfo.credential` for commercial-
+   * relationship decisions.** `ctx.agent` is the registry-resolved durable
+   * identity (status, billing capabilities, default account terms);
+   * `ctx.authInfo.credential` is the raw transport-level credential. For
+   * billing gates the registry-resolved identity is canonical. Use
+   * `credential` only for transport-level branching (e.g., reading the
+   * verified `agent_url` from `credential.kind === 'http_sig'` when
+   * `agentRegistry` is not configured).
    */
-  upsert?(refs: AccountReference[]): Promise<SyncAccountsResultRow[]>;
+  upsert?(refs: AccountReference[], ctx?: ResolveContext): Promise<SyncAccountsResultRow[]>;
 
   /**
    * list_accounts API surface. Framework wraps with cursor envelope.
    *
    * **Optional.** Same rationale as `upsert` — stateless platforms can omit.
+   *
+   * `ctx.authInfo` and `ctx.agent` carry the caller's principal — adopters
+   * scope the listing per-principal (e.g., return only accounts visible to
+   * the calling buyer agent) without re-deriving identity from the request.
    */
-  list?(filter: AccountFilter & CursorRequest): Promise<CursorPage<Account<TCtxMeta>>>;
+  list?(filter: AccountFilter & CursorRequest, ctx?: ResolveContext): Promise<CursorPage<Account<TCtxMeta>>>;
 
   /**
    * report_usage API surface. Operator-billed platforms accept usage rows
@@ -525,6 +545,12 @@ export interface AccountFilter {
  * `billing_entity`, `payment_terms`, etc. on creation. The framework
  * projects these through `toWireSyncAccountRow` before emit, applying the
  * same `billing_entity.bank` strip as `toWireAccount` (write-only contract).
+ *
+ * **MUST NOT carry `authInfo` or other auth-derived fields.** This shape is
+ * emitted on the `sync_accounts` response wire. The framework's projector
+ * does not read `authInfo`, but adopters MUST NOT add an `authInfo` key on
+ * returned rows — same MUST-NOT-LEAK rule the framework enforces on
+ * `Account.authInfo`.
  */
 export interface SyncAccountsResultRow {
   account_id?: string;
