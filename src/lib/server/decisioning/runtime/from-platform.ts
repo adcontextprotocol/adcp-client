@@ -66,7 +66,7 @@ import {
 import type { DecisioningPlatform, RequiredPlatformsFor, RequiredCapabilitiesFor } from '../platform';
 import type { ComplianceTestingCapabilities } from '../capabilities';
 import type { Account, ResolvedAuthInfo, ResolveContext } from '../account';
-import { AccountNotFoundError, toWireAccount, toWireSyncAccountRow } from '../account';
+import { AccountNotFoundError, refAccountId, toWireAccount, toWireSyncAccountRow } from '../account';
 import type { BuyerAgent, BuyerAgentRegistry } from '../buyer-agent';
 import { AdcpError, type AdcpStructuredError } from '../async-outcome';
 import type { CreativeBuilderPlatform } from '../specialisms/creative';
@@ -136,6 +136,36 @@ import { normalizeErrors } from '../../normalize-errors';
 function normalizeRowErrors<TRow extends { errors?: unknown }>(row: TRow): TRow {
   if (row?.errors == null) return row;
   return { ...row, errors: normalizeErrors(row.errors) } as TRow;
+}
+
+/**
+ * Enforce the documented `'implicit'`-resolution refusal. When a platform
+ * declares `accounts.resolution: 'implicit'`, the framework refuses inline
+ * `account_id` references on the wire — the buyer is expected to call
+ * `sync_accounts` first, then the framework resolves the account from the
+ * authenticated principal on subsequent calls. Documented at
+ * `AccountStore.resolution` in `account.ts`.
+ *
+ * Throws `AdcpError('INVALID_REQUEST')` before reaching the adopter's
+ * `accounts.resolve`, so each adopter doesn't reimplement the same
+ * `if (ref?.account_id) return null` branch and the wire response is
+ * consistent across implicit-mode platforms. The brand+operator union arm
+ * is permitted — the strict-reading docstring claim only refuses
+ * `account_id`-shaped references.
+ */
+function refuseImplicitAccountId(
+  resolution: 'explicit' | 'implicit' | 'derived' | undefined,
+  ref: AccountReference | undefined
+): void {
+  if (resolution !== 'implicit') return;
+  if (refAccountId(ref) === undefined) return;
+  throw new AdcpError('INVALID_REQUEST', {
+    message:
+      'This platform resolves accounts from the authenticated principal — call sync_accounts first; do not pass account.account_id inline.',
+    field: 'account.account_id',
+    suggestion:
+      'Call sync_accounts to associate accounts with your principal, then omit account_id on subsequent calls.',
+  });
 }
 
 /**
@@ -1014,6 +1044,7 @@ export function createAdcpServerFromPlatform<P extends DecisioningPlatform<any, 
       let resolved = false;
       let resolvedAccountId: string | undefined;
       try {
+        refuseImplicitAccountId(platform.accounts.resolution, ref);
         const account = await platform.accounts.resolve(ref, toResolveCtx(ctx, ctx.toolName));
         resolved = account != null;
         resolvedAccountId = account?.id;
@@ -1390,6 +1421,7 @@ function buildTasksGetTool<P extends DecisioningPlatform<any, any>>(
       };
       let resolvedAccountId: string | undefined;
       if (ref) {
+        refuseImplicitAccountId(platform.accounts.resolution, ref as AccountReference);
         try {
           const resolved = await platform.accounts.resolve(ref as AccountReference, resolveCtx);
           if (resolved) resolvedAccountId = resolved.id;
@@ -3637,6 +3669,7 @@ function buildAccountHandlers<P extends DecisioningPlatform<any, any>>(
       // tokens / upstream IDs off `ctx.account.ctx_metadata` without
       // having to re-resolve from `params.account`.
       const resolveCtx = toResolveCtx(ctx, 'get_account_financials');
+      refuseImplicitAccountId(accounts.resolution, params.account);
       const resolved = await accounts.resolve(params.account, resolveCtx);
       if (!resolved) {
         throw new AdcpError('ACCOUNT_NOT_FOUND', {

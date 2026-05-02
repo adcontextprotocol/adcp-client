@@ -56,6 +56,7 @@ import type { TaskStore, TaskMessageQueue } from './tasks';
 import { adcpError } from './errors';
 import type { BuyerAgent, BuyerAgentRegistry } from './decisioning/buyer-agent';
 import type { ResolvedAuthInfo } from './decisioning/account';
+import { AdcpError } from './decisioning/async-outcome';
 import { redactCredentialPatterns } from './redact';
 import { ADCP_ERROR_FIELD_ALLOWLIST } from './envelope-allowlist';
 import { InMemoryStateStore } from './state-store';
@@ -1657,6 +1658,25 @@ function isErrorResponse(response: McpToolResponse): boolean {
  * `[object Object]` inside a SERVICE_UNAVAILABLE wrapper — the dispatcher
  * unwraps and returns the envelope directly when the shape matches.
  */
+/**
+ * Project a thrown {@link AdcpError} to the wire envelope. Used by the
+ * account-resolution and tool-handler catch blocks so adopters can throw
+ * typed errors at any depth and have the framework project the structured
+ * fields verbatim — without coercion to `SERVICE_UNAVAILABLE`. Mirrors the
+ * `isThrownAdcpError` unwrap, but for the in-process class throw rather
+ * than the already-projected envelope throw.
+ */
+function projectThrownAdcpError(err: AdcpError): McpToolResponse {
+  return adcpError(err.code, {
+    recovery: err.recovery,
+    message: err.message,
+    ...(err.field !== undefined && { field: err.field }),
+    ...(err.suggestion !== undefined && { suggestion: err.suggestion }),
+    ...(err.retry_after !== undefined && { retry_after: err.retry_after }),
+    ...(err.details !== undefined && { details: err.details }),
+  });
+}
+
 function isThrownAdcpError(value: unknown): value is McpToolResponse {
   if (!value || typeof value !== 'object') return false;
   const sc = (value as { structuredContent?: unknown }).structuredContent;
@@ -3009,6 +3029,15 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
             }
             ctx.account = account;
           } catch (err) {
+            // AdcpError throws from `resolveAccount` propagate verbatim — the
+            // resolver may need to surface typed wire errors (e.g.
+            // `INVALID_REQUEST` for inline `account_id` against an
+            // `'implicit'`-resolution platform). Generic exceptions still
+            // project to SERVICE_UNAVAILABLE so leaks don't cross the trust
+            // boundary.
+            if (err instanceof AdcpError) {
+              return finalize(projectThrownAdcpError(err));
+            }
             const reason = err instanceof Error ? err.message : String(err);
             logger.error('Account resolution failed', { tool: toolName, error: reason });
             return finalize(
@@ -3033,6 +3062,12 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
             });
             if (account != null) ctx.account = account;
           } catch (err) {
+            // Same AdcpError pass-through as the explicit `resolveAccount`
+            // catch above — typed throws propagate verbatim, generic
+            // exceptions project to SERVICE_UNAVAILABLE.
+            if (err instanceof AdcpError) {
+              return finalize(projectThrownAdcpError(err));
+            }
             const reason = err instanceof Error ? err.message : String(err);
             logger.error('Auth-derived account resolution failed', { tool: toolName, error: reason });
             return finalize(

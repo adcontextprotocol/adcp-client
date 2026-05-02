@@ -366,7 +366,10 @@ export interface AccountStore<TCtxMeta = Record<string, unknown>> {
    * - `'implicit'` — buyer must `sync_accounts` first; subsequent requests are
    *   resolved from the auth principal's pre-synced linkage (LinkedIn, some
    *   retail-media operators). Framework refuses inline `account_id` references
-   *   for these platforms.
+   *   for these platforms — emits `AdcpError('INVALID_REQUEST', { field:
+   *   'account.account_id' })` before reaching `accounts.resolve`. The
+   *   brand+operator union arm is permitted (used during the initial
+   *   `sync_accounts` flow); only `account_id`-shaped references are rejected.
    * - `'derived'` — single-tenant agents where there is no account_id on the
    *   wire at all and the auth principal alone identifies the tenant. Most
    *   self-hosted broadcasters and retail-media operators in proxy mode.
