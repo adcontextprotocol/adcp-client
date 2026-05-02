@@ -116,11 +116,37 @@ function generateFile(manifest: AdcpManifest, sourcePath: string): string {
     toolsByProtocol.get(protocol)!.push(name);
   }
 
-  // Specialism → required tools (sorted)
+  // Specialism → required tools. Two sources:
+  //   1. `manifest.specialisms[id].required_tools` — explicit list, authoritative.
+  //   2. Reverse-mapping from `manifest.tools[*].specialisms[]` — every tool that
+  //      claims this specialism is presumed required by it.
+  // 3.0.4 doesn't populate (1), so we fall back to (2). Universal tools that
+  // every specialism inherits (`get_adcp_capabilities`) are filtered out — they
+  // belong on `PROTOCOL_TOOLS`, not on per-specialism platform interfaces.
+  const UNIVERSAL_TOOLS = new Set(
+    Object.entries(manifest.tools)
+      .filter(([, t]) => t.protocol === 'protocol')
+      .map(([name]) => name)
+  );
+  // Manifest uses snake_case specialism IDs (`sales_non_guaranteed`); the spec
+  // and the SDK's `AdCPSpecialism` enum use kebab-case (`sales-non-guaranteed`).
+  // Normalize to kebab on emit so consumers can index the table with the same
+  // string they'd put into `capabilities.specialisms[]`.
+  const toKebab = (snake: string) => snake.replace(/_/g, '-');
   const specialismRequiredTools = new Map<string, string[]>();
   for (const [id, spec] of Object.entries(manifest.specialisms).sort(([a], [b]) => a.localeCompare(b))) {
+    let tools: string[];
     if (Array.isArray(spec.required_tools) && spec.required_tools.length > 0) {
-      specialismRequiredTools.set(id, [...spec.required_tools].sort());
+      tools = [...spec.required_tools];
+    } else {
+      // Reverse-map: every tool that lists this specialism in tools[*].specialisms[]
+      tools = Object.entries(manifest.tools)
+        .filter(([, t]) => Array.isArray(t.specialisms) && t.specialisms.includes(id))
+        .map(([name]) => name);
+    }
+    const filtered = tools.filter(t => !UNIVERSAL_TOOLS.has(t)).sort();
+    if (filtered.length > 0) {
+      specialismRequiredTools.set(toKebab(id), filtered);
     }
   }
 
