@@ -156,8 +156,8 @@ export type {
   Deployment,
   ActivationKey,
   VendorPricingOption,
-  SignalFilters,
-  SignalTargeting,
+  SignalFilters,   // embedded in GetSignalsRequest.filters
+  SignalTargeting, // embedded in ActivateSignalRequest.signal_targeting
 } from './tools.generated';
 
 // Creative
@@ -247,10 +247,6 @@ export type {
 } from './tools.generated';
 
 // Sponsored intelligence
-// Note: AssetVariant (tools.generated.ts) is intentionally NOT re-exported here.
-// It is the codegen name for the same discriminated union that asset-instances.ts
-// exports as `AssetInstance`. Re-exporting both names for the same type would
-// give adopters two identities for the same concept. Use `AssetInstance`.
 export type {
   SIGetOfferingRequest,
   SIGetOfferingResponse,
@@ -275,6 +271,9 @@ export * from './format-asset-slots';
 // (which describes what a publisher SELLS in `Format.assets[]`). The
 // individual ImageAsset / VideoAsset / etc. interfaces are generated; this
 // file is the missing canonical union over them.
+// Note: tools.generated.ts also has `AssetVariant`, a narrower generated union
+// that omits AudioAsset. `AssetInstance` (this file) is the curated, complete
+// union — prefer it. `AssetVariant` is intentionally not re-exported.
 export * from './asset-instances';
 
 // Strict per-row types for sync_* response success arms. The codegen
