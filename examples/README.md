@@ -11,6 +11,13 @@ This directory contains practical examples of how to use the `@adcp/sdk` library
 - **`env-config.ts`** - Loading agent configuration from environment variables
 - **`conversation-client.ts`** - Conversation-aware client with input handlers
 
+### Hello adapters (server-side starters)
+
+Minimal server-side adapters — fork one to wire your own backend. Each boots via `npx tsx`, passes its specialism storyboard against the local compliance cache, and is documented with `// SWAP:` comments at every seam to replace.
+
+- **`hello_seller_adapter_signal_marketplace.ts`** — `signal-marketplace` specialism, port 3001. Wraps an upstream HTTP client; demo with `npx @adcp/sdk@latest mock-server signal-marketplace --port 4150`.
+- **`hello_seller_adapter_brand.ts`** — `brand-rights` specialism, port 3005. In-memory backend (no upstream server required); implements `get_brand_identity`, `get_rights`, `acquire_rights` + governance.
+
 ### Agent testing (`comply_test_controller`)
 
 Start with `createComplyController` (`comply-controller-seller.ts`). Switch to `registerTestController` (`seller-test-controller.ts`) only when your domain state has internal structure that multiple production tools read from — i.e., when the adapter surface's one-method-per-scenario shape starts fighting the code you already have.
