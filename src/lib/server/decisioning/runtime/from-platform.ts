@@ -519,7 +519,7 @@ export interface CreateAdcpServerFromPlatformOptions extends Omit<
   //
   // **Merge semantics**: platform-derived handlers WIN per-key. Adopter-
   // supplied handlers fill gaps for un-wired tools (`getMediaBuys`,
-  // `listCreativeFormats`, `providePerformanceFeedback`, `reportUsage`,
+  // `providePerformanceFeedback`, `reportUsage`,
   // `syncEventSources`, `logEvent`, `getAccountFinancials`, content-
   // standards CRUD, etc.).
   //
@@ -1081,8 +1081,8 @@ export function createAdcpServerFromPlatform<P extends DecisioningPlatform<any, 
     },
     // Merge: platform-derived handlers WIN per-key over adopter-supplied
     // custom handlers. Adopter handlers fill gaps for tools the v6 platform
-    // doesn't yet model (getMediaBuys, listCreativeFormats, content-standards
-    // CRUD, sync_event_sources, etc.). See `CreateAdcpServerFromPlatformOptions`
+    // doesn't yet model (getMediaBuys, content-standards CRUD,
+    // sync_event_sources, etc.). See `CreateAdcpServerFromPlatformOptions`
     // JSDoc for the migration-seam contract.
     mediaBuy: mergeHandlers(
       opts.mediaBuy,
@@ -1495,7 +1495,7 @@ function buildTasksGetTool<P extends DecisioningPlatform<any, any>>(
  * Used to bridge the gap between v6 specialism interfaces (which model the
  * stable v1.0 surface) and adopter codebases that need to dispatch
  * tools the platform shape doesn't cover yet (getMediaBuys,
- * listCreativeFormats, providePerformanceFeedback, reportUsage,
+ * providePerformanceFeedback, reportUsage,
  * sync_event_sources, log_event, content-standards CRUD, etc.).
  *
  * **Collision detection.** When a custom-supplied handler would be
@@ -3129,6 +3129,17 @@ function buildCreativeHandlers<P extends DecisioningPlatform<any, any>>(
         r => r
       );
     },
+
+    ...('listCreativeFormats' in creative &&
+      creative.listCreativeFormats && {
+        listCreativeFormats: async (params, ctx) => {
+          const reqCtx = ctxFor(ctx);
+          return projectSync(
+            () => creative.listCreativeFormats!(params, reqCtx),
+            r => r
+          );
+        },
+      }),
 
     // Ad-server-specialism methods. Only the CreativeAdServerPlatform variant
     // implements these; framework returns UNSUPPORTED_FEATURE for the other

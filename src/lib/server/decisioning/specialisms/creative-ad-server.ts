@@ -32,6 +32,8 @@ import type {
   CreativeManifest,
   PreviewCreativeRequest,
   PreviewCreativeResponse,
+  ListCreativeFormatsRequest,
+  ListCreativeFormatsResponse,
   ListCreativesRequest,
   ListCreativesResponse,
   GetCreativeDeliveryRequest,
@@ -87,6 +89,27 @@ export interface CreativeAdServerPlatform<TCtxMeta = Record<string, unknown>> {
     creatives: Creative[],
     ctx: Ctx<TCtxMeta>
   ): Promise<SyncCreativesRow[] | TaskHandoff<SyncCreativesRow[]>>;
+
+  // ── list_creative_formats: sync only ────────────────────────────────
+  // Discovery tool — buyers query what creative formats this ad server
+  // accepts. Optional because ad-server adopters that declare
+  // `creative_agents` in capabilities can delegate format discovery
+  // to those agents. Self-hosted ad servers implement directly.
+  //
+  // ⚠️  NO-ACCOUNT TOOL. The wire request does not carry an `account`
+  // field. `ctx.account` is undefined for `'explicit'`-resolution
+  // adopters. Three safe patterns:
+  //
+  // 1. **`'derived'` resolution** — `accounts.resolve(undefined)` returns
+  //    a singleton; `ctx.account` is always set.
+  // 2. **Don't implement the method** — the framework returns
+  //    `UNSUPPORTED_FEATURE`; buyers using declared `creative_agents`
+  //    still receive a response.
+  // 3. **Explicit-mode with defensive read** — cast `ctx.account as
+  //    Account | undefined` and derive the account from the request
+  //    body, or throw `AdcpError('ACCOUNT_NOT_FOUND')`.
+  /** Format catalog. What creative formats this ad server accepts. */
+  listCreativeFormats?(req: ListCreativeFormatsRequest, ctx: Ctx<TCtxMeta>): Promise<ListCreativeFormatsResponse>;
 
   /**
    * Read creatives from the library. Filters + pagination. When

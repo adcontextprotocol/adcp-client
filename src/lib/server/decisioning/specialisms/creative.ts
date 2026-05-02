@@ -26,6 +26,8 @@ import type {
   BuildCreativeMultiSuccess,
   PreviewCreativeRequest,
   PreviewCreativeResponse,
+  ListCreativeFormatsRequest,
+  ListCreativeFormatsResponse,
 } from '../../../types/tools.generated';
 import type { SyncCreativesRow } from './sales';
 
@@ -146,6 +148,28 @@ export interface CreativeBuilderPlatform<TCtxMeta = Record<string, unknown>> {
     creatives: Creative[],
     ctx: Ctx<TCtxMeta>
   ): Promise<SyncCreativesRow[] | TaskHandoff<SyncCreativesRow[]>>;
+
+  // ── list_creative_formats: sync only ────────────────────────────────
+  // Discovery tool — buyers query what creative formats this builder
+  // produces. Optional for adopters who declare `creative_agents` in
+  // capabilities — the framework can discover formats from those
+  // references. Self-hosted builders (own format catalog) implement
+  // this directly.
+  //
+  // ⚠️  NO-ACCOUNT TOOL. The wire request does not carry an `account`
+  // field. `ctx.account` is undefined for `'explicit'`-resolution
+  // adopters. Three safe patterns:
+  //
+  // 1. **`'derived'` resolution** — `accounts.resolve(undefined)` returns
+  //    a singleton; `ctx.account` is always set.
+  // 2. **Don't implement the method** — the framework returns
+  //    `UNSUPPORTED_FEATURE`; buyers using declared `creative_agents`
+  //    still receive a response.
+  // 3. **Explicit-mode with defensive read** — cast `ctx.account as
+  //    Account | undefined` and derive the account from the request
+  //    body, or throw `AdcpError('ACCOUNT_NOT_FOUND')`.
+  /** Format catalog. What creative formats this builder produces. */
+  listCreativeFormats?(req: ListCreativeFormatsRequest, ctx: Ctx<TCtxMeta>): Promise<ListCreativeFormatsResponse>;
 }
 
 /**
