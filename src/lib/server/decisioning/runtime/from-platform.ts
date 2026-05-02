@@ -3357,23 +3357,31 @@ function buildAccountHandlers<P extends DecisioningPlatform<any, any>>(
   const handlers: AccountHandlers<Account> = {};
 
   if (accounts.upsert) {
-    handlers.syncAccounts = async (params, _ctx) => {
+    handlers.syncAccounts = async (params, ctx) => {
       const refs = (params.accounts ?? []) as AccountReference[];
+      const resolveCtx = {
+        ...(ctx.authInfo !== undefined && { authInfo: ctx.authInfo }),
+        toolName: 'sync_accounts' as const,
+      };
       return projectSync(
-        () => accounts.upsert!(refs),
+        () => accounts.upsert!(refs, resolveCtx),
         rows => ({ accounts: rows })
       );
     };
   }
 
   if (accounts.list) {
-    handlers.listAccounts = async (params, _ctx) => {
+    handlers.listAccounts = async (params, ctx) => {
       const filter = params as Parameters<NonNullable<typeof accounts.list>>[0];
+      const resolveCtx = {
+        ...(ctx.authInfo !== undefined && { authInfo: ctx.authInfo }),
+        toolName: 'list_accounts' as const,
+      };
       // Wrap in projectSync so adopter `throw new AdcpError('PERMISSION_DENIED', ...)`
       // from the list impl projects to the structured wire envelope rather
       // than falling through to the framework's `SERVICE_UNAVAILABLE` mapping.
       return projectSync(
-        () => accounts.list!(filter),
+        () => accounts.list!(filter, resolveCtx),
         page => ({
           accounts: page.items.map(toWireAccount),
           ...(page.nextCursor != null && { next_cursor: page.nextCursor }),

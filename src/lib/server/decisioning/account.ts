@@ -222,15 +222,28 @@ export interface AccountStore<TCtxMeta = Record<string, unknown>> {
    * **Optional.** Stateless platforms (creative-template, signal-marketplace
    * proxies) that don't manage account lifecycle can omit this; framework
    * surfaces `UNSUPPORTED_FEATURE` to buyers calling `sync_accounts`.
+   *
+   * `ctx.authInfo` carries the caller's OAuth principal (when
+   * `serve({ authenticate })` is wired). Multi-tenant platforms extract
+   * the buyer's `org_id` / `clientId` from `ctx.authInfo` to tenant-scope
+   * writes — same pattern as `accounts.resolve`. Implementors that don't
+   * need tenant scoping can ignore the second argument.
    */
-  upsert?(refs: AccountReference[]): Promise<SyncAccountsResultRow[]>;
+  upsert?(refs: AccountReference[], ctx?: ResolveContext): Promise<SyncAccountsResultRow[]>;
 
   /**
    * list_accounts API surface. Framework wraps with cursor envelope.
    *
    * **Optional.** Same rationale as `upsert` — stateless platforms can omit.
+   *
+   * `ctx.authInfo` carries the caller's OAuth principal (when
+   * `serve({ authenticate })` is wired). Multi-tenant platforms filter the
+   * account roster to those belonging to the calling buyer's organization
+   * using `ctx.authInfo.clientId` / `ctx.authInfo.extra` — same pattern as
+   * `accounts.resolve`. Implementors that don't need tenant scoping can
+   * ignore the second argument.
    */
-  list?(filter: AccountFilter & CursorRequest): Promise<CursorPage<Account<TCtxMeta>>>;
+  list?(filter: AccountFilter & CursorRequest, ctx?: ResolveContext): Promise<CursorPage<Account<TCtxMeta>>>;
 
   /**
    * report_usage API surface. Operator-billed platforms accept usage rows
