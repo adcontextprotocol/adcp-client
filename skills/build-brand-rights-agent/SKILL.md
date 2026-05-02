@@ -23,7 +23,7 @@ A brand rights agent represents a brand's identity and licensing. Buyers discove
 
 ## Specialisms This Skill Covers
 
-| Specialism     | Status | Delta                                                                                                                                                                                  |
+| Specialism     | Status | Delta                                                                                                                                                                                  | See                                        |
 | -------------- | ------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------ |
 | `brand-rights` | stable | First-class tools: `get_brand_identity`, `get_rights`, `acquire_rights`, `update_rights`. `creative_approval` is webhook-only — wire your HTTP receiver at the `approval_webhook` URL. | [§ brand-rights](#specialism-brand-rights) |
 
@@ -222,27 +222,40 @@ Common rejections to surface as errors: `impression_cap` below already-delivered
 
 **Creative approval (webhook).** The `approval_webhook` in your `acquire_rights` response is a URL **your agent hosts** — the buyer POSTs `CreativeApprovalRequest` there when a generated creative needs review. Schema is published in 3.0.x (`brand/creative-approval-{request,response}.json`); the SDK does NOT register this as an MCP/A2A tool because it's webhook-only.
 
-The receiver pattern: validate the request body with `CreativeApprovalRequestSchema`, dispatch to `brandRights.reviewCreativeApproval(req, ctx)`, and serialize the result with the typed builders.
+The receiver pattern: **authenticate first**, then validate the request body with `CreativeApprovalRequestSchema`, dispatch to `brandRights.reviewCreativeApproval(req, ctx)`, and serialize the result with the typed builders.
+
+> **Security order matters.** The auth check (Bearer token from `acquire_rights.approval_webhook.authentication.credentials`, or your RFC 9421 signature verifier) MUST run **before** the idempotency-store lookup. The cache is a verdict store keyed by `(principal, idempotency_key)`; an unauthenticated lookup turns the endpoint into a replay-existence oracle and lets anyone who can reach the URL pull back a previously-issued verdict. Same posture as `acquire_rights` — apply the same `verifyApiKey` / signature middleware to this route.
+
+> **SSRF on `creative_url`.** The buyer's `creative_url` is a buyer-controlled URL the brand-rights agent typically fetches to render or scan for review. Treat it like any inbound URL: route through your standard SSRF-guarded HTTP client (https-only in prod, no RFC 1918 / loopback / link-local / metadata-service IPs). The SDK applies the same allowlist on `push_notification_config.url` via `extractPushConfig` — match that posture for `creative_url`.
 
 ```typescript
 import express from 'express';
 import {
-  creativeApproved,
+  creativeApprovalApproved,
   creativeApprovalRejected,
   creativeApprovalPendingReview,
 } from '@adcp/sdk/server';
 import { CreativeApprovalRequestSchema } from '@adcp/sdk/types';
 
 const app = express();
-app.use(express.json());
+// Cap payload size to bound a hostile body.
+app.use(express.json({ limit: '256kb' }));
+
+// Auth middleware — verify Bearer token / RFC 9421 signature against the
+// (principal, rights_id) you advertised on `acquire_rights`. Run BEFORE
+// idempotency-store lookup; verdicts are tenant-scoped state.
+app.use('/webhooks/creative-approval', verifyApprovalWebhookAuth);
 
 app.post('/webhooks/creative-approval', async (req, res) => {
   const parsed = CreativeApprovalRequestSchema.safeParse(req.body);
   if (!parsed.success) {
     return res.status(400).json({ errors: [{ code: 'INVALID_REQUEST', message: 'malformed creative-approval request' }] });
   }
-  // Idempotency — replay the cached verdict if you've seen this key.
-  const cached = await idempotencyStore.get(parsed.data.idempotency_key);
+
+  // Idempotency — keyed by (authenticated principal, idempotency_key) so
+  // verdicts can't leak across tenants. Replay the cached verdict if seen.
+  const principal = req.adcpPrincipal; // set by verifyApprovalWebhookAuth
+  const cached = await idempotencyStore.get(`${principal}:${parsed.data.idempotency_key}`);
   if (cached) return res.json(cached);
 
   // Dispatch to the platform — same `reviewCreativeApproval` method shape
@@ -250,7 +263,7 @@ app.post('/webhooks/creative-approval', async (req, res) => {
   // only surfaces, so adopters host the route themselves.
   try {
     const verdict = await platform.brandRights.reviewCreativeApproval(parsed.data, /* ctx built per request */);
-    await idempotencyStore.set(parsed.data.idempotency_key, verdict);
+    await idempotencyStore.set(`${principal}:${parsed.data.idempotency_key}`, verdict);
     return res.json(verdict);
   } catch (err) {
     return res.status(500).json({ errors: [{ code: 'INTERNAL_ERROR', message: err.message }] });
@@ -262,7 +275,7 @@ Three success arms (Approved / Rejected / PendingReview) plus an error arm. Arm 
 
 ```typescript
 // Approved
-creativeApproved({
+creativeApprovalApproved({
   rights_id: 'likeness_commercial_standard',
   creative_id: 'cr_42',
   creative_url: 'https://buyer.example.com/creatives/42.mp4',

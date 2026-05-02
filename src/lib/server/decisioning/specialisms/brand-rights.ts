@@ -145,9 +145,13 @@ export interface BrandRightsPlatform<TCtxMeta = Record<string, unknown>> {
    * For terminal rejection (e.g., `impression_cap` below already-delivered
    * count, `end_date` earlier than now, switching to an incompatible
    * `pricing_option_id`) throw `AdcpError('INVALID_REQUEST', { details })`
-   * — the framework wraps it as the `UpdateRightsError` arm. Use the
-   * multi-error variant only when you have multiple distinct failures to
-   * surface in one response (matches the `acquire_rights` convention).
+   * — the framework projects the throw into the `UpdateRightsError` wire
+   * arm. The Platform method's return type is `Promise<UpdateRightsSuccess>`
+   * by design: error arms are exclusively reachable via thrown `AdcpError`
+   * (matching `acquireRights`'s convention — its return type carries only
+   * the three success arms; the multi-error `AcquireRightsError` arm is
+   * also thrown). For a multi-error batch result, throw with
+   * `details: { errors: [...] }` and the framework projects the array.
    *
    * Idempotency: required (`x-mutates-state: true`). The framework caches
    * the response for replay against the same `idempotency_key`; this

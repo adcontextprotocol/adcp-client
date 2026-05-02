@@ -649,7 +649,7 @@ export function creativeApprovalResponse(data: CreativeApprovalResponse): Creati
 }
 
 /** Per-variant constructor for the `approved` branch — webhook payload. */
-export function creativeApproved(data: Omit<CreativeApproved, 'status'>): CreativeApproved {
+export function creativeApprovalApproved(data: Omit<CreativeApproved, 'status'>): CreativeApproved {
   return { ...data, status: 'approved' } as CreativeApproved;
 }
 

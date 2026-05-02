@@ -47,7 +47,7 @@ export {
   updateRightsResponse,
   updateRightsSuccess,
   creativeApprovalResponse,
-  creativeApproved,
+  creativeApprovalApproved,
   creativeApprovalRejected,
   creativeApprovalPendingReview,
   creativeApprovalError,

@@ -136,8 +136,8 @@ describe('updateRightsResponse builder', () => {
 });
 
 describe('creative_approval webhook builders', () => {
-  it('creativeApproved injects status discriminator', () => {
-    const payload = responses.creativeApproved({
+  it('creativeApprovalApproved injects status discriminator', () => {
+    const payload = responses.creativeApprovalApproved({
       rights_id: 'rights_grant_123',
       creative_id: 'cr_42',
       creative_url: 'https://buyer.example.com/creatives/42.mp4',
