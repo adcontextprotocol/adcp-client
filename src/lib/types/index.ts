@@ -36,52 +36,119 @@ import type { FormatReferenceStructuredObject } from './core.generated';
 export type FormatID = FormatReferenceStructuredObject;
 
 // Re-export wire request/response types adopters need when building a
-// DecisioningPlatform. Source of truth is `tools.generated.ts`; this
-// curated subset is the public surface so adopters never reach into
-// generated files. Add new entries as new specialism platforms land.
+// DecisioningPlatform or calling AdCP agents. Source of truth is
+// `tools.generated.ts`; this curated block is the public surface so
+// adopters never reach into generated files.
+//
+// Intentionally excluded — name conflicts with legacy adcp.ts shapes:
+//   SyncCreativesRequest, ListCreativesRequest, ListCreativesResponse,
+//   ManageCreativeAssetsRequest, ManageCreativeAssetsResponse (adcp.ts versions
+//   already public via `export * from './adcp'` above; use those).
+// Intentionally excluded — comply-runner internals, not specialism surface:
+//   ComplyTestControllerRequest/Response, SeedSuccess, SimulationSuccess,
+//   ControllerError, ForcedDirectiveSuccess, StateTransitionSuccess,
+//   ListScenariosSuccess.
+// Intentionally excluded — internal pagination/packaging sub-shapes, not
+// part of the top-level tool request/response surface:
+//   PaginationRequest, PaginationResponse, PackageRequest,
+//   TMPResponseType, WebhookResponseType.
+
+// Account model + account operations
 export type {
-  // Account model
   AccountReference,
-  // Creative
-  BuildCreativeRequest,
-  CreativeManifest,
-  PreviewCreativeRequest,
-  PreviewCreativeResponse,
-  CreativeAsset,
-  CreativeQuality,
-  // Sales — media buy
+  ListAccountsRequest,
+  ListAccountsResponse,
+  SyncAccountsRequest,
+  SyncAccountsResponse,
+  SyncAccountsSuccess,
+  SyncAccountsError,
+  GetAccountFinancialsRequest,
+  GetAccountFinancialsResponse,
+  GetAccountFinancialsSuccess,
+  GetAccountFinancialsError,
+} from './tools.generated';
+
+// Capabilities
+export type { AdCPSpecialism, GetAdCPCapabilitiesRequest, GetAdCPCapabilitiesResponse } from './tools.generated';
+
+// Sales — media buy
+export type {
   GetProductsRequest,
   GetProductsResponse,
+  GetProductsAsyncSubmitted,
   CreateMediaBuyRequest,
+  CreateMediaBuyResponse,
   CreateMediaBuySuccess,
+  CreateMediaBuyError,
+  CreateMediaBuySubmitted,
+  CreateMediaBuyAsyncSubmitted,
   UpdateMediaBuyRequest,
+  UpdateMediaBuyResponse,
   UpdateMediaBuySuccess,
+  UpdateMediaBuyError,
+  UpdateMediaBuyAsyncSubmitted,
+  GetMediaBuysRequest,
   GetMediaBuysResponse,
   GetMediaBuyDeliveryRequest,
   GetMediaBuyDeliveryResponse,
-  // Pricing models (discriminated union across pricing types)
-  PricingOption,
-  CPMPricingOption,
-  CPCPricingOption,
-  CPVPricingOption,
-  // Media-channel + status enums adopters need when implementing a platform
+  GetMediaBuyArtifactsRequest,
+  GetMediaBuyArtifactsResponse,
+  ProvidePerformanceFeedbackRequest,
+  ProvidePerformanceFeedbackResponse,
+  ProvidePerformanceFeedbackSuccess,
+  ProvidePerformanceFeedbackError,
+  SyncPlansRequest,
+  SyncPlansResponse,
+  ReportUsageRequest,
+  ReportUsageResponse,
+  ReportPlanOutcomeRequest,
+  ReportPlanOutcomeResponse,
+  GetPlanAuditLogsRequest,
+  GetPlanAuditLogsResponse,
+} from './tools.generated';
+
+// Pricing models (discriminated union across pricing types)
+export type { PricingOption, CPMPricingOption, CPCPricingOption, CPVPricingOption } from './tools.generated';
+
+// Media-channel + status enums; publisher property + reporting shapes
+export type {
   MediaChannel,
   AudienceStatus,
   MediaBuyStatus,
   CreativeStatus,
-  // Publisher property selection (for product publisher_properties[])
   PublisherPropertySelector,
-  // Reporting capability shape (per-product)
   ReportingCapabilities,
-  // Audiences
+} from './tools.generated';
+
+// Audiences, catalogs, event sources, and events (audience-sync + retail media)
+export type {
   SyncAudiencesRequest,
   SyncAudiencesResponse,
-  // Signals
+  SyncAudiencesSuccess,
+  SyncAudiencesError,
+  SyncCatalogsRequest,
+  SyncCatalogsResponse,
+  SyncCatalogsSuccess,
+  SyncCatalogsError,
+  SyncCatalogsAsyncSubmitted,
+  SyncEventSourcesRequest,
+  SyncEventSourcesResponse,
+  SyncEventSourcesSuccess,
+  SyncEventSourcesError,
+  LogEventRequest,
+  LogEventResponse,
+  LogEventSuccess,
+  LogEventError,
+} from './tools.generated';
+
+// Signals
+export type {
   GetSignalsRequest,
   GetSignalsResponse,
   ActivateSignalRequest,
   ActivateSignalResponse,
   ActivateSignalSuccess,
+  ActivateSignalError,
   SignalID,
   SignalValueType,
   SignalCatalogType,
@@ -89,9 +156,42 @@ export type {
   Deployment,
   ActivationKey,
   VendorPricingOption,
-  // Capability declaration
-  AdCPSpecialism,
-  // Property lists — full CRUD surface for governance adopters
+} from './tools.generated';
+
+// Creative
+export type {
+  BuildCreativeRequest,
+  BuildCreativeResponse,
+  BuildCreativeSuccess,
+  BuildCreativeError,
+  BuildCreativeMultiSuccess,
+  BuildCreativeAsyncSubmitted,
+  CreativeManifest,
+  PreviewCreativeRequest,
+  PreviewCreativeResponse,
+  PreviewCreativeSingleResponse,
+  PreviewCreativeVariantResponse,
+  PreviewCreativeBatchResponse,
+  PreviewBatchResultSuccess,
+  PreviewBatchResultError,
+  ListCreativeFormatsRequest,
+  ListCreativeFormatsResponse,
+  GetCreativeFeaturesRequest,
+  GetCreativeFeaturesResponse,
+  GetCreativeDeliveryRequest,
+  GetCreativeDeliveryResponse,
+  SyncCreativesResponse,
+  SyncCreativesSuccess,
+  SyncCreativesError,
+  SyncCreativesSubmitted,
+  SyncCreativesAsyncSubmitted,
+  CreativeAsset,
+  CreativeQuality,
+  Format,
+} from './tools.generated';
+
+// Governance — property lists
+export type {
   PropertyList,
   CreatePropertyListRequest,
   CreatePropertyListResponse,
@@ -103,7 +203,10 @@ export type {
   ListPropertyListsResponse,
   DeletePropertyListRequest,
   DeletePropertyListResponse,
-  // Collection lists — full CRUD surface for governance adopters
+} from './tools.generated';
+
+// Governance — collection lists
+export type {
   CollectionList,
   CreateCollectionListRequest,
   CreateCollectionListResponse,
@@ -115,7 +218,42 @@ export type {
   ListCollectionListsResponse,
   DeleteCollectionListRequest,
   DeleteCollectionListResponse,
-  Format,
+} from './tools.generated';
+
+// Governance — content standards + delivery validation
+export type {
+  CheckGovernanceRequest,
+  CheckGovernanceResponse,
+  SyncGovernanceRequest,
+  SyncGovernanceResponse,
+  SyncGovernanceSuccess,
+  SyncGovernanceError,
+  CreateContentStandardsRequest,
+  CreateContentStandardsResponse,
+  UpdateContentStandardsRequest,
+  UpdateContentStandardsResponse,
+  UpdateContentStandardsSuccess,
+  UpdateContentStandardsError,
+  ListContentStandardsRequest,
+  ListContentStandardsResponse,
+  GetContentStandardsRequest,
+  GetContentStandardsResponse,
+  CalibrateContentRequest,
+  CalibrateContentResponse,
+  ValidateContentDeliveryRequest,
+  ValidateContentDeliveryResponse,
+} from './tools.generated';
+
+// Sponsored intelligence
+export type {
+  SIGetOfferingRequest,
+  SIGetOfferingResponse,
+  SIInitiateSessionRequest,
+  SIInitiateSessionResponse,
+  SISendMessageRequest,
+  SISendMessageResponse,
+  SITerminateSessionRequest,
+  SITerminateSessionResponse,
 } from './tools.generated';
 
 // Strict format asset slot types (hand-authored — the codegen drops the
