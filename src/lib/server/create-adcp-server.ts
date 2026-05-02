@@ -54,7 +54,7 @@ import {
 import { createTaskCapableServer } from './tasks';
 import type { TaskStore, TaskMessageQueue } from './tasks';
 import { adcpError } from './errors';
-import type { AdcpCredential, BuyerAgent, BuyerAgentRegistry } from './decisioning/buyer-agent';
+import type { BuyerAgent, BuyerAgentRegistry } from './decisioning/buyer-agent';
 import type { ResolvedAuthInfo } from './decisioning/account';
 import { ADCP_ERROR_FIELD_ALLOWLIST } from './envelope-allowlist';
 import { InMemoryStateStore } from './state-store';
@@ -348,40 +348,22 @@ export interface HandlerContext<TAccount = unknown> {
   /** State store for persisting domain objects (media buys, accounts, creatives). */
   store: AdcpStateStore;
   /**
-   * Authentication info for the caller, when `ServeOptions.authenticate` is configured.
-   * Populated from the MCP SDK's `extra.authInfo`, which `serve()` sets from the auth
-   * principal. Use this to enforce per-principal authorization in handlers.
+   * Authentication info for the caller, when `ServeOptions.authenticate` is
+   * configured. Populated from the MCP SDK's `extra.authInfo`, which
+   * `serve()` sets from the auth principal. Use this to enforce
+   * per-principal authorization in handlers.
    *
-   * Stage 3 of #1269 added the kind-discriminated `credential`,
-   * informational `agent_url` (set post-resolution by `BuyerAgentRegistry`),
-   * and `operator` fields. The legacy `token` / `clientId` / `scopes` are
-   * preserved for the two-minor deprecation cycle; new code should read
-   * `credential` and switch on its `kind`.
+   * Stage 3 of #1269 added the kind-discriminated `credential` and the
+   * `operator` fields. The legacy `token` / `clientId` / `scopes` are
+   * preserved as optional fields through the deprecation cycle; new code
+   * should read `credential` and switch on its `kind`.
+   *
+   * Buyer-agent identity post-resolution is on `ctx.agent` (the resolved
+   * `BuyerAgent` record), NOT here — this surface only carries
+   * authentication information about the credential, not the registry
+   * lookup result.
    */
-  authInfo?: {
-    /**
-     * Kind-discriminated credential. Built-in authenticators stamp this;
-     * custom `authenticate` callbacks may stamp it directly. Adopters who
-     * want the `BuyerAgentRegistry` factory routing to work need this set.
-     */
-    credential?: AdcpCredential;
-    /**
-     * Buyer-agent URL stamped post-resolution by `BuyerAgentRegistry`
-     * (informational). Security checks MUST read `credential.agent_url`
-     * (verified, http_sig only) instead.
-     */
-    agent_url?: string;
-    /** Optional operator seat within the buyer agent. Reserved for future use. */
-    operator?: string;
-    /** @deprecated Use `credential` instead; removed in two minors per #1269. */
-    token: string;
-    /** @deprecated Use `credential.client_id` (oauth) or `credential.key_id` (api_key) instead. */
-    clientId: string;
-    /** @deprecated Use `credential.scopes` (oauth) instead. */
-    scopes: string[];
-    expiresAt?: number;
-    extra?: Record<string, unknown>;
-  };
+  authInfo?: ResolvedAuthInfo;
   /**
    * Emit a signed webhook to a buyer's `push_notification_config.url`.
    * Populated when `AdcpServerConfig.webhooks` is configured. Handles
@@ -2795,15 +2777,17 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
                 Object.freeze(resolved);
               }
               ctx.agent = resolved;
-              // Stamp the informational top-level `agent_url` on
-              // `ctx.authInfo` so adopters reading it see the registry's
-              // canonical view. Security checks MUST still read from
-              // `credential.agent_url` (verified) — the field is
-              // documented as informational. Only set when authInfo
-              // exists; the registry runs after authInfo is populated.
-              if (ctx.authInfo !== undefined && ctx.authInfo.agent_url === undefined) {
-                ctx.authInfo.agent_url = resolved.agent_url;
-              }
+              // Adopters reading the registry's view of `agent_url` get it
+              // from `ctx.agent.agent_url` (the resolved `BuyerAgent`
+              // record). Stage 3 of #1269 deliberately does NOT stamp a
+              // top-level `agent_url` on `ctx.authInfo` — that would
+              // invite handler code to gate on a non-cryptographically-
+              // verified URL while the spec (adcontextprotocol/adcp#3831)
+              // requires verified `agent_url` reads to come from the
+              // `http_sig` credential variant. Adopters who use bearer or
+              // OAuth credentials get a registry-resolved `ctx.agent` but
+              // NO verified `agent_url` — that's correct: bearer auth
+              // doesn't prove the agent_url cryptographically.
             }
           } catch (err) {
             const reason = err instanceof Error ? err.message : String(err);

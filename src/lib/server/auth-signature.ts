@@ -45,6 +45,7 @@ import { InMemoryReplayStore, type ReplayStore } from '../signing/replay';
 import { InMemoryRevocationStore, type RevocationStore } from '../signing/revocation';
 import type { VerifiedSigner, VerifierCapability, VerifyResult } from '../signing/types';
 import { verifyRequestSignature } from '../signing/verifier';
+import { markVerifiedHttpSig } from './decisioning/buyer-agent';
 import {
   AuthError,
   type AuthPrincipal,
@@ -198,12 +199,12 @@ export function verifySignatureAsAuthenticator(options: VerifySignatureAsAuthent
     // emitting one would just trip the guard and confuse the audit trail.
     const credential =
       signer.agent_url !== undefined
-        ? {
-            kind: 'http_sig' as const,
+        ? markVerifiedHttpSig({
+            kind: 'http_sig',
             keyid: signer.keyid,
             agent_url: signer.agent_url,
             verified_at: signer.verified_at,
-          }
+          })
         : undefined;
 
     const principal = options.makePrincipal

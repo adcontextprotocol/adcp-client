@@ -13,7 +13,7 @@ const { describe, it } = require('node:test');
 const assert = require('node:assert/strict');
 
 const { createAdcpServerFromPlatform } = require('../dist/lib/server/decisioning/runtime/from-platform');
-const { BuyerAgentRegistry } = require('../dist/lib/server/decisioning/buyer-agent');
+const { BuyerAgentRegistry, markVerifiedHttpSig } = require('../dist/lib/server/decisioning/buyer-agent');
 const { verifyApiKey } = require('../dist/lib/server/auth');
 
 const sampleAgent = (overrides = {}) => ({
@@ -75,7 +75,7 @@ const dispatchWithAuthInfo = (server, authInfo) =>
   );
 
 describe('Stage 3 — verifyApiKey stamps `credential: { kind: "api_key" }`', () => {
-  it('static-key match populates credential.key_id from the bearer token', async () => {
+  it('static-key match populates credential.key_id with a hash, not the raw token', async () => {
     const auth = verifyApiKey({
       keys: { sk_live_abc: { principal: 'acct_42' } },
     });
@@ -86,28 +86,198 @@ describe('Stage 3 — verifyApiKey stamps `credential: { kind: "api_key" }`', ()
     });
     assert.ok(result, 'authenticator must return a principal');
     assert.equal(result.principal, 'acct_42');
-    assert.deepEqual(result.credential, { kind: 'api_key', key_id: 'sk_live_abc' });
+    assert.equal(result.credential.kind, 'api_key');
+    // M1 (security): key_id MUST NOT be the raw token; it should be a
+    // stable opaque correlator (sha256 prefix). The raw token still flows
+    // through `principal.token` for backwards-compat.
+    assert.notEqual(result.credential.key_id, 'sk_live_abc');
+    assert.match(result.credential.key_id, /^[0-9a-f]+$/);
+    assert.equal(result.credential.key_id.length, 32);
+    assert.equal(result.token, 'sk_live_abc');
   });
 
-  it('does not overwrite an adopter-provided credential on the matched principal', async () => {
-    const customCred = { kind: 'oauth', client_id: 'custom', scopes: ['read'] };
+  it('returns the same key_id hash for the same token across calls (stable correlator)', async () => {
+    const auth = verifyApiKey({ keys: { stable_tok: { principal: 'a' } } });
+    const a = await auth({ headers: { authorization: 'Bearer stable_tok' }, method: 'POST', url: '/mcp' });
+    const b = await auth({ headers: { authorization: 'Bearer stable_tok' }, method: 'POST', url: '/mcp' });
+    assert.equal(a.credential.key_id, b.credential.key_id);
+  });
+
+  it('overwrites an adopter-provided non-api_key credential (H2: forgery clamp)', async () => {
+    // Security blocker H2: previously, `verifyApiKey` preserved a
+    // `matched.credential` with arbitrary kind, letting an adopter pin
+    // `credential: { kind: 'http_sig', agent_url: 'attacker.com' }` to a
+    // static key entry and route it through `signingOnly` as if signed.
+    // Stage 3 review fix: api-key path ALWAYS stamps `kind: 'api_key'`.
+    const forgedCred = { kind: 'http_sig', keyid: 'fake', agent_url: 'attacker.com', verified_at: 0 };
     const auth = verifyApiKey({
-      keys: { tok: { principal: 'acct', credential: customCred } },
+      keys: { tok: { principal: 'acct', credential: forgedCred } },
     });
     const result = await auth({ headers: { authorization: 'Bearer tok' }, method: 'POST', url: '/mcp' });
-    assert.deepEqual(result.credential, customCred);
+    assert.equal(result.credential.kind, 'api_key', 'matched.credential MUST be overwritten with api_key kind');
+    assert.notEqual(result.credential.key_id, 'fake');
   });
 
-  it('dynamic verify path stamps credential when the verifier did not', async () => {
+  it('dynamic verify path also stamps api_key credential (overwrites verifier output)', async () => {
     const auth = verifyApiKey({
-      verify: async token => (token === 'tok_dynamic' ? { principal: 'acct' } : null),
+      verify: async token =>
+        token === 'tok_dynamic'
+          ? {
+              principal: 'acct',
+              credential: { kind: 'http_sig', keyid: 'forged', agent_url: 'attacker.com', verified_at: 0 },
+            }
+          : null,
     });
     const result = await auth({
       headers: { authorization: 'Bearer tok_dynamic' },
       method: 'POST',
       url: '/mcp',
     });
-    assert.deepEqual(result.credential, { kind: 'api_key', key_id: 'tok_dynamic' });
+    assert.equal(result.credential.kind, 'api_key');
+  });
+});
+
+describe('Stage 3 — http_sig credential forgery clamp (H1)', () => {
+  it('signingOnly rejects a literal-shape http_sig credential without the verifier brand', async () => {
+    // Security blocker H1: a custom `authenticate` callback that
+    // synthesizes `{ kind: 'http_sig', agent_url: 'attacker.com', ... }`
+    // from arbitrary code MUST NOT be routed through `signingOnly` as if
+    // verifier-attested. Stage 3 review fix: factories check a module-
+    // private brand stamped only by the framework's signature verifier.
+    let invoked = false;
+    const platform = buildPlatform({
+      agentRegistry: BuyerAgentRegistry.signingOnly({
+        resolveByAgentUrl: async () => {
+          invoked = true;
+          return sampleAgent();
+        },
+      }),
+    });
+    const server = createAdcpServerFromPlatform(platform, {
+      name: 'spike',
+      version: '0.0.1',
+      validation: { requests: 'off', responses: 'off' },
+    });
+    const result = await dispatchWithAuthInfo(server, {
+      token: 'forged',
+      clientId: 'attacker',
+      scopes: [],
+      // Plain literal — no verifier brand. Registry MUST refuse.
+      extra: {
+        credential: {
+          kind: 'http_sig',
+          keyid: 'forged-kid',
+          agent_url: 'https://attacker.com',
+          verified_at: 0,
+        },
+      },
+    });
+    assert.notStrictEqual(result.isError, true, JSON.stringify(result.structuredContent));
+    assert.equal(invoked, false, 'literal-shape http_sig MUST NOT route through signingOnly');
+    assert.equal(result.structuredContent._ctxAgent, undefined);
+  });
+
+  it('signingOnly accepts a markVerifiedHttpSig-branded http_sig credential', async () => {
+    let invoked = false;
+    const platform = buildPlatform({
+      agentRegistry: BuyerAgentRegistry.signingOnly({
+        resolveByAgentUrl: async url => {
+          invoked = true;
+          return sampleAgent({ agent_url: url });
+        },
+      }),
+    });
+    const server = createAdcpServerFromPlatform(platform, {
+      name: 'spike',
+      version: '0.0.1',
+      validation: { requests: 'off', responses: 'off' },
+    });
+    const branded = markVerifiedHttpSig({
+      kind: 'http_sig',
+      keyid: 'verified-kid',
+      agent_url: 'https://agent.scope3.com',
+      verified_at: 1714660000,
+    });
+    const result = await dispatchWithAuthInfo(server, {
+      token: 'sig-tok',
+      clientId: 'signing:verified-kid',
+      scopes: [],
+      extra: { credential: branded },
+    });
+    assert.notStrictEqual(result.isError, true);
+    assert.equal(invoked, true);
+    assert.equal(result.structuredContent._ctxAgent.agent_url, 'https://agent.scope3.com');
+  });
+
+  it('mixed also rejects literal-shape http_sig (no fall-through to bearer path)', async () => {
+    let signedInvoked = false;
+    let bearerInvoked = false;
+    const platform = buildPlatform({
+      agentRegistry: BuyerAgentRegistry.mixed({
+        resolveByAgentUrl: async () => {
+          signedInvoked = true;
+          return sampleAgent();
+        },
+        resolveByCredential: async () => {
+          bearerInvoked = true;
+          return sampleAgent();
+        },
+      }),
+    });
+    const server = createAdcpServerFromPlatform(platform, {
+      name: 'spike',
+      version: '0.0.1',
+      validation: { requests: 'off', responses: 'off' },
+    });
+    const result = await dispatchWithAuthInfo(server, {
+      token: 'forged',
+      clientId: 'attacker',
+      scopes: [],
+      extra: {
+        credential: { kind: 'http_sig', keyid: 'forged', agent_url: 'https://attacker.com', verified_at: 0 },
+      },
+    });
+    assert.notStrictEqual(result.isError, true);
+    assert.equal(signedInvoked, false);
+    assert.equal(bearerInvoked, false, 'unbranded http_sig MUST NOT route to either path');
+    assert.equal(result.structuredContent._ctxAgent, undefined);
+  });
+
+  it('JSON round-trip strips the brand (defense against serialization replay)', async () => {
+    // Documents the security model: brands are non-enumerable and don't
+    // survive `JSON.stringify` / `structuredClone`. A relay that
+    // serializes the credential and re-presents it loses the brand and
+    // the registry refuses the credential.
+    const branded = markVerifiedHttpSig({
+      kind: 'http_sig',
+      keyid: 'kid',
+      agent_url: 'https://agent.scope3.com',
+      verified_at: 1714660000,
+    });
+    const replayed = JSON.parse(JSON.stringify(branded));
+
+    let invoked = false;
+    const platform = buildPlatform({
+      agentRegistry: BuyerAgentRegistry.signingOnly({
+        resolveByAgentUrl: async () => {
+          invoked = true;
+          return sampleAgent();
+        },
+      }),
+    });
+    const server = createAdcpServerFromPlatform(platform, {
+      name: 'spike',
+      version: '0.0.1',
+      validation: { requests: 'off', responses: 'off' },
+    });
+    const result = await dispatchWithAuthInfo(server, {
+      token: 'sig-tok',
+      clientId: 'signing:kid',
+      scopes: [],
+      extra: { credential: replayed },
+    });
+    assert.equal(invoked, false, 'serialized-and-replayed http_sig MUST be refused');
+    assert.equal(result.structuredContent._ctxAgent, undefined);
   });
 });
 
@@ -133,12 +303,12 @@ describe('Stage 3 — dispatcher hoists extra.credential to ctx.authInfo.credent
       version: '0.0.1',
       validation: { requests: 'off', responses: 'off' },
     });
-    const credential = {
+    const credential = markVerifiedHttpSig({
       kind: 'http_sig',
       keyid: 'scope3-2026-01',
       agent_url: 'https://agent.scope3.com',
       verified_at: 1714660000,
-    };
+    });
     const result = await dispatchWithAuthInfo(server, {
       token: 'sig-tok',
       clientId: 'signing:scope3-2026-01',
@@ -146,7 +316,11 @@ describe('Stage 3 — dispatcher hoists extra.credential to ctx.authInfo.credent
       extra: { credential },
     });
     assert.notStrictEqual(result.isError, true, JSON.stringify(result.structuredContent));
-    assert.deepEqual(resolveCredential, credential, 'accounts.resolve must see ctx.authInfo.credential populated');
+    // Compare visible fields (the brand is non-enumerable so deepEqual
+    // ignores it; checking visible fields proves the credential round-tripped).
+    assert.equal(resolveCredential?.kind, 'http_sig');
+    assert.equal(resolveCredential?.agent_url, 'https://agent.scope3.com');
+    assert.equal(resolveCredential?.keyid, 'scope3-2026-01');
   });
 });
 
@@ -171,12 +345,12 @@ describe('Stage 3 — BuyerAgentRegistry routes on the credential', () => {
       clientId: 'signing:kid',
       scopes: [],
       extra: {
-        credential: {
+        credential: markVerifiedHttpSig({
           kind: 'http_sig',
           keyid: 'kid',
           agent_url: 'https://agent.scope3.com',
           verified_at: 1714660000,
-        },
+        }),
       },
     });
     assert.notStrictEqual(result.isError, true, JSON.stringify(result.structuredContent));
@@ -236,12 +410,12 @@ describe('Stage 3 — BuyerAgentRegistry routes on the credential', () => {
       clientId: 'signing:kid',
       scopes: [],
       extra: {
-        credential: {
+        credential: markVerifiedHttpSig({
           kind: 'http_sig',
           keyid: 'kid',
           agent_url: 'https://agent.scope3.com',
           verified_at: 1714660000,
-        },
+        }),
       },
     });
     assert.equal(signedUrl, 'https://agent.scope3.com');
@@ -283,14 +457,28 @@ describe('Stage 3 — BuyerAgentRegistry routes on the credential', () => {
     assert.equal(result.structuredContent._ctxAgent, undefined);
   });
 
-  it('signingOnly resolves and stamps informational ctx.authInfo.agent_url', async () => {
+  it('registry-derived agent_url is on ctx.agent.agent_url, not on ctx.authInfo (M2)', async () => {
+    // Stage 3 review fix M2: framework does NOT stamp a top-level
+    // `ctx.authInfo.agent_url` post-resolution. Adopters reading the
+    // registry's view get it from `ctx.agent.agent_url`. Verified
+    // (`http_sig`-cryptographic) `agent_url` is on `credential.agent_url`.
+    let observedAuthInfo;
     const platform = buildPlatform({
+      accounts: {
+        resolve: async (ref, ctx) => {
+          observedAuthInfo = ctx?.authInfo;
+          return {
+            id: ref?.account_id ?? 'acc_1',
+            metadata: {},
+            authInfo: { kind: 'api_key' },
+            _resolveAgent: ctx?.agent,
+          };
+        },
+        upsert: async () => [],
+        list: async () => ({ items: [], nextCursor: null }),
+      },
       sales: {
-        getProducts: async (_req, ctx) => ({
-          products: [],
-          _ctxAgent: ctx?.agent,
-          _topLevelAgentUrl: ctx?.account?.authInfo?.agent_url,
-        }),
+        getProducts: async (_req, ctx) => ({ products: [], _ctxAgent: ctx?.agent }),
         createMediaBuy: async () => ({ media_buy_id: 'mb_1' }),
         updateMediaBuy: async () => ({ media_buy_id: 'mb_1' }),
         syncCreatives: async () => [],
@@ -310,14 +498,19 @@ describe('Stage 3 — BuyerAgentRegistry routes on the credential', () => {
       clientId: 'signing:kid',
       scopes: [],
       extra: {
-        credential: {
+        credential: markVerifiedHttpSig({
           kind: 'http_sig',
           keyid: 'kid',
           agent_url: 'https://agent.scope3.com',
           verified_at: 1714660000,
-        },
+        }),
       },
     });
     assert.equal(result.structuredContent._ctxAgent.agent_url, 'https://agent.scope3.com');
+    // Critical: the framework does NOT add a top-level `agent_url` to
+    // ctx.authInfo. Verified URL is on credential.agent_url; registry
+    // URL is on ctx.agent.agent_url.
+    assert.equal('agent_url' in observedAuthInfo, false, 'ctx.authInfo MUST NOT carry a top-level agent_url');
+    assert.equal(observedAuthInfo.credential.agent_url, 'https://agent.scope3.com');
   });
 });

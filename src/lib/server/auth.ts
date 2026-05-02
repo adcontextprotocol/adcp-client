@@ -27,10 +27,27 @@
  * + scope alone is not per-resource isolation.
  */
 import type { IncomingMessage, ServerResponse } from 'http';
+import { createHash } from 'node:crypto';
 import { createRemoteJWKSet, jwtVerify, type JWTPayload, type JWTVerifyOptions } from 'jose';
 import type { RequestSignatureErrorCode } from '../signing/errors';
 import { RequestSignatureError } from '../signing/errors';
 import type { AdcpCredential } from './decisioning/buyer-agent';
+
+/**
+ * Hash an api-key bearer token into a stable opaque identifier suitable
+ * for `credential.key_id`. The raw token MUST NOT appear on the credential
+ * — anything reading `credential.key_id` (handlers, `accounts.resolve`,
+ * `BuyerAgentRegistry.resolveByCredential`, log lines that flow through
+ * `details.reason`) would otherwise leak the secret.
+ *
+ * SHA-256 truncated to 32 hex chars (128 bits): collision-resistant
+ * enough for an opaque correlator, short enough to be readable in logs.
+ * Adopters who want full-hash or full-token forms wire their own
+ * authenticator and stamp the `credential` directly.
+ */
+function hashApiKeyToken(token: string): string {
+  return createHash('sha256').update(token).digest('hex').slice(0, 32);
+}
 
 /**
  * Default JWT algorithm allowlist. Asymmetric only — HS-family is intentionally
@@ -287,16 +304,28 @@ export function verifyApiKey(options: VerifyApiKeyOptions): Authenticator {
   return async req => {
     const token = extractBearerToken(req);
     if (!token) return null;
+    // ALWAYS stamp an api_key credential — adopter-provided credentials
+    // on the matched principal are NOT honored here. Allowing an api-key
+    // entry to claim `credential: { kind: 'http_sig', ... }` would let
+    // an adopter (or attacker who can write the keys map) forge signed-
+    // path identity — `signingOnly` and `mixed` registry factories would
+    // route the request as if it were verifier-attested. The api-key
+    // path has no signature proof, so the credential MUST be `api_key`
+    // regardless of what the matched record carries. Same posture for
+    // the dynamic `verify` path below.
+    //
+    // `key_id` is a SHA-256 hash prefix of the raw token, not the token
+    // itself — `credential.key_id` flows broadly through `ctx.authInfo`,
+    // handlers, and downstream code that may log structured context.
+    // Adopters with custom api-key authenticators that need a different
+    // `key_id` shape stamp their own credential and skip this path.
+    const apiKeyCredential: AdcpCredential = { kind: 'api_key', key_id: hashApiKeyToken(token) };
     if (options.keys && Object.prototype.hasOwnProperty.call(options.keys, token)) {
       const matched = options.keys[token]!;
       return {
         ...matched,
         token,
-        // Stamp `credential` so the dispatcher and `BuyerAgentRegistry`
-        // see a kind-discriminated variant. Adopters who provided their
-        // own `credential` on the matched principal win; otherwise
-        // synthesize from the api-key shape.
-        credential: matched.credential ?? { kind: 'api_key', key_id: token },
+        credential: apiKeyCredential,
       };
     }
     if (options.verify) {
@@ -305,7 +334,7 @@ export function verifyApiKey(options: VerifyApiKeyOptions): Authenticator {
       return {
         ...result,
         token: result.token ?? token,
-        credential: result.credential ?? { kind: 'api_key', key_id: token },
+        credential: apiKeyCredential,
       };
     }
     return null;
@@ -425,18 +454,37 @@ export function verifyBearer(options: VerifyBearerOptions): Authenticator {
         });
       }
     }
-    const clientId = typeof payload.sub === 'string' ? payload.sub : 'unknown';
+    // Prefer `payload.client_id` over `payload.sub` per RFC 9068 §2.2:
+    // `sub` is the resource-owner subject (often the user); `client_id`
+    // is the OAuth client identity (the buyer agent for AdCP traffic).
+    // For the client-credentials grant where `sub === client_id` both
+    // resolve to the same value; for authorization-code flows where
+    // `sub` is a user, falling back to `sub` would mis-route registry
+    // lookups keyed by client identity.
+    //
+    // When neither is a usable string, omit the `credential` entirely
+    // — `BuyerAgentRegistry` sees `null` (no credential = no known
+    // agent) instead of bucketing every unauthenticated principal into
+    // a single `'unknown'` row.
+    const clientIdFromPayload =
+      typeof payload.client_id === 'string' && payload.client_id.length > 0
+        ? payload.client_id
+        : typeof payload.sub === 'string' && payload.sub.length > 0
+          ? payload.sub
+          : undefined;
     const principal: AuthPrincipal = {
-      principal: clientId,
+      principal: clientIdFromPayload ?? 'unknown',
       token,
       scopes,
       claims: payload,
-      credential: {
-        kind: 'oauth',
-        client_id: clientId,
-        scopes,
-        ...(typeof payload.exp === 'number' && { expires_at: payload.exp }),
-      },
+      ...(clientIdFromPayload !== undefined && {
+        credential: {
+          kind: 'oauth' as const,
+          client_id: clientIdFromPayload,
+          scopes,
+          ...(typeof payload.exp === 'number' && { expires_at: payload.exp }),
+        },
+      }),
     };
     if (typeof payload.exp === 'number') principal.expiresAt = payload.exp;
     return principal;

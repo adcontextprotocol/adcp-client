@@ -215,22 +215,18 @@ export interface ResolvedAuthInfo {
    * discriminated-credential surface. The framework propagates it from
    * `req.auth.extra.credential` to this top-level field on every request.
    *
-   * Security-relevant decisions (mutating-tool authorization, brand-side
-   * authorization checks once `BrandAuthorizationResolver` lands) MUST read
-   * `agent_url` from `credential.kind === 'http_sig'` rather than the
-   * top-level `agent_url` field below — `credential.agent_url` is
-   * cryptographically verified per adcontextprotocol/adcp#3831.
+   * **Verified vs. claimed.** `credential.kind === 'http_sig'` carries an
+   * `agent_url` that is cryptographically verified by the framework's
+   * signature verifier (per adcontextprotocol/adcp#3831). The framework
+   * brands verified credentials with a module-private symbol that
+   * `BuyerAgentRegistry` factories check before treating the credential
+   * as authentic — a literal-shape `{ kind: 'http_sig', ... }` synthesized
+   * by a custom authenticator is rejected at the registry layer. Adopters
+   * making security-relevant decisions on `agent_url` MUST read it from
+   * the credential variant; framework-stamped registry-derived URLs are
+   * exposed via `ctx.agent.agent_url` only.
    */
   credential?: AdcpCredential;
-
-  /**
-   * Buyer-agent URL stamped post-resolution by `BuyerAgentRegistry`
-   * (Phase 1 of #1269). Informational — security checks MUST read
-   * `credential.agent_url` (verified) instead. Undefined when no registry
-   * is configured OR when the credential is non-`http_sig` and the
-   * registry didn't resolve a record.
-   */
-  agent_url?: string;
 
   /**
    * Optional operator seat within the buyer agent. Stamped only when the
@@ -242,20 +238,20 @@ export interface ResolvedAuthInfo {
 
   /**
    * @deprecated Use `credential.kind === 'oauth' ? credential.client_id : ...`
-   * for the discriminated shape. Removed in two minors per the migration
-   * plan in #1269. The framework continues to populate this field for
-   * adopter compatibility through the deprecation cycle.
+   * for the discriminated shape. Optional in N+1 of the deprecation cycle
+   * per #1269; framework continues to populate it for adopter compatibility
+   * through the cycle. Removed in N+2.
    */
-  token: string;
+  token?: string;
 
   /**
    * @deprecated Use `credential.client_id` (oauth) or `credential.key_id`
    * (api_key) instead.
    */
-  clientId: string;
+  clientId?: string;
 
   /** @deprecated Use `credential.scopes` (oauth) instead. */
-  scopes: string[];
+  scopes?: string[];
 
   expiresAt?: number;
   extra?: Record<string, unknown>;
