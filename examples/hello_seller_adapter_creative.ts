@@ -39,15 +39,7 @@ import {
   type CachedBuyerAgentRegistry,
   type SyncCreativesRow,
 } from '@adcp/sdk/server';
-import {
-  displayRender,
-  imageAssetSlot,
-  textAssetSlot,
-  vastAssetSlot,
-  javascriptAssetSlot,
-  htmlAssetSlot,
-  urlAssetSlot,
-} from '@adcp/sdk';
+import { displayRender, imageAssetSlot, textAssetSlot, vastAssetSlot, urlAssetSlot } from '@adcp/sdk';
 import type { ListCreativeFormatsResponse, Format, CreativeManifest } from '@adcp/sdk/types';
 import { createHash, randomUUID } from 'node:crypto';
 
@@ -373,6 +365,10 @@ class CreativeTemplateAdapter implements DecisioningPlatform<Record<string, neve
         }
       }
 
+      // The framework validates idempotency_key presence on mutating tools before
+      // reaching this handler. The randomUUID() fallback covers the rare case where
+      // the framework passes through without validation (e.g. test harness without
+      // idempotency enforcement). Production adopters SHOULD assert the key is present.
       const idempotency = req.idempotency_key ?? randomUUID();
 
       if (templateIds.length === 1) {
@@ -430,7 +426,9 @@ class CreativeTemplateAdapter implements DecisioningPlatform<Record<string, neve
         previews: [
           {
             preview_id: render.render_id,
-            renders: [{ url: previewUrl, render_type: 'url', role: 'primary' }],
+            renders: [
+              { render_id: render.render_id, output_format: 'url' as const, preview_url: previewUrl, role: 'primary' },
+            ],
             input: { name: 'preview', macros: {} },
           },
         ],
