@@ -189,6 +189,17 @@ function hashApiKey(token: string): string {
  * resolve to this record. Real adopters add real buyer agents (their
  * partner DSPs, internal test agents, etc.) keyed off the tokens they
  * issue.
+ *
+ * **Why Addie is `sandbox_only: true`.** The storyboard runner is a test
+ * agent — it should never have production reach. If the harness token
+ * leaks (it's literally `sk_harness_do_not_use_in_prod` in this example),
+ * blast radius is bounded to sandbox accounts. Production buyer agents
+ * leave `sandbox_only` unset (or `false`); test agents set it to `true`.
+ * This is the right default for any agent registered for testing —
+ * adopters cloning this example get the safe baseline rather than
+ * discovering the gap later. (The field is enforced by the framework
+ * after `accounts.resolve`: a sandbox-only agent hitting a non-sandbox
+ * account → PERMISSION_DENIED with `details.reason: 'sandbox-only'`.)
  */
 const ONBOARDING_LEDGER = new Map<string, BuyerAgent>([
   [
@@ -202,6 +213,10 @@ const ONBOARDING_LEDGER = new Map<string, BuyerAgent>([
       // 'agent', 'advertiser'])`. Phase 2 (#1292) wires framework-level
       // enforcement; today the field documents commercial intent.
       billing_capabilities: new Set(['operator']),
+      // Test-agent default. Framework rejects any request from this
+      // agent whose resolved Account.sandbox !== true. Production
+      // buyer agents leave this unset.
+      sandbox_only: true,
     },
   ],
 ]);
@@ -304,6 +319,15 @@ class SignalMarketplaceAdapter implements DecisioningPlatform<Record<string, nev
         status: 'active',
         operator: adcpOperator,
         ctx_metadata: { operator_id: operatorId },
+        // The upstream here is the AdCP mock-server. Every account it
+        // returns is a sandbox account by definition. Production
+        // adapters set `sandbox: true` only when they actually
+        // resolved a sandbox-flagged account from their backing store.
+        // This pairs with Addie's `sandbox_only: true` above — the
+        // framework's sandbox-only gate composes `agent.sandbox_only
+        // && account.sandbox !== true → reject`, so production
+        // accounts on a sandbox-only agent fail.
+        sandbox: true,
       };
     },
   };

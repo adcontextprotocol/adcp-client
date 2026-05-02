@@ -190,6 +190,30 @@ describe('examples/hello_seller_adapter_signal_marketplace', () => {
     // the registry isn't running on un-authenticated traffic.
     assert.equal(res.status, 401, 'unknown api-key MUST be rejected at the auth layer');
   });
+
+  // -------------------------------------------------------------------------
+  // Gate 5 — Addie is sandbox_only; resolver returns sandbox accounts
+  //
+  // The example marks Addie (the storyboard runner) as `sandbox_only: true`
+  // and `accounts.resolve` returns `sandbox: true` for every account. The
+  // framework's sandbox-only gate composes those:
+  //   sandbox_only && account.sandbox !== true → PERMISSION_DENIED.
+  //
+  // Gate 2 already asserts the storyboard succeeds end-to-end — which
+  // implicitly confirms the gate passes (sandbox-only agent + sandbox
+  // account). This explicit gate makes the wiring legible: a future
+  // refactor that drops either side of the pair would surface here AND
+  // in Gate 2.
+  // -------------------------------------------------------------------------
+  it('Gate 5 — sandbox_only example wiring is consistent (load-bearing pair present)', () => {
+    const fs = require('node:fs');
+    const source = fs.readFileSync(EXAMPLE_FILE, 'utf8');
+    assert.ok(source.includes('sandbox_only: true'), 'Addie seed entry MUST declare sandbox_only: true');
+    assert.ok(
+      /sandbox:\s*true/.test(source),
+      'resolver MUST mark resolved accounts as sandbox: true for the gate to pass'
+    );
+  });
 });
 
 // ---------------------------------------------------------------------------
