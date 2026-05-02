@@ -30,6 +30,7 @@
 
 import type { Request, Response, NextFunction, IRouter } from 'express';
 import type { TenantRegistry } from './tenant-registry';
+import { redactCredentialPatterns } from '../redact';
 
 /**
  * Minimal Express-router-shaped object so we don't need a hard dependency
@@ -88,10 +89,13 @@ export function createTenantAdminHandlers(registry: TenantRegistry): TenantAdmin
           res.status(404).json({ error: 'tenant_not_found', tenant_id: id });
           return;
         }
+        // Redact credential patterns before exposing on the wire (#1330).
+        // The recheck path can throw with upstream errors that echo
+        // basic-auth URLs or other credential bytes.
         res.status(500).json({
           error: 'recheck_failed',
           tenant_id: id,
-          reason: err instanceof Error ? err.message : String(err),
+          reason: redactCredentialPatterns(err instanceof Error ? err.message : String(err)),
         });
       }
     },

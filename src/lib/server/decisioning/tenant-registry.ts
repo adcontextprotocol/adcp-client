@@ -29,6 +29,7 @@ import type { DecisioningAdcpServer, CreateAdcpServerFromPlatformOptions } from 
 import { createAdcpServerFromPlatform } from './runtime/from-platform';
 import type { SignerKey } from '../../signing/signer';
 import type { AdcpJsonWebKey } from '../../signing/types';
+import { redactCredentialPatterns } from '../redact';
 
 // ---------------------------------------------------------------------------
 // Public types
@@ -396,7 +397,13 @@ export function createDefaultJwksValidator(opts?: { fetchImpl?: typeof fetch; ti
         return {
           ok: false,
           recovery: 'transient',
-          reason: `JWKS fetch failed: ${err instanceof Error ? err.message : String(err)}`,
+          // Redact credential patterns from the upstream error message
+          // before it surfaces on the admin-router wire (#1330). A fetch
+          // failure can echo basic-auth-bearing URLs or upstream-library
+          // diagnostics that include credential bytes.
+          reason: redactCredentialPatterns(
+            `JWKS fetch failed: ${err instanceof Error ? err.message : String(err)}`
+          ) as string,
         };
       }
       if (!response.ok) {
@@ -413,7 +420,9 @@ export function createDefaultJwksValidator(opts?: { fetchImpl?: typeof fetch; ti
         return {
           ok: false,
           recovery: 'permanent',
-          reason: `JWKS body not JSON: ${err instanceof Error ? err.message : String(err)}`,
+          reason: redactCredentialPatterns(
+            `JWKS body not JSON: ${err instanceof Error ? err.message : String(err)}`
+          ) as string,
         };
       }
       const jwks = (body as { jwks?: { keys?: unknown[] } }).jwks;
@@ -831,7 +840,9 @@ export function createTenantRegistry(opts: TenantRegistryOptions): TenantRegistr
         res = {
           ok: false,
           recovery: 'transient',
-          reason: `validator threw on '${url}': ${err instanceof Error ? err.message : String(err)}`,
+          reason: redactCredentialPatterns(
+            `validator threw on '${url}': ${err instanceof Error ? err.message : String(err)}`
+          ) as string,
         };
       }
       perUrlResults.push({ url, res });
