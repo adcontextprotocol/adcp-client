@@ -327,6 +327,10 @@ export interface AccountToolContext<TCtxMeta = Record<string, unknown>> extends 
  *
  * @public
  */
+// Inline type-import on `RequestContext` instead of a top-level
+// `import type { RequestContext } from './context'` — `context.ts` already
+// imports `Account` from this file, so a top-level import would form a
+// circular type dependency.
 export type NoAccountCtx<TCtxMeta = Record<string, unknown>> = Omit<
   import('./context').RequestContext<Account<TCtxMeta>>,
   'account'

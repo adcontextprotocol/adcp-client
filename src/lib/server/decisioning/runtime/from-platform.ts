@@ -37,9 +37,10 @@
  * `tasks/get` wire handler, per-server + module-level `publishStatusChange`.
  *
  * **Still deferred (rc.1+):** MCP Resources subscription projection for
- * `publishStatusChange`; `resolveAccount(undefined, { authInfo, toolName })`
- * refactor for `provide_performance_feedback` / `list_creative_formats`
- * no-account path in `'explicit'`-mode adopters (see `SalesPlatform` JSDoc).
+ * `publishStatusChange`. The no-account tool surface (`preview_creative`,
+ * `list_creative_formats`, `provide_performance_feedback`) is now typed
+ * via `NoAccountCtx<TCtxMeta>` — handlers receive `ctx.account: Account |
+ * undefined` and must narrow before reading `ctx_metadata`.
  *
  * Status: Preview / 6.0. Not yet exported from the public `./server`
  * subpath; reach in via `@adcp/sdk/server/decisioning/runtime` for
@@ -3086,9 +3087,11 @@ function buildCreativeHandlers<P extends DecisioningPlatform<any, any>>(
     },
 
     previewCreative: async (params, ctx) => {
-      if (!('previewCreative' in creative)) {
+      if (!('previewCreative' in creative) || (creative as CreativeBuilderPlatform).previewCreative == null) {
         return adcpError('UNSUPPORTED_FEATURE', {
-          message: 'preview_creative not supported by this platform',
+          message:
+            'preview_creative: this creative platform did not implement previewCreative. ' +
+            'Add `previewCreative(req, ctx)` to your CreativeBuilderPlatform / CreativeAdServerPlatform literal.',
         });
       }
       const reqCtx = ctxFor(ctx);
@@ -3106,7 +3109,10 @@ function buildCreativeHandlers<P extends DecisioningPlatform<any, any>>(
     listCreativeFormats: async (params, ctx) => {
       if (!('listCreativeFormats' in creative) || creative.listCreativeFormats == null) {
         return adcpError('UNSUPPORTED_FEATURE', {
-          message: 'list_creative_formats not supported by this creative platform',
+          message:
+            'list_creative_formats: this creative platform did not implement listCreativeFormats. ' +
+            'Add `listCreativeFormats(req, ctx)` to your CreativeBuilderPlatform / CreativeAdServerPlatform literal, ' +
+            'or delegate via `capabilities.creative_agents`.',
         });
       }
       const reqCtx = ctxFor(ctx);

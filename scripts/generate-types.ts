@@ -339,12 +339,21 @@ function flattenMutualExclusiveOneOf(schema: any): any {
       if (excluded.has(name)) continue;
       branchProps[name] = branchOwnProps[name] ?? prop;
     }
-    const required = Array.from(new Set([...outerRequired, ...branch.required]));
+    // Drop any outer `required` field this branch excluded — keeping it
+    // would leave a required key with no matching `properties` entry, which
+    // jsts emits as `field: unknown` and Ajv would reject on the unstripped
+    // schema anyway.
+    const filteredOuterRequired = outerRequired.filter(name => !excluded.has(name));
+    const required = Array.from(new Set([...filteredOuterRequired, ...branch.required]));
     const out: Record<string, unknown> = { type: 'object' };
     if (branch.title) out.title = branch.title;
     if (branch.description) out.description = branch.description;
     out.properties = branchProps;
     if (required.length > 0) out.required = required;
+    // Closed shape — branches must enumerate their fields. If a future
+    // upstream schema needs an open branch, file an issue and either widen
+    // detection (require explicit `additionalProperties: true` on the branch)
+    // or skip flattening.
     out.additionalProperties = false;
     return out;
   });

@@ -145,9 +145,10 @@ export interface CreativeBuilderPlatform<TCtxMeta = Record<string, unknown>> {
    * does not carry an `account` field. The framework dispatches with
    * `ctx.account === undefined` for `'explicit'`-resolution adopters that
    * don't return a synthetic singleton from `accounts.resolve(undefined)`.
-   * Format catalogs are typically publisher-wide and account-independent;
-   * read configuration from your platform's static catalog rather than
-   * `ctx.account.ctx_metadata`.
+   * Format catalogs are typically publisher-wide; if yours is per-tenant
+   * (Bannerflow / Celtra-style multi-tenant catalogs), return a synthetic
+   * account from `accounts.resolve(undefined)` keyed on
+   * `ctx.authInfo.clientId` and narrow `ctx.account` inside the handler.
    */
   listCreativeFormats?(
     req: ListCreativeFormatsRequest,
