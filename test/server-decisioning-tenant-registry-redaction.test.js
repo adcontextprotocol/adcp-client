@@ -39,7 +39,7 @@ describe('#1330 — tenant-registry redacts credentials from validator error mes
   it('validator throw with bearer token in message → reason has token redacted', async () => {
     const sampleKey = await ensureSampleKey();
     const validator = fakeValidator(async () => {
-      throw new Error('upstream auth failure: Bearer sk_live_secret_value_abc123');
+      throw new Error('upstream auth failure: Bearer placeholder_token_for_redactor_test');
     });
     const registry = createTenantRegistry({
       jwksValidator: validator,
@@ -56,7 +56,7 @@ describe('#1330 — tenant-registry redacts credentials from validator error mes
     assert.equal(status.health, 'pending');
     assert.ok(status.reason);
     assert.equal(
-      status.reason.includes('sk_live_secret_value_abc123'),
+      status.reason.includes('placeholder_token_for_redactor_test'),
       false,
       `reason leaked credential: ${status.reason}`
     );
@@ -66,7 +66,7 @@ describe('#1330 — tenant-registry redacts credentials from validator error mes
   it('validator throw with token=value in message → reason has labeled credential redacted', async () => {
     const sampleKey = await ensureSampleKey();
     const validator = fakeValidator(async () => {
-      throw new Error('upstream rejected: token=abc123def456ghi789jkl');
+      throw new Error('upstream rejected: token=placeholder_value_for_redactor_test');
     });
     const registry = createTenantRegistry({
       jwksValidator: validator,
@@ -80,7 +80,11 @@ describe('#1330 — tenant-registry redacts credentials from validator error mes
     });
 
     const status = await registry.recheck('t2');
-    assert.equal(status.reason.includes('abc123def456ghi789jkl'), false, `reason leaked credential: ${status.reason}`);
+    assert.equal(
+      status.reason.includes('placeholder_value_for_redactor_test'),
+      false,
+      `reason leaked credential: ${status.reason}`
+    );
     assert.match(status.reason, /token=<redacted>/);
   });
 
