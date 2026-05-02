@@ -13,8 +13,12 @@
  */
 
 import type {
+  Account as WireAccount,
+  AccountScope,
   BrandReference,
   AccountReference,
+  BusinessEntity,
+  PaymentTerms,
   ReportUsageRequest,
   ReportUsageResponse,
   GetAccountFinancialsRequest,
@@ -70,6 +74,64 @@ export interface Account<TCtxMeta = Record<string, unknown>> {
    * assert the right party is billed.
    */
   billing?: { invoicedTo: 'agent' | 'operator' | BrandReference };
+
+  /**
+   * Business entity invoiced on this account. Carries legal name, tax IDs,
+   * address, contacts, and (write-only) bank details for B2B invoicing.
+   *
+   * **`bank` is write-only.** The wire schema marks `BusinessEntity.bank` as
+   * MUST NOT be echoed in responses (sellers store and confirm receipt
+   * without returning the details). `toWireAccount` strips it on emit, so
+   * adopters who store the full entity here will not leak bank details to
+   * buyers — but DO NOT rely on the strip for anything beyond response
+   * projection. Adopters loading the entity from their own DB SHOULD apply
+   * the same rule at retrieval time, especially for non-list endpoints.
+   */
+  billing_entity?: BusinessEntity;
+
+  /**
+   * Identifier for the rate card applied to this account. Opaque seller-side
+   * string; emitted unchanged on the wire.
+   */
+  rate_card?: string;
+
+  /** Payment terms applied to this account. */
+  payment_terms?: PaymentTerms;
+
+  /** Maximum outstanding balance allowed on this account. */
+  credit_limit?: WireAccount['credit_limit'];
+
+  /**
+   * Setup payload for accounts in `pending_approval`. Carries the URL/message
+   * the buyer surfaces to a human to complete activation (credit-app, legal
+   * agreement, fund-add). Required-shape: `message` is mandatory; `url` and
+   * `expires_at` are optional.
+   *
+   * The framework does NOT validate that `setup` is populated when status is
+   * `pending_approval` — that's an adopter contract with the spec. It also
+   * does NOT clear `setup` when status leaves `pending_approval`; adopters
+   * who echo the same `Account` across status transitions should drop the
+   * field themselves.
+   */
+  setup?: WireAccount['setup'];
+
+  /** Account scope (operator / brand / operator_brand / agent). */
+  account_scope?: AccountScope;
+
+  /**
+   * Governance agent endpoints registered on this account. Auth credentials
+   * are write-only on the wire and not modeled here — adopters set/update
+   * via `sync_governance`, not by re-emitting the Account.
+   */
+  governance_agents?: WireAccount['governance_agents'];
+
+  /**
+   * Cloud storage bucket for offline reporting delivery. Only present when
+   * the seller's capabilities advertise `reporting_delivery_methods`
+   * including `'offline'`. Per-account access MUST be IAM-scoped — see the
+   * schema description for security constraints.
+   */
+  reporting_bucket?: WireAccount['reporting_bucket'];
 
   /**
    * Adapter-internal opaque state. Framework doesn't read this; **stripped
@@ -382,14 +444,14 @@ export type AdcpAccountStatus =
 // Wire projection — strip framework-internal fields before emit
 // ---------------------------------------------------------------------------
 
-import type { Account as WireAccount } from '../../types/tools.generated';
-
 /**
  * Project a framework `Account<TCtxMeta>` to the wire `Account` shape.
  *
- * Strips `metadata` and `authInfo` (framework-internal); renames `id` →
- * `account_id`; passes through `name`, `status`, `brand`, `operator`,
- * `advertiser`, and `billing.invoicedTo` mappings.
+ * Strips `ctx_metadata` and `authInfo` (framework-internal); renames `id` →
+ * `account_id`; passes through wire-shaped fields. Strips
+ * `billing_entity.bank` per the schema's write-only constraint — bank
+ * coordinates flow buyer→seller in `sync_accounts` requests but MUST NOT
+ * appear in any response payload.
  *
  * Used by the framework when emitting `list_accounts` and other wire
  * responses that include account data. Adopters never call this directly —
@@ -413,6 +475,19 @@ export function toWireAccount<TCtxMeta>(account: Account<TCtxMeta>): WireAccount
     const t = account.billing.invoicedTo;
     wire.billing = typeof t === 'string' ? t : 'advertiser';
   }
+  if (account.billing_entity !== undefined) {
+    // Destructuring guarantees `bank` is removed from the projected object
+    // even if the source carries it; the rename to `_bank` documents intent.
+    const { bank: _bank, ...rest } = account.billing_entity;
+    wire.billing_entity = rest;
+  }
+  if (account.rate_card !== undefined) wire.rate_card = account.rate_card;
+  if (account.payment_terms !== undefined) wire.payment_terms = account.payment_terms;
+  if (account.credit_limit !== undefined) wire.credit_limit = account.credit_limit;
+  if (account.setup !== undefined) wire.setup = account.setup;
+  if (account.account_scope !== undefined) wire.account_scope = account.account_scope;
+  if (account.governance_agents !== undefined) wire.governance_agents = account.governance_agents;
+  if (account.reporting_bucket !== undefined) wire.reporting_bucket = account.reporting_bucket;
   return wire;
 }
 
