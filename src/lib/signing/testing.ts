@@ -97,6 +97,12 @@ export function signerKeyToProvider(key: SignerKey): SigningProvider {
 export interface EphemeralSigningKey {
   /** The `kid` embedded in both JWKs. */
   kid: string;
+  /**
+   * AdCP wire-format algorithm identifier — pass directly to
+   * `InMemorySigningProvider({ algorithm })`. Always `'ed25519'` today;
+   * typed as `AdcpSignAlg` so callers don't hardcode a string literal.
+   */
+  algorithm: AdcpSignAlg;
   /** Public JWK — publish at `/.well-known/jwks.json` or pass to JWKS discovery. */
   publicKey: AdcpJsonWebKey;
   /**
@@ -147,8 +153,8 @@ export interface MintEphemeralSigningKeyOptions {
  * ```ts
  * import { mintEphemeralSigningKey, InMemorySigningProvider } from '@adcp/sdk/signing/testing';
  *
- * const { kid, privateKey, publicKey } = await mintEphemeralSigningKey();
- * const provider = new InMemorySigningProvider({ keyid: kid, algorithm: 'ed25519', privateKey });
+ * const { kid, algorithm, privateKey, publicKey } = await mintEphemeralSigningKey();
+ * const provider = new InMemorySigningProvider({ keyid: kid, algorithm, privateKey });
  * // Publish publicKey in your /.well-known/jwks.json `keys` array.
  * ```
  */
@@ -187,5 +193,5 @@ export async function mintEphemeralSigningKey(opts?: MintEphemeralSigningKeyOpti
     key_ops: ['sign'],
   };
 
-  return { kid: resolvedKid, publicKey, privateKey };
+  return { kid: resolvedKid, algorithm: 'ed25519', publicKey, privateKey };
 }

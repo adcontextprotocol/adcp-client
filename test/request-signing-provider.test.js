@@ -21,7 +21,11 @@ const {
   RequestSignatureError,
 } = require('../dist/lib/signing/index.js');
 
-const { InMemorySigningProvider, signerKeyToProvider } = require('../dist/lib/signing/testing.js');
+const {
+  InMemorySigningProvider,
+  signerKeyToProvider,
+  mintEphemeralSigningKey,
+} = require('../dist/lib/signing/testing.js');
 
 const KEYS_PATH = path.join(
   __dirname,
@@ -726,5 +730,63 @@ describe('derEcdsaToP1363', () => {
       () => derEcdsaToP1363(new Uint8Array([0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00]), 32),
       /SEQUENCE tag/
     );
+  });
+});
+
+describe('mintEphemeralSigningKey', () => {
+  test('returns kid, algorithm, publicKey, privateKey', async () => {
+    const result = await mintEphemeralSigningKey();
+    assert.ok(typeof result.kid === 'string' && result.kid.length > 0, 'kid should be a non-empty string');
+    assert.strictEqual(result.algorithm, 'ed25519');
+    assert.ok(result.publicKey, 'publicKey should be present');
+    assert.ok(result.privateKey, 'privateKey should be present');
+  });
+
+  test('publicKey has required AdcpJsonWebKey fields', async () => {
+    const { publicKey } = await mintEphemeralSigningKey();
+    assert.strictEqual(typeof publicKey.kty, 'string', 'kty must be a string');
+    assert.strictEqual(publicKey.alg, 'EdDSA');
+    assert.strictEqual(publicKey.use, 'sig');
+    assert.strictEqual(publicKey.adcp_use, 'webhook-signing');
+    assert.deepStrictEqual(publicKey.key_ops, ['verify']);
+    assert.ok(!publicKey.d, 'publicKey must not contain private scalar d');
+  });
+
+  test('privateKey has required AdcpJsonWebKey fields with d scalar', async () => {
+    const { privateKey } = await mintEphemeralSigningKey();
+    assert.strictEqual(typeof privateKey.kty, 'string', 'kty must be a string');
+    assert.strictEqual(privateKey.alg, 'EdDSA');
+    assert.strictEqual(privateKey.adcp_use, 'webhook-signing');
+    assert.deepStrictEqual(privateKey.key_ops, ['sign']);
+    assert.ok(typeof privateKey.d === 'string' && privateKey.d.length > 0, 'privateKey must have d scalar');
+  });
+
+  test('both keys share the same kid', async () => {
+    const { kid, publicKey, privateKey } = await mintEphemeralSigningKey();
+    assert.strictEqual(publicKey.kid, kid);
+    assert.strictEqual(privateKey.kid, kid);
+  });
+
+  test('passed kid option is reflected in both JWKs', async () => {
+    const { kid, publicKey, privateKey } = await mintEphemeralSigningKey({ kid: 'test-kid-001' });
+    assert.strictEqual(kid, 'test-kid-001');
+    assert.strictEqual(publicKey.kid, 'test-kid-001');
+    assert.strictEqual(privateKey.kid, 'test-kid-001');
+  });
+
+  test('adcp_use: request-signing is reflected in both JWKs', async () => {
+    const { publicKey, privateKey } = await mintEphemeralSigningKey({ adcp_use: 'request-signing' });
+    assert.strictEqual(publicKey.adcp_use, 'request-signing');
+    assert.strictEqual(privateKey.adcp_use, 'request-signing');
+  });
+
+  test('privateKey is usable directly by InMemorySigningProvider without throwing', async () => {
+    const { kid, algorithm, privateKey } = await mintEphemeralSigningKey();
+    assert.doesNotThrow(() => new InMemorySigningProvider({ keyid: kid, algorithm, privateKey }));
+  });
+
+  test('each call produces a unique kid when no kid option is passed', async () => {
+    const [a, b] = await Promise.all([mintEphemeralSigningKey(), mintEphemeralSigningKey()]);
+    assert.notStrictEqual(a.kid, b.kid, 'default kids should be unique across calls');
   });
 });
