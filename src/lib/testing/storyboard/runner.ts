@@ -104,6 +104,7 @@ const SKIP_DETAILS: Record<RunnerSkipReason, string> = {
     'Skipped: deterministic_testing phase requires comply_test_controller, which the agent did not advertise.',
   unsatisfied_contract: 'Skipped: test-kit contract is out of scope for this grading run.',
   peer_branch_taken: 'Skipped: a peer branch in the same any_of branch set already contributed the aggregation flag.',
+  peer_substituted: 'Skipped: a same-phase peer step established equivalent state via `provides_state_for`.',
 };
 
 const CONTROLLER_SEEDING_FAILED_DETAIL =
@@ -957,10 +958,12 @@ async function executeStoryboardPass(
     // Path (2): index of declared substitutions for this phase. Map keys
     // are target step IDs (the steps being substituted FOR); values are the
     // step IDs that declared the substitution. Built once per phase from
-    // each step's `peer_substitutes_for` field.
+    // each step's `provides_state_for` field (or the deprecated
+    // `peer_substitutes_for` synonym; the loader normalizes both onto
+    // `provides_state_for` at parse time, so reading either works).
     const phaseSubstitutes = new Map<string, string[]>();
     for (const declaringStep of phase.steps) {
-      const decl = declaringStep.peer_substitutes_for;
+      const decl = declaringStep.provides_state_for ?? declaringStep.peer_substitutes_for;
       if (decl === undefined) continue;
       const targets = Array.isArray(decl) ? decl : [decl];
       for (const target of targets) {
@@ -980,9 +983,15 @@ async function executeStoryboardPass(
       substitutes: string[];
     } | null = null;
     // Targets actually rescued by a passing declared substitute. Populated
-    // when a step with `peer_substitutes_for: X` passes — every X in its
-    // declaration list lands here.
+    // when a step with `provides_state_for: X` (or the deprecated synonym
+    // `peer_substitutes_for: X`) passes — every X in its declaration list
+    // lands here.
     const phaseRescuedTargets = new Set<string>();
+    // Map from rescued target id → the substitute step id that rescued it.
+    // Populated when the substitute passes; consumed at phase end to format
+    // the spec-mandated `peer_substituted` detail string. First substitute
+    // wins if multiple peers cover the same target.
+    const phaseRescueSource = new Map<string, string>();
     // Stateful step IDs in the phase. Used at phase end to decide whether
     // a deferred not_applicable trigger should cascade: if the sole stateful
     // step in the phase returned not_applicable AND there were no peers that
@@ -1319,14 +1328,20 @@ async function executeStoryboardPass(
         if (step.stateful) {
           phaseEstablishedStatefulState = true;
           // Path (2) rescue tracking: a passing step that declared
-          // `peer_substitutes_for: X` rescues X. Recorded against every
+          // `provides_state_for: X` (or the deprecated synonym
+          // `peer_substitutes_for`) rescues X. Recorded against every
           // declared target so phase-end resolution sees the target as
           // covered even if its skip arrives later in the loop.
-          const decl = step.peer_substitutes_for;
+          const decl = step.provides_state_for ?? step.peer_substitutes_for;
           if (decl !== undefined) {
             const targets = Array.isArray(decl) ? decl : [decl];
             for (const target of targets) {
               phaseRescuedTargets.add(target);
+              // Track the rescuing substitute's id so phase-end can format
+              // the contract-mandated `peer_substituted` detail string.
+              if (!phaseRescueSource.has(target)) {
+                phaseRescueSource.set(target, step.id);
+              }
             }
           }
         }
@@ -1387,12 +1402,13 @@ async function executeStoryboardPass(
 
     // Phase-end cascade resolution for deferred `missing_tool` triggers
     // (#1144). A stateful step that skipped with a hard-missing reason
-    // and had at least one declared substitute (`peer_substitutes_for`)
-    // was deferred above. If none of the declared substitutes passed,
-    // the substitution path failed to establish state — promote to a
-    // hard cascade with a detail message that names the substitute(s)
-    // tried so adopters reading the report see the substitution chain
-    // rather than a bare `missing_tool` cascade origin.
+    // and had at least one declared substitute (`provides_state_for`,
+    // formerly `peer_substitutes_for`) was deferred above. If none of
+    // the declared substitutes passed, the substitution path failed to
+    // establish state — promote to a hard cascade with a detail message
+    // that names the substitute(s) tried so adopters reading the report
+    // see the substitution chain rather than a bare `missing_tool`
+    // cascade origin.
     if (
       phasePendingMissingTool &&
       !phaseRescuedTargets.has(phasePendingMissingTool.stepId) &&
@@ -1405,6 +1421,31 @@ async function executeStoryboardPass(
         reason: phasePendingMissingTool.reason,
         substitution_chain: `declared substitute ${subsList} did not pass`,
       });
+    }
+
+    // Phase-end re-grading for rescued targets (adcp#3734, AdCP 3.0.3+).
+    // When a deferred `missing_tool` / `missing_test_controller` skip was
+    // rescued by a passing same-phase substitute, the spec mandates the
+    // target be re-graded with `skip_reason: 'peer_substituted'` and the
+    // detail string `"<target_step_id> state provided by <phase_id>.<substitute_step_id>"`
+    // — see `runner-output-contract.yaml` > `skip_result.reasons.peer_substituted`.
+    // Without this re-grading the target keeps its original `missing_tool`
+    // grade, which is misleading: state DID materialize, just via a
+    // declared substitute path. Tracked: adcp-client#1267.
+    for (const target of phaseRescuedTargets) {
+      const sourceId = phaseRescueSource.get(target);
+      if (!sourceId) continue;
+      const targetResult = stepResults.find(r => r.step_id === target);
+      if (!targetResult || !targetResult.skipped) continue;
+      // Only re-grade hard-missing-state skips. Other skip reasons (e.g.
+      // `prerequisite_failed`, `peer_branch_taken`) on the target are
+      // outside the substitute-rescue contract. Uses the same helper as
+      // the deferral path (line ~1269 above) so the two sides stay in
+      // lockstep when a future RunnerSkipReason joins the family.
+      if (!isHardMissingStateSkipReason(targetResult.skip_reason)) continue;
+      const detail = `${target} state provided by ${phase.id}.${sourceId}`;
+      targetResult.skip_reason = 'peer_substituted';
+      targetResult.skip = { reason: 'peer_substituted', detail };
     }
 
     phaseResults.push({

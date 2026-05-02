@@ -110,6 +110,11 @@
       "require": "./dist/lib/express-mcp/index.js",
       "types": "./dist/lib/express-mcp/index.d.ts"
     },
+    "./mock-server": {
+      "import": "./dist/lib/mock-server/index.js",
+      "require": "./dist/lib/mock-server/index.js",
+      "types": "./dist/lib/mock-server/index.d.ts"
+    },
     "./package.json": "./package.json"
   },
   "typesVersions": {
@@ -164,6 +169,9 @@
       ],
       "express-mcp": [
         "dist/lib/express-mcp/index.d.ts"
+      ],
+      "mock-server": [
+        "dist/lib/mock-server/index.d.ts"
       ]
     }
   },
@@ -194,6 +202,8 @@
     "test": "NODE_ENV=test node --test-timeout=60000 --test-force-exit --test test/*.test.js test/lib/*.test.js",
     "pretest:lib": "npm run schemas:ensure",
     "test:lib": "NODE_ENV=test node --test-timeout=60000 --test-force-exit --test test/lib/*.test.js",
+    "pretest:examples": "npm run build",
+    "test:examples": "NODE_ENV=test node --test-timeout=180000 --test-force-exit --test test/examples/*.test.js",
     "test:e2e": "node test/e2e/adcp-e2e.test.js",
     "test:protocols": "node test/run-protocol-tests.js",
     "changeset": "changeset",
@@ -210,7 +220,8 @@
     "sync-schemas:all": "npm run sync-schemas && npm run sync-schemas:v2.5",
     "schemas:ensure": "tsx scripts/schemas-ensure.ts",
     "schema-diff": "tsx scripts/schema-diff.ts",
-    "generate-types": "tsx scripts/generate-types.ts && tsx scripts/generate-enum-arrays.ts",
+    "generate-types": "tsx scripts/generate-types.ts && tsx scripts/generate-enum-arrays.ts && tsx scripts/generate-manifest-derived.ts",
+    "generate-manifest-derived": "tsx scripts/generate-manifest-derived.ts",
     "generate-types:v2.5": "tsx scripts/generate-v2-5-types.ts",
     "generate-types:all": "npm run generate-types && npm run generate-types:v2.5",
     "generate-registry-types": "tsx scripts/generate-registry-types.ts",
@@ -336,5 +347,5 @@
     },
     "minimatch": "^10.2.1"
   },
-  "adcp_version": "3.0.1"
+  "adcp_version": "3.0.4"
 }

@@ -9,6 +9,8 @@ description: Use when building an AdCP seller agent — a publisher, SSP, or ret
 
 A seller agent receives briefs from buyers, returns products with pricing, accepts media buys, manages creatives, and reports delivery. The business model — what you sell, how you price it, and whether humans approve deals — shapes every implementation decision. Determine that first.
 
+> **Common shape gotchas:** `BuildCreativeReturn` has 4 valid shapes (framework auto-wraps the bare manifest), `VASTAsset` requires an embedded `delivery_type` discriminator. See [SHAPE-GOTCHAS.md](../SHAPE-GOTCHAS.md) for patterns adopters consistently get wrong on first pass — schema validators catch these at runtime; type checkers don't.
+
 ## When to Use
 
 - User wants to build an agent that sells ad inventory

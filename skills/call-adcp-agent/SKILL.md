@@ -205,7 +205,6 @@ Returns `{ signals: [{ signal_agent_segment_id, match_rate, pricing, ... }] }`. 
 ## Transport notes
 
 - **MCP**: `tools/call` with `{ name: 'tool_name', arguments: {...} }`. Returns `{ content, structuredContent, isError? }`. Read `structuredContent` for the typed response.
-  - **Use the official `@modelcontextprotocol/sdk` client.** The Streamable HTTP transport requires `Accept: application/json, text/event-stream` on every request — a raw `fetch()` with only `Accept: application/json` gets an unhelpful `406 Not Acceptable` from the server before any AdCP framing runs. The official client sets the header correctly; reach for it instead of rolling your own HTTP plumbing.
 - **A2A**: `message/send` with a `DataPart` of shape `{ skill: 'tool_name', input: {...} }` (the legacy key `parameters` is also accepted). Returns an A2A `Task`; the typed response is at `task.artifacts[0].parts[0].data`.
 
 Both transports share: idempotency, error shape, schema enforcement, and handler semantics. If a call works on one, the equivalent call works on the other.
@@ -233,92 +232,9 @@ Quick lookup before reading the full envelope. Match what you see in `adcp_error
 | `keyword: 'enum'` at `/destinations/*/type` | Made-up destination type | Use `'platform'` (with `platform`) or `'agent'` (with `agent_url`). |
 | Response carries `status: 'submitted'` and `task_id` | Async — work is queued, NOT done | Poll via `tasks/get` (A2A) or the MCP async task extension using `task_id`. |
 | `recovery: 'transient'` (rate limit, 5xx, timeout) | Server-side, retry-safe | Retry with the **same** `idempotency_key`. |
-| `406 Not Acceptable` before any AdCP framing | Hand-rolled HTTP without `Accept: text/event-stream` (MCP transport) | Use `@modelcontextprotocol/sdk` client; it sets the right Accept header. |
-| `recovery: 'correctable'` | Buyer-side fix | Read `issues[]`, patch the pointers, resend. Most cases close in one attempt. (See exceptions below — four codes are technically `correctable` but operator-semantically human-escalate.) |
+| `recovery: 'correctable'` | Buyer-side fix | Read `issues[]`, patch the pointers, resend. Most cases close in one attempt. |
 | `recovery: 'terminal'` (account suspended, payment required, …) | Requires human action | Don't retry. Surface to the user. |
 | HTTP 401 with `WWW-Authenticate` header | Missing or expired credential | Add `Authorization` per the agent's auth spec; re-auth if applicable. |
-
-> **⚠️ Four codes are technically `correctable` but operator-semantically human-escalate. Don't auto-tweak.**
->
-> - **`POLICY_VIOLATION`** — buyer's content/targeting violates seller policy. Auto-mutating creative or targeting and resubmitting **looks like evasion** to the seller's governance reviewer. Surface to a human.
-> - **`COMPLIANCE_UNSATISFIED`** — required disclosure can't be satisfied by the chosen format. Auto-relaxing the compliance section IS the compliance failure. Surface to a human.
-> - **`GOVERNANCE_DENIED`** — registered governance agent rejected the spend. Auto-shrinking budget and retrying looks like governance evasion. Surface to the plan operator.
-> - **`AUTH_REQUIRED`** — conflates missing creds (genuinely correctable) with revoked / expired creds (operator must rotate). Until [adcontextprotocol/adcp#3730](https://github.com/adcontextprotocol/adcp/issues/3730) splits this into `auth_missing` + `auth_invalid`, treat as escalate-after-one-attempt.
->
-> Spec recovery on these is `correctable`; operator behavior is human-in-loop. The pattern: read `error.message` + `error.suggestion`, surface to the user, **don't loop**.
-
-### Operationalize the recovery rules — `decideRetry`
-
-`@adcp/sdk` exports `decideRetry(error, ctx?)` which encodes the operator-grade defaults from the table above plus this section. It returns a discriminated `RetryDecision` so the type system enforces the same-vs-fresh `idempotency_key` rule:
-
-```typescript
-import { decideRetry } from '@adcp/sdk';
-import { randomUUID } from 'node:crypto';
-
-async function callWithRetry(toolName: string, params: Record<string, unknown>): Promise<unknown> {
-  let attempt = 1;
-  let idempotencyKey = randomUUID();
-
-  while (true) {
-    try {
-      return await agent.call(toolName, { ...params, idempotency_key: idempotencyKey });
-    } catch (e) {
-      const error = extractAdcpError(e); // your SDK's error extractor
-      if (!error) throw e; // not an AdCP-shaped failure — let it bubble
-
-      const decision = decideRetry(error, { attempt });
-
-      if (decision.action === 'retry') {
-        // Server-side transient (RATE_LIMITED, SERVICE_UNAVAILABLE, CONFLICT).
-        // Replay with the SAME idempotency_key after the suggested delay.
-        await sleep(decision.delayMs);
-        attempt++;
-        continue;
-      }
-
-      if (decision.action === 'mutate-and-retry') {
-        // Buyer-fixable. Apply the seller's correction (decision.field /
-        // decision.suggestion) and mint a FRESH idempotency_key — payload
-        // changed, so the seller's replay-window must NOT dedupe.
-        params = applyCorrection(params, error, decision); // your domain logic
-        idempotencyKey = randomUUID();
-        await sleep(decision.delayMs); // small jitter (~125-250ms by default)
-        attempt++;
-        continue;
-      }
-
-      // 'escalate' — stop the loop and surface to a human. Includes
-      // commercial-relationship signals (POLICY_VIOLATION etc.), auth
-      // failures, IDEMPOTENCY_EXPIRED (do a natural-key check first!),
-      // attempt-cap exhaustion, and unknown vendor codes.
-      throw new EscalationRequired(decision.reason, decision.message);
-    }
-  }
-}
-```
-
-The discriminated union means TypeScript narrows correctly in each branch — `decision.delayMs` is only available on retry/mutate-and-retry, `decision.field` only on mutate-and-retry, `decision.message` only on escalate.
-
-For per-vertical overrides (e.g., a creative-template platform that legitimately auto-fixes `CREATIVE_REJECTED` format mismatches), instantiate `BuyerRetryPolicy` directly:
-
-```typescript
-import { BuyerRetryPolicy } from '@adcp/sdk';
-
-const policy = new BuyerRetryPolicy({
-  overrides: {
-    CREATIVE_REJECTED: (error) => {
-      if (error.field === 'creative.format' && /unsupported_format/.test(error.message)) {
-        return { action: 'mutate-and-retry', delayMs: 0, attemptCap: 2, sameIdempotencyKey: false, reason: 'capability' };
-      }
-      return null; // fall through to default (escalate as commercial)
-    },
-  },
-});
-
-const decision = policy.decide(error, { attempt });
-```
-
-Default policy is intentionally conservative — see the source comments in `src/lib/utils/buyer-retry-policy.ts` for per-code reasoning.
 
 If your symptom isn't here, fall through to the next section.
 

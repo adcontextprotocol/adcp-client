@@ -84,6 +84,11 @@ jobs:
         env:
           CI: true
 
+      - name: Run example adapter integration tests
+        run: npm run test:examples
+        env:
+          CI: true
+
       - name: Validate package exports
         run: |
           node -e "
