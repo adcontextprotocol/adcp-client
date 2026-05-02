@@ -1,4 +1,4 @@
-import { createHash, createPrivateKey, randomUUID, sign as nodeSign, type JsonWebKey } from 'crypto';
+import { createHash, createPrivateKey, randomUUID, sign as nodeSign, type JsonWebKey } from 'node:crypto';
 import type { SigningProvider } from './provider';
 import type { SignerKey } from './signer';
 import type { AdcpUse } from './jwks-helpers';
@@ -94,7 +94,7 @@ export function signerKeyToProvider(key: SignerKey): SigningProvider {
   });
 }
 
-export interface EphemeralSigningKey {
+export interface EphemeralEd25519Key {
   /** The `kid` embedded in both JWKs. */
   kid: string;
   /**
@@ -113,7 +113,7 @@ export interface EphemeralSigningKey {
   privateKey: AdcpJsonWebKey;
 }
 
-export interface MintEphemeralSigningKeyOptions {
+export interface MintEphemeralEd25519KeyOptions {
   /**
    * Stable key ID embedded in both JWKs. Defaults to a random UUID so each
    * call produces a unique kid. Pass a stable value for deterministic IDs
@@ -151,14 +151,14 @@ export interface MintEphemeralSigningKeyOptions {
  *
  * Usage with {@link InMemorySigningProvider}:
  * ```ts
- * import { mintEphemeralSigningKey, InMemorySigningProvider } from '@adcp/sdk/signing/testing';
+ * import { mintEphemeralEd25519Key, InMemorySigningProvider } from '@adcp/sdk/signing/testing';
  *
- * const { kid, algorithm, privateKey, publicKey } = await mintEphemeralSigningKey();
+ * const { kid, algorithm, privateKey, publicKey } = await mintEphemeralEd25519Key();
  * const provider = new InMemorySigningProvider({ keyid: kid, algorithm, privateKey });
  * // Publish publicKey in your /.well-known/jwks.json `keys` array.
  * ```
  */
-export async function mintEphemeralSigningKey(opts?: MintEphemeralSigningKeyOptions): Promise<EphemeralSigningKey> {
+export async function mintEphemeralEd25519Key(opts?: MintEphemeralEd25519KeyOptions): Promise<EphemeralEd25519Key> {
   const { generateKeyPair, exportJWK } = await import('jose');
   const resolvedKid = opts?.kid ?? randomUUID();
   const adcpUse: AdcpUse = opts?.adcp_use ?? 'webhook-signing';
@@ -168,8 +168,8 @@ export async function mintEphemeralSigningKey(opts?: MintEphemeralSigningKeyOpti
   });
   const [pubJwk, privJwk] = await Promise.all([exportJWK(pubKeyObj), exportJWK(privKeyObj)]);
 
-  if (!pubJwk.kty) throw new Error('mintEphemeralSigningKey: jose exportJWK returned publicKey without kty');
-  if (!privJwk.kty) throw new Error('mintEphemeralSigningKey: jose exportJWK returned privateKey without kty');
+  if (!pubJwk.kty) throw new Error('mintEphemeralEd25519Key: jose exportJWK returned publicKey without kty');
+  if (!privJwk.kty) throw new Error('mintEphemeralEd25519Key: jose exportJWK returned privateKey without kty');
 
   const publicKey: AdcpJsonWebKey = {
     ...(pubJwk as Record<string, unknown>),

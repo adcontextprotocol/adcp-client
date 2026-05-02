@@ -2,9 +2,9 @@
 "@adcp/sdk": minor
 ---
 
-Add `mintEphemeralSigningKey()` to `@adcp/sdk/signing/testing`.
+Add `mintEphemeralEd25519Key()` to `@adcp/sdk/signing/testing`.
 
-Exports `mintEphemeralSigningKey(opts?)` and `EphemeralSigningKey` from
+Exports `mintEphemeralEd25519Key(opts?)` and `EphemeralEd25519Key` from
 `@adcp/sdk/signing/testing`. The helper generates an ephemeral Ed25519
 keypair and returns both halves as fully-shaped `AdcpJsonWebKey` values
 (with `kid`, `alg: 'EdDSA'`, `use: 'sig'`, `adcp_use`, and `key_ops` set

@@ -24,7 +24,7 @@ const {
 const {
   InMemorySigningProvider,
   signerKeyToProvider,
-  mintEphemeralSigningKey,
+  mintEphemeralEd25519Key,
 } = require('../dist/lib/signing/testing.js');
 
 const KEYS_PATH = path.join(
@@ -733,9 +733,9 @@ describe('derEcdsaToP1363', () => {
   });
 });
 
-describe('mintEphemeralSigningKey', () => {
+describe('mintEphemeralEd25519Key', () => {
   test('returns kid, algorithm, publicKey, privateKey', async () => {
-    const result = await mintEphemeralSigningKey();
+    const result = await mintEphemeralEd25519Key();
     assert.ok(typeof result.kid === 'string' && result.kid.length > 0, 'kid should be a non-empty string');
     assert.strictEqual(result.algorithm, 'ed25519');
     assert.ok(result.publicKey, 'publicKey should be present');
@@ -743,7 +743,7 @@ describe('mintEphemeralSigningKey', () => {
   });
 
   test('publicKey has required AdcpJsonWebKey fields', async () => {
-    const { publicKey } = await mintEphemeralSigningKey();
+    const { publicKey } = await mintEphemeralEd25519Key();
     assert.strictEqual(typeof publicKey.kty, 'string', 'kty must be a string');
     assert.strictEqual(publicKey.alg, 'EdDSA');
     assert.strictEqual(publicKey.use, 'sig');
@@ -753,7 +753,7 @@ describe('mintEphemeralSigningKey', () => {
   });
 
   test('privateKey has required AdcpJsonWebKey fields with d scalar', async () => {
-    const { privateKey } = await mintEphemeralSigningKey();
+    const { privateKey } = await mintEphemeralEd25519Key();
     assert.strictEqual(typeof privateKey.kty, 'string', 'kty must be a string');
     assert.strictEqual(privateKey.alg, 'EdDSA');
     assert.strictEqual(privateKey.adcp_use, 'webhook-signing');
@@ -762,31 +762,50 @@ describe('mintEphemeralSigningKey', () => {
   });
 
   test('both keys share the same kid', async () => {
-    const { kid, publicKey, privateKey } = await mintEphemeralSigningKey();
+    const { kid, publicKey, privateKey } = await mintEphemeralEd25519Key();
     assert.strictEqual(publicKey.kid, kid);
     assert.strictEqual(privateKey.kid, kid);
   });
 
   test('passed kid option is reflected in both JWKs', async () => {
-    const { kid, publicKey, privateKey } = await mintEphemeralSigningKey({ kid: 'test-kid-001' });
+    const { kid, publicKey, privateKey } = await mintEphemeralEd25519Key({ kid: 'test-kid-001' });
     assert.strictEqual(kid, 'test-kid-001');
     assert.strictEqual(publicKey.kid, 'test-kid-001');
     assert.strictEqual(privateKey.kid, 'test-kid-001');
   });
 
   test('adcp_use: request-signing is reflected in both JWKs', async () => {
-    const { publicKey, privateKey } = await mintEphemeralSigningKey({ adcp_use: 'request-signing' });
+    const { publicKey, privateKey } = await mintEphemeralEd25519Key({ adcp_use: 'request-signing' });
     assert.strictEqual(publicKey.adcp_use, 'request-signing');
     assert.strictEqual(privateKey.adcp_use, 'request-signing');
   });
 
   test('privateKey is usable directly by InMemorySigningProvider without throwing', async () => {
-    const { kid, algorithm, privateKey } = await mintEphemeralSigningKey();
+    const { kid, algorithm, privateKey } = await mintEphemeralEd25519Key();
     assert.doesNotThrow(() => new InMemorySigningProvider({ keyid: kid, algorithm, privateKey }));
   });
 
   test('each call produces a unique kid when no kid option is passed', async () => {
-    const [a, b] = await Promise.all([mintEphemeralSigningKey(), mintEphemeralSigningKey()]);
+    const [a, b] = await Promise.all([mintEphemeralEd25519Key(), mintEphemeralEd25519Key()]);
     assert.notStrictEqual(a.kid, b.kid, 'default kids should be unique across calls');
+  });
+
+  test('minted key signs + verifies end-to-end (catches JWK encoding regressions)', async () => {
+    // Round-trip catches regressions in JWK encoding (base64 vs base64url),
+    // `d` scalar shape, or kid/alg plumbing that construction-only assertions
+    // miss. Uses jose directly for verification so it's independent of the
+    // SigningProvider internals.
+    const { kid, algorithm, publicKey, privateKey } = await mintEphemeralEd25519Key();
+    const provider = new InMemorySigningProvider({ keyid: kid, algorithm, privateKey });
+    const payload = Buffer.from('hello signing test', 'utf8');
+    const signature = await provider.sign(payload);
+    assert.ok(signature && signature.byteLength > 0, 'sign() must return non-empty bytes');
+
+    const { importJWK, FlattenedSign, flattenedVerify } = await import('jose');
+    const privKey = await importJWK(privateKey, 'EdDSA');
+    const pubKey = await importJWK(publicKey, 'EdDSA');
+    const jws = await new FlattenedSign(payload).setProtectedHeader({ alg: 'EdDSA' }).sign(privKey);
+    const verified = await flattenedVerify(jws, pubKey);
+    assert.deepStrictEqual(Buffer.from(verified.payload), payload, 'signed payload round-trips through verify');
   });
 });

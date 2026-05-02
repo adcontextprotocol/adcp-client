@@ -301,16 +301,16 @@ For non-GCP runtimes that lack OIDC and where the org policy blocks SA keys, the
 
 ### Testing — `InMemorySigningProvider`
 
-The SDK ships `InMemorySigningProvider` under a separate import path so production imports surface the KMS path first. Use `mintEphemeralSigningKey` to generate a typed keypair ready for use with the provider — it handles the Node `JsonWebKey.kty?: string` → `AdcpJsonWebKey.kty: string` reshape so you don't have to.
+The SDK ships `InMemorySigningProvider` under a separate import path so production imports surface the KMS path first. Use `mintEphemeralEd25519Key` to generate a typed keypair ready for use with the provider — it handles the Node `JsonWebKey.kty?: string` → `AdcpJsonWebKey.kty: string` reshape so you don't have to.
 
 **Buyer (request-signing):**
 
 ```typescript
 import { createAgentSignedFetch } from '@adcp/sdk/signing';
-import { mintEphemeralSigningKey, InMemorySigningProvider } from '@adcp/sdk/signing/testing';
+import { mintEphemeralEd25519Key, InMemorySigningProvider } from '@adcp/sdk/signing/testing';
 
 // Pass adcp_use: 'request-signing' — this section is about buyer outbound requests.
-const { kid, algorithm, privateKey, publicKey } = await mintEphemeralSigningKey({
+const { kid, algorithm, privateKey, publicKey } = await mintEphemeralEd25519Key({
   adcp_use: 'request-signing',
 });
 // Publish `publicKey` in your /.well-known/jwks.json `keys` array.
@@ -322,7 +322,7 @@ const signedFetch = createAgentSignedFetch({
 });
 ```
 
-**Seller (webhook-signing):** `mintEphemeralSigningKey()` defaults to `adcp_use: 'webhook-signing'` — omit the option when generating test keys for outbound webhook callbacks.
+**Seller (webhook-signing):** `mintEphemeralEd25519Key()` defaults to `adcp_use: 'webhook-signing'` — omit the option when generating test keys for outbound webhook callbacks.
 
 The `InMemorySigningProvider` constructor refuses to instantiate when `NODE_ENV=production` unless `ADCP_ALLOW_IN_MEMORY_SIGNER=1` is set explicitly — defense-in-depth so a copy-paste from a test file doesn't accidentally ship to prod. The gate is a self-discipline aid for the bundled implementation; the SDK can't enforce hygiene on third-party providers.
 
