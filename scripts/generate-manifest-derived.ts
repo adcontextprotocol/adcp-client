@@ -82,8 +82,7 @@ function loadManifest(): { manifest: AdcpManifest; sourcePath: string } {
 
   if (!manifest.error_codes || !manifest.tools || !manifest.specialisms) {
     throw new Error(
-      `manifest.json at ${manifestPath} is missing required sections. ` +
-        `Required: error_codes, tools, specialisms.`
+      `manifest.json at ${manifestPath} is missing required sections. ` + `Required: error_codes, tools, specialisms.`
     );
   }
   return { manifest, sourcePath: manifestPath };
