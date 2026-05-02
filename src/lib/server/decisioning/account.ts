@@ -417,9 +417,12 @@ export interface AccountStore<TCtxMeta = Record<string, unknown>> {
    * platform must dedupe replays under the framework's idempotency key.
    *
    * `ctx.authInfo` carries the caller's OAuth principal (when
-   * `serve({ authenticate })` is wired). Platforms fronting an upstream
-   * billing API (Snap, Meta, retail-media) use it to authorize the usage
-   * post against the principal's tenant — same pattern as `accounts.resolve`.
+   * `serve({ authenticate })` is wired); `ctx.agent` carries the resolved
+   * `BuyerAgent` record (when an `agentRegistry` is configured). Platforms
+   * fronting an upstream billing API (Snap, Meta, retail-media) use them
+   * to authorize the usage post against the principal's tenant — same
+   * pattern as `accounts.resolve`. Prefer `ctx.agent` for principal-keyed
+   * commercial gates; see `upsert?` for the rationale.
    */
   reportUsage?(req: ReportUsageRequest, ctx?: ResolveContext): Promise<ReportUsageResponse>;
 
@@ -439,9 +442,11 @@ export interface AccountStore<TCtxMeta = Record<string, unknown>> {
    * `ctx.account.ctx_metadata` without re-resolving.
    *
    * `ctx.authInfo` carries the caller's OAuth principal (when
-   * `serve({ authenticate })` is wired). Platforms that guard financials
-   * per-principal use it to authorize the read — same pattern as
-   * `accounts.resolve`.
+   * `serve({ authenticate })` is wired); `ctx.agent` carries the resolved
+   * `BuyerAgent` record (when an `agentRegistry` is configured). Platforms
+   * that guard financials per-principal use them to authorize the read —
+   * same pattern as `accounts.resolve`. Prefer `ctx.agent` for principal-
+   * keyed commercial gates; see `upsert?` for the rationale.
    */
   getAccountFinancials?(
     req: GetAccountFinancialsRequest,

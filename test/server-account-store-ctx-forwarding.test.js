@@ -49,6 +49,14 @@ function buildPlatform(captures, overrides = {}) {
         captures.listFilter = filter;
         return { items: [], nextCursor: null };
       },
+      reportUsage: async (req, ctx) => {
+        captures.reportUsageCtx = ctx;
+        return { accepted: [], rejected: [] };
+      },
+      getAccountFinancials: async (req, ctx) => {
+        captures.getAccountFinancialsCtx = ctx;
+        return { account_id: ctx?.account?.id ?? 'acc_1', currency: 'USD' };
+      },
     },
     statusMappers: {},
     sales: {
@@ -188,5 +196,102 @@ describe('Issue #1310 — accounts.list receives ResolveContext', () => {
     });
     await dispatchList(server);
     assert.ok(captures.listFilter, 'first arg must be the filter, ctx must come second');
+  });
+});
+
+// Symmetric follow-up: `reportUsage` and `getAccountFinancials` already
+// received `authInfo` and `toolName`, but the framework was not forwarding
+// `agent` (the resolved BuyerAgent record). Fixed by routing all four
+// AccountStore handlers through a single `toResolveCtx` helper, so any
+// future addition to `ResolveContext` lands on every method automatically.
+
+const dispatchReportUsage = (server, authInfo) =>
+  server.dispatchTestRequest(
+    {
+      method: 'tools/call',
+      params: {
+        name: 'report_usage',
+        arguments: {
+          usage: [
+            {
+              account: { account_id: 'acc_1' },
+              period_start: '2026-05-01T00:00:00Z',
+              period_end: '2026-05-02T00:00:00Z',
+              line_item_id: 'li_1',
+              impressions: 1000,
+            },
+          ],
+          idempotency_key: '22222222-2222-2222-2222-222222222222',
+        },
+      },
+    },
+    authInfo ? { authInfo } : undefined
+  );
+
+const dispatchGetAccountFinancials = (server, authInfo) =>
+  server.dispatchTestRequest(
+    {
+      method: 'tools/call',
+      params: {
+        name: 'get_account_financials',
+        arguments: { account: { account_id: 'acc_1' } },
+      },
+    },
+    authInfo ? { authInfo } : undefined
+  );
+
+describe('Symmetric follow-up — reportUsage receives ctx.agent', () => {
+  it('forwards resolved BuyerAgent to accounts.reportUsage when agentRegistry is configured', async () => {
+    const captures = {};
+    const agent = sampleAgent();
+    const server = createAdcpServerFromPlatform(
+      buildPlatform(captures, {
+        agentRegistry: {
+          async resolve() {
+            return agent;
+          },
+        },
+      }),
+      {
+        name: 'symmetric',
+        version: '0.0.1',
+        validation: { requests: 'off', responses: 'off' },
+      }
+    );
+    const result = await dispatchReportUsage(server, { kind: 'api_key', clientId: 'buyer-xyz' });
+    assert.notStrictEqual(result.isError, true, `expected success, got ${JSON.stringify(result.structuredContent)}`);
+    assert.ok(captures.reportUsageCtx?.agent, 'reportUsage MUST receive ctx.agent when agentRegistry is configured');
+    assert.strictEqual(captures.reportUsageCtx.agent.agent_url, 'https://agent.scope3.com');
+    assert.strictEqual(captures.reportUsageCtx.toolName, 'report_usage');
+  });
+});
+
+describe('Symmetric follow-up — getAccountFinancials receives ctx.agent', () => {
+  it('forwards resolved BuyerAgent to accounts.getAccountFinancials when agentRegistry is configured', async () => {
+    const captures = {};
+    const agent = sampleAgent();
+    const server = createAdcpServerFromPlatform(
+      buildPlatform(captures, {
+        agentRegistry: {
+          async resolve() {
+            return agent;
+          },
+        },
+      }),
+      {
+        name: 'symmetric',
+        version: '0.0.1',
+        validation: { requests: 'off', responses: 'off' },
+      }
+    );
+    const result = await dispatchGetAccountFinancials(server, { kind: 'api_key', clientId: 'buyer-xyz' });
+    assert.notStrictEqual(result.isError, true, `expected success, got ${JSON.stringify(result.structuredContent)}`);
+    assert.ok(
+      captures.getAccountFinancialsCtx?.agent,
+      'getAccountFinancials MUST receive ctx.agent when agentRegistry is configured'
+    );
+    assert.strictEqual(captures.getAccountFinancialsCtx.agent.agent_url, 'https://agent.scope3.com');
+    assert.strictEqual(captures.getAccountFinancialsCtx.toolName, 'get_account_financials');
+    assert.ok(captures.getAccountFinancialsCtx.account, 'AccountToolContext keeps `account` populated');
   });
 });
