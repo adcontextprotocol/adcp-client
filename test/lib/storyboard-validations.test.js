@@ -320,12 +320,14 @@ describe('field_contains (adcp#3803 item 2)', () => {
       },
     };
     const [result] = runOne(
-      [{
-        check: 'field_contains',
-        path: 'creatives[0].errors[*].code',
-        value: 'PROVENANCE_VERIFIER_NOT_ACCEPTED',
-        description: 'verifier-not-accepted appears regardless of cascade order',
-      }],
+      [
+        {
+          check: 'field_contains',
+          path: 'creatives[0].errors[*].code',
+          value: 'PROVENANCE_VERIFIER_NOT_ACCEPTED',
+          description: 'verifier-not-accepted appears regardless of cascade order',
+        },
+      ],
       'sync_creatives',
       taskResult
     );
@@ -341,12 +343,14 @@ describe('field_contains (adcp#3803 item 2)', () => {
       },
     };
     const [result] = runOne(
-      [{
-        check: 'field_contains',
-        path: 'creatives[0].errors[*].code',
-        allowed_values: ['PROVENANCE_DIGITAL_SOURCE_TYPE_MISSING', 'PROVENANCE_DISCLOSURE_MISSING'],
-        description: 'either disclosure code is acceptable',
-      }],
+      [
+        {
+          check: 'field_contains',
+          path: 'creatives[0].errors[*].code',
+          allowed_values: ['PROVENANCE_DIGITAL_SOURCE_TYPE_MISSING', 'PROVENANCE_DISCLOSURE_MISSING'],
+          description: 'either disclosure code is acceptable',
+        },
+      ],
       'sync_creatives',
       taskResult
     );
@@ -361,12 +365,14 @@ describe('field_contains (adcp#3803 item 2)', () => {
       },
     };
     const [result] = runOne(
-      [{
-        check: 'field_contains',
-        path: 'creatives[0].errors[*].code',
-        value: 'PROVENANCE_VERIFIER_NOT_ACCEPTED',
-        description: 'expected verifier-not-accepted',
-      }],
+      [
+        {
+          check: 'field_contains',
+          path: 'creatives[0].errors[*].code',
+          value: 'PROVENANCE_VERIFIER_NOT_ACCEPTED',
+          description: 'expected verifier-not-accepted',
+        },
+      ],
       'sync_creatives',
       taskResult
     );
@@ -378,12 +384,14 @@ describe('field_contains (adcp#3803 item 2)', () => {
   it('fails when path resolves to empty (no array elements)', () => {
     const taskResult = { success: true, data: { creatives: [{ errors: [] }] } };
     const [result] = runOne(
-      [{
-        check: 'field_contains',
-        path: 'creatives[0].errors[*].code',
-        value: 'PROVENANCE_DISCLOSURE_MISSING',
-        description: 'expected disclosure error',
-      }],
+      [
+        {
+          check: 'field_contains',
+          path: 'creatives[0].errors[*].code',
+          value: 'PROVENANCE_DISCLOSURE_MISSING',
+          description: 'expected disclosure error',
+        },
+      ],
       'sync_creatives',
       taskResult
     );
@@ -430,17 +438,20 @@ describe('field_contains (adcp#3803 item 2)', () => {
 
   it('emits the canonical JSON pointer for the path', () => {
     const [result] = runOne(
-      [{
-        check: 'field_contains',
-        path: 'creatives[0].errors[*].code',
-        value: 'X',
-        description: 'pointer test',
-      }],
+      [
+        {
+          check: 'field_contains',
+          path: 'creatives[0].errors[*].code',
+          value: 'X',
+          description: 'pointer test',
+        },
+      ],
       'sync_creatives',
       { success: true, data: { creatives: [{ errors: [{ code: 'X' }] }] } }
     );
     assert.strictEqual(result.passed, true);
-    // toJsonPointer renders [*] as /* per RFC 6901 string-encoding rules
-    assert.match(result.json_pointer, /^\/creatives\/0\/errors\/.*\/code$/);
+    // toJsonPointer renders [*] as /* (literal asterisk) — `*` isn't a
+    // forbidden character in RFC 6901, so it round-trips unescaped.
+    assert.strictEqual(result.json_pointer, '/creatives/0/errors/*/code');
   });
 });
