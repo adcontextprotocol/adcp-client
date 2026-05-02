@@ -929,6 +929,11 @@ export function createAdcpServerFromPlatform<P extends DecisioningPlatform<any, 
     // platform so the v5 dispatcher can call `agentRegistry.resolve()` on
     // every request and populate `ctx.agent`. When the platform omits the
     // field, the v5 surface stays unchanged.
+    //
+    // Precedence: this spread runs AFTER `...opts`, so `platform.agentRegistry`
+    // wins over any `opts.agentRegistry` an adopter passes via the v5 escape
+    // hatch. Same convention as the `idempotency` spread below — the platform
+    // is the authoritative v6 surface; opts is a low-level escape hatch.
     ...(platform.agentRegistry !== undefined && { agentRegistry: platform.agentRegistry }),
     // Pool-derived stores override the spread above when adopters supplied
     // `pool` but no explicit per-store opt. Explicit values still win.
@@ -954,7 +959,7 @@ export function createAdcpServerFromPlatform<P extends DecisioningPlatform<any, 
         const account = await platform.accounts.resolve(ref, {
           ...(ctx.authInfo !== undefined && { authInfo: ctx.authInfo }),
           toolName: ctx.toolName,
-          ...(ctx.agent !== undefined && { agent: ctx.agent }),
+          ...(ctx.agent != null && { agent: ctx.agent }),
         });
         resolved = account != null;
         resolvedAccountId = account?.id;
@@ -1002,7 +1007,7 @@ export function createAdcpServerFromPlatform<P extends DecisioningPlatform<any, 
         const account = await platform.accounts.resolve(undefined, {
           ...(ctx.authInfo !== undefined && { authInfo: ctx.authInfo }),
           toolName: ctx.toolName,
-          ...(ctx.agent !== undefined && { agent: ctx.agent }),
+          ...(ctx.agent != null && { agent: ctx.agent }),
         });
         resolved = account != null;
         resolvedAccountId = account?.id;

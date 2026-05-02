@@ -2721,10 +2721,16 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
         // billing capability — those land in Stage 4 and Phase 2 (#1292).
         if (agentRegistry !== undefined) {
           try {
+            // `credential` is intentionally omitted at this stage. Stage 3
+            // (#1269) wires `ResolvedAuthInfo.credential` synthesis from the
+            // auth principal so the factory functions can route by kind.
+            // Until then, the registry's `resolve` will return `null` for
+            // every request without a credential — the seam runs but stays
+            // functionally inert.
             const resolved = await agentRegistry.resolve({
               ...(ctx.authInfo?.extra !== undefined && { extra: ctx.authInfo.extra }),
             });
-            if (resolved !== null) {
+            if (resolved != null) {
               // Shallow-freeze the resolved record so downstream code cannot
               // accidentally mutate `status`, `agent_url`, or other own
               // properties. NOTE: `Object.freeze` on the `billing_capabilities`
@@ -2737,6 +2743,8 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
               // so adopter mis-mutation would only affect the same request's
               // own logic — no cross-request leak.
               if (!Object.isFrozen(resolved)) {
+                // Map-backed wrappers and other Set-shaped types skip the
+                // Set-freeze branch; the outer record's freeze still applies.
                 if (resolved.billing_capabilities instanceof Set) {
                   Object.freeze(resolved.billing_capabilities);
                 }
@@ -2886,7 +2894,7 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
             const account = await resolveAccount(params.account, {
               toolName: toolName as AdcpServerToolName,
               authInfo: ctx.authInfo,
-              ...(ctx.agent !== undefined && { agent: ctx.agent }),
+              ...(ctx.agent != null && { agent: ctx.agent }),
             });
             if (account == null) {
               logger.warn('Account not found', { tool: toolName, account: params.account });
@@ -2920,7 +2928,7 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
             const account = await resolveAccountFromAuth({
               toolName: toolName as AdcpServerToolName,
               authInfo: ctx.authInfo,
-              ...(ctx.agent !== undefined && { agent: ctx.agent }),
+              ...(ctx.agent != null && { agent: ctx.agent }),
             });
             if (account != null) ctx.account = account;
           } catch (err) {
@@ -2942,7 +2950,7 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
               toolName: toolName as AdcpServerToolName,
               params,
               account: ctx.account,
-              ...(ctx.agent !== undefined && { agent: ctx.agent }),
+              ...(ctx.agent != null && { agent: ctx.agent }),
             });
             if (sessionKey !== undefined) ctx.sessionKey = sessionKey;
           } catch (err) {

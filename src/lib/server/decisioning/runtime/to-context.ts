@@ -123,7 +123,7 @@ export function buildRequestContext<TCtxMeta = Record<string, unknown>>(
 
   return {
     account,
-    ...(handlerCtx.agent !== undefined && { agent: handlerCtx.agent }),
+    ...(handlerCtx.agent != null && { agent: handlerCtx.agent }),
     state: {
       findByObject: () => [],
       findProposalById: () => null,
