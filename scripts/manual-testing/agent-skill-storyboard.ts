@@ -31,7 +31,7 @@
 
 import { spawn, spawnSync, type ChildProcess } from 'node:child_process';
 import { createWriteStream } from 'node:fs';
-import { mkdir, readFile, writeFile, rm, stat, chmod, symlink } from 'node:fs/promises';
+import { mkdir, readFile, writeFile, stat, chmod, symlink } from 'node:fs/promises';
 import { dirname, join, resolve, basename } from 'node:path';
 import { connect } from 'node:net';
 
