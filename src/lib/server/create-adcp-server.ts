@@ -56,6 +56,7 @@ import type { TaskStore, TaskMessageQueue } from './tasks';
 import { adcpError } from './errors';
 import type { BuyerAgent, BuyerAgentRegistry } from './decisioning/buyer-agent';
 import type { ResolvedAuthInfo } from './decisioning/account';
+import { AdcpError } from './decisioning/async-outcome';
 import { redactCredentialPatterns } from './redact';
 import { ADCP_ERROR_FIELD_ALLOWLIST } from './envelope-allowlist';
 import { InMemoryStateStore } from './state-store';
@@ -1657,6 +1658,25 @@ function isErrorResponse(response: McpToolResponse): boolean {
  * `[object Object]` inside a SERVICE_UNAVAILABLE wrapper — the dispatcher
  * unwraps and returns the envelope directly when the shape matches.
  */
+/**
+ * Project a thrown {@link AdcpError} to the wire envelope. Used by the
+ * account-resolution and tool-handler catch blocks so adopters can throw
+ * typed errors at any depth and have the framework project the structured
+ * fields verbatim — without coercion to `SERVICE_UNAVAILABLE`. Mirrors the
+ * `isThrownAdcpError` unwrap, but for the in-process class throw rather
+ * than the already-projected envelope throw.
+ */
+function projectThrownAdcpError(err: AdcpError): McpToolResponse {
+  return adcpError(err.code, {
+    recovery: err.recovery,
+    message: err.message,
+    ...(err.field !== undefined && { field: err.field }),
+    ...(err.suggestion !== undefined && { suggestion: err.suggestion }),
+    ...(err.retry_after !== undefined && { retry_after: err.retry_after }),
+    ...(err.details !== undefined && { details: err.details }),
+  });
+}
+
 function isThrownAdcpError(value: unknown): value is McpToolResponse {
   if (!value || typeof value !== 'object') return false;
   const sc = (value as { structuredContent?: unknown }).structuredContent;
@@ -3009,7 +3029,18 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
             }
             ctx.account = account;
           } catch (err) {
+            // Typed errors propagate verbatim — both the already-projected
+            // envelope shape (`isThrownAdcpError`) and the raw class throw
+            // (`AdcpError instanceof`). Resolvers can surface
+            // `INVALID_REQUEST` for inline `account_id` against an
+            // `'implicit'`-resolution platform (#1364), or any other typed
+            // wire error, without coercion. Generic exceptions still
+            // project to SERVICE_UNAVAILABLE so upstream leaks don't cross
+            // the trust boundary.
             if (isThrownAdcpError(err)) return finalize(err);
+            if (err instanceof AdcpError) {
+              return finalize(projectThrownAdcpError(err));
+            }
             const reason = err instanceof Error ? err.message : String(err);
             logger.error('Account resolution failed', { tool: toolName, error: reason });
             return finalize(
@@ -3034,6 +3065,14 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
             });
             if (account != null) ctx.account = account;
           } catch (err) {
+            // Same typed-error pass-through as the explicit `resolveAccount`
+            // catch above — both the already-projected envelope shape and
+            // the raw `AdcpError` class throw propagate verbatim. Generic
+            // exceptions project to SERVICE_UNAVAILABLE.
+            if (isThrownAdcpError(err)) return finalize(err);
+            if (err instanceof AdcpError) {
+              return finalize(projectThrownAdcpError(err));
+            }
             const reason = err instanceof Error ? err.message : String(err);
             logger.error('Auth-derived account resolution failed', { tool: toolName, error: reason });
             return finalize(
@@ -3472,6 +3511,22 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
             });
             return finalize(err);
           }
+          // Raw `AdcpError` class throws — distinct from the
+          // already-projected envelope above. The framework has long
+          // documented `throw new AdcpError(...)` as the canonical way
+          // to signal structured rejection from any specialism method
+          // (see `AdcpError` JSDoc). Project to the typed envelope so
+          // the buyer sees the typed code, not `SERVICE_UNAVAILABLE`.
+          if (err instanceof AdcpError) {
+            logger.warn('Handler threw an AdcpError', {
+              tool: toolName,
+              handler: handlerKey,
+              code: err.code,
+              message: err.message,
+              stack: err.stack,
+            });
+            return finalize(projectThrownAdcpError(err));
+          }
           const reason = err instanceof Error ? err.message : String(err);
           // Log the full stack — `logger.error` with just the message turned
           // every "Handler failed" into a guessing game for agent authors.
@@ -3570,6 +3625,22 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
       const custom = config.customTools[customName];
       if (!custom) continue;
       const { description, title, inputSchema, outputSchema, annotations, handler } = custom;
+      // Wrap the adopter-supplied handler so `throw new AdcpError(...)` and
+      // `throw adcpError(...)` from inside it project to the typed envelope —
+      // matching the behavior framework-registered tools get from the catch
+      // at line ~3494. Without the wrap, AdcpError throws escape to the MCP
+      // SDK as generic JSON-RPC errors and the buyer loses the typed code.
+      // The framework's own `tasks_get` is registered through this path.
+      const rawHandler = handler as (...args: unknown[]) => Promise<McpToolResponse> | McpToolResponse;
+      const wrappedHandler = (async (...args: unknown[]) => {
+        try {
+          return await rawHandler(...args);
+        } catch (err) {
+          if (isThrownAdcpError(err)) return err;
+          if (err instanceof AdcpError) return projectThrownAdcpError(err);
+          throw err;
+        }
+      }) as Parameters<typeof server.registerTool>[2];
       server.registerTool(
         customName,
         {
@@ -3579,7 +3650,7 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
           ...(outputSchema != null && { outputSchema }),
           ...(annotations != null && { annotations }),
         } as Parameters<typeof server.registerTool>[1],
-        handler as Parameters<typeof server.registerTool>[2]
+        wrappedHandler
       );
       registeredToolNames.add(customName);
     }
