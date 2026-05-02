@@ -218,6 +218,10 @@ function validatePeerSubstitutesFor(
   if (newField === undefined && legacyField === undefined) return;
 
   if (newField !== undefined && legacyField !== undefined) {
+    // Order-sensitive equality: `[A, B]` vs `[B, A]` would throw despite being
+    // semantically equivalent. Authors mid-migration should write the same list
+    // in both fields; the deprecation alias is a literal synonym, not a
+    // same-set restatement.
     const a = JSON.stringify(Array.isArray(newField) ? newField : [newField]);
     const b = JSON.stringify(Array.isArray(legacyField) ? legacyField : [legacyField]);
     if (a !== b) {

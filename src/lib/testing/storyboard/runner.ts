@@ -1439,10 +1439,10 @@ async function executeStoryboardPass(
       if (!targetResult || !targetResult.skipped) continue;
       // Only re-grade hard-missing-state skips. Other skip reasons (e.g.
       // `prerequisite_failed`, `peer_branch_taken`) on the target are
-      // outside the substitute-rescue contract.
-      if (targetResult.skip_reason !== 'missing_tool' && targetResult.skip_reason !== 'missing_test_controller') {
-        continue;
-      }
+      // outside the substitute-rescue contract. Uses the same helper as
+      // the deferral path (line ~1269 above) so the two sides stay in
+      // lockstep when a future RunnerSkipReason joins the family.
+      if (!isHardMissingStateSkipReason(targetResult.skip_reason)) continue;
       const detail = `${target} state provided by ${phase.id}.${sourceId}`;
       targetResult.skip_reason = 'peer_substituted';
       targetResult.skip = { reason: 'peer_substituted', detail };
