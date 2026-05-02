@@ -184,33 +184,40 @@ describe('compactUnionErrors — oneOf variant selection (issue #1337)', () => {
   });
 
   test('regression: not error nested inside variant does not trigger penalty', () => {
-    // A `not` error at a nested path (e.g. /account/0/not) should NOT trigger
-    // the onlyNotAtRoot penalty — only `not` errors with instancePath === '' do.
+    // A `not` error at a nested path (e.g. /account/not) should NOT trigger
+    // the onlyNotAtRoot penalty — only `not` errors with instancePath === rootInstance
+    // (the union's instancePath) do. Give variant 1 an extra error so the winner
+    // is decided by count, not by insertion-order tie-breaking.
     const oneOfRoot = makeErr({
       keyword: 'oneOf',
       schemaPath: '#/oneOf',
       instancePath: '',
       params: { passingSchemas: null },
     });
-    // Variant 0: nested `not` at /account (not at root) + required
+    // Variant 0: 1 nested `not` at /account — not penalised (nested, not root)
     const nestedNot = makeErr({
       keyword: 'not',
       instancePath: '/account',
       schemaPath: '#/oneOf/0/properties/account/not',
     });
-    // Variant 1: required (fewer errors)
-    const req = makeErr({ schemaPath: '#/oneOf/1/required', params: { missingProperty: 'errors' } });
+    // Variant 1: 2 required errors — more residuals, so variant 0 wins on count
+    const req1 = makeErr({ schemaPath: '#/oneOf/1/required', params: { missingProperty: 'errors' } });
+    const req2 = makeErr({ schemaPath: '#/oneOf/1/required', params: { missingProperty: 'code' } });
 
-    const compacted = _compactUnionErrors([oneOfRoot, nestedNot, req], rootSchema);
+    const compacted = _compactUnionErrors([oneOfRoot, nestedNot, req1, req2], rootSchema);
     const surviving = compacted.filter(e => e.keyword !== 'oneOf');
     const survivingPaths = surviving.map(e => e.schemaPath);
 
-    // Variant 0 has 1 error (nested not — NOT penalised); variant 1 has 1 error.
-    // They're equal on count and equal on onlyNotAtRoot (variant 0's `not` is
-    // nested, so onlyNotAtRoot=0). First-inserted (variant 0) wins.
+    // Variant 0 has 1 residual (nested not — onlyNotAtRoot=0 because it's nested);
+    // variant 1 has 2 residuals. Variant 0 wins on count, confirming nested `not`
+    // carries no penalty.
     assert.ok(
       survivingPaths.some(p => p.includes('/oneOf/0/')),
       `nested not should not trigger penalty; variant 0 should survive, got: ${JSON.stringify(survivingPaths)}`
+    );
+    assert.ok(
+      !survivingPaths.some(p => p.includes('/oneOf/1/')),
+      `variant 1 has more residuals and should be dropped, got: ${JSON.stringify(survivingPaths)}`
     );
   });
 });

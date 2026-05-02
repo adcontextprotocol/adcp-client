@@ -2067,11 +2067,11 @@ function sanitizeAdcpErrorEnvelope(response: McpToolResponse): void {
  * serialization lets the server emit a developer-facing warning that names
  * the culprit fields.
  *
- * Recursion depth is capped at 8 — deeper nesting is not a realistic
+ * Recursion depth is capped at 8 levels — deeper nesting is not a realistic
  * AdCP response shape, and the cap keeps the hot path O(fields).
  */
 function collectUndefinedPaths(value: unknown, pointer = '', depth = 0): string[] {
-  if (depth > 8 || value == null || typeof value !== 'object') return [];
+  if (depth >= 8 || value == null || typeof value !== 'object') return [];
   const paths: string[] = [];
   if (Array.isArray(value)) {
     for (let i = 0; i < value.length; i++) {
@@ -3328,18 +3328,19 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
             }
           }
 
-          // Warn on undefined-valued fields before schema validation runs.
-          // JSON.stringify silently drops undefined keys, producing a
-          // missing-field validator error whose message points to the
-          // wrong oneOf variant (issue #1337). Logging the culprit paths
-          // here puts the root-cause signal in the same log flush as the
-          // schema error, so adopters don't need a second iteration.
-          if (responseValidationMode !== 'off' && !isErrorResponse(formatted)) {
+          // Warn on undefined-valued fields unconditionally, regardless of
+          // responseValidationMode. Fields with undefined values are silently
+          // dropped by JSON.stringify, producing missing-field validator errors
+          // whose messages point to the wrong oneOf variant (issue #1337).
+          // Fired unconditionally (including in 'off' mode / production) because
+          // undefined fields are always a handler mistake — the object walk is
+          // cheap and the warning is the only signal a production adopter gets.
+          if (!isErrorResponse(formatted)) {
             const undefinedPaths = collectUndefinedPaths(formatted.structuredContent);
             if (undefinedPaths.length > 0) {
               logger.warn(
-                `Response for ${toolName} has undefined field(s) that JSON.stringify will drop — ` +
-                  `check handler output: ${undefinedPaths.join(', ')}`,
+                `Response for ${toolName} has undefined field(s) that will be missing from the wire response; ` +
+                  `check that your handler sets these fields: ${undefinedPaths.join(', ')}`,
                 { tool: toolName, undefinedPaths }
               );
             }
