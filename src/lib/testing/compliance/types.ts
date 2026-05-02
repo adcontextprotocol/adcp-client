@@ -143,6 +143,14 @@ export interface ComplianceSummary {
   /** Storyboard steps that were skipped. */
   steps_skipped?: number;
   /**
+   * Validation results graded `not_applicable` because the runner did not
+   * implement the storyboard's authored `check` kind (forward-compat
+   * default). Surfaces "runner is older than the storyboard" as a distinct
+   * signal from clean passes. Per runner-output-contract.yaml v2.0.0
+   * run_summary optional field.
+   */
+  validations_not_applicable?: number;
+  /**
    * Schemas applied across all storyboards. Implementors can re-validate
    * locally against the same artifacts the runner used.
    */

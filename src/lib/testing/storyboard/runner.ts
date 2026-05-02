@@ -22,7 +22,18 @@ import {
 import { detectContextRejectionHints } from './rejection-hints';
 import { detectShapeDriftHints } from './shape-drift-hints';
 import { detectStrictValidationHints } from './strict-validation-hints';
-import { runValidations, type ValidationContext } from './validations';
+import {
+  runValidations,
+  type ValidationContext,
+  type UpstreamTrafficValidationContext,
+  type UpstreamTrafficQueryResult,
+} from './validations';
+import { toJsonPointer } from './path';
+import {
+  queryUpstreamTraffic,
+  type ControllerScenario,
+  type UpstreamTrafficSuccess,
+} from '../test-controller';
 import { enrichRequest, hasRequestEnricher } from './request-builder';
 import { resolveAccount, resolveBrand } from '../client';
 import { isMutatingTask, generateIdempotencyKey } from '../../utils/idempotency';
@@ -77,6 +88,7 @@ import type {
   StoryboardPhaseResult,
   StoryboardStepResult,
   StoryboardStepPreview,
+  StoryboardValidation,
   StrictValidationSummary,
   SchemaValidationError,
   ValidationResult,
@@ -720,6 +732,7 @@ async function executeStoryboardPass(
   const priorProbes = new Map<string, HttpProbeResult>();
   const contextProvenance = new Map<string, ContextProvenanceEntry>();
   const priorA2aEnvelopes = new Map<string, A2ATaskEnvelope>();
+  const stepRequestStarts = new Map<string, string>();
   const phaseResults: StoryboardPhaseResult[] = [];
   let passedCount = 0;
   let failedCount = 0;
@@ -1160,6 +1173,7 @@ async function executeStoryboardPass(
         runnerVars,
         contextProvenance,
         priorA2aEnvelopes,
+        stepRequestStarts,
         agentLibraryVersion: profile?.library_version,
       });
       const result: StoryboardStepResult = { ...rawResult, storyboard_id: storyboard.id };
@@ -1479,6 +1493,7 @@ async function executeStoryboardPass(
   if (seedingPhaseResult) phaseResults.unshift(seedingPhaseResult);
   const schemasUsed = collectSchemasUsed(phaseResults);
   const strictSummary = summarizeStrictValidation(phaseResults);
+  const validationsNotApplicable = countValidationsNotApplicable(phaseResults);
   const result: StoryboardResult = {
     storyboard_id: storyboard.id,
     storyboard_title: storyboard.title,
@@ -1495,6 +1510,7 @@ async function executeStoryboardPass(
     passed_count: passedCount,
     failed_count: failedCount,
     skipped_count: skippedCount,
+    ...(validationsNotApplicable > 0 ? { validations_not_applicable: validationsNotApplicable } : {}),
     tested_at: new Date().toISOString(),
     ...(schemasUsed.length > 0 ? { schemas_used: schemasUsed } : {}),
     ...(assertionResults.length > 0 ? { assertions: assertionResults } : {}),
@@ -1567,6 +1583,9 @@ async function runMultiPass(
       passed_count: result.passed_count,
       failed_count: result.failed_count,
       skipped_count: result.skipped_count,
+      ...(result.validations_not_applicable
+        ? { validations_not_applicable: result.validations_not_applicable }
+        : {}),
       duration_ms: result.total_duration_ms,
     });
   }
@@ -1576,6 +1595,7 @@ async function runMultiPass(
   const passed = passes.reduce((sum, p) => sum + p.passed_count, 0);
   const failed = passes.reduce((sum, p) => sum + p.failed_count, 0);
   const skipped = passes.reduce((sum, p) => sum + p.skipped_count, 0);
+  const notApplicable = passes.reduce((sum, p) => sum + (p.validations_not_applicable ?? 0), 0);
   const schemasUsed = passResults.flatMap(r => r.schemas_used ?? []);
   const schemasDedup = [...new Map(schemasUsed.map(s => [s.schema_id, s])).values()];
   // Assertions are scoped per-pass — each pass's runner resolved them
@@ -1598,6 +1618,7 @@ async function runMultiPass(
     passed_count: passed,
     failed_count: failed,
     skipped_count: skipped,
+    ...(notApplicable > 0 ? { validations_not_applicable: notApplicable } : {}),
     tested_at: new Date().toISOString(),
     ...(schemasDedup.length > 0 ? { schemas_used: schemasDedup } : {}),
     ...(assertionsAgg.length > 0 ? { assertions: assertionsAgg } : {}),
@@ -1609,6 +1630,27 @@ async function runMultiPass(
  * from every validation result with a schema_id; dropping empties keeps
  * the list proportional to what actually ran.
  */
+/**
+ * Count validation results graded `not_applicable` across every step. Per
+ * runner-output-contract.yaml v2.0.0 these come from the forward-compat
+ * default in the validation dispatcher: when a storyboard declares an
+ * authored `check` value the runner does not implement, the dispatcher
+ * grades it `passed: true, not_applicable: true` rather than failing the
+ * step. Surfacing the count separately lets consumers distinguish
+ * "runner is older than the storyboard" from clean passes.
+ */
+function countValidationsNotApplicable(phases: StoryboardPhaseResult[]): number {
+  let n = 0;
+  for (const phase of phases) {
+    for (const step of phase.steps) {
+      for (const v of step.validations) {
+        if (v.not_applicable) n++;
+      }
+    }
+  }
+  return n;
+}
+
 function collectSchemasUsed(phases: StoryboardPhaseResult[]): Array<{ schema_id: string; schema_url: string }> {
   const seen = new Set<string>();
   const out: Array<{ schema_id: string; schema_url: string }> = [];
@@ -1793,6 +1835,7 @@ export async function runStoryboardStep(
     runnerVars,
     contextProvenance,
     priorA2aEnvelopes: new Map(),
+    stepRequestStarts: new Map(),
     agentLibraryVersion: profile?.library_version,
   });
 
@@ -1814,6 +1857,15 @@ interface ExecutionState {
   priorStepResults: Map<string, StoryboardStepResult>;
   priorProbes: Map<string, HttpProbeResult>;
   agentUrl: string;
+  /**
+   * ISO timestamps captured immediately before each step's AdCP request
+   * dispatch. Threaded into `upstream_traffic` validations as the
+   * `since_timestamp` window bound (the step's own start by default; an
+   * earlier prior step's start when the validation declares
+   * `since: prior_step_id` for a cumulative assertion). Empty when no
+   * step in the run has fired a request yet.
+   */
+  stepRequestStarts?: Map<string, string>;
   /** Shared ephemeral webhook receiver, when the run has one enabled. */
   webhookReceiver?: WebhookReceiver;
   /** Shared runner-variable bag for `{{runner.*}}` substitution. */
@@ -1865,6 +1917,7 @@ async function executeStep(
     priorProbes: new Map(),
     agentUrl: '',
     contextProvenance: new Map(),
+    stepRequestStarts: new Map(),
   };
 
   // HTTP probe tasks bypass the MCP client entirely.
@@ -2042,7 +2095,31 @@ async function executeStep(
   const unresolvedVars = findUnresolvedContextVars(request);
   if (unresolvedVars.length > 0 && !step.expect_error) {
     const next = getNextStepPreview(step.id, allSteps, context, runState.runnerVars);
-    const detail = `Skipped: unresolved context variables from prior steps: ${unresolvedVars.join(', ')}.`;
+    const detail = `Skipped: unresolved context variables from prior steps: ${unresolvedVars.map(v => v.key).join(', ')}.`;
+    // Per runner-output-contract.yaml v2.0.0, a skipped consumer step MUST
+    // carry an `unresolved_substitution` validation result for each missing
+    // token — `expected` is the token string, `actual` / `json_pointer` /
+    // `request` / `response` are null (pre-wire failure; no response payload
+    // exists). Surfacing this as a validation rather than only a skip detail
+    // keeps the runner-output contract's "failed/skipped steps include at
+    // least one validation result" invariant intact and lets dashboards
+    // attribute the cascade origin without parsing the skip message.
+    const seenTokens = new Set<string>();
+    const synthesized: ValidationResult[] = [];
+    for (const v of unresolvedVars) {
+      if (seenTokens.has(v.token)) continue;
+      seenTokens.add(v.token);
+      synthesized.push({
+        check: 'unresolved_substitution',
+        passed: false,
+        description: `request token "${v.token}" did not resolve — prior step did not populate context.${v.key}`,
+        json_pointer: null,
+        expected: v.token,
+        actual: null,
+        schema_id: null,
+        schema_url: null,
+      });
+    }
     return {
       step_id: step.id,
       phase_id: phaseId,
@@ -2053,7 +2130,7 @@ async function executeStep(
       skip_reason: 'prerequisite_failed',
       skip: buildSkip('prerequisite_failed', detail),
       duration_ms: 0,
-      validations: [],
+      validations: synthesized,
       context,
       error: detail,
       next,
@@ -2094,6 +2171,14 @@ async function executeStep(
   let httpResult: HttpProbeResult | undefined;
   let responseRecord: RunnerResponseRecord | undefined;
   let a2aEnvelope: A2ATaskEnvelope | undefined;
+
+  // Capture the ISO timestamp immediately before the step's AdCP request
+  // dispatch. `upstream_traffic` validations use this as the default
+  // `since_timestamp` window bound when querying the controller. Recorded
+  // on `runState.stepRequestStarts` so a later step's `since: prior_step_id`
+  // reference can resolve back to it.
+  const requestStartIso = new Date().toISOString();
+  if (runState.stepRequestStarts) runState.stepRequestStarts.set(step.id, requestStartIso);
 
   if (useRawProbe) {
     const started = Date.now();
@@ -2244,6 +2329,22 @@ async function executeStep(
       }
       return resolved;
     });
+    // Pre-fetch upstream_traffic data: any `check: upstream_traffic`
+    // validation needs the controller's `query_upstream_traffic` response,
+    // but the validation dispatcher is synchronous. Async-fetch here once
+    // per unique `since_timestamp` window so the validator can grade
+    // synchronously. Adopters who don't advertise the scenario short-
+    // circuit to a single `advertised: false` marker and every
+    // upstream_traffic check on the step grades not_applicable.
+    const upstreamTraffic = await prefetchUpstreamTraffic(
+      step.id,
+      resolvedValidations,
+      client,
+      options,
+      runState,
+      requestStartIso
+    );
+
     const vctx: ValidationContext = {
       taskName: effectiveStep.task,
       ...(taskResult && { taskResult }),
@@ -2255,6 +2356,8 @@ async function executeStep(
       ...(responseRecord && { response: responseRecord }),
       storyboardContext: context,
       ...(a2aEnvelope && { a2aEnvelope }),
+      ...(upstreamTraffic && { upstreamTraffic }),
+      ...(step.sample_request && { storyboardStep: { sample_request: step.sample_request } }),
       ...(() => {
         // Walk back through the run's captured A2A envelopes and use
         // the most recent prior step's envelope as the comparison
@@ -2276,8 +2379,6 @@ async function executeStep(
     };
     validations = runValidations(resolvedValidations, vctx);
   }
-
-  const allValidationsPassed = validations.every(v => v.passed);
 
   // Persist the captured A2A envelope keyed by step id so cross-step
   // validators (`a2a_context_continuity`) on subsequent steps can
@@ -2331,7 +2432,34 @@ async function executeStep(
         runState.contextProvenance.set(key, entry);
       }
     }
+    // Per runner-output-contract.yaml v2.0.0, a `context_outputs.path` that
+    // resolves to absent / null / "" is a producer-side conformance failure
+    // on THIS step (capture_path_not_resolvable), not on a downstream
+    // consumer. Synthesize a failed validation_result so the failure is
+    // attributed where it actually originated. Emitted regardless of whether
+    // the step's authored validations passed — a clean response_schema with
+    // a failed capture is the exact case adcp#3796 set out to fix.
+    if (explicit.failures && explicit.failures.length > 0) {
+      for (const failure of explicit.failures) {
+        const synthetic: ValidationResult = {
+          check: 'capture_path_not_resolvable',
+          passed: false,
+          description: `context_outputs path "${failure.path}" (key "${failure.key}") did not resolve to a usable value`,
+          json_pointer: toJsonPointer(failure.path),
+          expected: failure.path,
+          actual: failure.resolved,
+          schema_id: null,
+          schema_url: null,
+          ...(requestRecord && { request: requestRecord }),
+          ...(responseRecord && { response: responseRecord }),
+        };
+        validations.push(synthetic);
+      }
+    }
   }
+  // Re-evaluate after any synthesized capture-failure validations are
+  // appended — the step's overall pass/fail must reflect them.
+  const allValidationsPassedFinal = validations.every(v => v.passed);
 
   // Emit context-value-rejected hints when the seller's error lists the
   // values it would have accepted and the rejected request value traces
@@ -2357,7 +2485,7 @@ async function executeStep(
   // Hints trace to context that existed BEFORE this step's own writes,
   // since the rejected value can't have come from this step's own
   // extraction.
-  const stepFailed = !(passed && allValidationsPassed);
+  const stepFailed = !(passed && allValidationsPassedFinal);
   const contextRejectionHints =
     stepFailed && runState.contextProvenance
       ? detectContextRejectionHints(taskResult, request, context, runState.contextProvenance, effectiveStep.task)
@@ -2402,7 +2530,7 @@ async function executeStep(
     phase_id: phaseId,
     title: step.title,
     task: step.task,
-    passed: passed && allValidationsPassed,
+    passed: passed && allValidationsPassedFinal,
     expect_error: step.expect_error,
     duration_ms: stepResult.duration_ms,
     // Legacy `response` field (new code reads `response_record`).
@@ -2972,14 +3100,110 @@ interface FlatStep {
 }
 
 /**
- * Find any "$context.xxx" strings that weren't resolved during injection.
+ * Pre-fetch `query_upstream_traffic` responses for every unique
+ * `since_timestamp` window declared by `upstream_traffic` validations on
+ * THIS step. The dispatcher is synchronous; the controller call is async
+ * — running it once here keeps the validator simple and avoids redundant
+ * controller traffic when a step has multiple upstream_traffic checks
+ * sharing a window.
+ *
+ * Returns `undefined` when the step declares no upstream_traffic checks
+ * (no work to do), or a context with `advertised: false` when the
+ * controller does not advertise `query_upstream_traffic` (every check
+ * grades not_applicable per the spec's adopter-opt-in rule).
  */
-function findUnresolvedContextVars(obj: unknown): string[] {
-  const vars: string[] = [];
+async function prefetchUpstreamTraffic(
+  stepId: string,
+  resolvedValidations: StoryboardValidation[],
+  client: unknown,
+  options: StoryboardRunOptions,
+  runState: ExecutionState,
+  requestStartIso: string
+): Promise<UpstreamTrafficValidationContext | undefined> {
+  const upstreamChecks = resolvedValidations.filter(v => v.check === 'upstream_traffic');
+  if (upstreamChecks.length === 0) return undefined;
+
+  const advertised =
+    options._controllerCapabilities?.detected === true &&
+    options._controllerCapabilities.scenarios.includes('query_upstream_traffic' as ControllerScenario);
+  if (!advertised) {
+    return {
+      advertised: false,
+      queries: new Map(),
+      thisStepSince: requestStartIso,
+    };
+  }
+
+  // Resolve `since: prior_step_id` references against runState's
+  // recorded request timestamps. Validations that name an unknown step
+  // fall back to this step's own start (matching default behavior).
+  const priorStepSinceMap = new Map<string, string>();
+  const sinceTimestamps = new Set<string>([requestStartIso]);
+  for (const v of upstreamChecks) {
+    if (!v.since) continue;
+    const priorStart = runState.stepRequestStarts?.get(v.since);
+    if (priorStart) {
+      priorStepSinceMap.set(v.since, priorStart);
+      sinceTimestamps.add(priorStart);
+    } else {
+      priorStepSinceMap.set(v.since, requestStartIso);
+    }
+  }
+
+  const queries = new Map<string, UpstreamTrafficQueryResult>();
+  for (const sinceTs of sinceTimestamps) {
+    const params = { since_timestamp: sinceTs, limit: 100 };
+    const requestRecord: RunnerRequestRecord = {
+      transport: options.protocol === 'a2a' ? 'a2a' : 'mcp',
+      operation: 'comply_test_controller',
+      payload: redactSecrets({ scenario: 'query_upstream_traffic', params }),
+      ...(runState.agentUrl ? { url: runState.agentUrl } : {}),
+    };
+    const startMs = Date.now();
+    let payload: UpstreamTrafficSuccess | { error: string };
+    try {
+      const result = await queryUpstreamTraffic(client as TestClient, params, options);
+      if ('success' in result && result.success === true) {
+        payload = result;
+      } else {
+        const errResult = result as { error?: string; error_detail?: string };
+        const message = errResult.error_detail
+          ? `${errResult.error ?? 'controller_error'}: ${errResult.error_detail}`
+          : (errResult.error ?? 'controller returned a non-success response');
+        payload = { error: message };
+      }
+    } catch (err) {
+      payload = { error: err instanceof Error ? err.message : String(err) };
+    }
+    const responseRecord: RunnerResponseRecord = {
+      transport: options.protocol === 'a2a' ? 'a2a' : 'mcp',
+      payload: redactSecrets(payload),
+      duration_ms: Date.now() - startMs,
+    };
+    queries.set(sinceTs, { request: requestRecord, response: responseRecord, payload });
+  }
+
+  return {
+    advertised: true,
+    queries,
+    thisStepSince: requestStartIso,
+    ...(priorStepSinceMap.size > 0 ? { priorStepSinceMap } : {}),
+  };
+}
+
+/**
+ * Find any "$context.xxx" strings that weren't resolved during injection.
+ * Returns one entry per occurrence with both the bare key (for legacy
+ * detail-string formatting) and the full token (for the
+ * `unresolved_substitution` validation result's `expected` field, per
+ * runner-output-contract.yaml v2.0.0).
+ */
+function findUnresolvedContextVars(obj: unknown): Array<{ key: string; token: string }> {
+  const vars: Array<{ key: string; token: string }> = [];
   const walk = (val: unknown) => {
     if (typeof val === 'string') {
       const match = val.match(/^\$context\.(\w+)$/);
-      if (match?.[1]) vars.push(match[1]);
+      if (match?.[1]) vars.push({ key: match[1], token: val });
     } else if (Array.isArray(val)) {
       val.forEach(walk);
     } else if (val !== null && typeof val === 'object') {
