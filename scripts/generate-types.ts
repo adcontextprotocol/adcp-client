@@ -1577,13 +1577,37 @@ async function compileGapSchemas(generatedTypes: Set<string>, refResolver: any):
     // Skip async response variants
     if (asyncVariantPattern.test(relPath)) continue;
 
-    const typeName = schemaPathToTypeName(relPath);
-
-    // Skip if this type was already generated
-    if (generatedTypes.has(typeName)) continue;
+    const pathDerivedTypeName = schemaPathToTypeName(relPath);
 
     // Skip deprecated schemas
     if (DEPRECATED_SCHEMAS.has(path.basename(relPath, '.json'))) continue;
+
+    // Peek at the schema's `title` before deciding whether to skip for dedupe.
+    // `json-schema-to-typescript` honors `title` over the typeName argument we
+    // pass, so the actual emitted name is title-derived. Using path-only for
+    // dedupe causes spurious skips when two distinct schemas share a kebab-name
+    // (e.g. `error-details/creative-rejected.json` was being dropped because
+    // brand-domain `creative-approval-response.json` already registered
+    // `CreativeRejected` — but the error-details file's title is "Creative
+    // Rejected Details", so jsts would emit `CreativeRejectedDetails`, not a
+    // duplicate. Tracked: adcp-client#1271.
+    let schemaForTypeName: Record<string, unknown> | null = null;
+    try {
+      const schemaPath = path.join(LATEST_CACHE_DIR, relPath);
+      schemaForTypeName = JSON.parse(readFileSync(schemaPath, 'utf8'));
+    } catch {
+      // Fall through to the main compile attempt for consistent error logging
+      schemaForTypeName = null;
+    }
+    const titleDerivedTypeName =
+      typeof schemaForTypeName?.title === 'string' ? schemaForTypeName.title.replace(/[^A-Za-z0-9]/g, '') : '';
+    const typeName = titleDerivedTypeName || pathDerivedTypeName;
+
+    // Skip if this type was already generated. The check uses the
+    // title-preferring name so two distinct schemas that share a kebab-name
+    // but have distinct titles can both emit (the previous behavior used
+    // path-only and silently dropped the second).
+    if (generatedTypes.has(typeName)) continue;
 
     try {
       const schemaPath = path.join(LATEST_CACHE_DIR, relPath);

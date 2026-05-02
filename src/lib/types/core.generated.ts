@@ -1,5 +1,5 @@
 // Generated AdCP core types from official schemas v3.0.4
-// Generated at: 2026-05-02T15:11:28.636Z
+// Generated at: 2026-05-02T16:13:43.797Z
 
 // MEDIA-BUY SCHEMA
 /**
@@ -17020,6 +17020,26 @@ export interface ConflictDetails {
    * Current version or ETag on the server
    */
   current_version?: number | string;
+}
+
+
+// error-details/creative-rejected.json
+/**
+ * Recommended details shape for CREATIVE_REJECTED errors. Provides policy reference and rejection reasons so agents can revise.
+ */
+export interface CreativeRejectedDetails {
+  /**
+   * Identifier for the violated policy
+   */
+  policy_id?: string;
+  /**
+   * URL where the full policy can be reviewed
+   */
+  policy_url?: string;
+  /**
+   * Specific reasons the creative was rejected
+   */
+  reasons?: string[];
 }
 
 
