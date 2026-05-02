@@ -22,7 +22,7 @@ runStoryboard('', storyboard, {
 
 Per-step `agent: <key>` override for cross-domain tools (`sync_creatives`, `list_creative_formats`) when the same protocol is claimed by multiple tenants. Per-agent auth and transport overrides supported via `AgentEntry.auth` / `AgentEntry.transport`.
 
-**Routing**: tool → `TASK_FEATURE_MAP` → first protocol → unique agent in the map that claims it via `get_adcp_capabilities`. Multi-claim conflicts fail-fast at storyboard-build time with a precise error naming the conflicting agents and affected step IDs. Tools with no specialism mapping fall back to `default_agent`, or fail-fast as `unroutable_task` when no default is set.
+**Routing**: tool → `TASK_FEATURE_MAP` → first protocol → unique agent in the map that claims it via `get_adcp_capabilities`. Multi-claim conflicts fail-fast at storyboard-build time **for affected steps lacking a `step.agent` override** — the override is the per-step disambiguator and resolves the conflict cleanly. Tools with no specialism mapping fall back to `default_agent`, or fail-fast as `unroutable_task` when no default is set.
 
 **Discovery**: parallel per-agent `get_adcp_capabilities` at storyboard start. Any tenant's discovery failure surfaces as a hard storyboard failure, not a per-step skip — a broken tenant in a multi-tenant flow is a topology bug, not a coverage gap.
 

@@ -2368,7 +2368,7 @@ function parseAgentsMapArgs(args) {
         console.error(`ERROR: ${filePath} agents.${key} must be an object with at least \`url\``);
         process.exit(2);
       }
-      const url = typeof entry === 'string' ? entry : entry.url;
+      const { url } = entry;
       if (typeof url !== 'string' || !url) {
         console.error(`ERROR: ${filePath} agents.${key} missing \`url\``);
         process.exit(2);

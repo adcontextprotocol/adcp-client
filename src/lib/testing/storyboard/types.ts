@@ -331,13 +331,25 @@ export interface StoryboardStep {
   /** Fallback task name when `task` is a `$test_kit.*` reference that resolves to null/undefined. */
   task_default?: string;
   /**
-   * Routing override for multi-agent runs (`StoryboardRunOptions.agents`).
-   * When set, must reference a key in the agents map; the runner sends this
-   * step to that agent regardless of `TASK_FEATURE_MAP` resolution. Use only
-   * when a tool's specialism is claimed by multiple agents in the map and
-   * the default conflict-resolution can't pick one — e.g., `sync_creatives`
-   * between sales and creative tenants. Ignored when `agents` is unset.
-   * Adcp-client#1066.
+   * Explicit per-step routing for multi-agent runs
+   * (`StoryboardRunOptions.agents`). Must reference a key in the agents
+   * map; the runner sends this step to that agent regardless of
+   * `TASK_FEATURE_MAP` resolution.
+   *
+   * This is the canonical primitive for cross-specialism storyboards —
+   * NOT just an escape hatch. A `signal_marketplace/governance_denied`
+   * storyboard NEEDS `agent: governance` on its `sync_governance` step
+   * and `agent: signals` on its `activate_signal` step because those
+   * tools are owned by different specialisms; protocol-based routing
+   * resolves them automatically when the agents map has unique
+   * claimants, but explicit `agent:` is the documentation-friendly form
+   * for storyboard authors who want the routing intent visible at the
+   * step level.
+   *
+   * Also used to disambiguate cross-domain tools (`sync_creatives`,
+   * `list_creative_formats`) when the agents map has multiple claimants
+   * for the same specialism and the runner's protocol-index can't pick
+   * one. Ignored when `agents` is unset. Adcp-client#1066.
    */
   agent?: string;
   schema_ref?: string;
@@ -824,17 +836,22 @@ export type StoryboardContext = Record<string, unknown>;
 /**
  * One agent in a per-specialism routing map. Used by `runStoryboard()` when
  * a storyboard spans tools that live on different tenants (e.g. signals at
- * `/signals`, governance at `/governance`). Per-agent auth is required from
- * day one — production multi-tenant deployments almost always use per-tenant
- * credentials. When `auth` is omitted on an entry, `StoryboardRunOptions.auth`
- * applies as the default. Adcp-client#1066.
+ * `/signals`, governance at `/governance`).
+ *
+ * `auth` is an optional per-tenant override. The canonical multi-tenant
+ * deployment (the prod test-agent's six tenants) uses one shared bearer
+ * across every URL — set `StoryboardRunOptions.auth` once at the run
+ * level and leave entries' `auth` empty. Set `auth` on an entry only
+ * when that tenant uses different credentials (e.g., a publisher whose
+ * signals tenant is fronted by a partner like LiveRamp with separate
+ * auth from the sales tenant). Adcp-client#1066.
  */
 export interface AgentEntry {
   /** MCP or A2A endpoint URL for this agent. */
   url: string;
-  /** Per-agent auth override; falls back to `StoryboardRunOptions.auth` when absent. */
+  /** Per-tenant auth override; falls back to `StoryboardRunOptions.auth` when absent. */
   auth?: TestOptions['auth'];
-  /** Per-agent transport override; defaults to `StoryboardRunOptions.protocol`. */
+  /** Per-tenant transport override; defaults to `StoryboardRunOptions.protocol`. */
   transport?: 'mcp' | 'a2a';
 }
 
@@ -943,8 +960,11 @@ export interface StoryboardRunOptions extends TestOptions {
    * not a per-step skip condition.
    *
    * Multi-claim conflicts (two agents claim the same specialism) fail-fast
-   * at discovery time and require either removing one from the map or
-   * resolving each affected step with an explicit `agent:` override.
+   * at discovery time for affected steps that lack an explicit `step.agent`
+   * override. Steps WITH an override route per the override and never see
+   * the conflict — the override is the disambiguator, not just an escape
+   * hatch. To resolve a conflict: either remove one of the conflicting
+   * agents from the map, or add `agent: <key>` to each affected step.
    *
    * Adcp-client#1066.
    */
