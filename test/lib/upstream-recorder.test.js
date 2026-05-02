@@ -132,15 +132,14 @@ describe('record-time redaction', () => {
   });
 
   test('redacts secret-shaped headers (lowercased keys)', async () => {
-    const r = createUpstreamRecorder({ enabled: true });
     let capturedHeaders;
     const purpose = ({ headers }) => {
       capturedHeaders = headers;
       return undefined;
     };
-    const r2 = createUpstreamRecorder({ enabled: true, purpose });
-    await r2.runWithPrincipal('p', async () => {
-      r2.record({
+    const r = createUpstreamRecorder({ enabled: true, purpose });
+    await r.runWithPrincipal('p', async () => {
+      r.record({
         method: 'POST',
         url: 'https://x',
         content_type: 'application/json',
