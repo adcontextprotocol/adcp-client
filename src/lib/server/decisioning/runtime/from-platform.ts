@@ -985,6 +985,12 @@ export function createAdcpServerFromPlatform<P extends DecisioningPlatform<any, 
     // hatch. Same convention as the `idempotency` spread below — the platform
     // is the authoritative v6 surface; opts is a low-level escape hatch.
     ...(platform.agentRegistry !== undefined && { agentRegistry: platform.agentRegistry }),
+    // Server-level `instructions` (closes #1312). Same precedence pattern as
+    // `agentRegistry` above — platform-declared instructions win over the
+    // v5 `opts.instructions` escape hatch when both are present, so v6
+    // adopters can colocate platform facts / decision policy with the rest
+    // of their platform declaration.
+    ...(platform.instructions !== undefined && { instructions: platform.instructions }),
     // Pool-derived stores override the spread above when adopters supplied
     // `pool` but no explicit per-store opt. Explicit values still win.
     ...(effectiveIdempotency !== undefined && { idempotency: effectiveIdempotency }),
