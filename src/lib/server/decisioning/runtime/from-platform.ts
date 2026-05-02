@@ -63,8 +63,9 @@ import {
   type HandlerContext,
 } from '../../create-adcp-server';
 import type { DecisioningPlatform, RequiredPlatformsFor, RequiredCapabilitiesFor } from '../platform';
+import type { ComplianceTestingCapabilities } from '../capabilities';
 import type { Account, ResolvedAuthInfo } from '../account';
-import { AccountNotFoundError, toWireAccount } from '../account';
+import { AccountNotFoundError, toWireAccount, toWireSyncAccountRow } from '../account';
 import { AdcpError, type AdcpStructuredError } from '../async-outcome';
 import type { CreativeBuilderPlatform } from '../specialisms/creative';
 import type { CreativeAdServerPlatform } from '../specialisms/creative-ad-server';
@@ -346,10 +347,19 @@ export interface CreateAdcpServerFromPlatformOptions extends Omit<
    * without a gate AND without an env-flag escape (matches the standalone
    * `createComplyController` warning behavior).
    *
-   * **Capability-vs-adapter consistency.** If
-   * `capabilities.compliance_testing` is declared but `complyTest` is
-   * omitted, construction throws `PlatformConfigError` — the framework
-   * refuses to project a discovery block the runtime can't honor.
+   * **Capability-vs-adapter consistency.** Both directions are enforced:
+   *
+   * - `capabilities.compliance_testing` declared without `complyTest` →
+   *   `PlatformConfigError` at construction (and a **compile-time error**
+   *   when `P` is typed with `compliance_testing` non-optional, via
+   *   `RequiredOptsFor<P>`).
+   * - `complyTest` supplied without `capabilities.compliance_testing` →
+   *   `PlatformConfigError` at construction (runtime defense-in-depth).
+   *
+   * To enforce the invariant at compile time when building the platform
+   * as an object literal, wrap it with `definePlatformWithCompliance`:
+   * TypeScript will then require `compliance_testing` on the platform
+   * and `complyTest` on opts together.
    *
    * @public
    */
@@ -519,6 +529,28 @@ export interface CreateAdcpServerFromPlatformOptions extends Omit<
 }
 
 /**
+ * Derives the opts type for `createAdcpServerFromPlatform` based on whether
+ * the platform declares `capabilities.compliance_testing`.
+ *
+ * When `P` carries a non-optional `compliance_testing` block (e.g. because
+ * the caller used `definePlatformWithCompliance`), this resolves to
+ * `CreateAdcpServerFromPlatformOptions & { complyTest: ComplyControllerConfig }`,
+ * making `complyTest` required. For all other platform shapes the resolved
+ * type is the plain `CreateAdcpServerFromPlatformOptions` — no change.
+ *
+ * Both directions of the mismatch are still caught at runtime by the
+ * `PlatformConfigError` check in `createAdcpServerFromPlatform` as
+ * defense-in-depth for untyped callers.
+ *
+ * @public
+ */
+export type RequiredOptsFor<P extends DecisioningPlatform<any, any>> = P extends {
+  capabilities: { compliance_testing: ComplianceTestingCapabilities };
+}
+  ? CreateAdcpServerFromPlatformOptions & { complyTest: ComplyControllerConfig }
+  : CreateAdcpServerFromPlatformOptions;
+
+/**
  * Adcp server returned by `createAdcpServerFromPlatform`. Adds task-state
  * accessors on top of the standard `AdcpServer` so test harnesses (and the
  * forthcoming `tasks/get` wire handler) can inspect lifecycle.
@@ -578,7 +610,7 @@ export function createAdcpServerFromPlatform<P extends DecisioningPlatform<any, 
   platform: P &
     RequiredPlatformsFor<P['capabilities']['specialisms'][number]> &
     RequiredCapabilitiesFor<P['capabilities']['specialisms'][number]>,
-  opts: CreateAdcpServerFromPlatformOptions
+  opts: RequiredOptsFor<P>
 ): DecisioningAdcpServer {
   validatePlatform(platform);
 
@@ -3361,7 +3393,7 @@ function buildAccountHandlers<P extends DecisioningPlatform<any, any>>(
       const refs = (params.accounts ?? []) as AccountReference[];
       return projectSync(
         () => accounts.upsert!(refs),
-        rows => ({ accounts: rows })
+        rows => ({ accounts: rows.map(toWireSyncAccountRow) })
       );
     };
   }

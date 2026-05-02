@@ -1,5 +1,5 @@
 // Generated AdCP core types from official schemas v3.0.4
-// Generated at: 2026-05-02T14:30:46.845Z
+// Generated at: 2026-05-02T16:13:43.797Z
 
 // MEDIA-BUY SCHEMA
 /**
@@ -9018,82 +9018,65 @@ export type CreativeQuality = 'draft' | 'production';
  */
 export type PreviewOutputFormat = 'url' | 'html';
 /**
- * Canonical union of all asset variant schemas. Referenced from creative-asset.json and creative-manifest.json to ensure a single named type is emitted by schema-to-TypeScript tooling. Add new asset types here and to the creative/asset-types registry.
+ * Re-export of `AssetVariant` under the legacy codegen artifact name.
  *
- * This interface was referenced by `undefined`'s JSON-Schema definition
- * via the `patternProperty` "^[a-z0-9_]+$".
+ * `AssetVariant1` is a json-schema-to-typescript under-resolution artifact —
+ * the bundler inlined the same schema at two call sites and jsts emitted a numbered
+ * sibling. The body it produced was strictly weaker than `AssetVariant` (missing the
+ * `asset_type` discriminator or its containing wrapper); aliasing to `AssetVariant`
+ * gives consumers the correctly-discriminated shape that matches the wire format.
+ *
+ * @deprecated Use `AssetVariant` from `@adcp/sdk/types`. Slated for removal in the next major.
  */
-export type AssetVariant1 =
-  | ImageAsset
-  | VideoAsset
-  | AudioAsset
-  | VASTAsset1
-  | TextAsset
-  | URLAsset
-  | HTMLAsset
-  | JavaScriptAsset
-  | WebhookAsset
-  | CSSAsset
-  | DAASTAsset1
-  | MarkdownAsset
-  | BriefAsset1
-  | CatalogAsset1;
+export type AssetVariant1 = AssetVariant;
 /**
- * VAST (Video Ad Serving Template) tag for third-party video ad serving
+ * Re-export of `VASTAsset` under the legacy codegen artifact name.
+ *
+ * `VASTAsset1` is a json-schema-to-typescript under-resolution artifact —
+ * the bundler inlined the same schema at two call sites and jsts emitted a numbered
+ * sibling. The body it produced was strictly weaker than `VASTAsset` (missing the
+ * `asset_type` discriminator or its containing wrapper); aliasing to `VASTAsset`
+ * gives consumers the correctly-discriminated shape that matches the wire format.
+ *
+ * @deprecated Use `VASTAsset` from `@adcp/sdk/types`. Slated for removal in the next major.
  */
-export type VASTAsset1 =
-  | {
-      /**
-       * Discriminator indicating VAST is delivered via URL endpoint
-       */
-      delivery_type: 'url';
-      /**
-       * URL endpoint that returns VAST XML
-       */
-      url: string;
-    }
-  | {
-      /**
-       * Discriminator indicating VAST is delivered as inline XML content
-       */
-      delivery_type: 'inline';
-      /**
-       * Inline VAST XML content
-       */
-      content: string;
-    };
+export type VASTAsset1 = VASTAsset;
 /**
- * DAAST (Digital Audio Ad Serving Template) tag for third-party audio ad serving
+ * Re-export of `DAASTAsset` under the legacy codegen artifact name.
+ *
+ * `DAASTAsset1` is a json-schema-to-typescript under-resolution artifact —
+ * the bundler inlined the same schema at two call sites and jsts emitted a numbered
+ * sibling. The body it produced was strictly weaker than `DAASTAsset` (missing the
+ * `asset_type` discriminator or its containing wrapper); aliasing to `DAASTAsset`
+ * gives consumers the correctly-discriminated shape that matches the wire format.
+ *
+ * @deprecated Use `DAASTAsset` from `@adcp/sdk/types`. Slated for removal in the next major.
  */
-export type DAASTAsset1 =
-  | {
-      /**
-       * Discriminator indicating DAAST is delivered via URL endpoint
-       */
-      delivery_type: 'url';
-      /**
-       * URL endpoint that returns DAAST XML
-       */
-      url: string;
-    }
-  | {
-      /**
-       * Discriminator indicating DAAST is delivered as inline XML content
-       */
-      delivery_type: 'inline';
-      /**
-       * Inline DAAST XML content
-       */
-      content: string;
-    };
+export type DAASTAsset1 = DAASTAsset;
 /**
- * Campaign-level creative context as an asset. Carries the creative brief through the manifest so it travels with the creative through regeneration, resizing, and auditing.
+ * Re-export of `BriefAsset` under the legacy codegen artifact name.
+ *
+ * `BriefAsset1` is a json-schema-to-typescript under-resolution artifact —
+ * the bundler inlined the same schema at two call sites and jsts emitted a numbered
+ * sibling. The body it produced was strictly weaker than `BriefAsset` (missing the
+ * `asset_type` discriminator or its containing wrapper); aliasing to `BriefAsset`
+ * gives consumers the correctly-discriminated shape that matches the wire format.
+ *
+ * @deprecated Use `BriefAsset` from `@adcp/sdk/types`. Slated for removal in the next major.
  */
-export type BriefAsset1 = CreativeBrief;
+export type BriefAsset1 = BriefAsset;
 /**
- * A typed data feed as a creative asset. Carries catalog context (products, stores, jobs, etc.) within the manifest's assets map.
+ * Re-export of `CatalogAsset` under the legacy codegen artifact name.
+ *
+ * `CatalogAsset1` is a json-schema-to-typescript under-resolution artifact —
+ * the bundler inlined the same schema at two call sites and jsts emitted a numbered
+ * sibling. The body it produced was strictly weaker than `CatalogAsset` (missing the
+ * `asset_type` discriminator or its containing wrapper); aliasing to `CatalogAsset`
+ * gives consumers the correctly-discriminated shape that matches the wire format.
+ *
+ * @deprecated Use `CatalogAsset` from `@adcp/sdk/types`. Slated for removal in the next major.
  */
-export type CatalogAsset1 = Catalog;
+export type CatalogAsset1 = CatalogAsset;
 
 /**
  * Request to generate previews of creative manifests. Uses request_type to select single, batch, or variant mode.
@@ -11796,62 +11779,17 @@ export interface PackageUpdate {
   ext?: ExtensionObject;
 }
 /**
- * Creative asset for upload to library - supports static assets, generative formats, and third-party snippets
+ * Re-export of `CreativeAsset` under the legacy codegen artifact name.
+ *
+ * `CreativeAsset1` is a json-schema-to-typescript under-resolution artifact —
+ * the bundler inlined the same schema at two call sites and jsts emitted a numbered
+ * sibling. The body it produced was strictly weaker than `CreativeAsset` (missing the
+ * `asset_type` discriminator or its containing wrapper); aliasing to `CreativeAsset`
+ * gives consumers the correctly-discriminated shape that matches the wire format.
+ *
+ * @deprecated Use `CreativeAsset` from `@adcp/sdk/types`. Slated for removal in the next major.
  */
-export interface CreativeAsset1 {
-  /**
-   * Unique identifier for the creative
-   */
-  creative_id: string;
-  /**
-   * Human-readable creative name
-   */
-  name: string;
-  format_id: FormatReferenceStructuredObject;
-  /**
-   * Assets required by the format, keyed by asset_id. Each asset value carries an `asset_type` discriminator that selects the matching asset schema.
-   */
-  assets: {
-    [k: string]: AssetVariant1 | undefined;
-  };
-  /**
-   * Preview contexts for generative formats - defines what scenarios to generate previews for
-   */
-  inputs?: {
-    /**
-     * Human-readable name for this preview variant
-     */
-    name: string;
-    /**
-     * Macro values to apply for this preview
-     */
-    macros?: {
-      [k: string]: string | undefined;
-    };
-    /**
-     * Natural language description of the context for AI-generated content
-     */
-    context_description?: string;
-  }[];
-  /**
-   * User-defined tags for organization and searchability
-   */
-  tags?: string[];
-  status?: CreativeStatus;
-  /**
-   * Optional delivery weight for creative rotation when uploading via create_media_buy or update_media_buy (0-100). If omitted, platform determines rotation. Only used during upload to media buy - not stored in creative library.
-   */
-  weight?: number;
-  /**
-   * Optional array of placement IDs where this creative should run when uploading via create_media_buy or update_media_buy. References placement_id values from the product's placements array. If omitted, creative runs on all placements. Only used during upload to media buy - not stored in creative library.
-   */
-  placement_ids?: string[];
-  /**
-   * Industry-standard identifiers for this creative (e.g., Ad-ID, ISCI, Clearcast clock number). In broadcast buying, these identifiers tie the creative to rotation instructions and traffic systems. A creative may have multiple identifiers when different systems reference the same asset.
-   */
-  industry_identifiers?: IndustryIdentifier[];
-  provenance?: Provenance;
-}
+export type CreativeAsset1 = CreativeAsset;
 
 // bundled/property/create-property-list-request.json
 /**
@@ -17082,6 +17020,26 @@ export interface ConflictDetails {
    * Current version or ETag on the server
    */
   current_version?: number | string;
+}
+
+
+// error-details/creative-rejected.json
+/**
+ * Recommended details shape for CREATIVE_REJECTED errors. Provides policy reference and rejection reasons so agents can revise.
+ */
+export interface CreativeRejectedDetails {
+  /**
+   * Identifier for the violated policy
+   */
+  policy_id?: string;
+  /**
+   * URL where the full policy can be reviewed
+   */
+  policy_url?: string;
+  /**
+   * Specific reasons the creative was rejected
+   */
+  reasons?: string[];
 }
 
 

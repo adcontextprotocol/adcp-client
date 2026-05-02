@@ -72,6 +72,7 @@ export {
 // Capabilities (single source of truth for get_adcp_capabilities)
 export type {
   DecisioningCapabilities,
+  ComplianceTestingCapabilities,
   CreativeAgentRef,
   TargetingCapabilities,
   ReportingCapabilities,
@@ -167,6 +168,7 @@ export {
   createAdcpServerFromPlatform,
   getAllAdcpMigrations,
   type CreateAdcpServerFromPlatformOptions,
+  type RequiredOptsFor,
   type DecisioningAdcpServer,
   type DecisioningObservabilityHooks,
 } from './runtime/from-platform';
@@ -250,6 +252,7 @@ export {
   definePropertyListsPlatform,
   defineCollectionListsPlatform,
   defineBrandRightsPlatform,
+  definePlatformWithCompliance,
 } from './platform-helpers';
 
 // Wire-shape assembly helpers — emit correct Product / PricingOption /
