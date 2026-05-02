@@ -181,6 +181,16 @@ export interface BuyerAgent {
    * the gate — they don't operate on a specific account, so the
    * sandbox/production axis doesn't apply.
    *
+   * **Load-bearing pair.** For the gate to admit ANY traffic from a
+   * `sandbox_only` agent, the seller's `accounts.resolve` MUST return
+   * `sandbox: true` on the accounts that agent should reach. Adopters
+   * cloning the worked example with `sandbox_only: true` on their seed
+   * agent and a hardcoded `sandbox: true` resolver are demoware-correct;
+   * production adopters either flip the agent to `sandbox_only: false`
+   * OR have their resolver return `sandbox: true` only for actually-
+   * sandbox accounts. Mismatches between these two sides 403 every
+   * request — failure is loud, not silent.
+   *
    * Default `false` (or undefined) — production-allowed.
    */
   readonly sandbox_only?: boolean;

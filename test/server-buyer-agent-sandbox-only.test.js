@@ -177,6 +177,71 @@ describe('Phase 1.5 — sandbox-only buyer agent enforcement', () => {
     assert.notStrictEqual(result.isError, true);
   });
 
+  it('production agent + production account → handler runs (gate explicitly does not fire)', async () => {
+    // Per code-reviewer: the existing "no gate fires" test asserts via
+    // overall non-error. This test explicitly confirms the handler
+    // executes — no false-positive where a gate fires but produces a
+    // non-error envelope somehow.
+    let handlerInvoked = false;
+    const platform = buildPlatform({
+      sales: {
+        getProducts: async () => {
+          handlerInvoked = true;
+          return { products: [] };
+        },
+        createMediaBuy: async () => ({ media_buy_id: 'mb_1' }),
+        updateMediaBuy: async () => ({ media_buy_id: 'mb_1' }),
+        syncCreatives: async () => [],
+        getMediaBuyDelivery: async () => ({ media_buys: [] }),
+        providePerformanceFeedback: async () => ({}),
+      },
+      agentRegistry: BuyerAgentRegistry.signingOnly({
+        resolveByAgentUrl: async () => sampleAgent(), // sandbox_only undefined
+      }),
+    });
+    const server = createAdcpServerFromPlatform(platform, {
+      name: 'spike',
+      version: '0.0.1',
+      validation: { requests: 'off', responses: 'off' },
+    });
+    const result = await dispatch(server, 'prod_acc_1');
+    assert.notStrictEqual(result.isError, true);
+    assert.equal(handlerInvoked, true, 'production agent on production account MUST reach the handler');
+  });
+
+  it('sandbox-only agent + account with explicit sandbox: false → reject (vs unset)', async () => {
+    // Code reads `sandbox !== true` so explicit `false` rejects same
+    // as unset. This locks the contract.
+    const platform = buildPlatform({
+      accounts: {
+        resolve: async (ref, ctx) => {
+          if (ref == null) return null;
+          return {
+            id: ref.account_id,
+            metadata: {},
+            authInfo: { kind: 'api_key' },
+            sandbox: false, // explicit false (not unset)
+            _resolveAgent: ctx?.agent,
+          };
+        },
+        upsert: async () => [],
+        list: async () => ({ items: [], nextCursor: null }),
+      },
+      agentRegistry: BuyerAgentRegistry.signingOnly({
+        resolveByAgentUrl: async () => sampleAgent({ sandbox_only: true }),
+      }),
+    });
+    const server = createAdcpServerFromPlatform(platform, {
+      name: 'spike',
+      version: '0.0.1',
+      validation: { requests: 'off', responses: 'off' },
+    });
+    const result = await dispatch(server, 'any_acc_1');
+    assert.equal(result.isError, true);
+    assert.equal(result.structuredContent.adcp_error.code, 'PERMISSION_DENIED');
+    assert.equal(result.structuredContent.adcp_error.details.reason, 'sandbox-only');
+  });
+
   it('sandbox-only agent → account-less tool (no resolved account) passes through', async () => {
     // Account-less tools (provide_performance_feedback,
     // list_creative_formats, etc.) don't have an account in scope. The

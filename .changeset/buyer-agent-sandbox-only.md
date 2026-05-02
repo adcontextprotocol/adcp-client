@@ -12,6 +12,6 @@ When `sandbox_only === true`, the framework rejects any request whose resolved `
 
 **Gate placement.** Runs after `accounts.resolve` so the framework can compare `agent.sandbox_only` against `account.sandbox`. Runs after Stage 4's status enforcement, so a suspended sandbox-only agent fails with status (not sandbox). Account-less tools (`provide_performance_feedback`, `list_creative_formats`, etc.) pass the gate — the sandbox/production axis doesn't apply when there's no account in scope.
 
-7 new tests cover: sandbox→sandbox succeeds, sandbox→prod rejected with structured envelope, undefined-or-false sandbox_only is permissive on both account types, account-less tools pass, status enforcement fires before sandbox-only enforcement, null registry result skips the gate. Full suite: 7459 pass, 0 fail.
+New tests cover: sandbox→sandbox succeeds, sandbox→prod rejected with structured envelope (and the explicit `sandbox: false` variant rejecting the same way as unset), undefined/false `sandbox_only` permissive on both account types (production-agent-on-prod-account explicit), account-less tools pass, status enforcement fires before sandbox-only enforcement, null registry result skips the gate. Full suite green.
 
 Phase 2 (#1292) — framework-level billing-capability enforcement and AdCP-3.1 error-code emission — is still gated on the SDK's 3.1 cutover.

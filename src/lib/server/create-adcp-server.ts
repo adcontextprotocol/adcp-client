@@ -3036,6 +3036,13 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
         // agents, partner pre-prod environments): if a sandbox-only
         // agent's credential leaks, blast radius is bounded to sandbox
         // accounts. Production agents leave `sandbox_only` unset.
+        // Strict-by-default: any non-Account shape (legacy v5 adopters,
+        // bespoke account types) lacking the `sandbox` field reads as
+        // `undefined !== true → reject`. That's correct: a sandbox-only
+        // agent operating against an unknown-shape account is the
+        // case where rejection is the safe default — adopters who want
+        // to opt in either flip the agent's `sandbox_only` off or
+        // populate `sandbox: true` on their resolved account.
         if (
           ctx.agent?.sandbox_only === true &&
           ctx.account !== undefined &&
