@@ -153,3 +153,8 @@ export * from './inline-enums.generated';
 // `enums/*.json` files). Each alias is `@deprecated` so editor tooling
 // surfaces the canonical replacement; slated for removal in the next major.
 export * from './inline-enums.aliases';
+
+// Back-compat aliases for the 6 error-details schemas renamed in AdCP 3.0.x
+// (adcp#3149 / adcp#3566 canonicalized SCREAMING_SNAKE titles into Title Case).
+// Each alias is `@deprecated`; slated for removal in the next major.
+export * from './error-details.aliases';
