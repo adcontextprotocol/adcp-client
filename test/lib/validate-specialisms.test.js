@@ -120,30 +120,20 @@ describe('validateSpecialismRequiredTools', () => {
   it('silently passes specialisms not present in SPECIALISM_REQUIRED_TOOLS', () => {
     // Manifest doesn't enumerate this; treat as no-op.
     const platform = { sales: {} };
-    assert.deepEqual(
-      validateSpecialismRequiredTools(platform, ['signed-requests']),
-      []
-    );
+    assert.deepEqual(validateSpecialismRequiredTools(platform, ['signed-requests']), []);
   });
 
   it('aggregates issues across multiple specialisms', () => {
     const platform = { sales: { getProducts: () => null } };
-    const issues = validateSpecialismRequiredTools(platform, [
-      'sales-non-guaranteed',
-      'signal-owned',
-    ]);
+    const issues = validateSpecialismRequiredTools(platform, ['sales-non-guaranteed', 'signal-owned']);
     const specialisms = new Set(issues.map(i => i.specialism));
     assert.deepEqual([...specialisms].sort(), ['sales-non-guaranteed', 'signal-owned']);
   });
 
   it('handles a non-object platform gracefully', () => {
     // Defensive: validator shouldn't throw on undefined / null / primitive.
-    assert.doesNotThrow(() =>
-      validateSpecialismRequiredTools(null, ['sales-non-guaranteed'])
-    );
-    assert.doesNotThrow(() =>
-      validateSpecialismRequiredTools(undefined, ['sales-non-guaranteed'])
-    );
+    assert.doesNotThrow(() => validateSpecialismRequiredTools(null, ['sales-non-guaranteed']));
+    assert.doesNotThrow(() => validateSpecialismRequiredTools(undefined, ['sales-non-guaranteed']));
     assert.doesNotThrow(() => validateSpecialismRequiredTools(42, ['sales-non-guaranteed']));
     // Each call should return issues for every required tool since no methods are reachable.
     const issues = validateSpecialismRequiredTools(null, ['sales-non-guaranteed']);
