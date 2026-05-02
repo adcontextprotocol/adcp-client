@@ -197,4 +197,36 @@ describe('createUpstreamHttpClient', () => {
     await client.delete('/items/1');
     assert.equal(capturedRequests[0].init.method, 'DELETE');
   });
+
+  it('PUT sends JSON body and correct method', async () => {
+    mockResponses.push({ status: 200, body: JSON.stringify({ id: 'x', name: 'updated' }) });
+    const client = createUpstreamHttpClient({
+      baseUrl: 'https://api.example.com',
+      auth: { kind: 'none' },
+    });
+    const result = await client.put('/items/x', { name: 'updated' });
+    assert.equal(result.status, 200);
+    assert.deepEqual(result.body, { id: 'x', name: 'updated' });
+    assert.equal(capturedRequests[0].init.method, 'PUT');
+    assert.equal(capturedRequests[0].init.body, JSON.stringify({ name: 'updated' }));
+  });
+
+  it('GET non-2xx empty body throws', async () => {
+    mockResponses.push({ status: 500, body: '' });
+    const client = createUpstreamHttpClient({
+      baseUrl: 'https://api.example.com',
+      auth: { kind: 'none' },
+    });
+    await assert.rejects(() => client.get('/items'), /500/);
+  });
+
+  it('GET does not send Content-Type header', async () => {
+    mockResponses.push({ status: 200, body: JSON.stringify([]) });
+    const client = createUpstreamHttpClient({
+      baseUrl: 'https://api.example.com',
+      auth: { kind: 'none' },
+    });
+    await client.get('/items');
+    assert.ok(!capturedRequests[0].init.headers['Content-Type']);
+  });
 });

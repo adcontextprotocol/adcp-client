@@ -55,6 +55,9 @@ export interface TranslationMap<A extends string, B extends string> {
  * record. Keys on the left are AdCP wire values; values on the right are
  * upstream platform values.
  *
+ * TypeScript infers literal types from the object literal, so `toUpstream`
+ * and `toAdcp` return the precise union of known values rather than `string`.
+ *
  * @example
  * ```ts
  * const channelMap = createTranslationMap({
@@ -65,8 +68,12 @@ export interface TranslationMap<A extends string, B extends string> {
  * channelMap.toAdcp('video');   // 'olv' | undefined
  * ```
  */
-export function createTranslationMap<A extends string, B extends string>(map: Record<A, B>): TranslationMap<A, B> {
-  const forward = new Map<A, B>(Object.entries(map) as Array<[A, B]>);
+export function createTranslationMap<const M extends Record<string, string>>(
+  adcpToUpstream: M
+): TranslationMap<keyof M & string, M[keyof M & string]> {
+  type A = keyof M & string;
+  type B = M[keyof M & string];
+  const forward = new Map<A, B>(Object.entries(adcpToUpstream) as Array<[A, B]>);
   const reverse = new Map<B, A>();
   for (const [a, b] of forward) {
     reverse.set(b, a);
@@ -127,7 +134,11 @@ export interface UpstreamHttpResult<T> {
 }
 
 export interface UpstreamHttpClient {
-  get<T>(path: string, params?: Record<string, string | number | boolean | undefined>): Promise<UpstreamHttpResult<T>>;
+  get<T>(
+    path: string,
+    params?: Record<string, string | number | boolean | undefined>,
+    headers?: Record<string, string>
+  ): Promise<UpstreamHttpResult<T>>;
   post<T>(path: string, body: unknown, headers?: Record<string, string>): Promise<UpstreamHttpResult<T>>;
   put<T>(path: string, body: unknown, headers?: Record<string, string>): Promise<UpstreamHttpResult<T>>;
   delete<T>(path: string, headers?: Record<string, string>): Promise<UpstreamHttpResult<T>>;
@@ -161,8 +172,7 @@ async function doRequest<T>(
   }
 ): Promise<UpstreamHttpResult<T>> {
   const authHeader = await resolveAuthHeader(auth);
-  const headers: Record<string, string> = {
-    'Content-Type': 'application/json',
+  const mergedHeaders: Record<string, string> = {
     ...defaultHeaders,
     ...authHeader,
     ...options.headers,
@@ -177,9 +187,10 @@ async function doRequest<T>(
     if (qs) url = `${url}?${qs}`;
   }
 
-  const init: RequestInit = { method, headers };
+  const init: RequestInit = { method, headers: mergedHeaders };
   if (options.body !== undefined) {
     init.body = JSON.stringify(options.body);
+    mergedHeaders['Content-Type'] = 'application/json';
   }
 
   const res = await fetch(url, init);
@@ -187,14 +198,15 @@ async function doRequest<T>(
   // 404 → null body (not an error — resource absent is a common upstream signal)
   if (res.status === 404) return { status: 404, body: null };
 
-  // Empty body (204 No Content, etc.)
   const text = await res.text();
-  if (!text) return { status: res.status, body: null };
 
-  // Non-2xx with a body: throw so callers don't silently swallow errors
+  // Non-2xx always throws — callers must not silently swallow errors
   if (!res.ok) {
     throw new Error(`Upstream ${method} ${path} failed: ${res.status} ${text.slice(0, 200)}`);
   }
+
+  // Empty body (204 No Content, etc.)
+  if (!text) return { status: res.status, body: null };
 
   const body = JSON.parse(text) as T;
   return { status: res.status, body };
@@ -221,7 +233,7 @@ async function doRequest<T>(
 export function createUpstreamHttpClient(options: UpstreamHttpClientOptions): UpstreamHttpClient {
   const { baseUrl, auth, defaultHeaders = {} } = options;
   return {
-    get: (path, params) => doRequest(baseUrl, auth, defaultHeaders, 'GET', path, { params }),
+    get: (path, params, headers) => doRequest(baseUrl, auth, defaultHeaders, 'GET', path, { params, headers }),
     post: (path, body, headers) => doRequest(baseUrl, auth, defaultHeaders, 'POST', path, { body, headers }),
     put: (path, body, headers) => doRequest(baseUrl, auth, defaultHeaders, 'PUT', path, { body, headers }),
     delete: (path, headers) => doRequest(baseUrl, auth, defaultHeaders, 'DELETE', path, { headers }),
