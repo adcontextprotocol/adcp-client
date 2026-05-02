@@ -117,7 +117,24 @@ What happens when a creative is synced:
 >   ```
 > - `build_creative` response is `{ creative_manifest: { format_id, assets } }` (single) or `{ creative_manifests: [...] }` (multi). Platform-native fields at the top level (`tag_url`, `creative_id`, `media_type`) are **invalid** — use `buildCreativeResponse({ creative_manifest })` / `buildCreativeMultiResponse({ creative_manifests })` from `@adcp/sdk/server` to lock the shape at compile time.
 > - Each asset in `creative_manifest.assets` requires an `asset_type` discriminator. Use the typed factories (`imageAsset`, `videoAsset`, `audioAsset`, `htmlAsset`, `urlAsset`, `textAsset`) so the discriminator is injected for you; a plain `{ serving_tag: { content: '<vast>...' } }` fails validation.
-> - `preview_creative` renders have the same pattern — each `renders[]` entry is a oneOf on `output_format`. Use `urlRender({...})`, `htmlRender({...})`, or `bothRender({...})` to inject the discriminator and require the matching `preview_url` / `preview_html` field automatically.
+> - `preview_creative` renders have the same pattern — each `renders[]` entry is a oneOf on `output_format`. Use `urlRender({...})`, `htmlRender({...})`, or `bothRender({...})` to inject the discriminator and require the matching `preview_url` / `preview_html` field automatically. **Even a single-preview response must use the top-level `previews[]` array, not a bare object:**
+>   ```ts
+>   // ✗ WRONG — bare preview object fails schema validation:
+>   { preview_id: 'p1', renders: [...] }
+>   // ✓ RIGHT — always wrap in previews[]:
+>   { previews: [{ preview_id: 'p1', renders: [...] }] }
+>   ```
+> - **`VASTAsset`** inside `creative_manifest.assets[]` requires a `delivery_type` discriminator. The redirect-URL field is named `url`, not `vast_url`:
+>   ```ts
+>   // ✗ WRONG — missing delivery_type:
+>   { asset_type: 'vast', content: '<vast>...</vast>' }
+>   // ✗ WRONG — redirect field name is `url`, not `vast_url`:
+>   { asset_type: 'vast', delivery_type: 'url', vast_url: 'https://...' }
+>   // ✓ RIGHT — redirect:
+>   { asset_type: 'vast', delivery_type: 'url', url: 'https://vast.example.com/tag' }
+>   // ✓ RIGHT — inline:
+>   { asset_type: 'vast', delivery_type: 'inline', content: '<VAST version="4.0">...</VAST>' }
+>   ```
 > - `get_creative_delivery` requires **top-level `currency: string`** (ISO 4217), in addition to any per-row spend fields. `reporting_period/start` and `/end` are ISO 8601 **date-time** strings (`new Date().toISOString()`), not date-only.
 > - `videoAsset({...})` requires `width` + `height` per GA (previously optional). Set realistic pixel values — `{ url, width: 1920, height: 1080 }`.
 > - `list_creatives` response — each `creatives[i].pricing_options[j]` uses the **vendor-pricing discriminator**, which is different from products' `pricing_model`. Field name is `model` (not `pricing_model`), valid values are `cpm` / `percent_of_media` / `flat_fee` / `per_unit` / `custom`. Each model has its own required fields: `cpm` needs `{model, cpm, currency}`; `flat_fee` needs `{model, amount, period, currency}` (`period` is required — the schema rejects `flat_fee` without it); `percent_of_media` needs `{model, percent, currency}`; `per_unit` needs `{model, unit, unit_price, currency}`. If you echo pricing_options from a seed fixture, normalize the shape — storyboard fixtures sometimes carry abbreviated shapes that fail validation on the way out.
