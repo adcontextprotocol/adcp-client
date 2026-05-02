@@ -162,6 +162,28 @@ export interface BuyerAgent {
    * Most adopters never populate this.
    */
   readonly aliases?: readonly string[];
+
+  /**
+   * When `true`, this buyer agent may ONLY operate against sandbox
+   * accounts. The framework rejects any request whose resolved
+   * `Account.sandbox !== true` with `PERMISSION_DENIED`,
+   * `error.details.scope: 'agent'`, `error.details.reason: 'sandbox-only'`.
+   *
+   * Defense-in-depth for test agents (CI runners, internal QA agents,
+   * partner pre-prod environments): if the test credential leaks, blast
+   * radius is bounded to sandbox accounts. Production agents leave this
+   * unset (or `false`).
+   *
+   * Composes with `Account.sandbox` (the wire-level sandbox marker on
+   * the resolved Account record): the gate fires when `agent.sandbox_only
+   * === true AND ctx.account?.sandbox !== true`. Account-less tools
+   * (`provide_performance_feedback`, `list_creative_formats`, etc.) pass
+   * the gate — they don't operate on a specific account, so the
+   * sandbox/production axis doesn't apply.
+   *
+   * Default `false` (or undefined) — production-allowed.
+   */
+  readonly sandbox_only?: boolean;
 }
 
 // ---------------------------------------------------------------------------
