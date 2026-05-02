@@ -115,9 +115,12 @@ describe('record-time redaction', () => {
         content_type: 'application/json',
         payload: {
           users: [{ hashed_email: 'real-vec' }],
-          authorization: 'Bearer SECRET_TOKEN_VALUE',
-          api_key: 'SK_LIVE_xxx',
-          nested: { refresh_token: 'REFRESH_xxx' },
+          // Synthetic test-fixture values — exercise the redactor without
+          // matching credential prefix patterns (Stripe SK_LIVE_, etc.)
+          // that secret scanners flag in CI.
+          authorization: 'Bearer fake_test_fixture_not_a_real_token_aaaa',
+          api_key: 'fake_test_fixture_not_a_real_key_bbbb',
+          nested: { refresh_token: 'fake_test_fixture_not_a_real_refresh_cccc' },
         },
       });
     });
@@ -143,7 +146,7 @@ describe('record-time redaction', () => {
         method: 'POST',
         url: 'https://x',
         content_type: 'application/json',
-        headers: { Authorization: 'Bearer xyz', 'X-Trace-Id': 'trace-123' },
+        headers: { Authorization: 'Bearer fake_test_fixture_not_a_real_token_ddd', 'X-Trace-Id': 'trace-123' },
       });
     });
     assert.equal(capturedHeaders.authorization, '[redacted]');
@@ -276,7 +279,7 @@ describe('wrapFetch end-to-end', () => {
     await r.runWithPrincipal('alice', async () => {
       await wrapped('https://api.test/v1/upload', {
         method: 'POST',
-        headers: { 'content-type': 'application/json', authorization: 'Bearer secret-xyz' },
+        headers: { 'content-type': 'application/json', authorization: 'Bearer fake_test_fixture_not_a_real_token_eee' },
         body: JSON.stringify({ users: [{ hashed_email: 'vec-1' }] }),
       });
     });
@@ -292,7 +295,7 @@ describe('wrapFetch end-to-end', () => {
     assert.deepEqual(call.payload, { users: [{ hashed_email: 'vec-1' }] });
     // Authorization header should never have leaked through to the recorded
     // call's payload via any path — it was a header, not a payload key.
-    assert.ok(!JSON.stringify(call).includes('secret-xyz'), 'no plaintext bearer in record');
+    assert.ok(!JSON.stringify(call).includes('fake_test_fixture_not_a_real_token_eee'), 'no plaintext bearer in record');
   });
 
   test('passes through unchanged when called outside runWithPrincipal', async () => {

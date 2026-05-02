@@ -93,7 +93,7 @@ describe('RecordedCall spec-shape conformance (UpstreamTrafficSuccess)', () => {
         method: 'POST',
         url: 'https://api.example.test/v1/audience/upload?cohort=2',
         content_type: 'application/json',
-        headers: { authorization: 'Bearer secret', 'content-type': 'application/json' },
+        headers: { authorization: 'Bearer fake_test_fixture_not_a_real_token_fff', 'content-type': 'application/json' },
         payload: { users: [{ hashed_email: 'vec-1' }, { hashed_email: 'vec-2' }] },
         status_code: 201,
       });
