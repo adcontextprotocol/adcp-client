@@ -96,4 +96,18 @@ describe('capabilities.ts: tool arrays drift against manifest.json', () => {
       .sort();
     assert.deepEqual([...PROTOCOL_TOOLS].sort(), manifestProtocolTools);
   });
+
+  it('TMP exemption is still load-bearing — context_match / identity_match remain outside manifest', () => {
+    // Defensive guard: when TMP folds into the AdCP manifest (or gets its own
+    // manifest artifact), this assertion fires and prompts a re-include of
+    // TRUSTED_MATCH_TOOLS in the main drift check above. Without it the
+    // exemption decays silently into a dead carve-out.
+    const manifest = JSON.parse(readFileSync(MANIFEST_PATH, 'utf8'));
+    const manifestTools = new Set(Object.keys(manifest.tools));
+    assert.ok(
+      !manifestTools.has('context_match') && !manifestTools.has('identity_match'),
+      'TMP tools (context_match / identity_match) appear to have folded into manifest.tools — ' +
+        're-include TRUSTED_MATCH_TOOLS in the drift check at line ~59 and remove this guard.'
+    );
+  });
 });
