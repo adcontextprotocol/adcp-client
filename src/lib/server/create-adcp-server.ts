@@ -3506,6 +3506,22 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
             });
             return finalize(err);
           }
+          // Raw `AdcpError` class throws — distinct from the
+          // already-projected envelope above. The framework has long
+          // documented `throw new AdcpError(...)` as the canonical way
+          // to signal structured rejection from any specialism method
+          // (see `AdcpError` JSDoc). Project to the typed envelope so
+          // the buyer sees the typed code, not `SERVICE_UNAVAILABLE`.
+          if (err instanceof AdcpError) {
+            logger.warn('Handler threw an AdcpError', {
+              tool: toolName,
+              handler: handlerKey,
+              code: err.code,
+              message: err.message,
+              stack: err.stack,
+            });
+            return finalize(projectThrownAdcpError(err));
+          }
           const reason = err instanceof Error ? err.message : String(err);
           // Log the full stack — `logger.error` with just the message turned
           // every "Handler failed" into a guessing game for agent authors.
@@ -3604,6 +3620,22 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
       const custom = config.customTools[customName];
       if (!custom) continue;
       const { description, title, inputSchema, outputSchema, annotations, handler } = custom;
+      // Wrap the adopter-supplied handler so `throw new AdcpError(...)` and
+      // `throw adcpError(...)` from inside it project to the typed envelope —
+      // matching the behavior framework-registered tools get from the catch
+      // at line ~3494. Without the wrap, AdcpError throws escape to the MCP
+      // SDK as generic JSON-RPC errors and the buyer loses the typed code.
+      // The framework's own `tasks_get` is registered through this path.
+      const rawHandler = handler as (...args: unknown[]) => Promise<McpToolResponse> | McpToolResponse;
+      const wrappedHandler = (async (...args: unknown[]) => {
+        try {
+          return await rawHandler(...args);
+        } catch (err) {
+          if (isThrownAdcpError(err)) return err;
+          if (err instanceof AdcpError) return projectThrownAdcpError(err);
+          throw err;
+        }
+      }) as Parameters<typeof server.registerTool>[2];
       server.registerTool(
         customName,
         {
@@ -3613,7 +3645,7 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
           ...(outputSchema != null && { outputSchema }),
           ...(annotations != null && { annotations }),
         } as Parameters<typeof server.registerTool>[1],
-        handler as Parameters<typeof server.registerTool>[2]
+        wrappedHandler
       );
       registeredToolNames.add(customName);
     }

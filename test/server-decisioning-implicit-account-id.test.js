@@ -233,4 +233,56 @@ describe("#1364 — accounts.resolution: 'implicit' refuses inline account_id", 
     assert.notStrictEqual(result.isError, true, `expected success, got ${JSON.stringify(result.structuredContent)}`);
     assert.strictEqual(sawRef, undefined, 'auth-derived path passes undefined ref');
   });
+
+  it('tasks_get rejects { account_id } with INVALID_REQUEST on implicit platforms', async () => {
+    const platform = buildImplicitPlatform({
+      accounts: {
+        resolution: 'implicit',
+        resolve: async () => null,
+        upsert: async () => [],
+        list: async () => ({ items: [], nextCursor: null }),
+      },
+    });
+    const server = createAdcpServerFromPlatform(platform, SERVER_OPTS);
+    const result = await server.dispatchTestRequest({
+      method: 'tools/call',
+      params: {
+        name: 'tasks_get',
+        arguments: {
+          task_id: 'task_does_not_matter',
+          account: { account_id: 'snap_act_123' },
+        },
+      },
+    });
+    assert.strictEqual(result.isError, true);
+    assert.strictEqual(result.structuredContent.adcp_error.code, 'INVALID_REQUEST');
+    assert.strictEqual(result.structuredContent.adcp_error.field, 'account.account_id');
+  });
+
+  it('get_account_financials rejects { account_id } with INVALID_REQUEST on implicit platforms', async () => {
+    const platform = buildImplicitPlatform({
+      accounts: {
+        resolution: 'implicit',
+        resolve: async () => null,
+        upsert: async () => [],
+        list: async () => ({ items: [], nextCursor: null }),
+        getAccountFinancials: async () => ({
+          financials: { spend: { amount: 0, currency: 'USD' } },
+        }),
+      },
+    });
+    const server = createAdcpServerFromPlatform(platform, SERVER_OPTS);
+    const result = await server.dispatchTestRequest({
+      method: 'tools/call',
+      params: {
+        name: 'get_account_financials',
+        arguments: {
+          account: { account_id: 'snap_act_123' },
+        },
+      },
+    });
+    assert.strictEqual(result.isError, true);
+    assert.strictEqual(result.structuredContent.adcp_error.code, 'INVALID_REQUEST');
+    assert.strictEqual(result.structuredContent.adcp_error.field, 'account.account_id');
+  });
 });
