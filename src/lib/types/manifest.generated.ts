@@ -370,5 +370,23 @@ export const SPONSORED_INTELLIGENCE_TOOLS_FROM_MANIFEST = [
  * matching list per the spec's specialism YAML.
  */
 export const SPECIALISM_REQUIRED_TOOLS = {
-
+  "audience-sync": ["list_accounts", "sync_audiences"] as const,
+  "brand-rights": ["acquire_rights", "get_brand_identity", "get_rights", "sync_accounts", "sync_governance", "sync_plans"] as const,
+  "collection-lists": ["create_collection_list", "delete_collection_list", "get_collection_list", "list_collection_lists", "update_collection_list"] as const,
+  "content-standards": ["calibrate_content", "create_content_standards", "get_content_standards", "list_content_standards", "update_content_standards", "validate_content_delivery"] as const,
+  "creative-ad-server": ["build_creative", "get_creative_delivery", "list_creative_formats", "list_creatives", "report_usage"] as const,
+  "creative-generative": ["build_creative", "list_creative_formats", "sync_catalogs"] as const,
+  "creative-template": ["build_creative", "list_creative_formats", "preview_creative"] as const,
+  "governance-aware-seller": ["create_media_buy", "get_products", "sync_accounts", "sync_governance", "sync_plans"] as const,
+  "governance-delivery-monitor": ["check_governance", "create_media_buy", "get_media_buy_delivery", "sync_plans"] as const,
+  "governance-spend-authority": ["check_governance", "create_media_buy", "sync_plans"] as const,
+  "property-lists": ["create_property_list", "delete_property_list", "get_property_list", "list_property_lists", "update_property_list", "validate_property_delivery"] as const,
+  "sales-broadcast-tv": ["create_media_buy", "get_media_buy_delivery", "get_media_buys", "get_products", "list_creative_formats", "sync_accounts", "sync_creatives", "update_media_buy"] as const,
+  "sales-catalog-driven": ["build_creative", "create_media_buy", "get_media_buy_delivery", "get_media_buys", "get_products", "list_creative_formats", "log_event", "provide_performance_feedback", "sync_accounts", "sync_catalogs", "sync_creatives", "sync_event_sources", "update_media_buy"] as const,
+  "sales-guaranteed": ["create_media_buy", "get_media_buy_delivery", "get_media_buys", "get_products", "sync_accounts", "sync_creatives", "update_media_buy"] as const,
+  "sales-non-guaranteed": ["create_media_buy", "get_media_buy_delivery", "get_media_buys", "get_products", "sync_accounts", "sync_creatives", "update_media_buy"] as const,
+  "sales-proposal-mode": ["create_media_buy", "get_media_buy_delivery", "get_media_buys", "get_products", "list_creative_formats", "sync_accounts", "sync_creatives", "update_media_buy"] as const,
+  "sales-social": ["get_account_financials", "list_accounts", "log_event", "sync_accounts", "sync_audiences", "sync_catalogs", "sync_creatives", "sync_event_sources"] as const,
+  "signal-marketplace": ["activate_signal", "get_signals", "sync_accounts", "sync_governance", "sync_plans"] as const,
+  "signal-owned": ["activate_signal", "get_signals"] as const
 } as const;
