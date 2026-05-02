@@ -848,12 +848,22 @@ function firstHeaderValue(value: string | string[] | undefined): string | undefi
 }
 
 function attachAuthInfo(req: IncomingMessage, principal: AuthPrincipal): void {
+  // Propagate the kind-discriminated `credential` (Stage 3 of #1269) into
+  // `info.extra.credential` so the dispatcher can hoist it to top-level
+  // `ctx.authInfo.credential` and pass it to `BuyerAgentRegistry.resolve`.
+  // MCP's `extra` is `Record<string, unknown>`, so this round-trips
+  // without a wire-shape change. Adopters with custom authenticators that
+  // don't stamp `credential` see the registry resolve to `null` (no
+  // credential = no known agent), preserving Stage 2's strict opt-in.
+  const baseExtra = principal.claims !== undefined ? { ...principal.claims } : undefined;
+  const extra =
+    principal.credential !== undefined ? { ...(baseExtra ?? {}), credential: principal.credential } : baseExtra;
   const info: AuthInfo = {
     token: principal.token ?? '',
     clientId: principal.principal,
     scopes: principal.scopes ?? [],
     ...(principal.expiresAt !== undefined ? { expiresAt: principal.expiresAt } : {}),
-    ...(principal.claims !== undefined ? { extra: { ...principal.claims } } : {}),
+    ...(extra !== undefined ? { extra } : {}),
   };
   (req as IncomingMessage & { auth?: AuthInfo }).auth = info;
 }

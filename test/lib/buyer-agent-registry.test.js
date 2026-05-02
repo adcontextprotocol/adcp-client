@@ -3,7 +3,7 @@
 const { describe, it } = require('node:test');
 const assert = require('node:assert/strict');
 
-const { BuyerAgentRegistry } = require('../../dist/lib/server/decisioning/buyer-agent');
+const { BuyerAgentRegistry, markVerifiedHttpSig } = require('../../dist/lib/server/decisioning/buyer-agent');
 
 const sampleAgent = (overrides = {}) => ({
   agent_url: 'https://agent.scope3.com',
@@ -13,13 +13,14 @@ const sampleAgent = (overrides = {}) => ({
   ...overrides,
 });
 
-const sigCredential = (overrides = {}) => ({
-  kind: 'http_sig',
-  keyid: 'scope3-2026-01',
-  agent_url: 'https://agent.scope3.com',
-  verified_at: 1714660000,
-  ...overrides,
-});
+const sigCredential = (overrides = {}) =>
+  markVerifiedHttpSig({
+    kind: 'http_sig',
+    keyid: 'scope3-2026-01',
+    agent_url: 'https://agent.scope3.com',
+    verified_at: 1714660000,
+    ...overrides,
+  });
 
 const apiKeyCredential = (overrides = {}) => ({
   kind: 'api_key',

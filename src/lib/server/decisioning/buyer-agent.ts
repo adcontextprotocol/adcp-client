@@ -284,6 +284,65 @@ function isVerifiedHttpSigPayload(credential: { agent_url?: string }): credentia
 }
 
 /**
+ * Module-private symbol used as a provenance brand on verifier-produced
+ * `http_sig` credentials. NOT registered via `Symbol.for(...)` — code
+ * outside this module cannot synthesize the symbol value, which is what
+ * makes it a usable provenance check.
+ *
+ * The brand is non-enumerable so it's invisible to `JSON.stringify`,
+ * `Object.keys`, spread, and structured-clone — meaning a credential
+ * that crosses a serialization boundary loses its brand. For the
+ * security model that's correct: a hostile relay or replay strips the
+ * brand and the registry refuses to treat the credential as verified.
+ *
+ * Only `markVerifiedHttpSig` (called by the framework's signature
+ * verifier in `src/lib/server/auth-signature.ts`) attaches the brand.
+ * Custom `authenticate` callbacks that synthesize a literal-shape
+ * `{ kind: 'http_sig', ... }` credential will NOT carry the brand —
+ * `signingOnly` and `mixed` registry factories reject those.
+ */
+const VERIFIED_HTTP_SIG_BRAND: unique symbol = Symbol('@adcp/sdk.verifiedHttpSig');
+
+type VerifiedHttpSig = Extract<AdcpCredential, { kind: 'http_sig' }> & {
+  readonly [VERIFIED_HTTP_SIG_BRAND]: true;
+};
+
+/**
+ * Brand an `http_sig` credential as verifier-produced. Only the framework's
+ * signature verifier (`verifySignatureAsAuthenticator`) calls this; the
+ * brand is the registry's proof that the credential's `agent_url` was
+ * cryptographically verified per adcontextprotocol/adcp#3831.
+ *
+ * Returned object is a fresh shallow copy — the input is not mutated.
+ *
+ * @internal — exported for `auth-signature.ts` only; not part of the
+ * adopter surface.
+ */
+export function markVerifiedHttpSig(
+  credential: Extract<AdcpCredential, { kind: 'http_sig' }>
+): Extract<AdcpCredential, { kind: 'http_sig' }> {
+  const branded = { ...credential };
+  Object.defineProperty(branded, VERIFIED_HTTP_SIG_BRAND, {
+    value: true,
+    enumerable: false,
+    configurable: false,
+    writable: false,
+  });
+  return branded as VerifiedHttpSig;
+}
+
+/**
+ * Predicate the registry factories use to distinguish verifier-produced
+ * `http_sig` credentials from literal-shape impostors. Returns true ONLY
+ * when the credential was produced by the framework's signature verifier
+ * (or another caller that imported the symbol from this module — there
+ * are none).
+ */
+function isVerifiedHttpSig(credential: AdcpCredential): boolean {
+  return credential.kind === 'http_sig' && (credential as Record<symbol, unknown>)[VERIFIED_HTTP_SIG_BRAND] === true;
+}
+
+/**
  * Construct a signing-only `BuyerAgentRegistry`. Bearer/API-key/OAuth
  * requests resolve to `null` (framework rejects); only signed requests
  * are honored.
@@ -302,6 +361,12 @@ export function signingOnly(opts: { resolveByAgentUrl: ResolveBuyerAgentByAgentU
     async resolve(authInfo) {
       const credential = authInfo.credential;
       if (credential === undefined || credential.kind !== 'http_sig') return null;
+      // Reject literal-shape http_sig credentials: only the framework's
+      // signature verifier brands a credential as verified. A custom
+      // `authenticate` callback that synthesizes `{ kind: 'http_sig', ... }`
+      // from arbitrary data would otherwise be routed as if cryptographically
+      // verified — the brand check closes that forgery vector.
+      if (!isVerifiedHttpSig(credential)) return null;
       if (!isVerifiedHttpSigPayload(credential)) return null;
       return resolveByAgentUrl(credential.agent_url);
     },
@@ -362,6 +427,9 @@ export function mixed(opts: {
       const credential = authInfo.credential;
       if (credential === undefined) return null;
       if (credential.kind === 'http_sig') {
+        // Same forgery clamp as `signingOnly`: only verifier-branded
+        // http_sig credentials route through the signed path.
+        if (!isVerifiedHttpSig(credential)) return null;
         // Reject a malformed `http_sig` credential here rather than falling
         // through to resolveByCredential. Otherwise `mixed` would be strictly
         // weaker than signingOnly: an authenticator that produces an
