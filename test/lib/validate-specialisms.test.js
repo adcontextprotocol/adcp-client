@@ -77,19 +77,12 @@ describe('validateSpecialismRequiredTools', () => {
       },
       accounts: { syncAccounts: () => null },
     };
-    assert.deepEqual(
-      validateSpecialismRequiredTools(platform, ['sales-non-guaranteed'], SYNTHETIC_REQUIREMENTS),
-      []
-    );
+    assert.deepEqual(validateSpecialismRequiredTools(platform, ['sales-non-guaranteed'], SYNTHETIC_REQUIREMENTS), []);
   });
 
   it('flags missing methods with specialism + tool + method names', () => {
     const platform = { sales: {} };
-    const issues = validateSpecialismRequiredTools(
-      platform,
-      ['sales-non-guaranteed'],
-      SYNTHETIC_REQUIREMENTS
-    );
+    const issues = validateSpecialismRequiredTools(platform, ['sales-non-guaranteed'], SYNTHETIC_REQUIREMENTS);
     assert.equal(issues.length, 7);
     const methods = issues.map(i => i.method).sort();
     assert.deepEqual(methods, [
@@ -121,10 +114,7 @@ describe('validateSpecialismRequiredTools', () => {
       },
       accounts: { syncAccounts: () => null },
     };
-    assert.deepEqual(
-      validateSpecialismRequiredTools(platform, ['sales-non-guaranteed'], SYNTHETIC_REQUIREMENTS),
-      []
-    );
+    assert.deepEqual(validateSpecialismRequiredTools(platform, ['sales-non-guaranteed'], SYNTHETIC_REQUIREMENTS), []);
   });
 
   it('alternative non-conventional layout: single mega-platform exposes all methods', () => {
@@ -139,19 +129,13 @@ describe('validateSpecialismRequiredTools', () => {
         syncAccounts: () => null,
       },
     };
-    assert.deepEqual(
-      validateSpecialismRequiredTools(platform, ['sales-non-guaranteed'], SYNTHETIC_REQUIREMENTS),
-      []
-    );
+    assert.deepEqual(validateSpecialismRequiredTools(platform, ['sales-non-guaranteed'], SYNTHETIC_REQUIREMENTS), []);
   });
 
   it('silently passes specialisms not present in the lookup', () => {
     // 'signed-requests' is not a per-specialism required-tools spec entry.
     const platform = { sales: {} };
-    assert.deepEqual(
-      validateSpecialismRequiredTools(platform, ['signed-requests'], SYNTHETIC_REQUIREMENTS),
-      []
-    );
+    assert.deepEqual(validateSpecialismRequiredTools(platform, ['signed-requests'], SYNTHETIC_REQUIREMENTS), []);
   });
 
   it('aggregates issues across multiple specialisms', () => {
@@ -166,15 +150,11 @@ describe('validateSpecialismRequiredTools', () => {
   });
 
   it('handles a non-object platform gracefully', () => {
-    assert.doesNotThrow(() =>
-      validateSpecialismRequiredTools(null, ['sales-non-guaranteed'], SYNTHETIC_REQUIREMENTS)
-    );
+    assert.doesNotThrow(() => validateSpecialismRequiredTools(null, ['sales-non-guaranteed'], SYNTHETIC_REQUIREMENTS));
     assert.doesNotThrow(() =>
       validateSpecialismRequiredTools(undefined, ['sales-non-guaranteed'], SYNTHETIC_REQUIREMENTS)
     );
-    assert.doesNotThrow(() =>
-      validateSpecialismRequiredTools(42, ['sales-non-guaranteed'], SYNTHETIC_REQUIREMENTS)
-    );
+    assert.doesNotThrow(() => validateSpecialismRequiredTools(42, ['sales-non-guaranteed'], SYNTHETIC_REQUIREMENTS));
     const issues = validateSpecialismRequiredTools(null, ['sales-non-guaranteed'], SYNTHETIC_REQUIREMENTS);
     assert.ok(issues.length > 0);
   });
