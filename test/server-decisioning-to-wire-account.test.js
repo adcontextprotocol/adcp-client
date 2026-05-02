@@ -204,14 +204,10 @@ describe('toWireAccount', () => {
       const wire = toWireAccount({
         ...baseAccount(),
         account_scope: 'operator_brand',
-        governance_agents: [
-          { url: 'https://gov.acme.com/mcp', categories: ['budget_authority'] },
-        ],
+        governance_agents: [{ url: 'https://gov.acme.com/mcp', categories: ['budget_authority'] }],
       });
       assert.equal(wire.account_scope, 'operator_brand');
-      assert.deepEqual(wire.governance_agents, [
-        { url: 'https://gov.acme.com/mcp', categories: ['budget_authority'] },
-      ]);
+      assert.deepEqual(wire.governance_agents, [{ url: 'https://gov.acme.com/mcp', categories: ['budget_authority'] }]);
     });
 
     it('drops unknown keys on governance_agents elements (credential smuggling guard)', () => {
