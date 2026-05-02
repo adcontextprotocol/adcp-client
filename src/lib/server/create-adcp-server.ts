@@ -3009,6 +3009,7 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
             }
             ctx.account = account;
           } catch (err) {
+            if (isThrownAdcpError(err)) return finalize(err);
             const reason = err instanceof Error ? err.message : String(err);
             logger.error('Account resolution failed', { tool: toolName, error: reason });
             return finalize(

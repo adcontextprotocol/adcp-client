@@ -1158,7 +1158,11 @@ export {
   type CommittedCheckRequest,
   GovernanceAdapterErrorCodes,
   isGovernanceAdapterError,
-  // OAuth pass-through resolver (Shape B accounts.resolve factory)
+  // Implicit Account Store (resolution: 'implicit') — Shape A reference adapter
+  InMemoryImplicitAccountStore,
+  defaultImplicitKeyFn,
+  type ImplicitAccountStoreOptions,
+  // OAuth pass-through resolver — Shape B accounts.resolve factory
   createOAuthPassthroughResolver,
   type OAuthPassthroughResolverOptions,
 } from './adapters';
