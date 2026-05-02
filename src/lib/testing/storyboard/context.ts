@@ -14,6 +14,14 @@ import { randomUUID } from 'node:crypto';
 import type { StoryboardContext, ContextOutput, ContextInput, ContextProvenanceEntry } from './types';
 import { resolvePath, setPath } from './path';
 
+/** A context_outputs path that resolved to absent, null, or "" (runner-output-contract v1.2.0). */
+export interface ContextCaptureFailed {
+  key: string;
+  path: string;
+  /** The resolved value: null when absent or null; "" when empty string. */
+  actual: unknown;
+}
+
 // ────────────────────────────────────────────────────────────
 // Context extraction: pull known IDs from task responses
 // ────────────────────────────────────────────────────────────
@@ -472,13 +480,14 @@ function expandMustache(input: string, runnerVars: RunnerVariables): string {
  * Apply explicit context_outputs rules to extract values from response data.
  * Entries with `generate` set are skipped — use `applyContextOutputsWithProvenance`
  * (which accepts a context for alias-cache access) to handle those.
+ * Absent, null, and "" are all treated as non-resolvable (runner-output-contract v1.2.0).
  */
 export function applyContextOutputs(data: unknown, outputs: ContextOutput[]): Record<string, unknown> {
   const result: Record<string, unknown> = {};
   for (const output of outputs) {
     if (!output.path) continue;
     const value = resolvePath(data, output.path);
-    if (value !== undefined && value !== null) {
+    if (value !== undefined && value !== null && value !== '') {
       result[output.key] = value;
     }
   }
@@ -491,11 +500,14 @@ export function applyContextOutputs(data: unknown, outputs: ContextOutput[]): Re
  * seller response rejects a value that traces back to one of these keys.
  * `values` carries the same Record as the non-provenance call so the
  * runner's downstream `Object.assign(updatedContext, values)` path is
- * unchanged.
+ * unchanged. `failures` lists path entries whose resolved value was absent,
+ * null, or "" — the runner emits `capture_path_not_resolvable` for these
+ * (runner-output-contract v1.2.0).
  */
 export interface ContextWriteResult {
   values: Record<string, unknown>;
   provenance: Record<string, ContextProvenanceEntry>;
+  failures: ContextCaptureFailed[];
 }
 
 /**
@@ -513,7 +525,7 @@ export function extractContextWithProvenance(taskName: string, data: unknown, st
       source_task: taskName,
     };
   }
-  return { values, provenance };
+  return { values, provenance, failures: [] };
 }
 
 /**
@@ -531,7 +543,8 @@ export function extractContextWithProvenance(taskName: string, data: unknown, st
  * an independent UUID that cannot be matched by an inline `$generate:…` form.
  *
  * Generator entries fire regardless of whether `data` is present; path
- * entries are silently skipped when the resolved value is null/undefined.
+ * entries that resolve to absent, null, or "" are recorded in `failures`
+ * (runner-output-contract v1.2.0 `capture_path_not_resolvable`).
  */
 export function applyContextOutputsWithProvenance(
   data: unknown,
@@ -542,6 +555,7 @@ export function applyContextOutputsWithProvenance(
 ): ContextWriteResult {
   const values: Record<string, unknown> = {};
   const provenance: Record<string, ContextProvenanceEntry> = {};
+  const failures: ContextCaptureFailed[] = [];
   for (const output of outputs) {
     if (output.generate !== undefined) {
       // Generator entries require a context — without one the alias cache
@@ -571,7 +585,7 @@ export function applyContextOutputsWithProvenance(
       };
     } else if (output.path) {
       const value = resolvePath(data, output.path);
-      if (value !== undefined && value !== null) {
+      if (value !== undefined && value !== null && value !== '') {
         values[output.key] = value;
         provenance[output.key] = {
           source_step_id: stepId,
@@ -579,10 +593,13 @@ export function applyContextOutputsWithProvenance(
           response_path: output.path,
           source_task: taskName,
         };
+      } else {
+        // Path resolved to absent, null, or "" — all equally non-resolvable.
+        failures.push({ key: output.key, path: output.path, actual: value !== undefined ? value : null });
       }
     }
   }
-  return { values, provenance };
+  return { values, provenance, failures };
 }
 
 // ────────────────────────────────────────────────────────────

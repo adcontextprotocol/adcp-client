@@ -139,7 +139,7 @@ export {
   applyContextOutputsWithProvenance,
   applyContextInputs,
 } from './context';
-export type { ContextWriteResult } from './context';
+export type { ContextWriteResult, ContextCaptureFailed } from './context';
 
 // Rejection-hint detection (issue #870)
 export { detectContextRejectionHints } from './rejection-hints';

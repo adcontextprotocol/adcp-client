@@ -23,6 +23,7 @@ import { detectContextRejectionHints } from './rejection-hints';
 import { detectShapeDriftHints } from './shape-drift-hints';
 import { detectStrictValidationHints } from './strict-validation-hints';
 import { runValidations, type ValidationContext } from './validations';
+import { toJsonPointer } from './path';
 import { enrichRequest, hasRequestEnricher } from './request-builder';
 import { resolveAccount, resolveBrand } from '../client';
 import { isMutatingTask, generateIdempotencyKey } from '../../utils/idempotency';
@@ -2037,8 +2038,9 @@ async function executeStep(
   // surfaces can still exercise the server's required-field check.
   request = applyIdempotencyInvariant(request, effectiveStep.task, step);
 
-  // Detect unresolved $context placeholders — a prior step likely failed
-  // and didn't produce the expected output. Skip rather than sending garbage.
+  // Detect unresolved $context and {{prior_step.*}} placeholders — a prior
+  // step likely failed and didn't produce the expected output. Skip rather
+  // than sending garbage. Emit unresolved_substitution per runner-output-contract v1.2.0.
   const unresolvedVars = findUnresolvedContextVars(request);
   if (unresolvedVars.length > 0 && !step.expect_error) {
     const next = getNextStepPreview(step.id, allSteps, context, runState.runnerVars);
@@ -2053,7 +2055,16 @@ async function executeStep(
       skip_reason: 'prerequisite_failed',
       skip: buildSkip('prerequisite_failed', detail),
       duration_ms: 0,
-      validations: [],
+      validations: unresolvedVars.map(token => ({
+        check: 'unresolved_substitution',
+        passed: false,
+        description: `Request token '${token}' could not be resolved; upstream step may have failed to capture the expected value.`,
+        expected: token,
+        actual: null,
+        json_pointer: null,
+        schema_id: null,
+        schema_url: null,
+      })),
       context,
       error: detail,
       next,
@@ -2277,7 +2288,7 @@ async function executeStep(
     validations = runValidations(resolvedValidations, vctx);
   }
 
-  const allValidationsPassed = validations.every(v => v.passed);
+  let allValidationsPassed = validations.every(v => v.passed);
 
   // Persist the captured A2A envelope keyed by step id so cross-step
   // validators (`a2a_context_continuity`) on subsequent steps can
@@ -2312,11 +2323,11 @@ async function executeStep(
   // determined (and may already be inline-substituted via $generate:…#<key>)
   // before the request went out. Propagating it even on failure lets the
   // next step use the same ID for a forced-completion or tasks/get follow-up.
-  // `path:` entries are gated on a non-null response and skip silently when
-  // data is absent. Both paths write into updatedContext and receive
-  // updatedContext for alias-cache coherence — forwardAliasCache above
-  // ensures the minted value from any same-step $generate:…#<key> inline
-  // substitution is visible here.
+  // `path:` entries that resolve to absent/null/"" emit capture_path_not_resolvable
+  // (runner-output-contract v1.2.0) and fail the step. Both paths write into
+  // updatedContext and receive updatedContext for alias-cache coherence —
+  // forwardAliasCache above ensures the minted value from any same-step
+  // $generate:…#<key> inline substitution is visible here.
   if (step.context_outputs?.length) {
     const explicit = applyContextOutputsWithProvenance(
       hasData && taskResult ? taskResult.data : undefined,
@@ -2330,6 +2341,23 @@ async function executeStep(
       for (const [key, entry] of Object.entries(explicit.provenance)) {
         runState.contextProvenance.set(key, entry);
       }
+    }
+    if (explicit.failures.length > 0) {
+      for (const failure of explicit.failures) {
+        validations.push({
+          check: 'capture_path_not_resolvable',
+          passed: false,
+          description: `context_outputs path '${failure.path}' did not resolve`,
+          expected: failure.path,
+          actual: failure.actual,
+          json_pointer: toJsonPointer(failure.path),
+          schema_id: null,
+          schema_url: null,
+          ...(requestRecord && { request: requestRecord }),
+          ...(responseRecord && { response: responseRecord }),
+        });
+      }
+      allValidationsPassed = validations.every(v => v.passed);
     }
   }
 
@@ -2974,12 +3002,27 @@ interface FlatStep {
 /**
  * Find any "$context.xxx" strings that weren't resolved during injection.
  */
+// Matches unresolved {{prior_step.*}} mustache tokens left in-place by
+// expandMustache. Uses [^{}]+ (no alternation, bounded by excluded chars) to
+// stay ReDoS-safe — same pattern as MUSTACHE_TOKEN_RE above.
+const UNRESOLVED_PRIOR_STEP_RE = /\{\{prior_step\.[^{}]+\}\}/g;
+
 function findUnresolvedContextVars(obj: unknown): string[] {
   const vars: string[] = [];
   const walk = (val: unknown) => {
     if (typeof val === 'string') {
-      const match = val.match(/^\$context\.(\w+)$/);
-      if (match?.[1]) vars.push(match[1]);
+      // Unresolved $context.* — injectContext returns the literal string when key absent.
+      const ctxMatch = val.match(/^\$context\.(\w+)$/);
+      if (ctxMatch?.[1]) {
+        vars.push(`$context.${ctxMatch[1]}`);
+        return;
+      }
+      // Unresolved {{prior_step.*}} — expandMustache leaves the token in-place.
+      let m: RegExpExecArray | null;
+      UNRESOLVED_PRIOR_STEP_RE.lastIndex = 0;
+      while ((m = UNRESOLVED_PRIOR_STEP_RE.exec(val)) !== null) {
+        vars.push(m[0]);
+      }
     } else if (Array.isArray(val)) {
       val.forEach(walk);
     } else if (val !== null && typeof val === 'object') {
