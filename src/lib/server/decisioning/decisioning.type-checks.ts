@@ -343,6 +343,57 @@ type _ct_opts_requires_complytest =
   CreateAdcpServerFromPlatformOptions extends RequiredOptsFor<_PlatformWithCT> ? 'assignable' : 'not-assignable';
 const _check_ct_opts_requires: _ct_opts_requires_complytest = 'not-assignable';
 
+// ── Format.renders[] accepts typed render builders ──
+
+import { displayRender, parameterizedRender } from '../../utils/format-render-builders';
+import type { Format, PreviewCreativeResponse } from '../../types/tools.generated';
+
+// `displayRender(...)` and `parameterizedRender(...)` produce closed shapes
+// that must be assignable to `Format['renders'][number]` under strict tsc.
+function _format_renders_accept_display_render(): void {
+  type FormatRenders = NonNullable<Format['renders']>;
+  const renders: FormatRenders = [
+    displayRender({ role: 'primary', dimensions: { width: 300, height: 250 } }),
+    parameterizedRender({ role: 'companion' }),
+  ];
+  void renders;
+}
+
+// ── NoAccountCtx narrows ctx.account on no-account tools ──
+
+import { defineCreativeBuilderPlatform } from './platform-helpers';
+
+// `previewCreative` handlers must narrow `ctx.account` before reading
+// `ctx_metadata` — the wire schema does not carry an `account` field, so
+// `ctx.account` is `Account<TCtxMeta> | undefined`.
+function _preview_creative_requires_account_narrow(): void {
+  defineCreativeBuilderPlatform<{ workspace_id: string }>({
+    buildCreative: async () => ({}) as never,
+    previewCreative: async (_req, ctx) => {
+      if (ctx.account == null) {
+        return {} as PreviewCreativeResponse;
+      }
+      const _ws: string = ctx.account.ctx_metadata.workspace_id;
+      void _ws;
+      return {} as PreviewCreativeResponse;
+    },
+  });
+}
+
+// Reading `ctx.account.ctx_metadata` without a narrow MUST fail typecheck
+// — this is the regression alarm guarding the no-account contract.
+function _preview_creative_rejects_unnarrowed_access(): void {
+  defineCreativeBuilderPlatform<{ workspace_id: string }>({
+    buildCreative: async () => ({}) as never,
+    previewCreative: async (_req, ctx) => {
+      // @ts-expect-error — ctx.account is `Account | undefined`; reading without narrowing fails.
+      const _ws: string = ctx.account.ctx_metadata.workspace_id;
+      void _ws;
+      return {} as PreviewCreativeResponse;
+    },
+  });
+}
+
 // Reference all symbols once so eslint-disable is targeted.
 export const _references = [
   _signals_only_capabilities_compiles,
@@ -381,4 +432,7 @@ export const _references = [
   _check_opts_no_ct,
   _check_opts_with_ct,
   _check_ct_opts_requires,
+  _format_renders_accept_display_render,
+  _preview_creative_requires_account_narrow,
+  _preview_creative_rejects_unnarrowed_access,
 ] as const;

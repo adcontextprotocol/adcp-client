@@ -287,7 +287,81 @@ export function enforceStrictSchema(schema: any): any {
     );
   }
 
-  return strictSchema;
+  return flattenMutualExclusiveOneOf(strictSchema);
+}
+
+/**
+ * Inline parent `properties` into `oneOf` branches that use the JSON Schema
+ * "X xor Y" mutual-exclusivity pattern (`{ required: [X], not: { required:
+ * [Y] } }`). Without this, json-schema-to-typescript can't extract each branch
+ * as a closed shape — branches with only `required` + `not` (no own type or
+ * properties) collapse to `{ [k: string]: unknown }`. The result is unions
+ * like `Format.renders[]` whose loose arm rejects the SDK's typed factory
+ * builders (`displayRender({...})`) under strict tsc.
+ *
+ * Detection (conservative): all `oneOf` branches must match a `{ required,
+ * not: { required }, properties?, title?, description? }` shape with no other
+ * keys. The transform inlines outer `properties` into each branch (minus the
+ * fields each branch's `not.required` excludes), promotes outer `required`
+ * into each branch, and drops the branch-level `not`. The mutual-exclusivity
+ * constraint stays enforced at runtime by Ajv against the unstripped schema —
+ * the codegen pass only widens what TypeScript can express.
+ *
+ * Schemas this affects today: `Format.renders[]`, `sync_plans` plan budget.
+ * Both share the same authorial idiom upstream (adcontextprotocol/adcp).
+ */
+function flattenMutualExclusiveOneOf(schema: any): any {
+  if (!schema || typeof schema !== 'object') return schema;
+  if (!schema.properties || !schema.oneOf || !Array.isArray(schema.oneOf)) return schema;
+  const branches = schema.oneOf;
+  if (branches.length < 2) return schema;
+
+  const ALLOWED_BRANCH_KEYS = new Set(['required', 'not', 'properties', 'title', 'description']);
+  const allBranchesAreMutex = branches.every((b: any) => {
+    if (!b || typeof b !== 'object') return false;
+    if (!Array.isArray(b.required) || b.required.length === 0) return false;
+    if (!b.not || typeof b.not !== 'object') return false;
+    if (!Array.isArray(b.not.required) || b.not.required.length === 0) return false;
+    if (Object.keys(b).some(k => !ALLOWED_BRANCH_KEYS.has(k))) return false;
+    if (Object.keys(b.not).some(k => k !== 'required')) return false;
+    return true;
+  });
+  if (!allBranchesAreMutex) return schema;
+
+  const outerProps = schema.properties as Record<string, any>;
+  const outerRequired: string[] = Array.isArray(schema.required) ? schema.required : [];
+
+  const newOneOf = branches.map((branch: any) => {
+    const excluded = new Set<string>(branch.not.required);
+    const branchOwnProps: Record<string, any> = branch.properties ?? {};
+    const branchProps: Record<string, any> = {};
+    for (const [name, prop] of Object.entries(outerProps)) {
+      if (excluded.has(name)) continue;
+      branchProps[name] = branchOwnProps[name] ?? prop;
+    }
+    // Drop any outer `required` field this branch excluded — keeping it
+    // would leave a required key with no matching `properties` entry, which
+    // jsts emits as `field: unknown` and Ajv would reject on the unstripped
+    // schema anyway.
+    const filteredOuterRequired = outerRequired.filter(name => !excluded.has(name));
+    const required = Array.from(new Set([...filteredOuterRequired, ...branch.required]));
+    const out: Record<string, unknown> = { type: 'object' };
+    if (branch.title) out.title = branch.title;
+    if (branch.description) out.description = branch.description;
+    out.properties = branchProps;
+    if (required.length > 0) out.required = required;
+    // Closed shape — branches must enumerate their fields. If a future
+    // upstream schema needs an open branch, file an issue and either widen
+    // detection (require explicit `additionalProperties: true` on the branch)
+    // or skip flattening.
+    out.additionalProperties = false;
+    return out;
+  });
+
+  const result = { ...schema, oneOf: newOneOf };
+  delete result.properties;
+  delete result.required;
+  return result;
 }
 
 // Load AdCP tool schemas from cache

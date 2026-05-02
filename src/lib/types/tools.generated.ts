@@ -2705,6 +2705,10 @@ export interface ListCreativeFormatsRequest {
  */
 export type FormatIDParameter = 'dimensions' | 'duration';
 /**
+ * Unit of measurement for width/height values. Defaults to 'px' when absent. Print formats use 'inches' or 'cm'.
+ */
+export type DimensionUnit = 'px' | 'dp' | 'inches' | 'cm' | 'mm' | 'pt';
+/**
  * Image asset
  */
 export type IndividualImageAsset = BaseIndividualAsset;
@@ -2962,9 +2966,57 @@ export interface Format {
    */
   renders?: (
     | {
-        [k: string]: unknown | undefined;
+        /**
+         * Semantic role of this rendered piece (e.g., 'primary', 'companion', 'mobile_variant')
+         */
+        role: string;
+        /**
+         * Dimensions for this rendered piece. Defaults to pixels when unit is absent.
+         */
+        dimensions: {
+          /**
+           * Fixed width. Interpretation depends on unit (default: pixels).
+           */
+          width?: number;
+          /**
+           * Fixed height. Interpretation depends on unit (default: pixels).
+           */
+          height?: number;
+          /**
+           * Minimum width for responsive renders
+           */
+          min_width?: number;
+          /**
+           * Minimum height for responsive renders
+           */
+          min_height?: number;
+          /**
+           * Maximum width for responsive renders
+           */
+          max_width?: number;
+          /**
+           * Maximum height for responsive renders
+           */
+          max_height?: number;
+          unit?: DimensionUnit;
+          /**
+           * Indicates which dimensions are responsive/fluid
+           */
+          responsive?: {
+            width: boolean;
+            height: boolean;
+          };
+          /**
+           * Fixed aspect ratio constraint (e.g., '16:9', '4:3', '1:1', '1.91:1')
+           */
+          aspect_ratio?: string;
+        };
       }
     | {
+        /**
+         * Semantic role of this rendered piece (e.g., 'primary', 'companion', 'mobile_variant')
+         */
+        role: string;
         parameters_from_format_id: true;
       }
   )[];
@@ -11492,10 +11544,71 @@ export interface SyncPlansRequest {
      */
     budget:
       | {
-          [k: string]: unknown | undefined;
+          /**
+           * Total authorized budget.
+           */
+          total: number;
+          /**
+           * ISO 4217 currency code.
+           */
+          currency: string;
+          /**
+           * Maximum percentage of budget that can go to a single seller.
+           */
+          per_seller_max_pct?: number;
+          /**
+           * Amount above which budget reallocations require human escalation. The orchestrator can reallocate spend across sellers, channels, or purchase types up to this threshold per change without asking a human. Set equal to `total` for effectively unlimited reallocation; set to 0 to require approval for every reallocation. Separate from `plan.human_review_required`, which governs decisions affecting data subjects (targeting, creative, delivery) under GDPR Art 22 / EU AI Act Annex III. Denominated in `budget.currency`.
+           */
+          reallocation_threshold: number;
+          /**
+           * Optional budget partition across purchase types. Keys are purchase-type enum values (media_buy, rights_license, signal_activation, creative_services). When present, the governance agent validates spend against both the total and the per-type allocation. When absent, all spend counts against the single total regardless of purchase type.
+           */
+          allocations?: {
+            [k: string]:
+              | {
+                  /**
+                   * Maximum budget for this purchase type.
+                   */
+                  amount?: number;
+                  /**
+                   * Maximum percentage of total budget for this purchase type.
+                   */
+                  max_pct?: number;
+                }
+              | undefined;
+          };
         }
       | {
+          /**
+           * Total authorized budget.
+           */
+          total: number;
+          /**
+           * ISO 4217 currency code.
+           */
+          currency: string;
+          /**
+           * Maximum percentage of budget that can go to a single seller.
+           */
+          per_seller_max_pct?: number;
           reallocation_unlimited: true;
+          /**
+           * Optional budget partition across purchase types. Keys are purchase-type enum values (media_buy, rights_license, signal_activation, creative_services). When present, the governance agent validates spend against both the total and the per-type allocation. When absent, all spend counts against the single total regardless of purchase type.
+           */
+          allocations?: {
+            [k: string]:
+              | {
+                  /**
+                   * Maximum budget for this purchase type.
+                   */
+                  amount?: number;
+                  /**
+                   * Maximum percentage of total budget for this purchase type.
+                   */
+                  max_pct?: number;
+                }
+              | undefined;
+          };
         };
     /**
      * Channel constraints. If omitted, all channels are allowed.

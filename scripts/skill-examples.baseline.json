@@ -247,7 +247,7 @@
   {
     "source": "skills/build-generative-seller-agent/SKILL.md",
     "errorCode": "TS2322",
-    "messagePrefix": "Type '(req: PreviewCreativeRequest, ctx: Ctx<Record<string, unknown>>) => Promis"
+    "messagePrefix": "Type '(req: PreviewCreativeRequest, ctx: NoAccountCtx<Record<string, unknown>>) "
   },
   {
     "source": "skills/build-generative-seller-agent/SKILL.md",
@@ -442,7 +442,7 @@
   {
     "source": "skills/build-retail-media-agent/SKILL.md",
     "errorCode": "TS2322",
-    "messagePrefix": "Type '(req: ProvidePerformanceFeedbackRequest, ctx: Ctx<Record<string, unknown>>"
+    "messagePrefix": "Type '(req: ProvidePerformanceFeedbackRequest, ctx: NoAccountCtx<Record<string, "
   },
   {
     "source": "skills/build-retail-media-agent/SKILL.md",
