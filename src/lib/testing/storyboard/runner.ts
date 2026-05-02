@@ -1479,6 +1479,10 @@ async function executeStoryboardPass(
   if (seedingPhaseResult) phaseResults.unshift(seedingPhaseResult);
   const schemasUsed = collectSchemasUsed(phaseResults);
   const strictSummary = summarizeStrictValidation(phaseResults);
+  const notApplicableCount = phaseResults
+    .flatMap(pr => pr.steps)
+    .flatMap(sr => sr.validations)
+    .filter(v => v.not_applicable === true).length;
   const result: StoryboardResult = {
     storyboard_id: storyboard.id,
     storyboard_title: storyboard.title,
@@ -1495,6 +1499,7 @@ async function executeStoryboardPass(
     passed_count: passedCount,
     failed_count: failedCount,
     skipped_count: skippedCount,
+    ...(notApplicableCount > 0 ? { validations_not_applicable: notApplicableCount } : {}),
     tested_at: new Date().toISOString(),
     ...(schemasUsed.length > 0 ? { schemas_used: schemasUsed } : {}),
     ...(assertionResults.length > 0 ? { assertions: assertionResults } : {}),
@@ -1567,6 +1572,9 @@ async function runMultiPass(
       passed_count: result.passed_count,
       failed_count: result.failed_count,
       skipped_count: result.skipped_count,
+      ...(result.validations_not_applicable !== undefined
+        ? { validations_not_applicable: result.validations_not_applicable }
+        : {}),
       duration_ms: result.total_duration_ms,
     });
   }
@@ -1576,6 +1584,7 @@ async function runMultiPass(
   const passed = passes.reduce((sum, p) => sum + p.passed_count, 0);
   const failed = passes.reduce((sum, p) => sum + p.failed_count, 0);
   const skipped = passes.reduce((sum, p) => sum + p.skipped_count, 0);
+  const notApplicableAgg = passes.reduce((sum, p) => sum + (p.validations_not_applicable ?? 0), 0);
   const schemasUsed = passResults.flatMap(r => r.schemas_used ?? []);
   const schemasDedup = [...new Map(schemasUsed.map(s => [s.schema_id, s])).values()];
   // Assertions are scoped per-pass — each pass's runner resolved them
@@ -1598,6 +1607,7 @@ async function runMultiPass(
     passed_count: passed,
     failed_count: failed,
     skipped_count: skipped,
+    ...(notApplicableAgg > 0 ? { validations_not_applicable: notApplicableAgg } : {}),
     tested_at: new Date().toISOString(),
     ...(schemasDedup.length > 0 ? { schemas_used: schemasDedup } : {}),
     ...(assertionsAgg.length > 0 ? { assertions: assertionsAgg } : {}),

@@ -156,12 +156,18 @@ function runValidation(validation: StoryboardValidation, ctx: ValidationContext)
     case 'field_equals_context':
       return validateFieldEqualsContext(validation, ctx);
     default:
+      // Forward-compat: unrecognized check kinds grade as not_applicable so
+      // storyboards authored against a newer spec version don't hard-fail on
+      // older runners. Contributes to validations_not_applicable on run_summary.
+      // Per runner-output-contract.yaml v2.0.0 (adcp#3816).
       return {
         check: validation.check,
-        passed: false,
+        passed: true,
         description: validation.description,
-        error: `Unknown validation check: ${validation.check}`,
-        json_pointer: null,
+        not_applicable: true,
+        observations: [
+          `runner does not implement check type '${validation.check}' — graded as not_applicable to preserve forward compatibility`,
+        ],
       };
   }
 }

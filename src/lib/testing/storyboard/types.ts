@@ -1078,6 +1078,16 @@ export interface ValidationResult {
    */
   warning?: string;
   /**
+   * True when the runner does not implement this check kind and graded it
+   * as not_applicable to preserve forward compatibility with storyboards
+   * authored against a newer spec version. Contributes to
+   * `StoryboardResult.validations_not_applicable` on the run summary.
+   * Consumers that read `passed === true` should also inspect this flag
+   * to distinguish a genuine pass from a forward-compat skip.
+   * Per runner-output-contract.yaml v2.0.0 (adcp#3816).
+   */
+  not_applicable?: true;
+  /**
    * Issue #820 follow-up — strict JSON-schema (AJV) verdict for
    * `response_schema` checks. `passed` remains the lenient Zod outcome
    * (runner's historical pass/fail semantics); `strict` carries the
@@ -1540,6 +1550,16 @@ export interface StoryboardResult {
   passed_count: number;
   failed_count: number;
   skipped_count: number;
+  /**
+   * Count of individual validation checks that were graded as not_applicable
+   * because the runner does not implement the check kind declared in the
+   * storyboard. A non-zero value means this runner is older than the storyboard
+   * — some checks were silently skipped. Consumers MUST NOT treat the absence
+   * of this field (or a zero value) as proof that all checks ran; they should
+   * confirm the runner version matches the storyboard's spec version.
+   * Per runner-output-contract.yaml v2.0.0 (adcp#3816).
+   */
+  validations_not_applicable?: number;
   tested_at: string;
   /**
    * Schemas applied during this run. Per the runner-output contract, runners
@@ -1663,5 +1683,13 @@ export interface StoryboardPassResult {
   passed_count: number;
   failed_count: number;
   skipped_count: number;
+  /**
+   * Count of not_applicable-graded validations in this pass.
+   * A non-zero value means some check kinds in the storyboard were not
+   * implemented by this runner — per-pass signal for multi-pass runs.
+   * Consumers MUST NOT treat absence or zero as proof that all checks ran.
+   * See `StoryboardResult.validations_not_applicable` for full semantics.
+   */
+  validations_not_applicable?: number;
   duration_ms: number;
 }
