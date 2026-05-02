@@ -1212,18 +1212,10 @@ export function applyKnownJstsAliases(typeDefinitions: string): string {
       continue;
     }
 
-    // Found a target — walk back to swallow any preceding JSDoc, then forward
-    // to the end of the block (brace-balanced for interfaces; first `;` at
-    // brace depth 0 for unions/intersections/aliases).
-    while (
-      outputLines.length > 0 &&
-      (outputLines[outputLines.length - 1].trimStart().startsWith('*') ||
-        outputLines[outputLines.length - 1].trimStart().startsWith('/**') ||
-        outputLines[outputLines.length - 1].trim() === '')
-    ) {
-      outputLines.pop();
-    }
-
+    // Found a target — locate the end of the block (brace-balanced for
+    // interfaces; first `;` at brace+paren depth 0 for unions/intersections/
+    // aliases) BEFORE swallowing the leading JSDoc, so a defensive bail
+    // (terminator not found) leaves the original prose intact.
     const numbered = typeMatch[1];
     const base = baseByNumbered.get(numbered)!;
 
@@ -1240,7 +1232,11 @@ export function applyKnownJstsAliases(typeDefinitions: string): string {
         else if (ch === ')') parenDepth--;
       }
       // Interface block: ends at the line that closes braceDepth back to 0.
-      // Type alias block: first `;` at brace+paren depth 0 ends it.
+      // Type alias block: first `;` at brace+paren depth 0 ends it. Skip lines
+      // that are JSDoc continuations (`*`-prefixed) so a `;` inside a comment
+      // doesn't terminate the block early.
+      const trimmed = cur.trimStart();
+      const isJsdocLine = trimmed.startsWith('*') || trimmed.startsWith('/*');
       if (line.startsWith('export interface')) {
         if (braceDepth === 0 && j > i) {
           endIdx = j;
@@ -1248,7 +1244,7 @@ export function applyKnownJstsAliases(typeDefinitions: string): string {
           break;
         }
       } else {
-        if (cur.includes(';') && braceDepth === 0 && parenDepth === 0) {
+        if (!isJsdocLine && cur.includes(';') && braceDepth === 0 && parenDepth === 0) {
           endIdx = j;
           foundTerminator = true;
           break;
@@ -1261,6 +1257,17 @@ export function applyKnownJstsAliases(typeDefinitions: string): string {
       outputLines.push(line);
       i++;
       continue;
+    }
+
+    // Now that we've confirmed we'll rewrite this block, swallow any preceding
+    // JSDoc lines from outputLines so the new alias's JSDoc replaces them.
+    while (
+      outputLines.length > 0 &&
+      (outputLines[outputLines.length - 1].trimStart().startsWith('*') ||
+        outputLines[outputLines.length - 1].trimStart().startsWith('/**') ||
+        outputLines[outputLines.length - 1].trim() === '')
+    ) {
+      outputLines.pop();
     }
 
     outputLines.push(
