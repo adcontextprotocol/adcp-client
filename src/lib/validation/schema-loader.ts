@@ -412,6 +412,26 @@ export function listValidatorKeys(version: string = ADCP_VERSION): string[] {
   return [...s.fileIndex.keys()].sort();
 }
 
+/**
+ * `$id`s of every schema currently registered with the AdCP validator's AJV
+ * instance for `version`. Used by the schema-validator to extract the
+ * rejecting sub-schema's `$id` from an Ajv error's `schemaPath`: when a
+ * `$ref` is followed, Ajv prefixes the schemaPath with the target schema's
+ * `$id`, so the longest registered `$id` that prefixes a schemaPath is the
+ * sub-schema responsible for the failure.
+ *
+ * The set grows as `getValidator` calls trigger `ensureCoreLoaded` and
+ * compile new tool roots — callers should read it AFTER the validate call
+ * they're projecting errors from.
+ */
+export function getRegisteredSchemaIds(version: string = ADCP_VERSION): readonly string[] {
+  const s = ensureInit(version);
+  // Ajv 8 keeps registered schemas at `ajv.schemas` (URI → SchemaEnv). Returning
+  // the keys is enough for prefix matching; we don't expose the SchemaEnv values.
+  const registry = (s.ajv as unknown as { schemas?: Record<string, unknown> }).schemas;
+  return registry ? Object.keys(registry) : [];
+}
+
 /** Suffix used in the suffix table — exported for testing. */
 export { SCHEMA_FILENAME_SUFFIX };
 

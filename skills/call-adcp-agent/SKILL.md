@@ -118,8 +118,11 @@ Every validation failure produces:
 - `issues[].pointer` — RFC 6901 JSON Pointer to the field.
 - `issues[].keyword` — AJV keyword (`required`, `type`, `oneOf`, `anyOf`, `additionalProperties`, `format`, `enum`).
 - `issues[].variants` — when the keyword is `oneOf` or `anyOf`, each entry lists one variant's `required` + declared `properties`. **Pick ONE variant**, send only its `required` fields. This is the fastest recovery path when you didn't know the field was a union.
+- `issues[].discriminator` — when an SDK ≥6.7 picks a "best surviving variant" of a const-discriminated union, this is the `[{field, value}, …]` pairs that variant requires. Reads as the validator's verdict on which branch you were inferred to be targeting. Example: `discriminator: [{field: 'type', value: 'key_value'}]` plus `pointer: '/deployments/0/activation_key/key'` and `keyword: 'required'` means "you picked the `key_value` activation_key variant and it requires top-level `key` and `value`." Compound discriminators like `audience-selector`'s `(type, value_type)` produce two-entry arrays.
+- `issues[].schemaId` — `$id` of the rejecting schema. For tools served from the bundled tree this is usually the response root; for flat-tree tools it can land on the deeper sub-schema. Diagnostic only; the actionable lever is `discriminator` + `variants` + `pointer`.
+- `issues[].allowedValues` — closed enum lists for `keyword: 'enum'` issues. Picking from this list closes the case in one round.
 
-Patch the pointers, don't re-guess what the skill or the `variants` already told you, resend. Three attempts should cover every field.
+**Recovery order**: read `discriminator` first (names which branch to fix), then `variants` (lists every option if you're not in a branch), then `pointer` + `keyword` + `message` for the leaf fix. Patch and resend. Three attempts should cover every field.
 
 ## Minimal working examples
 
@@ -225,6 +228,7 @@ Quick lookup before reading the full envelope. Match what you see in `adcp_error
 | Symptom | What it means | Fix |
 |---|---|---|
 | `keyword: 'oneOf'` with `variants[]` | Discriminated union — you sent fields from multiple variants, or none | Pick ONE variant from `variants[]`. Send only its `required` fields. |
+| `discriminator: [{field, value}]` on a `required` issue | Validator inferred which branch you targeted; you missed required fields IN that branch | Read the `discriminator` pair, fill the missing required fields at the same level (don't nest under the discriminator field name). |
 | 2-3 `additionalProperties` errors at the same pointer | You merged `oneOf` variants ({account_id, brand, operator, …}) | Drop to one variant. Don't keep "extra" fields "for completeness". |
 | `keyword: 'required'`, `pointer: '/idempotency_key'` | Mutating tool, no UUID | Generate fresh UUID per logical operation. Reuse it on retries. |
 | `keyword: 'type'` or `additionalProperties` at `/budget` | Sent `{amount, currency}` | `budget` is a number. Currency is implied by `pricing_option_id`. |
