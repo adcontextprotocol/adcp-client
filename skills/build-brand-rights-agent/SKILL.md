@@ -13,7 +13,7 @@ A brand rights agent represents a brand's identity and licensing. Buyers discove
 
 - User wants to build an agent that manages brand identity and licensing
 - User mentions brand rights, brand guidelines, creative approval, or licensing
-- User references `get_brand_identity`, `get_rights`, or `acquire_rights`
+- User references `get_brand_identity`, `get_rights`, `acquire_rights`, `update_rights`, or `creative_approval`
 
 **Not this skill:**
 
@@ -23,9 +23,9 @@ A brand rights agent represents a brand's identity and licensing. Buyers discove
 
 ## Specialisms This Skill Covers
 
-| Specialism     | Status | Delta                                                                                                                                                                                |
-| -------------- | ------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ------------------------------------------ |
-| `brand-rights` | stable | First-class tools: `get_brand_identity`, `get_rights`, `acquire_rights`. `update_rights` and `creative_approval` are spec-tracked but not schema-backed (see Protocol Status below). | [§ brand-rights](#specialism-brand-rights) |
+| Specialism     | Status | Delta                                                                                                                                                                                  |
+| -------------- | ------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------ |
+| `brand-rights` | stable | First-class tools: `get_brand_identity`, `get_rights`, `acquire_rights`, `update_rights`. `creative_approval` is webhook-only — wire your HTTP receiver at the `approval_webhook` URL. | [§ brand-rights](#specialism-brand-rights) |
 
 Storyboard: `brand_rights`. The specialism tests identity discovery → rights search → acquisition → enforcement (including expired-campaign denial).
 
@@ -33,7 +33,7 @@ Storyboard: `brand_rights`. The specialism tests identity discovery → rights s
 
 Full treatment in `skills/build-seller-agent/SKILL.md` §Protocol-Wide Requirements and §Composing. Minimum viable pointers:
 
-- **`idempotency_key`** on every mutating request (`acquire_rights` — and `update_rights` / `creative_approval` once their schemas land). Wire `createIdempotencyStore` into `createAdcpServer({ idempotency })`.
+- **`idempotency_key`** on every mutating request (`acquire_rights`, `update_rights`, and the `creative_approval` webhook payload). Wire `createIdempotencyStore` into `createAdcpServer({ idempotency })`. The framework auto-applies idempotency middleware to mutating tools; for the `creative_approval` webhook receiver, validate `idempotency_key` yourself and replay the cached verdict on resubmission.
 - **Authentication** via `serve({ authenticate })` with `verifyApiKey`/`verifyBearer` from `@adcp/sdk/server`. Unauthenticated agents fail the universal `security_baseline` storyboard.
 - **Signature-header transparency**: accept `Signature-Input`/`Signature` headers even if you don't claim `signed-requests`.
 
@@ -68,17 +68,15 @@ How are generated creatives reviewed?
 
 ## Protocol Status
 
-Three tools are first-class in the `brandRights` domain group. Two additional operations are spec-tracked but not yet schema-backed.
+Four MCP/A2A tools are first-class in the `brandRights` domain group. `creative_approval` is webhook-only — the spec models it as an HTTP POST from the buyer to the `approval_webhook` URL the seller returned in `acquire_rights`.
 
-| Operation            | Status                                        | How to implement                                                  |
-| -------------------- | --------------------------------------------- | ----------------------------------------------------------------- |
-| `get_brand_identity` | Published schema — `brand/get-brand-identity` | `brandRights.getBrandIdentity` handler                            |
-| `get_rights`         | Published schema — `brand/get-rights`         | `brandRights.getRights` handler                                   |
-| `acquire_rights`     | Published schema — `brand/acquire-rights`     | `brandRights.acquireRights` handler                               |
-| `update_rights`      | Spec prose only — no JSON schema              | HTTP endpoint outside MCP surface                                 |
-| `creative_approval`  | Webhook contract, no JSON schema              | HTTP endpoint your agent hosts (URL returned in `acquire_rights`) |
-
-Upstream tracking for the two schema gaps: https://github.com/adcontextprotocol/adcp/issues/2253. The SDK will register handlers for both once schemas land.
+| Operation            | Status                                          | How to implement                                                                                       |
+| -------------------- | ----------------------------------------------- | ------------------------------------------------------------------------------------------------------ |
+| `get_brand_identity` | Published schema — `brand/get-brand-identity`   | `brandRights.getBrandIdentity` handler                                                                 |
+| `get_rights`         | Published schema — `brand/get-rights`           | `brandRights.getRights` handler                                                                        |
+| `acquire_rights`     | Published schema — `brand/acquire-rights`       | `brandRights.acquireRights` handler                                                                    |
+| `update_rights`      | Published schema — `brand/update-rights`        | `brandRights.updateRights` handler (mutating)                                                          |
+| `creative_approval`  | Published schema — `brand/creative-approval`    | Webhook receiver at the URL you returned in `acquire_rights.approval_webhook`; dispatch to `brandRights.reviewCreativeApproval` |
 
 <a name="specialism-brand-rights"></a>
 
@@ -193,7 +191,101 @@ Three success variants plus an error variant. The most common is `acquired`. Thr
 { rights_id, status: 'rejected', brand_id, reason, suggestions? }
 ```
 
-**Creative approval.** The `approval_webhook` in your `acquire_rights` response is a URL **your agent hosts** — the buyer POSTs `creative-approval-request` there when a generated creative needs review. Payload shapes (`creative-approval-request`/`creative-approval-response`) are spec-tracked but not yet schema-published (adcontextprotocol/adcp#2253); accept at minimum the creative reference and a `rights_grant_id`, return a decision.
+**`update_rights`** — returns either a success arm (with re-issued credentials) or the error arm
+
+Mutating; framework auto-applies idempotency middleware. Carry only the fields you're changing — omitted fields stay at their current value (parallels `update_media_buy` semantics). The framework hydrates the underlying grant from `rights_id`, so handlers read the resolved grant from `ctx.store`.
+
+```typescript
+// Success — change applied
+{
+  rights_id: 'likeness_commercial_standard',
+  terms: { /* updated rights-terms shape */ },
+  generation_credentials: [ /* re-issued with the new constraint */ ],
+  rights_constraint: { /* updated for re-embedding in creative manifests */ },
+  paused: false,
+  implementation_date: '2026-05-02T19:00:00Z',  // string when live immediately
+}
+// Pending rights-holder approval
+{
+  rights_id: 'likeness_commercial_standard',
+  terms: { /* updated terms */ },
+  implementation_date: null,                     // null = follow-up via push_notification_config webhook
+}
+// Error — buyer-fixable rejection. Throw `adcpError('INVALID_REQUEST', ...)`
+// for single-error cases; the multi-error arm is for batch failures.
+{
+  errors: [{ code: 'INVALID_REQUEST', message: 'impression_cap below delivered count' }],
+}
+```
+
+Common rejections to surface as errors: `impression_cap` below already-delivered count, `end_date` earlier than current `end_date`, switching to a `pricing_option_id` from a different `get_rights` offering than the original.
+
+**Creative approval (webhook).** The `approval_webhook` in your `acquire_rights` response is a URL **your agent hosts** — the buyer POSTs `CreativeApprovalRequest` there when a generated creative needs review. Schema is published in 3.0.x (`brand/creative-approval-{request,response}.json`); the SDK does NOT register this as an MCP/A2A tool because it's webhook-only.
+
+The receiver pattern: validate the request body with `CreativeApprovalRequestSchema`, dispatch to `brandRights.reviewCreativeApproval(req, ctx)`, and serialize the result with the typed builders.
+
+```typescript
+import express from 'express';
+import {
+  creativeApproved,
+  creativeApprovalRejected,
+  creativeApprovalPendingReview,
+} from '@adcp/sdk/server';
+import { CreativeApprovalRequestSchema } from '@adcp/sdk/types';
+
+const app = express();
+app.use(express.json());
+
+app.post('/webhooks/creative-approval', async (req, res) => {
+  const parsed = CreativeApprovalRequestSchema.safeParse(req.body);
+  if (!parsed.success) {
+    return res.status(400).json({ errors: [{ code: 'INVALID_REQUEST', message: 'malformed creative-approval request' }] });
+  }
+  // Idempotency — replay the cached verdict if you've seen this key.
+  const cached = await idempotencyStore.get(parsed.data.idempotency_key);
+  if (cached) return res.json(cached);
+
+  // Dispatch to the platform — same `reviewCreativeApproval` method shape
+  // as if it were a tool. The framework doesn't auto-wire HTTP for webhook-
+  // only surfaces, so adopters host the route themselves.
+  try {
+    const verdict = await platform.brandRights.reviewCreativeApproval(parsed.data, /* ctx built per request */);
+    await idempotencyStore.set(parsed.data.idempotency_key, verdict);
+    return res.json(verdict);
+  } catch (err) {
+    return res.status(500).json({ errors: [{ code: 'INTERNAL_ERROR', message: err.message }] });
+  }
+});
+```
+
+Three success arms (Approved / Rejected / PendingReview) plus an error arm. Arm choice depends on review pipeline — auto-approve immediately, route to human review, or pre-flight reject for hard violations. Use the typed builders so the discriminator (`status`) is injected for you:
+
+```typescript
+// Approved
+creativeApproved({
+  rights_id: 'likeness_commercial_standard',
+  creative_id: 'cr_42',
+  creative_url: 'https://buyer.example.com/creatives/42.mp4',
+  approved_at: new Date().toISOString(),
+  conditions: ['approved for NL only'],   // optional
+});
+
+// Rejected
+creativeApprovalRejected({
+  rights_id: 'likeness_commercial_standard',
+  creative_id: 'cr_42',
+  reason: 'logo not visible per brand standards',
+  suggestions: ['enlarge the logo to 15% of the frame'],
+});
+
+// Pending — buyer polls `status_url` or waits up to `estimated_response_time`
+creativeApprovalPendingReview({
+  rights_id: 'likeness_commercial_standard',
+  creative_id: 'cr_42',
+  estimated_response_time: '24h',
+  status_url: 'https://brand.example/approvals/cr_42',
+});
+```
 
 **Revocation webhook.** The `acquire_rights` _request_ carries a required `revocation_webhook`. Persist it against the grant. When you need to revoke (credential rotation, terms violation, brand takedown), use `ctx.emitWebhook` — don't hand-roll `fetch`. See [`skills/build-seller-agent/SKILL.md`](../build-seller-agent/SKILL.md) § Webhooks for the full wiring; minimal call:
 

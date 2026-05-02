@@ -4,7 +4,7 @@
  * Brand-rights agents handle identity discovery + licensing for branded
  * inventory — covers IP holders (sports leagues, movie studios), CTV
  * brand-rights desks, and brand-licensing marketplaces. Adopters
- * implement the three wire tools the spec ships with stable schemas
+ * implement the four wire tools the spec ships with stable schemas
  * AND framework dispatch infrastructure (in `AdcpToolMap`):
  *
  *   - `get_brand_identity` — sync read; brand catalog + identity record
@@ -13,11 +13,18 @@
  *     are delivered via the buyer-supplied `push_notification_config`
  *     webhook (NOT a polling tool — the spec doesn't define one for
  *     this surface).
+ *   - `update_rights` — modify an existing rights grant. Mutating;
+ *     `idempotency_key` required. Returns updated terms + re-issued
+ *     credentials, or pending if the change requires rights-holder
+ *     approval (signaled via `implementation_date: null`).
  *
- * The two other surfaces in this domain (`update_rights`,
- * `creative_approval`) are spec-published but not yet in `AdcpToolMap`;
- * adopters wire them via the merge seam (`opts.brandRights.*`) until
- * they land in v6.1.
+ * `creative_approval` is also part of this domain but is webhook-only
+ * (not in `AdcpToolMap`). Adopters wire {@link reviewCreativeApproval}
+ * to their HTTP server's `approval_webhook` route — the URL they
+ * returned to the buyer in `acquire_rights`. Use the
+ * `creativeApproved` / `creativeApprovalRejected` /
+ * `creativeApprovalPendingReview` / `creativeApprovalError` builders
+ * from `@adcp/sdk/server` to construct the webhook response.
  *
  * Status: Preview / 6.0.
  *
@@ -40,6 +47,12 @@ import type {
   AcquireRightsAcquired,
   AcquireRightsPendingApproval,
   AcquireRightsRejected,
+  UpdateRightsRequest,
+  UpdateRightsSuccess,
+  CreativeApprovalRequest,
+  CreativeApproved,
+  CreativeRejected,
+  CreativePendingReview,
 } from '../../../types/core.generated';
 
 type Ctx<TCtxMeta> = RequestContext<Account<TCtxMeta>>;
@@ -109,4 +122,75 @@ export interface BrandRightsPlatform<TCtxMeta = Record<string, unknown>> {
     req: AcquireRightsRequest,
     ctx: Ctx<TCtxMeta>
   ): Promise<AcquireRightsAcquired | AcquireRightsPendingApproval | AcquireRightsRejected>;
+
+  /**
+   * Modify an existing rights grant — extend dates, adjust impression caps,
+   * change pricing, pause/resume. Parallels `updateMediaBuy` semantics on
+   * the media-buy side: only the fields the buyer provides are touched;
+   * omitted fields remain unchanged. The framework auto-hydrates the
+   * underlying grant from `req.rights_id` (mirroring `acquire_rights`'s
+   * `req.rights` hydration), so the implementation reads the resolved
+   * grant from `ctx.store` rather than re-fetching it.
+   *
+   * Return shape:
+   *   - `UpdateRightsSuccess` — change applied. Carries updated `terms`,
+   *     re-issued `generation_credentials` (LLM keys reflecting the new
+   *     constraint), updated `rights_constraint`, and an
+   *     `implementation_date`:
+   *       - timestamp string when changes are live immediately
+   *       - **`null`** when the change requires rights-holder approval —
+   *         the buyer's `push_notification_config.url` will receive a
+   *         follow-up webhook with the resolved state.
+   *
+   * For terminal rejection (e.g., `impression_cap` below already-delivered
+   * count, `end_date` earlier than now, switching to an incompatible
+   * `pricing_option_id`) throw `AdcpError('INVALID_REQUEST', { details })`
+   * — the framework wraps it as the `UpdateRightsError` arm. Use the
+   * multi-error variant only when you have multiple distinct failures to
+   * surface in one response (matches the `acquire_rights` convention).
+   *
+   * Idempotency: required (`x-mutates-state: true`). The framework caches
+   * the response for replay against the same `idempotency_key`; this
+   * handler runs at most once per (key, principal).
+   */
+  updateRights(req: UpdateRightsRequest, ctx: Ctx<TCtxMeta>): Promise<UpdateRightsSuccess>;
+
+  /**
+   * Review a creative submitted under an existing rights grant.
+   *
+   * **This is a WEBHOOK handler, not a tool.** The spec models creative
+   * approval as an HTTP webhook: the buyer POSTs a
+   * `CreativeApprovalRequest` to the `approval_webhook` URL the seller
+   * returned in `acquire_rights`. The framework does NOT register this as
+   * an MCP/A2A tool — adopters mount their own HTTP route at the URL they
+   * advertised, parse the request body against
+   * `CreativeApprovalRequestSchema`, dispatch to this method, and use
+   * `creativeApproved` / `creativeApprovalRejected` /
+   * `creativeApprovalPendingReview` / `creativeApprovalError` from
+   * `@adcp/sdk/server` to construct the JSON response.
+   *
+   * Three success arms (the framework's typed signature surfaces the
+   * three; the multi-error arm is reachable via thrown `AdcpError` once
+   * the receiver glue lands in v6.1+):
+   *
+   *   - `CreativeApproved` — creative cleared for distribution; carries
+   *     optional `conditions[]` (e.g. "approved for NL only").
+   *   - `CreativeRejected` — terminal rejection; carries `reason` plus
+   *     optional `suggestions[]` for remediation. Buyer revises and
+   *     resubmits with a fresh `idempotency_key`.
+   *   - `CreativePendingReview` — queued for human review. Carry
+   *     `estimated_response_time` (e.g. "24h") and a `status_url` the
+   *     buyer can poll.
+   *
+   * Pre-flight (rights grant exists, `creative_url` reachable for review)
+   * runs before this method — adopters can read the resolved grant from
+   * `ctx.store` after their HTTP route does the schema validation step.
+   *
+   * Idempotency: required (`x-mutates-state: true`). Resubmission with
+   * the same `idempotency_key` returns the original verdict.
+   */
+  reviewCreativeApproval(
+    req: CreativeApprovalRequest,
+    ctx: Ctx<TCtxMeta>
+  ): Promise<CreativeApproved | CreativeRejected | CreativePendingReview>;
 }

@@ -146,8 +146,7 @@ export interface DecisioningPlatform<TConfig = unknown, TCtxMeta = Record<string
   collectionLists?: CollectionListsPlatform<TCtxMeta>;
   brandRights?: BrandRightsPlatform<TCtxMeta>;
 
-  // v1.1+ specialisms add: creative-review, plus the 2 brand-rights wire
-  // tools awaiting AdcpToolMap landing (`update_rights`, `creative_approval`).
+  // v1.1+ specialisms add: creative-review.
 }
 
 // ---------------------------------------------------------------------------

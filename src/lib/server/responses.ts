@@ -75,6 +75,13 @@ import type {
   AcquireRightsAcquired,
   AcquireRightsPendingApproval,
   AcquireRightsRejected,
+  UpdateRightsResponse,
+  UpdateRightsSuccess,
+  CreativeApprovalResponse,
+  CreativeApproved,
+  CreativeRejected,
+  CreativePendingReview,
+  CreativeApprovalError,
 } from '../types/core.generated';
 
 /**
@@ -581,6 +588,84 @@ export function acquireRightsPendingApproval(
 /** @deprecated v6: `createAdcpServerFromPlatform` constructs wire responses from typed platform returns. Direct use is for v5 raw-handler adopters mid-migration only. */
 export function acquireRightsRejected(data: Omit<AcquireRightsRejected, 'status'>, summary?: string): McpToolResponse {
   return acquireRightsResponse({ ...data, status: 'rejected' } as AcquireRightsRejected, summary);
+}
+
+/**
+ * Build an `update_rights` response. Wraps a `UpdateRightsResponse` (success
+ * or error arm — discriminated structurally on `errors` presence) in the
+ * standard `content` + `structuredContent` envelope. The framework auto-
+ * applies this wrapper for v6 typed-platform handlers; direct callers are
+ * v5 raw-handler adopters only.
+ *
+ * Mirrors `acquireRightsResponse`'s shape conventions (success-first
+ * default summary, error pass-through).
+ */
+/** @deprecated v6: `createAdcpServerFromPlatform` constructs wire responses from typed platform returns. Direct use is for v5 raw-handler adopters mid-migration only. */
+export function updateRightsResponse(data: UpdateRightsResponse, summary?: string): McpToolResponse {
+  const defaultSummary =
+    'errors' in data
+      ? 'Rights update error'
+      : data.implementation_date == null
+        ? `Rights ${data.rights_id} update pending approval`
+        : `Rights ${data.rights_id} updated`;
+  return {
+    content: [{ type: 'text', text: summary ?? defaultSummary }],
+    structuredContent: toStructuredContent(data),
+  };
+}
+
+/**
+ * Per-variant constructor for the success arm. The wire spec doesn't
+ * carry a `status` discriminator on `update_rights` (unlike
+ * `acquire_rights`); success is identified structurally by absence of
+ * `errors`. The narrow constructor is still useful — it gives autocomplete
+ * the success-shape fields (`terms`, `generation_credentials`,
+ * `rights_constraint`) without crossing the union.
+ */
+/** @deprecated v6: `createAdcpServerFromPlatform` constructs wire responses from typed platform returns. Direct use is for v5 raw-handler adopters mid-migration only. */
+export function updateRightsSuccess(data: UpdateRightsSuccess, summary?: string): McpToolResponse {
+  return updateRightsResponse(data, summary);
+}
+
+/**
+ * Build a `creative_approval` webhook response.
+ *
+ * Unlike the other builders in this module, `creative_approval` is NOT an
+ * MCP/A2A tool — the spec models it as an HTTP webhook. The buyer POSTs
+ * a `CreativeApprovalRequest` to the `approval_webhook` URL returned in
+ * `acquire_rights`; the brand-rights agent reviews and returns one of four
+ * arms (Approved / Rejected / PendingReview / Error). Adopters wire this
+ * builder into their HTTP server's response path — see the
+ * `BrandRightsPlatform.reviewCreativeApproval` Platform method and the
+ * skill at `skills/build-brand-rights-agent/SKILL.md` for the receiver
+ * pattern.
+ *
+ * Returns the raw JSON-serializable payload, NOT an `McpToolResponse` —
+ * webhooks have no `content` envelope. Adopters serialize this to JSON and
+ * write to the HTTP response body.
+ */
+export function creativeApprovalResponse(data: CreativeApprovalResponse): CreativeApprovalResponse {
+  return data;
+}
+
+/** Per-variant constructor for the `approved` branch — webhook payload. */
+export function creativeApproved(data: Omit<CreativeApproved, 'status'>): CreativeApproved {
+  return { ...data, status: 'approved' } as CreativeApproved;
+}
+
+/** Per-variant constructor for the `rejected` branch — webhook payload. */
+export function creativeApprovalRejected(data: Omit<CreativeRejected, 'status'>): CreativeRejected {
+  return { ...data, status: 'rejected' } as CreativeRejected;
+}
+
+/** Per-variant constructor for the `pending_review` branch — webhook payload. */
+export function creativeApprovalPendingReview(data: Omit<CreativePendingReview, 'status'>): CreativePendingReview {
+  return { ...data, status: 'pending_review' } as CreativePendingReview;
+}
+
+/** Per-variant constructor for the multi-error arm — webhook payload. */
+export function creativeApprovalError(data: CreativeApprovalError): CreativeApprovalError {
+  return data;
 }
 
 /**

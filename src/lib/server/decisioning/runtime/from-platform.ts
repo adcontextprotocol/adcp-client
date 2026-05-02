@@ -3331,6 +3331,29 @@ function buildBrandRightsHandlers<P extends DecisioningPlatform<any, any>>(
         r => r
       );
     },
+    // `update_rights` modifies an existing grant. The framework hydrates the
+    // grant record from `req.rights_id` so the implementation reads the
+    // resolved state from `ctx.store` (parallel to `acquire_rights`'s
+    // `req.rights` hydration). Async delivery — when the change requires
+    // rights-holder counter-signature — rides the buyer's
+    // `push_notification_config` webhook; the immediate response carries
+    // `implementation_date: null` to signal pending state.
+    updateRights: async (params, ctx) => {
+      const reqCtx = ctxFor(ctx);
+      await hydrateSingleResource(
+        ctxMetadataStore,
+        reqCtx.account?.id,
+        'rights_grant',
+        (params as { rights_id?: string }).rights_id,
+        'rights_grant',
+        params,
+        logger
+      );
+      return projectSync(
+        () => br.updateRights(params, reqCtx),
+        r => r
+      );
+    },
   };
 }
 

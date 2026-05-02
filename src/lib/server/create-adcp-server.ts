@@ -78,6 +78,7 @@ import {
   getSignalsResponse,
   activateSignalResponse,
   acquireRightsResponse,
+  updateRightsResponse,
   syncAccountsResponse,
   syncGovernanceResponse,
   reportUsageResponse,
@@ -183,12 +184,15 @@ import type {
   GetBrandIdentityRequestSchema,
   GetRightsRequestSchema,
   AcquireRightsRequestSchema,
+  UpdateRightsRequestSchema,
 } from '../types/schemas.generated';
 
 import type {
   AcquireRightsAcquired,
   AcquireRightsPendingApproval,
   AcquireRightsRejected,
+  UpdateRightsResponse,
+  UpdateRightsSuccess,
   GetBrandIdentitySuccess,
   GetRightsSuccess,
 } from '../types/core.generated';
@@ -717,6 +721,11 @@ export interface AdcpToolMap {
     result: AcquireRightsAcquired | AcquireRightsPendingApproval | AcquireRightsRejected;
     response: AcquireRightsAcquired | AcquireRightsPendingApproval | AcquireRightsRejected;
   };
+  update_rights: {
+    params: z.input<typeof UpdateRightsRequestSchema>;
+    result: UpdateRightsSuccess;
+    response: UpdateRightsResponse;
+  };
 }
 
 export type AdcpServerToolName = keyof AdcpToolMap;
@@ -849,16 +858,26 @@ export interface SponsoredIntelligenceHandlers<TAccount = unknown> {
 }
 
 /**
- * Brand rights covers identity and licensing workflows. `update_rights` and
- * `creative_approval` are intentionally not exposed here — the spec models
- * creative approval as a webhook (POST to `approval_webhook` returned from
- * `acquire_rights`), and neither has published JSON schemas yet. Implement
- * those as regular HTTP endpoints outside the MCP surface until schemas land.
+ * Brand rights covers identity and licensing workflows.
+ *
+ * `update_rights` is a first-class mutating tool — modify an existing rights
+ * grant (extend dates, adjust impression caps, change pricing, pause/resume).
+ * Schemas published in AdCP 3.0.x; framework dispatch parallels
+ * `acquire_rights`.
+ *
+ * `creative_approval` is intentionally NOT in this handler bag — the spec
+ * models it as an HTTP webhook (the buyer POSTs to the `approval_webhook`
+ * URL returned from `acquire_rights`), not as an MCP/A2A tool. Adopters
+ * wire the receiver to `BrandRightsPlatform.reviewCreativeApproval` and
+ * use `creativeApproved` / `creativeApprovalRejected` /
+ * `creativeApprovalPendingReview` / `creativeApprovalError` from
+ * `@adcp/sdk/server` to build the webhook response.
  */
 export interface BrandRightsHandlers<TAccount = unknown> {
   getBrandIdentity?: DomainHandler<'get_brand_identity', TAccount>;
   getRights?: DomainHandler<'get_rights', TAccount>;
   acquireRights?: DomainHandler<'acquire_rights', TAccount>;
+  updateRights?: DomainHandler<'update_rights', TAccount>;
 }
 
 // ---------------------------------------------------------------------------
@@ -1066,7 +1085,7 @@ export type AdcpPreTransport = (
  * Declarative registration for a tool outside {@link AdcpToolMap} — seller
  * extensions (e.g. collection-list helpers), test-harness endpoints
  * (`comply_test_controller`), or AdCP surfaces whose JSON Schemas haven't
- * landed in the framework yet (`creative_approval`, `update_rights`).
+ * landed in the framework yet.
  *
  * These tools **bypass the framework's spec-tool pipeline**:
  * idempotency middleware, governance pre-checks, account resolution,
@@ -1413,8 +1432,7 @@ export interface AdcpServerConfig<TAccount = unknown> {
    * Gives sellers a declarative extension point without reaching for the
    * `getSdkServer()` escape hatch. Typical callers:
    *
-   *   - AdCP surfaces whose JSON Schemas haven't landed yet
-   *     (`creative_approval`, `update_rights`).
+   *   - AdCP surfaces whose JSON Schemas haven't landed yet.
    *   - Governance specialism helpers (`*_collection_list` family).
    *   - Test-harness tools (`comply_test_controller` — prefer
    *     {@link registerTestController} which wraps this).
@@ -1775,6 +1793,7 @@ const TOOL_META: Record<string, ToolMeta> = {
   get_brand_identity: { wrap: null, annotations: RO },
   get_rights: { wrap: null, annotations: RO },
   acquire_rights: { wrap: acquireRightsResponse, annotations: MUT },
+  update_rights: { wrap: updateRightsResponse, annotations: MUT },
 };
 
 // ---------------------------------------------------------------------------
@@ -1860,6 +1879,7 @@ const BRAND_RIGHTS_ENTRIES: HandlerEntry[] = [
   { handlerKey: 'getBrandIdentity', toolName: 'get_brand_identity' },
   { handlerKey: 'getRights', toolName: 'get_rights' },
   { handlerKey: 'acquireRights', toolName: 'acquire_rights' },
+  { handlerKey: 'updateRights', toolName: 'update_rights' },
 ];
 
 // ---------------------------------------------------------------------------

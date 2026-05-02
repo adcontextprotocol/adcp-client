@@ -63,9 +63,10 @@ const SPECIALISM_REQUIREMENTS: Partial<Record<AdCPSpecialism, ReadonlyArray<keyo
   // Content standards — brand-safety / policy compliance enforcement.
   'content-standards': ['contentStandards'],
   // Brand-rights — identity discovery + licensing for branded inventory.
-  // 3 of 5 wire tools wire through `brandRights`; the other 2
-  // (`update_rights`, `creative_approval`) await AdcpToolMap landing
-  // and stay on the merge-seam path until then.
+  // 4 wire tools wire through `brandRights` (`get_brand_identity`,
+  // `get_rights`, `acquire_rights`, `update_rights`). `creative_approval`
+  // is webhook-only (`reviewCreativeApproval` on the platform interface)
+  // and not in `AdcpToolMap`.
   'brand-rights': ['brandRights'],
 };
 
