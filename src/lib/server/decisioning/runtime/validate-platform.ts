@@ -20,14 +20,14 @@ import type { AdCPSpecialism } from '../../../types/tools.generated';
 // trades in. Signals/governance/creative-only platforms legitimately omit them
 // (hence the fields are optional on DecisioningCapabilities), but a media-buy
 // platform serving an empty or absent channels list is a mis-configured agent.
-const SALES_SPECIALISMS = new Set<AdCPSpecialism>([
-  'sales-non-guaranteed',
-  'sales-guaranteed',
-  'sales-broadcast-tv',
-  'sales-social',
-  'sales-catalog-driven',
-  'sales-proposal-mode',
-]);
+// Derived from the `sales-` prefix on `AdCPSpecialism` rather than a hand-
+// maintained allowlist: when preview specialisms (`sales-streaming-tv`,
+// `sales-exchange`, `sales-retail-media`) graduate into the generated enum,
+// they automatically inherit the channels + pricingModels gate. A hand-list
+// would silently let mis-configured streaming/exchange platforms through.
+function isSalesSpecialism(s: AdCPSpecialism): boolean {
+  return s.startsWith('sales-');
+}
 
 const SPECIALISM_REQUIREMENTS: Partial<Record<AdCPSpecialism, ReadonlyArray<keyof DecisioningPlatform>>> = {
   // All sales-* specialisms share the SalesPlatform interface. Adopters
@@ -108,7 +108,7 @@ export function validatePlatform(platform: DecisioningPlatform): void {
   // platforms (signals, governance, creative-only) can omit them, but a
   // sales platform that omits them will emit a broken get_adcp_capabilities
   // response that buyers cannot interpret.
-  const claimedSales = claimed.filter(s => SALES_SPECIALISMS.has(s));
+  const claimedSales = claimed.filter(isSalesSpecialism);
   if (claimedSales.length > 0) {
     if (platform.capabilities?.channels == null) {
       errors.push(`capabilities.channels is required for media-buy platforms (claimed: ${claimedSales.join(', ')})`);
