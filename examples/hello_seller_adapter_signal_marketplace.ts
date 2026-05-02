@@ -23,6 +23,7 @@ import {
   serve,
   verifyApiKey,
   createIdempotencyStore,
+  createUpstreamHttpClient,
   memoryBackend,
   AdcpError,
   defineSignalsPlatform,
@@ -41,8 +42,9 @@ const ADCP_AUTH_TOKEN = process.env['ADCP_AUTH_TOKEN'] ?? 'sk_harness_do_not_use
 
 // ---------------------------------------------------------------------------
 // Upstream client — SWAP for production.
-// One generic httpJson helper plus 5 typed entry points; each entry point is
-// the seam to swap when wiring to your real backend.
+// `createUpstreamHttpClient` from @adcp/sdk/server handles auth injection,
+// 404→null, and JSON parse. Five typed wrappers below are the seams to
+// swap when wiring to your real backend.
 // ---------------------------------------------------------------------------
 
 interface UpstreamCohort {
@@ -72,76 +74,61 @@ interface UpstreamActivation {
   agent_activation_key?: { agent_segment?: string };
 }
 
-class UpstreamClient {
-  constructor(
-    private readonly baseUrl: string,
-    private readonly apiKey: string
-  ) {}
+const http = createUpstreamHttpClient({
+  baseUrl: UPSTREAM_URL,
+  auth: { kind: 'static_bearer', token: UPSTREAM_API_KEY },
+});
 
-  /** Generic JSON request. SWAP this if your backend uses an SDK or different
-   *  auth header conventions; the typed entry points below stay the same. */
-  private async httpJson<T>(
-    method: string,
-    path: string,
-    opts: { operatorId?: string; query?: Record<string, string>; body?: unknown } = {}
-  ): Promise<{ status: number; body: T | null }> {
-    const url = new URL(this.baseUrl + path);
-    for (const [k, v] of Object.entries(opts.query ?? {})) url.searchParams.set(k, v);
-    const headers: Record<string, string> = { Authorization: `Bearer ${this.apiKey}` };
-    if (opts.operatorId) headers['X-Operator-Id'] = opts.operatorId;
-    const init: RequestInit = { method, headers };
-    if (opts.body !== undefined) {
-      headers['Content-Type'] = 'application/json';
-      init.body = JSON.stringify(opts.body);
-    }
-    const res = await fetch(url, init);
-    if (res.status === 404) return { status: 404, body: null };
-    if (!res.ok) throw new Error(`upstream ${method} ${path} → ${res.status}`);
-    return { status: res.status, body: (await res.json()) as T };
-  }
+const tenantHeader = (operatorId: string) => ({ 'X-Operator-Id': operatorId });
 
+const upstream = {
   // SWAP: tenant lookup. Mock exposes /_lookup; production typically a
   // directory service or config registry.
   async lookupOperator(adcpOperator: string): Promise<string | null> {
-    const r = await this.httpJson<{ operator_id?: string }>('GET', '/_lookup/operator', {
-      query: { adcp_operator: adcpOperator },
+    const { body } = await http.get<{ operator_id?: string }>('/_lookup/operator', {
+      adcp_operator: adcpOperator,
     });
-    return r.body?.operator_id ?? null;
-  }
+    return body?.operator_id ?? null;
+  },
 
   // SWAP: catalog list.
   async listCohorts(operatorId: string): Promise<UpstreamCohort[]> {
-    const r = await this.httpJson<{ cohorts: UpstreamCohort[] }>('GET', '/v2/cohorts', { operatorId });
-    return r.body?.cohorts ?? [];
-  }
+    const { body } = await http.get<{ cohorts: UpstreamCohort[] }>('/v2/cohorts', undefined, tenantHeader(operatorId));
+    return body?.cohorts ?? [];
+  },
 
   // SWAP: single cohort.
   async getCohort(operatorId: string, cohortId: string): Promise<UpstreamCohort | null> {
-    const r = await this.httpJson<UpstreamCohort>('GET', `/v2/cohorts/${encodeURIComponent(cohortId)}`, { operatorId });
-    return r.body;
-  }
+    const { body } = await http.get<UpstreamCohort>(
+      `/v2/cohorts/${encodeURIComponent(cohortId)}`,
+      undefined,
+      tenantHeader(operatorId)
+    );
+    return body;
+  },
 
   // SWAP: destinations available to this operator.
   async listDestinations(operatorId: string): Promise<UpstreamDestination[]> {
-    const r = await this.httpJson<{ destinations: UpstreamDestination[] }>('GET', '/v2/destinations', { operatorId });
-    return r.body?.destinations ?? [];
-  }
+    const { body } = await http.get<{ destinations: UpstreamDestination[] }>(
+      '/v2/destinations',
+      undefined,
+      tenantHeader(operatorId)
+    );
+    return body?.destinations ?? [];
+  },
 
   // SWAP: post an activation.
   async activate(
     operatorId: string,
     body: { cohort_id: string; destination_id: string; pricing_id: string; client_request_id: string }
   ): Promise<UpstreamActivation> {
-    const r = await this.httpJson<UpstreamActivation>('POST', '/v2/activations', {
-      operatorId,
-      body,
-    });
+    const r = await http.post<UpstreamActivation>('/v2/activations', body, tenantHeader(operatorId));
     if (r.body === null) {
       throw new AdcpError('SIGNAL_NOT_FOUND', { message: 'cohort or destination not found' });
     }
     return r.body;
-  }
-}
+  },
+};
 
 // ---------------------------------------------------------------------------
 // AdCP-side adapter — typed against SignalsPlatform.
@@ -152,8 +139,6 @@ interface OperatorMeta {
   operator_id: string;
   [key: string]: unknown;
 }
-
-const upstream = new UpstreamClient(UPSTREAM_URL, UPSTREAM_API_KEY);
 
 function toAdcpSignal(c: UpstreamCohort): GetSignalsResponse['signals'][number] {
   const coverage = c.total_universe > 0 ? Math.round((c.member_count / c.total_universe) * 100) : 0;
