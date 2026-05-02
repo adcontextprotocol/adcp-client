@@ -3029,12 +3029,15 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
             }
             ctx.account = account;
           } catch (err) {
-            // AdcpError throws from `resolveAccount` propagate verbatim — the
-            // resolver may need to surface typed wire errors (e.g.
+            // Typed errors propagate verbatim — both the already-projected
+            // envelope shape (`isThrownAdcpError`) and the raw class throw
+            // (`AdcpError instanceof`). Resolvers can surface
             // `INVALID_REQUEST` for inline `account_id` against an
-            // `'implicit'`-resolution platform). Generic exceptions still
-            // project to SERVICE_UNAVAILABLE so leaks don't cross the trust
-            // boundary.
+            // `'implicit'`-resolution platform (#1364), or any other typed
+            // wire error, without coercion. Generic exceptions still
+            // project to SERVICE_UNAVAILABLE so upstream leaks don't cross
+            // the trust boundary.
+            if (isThrownAdcpError(err)) return finalize(err);
             if (err instanceof AdcpError) {
               return finalize(projectThrownAdcpError(err));
             }
@@ -3062,9 +3065,11 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
             });
             if (account != null) ctx.account = account;
           } catch (err) {
-            // Same AdcpError pass-through as the explicit `resolveAccount`
-            // catch above — typed throws propagate verbatim, generic
+            // Same typed-error pass-through as the explicit `resolveAccount`
+            // catch above — both the already-projected envelope shape and
+            // the raw `AdcpError` class throw propagate verbatim. Generic
             // exceptions project to SERVICE_UNAVAILABLE.
+            if (isThrownAdcpError(err)) return finalize(err);
             if (err instanceof AdcpError) {
               return finalize(projectThrownAdcpError(err));
             }

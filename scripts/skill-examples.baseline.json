@@ -72,11 +72,6 @@
   {
     "source": "skills/build-decisioning-platform/advanced/MULTI-TENANT.md",
     "errorCode": "TS2304",
-    "messagePrefix": "Cannot find name 'extractTenantFromHost'."
-  },
-  {
-    "source": "skills/build-decisioning-platform/advanced/MULTI-TENANT.md",
-    "errorCode": "TS2304",
     "messagePrefix": "Cannot find name 'loadTenant'."
   },
   {
@@ -88,26 +83,6 @@
     "source": "skills/build-decisioning-platform/advanced/MULTI-TENANT.md",
     "errorCode": "TS2322",
     "messagePrefix": "Type 'string | undefined' is not assignable to type 'number | undefined'."
-  },
-  {
-    "source": "skills/build-decisioning-platform/advanced/MULTI-TENANT.md",
-    "errorCode": "TS2339",
-    "messagePrefix": "Property 'host' does not exist on type 'TenantRegistry'."
-  },
-  {
-    "source": "skills/build-decisioning-platform/advanced/MULTI-TENANT.md",
-    "errorCode": "TS2353",
-    "messagePrefix": "Object literal may only specify known properties, and 'resolveTenant' does not e"
-  },
-  {
-    "source": "skills/build-decisioning-platform/advanced/MULTI-TENANT.md",
-    "errorCode": "TS7006",
-    "messagePrefix": "Parameter 'req' implicitly has an 'any' type."
-  },
-  {
-    "source": "skills/build-decisioning-platform/advanced/MULTI-TENANT.md",
-    "errorCode": "TS7006",
-    "messagePrefix": "Parameter 'tenantId' implicitly has an 'any' type."
   },
   {
     "source": "skills/build-decisioning-platform/advanced/OAUTH.md",
