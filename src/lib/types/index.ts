@@ -156,6 +156,8 @@ export type {
   Deployment,
   ActivationKey,
   VendorPricingOption,
+  SignalFilters,
+  SignalTargeting,
 } from './tools.generated';
 
 // Creative
@@ -245,6 +247,10 @@ export type {
 } from './tools.generated';
 
 // Sponsored intelligence
+// Note: AssetVariant (tools.generated.ts) is intentionally NOT re-exported here.
+// It is the codegen name for the same discriminated union that asset-instances.ts
+// exports as `AssetInstance`. Re-exporting both names for the same type would
+// give adopters two identities for the same concept. Use `AssetInstance`.
 export type {
   SIGetOfferingRequest,
   SIGetOfferingResponse,
@@ -254,6 +260,10 @@ export type {
   SISendMessageResponse,
   SITerminateSessionRequest,
   SITerminateSessionResponse,
+  SICapabilities,
+  SIIdentity,
+  SISessionStatus,
+  SIUIElement,
 } from './tools.generated';
 
 // Strict format asset slot types (hand-authored — the codegen drops the
