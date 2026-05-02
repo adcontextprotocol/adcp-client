@@ -393,3 +393,12 @@ export type {
   UpstreamHttpClient,
   UpstreamHttpResult,
 } from './upstream-helpers';
+
+// ---------------------------------------------------------------------------
+// Server-side adapters
+// ---------------------------------------------------------------------------
+export {
+  InMemoryImplicitAccountStore,
+  defaultImplicitKeyFn,
+  type ImplicitAccountStoreOptions,
+} from '../adapters/implicit-account-store';
