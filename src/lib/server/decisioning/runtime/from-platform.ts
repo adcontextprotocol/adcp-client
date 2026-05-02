@@ -2602,9 +2602,11 @@ export const ENTITY_TO_RESOURCE_KIND: Readonly<Record<string, ResourceKind>> = {
  * doesn't model this kind."
  *
  * The codegen-derived `TOOL_ENTITY_FIELDS` map carries every `x-entity`
- * the spec emits; this allowlist + `ENTITY_TO_RESOURCE_KIND` together
- * must cover the full set, enforced by a test
- * (`test/lib/x-entity-hydration.test.js`) that imports both.
+ * the spec emits on dispatchable tools (webhook-only payloads like
+ * `creative_approval` are filtered out at codegen time); this allowlist
+ * + `ENTITY_TO_RESOURCE_KIND` together must cover the full set,
+ * enforced by a test (`test/lib/x-entity-hydration.test.js`) that
+ * imports both.
  *
  * @internal Exported for the coverage test; not part of the public API.
  */
