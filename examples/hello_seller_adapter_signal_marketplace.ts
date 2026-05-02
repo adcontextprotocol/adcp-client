@@ -31,11 +31,7 @@ import {
   type AccountStore,
   type Account,
 } from '@adcp/sdk/server';
-import type {
-  GetSignalsResponse,
-  ActivateSignalRequest,
-  ActivateSignalSuccess,
-} from '@adcp/sdk/types';
+import type { GetSignalsResponse, ActivateSignalRequest, ActivateSignalSuccess } from '@adcp/sdk/types';
 import { randomUUID } from 'node:crypto';
 
 const UPSTREAM_URL = process.env['UPSTREAM_URL'] ?? 'http://127.0.0.1:4150';
@@ -77,14 +73,17 @@ interface UpstreamActivation {
 }
 
 class UpstreamClient {
-  constructor(private readonly baseUrl: string, private readonly apiKey: string) {}
+  constructor(
+    private readonly baseUrl: string,
+    private readonly apiKey: string
+  ) {}
 
   /** Generic JSON request. SWAP this if your backend uses an SDK or different
    *  auth header conventions; the typed entry points below stay the same. */
   private async httpJson<T>(
     method: string,
     path: string,
-    opts: { operatorId?: string; query?: Record<string, string>; body?: unknown } = {},
+    opts: { operatorId?: string; query?: Record<string, string>; body?: unknown } = {}
   ): Promise<{ status: number; body: T | null }> {
     const url = new URL(this.baseUrl + path);
     for (const [k, v] of Object.entries(opts.query ?? {})) url.searchParams.set(k, v);
@@ -104,11 +103,9 @@ class UpstreamClient {
   // SWAP: tenant lookup. Mock exposes /_lookup; production typically a
   // directory service or config registry.
   async lookupOperator(adcpOperator: string): Promise<string | null> {
-    const r = await this.httpJson<{ operator_id?: string }>(
-      'GET',
-      '/_lookup/operator',
-      { query: { adcp_operator: adcpOperator } },
-    );
+    const r = await this.httpJson<{ operator_id?: string }>('GET', '/_lookup/operator', {
+      query: { adcp_operator: adcpOperator },
+    });
     return r.body?.operator_id ?? null;
   }
 
@@ -120,28 +117,20 @@ class UpstreamClient {
 
   // SWAP: single cohort.
   async getCohort(operatorId: string, cohortId: string): Promise<UpstreamCohort | null> {
-    const r = await this.httpJson<UpstreamCohort>(
-      'GET',
-      `/v2/cohorts/${encodeURIComponent(cohortId)}`,
-      { operatorId },
-    );
+    const r = await this.httpJson<UpstreamCohort>('GET', `/v2/cohorts/${encodeURIComponent(cohortId)}`, { operatorId });
     return r.body;
   }
 
   // SWAP: destinations available to this operator.
   async listDestinations(operatorId: string): Promise<UpstreamDestination[]> {
-    const r = await this.httpJson<{ destinations: UpstreamDestination[] }>(
-      'GET',
-      '/v2/destinations',
-      { operatorId },
-    );
+    const r = await this.httpJson<{ destinations: UpstreamDestination[] }>('GET', '/v2/destinations', { operatorId });
     return r.body?.destinations ?? [];
   }
 
   // SWAP: post an activation.
   async activate(
     operatorId: string,
-    body: { cohort_id: string; destination_id: string; pricing_id: string; client_request_id: string },
+    body: { cohort_id: string; destination_id: string; pricing_id: string; client_request_id: string }
   ): Promise<UpstreamActivation> {
     const r = await this.httpJson<UpstreamActivation>('POST', '/v2/activations', {
       operatorId,
@@ -234,16 +223,13 @@ class SignalMarketplaceAdapter implements DecisioningPlatform<Record<string, nev
           sid =>
             sid.source === 'catalog' &&
             sid.data_provider_domain === c.data_provider_domain &&
-            sid.id === c.data_provider_id,
+            sid.id === c.data_provider_id
         );
       });
       return { signals: filtered.map(toAdcpSignal) } satisfies GetSignalsResponse;
     },
 
-    activateSignal: async (
-      req: ActivateSignalRequest,
-      ctx,
-    ): Promise<ActivateSignalSuccess> => {
+    activateSignal: async (req: ActivateSignalRequest, ctx): Promise<ActivateSignalSuccess> => {
       const operatorId = ctx.account.ctx_metadata.operator_id;
       const cohortId = req.signal_agent_segment_id;
       const cohort = await upstream.getCohort(operatorId, cohortId);
@@ -308,7 +294,7 @@ class SignalMarketplaceAdapter implements DecisioningPlatform<Record<string, nev
             },
             estimated_activation_duration_minutes: 30,
           };
-        }),
+        })
       );
       return { deployments } satisfies ActivateSignalSuccess;
     },
@@ -340,9 +326,7 @@ serve(
     authenticate: verifyApiKey({
       keys: { [ADCP_AUTH_TOKEN]: { principal: 'compliance-runner' } },
     }),
-  },
+  }
 );
 
-console.log(
-  `signals adapter on http://127.0.0.1:${PORT}/mcp · upstream: ${UPSTREAM_URL}`,
-);
+console.log(`signals adapter on http://127.0.0.1:${PORT}/mcp · upstream: ${UPSTREAM_URL}`);
