@@ -4,6 +4,34 @@ This directory contains practical examples of how to use the `@adcp/sdk` library
 
 ## Examples
 
+### Hello Adapter examples
+
+Worked starting points for adopters wrapping a real upstream platform. Fork the
+file matching your specialism, replace the clearly-marked `// SWAP` seams with
+your backend client, and run `adcp storyboard run` to validate.
+
+- **`hello_seller_adapter_signal_marketplace.ts`** — signals adapter wrapping
+  an upstream signal-marketplace platform. Demonstrates `createUpstreamHttpClient`,
+  upstream-traffic recording, and `defineSignalsPlatform`. Port 3001.
+
+  ```bash
+  npx @adcp/sdk@latest mock-server signal-marketplace --port 4150
+  UPSTREAM_URL=http://127.0.0.1:4150 npx tsx examples/hello_seller_adapter_signal_marketplace.ts
+  adcp storyboard run http://127.0.0.1:3001/mcp signal_marketplace --auth sk_harness_do_not_use_in_prod
+  ```
+
+- **`hello_seller_adapter_governance.ts`** — governance agent managing campaign
+  spend authority and property lists. No upstream HTTP backend needed — governance
+  state is agent-owned. Demonstrates `defineCampaignGovernancePlatform`,
+  `definePropertyListsPlatform`, and `createComplyController` with `seed.plan`.
+  Port 3003.
+
+  ```bash
+  npx tsx examples/hello_seller_adapter_governance.ts
+  ADCP_SANDBOX=1 adcp storyboard run http://127.0.0.1:3003/mcp governance_spend_authority --auth sk_harness_do_not_use_in_prod
+  ADCP_SANDBOX=1 adcp storyboard run http://127.0.0.1:3003/mcp property_lists --auth sk_harness_do_not_use_in_prod
+  ```
+
 ### Basic Usage
 
 - **`basic-mcp.ts`** - Simple MCP protocol client usage
