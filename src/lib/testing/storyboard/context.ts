@@ -472,13 +472,21 @@ function expandMustache(input: string, runnerVars: RunnerVariables): string {
  * Apply explicit context_outputs rules to extract values from response data.
  * Entries with `generate` set are skipped — use `applyContextOutputsWithProvenance`
  * (which accepts a context for alias-cache access) to handle those.
+ *
+ * Per runner-output-contract.yaml v2.0.0, paths that resolve to `undefined`,
+ * `null`, or `""` are equally non-resolvable — capturing null or "" produces
+ * fabricated downstream state. The provenance-aware variant additionally
+ * surfaces the failures on `ContextWriteResult.failures` so the runner can
+ * synthesize a `capture_path_not_resolvable` validation result; this lower-
+ * level form drops them silently and is kept for callers that don't need
+ * the structured failure surface.
  */
 export function applyContextOutputs(data: unknown, outputs: ContextOutput[]): Record<string, unknown> {
   const result: Record<string, unknown> = {};
   for (const output of outputs) {
     if (!output.path) continue;
     const value = resolvePath(data, output.path);
-    if (value !== undefined && value !== null) {
+    if (value !== undefined && value !== null && value !== '') {
       result[output.key] = value;
     }
   }

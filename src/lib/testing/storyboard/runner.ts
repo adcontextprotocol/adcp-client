@@ -3138,6 +3138,7 @@ async function prefetchUpstreamTraffic(
   // recorded request timestamps. Validations that name an unknown step
   // fall back to this step's own start (matching default behavior).
   const priorStepSinceMap = new Map<string, string>();
+  const unresolvedSinceRefs = new Set<string>();
   const sinceTimestamps = new Set<string>([requestStartIso]);
   for (const v of upstreamChecks) {
     if (!v.since) continue;
@@ -3146,13 +3147,24 @@ async function prefetchUpstreamTraffic(
       priorStepSinceMap.set(v.since, priorStart);
       sinceTimestamps.add(priorStart);
     } else {
+      // Spec PR adcp#3816: a `since: prior_step_id` that doesn't resolve
+      // is a storyboard authoring bug — silently masking it as "use this
+      // step's start" lets misspelled refs pass vacuously. Track and
+      // surface as a typed failure on the validation result.
       priorStepSinceMap.set(v.since, requestStartIso);
+      unresolvedSinceRefs.add(v.since);
     }
   }
 
   const queries = new Map<string, UpstreamTrafficQueryResult>();
   for (const sinceTs of sinceTimestamps) {
-    const params = { since_timestamp: sinceTs, limit: 100 };
+    // Per spec PR adcp#3816: runners SHOULD subtract a clock-skew tolerance
+    // (50ms minimum, 250ms recommended) before sending the bound to the
+    // controller, so a recorded call timestamped microseconds before the
+    // runner's clock measurement isn't silently excluded. We use 250ms (the
+    // spec's recommended value).
+    const adjustedSince = new Date(new Date(sinceTs).getTime() - 250).toISOString();
+    const params = { since_timestamp: adjustedSince, limit: 100 };
     const requestRecord: RunnerRequestRecord = {
       transport: options.protocol === 'a2a' ? 'a2a' : 'mcp',
       operation: 'comply_test_controller',
@@ -3188,6 +3200,7 @@ async function prefetchUpstreamTraffic(
     queries,
     thisStepSince: requestStartIso,
     ...(priorStepSinceMap.size > 0 ? { priorStepSinceMap } : {}),
+    ...(unresolvedSinceRefs.size > 0 ? { unresolvedSinceRefs } : {}),
   };
 }
 

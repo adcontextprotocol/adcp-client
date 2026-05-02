@@ -26,6 +26,7 @@ import type {
   ValidationResult,
 } from './types';
 import type { RecordedCall, UpstreamTrafficSuccess } from '../test-controller';
+import { isJsonContentType } from '../test-controller';
 import { resolvePath, resolvePathAll, toJsonPointer } from './path';
 import { detectShapeDriftHints } from './shape-drift-hints';
 import { PROBE_TASK_ALLOWLIST } from './test-kit';
@@ -130,6 +131,14 @@ export interface UpstreamTrafficValidationContext {
    * declaration or the named prior step did not record a timestamp.
    */
   priorStepSinceMap?: Map<string, string>;
+  /**
+   * `since:` step IDs declared by storyboard validations that did not
+   * resolve to any recorded prior step. Surfaced as a typed failure on
+   * the validation result rather than silently widened to the current
+   * step's window — a misspelled reference would otherwise pass vacuously
+   * (the contract treats unresolved references as authoring bugs).
+   */
+  unresolvedSinceRefs?: Set<string>;
 }
 
 export interface UpstreamTrafficQueryResult {
@@ -2209,6 +2218,24 @@ function validateUpstreamTraffic(validation: StoryboardValidation, ctx: Validati
     };
   }
 
+  // A `since: prior_step_id` reference that didn't resolve to any recorded
+  // prior step is a storyboard authoring bug — fail loudly rather than
+  // silently widen to this step's window (which would let misspelled refs
+  // pass vacuously).
+  if (validation.since && upstream.unresolvedSinceRefs?.has(validation.since)) {
+    return {
+      check: 'upstream_traffic',
+      passed: false,
+      description: validation.description,
+      error: `since: "${validation.since}" did not resolve to any prior step's recorded request timestamp.`,
+      json_pointer: null,
+      expected,
+      actual: null,
+      schema_id: null,
+      schema_url: null,
+    };
+  }
+
   const sinceKey = upstream.priorStepSinceMap?.get(validation.since ?? '') ?? upstream.thisStepSince;
   const query = upstream.queries.get(sinceKey);
   if (!query) {
@@ -2227,16 +2254,18 @@ function validateUpstreamTraffic(validation: StoryboardValidation, ctx: Validati
 
   // Controller call itself errored (transport or controller-side fault).
   // Surface the error rather than treating an empty result as "no traffic".
+  // Truncate the agent-controlled error string to match the runner's
+  // `MAX_ERROR_LENGTH` posture on every other validation_result.error.
   if (!('success' in query.payload) || query.payload.success !== true) {
     const errMsg = 'error' in query.payload ? query.payload.error : 'controller returned a non-success response';
     return {
       check: 'upstream_traffic',
       passed: false,
       description: validation.description,
-      error: `query_upstream_traffic failed: ${errMsg}`,
+      error: truncateValidationError(`query_upstream_traffic failed: ${errMsg}`),
       json_pointer: null,
       expected,
-      actual: { matched_count: 0, total_calls: 0, missing_payload_paths: [], identifier_echo_failures: [] },
+      actual: { matched_count: 0, total_calls: 0, missing_payload_paths: [], missing_identifier_values: [] },
       schema_id: null,
       schema_url: null,
       request: query.request,
@@ -2250,31 +2279,62 @@ function validateUpstreamTraffic(validation: StoryboardValidation, ctx: Validati
   const matchedCount = matched.length;
   const minCount = validation.min_count ?? 1;
 
+  // payload_must_contain results bucket two ways: paths that no matched
+  // call satisfied (failure), and paths whose only matched calls were
+  // non-JSON for an `equals` / `contains_any` assertion (`not_applicable`).
+  // Per spec, the assertion grades `not_applicable` only when *every*
+  // path-based check downgraded that way; mixed payload+content_type
+  // results still fail the validation if any required path is missing.
   const missingPayloadPaths: string[] = [];
+  const notApplicablePaths: string[] = [];
   if (validation.payload_must_contain && validation.payload_must_contain.length > 0) {
     for (const spec of validation.payload_must_contain) {
-      if (!anyMatchedCallSatisfies(matched, spec)) {
+      const result = anyMatchedCallSatisfies(matched, spec);
+      if (result.satisfied) continue;
+      if (result.not_applicable) {
+        notApplicablePaths.push(spec.path);
+      } else {
         missingPayloadPaths.push(spec.path);
       }
     }
   }
 
-  const identifierEchoFailures: string[] = [];
-  if (validation.buyer_identifier_echo) {
-    const vectors = collectBuyerIdentifierVectors(ctx.storyboardStep?.sample_request);
-    for (const vector of vectors) {
-      if (!anyMatchedCallEchoesValue(matched, vector)) {
-        identifierEchoFailures.push(String(vector));
+  // identifier_paths: extract every value at each declared path against the
+  // storyboard's sample_request (author-controlled vectors), then assert each
+  // resolved value appears at any depth in some matched call's payload. Spec
+  // is explicit: ALL resolved values must be present — single-placeholder
+  // fabrication is the threat. Replaces the earlier `buyer_identifier_echo`
+  // boolean shorthand per spec PR adcp#3816.
+  const missingIdentifierValues: unknown[] = [];
+  if (validation.identifier_paths && validation.identifier_paths.length > 0) {
+    const sample = ctx.storyboardStep?.sample_request;
+    for (const path of validation.identifier_paths) {
+      const vectors = sample !== undefined ? resolveJsonPathLite(sample, path) : [];
+      for (const vector of vectors) {
+        if (vector === undefined || vector === null) continue;
+        if (!anyMatchedCallEchoesValue(matched, vector)) {
+          missingIdentifierValues.push(vector);
+        }
       }
     }
   }
 
   const countOk = matchedCount >= minCount;
   const payloadOk = missingPayloadPaths.length === 0;
-  const echoOk = identifierEchoFailures.length === 0;
+  const echoOk = missingIdentifierValues.length === 0;
   const passed = countOk && payloadOk && echoOk;
 
-  const actual = { matched_count: matchedCount, total_calls: totalCalls, missing_payload_paths: missingPayloadPaths, identifier_echo_failures: identifierEchoFailures };
+  // Per spec: a payload_must_contain assertion whose ONLY checks were
+  // path-based against non-JSON content_types grades not_applicable. When
+  // EVERY declared path landed in that bucket (and count + echo also
+  // passed), the whole validation grades not_applicable rather than passed.
+  const allPathsNotApplicable =
+    (validation.payload_must_contain?.length ?? 0) > 0 &&
+    notApplicablePaths.length === (validation.payload_must_contain?.length ?? 0) &&
+    missingPayloadPaths.length === 0;
+  const not_applicable = passed && allPathsNotApplicable && countOk && echoOk;
+
+  const actual = { matched_count: matchedCount, total_calls: totalCalls, missing_payload_paths: missingPayloadPaths, missing_identifier_values: missingIdentifierValues };
 
   // RFC 6901 pointer: when one specific call's payload failed
   // payload_must_contain, point at that call's payload; null when the
@@ -2289,6 +2349,10 @@ function validateUpstreamTraffic(validation: StoryboardValidation, ctx: Validati
     return {
       check: 'upstream_traffic',
       passed: true,
+      ...(not_applicable && { not_applicable: true }),
+      ...(not_applicable && {
+        note: `payload_must_contain paths only matched non-JSON content_types — graded not_applicable`,
+      }),
       description: validation.description,
       json_pointer: null,
       expected,
@@ -2301,7 +2365,7 @@ function validateUpstreamTraffic(validation: StoryboardValidation, ctx: Validati
   const errParts: string[] = [];
   if (!countOk) errParts.push(`expected at least ${minCount} matching call(s); observed ${matchedCount}`);
   if (!payloadOk) errParts.push(`missing payload paths: ${missingPayloadPaths.join(', ')}`);
-  if (!echoOk) errParts.push(`buyer-identifier vectors not echoed: ${identifierEchoFailures.join(', ')}`);
+  if (!echoOk) errParts.push(`identifier values not echoed: ${missingIdentifierValues.map(v => JSON.stringify(v)).join(', ')}`);
 
   return {
     check: 'upstream_traffic',
@@ -2318,13 +2382,27 @@ function validateUpstreamTraffic(validation: StoryboardValidation, ctx: Validati
   };
 }
 
+/**
+ * Cap on agent / controller-controlled error strings inlined into a
+ * `validation_result.error` field. Mirrors the runner's `MAX_ERROR_LENGTH`
+ * posture so a hostile or buggy controller can't bloat the compliance
+ * report (or LLM context window) by returning a megabyte error message.
+ */
+const VALIDATION_ERROR_MAX_LENGTH = 2000;
+
+function truncateValidationError(s: string): string {
+  return s.length > VALIDATION_ERROR_MAX_LENGTH
+    ? s.slice(0, VALIDATION_ERROR_MAX_LENGTH) + '...[truncated]'
+    : s;
+}
+
 function buildUpstreamTrafficExpected(validation: StoryboardValidation): Record<string, unknown> {
   const expected: Record<string, unknown> = {};
   if (validation.min_count !== undefined) expected.min_count = validation.min_count;
   else expected.min_count = 1;
   if (validation.endpoint_pattern !== undefined) expected.endpoint_pattern = validation.endpoint_pattern;
   if (validation.payload_must_contain !== undefined) expected.payload_must_contain = validation.payload_must_contain;
-  if (validation.buyer_identifier_echo !== undefined) expected.buyer_identifier_echo = validation.buyer_identifier_echo;
+  if (validation.identifier_paths !== undefined) expected.identifier_paths = validation.identifier_paths;
   return expected;
 }
 
@@ -2341,46 +2419,103 @@ function filterByEndpointPattern(calls: RecordedCall[], pattern: string | undefi
 }
 
 function globToRegExp(pattern: string): RegExp {
-  const escaped = pattern.replace(/[.+^${}()|[\]\\]/g, '\\$&').replace(/\*/g, '.*');
+  // Escape every regex metacharacter (including `?` so it doesn't slip
+  // through as a 0-or-1 quantifier), then map `*` to `.*` as the only
+  // intended wildcard.
+  const escaped = pattern.replace(/[.+?^${}()|[\]\\]/g, '\\$&').replace(/\*/g, '.*');
   return new RegExp(`^${escaped}$`);
 }
 
 /**
- * Returns true when at least one matched call's payload satisfies the
- * `payload_must_contain` predicate. JSONPath-lite: only `$.<path>` and
- * `$..<key>` shapes are supported; richer JSONPath features fall through
- * to a recursive any-depth match for the trailing key.
+ * Returns whether at least one matched call's payload satisfies the
+ * `payload_must_contain` predicate, plus a flag indicating the assertion
+ * graded `not_applicable` (every matched call was non-JSON and the spec
+ * required JSONPath path-based matching). Per spec PR adcp#3816:
+ *   - JSONPath path-based matching is valid ONLY when `content_type` is
+ *     `application/json` or `*+json`.
+ *   - Non-JSON calls + `match: present`: substring fallback. The terminal
+ *     identifier segment of the path is the substring searched against the
+ *     raw payload string (e.g. `users[*].hashed_email` → `hashed_email`).
+ *   - Non-JSON calls + `match: equals` / `contains_any`: skipped (cannot
+ *     resolve a path-based equality without a structured payload).
+ *
+ * Path syntax is dotted-with-`[*]` only; RFC 9535 descendant operator
+ * (`$..foo`) is explicitly NOT supported per the storyboard-schema patch.
  */
-function anyMatchedCallSatisfies(calls: RecordedCall[], spec: UpstreamTrafficPayloadMatch): boolean {
+function anyMatchedCallSatisfies(
+  calls: RecordedCall[],
+  spec: UpstreamTrafficPayloadMatch
+): { satisfied: boolean; not_applicable: boolean } {
+  let sawApplicableCall = false;
   for (const call of calls) {
-    const candidates = resolveJsonPathLite(call.payload, spec.path);
-    if (candidates.length === 0) continue;
-    if (spec.match === 'present') return true;
-    if (spec.match === 'equals') {
-      if (candidates.some(v => deepEqual(v, spec.value))) return true;
-    } else if (spec.match === 'contains_any') {
-      const allowed = spec.allowed_values ?? [];
-      if (candidates.some(v => allowed.some(a => deepEqual(v, a)))) return true;
+    const isJson = isJsonContentType(call.content_type);
+    if (spec.match === 'present') {
+      // present is applicable to every call — JSON via path, non-JSON via
+      // substring fallback. Either way, the assertion can be graded.
+      sawApplicableCall = true;
+      if (isJson) {
+        const candidates = resolveJsonPathLite(call.payload, spec.path);
+        if (candidates.length > 0) return { satisfied: true, not_applicable: false };
+      } else {
+        const raw = typeof call.payload === 'string' ? call.payload : JSON.stringify(call.payload);
+        const needle = terminalPathKey(spec.path);
+        if (needle && raw.includes(needle)) return { satisfied: true, not_applicable: false };
+      }
+    } else {
+      // equals / contains_any require JSON — non-JSON calls don't contribute.
+      if (!isJson) continue;
+      sawApplicableCall = true;
+      const candidates = resolveJsonPathLite(call.payload, spec.path);
+      if (candidates.length === 0) continue;
+      if (spec.match === 'equals') {
+        if (candidates.some(v => deepEqual(v, spec.value))) return { satisfied: true, not_applicable: false };
+      } else if (spec.match === 'contains_any') {
+        const allowed = spec.allowed_values ?? [];
+        if (candidates.some(v => allowed.some(a => deepEqual(v, a)))) return { satisfied: true, not_applicable: false };
+      }
     }
   }
-  return false;
+  return { satisfied: false, not_applicable: !sawApplicableCall };
 }
 
+/**
+ * Extract the terminal identifier-shaped segment of a dotted-with-`[*]`
+ * path. Used as the substring-fallback needle when a non-JSON payload is
+ * graded against `match: present`. Returns null if the path has no
+ * alpha-leading terminal token.
+ */
+function terminalPathKey(path: string): string | null {
+  const tokens = path.split(/[.\[\]]/).filter(Boolean);
+  for (let i = tokens.length - 1; i >= 0; i--) {
+    const t = tokens[i]!;
+    if (/^[A-Za-z_][A-Za-z0-9_]*$/.test(t)) return t;
+  }
+  return null;
+}
+
+/**
+ * JSONPath-lite resolver — dotted-with-`[*]` form only, per spec PR
+ * adcp#3816's pin to `parsePathWithWildcards` semantics. RFC 9535
+ * descendant operator (`$..foo`) is explicitly NOT supported. A leading
+ * `$.` / `$` prefix is tolerated and stripped; the canonical form authors
+ * are encouraged to write is the bare positional path.
+ */
 function resolveJsonPathLite(root: unknown, path: string): unknown[] {
   if (!path) return [];
-  // $.foo.bar.baz → walk literal keys; $..key → any-depth key
-  if (path.startsWith('$..')) {
-    const key = path.slice(3);
-    return collectByKeyAnyDepth(root, key);
-  }
   let p = path;
   if (p.startsWith('$.')) p = p.slice(2);
   else if (p.startsWith('$')) p = p.slice(1);
-  // Strip leading dot if any
   if (p.startsWith('.')) p = p.slice(1);
-  // Support trailing `[*]` fan-out tokens by routing through resolvePathAll-style glob
   return walkLitePath(root, p);
 }
+
+/**
+ * Cap on the number of terminal values JSONPath-lite emission can produce
+ * across all wildcard fan-out, defending the runner against a hostile
+ * `recorded_calls[].payload` shaped to maximize fan-out. Mirrors the
+ * existing `RESOLVE_PATH_ALL_MAX` cap in path.ts.
+ */
+const JSONPATH_LITE_MAX_RESULTS = 10_000;
 
 function walkLitePath(root: unknown, path: string): unknown[] {
   if (path === '') return root === undefined ? [] : [root];
@@ -2391,6 +2526,7 @@ function walkLitePath(root: unknown, path: string): unknown[] {
     const token = rawToken.startsWith('.') ? rawToken.slice(1) : rawToken;
     const next: unknown[] = [];
     for (const cur of frontier) {
+      if (next.length >= JSONPATH_LITE_MAX_RESULTS) break;
       if (cur === undefined || cur === null) continue;
       if (token === '[*]') {
         if (Array.isArray(cur)) next.push(...cur);
@@ -2409,81 +2545,42 @@ function walkLitePath(root: unknown, path: string): unknown[] {
         next.push((cur as Record<string, unknown>)[token]);
       }
     }
-    frontier = next.filter(v => v !== undefined);
+    frontier = next.slice(0, JSONPATH_LITE_MAX_RESULTS).filter(v => v !== undefined);
   }
   return frontier;
 }
 
-function collectByKeyAnyDepth(root: unknown, key: string): unknown[] {
-  const out: unknown[] = [];
-  const walk = (v: unknown): void => {
-    if (v === null || v === undefined) return;
-    if (Array.isArray(v)) {
-      for (const item of v) walk(item);
-      return;
-    }
-    if (typeof v === 'object') {
-      for (const [k, child] of Object.entries(v as Record<string, unknown>)) {
-        if (k === key) out.push(child);
-        walk(child);
-      }
-    }
-  };
-  walk(root);
-  return out;
-}
-
 /**
- * Buyer-identifier-echo: collect every leaf value from the storyboard's
- * `sample_request` whose key OR value matches a hashed-identifier or
- * buyer-key shape. Placeholder constants don't match the storyboard's
- * supplied vectors — that's the strongest single anti-façade signal.
+ * Depth cap for any-depth value containment check. Defends the runner
+ * against a hostile `recorded_calls[].payload` shaped as a 100k-deep
+ * nested object that would blow the recursion stack.
  */
-function collectBuyerIdentifierVectors(sampleRequest: Record<string, unknown> | undefined): unknown[] {
-  if (!sampleRequest) return [];
-  const out: unknown[] = [];
-  const seen = new Set<string>();
-  const walk = (v: unknown, key?: string): void => {
-    if (v === null || v === undefined) return;
-    if (Array.isArray(v)) {
-      for (const item of v) walk(item, key);
-      return;
-    }
-    if (typeof v === 'object') {
-      for (const [k, child] of Object.entries(v as Record<string, unknown>)) walk(child, k);
-      return;
-    }
-    if (typeof v === 'string' && key && BUYER_IDENTIFIER_KEY_RE.test(key)) {
-      const sig = `${key}:${v}`;
-      if (!seen.has(sig)) {
-        seen.add(sig);
-        out.push(v);
-      }
-    }
-  };
-  walk(sampleRequest);
-  return out;
-}
-
-const BUYER_IDENTIFIER_KEY_RE =
-  /^(hashed_email|hashed_phone|hashed_[a-z_]+|external_id|buyer_(id|key)|advertiser_id|user_id|customer_id|external_user_id|maid|idfa|gaid)$/i;
+const CONTAINS_VALUE_MAX_DEPTH = 256;
 
 function anyMatchedCallEchoesValue(calls: RecordedCall[], value: unknown): boolean {
   for (const call of calls) {
-    if (containsValueAnyDepth(call.payload, value)) return true;
+    // Non-JSON payloads land as raw strings — substring-match the
+    // stringified vector. Defensible best-effort downgrade per the spec's
+    // non-JSON fallback note.
+    if (typeof call.payload === 'string') {
+      if (typeof value === 'string' && call.payload.includes(value)) return true;
+      continue;
+    }
+    if (containsValueAnyDepth(call.payload, value, 0)) return true;
   }
   return false;
 }
 
-function containsValueAnyDepth(root: unknown, target: unknown): boolean {
+function containsValueAnyDepth(root: unknown, target: unknown, depth: number): boolean {
+  if (depth > CONTAINS_VALUE_MAX_DEPTH) return false;
   if (deepEqual(root, target)) return true;
   if (Array.isArray(root)) {
-    for (const item of root) if (containsValueAnyDepth(item, target)) return true;
+    for (const item of root) if (containsValueAnyDepth(item, target, depth + 1)) return true;
     return false;
   }
   if (root !== null && typeof root === 'object') {
     for (const v of Object.values(root as Record<string, unknown>)) {
-      if (containsValueAnyDepth(v, target)) return true;
+      if (containsValueAnyDepth(v, target, depth + 1)) return true;
     }
   }
   return false;

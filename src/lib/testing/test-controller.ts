@@ -218,10 +218,31 @@ export interface RecordedCall {
   url: string;
   host?: string;
   path?: string;
+  /**
+   * Media type of the recorded `payload`, mirroring the agent's outbound
+   * `Content-Type` header. Required by the spec so the runner picks the
+   * right matcher deterministically: `payload_must_contain` JSONPath is
+   * valid only when this is `application/json` or `*+json`. Non-JSON
+   * payloads fall back to substring matching for `match: present` and
+   * grade `not_applicable` for `match: equals` / `match: contains_any`.
+   */
+  content_type: string;
+  /** Decoded JSON object when content_type is JSON-shaped; raw string otherwise. */
   payload: unknown;
   timestamp: string;
   status_code?: number;
   [key: string]: unknown;
+}
+
+/**
+ * Per spec PR adcontextprotocol/adcp#3816: `payload_must_contain` JSONPath
+ * is valid only when `content_type` is `application/json` or has a `+json`
+ * suffix.
+ */
+export function isJsonContentType(contentType: string | undefined): boolean {
+  if (!contentType) return false;
+  const base = contentType.split(';')[0]?.trim().toLowerCase() ?? '';
+  return base === 'application/json' || /\+json$/.test(base);
 }
 
 export interface UpstreamTrafficSuccess {

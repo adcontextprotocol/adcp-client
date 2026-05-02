@@ -661,13 +661,17 @@ export interface StoryboardValidation {
    */
   payload_must_contain?: UpstreamTrafficPayloadMatch[];
   /**
-   * Shorthand: any value from the storyboard's `sample_request` that
-   * matches a hashed-identifier or buyer-key shape MUST appear in at
-   * least one matching call's payload at any depth. The strongest single
-   * anti-façade signal — placeholder constants won't match the
-   * storyboard's vectors.
+   * Paths into the storyboard's `sample_request` that name the load-bearing
+   * identifiers the adapter MUST forward upstream. The runner extracts the
+   * values at these paths and asserts each resolved value appears in at
+   * least one matching `recorded_call`'s payload at any depth. Each path
+   * MAY resolve to a single value or an array; ALL resolved values MUST be
+   * present in the recorded payload — single-placeholder fabrication is
+   * the threat model. Path syntax: same dotted-with-`[*]` form as
+   * `payload_must_contain.path`. Per spec PR adcontextprotocol/adcp#3816,
+   * replaces the earlier `buyer_identifier_echo: boolean` shorthand.
    */
-  buyer_identifier_echo?: boolean;
+  identifier_paths?: string[];
   /**
    * Bound the lookup window to traffic recorded since this step's request
    * timestamp (default) or since the request timestamp of `prior_step_id`
