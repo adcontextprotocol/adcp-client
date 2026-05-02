@@ -138,6 +138,42 @@ describe('agent-routing: protocol index + conflict detection', () => {
   });
 });
 
+describe('agent-routing: per-agent options isolation', () => {
+  // Regression: `_profile` and `agentTools` are run-scoped fields that
+  // comply() pre-populates from a single-tenant probe. If they leak into
+  // per-agent discovery views, `getOrDiscoverProfile` short-circuits to
+  // the cached profile instead of probing the real tenant — silently
+  // breaking the protocol-claim index. The fix lives in
+  // `buildAgentOptions` (agent-routing.ts); the test below pins the
+  // contract by exercising `buildRoutingContextFromProfiles` with
+  // distinct per-agent profiles and asserting routing reflects them.
+  test('per-agent profiles drive routing even when run-level _profile is set', () => {
+    const profiles = new Map([
+      ['signals', makeProfile(['signal-marketplace'], ['signals'], ['get_signals'])],
+      ['sales', makeProfile(['sales-non-guaranteed'], ['media_buy'], ['create_media_buy'])],
+    ]);
+    const storyboard = makeStoryboard([
+      { id: 's1', title: 't', task: 'get_signals' },
+      { id: 's2', title: 't', task: 'create_media_buy' },
+    ]);
+    // Simulate comply() priming run-level _profile with the sales tenant's profile.
+    const options = {
+      _profile: profiles.get('sales'),
+      agentTools: ['create_media_buy'],
+      agents: {
+        signals: { url: 'https://signals.example/mcp' },
+        sales: { url: 'https://sales.example/mcp' },
+      },
+    };
+    const ctx = buildRoutingContextFromProfiles(storyboard, options, profiles);
+    // If _profile leaked, signals would route to sales (because routing's
+    // index would only see one merged profile). With the leak fixed,
+    // each agent's distinct supported_protocols drives the index.
+    assert.strictEqual(resolveAgentForStep(storyboard.phases[0].steps[0], options, ctx), 'signals');
+    assert.strictEqual(resolveAgentForStep(storyboard.phases[0].steps[1], options, ctx), 'sales');
+  });
+});
+
 describe('runStoryboard entry guards for `agents` map', () => {
   const okStoryboard = makeStoryboard([{ id: 's1', title: 't', task: 'get_signals' }]);
 

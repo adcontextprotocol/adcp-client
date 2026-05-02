@@ -40,9 +40,18 @@ function buildAgentOptions(entry: AgentEntry, options: StoryboardRunOptions): St
     ...options,
     auth: entry.auth ?? options.auth,
     protocol: entry.transport ?? options.protocol,
-    // _client and agents are run-scoped; never inherit into per-agent views.
+    // _client, _profile, and agents are run-scoped — never inherit into
+    // per-agent views. `_profile` is the load-bearing one: when comply()
+    // sets it on the run-level options, `getOrDiscoverProfile` (`client.ts`)
+    // short-circuits to that cached profile and skips the actual probe.
+    // Without this clear, every per-agent discovery would return
+    // comply()'s primary-tenant profile instead of probing the real
+    // tenant — silently breaking the protocol-claim index that routing
+    // depends on.
     _client: undefined,
+    _profile: undefined,
     agents: undefined,
+    agentTools: undefined,
   };
 }
 
