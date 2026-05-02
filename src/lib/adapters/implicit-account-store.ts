@@ -54,6 +54,17 @@ export function defaultImplicitKeyFn(authInfo: ResolvedAuthInfo): string | undef
   }
 }
 
+// Natural key for a ref — used to detect re-syncs of the same
+// (brand, operator, sandbox) tuple so upsert() can return 'unchanged'
+// without calling buildAccount again (which may be non-deterministic).
+function refNaturalKey(ref: AccountReference): string {
+  const r = ref as Record<string, unknown>;
+  const domain = (r['brand'] as Record<string, unknown> | undefined)?.['domain'] as string | undefined;
+  const operator = r['operator'] as string | undefined;
+  const sandbox = Boolean(r['sandbox'] as boolean | undefined);
+  return `${domain ?? ''}|${operator ?? ''}|${sandbox ? '1' : '0'}`;
+}
+
 // ---------------------------------------------------------------------------
 // Store interface
 // ---------------------------------------------------------------------------
@@ -132,6 +143,7 @@ function defaultBuildAccount<TCtxMeta>(
 
 interface StoredEntry<TCtxMeta> {
   accounts: Account<TCtxMeta>[];
+  refs: AccountReference[];
   storedAt: number;
 }
 
@@ -265,13 +277,54 @@ export class InMemoryImplicitAccountStore<TCtxMeta = Record<string, unknown>> im
       });
     }
 
-    const accounts: Account<TCtxMeta>[] = [];
+    // Build a natural-key index from any existing stored entry so we can
+    // detect re-syncs of the same (brand, operator, sandbox) tuple.
+    const existing = this._store.get(key);
+    const existingByNk = new Map<string, { account: Account<TCtxMeta>; ref: AccountReference }>();
+    if (existing) {
+      for (let i = 0; i < existing.refs.length; i++) {
+        existingByNk.set(refNaturalKey(existing.refs[i]!), {
+          account: existing.accounts[i]!,
+          ref: existing.refs[i]!,
+        });
+      }
+    }
+
+    const newAccounts: Account<TCtxMeta>[] = [];
+    const newRefs: AccountReference[] = [];
     const rows: SyncAccountsResultRow[] = [];
 
     for (const ref of refs) {
+      const nk = refNaturalKey(ref);
+      const hit = existingByNk.get(nk);
+      if (hit) {
+        // Re-sync of the same (brand, operator, sandbox) — preserve the
+        // original account_id without calling buildAccount again so adopters
+        // with non-deterministic resolvers (upstream API calls, DB writes)
+        // don't accumulate duplicate ids on replay.
+        newAccounts.push(hit.account);
+        newRefs.push(hit.ref);
+        const r = ref as Record<string, unknown>;
+        const brand: BrandReference =
+          hit.account.brand ??
+          (r['brand'] as BrandReference | undefined) ??
+          ({ domain: hit.account.id } as BrandReference);
+        const operator = hit.account.operator ?? (r['operator'] as string | undefined) ?? '';
+        rows.push({
+          account_id: hit.account.id,
+          brand,
+          operator,
+          name: hit.account.name,
+          action: 'unchanged',
+          status: hit.account.status,
+        });
+        continue;
+      }
+
       try {
         const account = await this._buildAccount(ref, ctx);
-        accounts.push(account);
+        newAccounts.push(account);
+        newRefs.push(ref);
         const r = ref as Record<string, unknown>;
         const brand: BrandReference =
           account.brand ?? (r['brand'] as BrandReference | undefined) ?? ({ domain: account.id } as BrandReference);
@@ -300,12 +353,11 @@ export class InMemoryImplicitAccountStore<TCtxMeta = Record<string, unknown>> im
       }
     }
 
-    // Only overwrite a previously-valid entry when at least one account was
-    // successfully built. An all-fail batch (every buildAccount threw) leaves
-    // the prior sync linkage intact so the buyer can retry without losing
-    // their existing account mapping.
-    if (accounts.length > 0) {
-      this._store.set(key, { accounts, storedAt: Date.now() });
+    // Only update the stored entry when at least one ref resolved successfully
+    // (either 'unchanged' or 'created'). An all-fail batch leaves the prior
+    // sync linkage intact so the buyer can retry without losing their mapping.
+    if (newAccounts.length > 0) {
+      this._store.set(key, { accounts: newAccounts, refs: newRefs, storedAt: Date.now() });
     }
     return rows;
   }
