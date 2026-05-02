@@ -1158,6 +1158,148 @@ export function filterDuplicateTypeDefinitions(typeDefinitions: string, generate
 }
 
 /**
+ * Some `Foo1` artifacts survive `removeNumberedTypeDuplicates` because their bodies
+ * are not byte-identical to `Foo` — `json-schema-to-typescript` under-resolves the
+ * second compile pass on certain shapes, dropping properties or wrappers the first
+ * pass preserved. Examples (AdCP 3.0.4):
+ *
+ *   VASTAsset      = { asset_type: 'vast'; …metadata… } & ({delivery_type:'url',url} | {delivery_type:'inline',content})
+ *   VASTAsset1     = ({delivery_type:'url',url} | {delivery_type:'inline',content})           ← lost asset_type wrapper
+ *
+ *   BriefAsset     = CreativeBrief & { asset_type: 'brief' }
+ *   BriefAsset1    = CreativeBrief                                                            ← lost asset_type discriminator
+ *
+ *   AssetVariant   = ImageAsset | … | VASTAsset | … | BriefAsset | CatalogAsset
+ *   AssetVariant1  = ImageAsset | … | VASTAsset1 | … | BriefAsset1 | CatalogAsset1            ← references the under-resolved variants
+ *
+ * The spec converged these via `core/assets/asset-union.json` (adcp#3462) — both
+ * `creative-asset.json` and `creative-manifest.json` `$ref` the same union. The
+ * bundler inlines both occurrences though, so jsts sees two anonymous-but-identically-
+ * titled shapes and emits Foo / Foo1.
+ *
+ * Rewriting each `Foo1` as `type Foo1 = Foo` is type-level safe: the bundled
+ * response carries `asset_type` correctly at runtime; the under-resolved TS type
+ * was strictly weaker than the wire format. The alias gives consumers the
+ * correctly-discriminated shape; `@deprecated` JSDoc surfaces the canonical name.
+ *
+ * Tracked: adcp-client#1264.
+ */
+const JSTS_UNDER_RESOLUTION_ALIASES: Array<{ numbered: string; base: string }> = [
+  { numbered: 'VASTAsset1', base: 'VASTAsset' },
+  { numbered: 'DAASTAsset1', base: 'DAASTAsset' },
+  { numbered: 'BriefAsset1', base: 'BriefAsset' },
+  { numbered: 'CatalogAsset1', base: 'CatalogAsset' },
+  { numbered: 'AssetVariant1', base: 'AssetVariant' },
+  { numbered: 'CreativeAsset1', base: 'CreativeAsset' },
+];
+
+export function applyKnownJstsAliases(typeDefinitions: string): string {
+  const lines = typeDefinitions.split('\n');
+  const targetNames = new Set(JSTS_UNDER_RESOLUTION_ALIASES.map(a => a.numbered));
+  const baseByNumbered = new Map(JSTS_UNDER_RESOLUTION_ALIASES.map(a => [a.numbered, a.base]));
+  const aliasedNames = new Set<string>();
+
+  const outputLines: string[] = [];
+  let i = 0;
+
+  while (i < lines.length) {
+    const line = lines[i];
+    const typeMatch = line.match(/^export (?:type|interface) (\w+)\b/);
+
+    if (!typeMatch || !targetNames.has(typeMatch[1])) {
+      outputLines.push(line);
+      i++;
+      continue;
+    }
+
+    // Found a target — locate the end of the block (brace-balanced for
+    // interfaces; first `;` at brace+paren depth 0 for unions/intersections/
+    // aliases) BEFORE swallowing the leading JSDoc, so a defensive bail
+    // (terminator not found) leaves the original prose intact.
+    const numbered = typeMatch[1];
+    const base = baseByNumbered.get(numbered)!;
+
+    let braceDepth = 0;
+    let parenDepth = 0;
+    let endIdx = i;
+    let foundTerminator = false;
+    for (let j = i; j < lines.length; j++) {
+      const cur = lines[j];
+      for (const ch of cur) {
+        if (ch === '{') braceDepth++;
+        else if (ch === '}') braceDepth--;
+        else if (ch === '(') parenDepth++;
+        else if (ch === ')') parenDepth--;
+      }
+      // Interface block: ends at the line that closes braceDepth back to 0.
+      // Type alias block: first `;` at brace+paren depth 0 ends it. Skip lines
+      // that are JSDoc continuations (`*`-prefixed) so a `;` inside a comment
+      // doesn't terminate the block early.
+      const trimmed = cur.trimStart();
+      const isJsdocLine = trimmed.startsWith('*') || trimmed.startsWith('/*');
+      if (line.startsWith('export interface')) {
+        if (braceDepth === 0 && j > i) {
+          endIdx = j;
+          foundTerminator = true;
+          break;
+        }
+      } else {
+        if (!isJsdocLine && cur.includes(';') && braceDepth === 0 && parenDepth === 0) {
+          endIdx = j;
+          foundTerminator = true;
+          break;
+        }
+      }
+    }
+
+    if (!foundTerminator) {
+      // Defensive: if we can't find the end, leave the block intact
+      outputLines.push(line);
+      i++;
+      continue;
+    }
+
+    // Now that we've confirmed we'll rewrite this block, swallow any preceding
+    // JSDoc lines from outputLines so the new alias's JSDoc replaces them.
+    while (
+      outputLines.length > 0 &&
+      (outputLines[outputLines.length - 1].trimStart().startsWith('*') ||
+        outputLines[outputLines.length - 1].trimStart().startsWith('/**') ||
+        outputLines[outputLines.length - 1].trim() === '')
+    ) {
+      outputLines.pop();
+    }
+
+    outputLines.push(
+      '/**',
+      ` * Re-export of \`${base}\` under the legacy codegen artifact name.`,
+      ' *',
+      ` * \`${numbered}\` is a json-schema-to-typescript under-resolution artifact —`,
+      ` * the bundler inlined the same schema at two call sites and jsts emitted a numbered`,
+      ` * sibling. The body it produced was strictly weaker than \`${base}\` (missing the`,
+      ` * \`asset_type\` discriminator or its containing wrapper); aliasing to \`${base}\``,
+      ' * gives consumers the correctly-discriminated shape that matches the wire format.',
+      ' *',
+      ` * @deprecated Use \`${base}\` from \`@adcp/sdk/types\`. Slated for removal in the next major.`,
+      ' */',
+      `export type ${numbered} = ${base};`
+    );
+    aliasedNames.add(numbered);
+    i = endIdx + 1;
+  }
+
+  if (aliasedNames.size > 0) {
+    console.log(
+      `🔀 Aliased ${aliasedNames.size} jsts under-resolution artifact(s): ${[...aliasedNames]
+        .map(n => `${n}→${baseByNumbered.get(n)}`)
+        .join(', ')}`
+    );
+  }
+
+  return outputLines.join('\n');
+}
+
+/**
  * Convert method name to proper type name, preserving acronyms.
  * Examples:
  *   siGetOffering -> SIGetOffering
@@ -1645,9 +1787,11 @@ async function generateTypes() {
   const coreTypesPath = path.join(libOutputDir, 'core.generated.ts');
   // Strip inline index-signature arms first so numbered-duplicate detection compares
   // clean bodies (without the { [k: string]: unknown } intersection arms that only appear
-  // on some compile passes of the same schema).
+  // on some compile passes of the same schema). After byte-identity dedupe, alias the
+  // residual jsts under-resolution artifacts (*Asset1, AssetVariant1, CreativeAsset1) —
+  // see applyKnownJstsAliases for the rationale.
   const processedCoreTypes = fixTypedIndexSignatures(
-    removeNumberedTypeDuplicates(removeIndexSignatureTypes(coreTypes))
+    applyKnownJstsAliases(removeNumberedTypeDuplicates(removeIndexSignatureTypes(coreTypes)))
   );
   const coreChanged = writeFileIfChanged(coreTypesPath, processedCoreTypes);
 
