@@ -1,3 +1,5 @@
+import type { DimensionUnit } from '../types/core.generated';
+
 // Typed factory helpers for `Format.renders[]` entries (format declarations
 // returned by `list_creative_formats`).
 //
@@ -22,33 +24,29 @@
 // responses). The two are unrelated and use separate namespace exports
 // (`FormatRender` vs `Render`) to prevent name collision.
 
-import type { Format } from '../types/tools.generated';
-
-/**
- * Item type of `Format.renders[]` — discriminated union of the dimensions
- * branch and the parameters_from_format_id branch. Adopters typing a
- * `renders[]` field by hand can write `FormatRenderItem[]` for the array
- * element type without reaching into `Format` themselves.
- */
-export type FormatRenderItem = NonNullable<Format['renders']>[number];
-
-/**
- * Dimensions branch of {@link FormatRenderItem} — extracted by the
- * presence of a required `dimensions` property. Adopters reading a
- * narrowed render after a discriminator check (`'dimensions' in render`)
- * use this for the static type.
- */
-export type DimensionsRender = Extract<FormatRenderItem, { dimensions: unknown }>;
-
-/**
- * Parameterized branch of {@link FormatRenderItem} — extracted by the
- * `parameters_from_format_id: true` discriminator. Audio formats and
- * template formats whose dimensions/duration come from `accepts_parameters`.
- */
-export type ParameterizedRender = Extract<FormatRenderItem, { parameters_from_format_id: true }>;
-
 /** Dimensions sub-object — shared between display and video formats. */
-export type RenderDimensions = DimensionsRender['dimensions'];
+export interface RenderDimensions {
+  width: number;
+  height: number;
+  /** Unit defaults to pixels. Set explicitly for non-pixel formats (e.g. DOOH physical dimensions). */
+  unit?: DimensionUnit;
+}
+
+/** Fixed-dimensions render — display banners, video placements, any format with a known W×H. */
+export interface DimensionsRender {
+  role: string;
+  dimensions: RenderDimensions;
+}
+
+/**
+ * Parameterized render — format carries its render spec in the format_id
+ * parameters. Required for audio formats (no W×H) and for template formats
+ * whose dimensions/duration are caller-chosen via `accepts_parameters`.
+ */
+export interface ParameterizedRender {
+  role: string;
+  parameters_from_format_id: true;
+}
 
 /**
  * Build a fixed-dimensions render entry. Use for display banners, video ads,
@@ -58,7 +56,7 @@ export type RenderDimensions = DimensionsRender['dimensions'];
  *   displayRender({ role: 'primary', dimensions: { width: 300, height: 250 } })
  */
 export function displayRender(fields: { role: string; dimensions: RenderDimensions }): DimensionsRender {
-  return { role: fields.role, dimensions: fields.dimensions } as DimensionsRender;
+  return { role: fields.role, dimensions: fields.dimensions };
 }
 
 /**

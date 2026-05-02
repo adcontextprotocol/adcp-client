@@ -37,9 +37,10 @@
  * `tasks/get` wire handler, per-server + module-level `publishStatusChange`.
  *
  * **Still deferred (rc.1+):** MCP Resources subscription projection for
- * `publishStatusChange`; `resolveAccount(undefined, { authInfo, toolName })`
- * refactor for `provide_performance_feedback` / `list_creative_formats`
- * no-account path in `'explicit'`-mode adopters (see `SalesPlatform` JSDoc).
+ * `publishStatusChange`. The no-account tool surface (`preview_creative`,
+ * `list_creative_formats`, `provide_performance_feedback`) is now typed
+ * via `NoAccountCtx<TCtxMeta>` — handlers receive `ctx.account: Account |
+ * undefined` and must narrow before reading `ctx_metadata`.
  *
  * Status: Preview / 6.0. Not yet exported from the public `./server`
  * subpath; reach in via `@adcp/sdk/server/decisioning/runtime` for
@@ -97,6 +98,7 @@ import { pgBackend, getIdempotencyMigration } from '../../idempotency/backends/p
 import { createPostgresTaskRegistry, getDecisioningTaskRegistryMigration } from './postgres-task-registry';
 import type { PgQueryable } from '../../postgres-task-store';
 import { isTaskHandoff, _extractTaskFn, type TaskHandoff } from '../async-outcome';
+import { TOOL_ENTITY_FIELDS } from './entity-hydration.generated';
 import { z } from 'zod';
 import { createInMemoryTaskRegistry, type TaskRegistry, type TaskRecord, type TaskStatus } from './task-registry';
 import { protocolForTool, SPEC_WEBHOOK_TASK_TYPES } from './protocol-for-tool';
@@ -1081,9 +1083,9 @@ export function createAdcpServerFromPlatform<P extends DecisioningPlatform<any, 
     },
     // Merge: platform-derived handlers WIN per-key over adopter-supplied
     // custom handlers. Adopter handlers fill gaps for tools the v6 platform
-    // doesn't yet model (getMediaBuys, listCreativeFormats, content-standards
-    // CRUD, sync_event_sources, etc.). See `CreateAdcpServerFromPlatformOptions`
-    // JSDoc for the migration-seam contract.
+    // doesn't yet model (content-standards CRUD, sync_event_sources, etc.).
+    // See `CreateAdcpServerFromPlatformOptions` JSDoc for the migration-seam
+    // contract.
     mediaBuy: mergeHandlers(
       opts.mediaBuy,
       buildMediaBuyHandlers(
@@ -2559,6 +2561,138 @@ async function hydrateSingleResource(
 }
 
 /**
+ * Spec `x-entity` annotation → SDK `ResourceKind`. The SDK only hydrates
+ * resource kinds it has a backing store for; unmapped entities (e.g.
+ * `vendor_pricing_option`, `governance_plan`) are gracefully skipped.
+ *
+ * The annotation acts as a renaming-firewall: if the spec renames
+ * `media_buy_id` → `mediabuy_id`, the `x-entity: "media_buy"` tag travels
+ * with the field and the codegen step in `scripts/generate-entity-hydration.ts`
+ * picks up the new field name automatically — no SDK code change required.
+ *
+ * Adding a new `ResourceKind` for hydration is a coordinated change: add
+ * it to `ResourceKind` (in `ctx-metadata/store.ts`) and to this map.
+ */
+/** @internal Exported for the coverage test in `test/lib/x-entity-hydration.test.js`. */
+export const ENTITY_TO_RESOURCE_KIND: Readonly<Record<string, ResourceKind>> = {
+  media_buy: 'media_buy',
+  package: 'package',
+  creative: 'creative',
+  audience: 'audience',
+  // Spec quirk: `signal_activation_id` is a SEPARATE entity from `signal`
+  // (per AdCP `core/x-entity-types.json` — the activation handle is
+  // scoped to the issuing signals agent, not interchangeable with the
+  // catalog's `signal_id`). The SDK collapses them onto the existing
+  // `signal` ResourceKind for backward-compat: adopters already seed
+  // the cache keyed by `signal_agent_segment_id` under `kind: 'signal'`.
+  // Splitting `signal_activation` to its own ResourceKind would orphan
+  // those entries. Tracked upstream — file an `adcp` issue if/when this
+  // collapse causes confusion.
+  signal_activation_id: 'signal',
+  rights_grant: 'rights_grant',
+  property_list: 'property_list',
+  collection_list: 'collection_list',
+  account: 'account',
+  product: 'product',
+};
+
+/**
+ * `x-entity` values the SDK does NOT hydrate today — graceful skip rather
+ * than failure. Entries here are documented intentional skips so a future
+ * code reader can distinguish "we forgot to map this" from "the SDK
+ * doesn't model this kind."
+ *
+ * The codegen-derived `TOOL_ENTITY_FIELDS` map carries every `x-entity`
+ * the spec emits on dispatchable tools (webhook-only payloads like
+ * `creative_approval` are filtered out at codegen time); this allowlist
+ * + `ENTITY_TO_RESOURCE_KIND` together must cover the full set,
+ * enforced by a test (`test/lib/x-entity-hydration.test.js`) that
+ * imports both.
+ *
+ * @internal Exported for the coverage test; not part of the public API.
+ */
+export const INTENTIONALLY_UNHYDRATED_ENTITIES: ReadonlySet<string> = new Set([
+  'vendor_pricing_option', // Scoped to issuing vendor agent; adopters seed pricing context themselves.
+  'governance_plan', // No SDK ResourceKind yet; campaign-governance follow-up.
+  'governance_check', // Transient request envelope; not stored.
+  'event_source', // No SDK ResourceKind yet.
+  'si_session', // Session lifecycle owned by `SponsoredIntelligencePlatform`.
+  'offering', // SI offering catalog; not stored as ctx-metadata.
+  'rights_holder_brand', // Read-through `get_brand_identity`; not separately stored.
+  'advertiser_brand', // Same as above.
+]);
+
+/**
+ * Per-tool, per-field destination property name for hydrated resources.
+ *
+ * The hydrator's default is to derive the destination from the field name
+ * by stripping the `_id` suffix (e.g. `media_buy_id` → attach as
+ * `params.media_buy`). Three cases need explicit overrides because their
+ * historical attach-fields don't match that convention — adopters already
+ * read these in handler code and a rename would be wire-visible behavior:
+ *
+ *   - `acquire_rights.rights_id` → `params.rights` (NOT `rights_grant`).
+ *     Predates the entity-driven hydrator. Kept for backward-compat.
+ *   - `activate_signal.signal_agent_segment_id` → `params.signal`
+ *     (NOT `signal_agent_segment` — `_id` suffix isn't on the boundary
+ *     the convention strips).
+ *   - `update_rights.rights_id` → `params.rights_grant` (NOT `rights`).
+ *     Diverges from `acquire_rights`'s historical `params.rights` because
+ *     the wire payloads model different things — acquire takes an
+ *     offering selection, update modifies an existing grant.
+ *
+ * Other tools either follow the convention (`update_media_buy`,
+ * `provide_performance_feedback`) or don't currently have hydration
+ * registered (the unmapped `x-entity` skips above).
+ */
+const HYDRATION_ATTACH_FIELD_OVERRIDES: Readonly<Record<string, Readonly<Record<string, string>>>> = {
+  acquire_rights: { rights_id: 'rights' },
+  activate_signal: { signal_agent_segment_id: 'signal' },
+  update_rights: { rights_id: 'rights_grant' },
+};
+
+function deriveAttachField(toolName: string, field: string): string {
+  const override = HYDRATION_ATTACH_FIELD_OVERRIDES[toolName]?.[field];
+  if (override) return override;
+  // Default: strip the `_id` suffix so `media_buy_id` → `media_buy`,
+  // `creative_id` → `creative`, etc. This is the convention every existing
+  // hydration call site followed before the schema-driven refactor.
+  return field.endsWith('_id') ? field.slice(0, -3) : field;
+}
+
+/**
+ * Schema-driven auto-hydration for a tool's request payload.
+ *
+ * Walks the codegen-derived `TOOL_ENTITY_FIELDS` table for the named tool,
+ * looks up each spec-tagged identifier on `params`, maps the `x-entity`
+ * annotation to a `ResourceKind`, and attaches the resolved record at the
+ * conventional destination field. Replaces the four hand-rolled
+ * `hydrateSingleResource` call sites that hardcoded `(field_name, kind)`
+ * pairs and were vulnerable to a silent break under a future spec rename
+ * (protocol-expert review of #1086 → tracked as #1109).
+ */
+async function hydrateForTool(
+  store: CtxMetadataStore | undefined,
+  accountId: string | undefined,
+  toolName: string,
+  params: unknown,
+  logger: AdcpLogger
+): Promise<void> {
+  if (!store || !accountId || params == null || typeof params !== 'object') return;
+  const fields = TOOL_ENTITY_FIELDS[toolName];
+  if (!fields || fields.length === 0) return;
+  const paramsRecord = params as Record<string, unknown>;
+  for (const { field, xEntity } of fields) {
+    const id = paramsRecord[field];
+    if (typeof id !== 'string' || id.length === 0) continue;
+    const kind = ENTITY_TO_RESOURCE_KIND[xEntity];
+    if (!kind) continue; // Unknown entity — graceful skip; don't break unknown verbs.
+    const attachField = deriveAttachField(toolName, field);
+    await hydrateSingleResource(store, accountId, kind, id, attachField, params, logger);
+  }
+}
+
+/**
  * Extract the buyer's push-notification webhook config from a request body
  * and validate the URL + token against SSRF / replay primitives.
  *
@@ -2887,16 +3021,8 @@ function buildMediaBuyHandlers<P extends DecisioningPlatform<any, any>>(
         // Auto-hydrate: attach the full MediaBuy (wire shape + ctx_metadata)
         // at `req.media_buy`. Publisher reads `req.media_buy.ctx_metadata?.gam`
         // directly — no separate lookup. Misses are silent; publisher falls
-        // back to its own DB.
-        await hydrateSingleResource(
-          ctxMetadataStore,
-          reqCtx.account?.id,
-          'media_buy',
-          media_buy_id,
-          'media_buy',
-          params,
-          logger
-        );
+        // back to its own DB. Schema-driven via `x-entity` (#1109).
+        await hydrateForTool(ctxMetadataStore, reqCtx.account?.id, 'update_media_buy', params, logger);
         return projectSync(
           async () => {
             const push = extractPushConfig(params, logger, {
@@ -3010,23 +3136,13 @@ function buildMediaBuyHandlers<P extends DecisioningPlatform<any, any>>(
         const reqCtx = ctxFor(ctx);
         // Auto-hydrate `req.media_buy` from the prior createMediaBuy /
         // getMediaBuys store entry, plus `req.creative` when the buyer
-        // scoped feedback to a specific creative. Both fields are optional
-        // hydration targets — adopters who only care about the feedback
-        // payload itself can ignore them.
-        const accountId = reqCtx.account?.id;
-        await hydrateSingleResource(
-          ctxMetadataStore,
-          accountId,
-          'media_buy',
-          (params as { media_buy_id?: string }).media_buy_id,
-          'media_buy',
-          params,
-          logger
-        );
-        const creativeId = (params as { creative_id?: string }).creative_id;
-        if (creativeId) {
-          await hydrateSingleResource(ctxMetadataStore, accountId, 'creative', creativeId, 'creative', params, logger);
-        }
+        // scoped feedback to a specific creative, plus `req.package`
+        // when scoped to a package. All three are optional hydration
+        // targets — adopters who only care about the feedback payload
+        // itself can ignore them. Schema-driven via `x-entity` (#1109);
+        // package hydration is additive vs the prior hardcoded version
+        // (silent no-op when packages aren't seeded).
+        await hydrateForTool(ctxMetadataStore, reqCtx.account?.id, 'provide_performance_feedback', params, logger);
         return projectSync(
           () => sales.providePerformanceFeedback!(params, reqCtx),
           r => r
@@ -3095,12 +3211,6 @@ function buildCreativeHandlers<P extends DecisioningPlatform<any, any>>(
   const creative = platform.creative;
   if (!creative) return undefined;
 
-  // List creative formats — declared optional on both archetypes; only emit
-  // a handler when the adopter actually wired it so we don't shadow the
-  // sales-side registration (mediaBuy domain registers first; first wins).
-  const creativeListCreativeFormats = (creative as CreativeBuilderPlatform | CreativeAdServerPlatform)
-    .listCreativeFormats;
-
   return {
     buildCreative: async (params, ctx) => {
       const reqCtx = ctxFor(ctx);
@@ -3111,15 +3221,38 @@ function buildCreativeHandlers<P extends DecisioningPlatform<any, any>>(
     },
 
     previewCreative: async (params, ctx) => {
-      if (!('previewCreative' in creative)) {
+      if (!('previewCreative' in creative) || (creative as CreativeBuilderPlatform).previewCreative == null) {
         return adcpError('UNSUPPORTED_FEATURE', {
-          message: 'preview_creative not supported by this platform',
+          message:
+            'preview_creative: this creative platform did not implement previewCreative. ' +
+            'Add `previewCreative(req, ctx)` to your CreativeBuilderPlatform / CreativeAdServerPlatform literal.',
         });
       }
       const reqCtx = ctxFor(ctx);
       return projectSync(
         () => (creative as CreativeBuilderPlatform).previewCreative!(params, reqCtx),
         preview => preview
+      );
+    },
+
+    // No-account tool — `list_creative_formats` request schema doesn't carry
+    // `account`. The framework's `resolveAccountFromAuth` runs and accepts a
+    // null return; the platform method receives `ctx.account` possibly
+    // undefined per `NoAccountCtx`. Wired identically on both
+    // `CreativeBuilderPlatform` and `CreativeAdServerPlatform`.
+    listCreativeFormats: async (params, ctx) => {
+      if (!('listCreativeFormats' in creative) || creative.listCreativeFormats == null) {
+        return adcpError('UNSUPPORTED_FEATURE', {
+          message:
+            'list_creative_formats: this creative platform did not implement listCreativeFormats. ' +
+            'Add `listCreativeFormats(req, ctx)` to your CreativeBuilderPlatform / CreativeAdServerPlatform literal, ' +
+            'or delegate via `capabilities.creative_agents`.',
+        });
+      }
+      const reqCtx = ctxFor(ctx);
+      return projectSync(
+        () => (creative as CreativeBuilderPlatform).listCreativeFormats!(params, reqCtx),
+        r => r
       );
     },
 
@@ -3183,23 +3316,6 @@ function buildCreativeHandlers<P extends DecisioningPlatform<any, any>>(
         r => r
       );
     },
-
-    // Format catalog. Optional on both archetypes; only emit a handler when
-    // the adopter actually wired it (so we don't shadow the sales-side
-    // registration — first domain wins, mediaBuy is registered before
-    // creative). NO-ACCOUNT TOOL — same shape as SalesPlatform.listCreativeFormats;
-    // adopters whose AccountStore returns null for `resolve(undefined)`
-    // receive an undefined `ctx.account` and must read defensively (or use
-    // `'derived'` resolution to guarantee a singleton).
-    ...(creativeListCreativeFormats && {
-      listCreativeFormats: (async (params, ctx) => {
-        const reqCtx = ctxFor(ctx);
-        return projectSync(
-          () => creativeListCreativeFormats(params, reqCtx),
-          r => r
-        );
-      }) satisfies NonNullable<CreativeHandlers<Account>['listCreativeFormats']>,
-    }),
   };
 }
 
@@ -3296,15 +3412,10 @@ function buildSignalsHandlers<P extends DecisioningPlatform<any, any>>(
       // Auto-hydrate `req.signal` from the prior getSignals store entry —
       // publisher reads pricing options, agent segment id, ctx_metadata
       // directly without the buyer round-tripping the full signal object.
-      await hydrateSingleResource(
-        ctxMetadataStore,
-        reqCtx.account?.id,
-        'signal',
-        (params as { signal_agent_segment_id?: string }).signal_agent_segment_id,
-        'signal',
-        params,
-        logger
-      );
+      // Schema-driven via `x-entity` (#1109): `signal_agent_segment_id`
+      // carries `x-entity: "signal_activation_id"`, mapped to ResourceKind
+      // `signal`; attached at `params.signal` per the override table.
+      await hydrateForTool(ctxMetadataStore, reqCtx.account?.id, 'activate_signal', params, logger);
       return projectSync(
         () => signals.activateSignal(params, reqCtx),
         r => r
@@ -3359,17 +3470,32 @@ function buildBrandRightsHandlers<P extends DecisioningPlatform<any, any>>(
       const reqCtx = ctxFor(ctx);
       // Auto-hydrate `req.rights` from the prior getRights catalog entry.
       // Publisher reads selected pricing option + ctx_metadata directly.
-      await hydrateSingleResource(
-        ctxMetadataStore,
-        reqCtx.account?.id,
-        'rights_grant',
-        (params as { rights_id?: string }).rights_id,
-        'rights',
-        params,
-        logger
-      );
+      // Schema-driven via `x-entity` (#1109); destination field stays at
+      // `params.rights` per the override table — historical, predates
+      // the entity-driven hydrator and `updateRights`'s convention of
+      // `params.rights_grant`. Adopters already read this field, so a
+      // rename would be wire-visible behavior.
+      await hydrateForTool(ctxMetadataStore, reqCtx.account?.id, 'acquire_rights', params, logger);
       return projectSync(
         () => br.acquireRights(params, reqCtx),
+        r => r
+      );
+    },
+    // `update_rights` modifies an existing grant. The framework hydrates
+    // the grant record from `req.rights_id` so the implementation reads
+    // the resolved state from `ctx.store` (or as `params.rights_grant`
+    // — see field-name divergence note on `acquireRights` above; this
+    // tool attaches under `rights_grant` because the wire payload has
+    // no `rights` field). Schema-driven via `x-entity` (#1109). Async
+    // delivery — when the change requires rights-holder counter-
+    // signature — rides the buyer's `push_notification_config` webhook;
+    // the immediate response carries `implementation_date: null` to
+    // signal pending state.
+    updateRights: async (params, ctx) => {
+      const reqCtx = ctxFor(ctx);
+      await hydrateForTool(ctxMetadataStore, reqCtx.account?.id, 'update_rights', params, logger);
+      return projectSync(
+        () => br.updateRights(params, reqCtx),
         r => r
       );
     },

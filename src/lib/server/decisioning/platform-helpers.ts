@@ -45,8 +45,6 @@
 
 import type { DecisioningPlatform } from './platform';
 import type { ComplianceTestingCapabilities } from './capabilities';
-import type { Account, AccountStore, ResolveContext } from './account';
-import type { AccountReference } from '../../types/tools.generated';
 import type { SalesPlatform, SalesCorePlatform, SalesIngestionPlatform } from './specialisms/sales';
 import type { AudiencePlatform } from './specialisms/audiences';
 import type { SignalsPlatform } from './specialisms/signals';
@@ -356,95 +354,4 @@ export function definePlatformWithCompliance<TConfig = unknown, TCtxMeta = Recor
   capabilities: { compliance_testing: ComplianceTestingCapabilities };
 } {
   return platform;
-}
-
-/**
- * Type-level identity for an `AccountStore` sub-object.
- *
- * Forces a concrete `AccountStore<TCtxMeta>` annotation on the argument so
- * TypeScript flows types into `resolve` / `upsert` / `getAccountFinancials`
- * handler bodies. Without this, an inline `accounts: { resolve: ... }` literal
- * gets `ref: AccountReference | undefined` typed but `ctx_metadata` returns
- * fall back to `Record<string, unknown>` — `defineAccountStore<MyMeta>(...)`
- * pins the metadata type at construction.
- *
- * @example
- * ```ts
- * accounts: defineAccountStore<MyMeta>({
- *   resolve: async (ref) => {
- *     if (!ref) return null;
- *     // ctx_metadata: MyMeta ✓
- *     return { id: ..., ctx_metadata: { advertiserId: '...' } };
- *   },
- * }),
- * ```
- */
-export function defineAccountStore<TCtxMeta = Record<string, unknown>>(
-  store: AccountStore<TCtxMeta>
-): AccountStore<TCtxMeta> {
-  return store;
-}
-
-/**
- * Build an `AccountStore` whose `resolve(undefined, ctx)` is guaranteed to
- * return a non-null `Account<TCtxMeta>` — fixes the no-account-tool footgun
- * where `preview_creative` / `list_creative_formats` /
- * `provide_performance_feedback` / `tasks_get` arrive without an `account`
- * field on the wire and the dispatcher hands the typed handler a
- * `ctx.account === undefined`.
- *
- * Pass a `noAccountFallback` Account (the publisher-wide / single-tenant
- * singleton appropriate for catalog lookups and feedback intake) and a
- * `resolve` for the account-bearing case (`ref` is non-undefined). The
- * helper composes them: if `ref` is undefined, the fallback wins; otherwise
- * the inner resolver runs. The composed store is a normal
- * `AccountStore<TCtxMeta>` — no separate type, no escape hatch needed.
- *
- * Why this exists rather than per-tool ctx narrowing: `RequestContext.account`
- * is non-optional by design (90% of tools carry `account` on the wire and
- * type-narrowing every handler would force optional-chaining everywhere).
- * No-account tools are the long-tail exception — this helper makes the
- * typed-handler invariant explicit at the AccountStore construction site.
- *
- * Adopters who don't claim no-account specialisms (or who don't implement
- * `previewCreative` / `listCreativeFormats` / `providePerformanceFeedback`)
- * keep using `defineAccountStore` with their own `resolve` and don't need
- * this helper.
- *
- * @example
- * ```ts
- * accounts: accountStoreWithNoAccountFallback<MyMeta>({
- *   noAccountFallback: {
- *     id: 'publisher-wide',
- *     name: 'Publisher (no-account fallback)',
- *     status: 'active',
- *     ctx_metadata: { workspace_id: 'default' },
- *   },
- *   resolve: async (ref, ctx) => {
- *     // ref is guaranteed non-undefined here — TS flows the narrowing
- *     return await this.db.findById(ref.account_id);
- *   },
- * }),
- * ```
- */
-export function accountStoreWithNoAccountFallback<TCtxMeta = Record<string, unknown>>(
-  spec: Omit<AccountStore<TCtxMeta>, 'resolve'> & {
-    /** Singleton Account returned when `accounts.resolve(undefined)` fires. Required. */
-    noAccountFallback: Account<TCtxMeta>;
-    /**
-     * Resolve a non-undefined buyer reference. The framework's no-account
-     * branch is intercepted by `noAccountFallback`, so this resolver only
-     * runs for `ref !== undefined`.
-     */
-    resolve: (ref: AccountReference, ctx?: ResolveContext) => Promise<Account<TCtxMeta> | null>;
-  }
-): AccountStore<TCtxMeta> {
-  const { noAccountFallback, resolve, ...rest } = spec;
-  return {
-    ...rest,
-    resolve: async (ref, ctx) => {
-      if (ref === undefined) return noAccountFallback;
-      return await resolve(ref, ctx);
-    },
-  };
 }

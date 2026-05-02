@@ -950,7 +950,82 @@ registerTestController(adcpServer, {
 });
 ```
 
-For multi-tenant adopters where principal varies per request, use the factory shape — `createStore: async input => ({ queryUpstreamTraffic: ... })` — so the resolver runs once per request with access to the controller request's `account` block.
+#### Multi-tenant adopters: factory shape with per-request principal resolution
+
+The wire-up above hardcodes `RECORDER_PRINCIPAL` because the example uses static-API-key auth (one principal for the whole process). Multi-tenant adopters — OAuth `client_credentials` sellers, session-token sellers, anyone whose `comply_test_controller` request can come from different tenants — MUST resolve the principal **per request** so cross-tenant isolation actually holds. Use `registerTestController`'s factory shape, which runs a fresh `createStore` per request with access to the controller's input:
+
+```ts
+import { CONTROLLER_SCENARIOS } from '@adcp/sdk/server';
+
+registerTestController(adcpServer, {
+  // Static capability list — answered without invoking createStore so
+  // list_scenarios pings don't pay a session-rehydration cost.
+  scenarios: [
+    CONTROLLER_SCENARIOS.FORCE_CREATIVE_STATUS,
+    // ... your existing canonical scenarios ...
+    'query_upstream_traffic', // extension scenario, advertised verbatim
+  ],
+  createStore: async input => {
+    // input is the parsed comply_test_controller request — { scenario,
+    // params, context, ext, account } as the buyer sent it. Resolve the
+    // calling principal from your auth layer here.
+    const principal = await resolvePrincipal(input);
+
+    return {
+      // ... your existing force/seed/simulate methods ...
+
+      queryUpstreamTraffic: async params =>
+        toQueryUpstreamTrafficResponse(
+          recorder.query({
+            principal,
+            sinceTimestamp: params.since_timestamp,
+            endpointPattern: params.endpoint_pattern,
+            limit: params.limit,
+          })
+        ),
+    };
+  },
+});
+```
+
+The `resolvePrincipal(input)` resolver is where adopter auth-layer choice lives:
+
+```ts
+async function resolvePrincipal(input: Record<string, unknown>): Promise<string> {
+  // OAuth client_credentials: derive from your token-introspection cache,
+  // keyed off the bearer the request arrived with. The same principal
+  // string MUST be returned by your handler-side `runWithPrincipal(p, fn)`
+  // wrapper — keep both call sites pointing at one resolver.
+  const oauth = await loadOAuthSession(input);
+  if (oauth) return oauth.client_id;
+
+  // Session-token sellers: resolve account from the session id and use
+  // its stable account.id.
+  const session = (input.context as { session_id?: string })?.session_id;
+  if (session) {
+    const acct = await accountFromSession(session);
+    return acct.id;
+  }
+
+  // Public-sandbox adopters serving anonymous traffic: a stable
+  // per-session identifier you mint at session start. The literal
+  // string "anonymous" collides across tenants — don't use it.
+  throw new Error('No auth context available; cannot scope upstream-traffic query');
+}
+```
+
+On the AdCP-handler side, call the **same** `resolvePrincipal` from `runWithPrincipal`. The `ctx` an AdCP handler receives carries the same auth shape your controller-side `input` does (often `ctx.account`, sometimes `ctx.authInfo` for the raw transport layer). Wrap a thin shim:
+
+```ts
+async function syncAudiences(req, ctx) {
+  const principal = await resolvePrincipal(adcpCtxToControllerInput(ctx));
+  await recorder.runWithPrincipal(principal, async () => {
+    await fetch('https://platform.example/v1/audience/upload', { /* ... */ });
+  });
+}
+```
+
+If the two call sites pick the principal differently — for example, controller-side resolves from `input.account.operator` but handler-side uses `ctx.account.id` directly — your storyboard runs grade `failed` with `matched_count: 0` and the diagnostic looks identical to a façade. Use one resolver, call it from both ends.
 
 #### Adopters not on `fetch`
 

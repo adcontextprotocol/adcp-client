@@ -105,4 +105,5 @@ export const TOOL_REQUEST_SCHEMAS: Partial<Record<string, z.ZodType>> = {
   get_brand_identity: schemas.GetBrandIdentityRequestSchema,
   get_rights: schemas.GetRightsRequestSchema,
   acquire_rights: schemas.AcquireRightsRequestSchema,
+  update_rights: schemas.UpdateRightsRequestSchema,
 };

@@ -24,7 +24,7 @@
  * @public
  */
 
-import type { Account } from '../account';
+import type { Account, NoAccountCtx } from '../account';
 import type { RequestContext } from '../context';
 import type { TaskHandoff } from '../async-outcome';
 import type {
@@ -73,8 +73,26 @@ export interface CreativeAdServerPlatform<TCtxMeta = Record<string, unknown>> {
     ctx: Ctx<TCtxMeta>
   ): Promise<CreativeManifest | CreativeManifest[] | BuildCreativeSuccess | BuildCreativeMultiSuccess>;
 
-  /** Preview-only variant — sandbox URL or inline HTML, expires. Always sync. */
-  previewCreative(req: PreviewCreativeRequest, ctx: Ctx<TCtxMeta>): Promise<PreviewCreativeResponse>;
+  /**
+   * Preview-only variant — sandbox URL or inline HTML, expires. Always sync.
+   *
+   * ⚠️  NO-ACCOUNT TOOL — `ctx: NoAccountCtx<TCtxMeta>`. The wire request
+   * does not carry an `account` field; narrow `ctx.account` before reading
+   * `ctx_metadata` / `id`. See {@link NoAccountCtx}.
+   */
+  previewCreative(req: PreviewCreativeRequest, ctx: NoAccountCtx<TCtxMeta>): Promise<PreviewCreativeResponse>;
+
+  /**
+   * Format catalog. Optional because adopters who delegate format definitions
+   * to a separate creative agent (declared via `capabilities.creative_agents`)
+   * don't own them; the framework returns `UNSUPPORTED_FEATURE` when omitted.
+   *
+   * ⚠️  NO-ACCOUNT TOOL. See `previewCreative` note above.
+   */
+  listCreativeFormats?(
+    req: ListCreativeFormatsRequest,
+    ctx: NoAccountCtx<TCtxMeta>
+  ): Promise<ListCreativeFormatsResponse>;
 
   // sync_creatives: sync OR task — `SyncCreativesResponse` has a Submitted arm.
 

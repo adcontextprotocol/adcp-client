@@ -298,6 +298,51 @@ export interface AccountToolContext<TCtxMeta = Record<string, unknown>> extends 
   account: Account<TCtxMeta>;
 }
 
+/**
+ * Request context for tools whose wire request does not carry an `account`
+ * field — `preview_creative`, `list_creative_formats`, and
+ * `provide_performance_feedback`. The framework calls
+ * `accounts.resolve(undefined, ctx)` for these, accepting a `null` return; if
+ * `null`, `ctx.account` is undefined when the handler runs.
+ *
+ * Adopter handlers MUST handle the `undefined` case explicitly. Choose one of:
+ *
+ *   1. **Singleton fallback** — return a non-null synthetic `Account` from
+ *      `accounts.resolve(undefined, ctx)` for the publisher-wide tenant
+ *      (e.g., format catalog, performance feedback aggregation). Inside the
+ *      handler, narrow with `if (!ctx.account) throw ...` once and treat
+ *      `ctx.account` as defined for the rest.
+ *   2. **Auth-derived lookup** — in `accounts.resolve(undefined, ctx)`, look
+ *      up by `ctx.authInfo.clientId` (or whichever principal field your auth
+ *      wires) and return the matching account.
+ *   3. **Error out** — throw `AdcpError({ code: 'ACCOUNT_NOT_FOUND' })` from
+ *      within the handler when `ctx.account == null` and the operation
+ *      requires tenant scoping.
+ *
+ * The narrowed type catches the mismatch at authorship time — adopters who
+ * forget to handle `ctx.account === undefined` get a TS error, not a runtime
+ * `Cannot read properties of undefined` deep in their upstream call. Same
+ * shape as the `definePlatformWithCompliance` invariant: convert a runtime
+ * gate into a compile-time one.
+ *
+ * @public
+ */
+// Inline type-import on `RequestContext` instead of a top-level
+// `import type { RequestContext } from './context'` — `context.ts` already
+// imports `Account` from this file, so a top-level import would form a
+// circular type dependency.
+export type NoAccountCtx<TCtxMeta = Record<string, unknown>> = Omit<
+  import('./context').RequestContext<Account<TCtxMeta>>,
+  'account'
+> & {
+  /**
+   * Resolved account, OR `undefined` when the wire request didn't carry an
+   * account ref AND `accounts.resolve(undefined, ctx)` returned null. Always
+   * narrow before reading `ctx_metadata` / `id`.
+   */
+  account: Account<TCtxMeta> | undefined;
+};
+
 export interface AuthPrincipal {
   /** Stable identifier for the calling agent (e.g., `https://buyer.example.com/mcp`). */
   agent_url?: string;

@@ -24,11 +24,12 @@ test('parameterizedRender auto-injects parameters_from_format_id: true', () => {
 });
 
 test('displayRender supports non-pixel units (e.g. DOOH physical dimensions)', () => {
+  // Schema's `dimension-unit` enum: 'px' | 'dp' | 'inches' | 'cm' | 'mm' | 'pt'
   const render = displayRender({
     role: 'primary',
-    dimensions: { width: 12, height: 8, unit: 'feet' },
+    dimensions: { width: 12, height: 8, unit: 'inches' },
   });
-  assert.strictEqual(render.dimensions.unit, 'feet');
+  assert.strictEqual(render.dimensions.unit, 'inches');
 });
 
 test('templateRender is an alias for parameterizedRender', () => {

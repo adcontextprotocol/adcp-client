@@ -60,7 +60,7 @@
  * @public
  */
 
-import type { Account } from '../account';
+import type { Account, NoAccountCtx } from '../account';
 import type { RequestContext } from '../context';
 import type { TaskHandoff } from '../async-outcome';
 import type {
@@ -267,13 +267,15 @@ export interface SalesPlatform<TCtxMeta = Record<string, unknown>> {
   // buyer expects to be able to call it. Framework returns UNSUPPORTED_FEATURE
   // when omitted.
   //
-  // ⚠️  NO-ACCOUNT TOOL. The wire request does not carry an `account` field.
-  // `ctx.account` is undefined for `'explicit'`-resolution adopters.
-  // See the `SalesPlatform` JSDoc ("No-account tools") for safe patterns.
+  // ⚠️  NO-ACCOUNT TOOL — `ctx: NoAccountCtx<TCtxMeta>`. The wire request
+  // does not carry an `account` field. `ctx.account` may be `undefined` for
+  // `'explicit'`-resolution adopters; narrow before reading
+  // `ctx.account.ctx_metadata`. See {@link NoAccountCtx} and the
+  // `SalesPlatform` JSDoc ("No-account tools") for safe patterns.
   /** Accept buyer-side performance signals on a media buy / creative. */
   providePerformanceFeedback?(
     req: ProvidePerformanceFeedbackRequest,
-    ctx: Ctx<TCtxMeta>
+    ctx: NoAccountCtx<TCtxMeta>
   ): Promise<ProvidePerformanceFeedbackSuccess>;
 
   // ── list_creative_formats: sync only ────────────────────────────────
@@ -283,8 +285,12 @@ export interface SalesPlatform<TCtxMeta = Record<string, unknown>> {
   // own format definitions; framework can resolve from the declared agents.
   // Self-hosted sellers (own creative library) implement this directly.
   //
-  // ⚠️  NO-ACCOUNT TOOL. See `providePerformanceFeedback` note above.
-  listCreativeFormats?(req: ListCreativeFormatsRequest, ctx: Ctx<TCtxMeta>): Promise<ListCreativeFormatsResponse>;
+  // ⚠️  NO-ACCOUNT TOOL — `ctx: NoAccountCtx<TCtxMeta>`. See
+  // `providePerformanceFeedback` note above.
+  listCreativeFormats?(
+    req: ListCreativeFormatsRequest,
+    ctx: NoAccountCtx<TCtxMeta>
+  ): Promise<ListCreativeFormatsResponse>;
 
   // ── list_creatives: sync only ───────────────────────────────────────
   // Read tool — buyers query the seller's creative library. Optional
