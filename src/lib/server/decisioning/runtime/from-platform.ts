@@ -1141,7 +1141,7 @@ export function createAdcpServerFromPlatform<P extends DecisioningPlatform<any, 
     ),
     customTools: {
       ...opts.customTools,
-      tasks_get: buildTasksGetTool(platform, taskRegistry, platform.agentRegistry),
+      tasks_get: buildTasksGetTool(platform, taskRegistry, platform.agentRegistry, fwLogger),
     },
   };
 
@@ -1286,7 +1286,8 @@ export function createAdcpServerFromPlatform<P extends DecisioningPlatform<any, 
 function buildTasksGetTool<P extends DecisioningPlatform<any, any>>(
   platform: P,
   taskRegistry: TaskRegistry,
-  agentRegistry: BuyerAgentRegistry | undefined
+  agentRegistry: BuyerAgentRegistry | undefined,
+  logger: AdcpLogger
 ) {
   const inputShape = {
     // Cap task_id length: framework-issued task ids are
@@ -1369,8 +1370,16 @@ function buildTasksGetTool<P extends DecisioningPlatform<any, any>>(
             }
             agent = resolved;
           }
-        } catch {
-          // swallow per the policy above — agent stays undefined
+        } catch (err) {
+          // Swallow to keep the poll alive (see policy comment above), but
+          // log so upstream-IDP outages are visible to operators. Without
+          // this log, buyers seeing REFERENCE_NOT_FOUND for valid tasks
+          // (because adopters' resolvers return null without `ctx.agent`)
+          // would be invisible in adopter logs. Per security-reviewer
+          // defense-in-depth note on PR #1323.
+          logger.warn?.('Buyer-agent registry resolution failed during tasks_get poll', {
+            error: err instanceof Error ? err.message : String(err),
+          });
         }
       }
       const resolveCtx = {
