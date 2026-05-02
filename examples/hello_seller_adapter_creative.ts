@@ -39,7 +39,7 @@ import {
   type CachedBuyerAgentRegistry,
   type SyncCreativesRow,
 } from '@adcp/sdk/server';
-import { displayRender, imageAssetSlot, textAssetSlot, vastAssetSlot, urlAssetSlot } from '@adcp/sdk';
+import { displayRender, imageAssetSlot, textAssetSlot, vastAssetSlot, urlAssetSlot, audioAssetSlot } from '@adcp/sdk';
 import type { ListCreativeFormatsResponse, Format, CreativeManifest } from '@adcp/sdk/types';
 import { createHash, randomUUID } from 'node:crypto';
 
@@ -198,7 +198,10 @@ function templateToFormat(t: UpstreamTemplate): Format {
     if (slot.asset_type === 'click_url') {
       return urlAssetSlot({ asset_id: slot.slot_id, required: slot.required });
     }
-    // text, audio → text slot
+    if (slot.asset_type === 'audio') {
+      return audioAssetSlot({ asset_id: slot.slot_id, required: slot.required });
+    }
+    // text → text slot
     return textAssetSlot({ asset_id: slot.slot_id, required: slot.required });
   });
 
@@ -423,6 +426,8 @@ class CreativeTemplateAdapter implements DecisioningPlatform<Record<string, neve
 
       return {
         response_type: 'single',
+        // SWAP: set expires_at to however long your preview URLs remain valid.
+        expires_at: new Date(Date.now() + 3_600_000).toISOString(),
         previews: [
           {
             preview_id: render.render_id,
