@@ -137,6 +137,12 @@ export type { DecisioningPlatform, RequiredPlatformsFor, RequiredCapabilitiesFor
 export { composeMethod } from './compose';
 export type { ComposeHooks, ComposeShortCircuit } from './compose';
 
+// `accounts.resolve` security presets (closes #1339) — canonical post-resolve
+// guards that standardize the multi-tenant authorization pattern instead of
+// every adopter rolling their own.
+export { requireAccountMatch, requireAdvertiserMatch, requireOrgScope } from './resolve-presets';
+export type { ResolveAccountHooks, ResolveGuardOptions } from './resolve-presets';
+
 // Specialism interfaces (v1.0)
 export type {
   CreativeBuilderPlatform,
