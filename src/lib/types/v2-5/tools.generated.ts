@@ -1849,9 +1849,56 @@ export interface Format {
    */
   renders?: (
     | {
-        [k: string]: unknown | undefined;
+        /**
+         * Semantic role of this rendered piece (e.g., 'primary', 'companion', 'mobile_variant')
+         */
+        role: string;
+        /**
+         * Dimensions for this rendered piece (in pixels)
+         */
+        dimensions: {
+          /**
+           * Fixed width in pixels
+           */
+          width?: number;
+          /**
+           * Fixed height in pixels
+           */
+          height?: number;
+          /**
+           * Minimum width in pixels for responsive renders
+           */
+          min_width?: number;
+          /**
+           * Minimum height in pixels for responsive renders
+           */
+          min_height?: number;
+          /**
+           * Maximum width in pixels for responsive renders
+           */
+          max_width?: number;
+          /**
+           * Maximum height in pixels for responsive renders
+           */
+          max_height?: number;
+          /**
+           * Indicates which dimensions are responsive/fluid
+           */
+          responsive?: {
+            width: boolean;
+            height: boolean;
+          };
+          /**
+           * Fixed aspect ratio constraint (e.g., '16:9', '4:3', '1:1')
+           */
+          aspect_ratio?: string;
+        };
       }
     | {
+        /**
+         * Semantic role of this rendered piece (e.g., 'primary', 'companion', 'mobile_variant')
+         */
+        role: string;
         parameters_from_format_id: true;
       }
   )[];
