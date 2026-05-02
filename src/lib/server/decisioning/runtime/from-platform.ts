@@ -3192,13 +3192,13 @@ function buildCreativeHandlers<P extends DecisioningPlatform<any, any>>(
     // receive an undefined `ctx.account` and must read defensively (or use
     // `'derived'` resolution to guarantee a singleton).
     ...(creativeListCreativeFormats && {
-      listCreativeFormats: async (params: any, ctx: any) => {
+      listCreativeFormats: (async (params, ctx) => {
         const reqCtx = ctxFor(ctx);
         return projectSync(
           () => creativeListCreativeFormats(params, reqCtx),
           r => r
         );
-      },
+      }) satisfies NonNullable<CreativeHandlers<Account>['listCreativeFormats']>,
     }),
   };
 }

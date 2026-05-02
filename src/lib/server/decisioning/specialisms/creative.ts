@@ -162,6 +162,13 @@ export interface CreativeBuilderPlatform<TCtxMeta = Record<string, unknown>> {
    * — see {@link AccountStore} JSDoc for safe patterns (`'derived'`
    * resolution returning a singleton, or returning a synthetic publisher-
    * wide Account from `accounts.resolve(undefined)`).
+   *
+   * **Precedence:** when an adopter ALSO wires `SalesPlatform.listCreativeFormats`
+   * on the same platform, the sales-side handler wins (mediaBuy domain
+   * registers before creative). Don't wire both — pick the surface that
+   * matches your specialism. This creative-side wiring exists for adopters
+   * claiming only creative specialisms (`creative-template`, `creative-
+   * generative`, `creative-ad-server`) without a sales platform attached.
    */
   listCreativeFormats?(req: ListCreativeFormatsRequest, ctx: Ctx<TCtxMeta>): Promise<ListCreativeFormatsResponse>;
 }

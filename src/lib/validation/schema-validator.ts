@@ -482,6 +482,16 @@ function compactUnionErrors(errors: readonly ErrorObject[], rootSchema: unknown)
     // required fields they need to add) — surfacing the `not` failure
     // points at a path the adopter shouldn't take. See adcp-client#1337.
     //
+    // **Spec assumption.** AdCP 3.x uses `not` only as an envelope-level
+    // mutual-exclusion guard between Success ↔ Error arms of a response
+    // oneOf — never as an intra-arm discriminator (those use `const` on a
+    // tag field, e.g. async `status: 'submitted' | 'working' | ...`).
+    // The exclusion logic here targets that dominant pattern. If a future
+    // spec ever inverts the convention (a Success arm using `not` to
+    // discriminate sub-variants), this heuristic would suppress an
+    // actionable diagnostic — re-evaluate the assumption when adopting
+    // any AdCP version that does so.
+    //
     // If every variant has a `not` failure, fall back to the unconstrained
     // pick — preserves diagnostic on contrived schemas where mutual-
     // exclusion is the only signal.
