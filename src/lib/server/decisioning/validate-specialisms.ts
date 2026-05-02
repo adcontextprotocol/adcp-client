@@ -82,15 +82,23 @@ function hasMethodAnywhere(platform: unknown, methodName: string): boolean {
  * not yet enumerated by the manifest) are silently passed — the manifest is
  * the source of truth, and a missing entry there means the spec hasn't yet
  * formalized the required tools for that specialism.
+ *
+ * The optional `requiredToolsLookup` parameter exists for testing — production
+ * callers omit it and get the manifest-derived `SPECIALISM_REQUIRED_TOOLS`.
+ * Tests can inject synthetic data so the validator's behavior can be exercised
+ * even when the manifest's `required_tools` field is empty (3.0.4 ships every
+ * specialism with `required_tools: []` per spec; coverage activates when the
+ * spec authors populate the field).
  */
 export function validateSpecialismRequiredTools(
   platform: unknown,
-  specialisms: readonly string[] | undefined
+  specialisms: readonly string[] | undefined,
+  requiredToolsLookup: Record<string, readonly string[] | undefined> = SPECIALISM_REQUIRED_TOOLS
 ): ValidatorIssue[] {
   if (!specialisms || specialisms.length === 0) return [];
   const issues: ValidatorIssue[] = [];
   for (const specialism of specialisms) {
-    const required = (SPECIALISM_REQUIRED_TOOLS as Record<string, readonly string[] | undefined>)[specialism];
+    const required = requiredToolsLookup[specialism];
     if (!required) continue;
     for (const tool of required) {
       const method = toolNameToMethodName(tool);

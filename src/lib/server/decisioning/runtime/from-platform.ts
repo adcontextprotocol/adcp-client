@@ -64,8 +64,9 @@ import {
 } from '../../create-adcp-server';
 import type { DecisioningPlatform, RequiredPlatformsFor, RequiredCapabilitiesFor } from '../platform';
 import type { ComplianceTestingCapabilities } from '../capabilities';
-import type { Account, ResolvedAuthInfo } from '../account';
+import type { Account, ResolvedAuthInfo, ResolveContext } from '../account';
 import { AccountNotFoundError, toWireAccount, toWireSyncAccountRow } from '../account';
+import type { BuyerAgent } from '../buyer-agent';
 import { AdcpError, type AdcpStructuredError } from '../async-outcome';
 import type { CreativeBuilderPlatform } from '../specialisms/creative';
 import type { CreativeAdServerPlatform } from '../specialisms/creative-ad-server';
@@ -985,6 +986,12 @@ export function createAdcpServerFromPlatform<P extends DecisioningPlatform<any, 
     // hatch. Same convention as the `idempotency` spread below — the platform
     // is the authoritative v6 surface; opts is a low-level escape hatch.
     ...(platform.agentRegistry !== undefined && { agentRegistry: platform.agentRegistry }),
+    // Server-level `instructions` (closes #1312). Same precedence pattern as
+    // `agentRegistry` above — platform-declared instructions win over the
+    // v5 `opts.instructions` escape hatch when both are present, so v6
+    // adopters can colocate platform facts / decision policy with the rest
+    // of their platform declaration.
+    ...(platform.instructions !== undefined && { instructions: platform.instructions }),
     // Pool-derived stores override the spread above when adopters supplied
     // `pool` but no explicit per-store opt. Explicit values still win.
     ...(effectiveIdempotency !== undefined && { idempotency: effectiveIdempotency }),
@@ -1006,11 +1013,7 @@ export function createAdcpServerFromPlatform<P extends DecisioningPlatform<any, 
       let resolved = false;
       let resolvedAccountId: string | undefined;
       try {
-        const account = await platform.accounts.resolve(ref, {
-          ...(ctx.authInfo !== undefined && { authInfo: ctx.authInfo }),
-          toolName: ctx.toolName,
-          ...(ctx.agent != null && { agent: ctx.agent }),
-        });
+        const account = await platform.accounts.resolve(ref, toResolveCtx(ctx, ctx.toolName));
         resolved = account != null;
         resolvedAccountId = account?.id;
         return account;
@@ -1054,11 +1057,7 @@ export function createAdcpServerFromPlatform<P extends DecisioningPlatform<any, 
       let resolved = false;
       let resolvedAccountId: string | undefined;
       try {
-        const account = await platform.accounts.resolve(undefined, {
-          ...(ctx.authInfo !== undefined && { authInfo: ctx.authInfo }),
-          toolName: ctx.toolName,
-          ...(ctx.agent != null && { agent: ctx.agent }),
-        });
+        const account = await platform.accounts.resolve(undefined, toResolveCtx(ctx, ctx.toolName));
         resolved = account != null;
         resolvedAccountId = account?.id;
         return account;
@@ -2253,6 +2252,32 @@ type CtxForFn = (handlerCtx: HandlerContext<Account>) => RequestContext<Account>
 
 function makeCtxFor(ctxMetadataStore?: CtxMetadataStore): CtxForFn {
   return handlerCtx => buildRequestContext(handlerCtx, ctxMetadataStore);
+}
+
+/**
+ * Project a framework `HandlerContext` / `RequestContext` to the public
+ * `ResolveContext` shape passed to every `AccountStore` method
+ * (`resolve`, `upsert`, `list`, `reportUsage`, `getAccountFinancials`).
+ *
+ * Single source of truth for the threading shape: when `ResolveContext`
+ * gains a new field, update this function and every account-method call
+ * site picks it up. The alternative (inline literals at each call site)
+ * is what produced the original asymmetric `agent` gap on `reportUsage`
+ * and `getAccountFinancials` — fixed by routing all six framework call
+ * sites through here.
+ *
+ * `toolName` is supplied per call site (handlers hardcode their tool
+ * name; the dispatcher's `resolveAccount` / `resolveAccountFromAuth`
+ * paths read it off `RequestContext.toolName`). Spread guards keep
+ * `authInfo` / `agent` keys absent rather than `undefined` — adopters
+ * can use `'authInfo' in ctx` as a presence check.
+ */
+function toResolveCtx(ctx: { authInfo?: ResolvedAuthInfo; agent?: BuyerAgent }, toolName: string): ResolveContext {
+  return {
+    ...(ctx.authInfo !== undefined && { authInfo: ctx.authInfo }),
+    toolName,
+    ...(ctx.agent != null && { agent: ctx.agent }),
+  };
 }
 
 /**
@@ -3458,23 +3483,25 @@ function buildAccountHandlers<P extends DecisioningPlatform<any, any>>(
   const handlers: AccountHandlers<Account> = {};
 
   if (accounts.upsert) {
-    handlers.syncAccounts = async (params, _ctx) => {
+    handlers.syncAccounts = async (params, ctx) => {
       const refs = (params.accounts ?? []) as AccountReference[];
+      const resolveCtx = toResolveCtx(ctx, 'sync_accounts');
       return projectSync(
-        () => accounts.upsert!(refs),
+        () => accounts.upsert!(refs, resolveCtx),
         rows => ({ accounts: rows.map(toWireSyncAccountRow) })
       );
     };
   }
 
   if (accounts.list) {
-    handlers.listAccounts = async (params, _ctx) => {
+    handlers.listAccounts = async (params, ctx) => {
       const filter = params as Parameters<NonNullable<typeof accounts.list>>[0];
+      const resolveCtx = toResolveCtx(ctx, 'list_accounts');
       // Wrap in projectSync so adopter `throw new AdcpError('PERMISSION_DENIED', ...)`
       // from the list impl projects to the structured wire envelope rather
       // than falling through to the framework's `SERVICE_UNAVAILABLE` mapping.
       return projectSync(
-        () => accounts.list!(filter),
+        () => accounts.list!(filter, resolveCtx),
         page => ({
           accounts: page.items.map(toWireAccount),
           ...(page.nextCursor != null && { next_cursor: page.nextCursor }),
@@ -3485,10 +3512,7 @@ function buildAccountHandlers<P extends DecisioningPlatform<any, any>>(
 
   if (accounts.reportUsage) {
     handlers.reportUsage = async (params, ctx) => {
-      const resolveCtx = {
-        ...(ctx.authInfo !== undefined && { authInfo: ctx.authInfo }),
-        toolName: 'report_usage' as const,
-      };
+      const resolveCtx = toResolveCtx(ctx, 'report_usage');
       return projectSync(
         () => accounts.reportUsage!(params, resolveCtx),
         r => r
@@ -3502,10 +3526,7 @@ function buildAccountHandlers<P extends DecisioningPlatform<any, any>>(
       // platform method runs. Adopters fronting an upstream platform read
       // tokens / upstream IDs off `ctx.account.ctx_metadata` without
       // having to re-resolve from `params.account`.
-      const resolveCtx = {
-        ...(ctx.authInfo !== undefined && { authInfo: ctx.authInfo }),
-        toolName: 'get_account_financials' as const,
-      };
+      const resolveCtx = toResolveCtx(ctx, 'get_account_financials');
       const resolved = await accounts.resolve(params.account, resolveCtx);
       if (!resolved) {
         throw new AdcpError('ACCOUNT_NOT_FOUND', {

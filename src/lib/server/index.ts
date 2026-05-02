@@ -375,3 +375,14 @@ export type {
   PgCtxMetadataBackendOptions,
   WireShape,
 } from './ctx-metadata';
+
+export { createTranslationMap, createUpstreamHttpClient } from './upstream-helpers';
+export type {
+  TranslationMap,
+  UpstreamAuth,
+  AuthContext,
+  UpstreamCallOptions,
+  UpstreamHttpClientOptions,
+  UpstreamHttpClient,
+  UpstreamHttpResult,
+} from './upstream-helpers';

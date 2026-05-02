@@ -8,6 +8,7 @@
 import type { ErrorObject } from 'ajv';
 import { getValidator, getRegisteredSchemaIds, type Direction, type ResponseVariant } from './schema-loader';
 import { parseAdcpMajorVersion } from '../version';
+import { findHint } from './hints';
 
 /**
  * One variant of a `oneOf` / `anyOf` that the caller's payload could have
@@ -110,6 +111,21 @@ export interface ValidationIssue {
    * branch detail.
    */
   allowedValues?: readonly unknown[];
+  /**
+   * Curated one-sentence hint naming the most common adopter mistake for
+   * a recognized failure pattern (e.g. "type='key_value' requires
+   * top-level `key` and `value` strings; do not nest under a `key_value`
+   * field"). Sourced from {@link import('./hints').findHint} — see
+   * `validation/hints.ts` for the rule table and the
+   * empirical-evidence quality bar for adding new entries.
+   *
+   * Absent for issues that don't match a curated rule. Most issues
+   * won't have a hint, and that's fine — the structured `pointer` +
+   * `keyword` + `discriminator` + `variants` already cover the long
+   * tail. Hints are reserved for shape gotchas where the validator's
+   * raw message reads as ambiguous to a first-time adopter.
+   */
+  hint?: string;
 }
 
 export interface ValidationOutcome {
@@ -194,6 +210,13 @@ function extractSchemaId(
 interface FormatContext {
   rootSchema: unknown;
   registeredIds: readonly string[];
+  /**
+   * Tool name being validated. Threaded into {@link findHint} so curated
+   * hints that gate on tool name can fire. Optional only because
+   * `validateRequest` / `validateResponse` always pass it; tests that
+   * call `formatIssue` directly are the rare exception.
+   */
+  toolName?: string;
 }
 
 function formatIssue(err: ErrorObject, ctx: FormatContext): ValidationIssue {
@@ -222,8 +245,7 @@ function formatIssue(err: ErrorObject, ctx: FormatContext): ValidationIssue {
 
   const schemaId = extractSchemaId(err.schemaPath, ctx.rootSchema, ctx.registeredIds);
   const discriminator = (err as AdcpDiscriminatedError).__adcp_discriminator;
-
-  return {
+  const issue: ValidationIssue = {
     pointer: `${instancePath}${missingProperty}` || '/',
     message,
     keyword: err.keyword,
@@ -232,6 +254,13 @@ function formatIssue(err: ErrorObject, ctx: FormatContext): ValidationIssue {
     ...(discriminator !== undefined && discriminator.length > 0 && { discriminator }),
     ...(allowedValues !== undefined && { allowedValues }),
   };
+  // Attach a curated `hint` last so the matcher can read every other
+  // resolved field (schemaId, discriminator, pointer, keyword) when
+  // deciding whether to fire. Most issues won't match any rule —
+  // findHint returns undefined, and the field stays absent.
+  const hint = findHint(issue, ctx.toolName);
+  if (hint !== undefined) issue.hint = hint;
+  return issue;
 }
 
 // Path segments we refuse to walk into during schema-path resolution. AJV
@@ -546,7 +575,7 @@ export function validateRequest(toolName: string, payload: unknown, version?: st
       : undefined;
   if (valid) return { valid: true, issues: [], variant: 'request', ...(rootSchemaId && { schemaId: rootSchemaId }) };
   const registeredIds = getRegisteredSchemaIds(version);
-  const ctx: FormatContext = { rootSchema, registeredIds };
+  const ctx: FormatContext = { rootSchema, registeredIds, toolName };
   const compacted = compactUnionErrors(validator.errors ?? [], rootSchema);
   return {
     valid: false,
@@ -655,7 +684,7 @@ export function validateResponse(toolName: string, payload: unknown, version?: s
     };
   }
   const registeredIds = getRegisteredSchemaIds(version);
-  const ctx: FormatContext = { rootSchema, registeredIds };
+  const ctx: FormatContext = { rootSchema, registeredIds, toolName };
   const compacted = compactUnionErrors(effective.errors ?? [], rootSchema);
   return {
     valid: false,
@@ -689,12 +718,13 @@ export function formatDiscriminator(
 }
 
 /**
- * One-line render of a validation issue with `(schema: <$id>)` and
- * `(discriminator: <field>='<value>')` suffixes when the issue carries
- * them. Used by both {@link formatIssues} and the prose `message` field on
- * `VALIDATION_ERROR` envelopes (issue #1283), so adopters debugging from
- * the wire envelope alone see the rejecting schema and union discriminator
- * without having to walk `issues[]`.
+ * One-line render of a validation issue with `(schema: <$id>)`,
+ * `(discriminator: <field>='<value>')`, and `(hint: …)` suffixes when
+ * the issue carries them. Used by both {@link formatIssues} and the
+ * prose `message` field on `VALIDATION_ERROR` envelopes (issue #1283
+ * for schema/discriminator, #1309 for hint), so adopters debugging from
+ * the wire envelope alone see the rejecting schema, union discriminator,
+ * and curated mistake-recipe without having to walk `issues[]`.
  *
  * The `(schema: ...)` suffix is suppressed for inline failures whose
  * `schemaId` is the response root — the tool name already conveys that,
@@ -711,6 +741,7 @@ export function formatIssueLine(issue: ValidationIssue, options: { rootSchemaId?
   }
   const discriminator = formatDiscriminator(issue.discriminator);
   if (discriminator) parts.push(`(discriminator: ${discriminator})`);
+  if (issue.hint) parts.push(`(hint: ${issue.hint})`);
   return parts.join(' ');
 }
 

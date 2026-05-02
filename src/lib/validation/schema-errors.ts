@@ -19,6 +19,7 @@ function buildIssueProseSuffix(issue: ValidationIssue, rootSchemaId: string | un
   if (issue.schemaId && issue.schemaId !== rootSchemaId) parts.push(`schema: ${issue.schemaId}`);
   const discriminator = formatDiscriminator(issue.discriminator);
   if (discriminator) parts.push(`discriminator: ${discriminator}`);
+  if (issue.hint) parts.push(`hint: ${issue.hint}`);
   return parts.length > 0 ? ` (${parts.join('; ')})` : '';
 }
 

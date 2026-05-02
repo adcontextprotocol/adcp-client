@@ -752,12 +752,12 @@
   {
     "source": "skills/build-seller-agent/SKILL.md",
     "errorCode": "TS2322",
-    "messagePrefix": "Type '(params: any, ctx: any) => Promise<{ items: never[]; nextCursor: null; }>'"
+    "messagePrefix": "Type '(params: AccountFilter & CursorRequest, ctx: ResolveContext | undefined) ="
   },
   {
     "source": "skills/build-seller-agent/SKILL.md",
     "errorCode": "TS2322",
-    "messagePrefix": "Type '(params: any, ctx: any) => Promise<{ ok: boolean; items: never[]; }>' is n"
+    "messagePrefix": "Type '(params: AccountReference[], ctx: ResolveContext | undefined) => Promise<{"
   },
   {
     "source": "skills/build-seller-agent/SKILL.md",
@@ -862,27 +862,7 @@
   {
     "source": "skills/build-seller-agent/SKILL.md",
     "errorCode": "TS7006",
-    "messagePrefix": "Parameter 'ctx' implicitly has an 'any' type."
-  },
-  {
-    "source": "skills/build-seller-agent/SKILL.md",
-    "errorCode": "TS7006",
-    "messagePrefix": "Parameter 'ctx' implicitly has an 'any' type."
-  },
-  {
-    "source": "skills/build-seller-agent/SKILL.md",
-    "errorCode": "TS7006",
     "messagePrefix": "Parameter 'outcome' implicitly has an 'any' type."
-  },
-  {
-    "source": "skills/build-seller-agent/SKILL.md",
-    "errorCode": "TS7006",
-    "messagePrefix": "Parameter 'params' implicitly has an 'any' type."
-  },
-  {
-    "source": "skills/build-seller-agent/SKILL.md",
-    "errorCode": "TS7006",
-    "messagePrefix": "Parameter 'params' implicitly has an 'any' type."
   },
   {
     "source": "skills/build-si-agent/SKILL.md",
