@@ -474,19 +474,39 @@ function compactUnionErrors(errors: readonly ErrorObject[], rootSchema: unknown)
       }
     }
 
-    // Pick the best surviving variant; prefer fewest residuals, tie-break
-    // by fewest residual `const` errors (so variants whose discriminator
-    // the user actually picked win over siblings whose discriminator they
-    // violated).
+    // Pick the best surviving variant. Priority order:
+    //
+    // 1. Prefer variants that have at least one non-`not` residual over
+    //    variants whose ONLY residuals are `not`-keyword errors at the root
+    //    instance path. A root-level `not` fires when the payload has "the
+    //    wrong shape entirely" (e.g. an Error variant whose `not` clause
+    //    rejects success-shaped payloads). Those errors are less actionable
+    //    than the success variant's `required` failures, and a low total count
+    //    from a single `not` error should not beat two `required` errors on the
+    //    intended variant. Scoped to `not` errors at the exact root to avoid
+    //    penalising `not` discriminators embedded deeper in the schema
+    //    (issue #1337).
+    // 2. Fewest residuals (existing behaviour).
+    // 3. Fewest residual `const` errors (so variants whose discriminator
+    //    the user actually picked win over siblings whose discriminator they
+    //    violated).
     let bestIdx = -1;
     let bestCount = Infinity;
     let bestConsts = Infinity;
+    let bestOnlyNot = 1; // 0 = has ≥1 non-`not` residual (better), 1 = all-`not`-at-root (worse)
     for (const [idx, residual] of residualByVariant) {
       const constCount = residual.reduce((n, e) => (e.keyword === 'const' ? n + 1 : n), 0);
-      if (residual.length < bestCount || (residual.length === bestCount && constCount < bestConsts)) {
+      const onlyNotAtRoot =
+        residual.length > 0 && residual.every(e => e.keyword === 'not' && e.instancePath === rootInstance) ? 1 : 0;
+      if (
+        onlyNotAtRoot < bestOnlyNot ||
+        (onlyNotAtRoot === bestOnlyNot && residual.length < bestCount) ||
+        (onlyNotAtRoot === bestOnlyNot && residual.length === bestCount && constCount < bestConsts)
+      ) {
         bestIdx = idx;
         bestCount = residual.length;
         bestConsts = constCount;
+        bestOnlyNot = onlyNotAtRoot;
       }
     }
     for (const [idx, residual] of residualByVariant) {
@@ -760,3 +780,7 @@ export function formatIssues(issues: ValidationIssue[], limit = 3, options: { ro
   const rest = issues.length - limit;
   return rest > 0 ? `${head} (+${rest} more)` : head;
 }
+
+/** Test-only: expose compactUnionErrors for unit-testing the variant-selection logic. */
+export const _compactUnionErrors: (errors: readonly ErrorObject[], rootSchema: unknown) => ErrorObject[] =
+  compactUnionErrors;

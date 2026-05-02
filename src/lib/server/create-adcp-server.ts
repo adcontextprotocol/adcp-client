@@ -2059,6 +2059,43 @@ function sanitizeAdcpErrorEnvelope(response: McpToolResponse): void {
   }
 }
 
+/**
+ * Walk `value` (a handler response payload) and return JSON-pointer paths
+ * of any object keys whose value is `undefined`. JSON.stringify silently
+ * drops these, producing missing-field validation errors whose messages
+ * point to the wrong oneOf variant (issue #1337). Collecting them before
+ * serialization lets the server emit a developer-facing warning that names
+ * the culprit fields.
+ *
+ * Recursion depth is capped at 8 — deeper nesting is not a realistic
+ * AdCP response shape, and the cap keeps the hot path O(fields).
+ */
+function collectUndefinedPaths(value: unknown, pointer = '', depth = 0): string[] {
+  if (depth > 8 || value == null || typeof value !== 'object') return [];
+  const paths: string[] = [];
+  if (Array.isArray(value)) {
+    for (let i = 0; i < value.length; i++) {
+      if ((value as unknown[])[i] === undefined) {
+        paths.push(`${pointer}/${i}`);
+      } else {
+        paths.push(...collectUndefinedPaths((value as unknown[])[i], `${pointer}/${i}`, depth + 1));
+      }
+    }
+  } else {
+    for (const key of Object.keys(value as object)) {
+      const child = (value as Record<string, unknown>)[key];
+      const encodedKey = key.replace(/~/g, '~0').replace(/\//g, '~1');
+      const childPointer = `${pointer}/${encodedKey}`;
+      if (child === undefined) {
+        paths.push(childPointer);
+      } else {
+        paths.push(...collectUndefinedPaths(child, childPointer, depth + 1));
+      }
+    }
+  }
+  return paths;
+}
+
 // Echo the request context into a formatted MCP tool response so buyers can
 // trace correlation_id across both success and error responses. Only plain
 // objects are echoed: `si_get_offering` and `si_initiate_session` override
@@ -3288,6 +3325,23 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
                 tool: toolName,
                 error: reason,
               });
+            }
+          }
+
+          // Warn on undefined-valued fields before schema validation runs.
+          // JSON.stringify silently drops undefined keys, producing a
+          // missing-field validator error whose message points to the
+          // wrong oneOf variant (issue #1337). Logging the culprit paths
+          // here puts the root-cause signal in the same log flush as the
+          // schema error, so adopters don't need a second iteration.
+          if (responseValidationMode !== 'off' && !isErrorResponse(formatted)) {
+            const undefinedPaths = collectUndefinedPaths(formatted.structuredContent);
+            if (undefinedPaths.length > 0) {
+              logger.warn(
+                `Response for ${toolName} has undefined field(s) that JSON.stringify will drop — ` +
+                  `check handler output: ${undefinedPaths.join(', ')}`,
+                { tool: toolName, undefinedPaths }
+              );
             }
           }
 
