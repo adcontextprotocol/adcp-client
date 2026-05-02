@@ -12,6 +12,7 @@ import type {
   DecisioningPlatform,
   RequiredPlatformsFor,
   RequiredCapabilitiesFor,
+  RequiredOptsFor,
   Account,
   AccountStore,
   DecisioningCapabilities,
@@ -21,8 +22,17 @@ import type {
   CreativeTemplatePlatform,
   SalesPlatform,
   AudiencePlatform,
+  CreateAdcpServerFromPlatformOptions,
+  ComplianceTestingCapabilities,
 } from './index';
-import { AdcpError, AccountNotFoundError, defineSalesPlatform, defineAudiencePlatform } from './index';
+import {
+  AdcpError,
+  AccountNotFoundError,
+  defineSalesPlatform,
+  defineAudiencePlatform,
+  definePlatformWithCompliance,
+} from './index';
+import type { ComplyControllerConfig } from '../../testing/comply-controller';
 
 // ── AdcpError construction ────────────────────────────────────────────
 
@@ -185,6 +195,30 @@ function _account_store_resolution_invalid_value(): Pick<AccountStore<GAMAccount
   return { resolution: 'auto' };
 }
 
+// ── Signals-only platforms omit media-buy fields ─────────────────────
+
+// Positive: a signals-only platform doesn't need creative_agents, channels,
+// or pricingModels — those fields are optional and inapplicable to platforms
+// that sell audience data access rather than media inventory.
+function _signals_only_capabilities_compiles(): DecisioningCapabilities {
+  return {
+    specialisms: ['signal-marketplace'] as const,
+    config: {},
+  };
+}
+
+// Negative: channels rejects values outside the MediaChannel union.
+function _channels_rejects_unknown_channel(): Pick<DecisioningCapabilities, 'channels'> {
+  // @ts-expect-error — 'billboard' is not a known MediaChannel value.
+  return { channels: ['billboard'] as const };
+}
+
+// Negative: pricingModels rejects values outside the PricingModel union.
+function _pricing_models_rejects_unknown_model(): Pick<DecisioningCapabilities, 'pricingModels'> {
+  // @ts-expect-error — 'rev_share' is not a known PricingModel value.
+  return { pricingModels: ['rev_share'] as const };
+}
+
 // ── DecisioningCapabilities.supportedBillings is a closed enum ────────
 
 function _capabilities_supported_billings_operator(): Pick<DecisioningCapabilities, 'supportedBillings'> {
@@ -274,8 +308,46 @@ function _define_audience_platform_rejects_wrong_shape() {
   return defineAudiencePlatform<_SocialMeta>({ syncAudiences: 'not-a-function' });
 }
 
+// ── definePlatformWithCompliance / RequiredOptsFor invariants ─────────────
+
+// Positive: definePlatformWithCompliance accepts a platform with compliance_testing.
+type _PlatformBase = DecisioningPlatform<unknown, Record<string, unknown>>;
+type _PlatformWithCT = _PlatformBase & {
+  capabilities: { compliance_testing: ComplianceTestingCapabilities };
+};
+function _define_platform_with_compliance_accepts_ct(p: _PlatformWithCT): _PlatformWithCT {
+  return definePlatformWithCompliance(p);
+}
+
+// Negative: definePlatformWithCompliance rejects a platform missing compliance_testing
+// (compliance_testing is optional on DecisioningPlatformCapabilities, required by the helper).
+function _define_platform_with_compliance_rejects_missing_ct() {
+  const p: _PlatformBase = {} as unknown as _PlatformBase;
+  // @ts-expect-error — compliance_testing is required by the helper but optional on the base type.
+  return definePlatformWithCompliance(p);
+}
+
+// Positive: RequiredOptsFor resolves to base options when P has no compliance_testing.
+type _opts_no_ct = RequiredOptsFor<_PlatformBase>;
+const _check_opts_no_ct: _opts_no_ct extends CreateAdcpServerFromPlatformOptions ? true : false = true;
+
+// Positive: RequiredOptsFor resolves to require complyTest when P has compliance_testing.
+// Uses ComplyControllerConfig (not object) to assert the exact required type.
+type _opts_with_ct = RequiredOptsFor<_PlatformWithCT>;
+const _check_opts_with_ct: _opts_with_ct extends { complyTest: ComplyControllerConfig } ? true : false = true;
+
+// Negative: base opts (complyTest optional) is NOT assignable to CT opts (complyTest required).
+// This is the call-site regression alarm: if RequiredOptsFor stops requiring complyTest,
+// this would flip to 'assignable' and fail to match the 'not-assignable' literal type.
+type _ct_opts_requires_complytest =
+  CreateAdcpServerFromPlatformOptions extends RequiredOptsFor<_PlatformWithCT> ? 'assignable' : 'not-assignable';
+const _check_ct_opts_requires: _ct_opts_requires_complytest = 'not-assignable';
+
 // Reference all symbols once so eslint-disable is targeted.
 export const _references = [
+  _signals_only_capabilities_compiles,
+  _channels_rejects_unknown_channel,
+  _pricing_models_rejects_unknown_model,
   _adcp_error_minimum,
   _adcp_error_full_fields,
   _adcp_error_accepts_unknown_code,
@@ -304,4 +376,9 @@ export const _references = [
   _define_sales_platform_identity,
   _define_audience_platform_identity,
   _define_audience_platform_rejects_wrong_shape,
+  _define_platform_with_compliance_accepts_ct,
+  _define_platform_with_compliance_rejects_missing_ct,
+  _check_opts_no_ct,
+  _check_opts_with_ct,
+  _check_ct_opts_requires,
 ] as const;

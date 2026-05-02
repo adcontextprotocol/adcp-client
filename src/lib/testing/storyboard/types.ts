@@ -338,23 +338,37 @@ export interface StoryboardStep {
   /** Whether this step depends on state from a previous step */
   stateful?: boolean;
   /**
-   * Declares that this step substitutes for one or more peer steps in the
-   * same phase. When a target peer skips with `not_applicable` or
-   * `missing_tool` (no advertised tool), the runner defers the cascade and
-   * waives it iff this substitute step passes. Same-phase only; cross-phase
-   * substitution is not supported.
+   * Declares that this step's pass establishes equivalent state for one or
+   * more peer steps in the same phase. When a target peer skips with
+   * `missing_tool` or `missing_test_controller` (no advertised tool),
+   * the runner defers the cascade and waives it iff this substitute step
+   * passes. Same-phase only; cross-phase substitution is not supported.
    *
-   * Canonical case: `list_accounts` declares `peer_substitutes_for:
+   * Canonical case: `list_accounts` declares `provides_state_for:
    * sync_accounts` on explicit-mode social platforms where the buyer never
    * calls `sync_accounts` because accounts are pre-provisioned out-of-band.
    *
    * Without this declaration, a `missing_tool` skip on a stateful step
    * trips the cascade immediately (state genuinely never materialized).
    * With it, the runner gives a declared substitute a chance to establish
-   * equivalent state before tripping.
+   * equivalent state before tripping. When the rescue fires, the target
+   * peer is graded with `skip_reason: 'peer_substituted'` and detail
+   * `"<target_step_id> state provided by <phase_id>.<substitute_step_id>"`
+   * per `runner-output-contract.yaml`.
    *
-   * Use `string[]` for the rare bulk case (e.g., a `bulk_setup` that
-   * substitutes for both account and event-source provisioning).
+   * Use `string[]` for the bulk case (`provides_state_for: [A, B]` is
+   * ALL-OF — one substitute pass establishes state for both A and B).
+   *
+   * Spec source: `compliance/cache/{version}/universal/storyboard-schema.yaml`
+   * (adcp#3734, AdCP 3.0.3+).
+   */
+  provides_state_for?: string | string[];
+
+  /**
+   * @deprecated Renamed to `provides_state_for` to align with the AdCP 3.0.3
+   * spec field (adcp#3734). The old name is still accepted at parse time for
+   * one minor cycle. New storyboards SHOULD use `provides_state_for`. Slated
+   * for removal in the next major.
    */
   peer_substitutes_for?: string | string[];
   /** When true, the step passes if the task returns an error */
@@ -1023,7 +1037,18 @@ export type RunnerSkipReason =
    * patterns" and runner-output-contract.yaml). Kept distinct from
    * `not_applicable` (coverage gap) and raw `failed` (agent misbehavior).
    */
-  | 'peer_branch_taken';
+  | 'peer_branch_taken'
+  /**
+   * A same-phase peer step declared `provides_state_for: <this_step_id>`
+   * and passed, establishing equivalent state. This step would have graded
+   * `missing_tool` or `missing_test_controller`; the substitute rescued it
+   * so downstream stateful steps can still run. Detail format per
+   * `runner-output-contract.yaml`:
+   * `"<this_step_id> state provided by <phase_id>.<substitute_step_id>"`.
+   * Kept distinct from `peer_branch_taken` (branch-set routing) and
+   * `not_applicable` (coverage gap). Spec source: adcp#3734 (AdCP 3.0.3+).
+   */
+  | 'peer_substituted';
 
 /**
  * Grader-specific skip reasons. These are narrower than the six canonical

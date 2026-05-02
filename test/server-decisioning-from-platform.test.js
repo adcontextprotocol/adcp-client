@@ -3046,6 +3046,46 @@ describe('validatePlatform', () => {
     });
     assert.doesNotThrow(() => validatePlatform(platform));
   });
+
+  it('throws PlatformConfigError when sales-* specialism declared without capabilities.channels', () => {
+    // Sales platforms declaring an empty/missing `channels` emit a broken
+    // get_adcp_capabilities response that buyers cannot interpret. Runtime
+    // guard catches what the now-optional type signature lets through.
+    const base = buildPlatform();
+    const platform = {
+      ...base,
+      capabilities: {
+        ...base.capabilities,
+        // channels intentionally omitted (was optional after #1278)
+        channels: undefined,
+      },
+    };
+    assert.throws(
+      () => validatePlatform(platform),
+      err => err instanceof PlatformConfigError && /channels/.test(err.message)
+    );
+  });
+
+  it('passes for signals-only platform without channels/pricingModels/creative_agents', () => {
+    // After #1278 these capability fields are optional on
+    // DecisioningCapabilities — signals-only platforms don't sell media
+    // and don't compose with creative agents. The `sales-` prefix derived
+    // gate (validate-platform.ts) means non-sales claims pass.
+    const base = buildPlatform();
+    const platform = {
+      ...base,
+      sales: undefined, // signals-only
+      signals: {
+        getSignals: async () => ({ signals: [] }),
+        activateSignal: async () => ({ deployments: [] }),
+      },
+      capabilities: {
+        specialisms: ['signal-marketplace'],
+        config: {},
+      },
+    };
+    assert.doesNotThrow(() => validatePlatform(platform));
+  });
 });
 
 describe('server.statusChange — per-server bus', () => {

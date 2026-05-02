@@ -38,14 +38,41 @@ export interface DecisioningCapabilities<TConfig = unknown> {
    * Useful when a creative agent hosts 50 formats but this seller only accepts
    * 10 of them. Filter scope is per-creative-agent: `[{ agent_url: A, format_ids: ['x'] }, { agent_url: B }]`
    * means "from A only format x; from B all formats."
+   *
+   * Omit for signals-only platforms (`signal-marketplace`, `signal-owned`) — they
+   * sell audience data access, not media inventory, and don't compose with creative agents.
    */
-  creative_agents: readonly CreativeAgentRef[];
+  creative_agents?: readonly CreativeAgentRef[];
 
-  /** Channels this platform sells. */
-  channels: readonly MediaChannel[];
+  /**
+   * Channels this platform sells.
+   *
+   * Omit for non-media-buy platforms — they don't sell ad inventory and have no
+   * channels to declare. Applies to signals (`signal-marketplace`, `signal-owned`),
+   * governance (`governance-spend-authority`, `governance-delivery-monitor`,
+   * `property-lists`, `collection-lists`, `content-standards`), creative-only
+   * (`creative-ad-server`, `creative-template`, `creative-generative`), and
+   * brand (`brand-rights`) platforms.
+   *
+   * **Required at runtime for media-buy platforms.** `validatePlatform` (called
+   * by `createAdcpServerFromPlatform`) throws `PlatformConfigError` when any
+   * `sales-*` specialism is claimed and this field is absent.
+   */
+  channels?: readonly MediaChannel[];
 
-  /** Pricing models this platform supports. */
-  pricingModels: readonly PricingModel[];
+  /**
+   * Pricing models this platform supports.
+   *
+   * Omit for non-media-buy platforms — they don't sell ad inventory and have no
+   * channel-level pricing to declare. For signals platforms specifically, pricing
+   * is declared per-signal in the signal descriptor's `pricing_options[]` instead.
+   * Same non-media-buy specialism set as `channels` above.
+   *
+   * **Required at runtime for media-buy platforms.** `validatePlatform` (called
+   * by `createAdcpServerFromPlatform`) throws `PlatformConfigError` when any
+   * `sales-*` specialism is claimed and this field is absent.
+   */
+  pricingModels?: readonly PricingModel[];
 
   /** Targeting capabilities. Optional — framework infers reasonable defaults if omitted. */
   targeting?: TargetingCapabilities;
