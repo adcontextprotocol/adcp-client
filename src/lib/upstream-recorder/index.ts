@@ -53,11 +53,14 @@
  */
 
 export { createUpstreamRecorder } from './recorder';
+export { UpstreamRecorderScopeError } from './types';
 export type {
   PurposeClassifier,
   RecordInput,
   RecordedCall,
   UpstreamRecorder,
+  UpstreamRecorderDebugInfo,
+  UpstreamRecorderErrorEvent,
   UpstreamRecorderOptions,
   UpstreamRecorderQueryParams,
   UpstreamRecorderQueryResult,

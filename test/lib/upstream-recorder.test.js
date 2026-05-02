@@ -16,7 +16,7 @@
 const { describe, test } = require('node:test');
 const assert = require('node:assert/strict');
 
-const { createUpstreamRecorder } = require('../../dist/lib/upstream-recorder');
+const { createUpstreamRecorder, UpstreamRecorderScopeError } = require('../../dist/lib/upstream-recorder');
 
 // ────────────────────────────────────────────────────────────
 // enabled: false fast-path
@@ -373,5 +373,296 @@ describe('clear()', () => {
     assert.equal(r.query({ principal: 'p' }).total, 1);
     r.clear();
     assert.equal(r.query({ principal: 'p' }).total, 0);
+  });
+});
+
+// ────────────────────────────────────────────────────────────
+// query() principal validation
+// ────────────────────────────────────────────────────────────
+
+describe('query() principal validation', () => {
+  test('throws on empty-string principal', () => {
+    const r = createUpstreamRecorder({ enabled: true });
+    assert.throws(() => r.query({ principal: '' }), UpstreamRecorderScopeError);
+  });
+
+  test('throws on undefined / non-string principal (JS-shaped misuse)', () => {
+    const r = createUpstreamRecorder({ enabled: true });
+    assert.throws(() => r.query({ principal: undefined }), UpstreamRecorderScopeError);
+    assert.throws(() => r.query({ principal: 42 }), UpstreamRecorderScopeError);
+  });
+});
+
+// ────────────────────────────────────────────────────────────
+// runWithPrincipal validation
+// ────────────────────────────────────────────────────────────
+
+describe('runWithPrincipal validation', () => {
+  test('rejects non-string / empty principal', async () => {
+    const r = createUpstreamRecorder({ enabled: true });
+    await assert.rejects(() => r.runWithPrincipal('', async () => {}), UpstreamRecorderScopeError);
+    await assert.rejects(() => r.runWithPrincipal(null, async () => {}), UpstreamRecorderScopeError);
+  });
+});
+
+// ────────────────────────────────────────────────────────────
+// strict mode
+// ────────────────────────────────────────────────────────────
+
+describe('strict mode', () => {
+  test('record() outside scope throws when strict: true', () => {
+    const r = createUpstreamRecorder({ enabled: true, strict: true });
+    assert.throws(
+      () => r.record({ method: 'GET', url: 'https://x', content_type: 'application/json' }),
+      UpstreamRecorderScopeError
+    );
+  });
+
+  test('wrapFetch outside scope throws when strict: true', async () => {
+    const r = createUpstreamRecorder({ enabled: true, strict: true });
+    const fakeFetch = async () => new Response('ok');
+    const wrapped = r.wrapFetch(fakeFetch);
+    await assert.rejects(() => wrapped('https://x'), UpstreamRecorderScopeError);
+  });
+
+  test('strict: false (default) silently drops outside scope (preserves the no-break-adapter posture)', () => {
+    const r = createUpstreamRecorder({ enabled: true });
+    // Should not throw.
+    r.record({ method: 'GET', url: 'https://x', content_type: 'application/json' });
+    assert.equal(r.query({ principal: 'anyone' }).total, 0);
+  });
+});
+
+// ────────────────────────────────────────────────────────────
+// onError observability
+// ────────────────────────────────────────────────────────────
+
+describe('onError observability', () => {
+  test('fires on classifier throw with err detail', async () => {
+    const events = [];
+    const r = createUpstreamRecorder({
+      enabled: true,
+      purpose: () => {
+        throw new Error('classifier-bug');
+      },
+      onError: e => events.push(e),
+    });
+    await r.runWithPrincipal('p', async () => {
+      r.record({ method: 'GET', url: 'https://x', content_type: 'application/json' });
+    });
+    assert.equal(events.length, 1);
+    assert.equal(events[0].kind, 'classifier_threw');
+    assert.match(events[0].err.message, /classifier-bug/);
+  });
+
+  test('fires on unscoped record (non-strict)', () => {
+    const events = [];
+    const r = createUpstreamRecorder({ enabled: true, onError: e => events.push(e) });
+    r.record({ method: 'POST', url: 'https://api/x', content_type: 'application/json' });
+    assert.equal(events.length, 1);
+    assert.equal(events[0].kind, 'unscoped_record');
+    assert.equal(events[0].url, 'https://api/x');
+  });
+
+  test('fires on URL parse failure', async () => {
+    const events = [];
+    const r = createUpstreamRecorder({ enabled: true, onError: e => events.push(e) });
+    await r.runWithPrincipal('p', async () => {
+      r.record({ method: 'POST', url: 'not a url', content_type: 'application/json' });
+    });
+    assert.ok(events.some(e => e.kind === 'url_parse_failed' && e.url === 'not a url'));
+  });
+
+  test('throwing inside onError is itself swallowed (recorder MUST NOT crash)', async () => {
+    const r = createUpstreamRecorder({
+      enabled: true,
+      purpose: () => {
+        throw new Error('p');
+      },
+      onError: () => {
+        throw new Error('observer-bug');
+      },
+    });
+    await r.runWithPrincipal('p', async () => {
+      r.record({ method: 'GET', url: 'https://x', content_type: 'application/json' });
+    });
+    // Recording still landed despite the onError throw.
+    assert.equal(r.query({ principal: 'p' }).total, 1);
+  });
+});
+
+// ────────────────────────────────────────────────────────────
+// debug() introspection
+// ────────────────────────────────────────────────────────────
+
+describe('debug() introspection', () => {
+  test('reports buffer state and active principal', async () => {
+    const r = createUpstreamRecorder({ enabled: true, bufferSize: 50 });
+    await r.runWithPrincipal('alice', async () => {
+      r.record({ method: 'GET', url: 'https://x/1', content_type: 'application/json' });
+    });
+    await r.runWithPrincipal('bob', async () => {
+      r.record({ method: 'GET', url: 'https://x/2', content_type: 'application/json' });
+      const info = r.debug();
+      assert.equal(info.enabled, true);
+      assert.equal(info.bufferSize, 50);
+      assert.equal(info.bufferedEntries, 2);
+      assert.deepEqual(info.principals.sort(), ['alice', 'bob']);
+      assert.equal(info.activePrincipal, 'bob');
+      assert.ok(info.lastRecordedAt);
+    });
+  });
+
+  test('activePrincipal is null outside any scope', () => {
+    const r = createUpstreamRecorder({ enabled: true });
+    assert.equal(r.debug().activePrincipal, null);
+  });
+
+  test('disabled recorder returns matching shape', () => {
+    const r = createUpstreamRecorder({ enabled: false });
+    const info = r.debug();
+    assert.equal(info.enabled, false);
+    assert.equal(info.bufferedEntries, 0);
+    assert.deepEqual(info.principals, []);
+  });
+});
+
+// ────────────────────────────────────────────────────────────
+// Buffer/Blob/TypedArray binary handling
+// ────────────────────────────────────────────────────────────
+
+describe('binary payload handling', () => {
+  test('Buffer body is replaced with [binary N bytes] marker', async () => {
+    const r = createUpstreamRecorder({ enabled: true });
+    await r.runWithPrincipal('p', async () => {
+      r.record({
+        method: 'POST',
+        url: 'https://x',
+        content_type: 'application/octet-stream',
+        payload: Buffer.from([1, 2, 3, 4, 5]),
+      });
+    });
+    const { items } = r.query({ principal: 'p' });
+    assert.equal(items[0].payload, '[binary 5 bytes]');
+  });
+
+  test('TypedArray body is replaced with marker', async () => {
+    const r = createUpstreamRecorder({ enabled: true });
+    await r.runWithPrincipal('p', async () => {
+      r.record({
+        method: 'POST',
+        url: 'https://x',
+        content_type: 'application/octet-stream',
+        payload: new Uint8Array([1, 2, 3]),
+      });
+    });
+    const { items } = r.query({ principal: 'p' });
+    assert.equal(items[0].payload, '[binary 3 bytes]');
+  });
+});
+
+// ────────────────────────────────────────────────────────────
+// Form-urlencoded redaction
+// ────────────────────────────────────────────────────────────
+
+describe('form-urlencoded redaction', () => {
+  test('redacts secret-keyed values in form-urlencoded body', async () => {
+    const r = createUpstreamRecorder({ enabled: true });
+    await r.runWithPrincipal('p', async () => {
+      r.record({
+        method: 'POST',
+        url: 'https://oauth/token',
+        content_type: 'application/x-www-form-urlencoded',
+        payload: 'grant_type=client_credentials&client_secret=SK_xxx&access_token=AT_xxx&audience_id=42',
+      });
+    });
+    const { items } = r.query({ principal: 'p' });
+    const body = items[0].payload;
+    assert.match(body, /grant_type=client_credentials/);
+    assert.match(body, /client_secret=%5Bredacted%5D|client_secret=\[redacted\]/);
+    assert.match(body, /access_token=%5Bredacted%5D|access_token=\[redacted\]/);
+    assert.match(body, /audience_id=42/);
+  });
+});
+
+// ────────────────────────────────────────────────────────────
+// Payload byte cap
+// ────────────────────────────────────────────────────────────
+
+describe('payload byte cap', () => {
+  test('JSON payload exceeding maxPayloadBytes replaced with [truncated N bytes]', async () => {
+    const r = createUpstreamRecorder({ enabled: true, maxPayloadBytes: 100 });
+    const big = { users: Array.from({ length: 100 }, (_, i) => ({ id: i })) };
+    await r.runWithPrincipal('p', async () => {
+      r.record({
+        method: 'POST',
+        url: 'https://x',
+        content_type: 'application/json',
+        payload: big,
+      });
+    });
+    const { items } = r.query({ principal: 'p' });
+    assert.match(String(items[0].payload), /^\[truncated \d+ bytes\]$/);
+  });
+
+  test('maxPayloadBytes: 0 disables truncation', async () => {
+    const r = createUpstreamRecorder({ enabled: true, maxPayloadBytes: 0 });
+    const big = { users: Array.from({ length: 100 }, (_, i) => ({ id: i })) };
+    await r.runWithPrincipal('p', async () => {
+      r.record({
+        method: 'POST',
+        url: 'https://x',
+        content_type: 'application/json',
+        payload: big,
+      });
+    });
+    const { items } = r.query({ principal: 'p' });
+    assert.deepEqual(items[0].payload, big);
+  });
+});
+
+// ────────────────────────────────────────────────────────────
+// Constructor option clamping
+// ────────────────────────────────────────────────────────────
+
+describe('option clamping (defense-in-depth against misconfigured adopters)', () => {
+  test('bufferSize: 0 falls back to default', async () => {
+    const r = createUpstreamRecorder({ enabled: true, bufferSize: 0 });
+    await r.runWithPrincipal('p', async () => {
+      r.record({ method: 'GET', url: 'https://x', content_type: 'application/json' });
+    });
+    assert.equal(r.query({ principal: 'p' }).total, 1, 'a zero-size buffer would silently drop everything');
+  });
+
+  test('bufferSize: Infinity falls back to default (DoS guard)', () => {
+    const r = createUpstreamRecorder({ enabled: true, bufferSize: Infinity });
+    assert.equal(r.debug().bufferSize, 1000); // DEFAULT_BUFFER_SIZE
+  });
+
+  test('bufferSize: negative falls back to default', () => {
+    const r = createUpstreamRecorder({ enabled: true, bufferSize: -10 });
+    assert.equal(r.debug().bufferSize, 1000);
+  });
+});
+
+// ────────────────────────────────────────────────────────────
+// Glob ReDoS guard
+// ────────────────────────────────────────────────────────────
+
+describe('endpointPattern ReDoS guard', () => {
+  test('pathological *+ patterns coalesce — no catastrophic backtracking', async () => {
+    const r = createUpstreamRecorder({ enabled: true });
+    await r.runWithPrincipal('p', async () => {
+      r.record({ method: 'POST', url: 'https://api.test/v1/upload', content_type: 'application/json' });
+    });
+    const start = Date.now();
+    const { items } = r.query({
+      principal: 'p',
+      // Without the coalesce, this generates `^.*.*.*.*.*.*.*.*.*.*.*$` which is catastrophic on a non-match.
+      endpointPattern: 'POST ***********nonmatching**********pattern',
+    });
+    const elapsed = Date.now() - start;
+    assert.equal(items.length, 0);
+    assert.ok(elapsed < 100, `query took ${elapsed}ms — ReDoS not guarded`);
   });
 });

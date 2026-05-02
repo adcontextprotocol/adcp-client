@@ -889,7 +889,52 @@ function handleQueryUpstreamTraffic(req, callerPrincipal) {
 // 4. Add 'query_upstream_traffic' to your `list_scenarios` response — that's the opt-in flag.
 ```
 
-`enabled: false` returns a no-op recorder for production builds — zero per-call overhead. See `@adcp/sdk/upstream-recorder`'s module-level docs for the full surface (custom `redactPattern`, `purpose` classifier hook, `bufferSize` / `ttlMs` tuning).
+**Adopters not on `fetch`**: same model, drop the recorder into your existing client's interceptor / hook surface and call `recorder.record()` manually. Auto-fills timestamp, host/path, redaction, purpose tagging — same wire shape as `wrapFetch`.
+
+```ts
+// Axios
+axiosInstance.interceptors.request.use(config => {
+  config.metadata = { startedAt: Date.now() }; // for status-code-on-response wiring
+  return config;
+});
+axiosInstance.interceptors.response.use(
+  resp => {
+    recorder.record({
+      method: resp.config.method?.toUpperCase() ?? 'GET',
+      url: resp.config.url ?? '',
+      content_type: resp.config.headers['content-type'] ?? '',
+      headers: resp.config.headers,
+      payload: resp.config.data,
+      status_code: resp.status,
+    });
+    return resp;
+  },
+  err => { /* still record on error — same shape, omit status_code */ throw err; }
+);
+
+// got
+got.extend({
+  hooks: {
+    afterResponse: [
+      response => {
+        recorder.record({
+          method: response.request.options.method,
+          url: response.request.requestUrl.toString(),
+          content_type: response.request.options.headers['content-type'] ?? '',
+          headers: response.request.options.headers,
+          payload: response.request.options.body,
+          status_code: response.statusCode,
+        });
+        return response;
+      },
+    ],
+  },
+});
+```
+
+**Debugging "my storyboard says zero calls but I see them in my logs"**: enable `strict: true` during integration test runs — `record()` and the wrapped fetch then throw `UpstreamRecorderScopeError` instead of silently dropping calls made outside `runWithPrincipal`. Or call `recorder.debug()` from inside your handler to see the buffer state, distinct principals, and active principal at that point — `console.log(recorder.debug())` is enough to pinpoint a missing scope wrapper or a record-time / query-time principal mismatch.
+
+`enabled: false` returns a no-op recorder for production builds — zero per-call overhead. See `@adcp/sdk/upstream-recorder`'s module-level docs for the full surface (`strict`, `debug()`, `onError` hook, `redactPattern`, `maxPayloadBytes`, `purpose` classifier, `bufferSize` / `ttlMs` tuning).
 
 ## SDK Quick Reference
 

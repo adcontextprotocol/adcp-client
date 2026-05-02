@@ -105,6 +105,57 @@ export interface UpstreamRecorderOptions {
    * with the redacted-headers view of the outbound call.
    */
   purpose?: PurposeClassifier;
+  /**
+   * When `true`, calling `record()` or invoking the wrapped fetch outside a
+   * `runWithPrincipal(p, fn)` scope throws an `UpstreamRecorderScopeError`
+   * instead of silently dropping the call. Default `false` — silent drop
+   * matches the recorder's "don't break the adapter" posture in production.
+   * Adopters writing or debugging integration tests SHOULD enable this so
+   * forgotten scope wrappers surface as a stack trace pointing at the
+   * unwrapped call site, not as mysterious "controller present, observed
+   * nothing" storyboard failures.
+   */
+  strict?: boolean;
+  /**
+   * Maximum bytes retained in `RecordedCall.payload` per entry. Adopter
+   * payloads exceeding this limit are replaced with the marker string
+   * `'[truncated <n> bytes]'` so the buffer ceiling stays bounded even
+   * when an adopter records bulk uploads. Default 65 536 (64 KiB —
+   * mirrors the spec's `recorded_calls[].payload` `maxLength`).
+   * Set to 0 to disable truncation.
+   */
+  maxPayloadBytes?: number;
+  /**
+   * Optional observability hook. Invoked when the recorder swallows an
+   * error that would otherwise be invisible (purpose classifier throw,
+   * URL parse failure, payload-build throw on a hostile getter, record
+   * outside scope when `strict: false`). Adopters wire this to their
+   * logger so silent failures surface in dev sessions. Throwing inside
+   * `onError` is itself swallowed — the hook MUST NOT crash the recorder.
+   */
+  onError?: (event: UpstreamRecorderErrorEvent) => void;
+}
+
+/**
+ * Surfaced through `UpstreamRecorderOptions.onError` for adopter
+ * observability. Each kind names a specific swallow site in the recorder.
+ */
+export type UpstreamRecorderErrorEvent =
+  | { kind: 'classifier_threw'; err: unknown }
+  | { kind: 'url_parse_failed'; url: string }
+  | { kind: 'payload_build_failed'; err: unknown }
+  | { kind: 'unscoped_record'; method: string; url: string };
+
+/**
+ * Thrown by `record()` and the wrapped fetch when invoked outside a
+ * `runWithPrincipal` scope and `strict: true` is set. Subclasses `Error`
+ * so adopter test runners surface the stack trace.
+ */
+export class UpstreamRecorderScopeError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'UpstreamRecorderScopeError';
+  }
 }
 
 /**
@@ -184,6 +235,24 @@ export interface UpstreamRecorder {
    * Re-entrant — nested `runWithPrincipal` calls override the parent's
    * principal for their inner scope only.
    */
+  /**
+   * The same string MUST be passed at record-time and query-time — record
+   * happens inside `runWithPrincipal(p, fn)`, query is invoked from the
+   * adopter's `comply_test_controller` handler with the principal it
+   * receives in its auth context. The two ends MUST agree:
+   *
+   *   - **OAuth client_credentials sellers**: pass the resolved `client_id`.
+   *   - **Session-token sellers**: pass the `account.id` (or whatever
+   *     stable per-adopter-account identifier the auth layer materializes).
+   *   - **Anonymous / public-sandbox sellers**: pass a stable per-session
+   *     identifier; literal-anonymous strings collide across tenants and
+   *     defeat isolation.
+   *
+   * Mismatch between record-time and query-time principal returns zero
+   * results. That's the spec's security floor (cross-principal leakage
+   * MUST NOT happen), not a bug — but it means a typo shows up as
+   * "controller present, observed nothing" in storyboard output.
+   */
   runWithPrincipal<T>(principal: string, fn: () => T | Promise<T>): Promise<T>;
   /**
    * Wrap a fetch implementation so calls inside `runWithPrincipal` flow
@@ -215,6 +284,36 @@ export interface UpstreamRecorder {
   clear(): void;
   /** Reflect the configured `enabled` flag — useful for adopter assertions. */
   readonly enabled: boolean;
+  /**
+   * Introspection helper for adopters debugging "my storyboard says zero
+   * calls but I see them in the logs". Returns the recorder's current
+   * state — buffer size, total entries, distinct principals, the
+   * timestamp of the most recent record, and the active principal in the
+   * caller's scope (when invoked from inside `runWithPrincipal`).
+   * Diagnostic only; not a public conformance surface.
+   */
+  debug(): UpstreamRecorderDebugInfo;
+}
+
+/**
+ * Snapshot returned by `recorder.debug()`. The shape is informational —
+ * adopters are expected to log it, not match against it.
+ */
+export interface UpstreamRecorderDebugInfo {
+  enabled: boolean;
+  bufferSize: number;
+  bufferedEntries: number;
+  /** Distinct principals with at least one buffered entry. */
+  principals: string[];
+  /** ISO timestamp of the most recent record, or `null` if buffer is empty. */
+  lastRecordedAt: string | null;
+  /**
+   * The principal active in the caller's `runWithPrincipal` scope at the
+   * moment `debug()` was invoked. `null` when called outside any scope.
+   */
+  activePrincipal: string | null;
+  /** Echo of the configured `strict` flag. */
+  strict: boolean;
 }
 
 /**
