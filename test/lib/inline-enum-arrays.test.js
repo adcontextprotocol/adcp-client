@@ -153,4 +153,30 @@ describe('Inline-union value arrays (inline-enums.generated)', () => {
     const typesEntry = await import('../../dist/lib/types/index.js');
     assert.ok(typesEntry.ImageAssetRequirements_FormatsValues, 'inline-enum reachable via /types entrypoint');
   });
+
+  it('no two distinct inline-enum array references share an identical literal set (#941)', async () => {
+    if (!inlineEnums) inlineEnums = await import('../../dist/lib/types/inline-enums.generated.js');
+    // Aliases (deprecated re-exports) share the canonical's array reference,
+    // so identity-based dedup keeps them out of the mismatch set. Any future
+    // independent emission with a duplicate literal set creates a new array
+    // reference and trips the assertion — exactly the regression we want.
+    const seen = new Map();
+    const duplicates = [];
+    for (const [name, value] of Object.entries(inlineEnums)) {
+      if (!name.endsWith('Values')) continue;
+      if (!Array.isArray(value)) continue;
+      const fingerprint = [...value].sort().join('|');
+      const prior = seen.get(fingerprint);
+      if (prior && prior.value !== value) {
+        duplicates.push(`${name} ≡ ${prior.name} (literals: ${JSON.stringify([...value].sort())})`);
+        continue;
+      }
+      if (!prior) seen.set(fingerprint, { name, value });
+    }
+    assert.deepEqual(
+      duplicates,
+      [],
+      'inline-enum exports with byte-identical literal sets must be aliased to a canonical export, not emitted independently'
+    );
+  });
 });
