@@ -32,9 +32,12 @@ export const DEFAULT_UNKNOWN_RECOVERY: ErrorRecovery = "transient";
  * Standard AdCP error codes with structured `description`, `recovery`, and
  * (where the spec provides one) `suggestion`. Keyed by the wire code.
  *
- * The `StandardErrorCode` union is derived from `ErrorCodeValues` in
- * `enums.generated.ts`. Drift is caught by the `satisfies Record<…>`
- * assertion in `src/lib/types/error-codes.ts`.
+ * Typed loosely as `Record<string, StandardErrorCodeInfo>` on purpose: the
+ * generated file does not import from `enums.generated.ts` so the codegen
+ * stays decoupled from the rest of the type pipeline. The strict
+ * `Record<StandardErrorCode, ErrorCodeInfo>` constraint is re-applied at
+ * the consumer site (`src/lib/types/error-codes.ts`) — drift is caught
+ * there. Don't tighten this annotation without rewiring that layering.
  */
 export const STANDARD_ERROR_CODES_FROM_MANIFEST = {
   ACCOUNT_AMBIGUOUS: {

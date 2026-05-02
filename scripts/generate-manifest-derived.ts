@@ -105,7 +105,13 @@ function generateFile(manifest: AdcpManifest, sourcePath: string): string {
   // today so consumers' imports keep compiling after migration.
   const toolsByProtocol = new Map<string, string[]>();
   for (const [name, tool] of Object.entries(manifest.tools).sort(([a], [b]) => a.localeCompare(b))) {
-    const protocol = tool.protocol ?? 'unknown';
+    if (!tool.protocol) {
+      throw new Error(
+        `manifest.json tool ${JSON.stringify(name)} is missing the required \`protocol\` field. ` +
+          `The manifest schema marks this as required — fix the source manifest before regenerating.`
+      );
+    }
+    const protocol = tool.protocol;
     if (!toolsByProtocol.has(protocol)) toolsByProtocol.set(protocol, []);
     toolsByProtocol.get(protocol)!.push(name);
   }
@@ -178,9 +184,12 @@ export const DEFAULT_UNKNOWN_RECOVERY: ErrorRecovery = ${JSON.stringify(manifest
  * Standard AdCP error codes with structured \`description\`, \`recovery\`, and
  * (where the spec provides one) \`suggestion\`. Keyed by the wire code.
  *
- * The \`StandardErrorCode\` union is derived from \`ErrorCodeValues\` in
- * \`enums.generated.ts\`. Drift is caught by the \`satisfies Record<…>\`
- * assertion in \`src/lib/types/error-codes.ts\`.
+ * Typed loosely as \`Record<string, StandardErrorCodeInfo>\` on purpose: the
+ * generated file does not import from \`enums.generated.ts\` so the codegen
+ * stays decoupled from the rest of the type pipeline. The strict
+ * \`Record<StandardErrorCode, ErrorCodeInfo>\` constraint is re-applied at
+ * the consumer site (\`src/lib/types/error-codes.ts\`) — drift is caught
+ * there. Don't tighten this annotation without rewiring that layering.
  */
 export const STANDARD_ERROR_CODES_FROM_MANIFEST = {
 ${errorCodesEntries}
