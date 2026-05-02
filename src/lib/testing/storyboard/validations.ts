@@ -27,6 +27,7 @@ import type {
 } from './types';
 import type { RecordedCall, UpstreamTrafficSuccess } from '../test-controller';
 import { isJsonContentType } from '../test-controller';
+import { globToRegExp } from '../../utils/glob';
 import { resolvePath, resolvePathAll, toJsonPointer } from './path';
 import { detectShapeDriftHints } from './shape-drift-hints';
 import { PROBE_TASK_ALLOWLIST } from './test-kit';
@@ -2492,14 +2493,6 @@ function filterByEndpointPattern(calls: RecordedCall[], pattern: string | undefi
   if (!pattern) return calls;
   const re = globToRegExp(pattern);
   return calls.filter(c => re.test(c.endpoint));
-}
-
-function globToRegExp(pattern: string): RegExp {
-  // Escape every regex metacharacter (including `?` so it doesn't slip
-  // through as a 0-or-1 quantifier), then map `*` to `.*` as the only
-  // intended wildcard.
-  const escaped = pattern.replace(/[.+?^${}()|[\]\\]/g, '\\$&').replace(/\*/g, '.*');
-  return new RegExp(`^${escaped}$`);
 }
 
 /**

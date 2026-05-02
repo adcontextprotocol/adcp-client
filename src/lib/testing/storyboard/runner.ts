@@ -29,6 +29,7 @@ import {
   type UpstreamTrafficQueryResult,
 } from './validations';
 import { toJsonPointer } from './path';
+import { redactSecrets } from '../../utils/redact-secrets';
 import { queryUpstreamTraffic, type ControllerScenario, type UpstreamTrafficSuccess } from '../test-controller';
 import { enrichRequest, hasRequestEnricher } from './request-builder';
 import { resolveAccount, resolveBrand } from '../client';
@@ -303,16 +304,6 @@ function extractionFromTaskResult(taskResult: TaskResult | undefined): RunnerExt
   return taskResult.data !== undefined && taskResult.data !== null ? { path: 'structured_content' } : { path: 'none' };
 }
 
-/**
- * Keys whose values must never appear verbatim in a compliance report.
- * Matching is case-insensitive and structural: any property whose final
- * path segment matches is replaced with `'[redacted]'` before the payload
- * is persisted on a step result. The contract spec calls for exactly this:
- * "Secrets SHOULD be redacted with the literal string '[redacted]'".
- */
-const SECRET_KEY_PATTERN =
-  /^(authorization|credentials?|token|api[_-]?key|password|secret|client[_-]secret|refresh[_-]token|access[_-]token|bearer|session[_-]token|session[_-]id|offering[_-]token|cookie|set[_-]cookie)$/i;
-
 export function __redactSecretsForTest(value: unknown): unknown {
   return redactSecrets(value);
 }
@@ -327,22 +318,6 @@ export function __defaultAuthHeadersForRawProbeForTest(
   options: StoryboardRunOptions
 ): Record<string, string> | undefined {
   return defaultAuthHeadersForRawProbe(options);
-}
-
-function redactSecrets(value: unknown, depth = 0): unknown {
-  if (depth > 32) return value; // cheap cycle guard
-  if (Array.isArray(value)) return value.map(v => redactSecrets(v, depth + 1));
-  if (value && typeof value === 'object') {
-    const out: Record<string, unknown> = {};
-    for (const [k, v] of Object.entries(value as Record<string, unknown>)) {
-      out[k] =
-        SECRET_KEY_PATTERN.test(k) && (typeof v === 'string' || typeof v === 'number')
-          ? '[redacted]'
-          : redactSecrets(v, depth + 1);
-    }
-    return out;
-  }
-  return value;
 }
 
 /**

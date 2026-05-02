@@ -296,6 +296,56 @@ export interface TestControllerStore {
    * session.
    */
   seedCreativeFormat?(formatId: string, fixture: Record<string, unknown> | undefined): Promise<void>;
+
+  /**
+   * Return outbound HTTP calls the agent has made since `since_timestamp`,
+   * scoped to the calling principal. Backs the `upstream_traffic` storyboard
+   * validation per spec PR adcontextprotocol/adcp#3816 — runners assert that
+   * the adapter actually called upstream with the storyboard-supplied
+   * identifiers. The producer-side reference middleware lives at
+   * `@adcp/sdk/upstream-recorder`; adopters typically delegate to
+   * `recorder.query()` + `toQueryUpstreamTrafficResponse()` rather than
+   * implementing this from scratch.
+   *
+   * Adopters opt in by implementing this method (advertised as
+   * `query_upstream_traffic` via `list_scenarios`). NOT yet a member of
+   * `CONTROLLER_SCENARIOS` because the schema cache predates the spec PR
+   * — the dispatcher accepts the literal `'query_upstream_traffic'`
+   * string under the `TOOL_INPUT_SHAPE.scenario: z.string()` open-extension
+   * pattern. Once a 3.0.5+ release ships the schema, this scenario will
+   * be promoted to a first-class constant.
+   */
+  queryUpstreamTraffic?(params: {
+    since_timestamp?: string;
+    endpoint_pattern?: string;
+    limit?: number;
+  }): Promise<UpstreamTrafficSuccessResponse>;
+}
+
+/**
+ * Wire shape returned by `queryUpstreamTraffic` — mirrors
+ * `UpstreamTrafficSuccess` in `comply-test-controller-response.json`
+ * (spec PR adcontextprotocol/adcp#3816). Defined locally rather than
+ * imported from the generated types because the schema cache predates
+ * the spec PR; switch to the generated type once 3.0.5+ ships.
+ *
+ * `recorded_calls` is typed as an opaque array — the spec's per-item
+ * shape (method / endpoint / url / content_type / payload / timestamp
+ * required, host / path / status_code optional) is the runtime contract
+ * but isn't expressed in TypeScript here so adopters can return their
+ * own typed `RecordedCall[]` (e.g. from `@adcp/sdk/upstream-recorder`)
+ * without `exactOptionalPropertyTypes` collisions on optional fields.
+ * The wire-shape Ajv test in
+ * `test/lib/upstream-recorder-spec-shape.test.js` enforces the runtime
+ * contract; adopters validating their own shape against the spec schema
+ * get the same guarantee.
+ */
+export interface UpstreamTrafficSuccessResponse {
+  success: true;
+  recorded_calls: ReadonlyArray<unknown>;
+  total_count: number;
+  truncated?: boolean;
+  since_timestamp?: string;
 }
 
 /**
@@ -419,6 +469,15 @@ export function enforceMapCap<V>(
 // Request handler
 // ────────────────────────────────────────────────────────────
 
+/**
+ * Extension scenarios accepted by the dispatcher but not yet members of
+ * `CONTROLLER_SCENARIOS` because the schema cache predates the spec PR
+ * that introduced them. Auto-advertised when the matching store method
+ * is present. Promoted to first-class constants once a release ships the
+ * schema (currently `query_upstream_traffic` from spec PR adcp#3816).
+ */
+const QUERY_UPSTREAM_TRAFFIC_SCENARIO = 'query_upstream_traffic';
+
 /** Map store method presence to scenario names. */
 const SCENARIO_MAP: Array<[keyof TestControllerStore, ControllerScenario]> = [
   ['forceCreativeStatus', CONTROLLER_SCENARIOS.FORCE_CREATIVE_STATUS],
@@ -431,8 +490,28 @@ const SCENARIO_MAP: Array<[keyof TestControllerStore, ControllerScenario]> = [
   ['simulateBudgetSpend', CONTROLLER_SCENARIOS.SIMULATE_BUDGET_SPEND],
 ];
 
+/**
+ * Canonical scenarios from the generated `ListScenariosSuccess` enum. Used
+ * for the typed `compliance_testing.scenarios` capability block, which the
+ * generated Zod validator constrains to the enum's literal union — an
+ * extension scenario like `query_upstream_traffic` (not yet in the schema
+ * cache) gets rejected by `get_adcp_capabilities` response validation when
+ * its enum hasn't picked up the spec PR yet.
+ */
 function scenariosFromStore(store: TestControllerStore): ControllerScenario[] {
   return SCENARIO_MAP.filter(([method]) => typeof store[method] === 'function').map(([, scenario]) => scenario);
+}
+
+/**
+ * All scenarios — canonical + extensions accepted by the dispatcher but
+ * not yet in `CONTROLLER_SCENARIOS`. Used for `list_scenarios` which is
+ * open-for-extension (the `comply_test_controller`'s discovery scenario
+ * accepts unknown strings per the spec).
+ */
+function allScenariosFromStore(store: TestControllerStore): string[] {
+  const out: string[] = scenariosFromStore(store);
+  if (typeof store.queryUpstreamTraffic === 'function') out.push(QUERY_UPSTREAM_TRAFFIC_SCENARIO);
+  return out;
 }
 
 function controllerError(
@@ -702,8 +781,13 @@ export async function handleTestControllerRequest(
   // invoking the factory so session-backed factories don't need to tolerate
   // sessionless probes.
   if (scenario === 'list_scenarios') {
-    const scenarios = isFactory(storeOrFactory) ? [...storeOrFactory.scenarios] : scenariosFromStore(storeOrFactory);
-    return { success: true, scenarios };
+    const scenarios = isFactory(storeOrFactory) ? [...storeOrFactory.scenarios] : allScenariosFromStore(storeOrFactory);
+    // Cast: the generated union doesn't yet include extension scenarios
+    // (e.g. `query_upstream_traffic` from spec PR adcp#3816, schema not
+    // released yet). The wire shape says `scenarios` is open-for-extension
+    // — runners and sellers MUST accept unknown strings — so the runtime
+    // shape is correct. Drop the cast once the schema cache picks them up.
+    return { success: true, scenarios } as unknown as ListScenariosSuccess;
   }
 
   let store: TestControllerStore;
@@ -909,6 +993,25 @@ export async function handleTestControllerRequest(
               })()
             : undefined;
         return await dispatchSeed(store, scenario as SeedScenario, params, options?.seedCache, scope);
+      }
+
+      // Extension scenarios — accepted by the dispatcher but not yet
+      // members of CONTROLLER_SCENARIOS. Promoted to first-class constants
+      // once a release ships the schema. Today: just `query_upstream_traffic`
+      // (spec PR adcp#3816).
+      case QUERY_UPSTREAM_TRAFFIC_SCENARIO: {
+        if (!store.queryUpstreamTraffic) {
+          return controllerError('UNKNOWN_SCENARIO', `Scenario not supported: ${scenario}`);
+        }
+        const queryParams = (params ?? {}) as {
+          since_timestamp?: string;
+          endpoint_pattern?: string;
+          limit?: number;
+        };
+        // Cast through ComplyTestControllerResponse — UpstreamTrafficSuccess
+        // isn't in the generated union yet (3.0.4 cache predates spec PR
+        // #3816). The runtime value matches `UpstreamTrafficSuccess`.
+        return (await store.queryUpstreamTraffic(queryParams)) as unknown as ComplyTestControllerResponse;
       }
 
       default:
