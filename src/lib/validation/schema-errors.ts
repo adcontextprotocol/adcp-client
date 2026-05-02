@@ -4,7 +4,23 @@
  */
 
 import { ValidationError } from '../errors';
-import type { ValidationIssue } from './schema-validator';
+import { formatDiscriminator, type ValidationIssue } from './schema-validator';
+
+/**
+ * Build the `(schema: …; discriminator: …)` suffix for a single issue's
+ * prose message. Suppresses `schema:` when the issue's `schemaId` matches
+ * `rootSchemaId` (it would just restate the tool the adopter already
+ * knows), and `discriminator:` when no const-discriminator was resolved.
+ * Returns an empty string when both halves drop out so callers can compose
+ * conditionally.
+ */
+function buildIssueProseSuffix(issue: ValidationIssue, rootSchemaId: string | undefined): string {
+  const parts: string[] = [];
+  if (issue.schemaId && issue.schemaId !== rootSchemaId) parts.push(`schema: ${issue.schemaId}`);
+  const discriminator = formatDiscriminator(issue.discriminator);
+  if (discriminator) parts.push(`discriminator: ${discriminator}`);
+  return parts.length > 0 ? ` (${parts.join('; ')})` : '';
+}
 
 export interface ValidationErrorDetails {
   /** Tool that was being validated. */
@@ -28,7 +44,9 @@ export function buildValidationError(
 ): ValidationError {
   const first = issues[0];
   const field = first?.pointer ?? '/';
-  const constraint = first ? `${first.keyword}: ${first.message}` : 'schema validation failed';
+  const constraint = first
+    ? `${first.keyword}: ${first.message}${buildIssueProseSuffix(first, undefined)}`
+    : 'schema validation failed';
   const err = new ValidationError(field, undefined, `${tool} ${side}: ${constraint}`);
   err.details = { tool, side, issues } satisfies ValidationErrorDetails;
   return err;
@@ -72,7 +90,7 @@ export function buildAdcpValidationErrorPayload(
   tool: string,
   side: 'request' | 'response',
   issues: ValidationIssue[],
-  options: { exposeSchemaPath?: boolean } = {}
+  options: { exposeSchemaPath?: boolean; rootSchemaId?: string } = {}
 ): {
   message: string;
   field?: string;
@@ -80,10 +98,21 @@ export function buildAdcpValidationErrorPayload(
   details: Record<string, unknown>;
 } {
   const first = issues[0];
-  const message =
-    first != null
-      ? `${tool} ${side} failed schema validation at ${first.pointer}: ${first.message}`
-      : `${tool} ${side} failed schema validation`;
+  let message: string;
+  if (first != null) {
+    // Prose suffix mirrors `formatIssueLine` so adopters reading
+    // `adcp_error.message` directly see the rejecting schema $id and
+    // (when known) the union discriminator the payload was inferred to be
+    // targeting (issue #1283). `rootSchemaId` (passed by callers that
+    // know the validator's root, e.g. the server middleware threading
+    // through from `validateRequest`/`validateResponse`) suppresses the
+    // `schema:` half when the issue landed on the response root — typical
+    // for AdCP's bundled tree, where most issues do, and where the schema
+    // suffix would just restate the tool name.
+    message = `${tool} ${side} failed schema validation at ${first.pointer}: ${first.message}${buildIssueProseSuffix(first, options.rootSchemaId)}`;
+  } else {
+    message = `${tool} ${side} failed schema validation`;
+  }
   // `exposeSchemaPath` gates `schemaPath` only. Not `variants`.
   // Different sensitivity classes justify different defaults:
   //   - `schemaPath` (e.g. `#/properties/account/oneOf/2`) encodes which

@@ -297,6 +297,294 @@ describe('schema-driven validation', () => {
     });
   });
 
+  describe('schemaId + discriminator enrichment (issue #1283)', () => {
+    test('schemaId resolves to the validating schema $id', () => {
+      // Adopters debugging an activate_signal validation error need to know
+      // which schema rejected their payload. AdCP ships activate_signal in
+      // the pre-resolved `bundled/` tree — the activation_key sub-schema is
+      // inlined at bundle time without an inner $id — so the rejecting
+      // schemaId is the response root. That's still the right answer for
+      // the wire envelope: it names the schema the validator actually used,
+      // matching exactly what `npm view @adcp/sdk` ships.
+      const outcome = validateResponse('activate_signal', {
+        deployments: [
+          {
+            type: 'platform',
+            platform: 'dsp1',
+            is_live: true,
+            activation_key: { type: 'key_value' },
+          },
+        ],
+      });
+      assert.strictEqual(outcome.valid, false);
+      const issue = outcome.issues.find(i => i.pointer.startsWith('/deployments/0/activation_key'));
+      assert.ok(issue, `expected an activation_key issue, got: ${JSON.stringify(outcome.issues)}`);
+      assert.ok(
+        typeof issue.schemaId === 'string' && issue.schemaId.endsWith('.json'),
+        `expected a registered schema $id, got: ${JSON.stringify(issue.schemaId)}`
+      );
+      assert.ok(
+        issue.schemaId.includes('activate-signal-response') || issue.schemaId.includes('activation-key'),
+        `schemaId should name the activate_signal response or its activation-key fragment, got: ${issue.schemaId}`
+      );
+    });
+
+    test('schemaId falls back to the root validator $id for inline failures', () => {
+      // get_products-request rejects an empty payload at the request root —
+      // schemaPath is `#/required`, so schemaId comes from the root schema's $id.
+      const outcome = validateRequest('get_products', {});
+      assert.strictEqual(outcome.valid, false);
+      const issue = outcome.issues[0];
+      assert.ok(issue);
+      assert.ok(typeof issue.schemaId === 'string', `expected schemaId on root issue, got: ${JSON.stringify(issue)}`);
+      assert.ok(
+        issue.schemaId.endsWith('-request.json'),
+        `schemaId should be the request schema $id, got: ${issue.schemaId}`
+      );
+    });
+
+    test('discriminator is attached to the surviving variant on a const collapse', () => {
+      // activation_key is a oneOf split by `type` const ('segment_id' vs 'key_value').
+      // Outer deployment matches the platform variant cleanly so only the inner
+      // activation_key oneOf cascades. Picking type='key_value' but omitting
+      // `key`/`value` leaves variant[1] as the best surviving variant — every
+      // residual error inherited from that variant should carry
+      // `discriminator: [{field: 'type', value: 'key_value'}]`.
+      const outcome = validateResponse('activate_signal', {
+        deployments: [
+          {
+            type: 'platform',
+            platform: 'dsp1',
+            is_live: true,
+            activation_key: { type: 'key_value' },
+          },
+        ],
+      });
+      assert.strictEqual(outcome.valid, false);
+      const tagged = outcome.issues.filter(i => Array.isArray(i.discriminator));
+      assert.ok(
+        tagged.length > 0,
+        `expected at least one issue with a discriminator tag, got: ${JSON.stringify(outcome.issues)}`
+      );
+      const sample = tagged[0];
+      assert.deepStrictEqual(
+        sample.discriminator,
+        [{ field: 'type', value: 'key_value' }],
+        `discriminator should reflect the picked variant, got: ${JSON.stringify(sample.discriminator)}`
+      );
+    });
+
+    test('formatIssues suffixes prose with schema and discriminator when present', () => {
+      const issues = [
+        {
+          pointer: '/deployments/0/activation_key',
+          message: "must have required property 'key'",
+          keyword: 'required',
+          schemaPath: '/schemas/3.0.4/core/activation-key.json/oneOf/1/required',
+          schemaId: '/schemas/3.0.4/core/activation-key.json',
+          discriminator: [{ field: 'type', value: 'key_value' }],
+        },
+      ];
+      const summary = formatIssues(issues);
+      assert.ok(
+        summary.includes('(schema: /schemas/3.0.4/core/activation-key.json)'),
+        `summary should embed schema $id, got: ${summary}`
+      );
+      assert.ok(
+        summary.includes("(discriminator: type='key_value')"),
+        `summary should embed discriminator, got: ${summary}`
+      );
+    });
+
+    test('formatIssues suppresses (schema: …) when schemaId equals the rootSchemaId', () => {
+      // Most issues land on the response root in the bundled tree; the
+      // schema suffix would just restate the tool name. Adopters who want
+      // the field unconditionally read it from the structured issues[].
+      const rootSchemaId = '/schemas/3.0.4/bundled/signals/activate-signal-response.json';
+      const issues = [
+        {
+          pointer: '/deployments/0/activation_key/key',
+          message: "must have required property 'key'",
+          keyword: 'required',
+          schemaPath: '/schemas/3.0.4/bundled/signals/activate-signal-response.json/oneOf/0/...',
+          schemaId: rootSchemaId,
+          discriminator: [{ field: 'type', value: 'key_value' }],
+        },
+      ];
+      const summary = formatIssues(issues, 3, { rootSchemaId });
+      assert.ok(!summary.includes('(schema:'), `schema suffix should be suppressed at root, got: ${summary}`);
+      assert.ok(
+        summary.includes("(discriminator: type='key_value')"),
+        `discriminator suffix must still ship, got: ${summary}`
+      );
+    });
+
+    test('discriminator is absent when no const collapse picks a variant', () => {
+      // create_content_standards uses an anyOf split by `required`-only
+      // (policies vs registry_policy_ids), no `const` asserters.
+      // discriminator is reserved for const-asserting unions where we
+      // can name a specific field/value pair.
+      const res = validateRequest('create_content_standards', {
+        idempotency_key: '00000000-0000-0000-0000-000000000000',
+        account: { account_id: 'acme' },
+        scope: { kind: 'buyer' },
+      });
+      assert.strictEqual(res.valid, false);
+      const anyOfIssue = res.issues.find(i => i.keyword === 'anyOf');
+      assert.ok(anyOfIssue, 'anyOf issue must be present');
+      assert.strictEqual(
+        anyOfIssue.discriminator,
+        undefined,
+        `non-const unions must not carry discriminator, got: ${JSON.stringify(anyOfIssue.discriminator)}`
+      );
+      // ...but variants[] still ships (the public-spec recovery info).
+      assert.ok(Array.isArray(anyOfIssue.variants));
+    });
+
+    test('nested unions: inner discriminator tag is preserved on leaf errors', () => {
+      // activate_signal-response has nested oneOfs:
+      //   response root oneOf (success/error) →
+      //     deployments[].items oneOf (platform/agent) →
+      //       activation_key oneOf (segment_id/key_value)
+      // User picks platform deployment + key_value activation_key but
+      // omits `key`/`value`. The leaf `required` errors live inside the
+      // INNER activation_key oneOf — their tag must reflect the most-
+      // specific discriminator (`type='key_value'`), not the outer
+      // deployment discriminator (`type='platform'`). Adopters fix the
+      // payload by reading the leaf, so the leaf tag is the actionable one.
+      const outcome = validateResponse('activate_signal', {
+        deployments: [
+          {
+            type: 'platform',
+            platform: 'dsp1',
+            is_live: true,
+            activation_key: { type: 'key_value' },
+          },
+        ],
+      });
+      assert.strictEqual(outcome.valid, false);
+      const leaf = outcome.issues.find(i => i.pointer === '/deployments/0/activation_key/key');
+      assert.ok(leaf, `expected a leaf 'required' issue, got: ${JSON.stringify(outcome.issues)}`);
+      assert.deepStrictEqual(
+        leaf.discriminator,
+        [{ field: 'type', value: 'key_value' }],
+        `leaf tag must be the inner discriminator, got: ${JSON.stringify(leaf.discriminator)}`
+      );
+    });
+
+    test('formatDiscriminator escapes apostrophes in const string values', () => {
+      // No live AdCP const carries an apostrophe today, but a future
+      // spec addition could. The wire suffix must stay unambiguous.
+      const issues = [
+        {
+          pointer: '/x',
+          message: 'must match',
+          keyword: 'enum',
+          schemaPath: '#/properties/x/enum',
+          discriminator: [{ field: 'flavor', value: "it's spicy" }],
+        },
+      ];
+      const summary = formatIssues(issues);
+      assert.ok(
+        summary.includes("flavor='it\\'s spicy'"),
+        `apostrophe must be escaped in discriminator suffix, got: ${summary}`
+      );
+    });
+
+    test('compound discriminators produce a multi-entry array', () => {
+      // Synthetic ValidationIssue with two discriminator pairs (mirrors
+      // audience-selector's `(type, value_type)` shape). formatDiscriminator
+      // joins multiple entries with `, ` so adopters reading the wire
+      // envelope see every discriminator field.
+      const issues = [
+        {
+          pointer: '/audience_selector',
+          message: 'must have required property X',
+          keyword: 'required',
+          schemaPath: '#/properties/audience_selector/oneOf/2/required',
+          discriminator: [
+            { field: 'type', value: 'demographic' },
+            { field: 'value_type', value: 'range' },
+          ],
+        },
+      ];
+      const summary = formatIssues(issues);
+      assert.ok(
+        summary.includes("(discriminator: type='demographic', value_type='range')"),
+        `compound discriminator must render as comma-joined pairs, got: ${summary}`
+      );
+    });
+
+    test('buildAdcpValidationErrorPayload prose embeds schema and discriminator hints', () => {
+      const issues = [
+        {
+          pointer: '/deployments/0/activation_key',
+          message: "must have required property 'key'",
+          keyword: 'required',
+          schemaPath: '/schemas/3.0.4/core/activation-key.json/oneOf/1/required',
+          schemaId: '/schemas/3.0.4/core/activation-key.json',
+          discriminator: [{ field: 'type', value: 'key_value' }],
+        },
+      ];
+      const payload = buildAdcpValidationErrorPayload('activate_signal', 'response', issues);
+      assert.ok(
+        payload.message.includes('schema: /schemas/3.0.4/core/activation-key.json'),
+        `wire message should name the schema, got: ${payload.message}`
+      );
+      assert.ok(
+        payload.message.includes("discriminator: type='key_value'"),
+        `wire message should name the discriminator, got: ${payload.message}`
+      );
+      // schemaId and discriminator must survive the default (exposeSchemaPath: false) projection.
+      assert.strictEqual(payload.issues[0].schemaId, '/schemas/3.0.4/core/activation-key.json');
+      assert.deepStrictEqual(payload.issues[0].discriminator, [{ field: 'type', value: 'key_value' }]);
+      assert.strictEqual(payload.issues[0].schemaPath, undefined, 'schemaPath stripped by default — schemaId is not');
+    });
+
+    test('buildAdcpValidationErrorPayload suppresses redundant schema suffix when rootSchemaId matches', () => {
+      const rootSchemaId = '/schemas/3.0.4/bundled/signals/activate-signal-response.json';
+      const issues = [
+        {
+          pointer: '/deployments/0/activation_key/key',
+          message: "must have required property 'key'",
+          keyword: 'required',
+          schemaPath: '/schemas/3.0.4/bundled/signals/activate-signal-response.json/oneOf/0/.../required',
+          schemaId: rootSchemaId,
+          discriminator: [{ field: 'type', value: 'key_value' }],
+        },
+      ];
+      const payload = buildAdcpValidationErrorPayload('activate_signal', 'response', issues, { rootSchemaId });
+      assert.ok(
+        !payload.message.includes('schema:'),
+        `schema suffix should be suppressed when schemaId matches rootSchemaId, got: ${payload.message}`
+      );
+      assert.ok(
+        payload.message.includes("discriminator: type='key_value'"),
+        `discriminator suffix must still ship, got: ${payload.message}`
+      );
+      // The structured issue still carries schemaId for adopters who want it.
+      assert.strictEqual(payload.issues[0].schemaId, rootSchemaId);
+    });
+
+    test('ValidationOutcome surfaces the root validator schemaId', () => {
+      const outcome = validateResponse('activate_signal', {
+        deployments: [
+          {
+            type: 'platform',
+            platform: 'dsp1',
+            is_live: true,
+            activation_key: { type: 'key_value' },
+          },
+        ],
+      });
+      assert.strictEqual(
+        outcome.schemaId,
+        '/schemas/3.0.4/bundled/signals/activate-signal-response.json',
+        `outcome.schemaId should name the root validator, got: ${outcome.schemaId}`
+      );
+    });
+  });
+
   describe('listValidatorKeys', () => {
     test('exposes every (tool, direction) pair with a shipped schema', () => {
       const keys = listValidatorKeys();

@@ -2877,13 +2877,17 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
                 // stripped schemaPath even in dev — asymmetric with response-side.
                 const payload = buildAdcpValidationErrorPayload(toolName, 'request', issues, {
                   exposeSchemaPath: exposeErrorDetails,
+                  rootSchemaId: outcome.schemaId,
                 });
                 return finalize(adcpError('VALIDATION_ERROR', payload));
               }
-              logger.warn(`Schema validation warning (request) for ${toolName}: ${formatIssues(issues)}`, {
-                tool: toolName,
-                issues,
-              });
+              logger.warn(
+                `Schema validation warning (request) for ${toolName}: ${formatIssues(issues, 3, { rootSchemaId: outcome.schemaId })}`,
+                {
+                  tool: toolName,
+                  issues,
+                }
+              );
             }
           }
         }
@@ -3185,14 +3189,18 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
             const payload = formatted.structuredContent;
             const outcome = validateResponse(toolName, payload, adcpVersion);
             if (!outcome.valid) {
-              logger.warn(`Schema validation warning (response) for ${toolName}: ${formatIssues(outcome.issues)}`, {
-                tool: toolName,
-                issues: outcome.issues,
-                variant: outcome.variant,
-              });
+              logger.warn(
+                `Schema validation warning (response) for ${toolName}: ${formatIssues(outcome.issues, 3, { rootSchemaId: outcome.schemaId })}`,
+                {
+                  tool: toolName,
+                  issues: outcome.issues,
+                  variant: outcome.variant,
+                }
+              );
               if (responseValidationMode === 'strict') {
                 const errPayload = buildAdcpValidationErrorPayload(toolName, 'response', outcome.issues, {
                   exposeSchemaPath: exposeErrorDetails,
+                  rootSchemaId: outcome.schemaId,
                 });
                 const errEnvelope = adcpError('VALIDATION_ERROR', errPayload);
                 if (idempotencyCheck && idempotency) {
