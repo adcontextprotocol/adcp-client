@@ -1011,6 +1011,20 @@ export function createAdcpServerFromPlatform<P extends DecisioningPlatform<any, 
       opts.resolveIdempotencyPrincipal ??
       (ctx => ctx.authInfo?.clientId ?? ctx.sessionKey ?? ctx.account?.id ?? undefined),
     resolveAccount: async (ref, ctx) => {
+      // Enforce the JSDoc contract: implicit-mode platforms require
+      // sync_accounts first; inline account refs must never reach the
+      // adopter's resolve() so a naïve findById(ref.account_id) can't
+      // return a wrong-tenant record to a caller who guessed an id.
+      if (platform.accounts.resolution === 'implicit' && ref != null) {
+        throw adcpError('INVALID_PARAMS', {
+          field: 'account',
+          message:
+            'This platform uses implicit account resolution. ' +
+            'Do not pass account_id inline — call sync_accounts to link ' +
+            'your account first, then omit the account field.',
+          suggestion: 'Call sync_accounts to register your account, then retry the request without an account field.',
+        });
+      }
       const start = Date.now();
       let resolved = false;
       let resolvedAccountId: string | undefined;
