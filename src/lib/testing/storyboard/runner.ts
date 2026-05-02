@@ -3003,10 +3003,6 @@ interface FlatStep {
  * Find any "$context.xxx" strings that weren't resolved during injection.
  */
 // Matches unresolved {{prior_step.*}} mustache tokens left in-place by
-// expandMustache. Uses [^{}]+ (no alternation, bounded by excluded chars) to
-// stay ReDoS-safe — same pattern as MUSTACHE_TOKEN_RE above.
-const UNRESOLVED_PRIOR_STEP_RE = /\{\{prior_step\.[^{}]+\}\}/g;
-
 function findUnresolvedContextVars(obj: unknown): string[] {
   const vars: string[] = [];
   const walk = (val: unknown) => {
@@ -3018,9 +3014,11 @@ function findUnresolvedContextVars(obj: unknown): string[] {
         return;
       }
       // Unresolved {{prior_step.*}} — expandMustache leaves the token in-place.
+      // Local regex (not module-scope /g) — safe under concurrent async execution.
+      // Uses [^{}]+ (no alternation, bounded by excluded chars) — ReDoS-safe.
+      const unresolvedPriorStepRe = /\{\{prior_step\.[^{}]+\}\}/g;
       let m: RegExpExecArray | null;
-      UNRESOLVED_PRIOR_STEP_RE.lastIndex = 0;
-      while ((m = UNRESOLVED_PRIOR_STEP_RE.exec(val)) !== null) {
+      while ((m = unresolvedPriorStepRe.exec(val)) !== null) {
         vars.push(m[0]);
       }
     } else if (Array.isArray(val)) {

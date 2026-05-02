@@ -503,7 +503,22 @@ export type StoryboardValidationCheck =
    * `context_key_absent` observation.
    * Added for adcp#2642 cross-step comparison primitives.
    */
-  | 'field_equals_context';
+  | 'field_equals_context'
+  /**
+   * Runner-synthesized: a `context_outputs[].path` resolved to absent, `null`,
+   * or `""`. Emitted by the runner (not YAML-authored); contributes to
+   * `run_summary.steps_failed` on the capturing step.
+   * Defined in runner-output-contract v1.2.0 (adcp-client#1251).
+   */
+  | 'capture_path_not_resolvable'
+  /**
+   * Runner-synthesized: a `$context.<name>` or `{{prior_step.<id>.<field>}}`
+   * token could not be resolved at request-build time. Emitted on a consumer
+   * step that skips with `prerequisite_failed`; contributes to
+   * `run_summary.steps_skipped` (not `steps_failed`).
+   * Defined in runner-output-contract v1.2.0 (adcp-client#1251).
+   */
+  | 'unresolved_substitution';
 
 /**
  * Captured A2A wire shape from a `message/send` JSON-RPC response. The
