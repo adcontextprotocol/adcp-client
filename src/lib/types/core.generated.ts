@@ -1,5 +1,5 @@
-// Generated AdCP core types from official schemas v3.0.1
-// Generated at: 2026-04-29T10:03:50.622Z
+// Generated AdCP core types from official schemas v3.0.4
+// Generated at: 2026-05-02T14:30:46.845Z
 
 // MEDIA-BUY SCHEMA
 /**
@@ -1145,6 +1145,27 @@ export interface CreativeAssignment {
  */
 export interface ContextObject {}
 /**
+ * Canonical union of all asset variant schemas. Referenced from creative-asset.json and creative-manifest.json to ensure a single named type is emitted by schema-to-TypeScript tooling. Add new asset types here and to the creative/asset-types registry.
+ *
+ * This interface was referenced by `undefined`'s JSON-Schema definition
+ * via the `patternProperty` "^[a-z0-9_]+$".
+ */
+export type AssetVariant =
+  | ImageAsset
+  | VideoAsset
+  | AudioAsset
+  | VASTAsset
+  | TextAsset
+  | URLAsset
+  | HTMLAsset
+  | JavaScriptAsset
+  | WebhookAsset
+  | CSSAsset
+  | DAASTAsset
+  | MarkdownAsset
+  | BriefAsset
+  | CatalogAsset;
+/**
  * IPTC-aligned classification of AI involvement in producing this content
  */
 export type DigitalSourceType =
@@ -1286,7 +1307,7 @@ export type VASTTrackingEvent =
   | 'measurableImpression'
   | 'viewableImpression';
 /**
- * Type of URL asset: 'clickthrough' for user click destination (landing page), 'tracker_pixel' for impression/event tracking via HTTP request (fires GET, expects pixel/204 response), 'tracker_script' for measurement SDKs that must load as <script> tag (OMID verification, native event trackers using method:2)
+ * Mechanism a receiver uses to invoke this URL (distinct from purpose, which lives in `url-asset-requirements.role`): `clickthrough` for user click destination (landing page), `tracker_pixel` for impression/event tracking via HTTP request (fires GET, expects pixel/204 response), `tracker_script` for measurement SDKs that must load as a <script> tag (OMID verification, native event trackers using method:2). SHOULD be present on every URL asset; senders that omit it force the receiver into the role-based fallback described in this schema's top-level description.
  */
 export type URLAssetType = 'clickthrough' | 'tracker_pixel' | 'tracker_script';
 /**
@@ -1505,25 +1526,7 @@ export interface CreativeAsset {
    * Assets required by the format, keyed by asset_id. Each asset value carries an `asset_type` discriminator that selects the matching asset schema.
    */
   assets: {
-    /**
-     * This interface was referenced by `undefined`'s JSON-Schema definition
-     * via the `patternProperty` "^[a-z0-9_]+$".
-     */
-    [k: string]:
-      | ImageAsset
-      | VideoAsset
-      | AudioAsset
-      | VASTAsset
-      | TextAsset
-      | URLAsset
-      | HTMLAsset
-      | JavaScriptAsset
-      | WebhookAsset
-      | CSSAsset
-      | DAASTAsset
-      | MarkdownAsset
-      | BriefAsset
-      | CatalogAsset;
+    [k: string]: AssetVariant | undefined;
   };
   /**
    * Preview contexts for generative formats - defines what scenarios to generate previews for
@@ -1906,7 +1909,7 @@ export interface TextAsset {
   provenance?: Provenance;
 }
 /**
- * URL reference asset
+ * URL reference asset. `url_type` declares the mechanism a receiver uses to invoke the URL (clickthrough vs. tracker_pixel vs. tracker_script) and is distinct from the URL's purpose, which the format declares in `url-asset-requirements.role` (clickthrough, landing_page, impression_tracker, click_tracker, viewability_tracker, third_party_tracker). Senders SHOULD include `url_type` on every URL asset. When `url_type` is absent, receivers SHOULD fall back to the format's `url-asset-requirements.role` per this mapping: clickthrough/landing_page → `clickthrough`; impression_tracker/click_tracker → `tracker_pixel`; viewability_tracker → `tracker_script` (OMID and equivalent verification SDKs require a <script> tag — firing them as a pixel produces no measurement); third_party_tracker → no safe fallback (mechanism is integration-specific — DV/IAS ship both pixel and script forms — receivers MAY reject or warn). When neither `url_type` nor a format-side `role` is available, receivers MUST NOT silently pick a mechanism; they SHOULD reject the manifest. Note: VAST/DAAST tag URLs are not URL assets — use `asset_type: "vast"` (or the dedicated tracker types pending RFC #2915), not `asset_type: "url"` with a tracker_pixel mechanism.
  */
 export interface URLAsset {
   /**
@@ -4451,7 +4454,7 @@ export interface Error {
    */
   message: string;
   /**
-   * Field path associated with the error (e.g., 'packages[0].targeting')
+   * Field path associated with the error in JSONPath-lite format (e.g., 'packages[0].targeting'). When `issues[]` is also present, sellers MUST set this to `issues[0].pointer` translated from RFC 6901 to JSONPath-lite (e.g., '/packages/0/targeting' → 'packages[0].targeting') so pre-3.1 consumers reading `field` only get deterministic behavior. Will be deprecated in a future major version in favor of `issues[].pointer`.
    */
   field?: string;
   /**
@@ -4463,7 +4466,28 @@ export interface Error {
    */
   retry_after?: number;
   /**
-   * Additional task-specific error details
+   * Structured list of validation failures. Primary use is `VALIDATION_ERROR`, where multi-field rejections are common and `field` (singular) cannot carry the full pointer map. MAY appear on other error codes that reject multiple fields at once. When `issues` is present, sellers MUST also populate `field` from `issues[0]` for backward compatibility with pre-3.1 consumers that read `field` only — translating the RFC 6901 `pointer` format to the JSONPath-lite format `field` uses (e.g., `/packages/0/targeting` → `packages[0].targeting`). MUST (not SHOULD) so consumers reading `field` get deterministic behavior across sellers — the cost is one line of dual-write per seller; the cost of SHOULD is a long tail of seller-A-vs-seller-B inconsistency. Future major versions will deprecate `field` in favor of `issues[].pointer`.
+   */
+  issues?: {
+    /**
+     * RFC 6901 JSON Pointer to the offending field in the request payload (e.g., '/packages/0/targeting/geo_countries/2'). Format chosen to match Ajv's native validation output (`instancePath`); standardized and unambiguous on keys containing `/` or `~`. NOTE: this differs from the legacy top-level `field` which uses JSONPath-lite (`packages[0].targeting.geo_countries[2]`). When sellers populate `field` from `issues[0].pointer` for backward compatibility (see `field` description), they MUST translate the format — `/packages/0/x` → `packages[0].x`. Future major versions will deprecate `field` in favor of `issues[].pointer`.
+     */
+    pointer: string;
+    /**
+     * Human-readable description of why this specific field was rejected.
+     */
+    message: string;
+    /**
+     * Schema keyword that rejected the payload, drawn from the JSON Schema vocabulary (e.g., 'required', 'type', 'format', 'enum', 'pattern', 'minimum', 'maxLength'). Matches the keyword names emitted by JSON Schema validators (Ajv, jsonschema, etc.) so agents can pattern-match on rejection class without parsing message text. Implementers SHOULD use the validator's native keyword name; do not invent custom values here.
+     */
+    keyword: string;
+    /**
+     * Optional. Path inside the schema that rejected the payload (e.g., '#/properties/packages/items/properties/targeting/oneOf/1'). Sellers SHOULD NOT emit on production-facing endpoints — `schemaPath` leaks which `oneOf` branch the validator selected before semantic rejection, which is a probe oracle for adversarial callers crafting payloads against polymorphic unions. Sellers MAY emit in dev/sandbox modes where the diagnostic value outweighs the fingerprinting risk.
+     */
+    schemaPath?: string;
+  }[];
+  /**
+   * Additional task-specific error details. Sellers MAY mirror `issues[]` here as `details.issues` for backward compatibility with pre-3.1 consumers reading from `details`; new consumers SHOULD prefer the top-level `issues` field.
    */
   details?: {};
   /**
@@ -4882,25 +4906,7 @@ export interface CreativeManifest {
    * Each asset value carries an `asset_type` discriminator (image, video, audio, vast, daast, text, markdown, url, html, css, webhook, javascript, brief, catalog) that selects the matching asset schema. Validators with OpenAPI-style discriminator support use `asset_type` to report errors against only the selected branch instead of all branches.
    */
   assets: {
-    /**
-     * This interface was referenced by `undefined`'s JSON-Schema definition
-     * via the `patternProperty` "^[a-z0-9_]+$".
-     */
-    [k: string]:
-      | ImageAsset
-      | VideoAsset
-      | AudioAsset
-      | VASTAsset
-      | TextAsset
-      | URLAsset
-      | HTMLAsset
-      | JavaScriptAsset
-      | WebhookAsset
-      | CSSAsset
-      | DAASTAsset
-      | MarkdownAsset
-      | BriefAsset
-      | CatalogAsset;
+    [k: string]: AssetVariant | undefined;
   };
   /**
    * Rights constraints attached to this creative. Each entry represents constraints from a single rights holder. A creative may combine multiple rights constraints (e.g., talent likeness + music license). For v1, rights constraints are informational metadata — the buyer/orchestrator manages creative lifecycle against these terms.
@@ -8857,25 +8863,7 @@ export interface ListCreativesResponse {
      * Assets for this creative, keyed by asset_id. Each asset value carries an `asset_type` discriminator that selects the matching asset schema.
      */
     assets?: {
-      /**
-       * This interface was referenced by `undefined`'s JSON-Schema definition
-       * via the `patternProperty` "^[a-z0-9_]+$".
-       */
-      [k: string]:
-        | ImageAsset
-        | VideoAsset
-        | AudioAsset
-        | VASTAsset
-        | TextAsset
-        | URLAsset
-        | HTMLAsset
-        | JavaScriptAsset
-        | WebhookAsset
-        | CSSAsset
-        | DAASTAsset
-        | MarkdownAsset
-        | BriefAsset
-        | CatalogAsset;
+      [k: string]: AssetVariant | undefined;
     };
     /**
      * User-defined tags for organization and searchability
@@ -9029,6 +9017,27 @@ export type CreativeQuality = 'draft' | 'production';
  * Output format. 'url' returns preview_url (iframe-embeddable URL), 'html' returns preview_html (raw HTML). In batch mode, sets the default for all requests (individual items can override). Default: 'url'.
  */
 export type PreviewOutputFormat = 'url' | 'html';
+/**
+ * Canonical union of all asset variant schemas. Referenced from creative-asset.json and creative-manifest.json to ensure a single named type is emitted by schema-to-TypeScript tooling. Add new asset types here and to the creative/asset-types registry.
+ *
+ * This interface was referenced by `undefined`'s JSON-Schema definition
+ * via the `patternProperty` "^[a-z0-9_]+$".
+ */
+export type AssetVariant1 =
+  | ImageAsset
+  | VideoAsset
+  | AudioAsset
+  | VASTAsset1
+  | TextAsset
+  | URLAsset
+  | HTMLAsset
+  | JavaScriptAsset
+  | WebhookAsset
+  | CSSAsset
+  | DAASTAsset1
+  | MarkdownAsset
+  | BriefAsset1
+  | CatalogAsset1;
 /**
  * VAST (Video Ad Serving Template) tag for third-party video ad serving
  */
@@ -11803,25 +11812,7 @@ export interface CreativeAsset1 {
    * Assets required by the format, keyed by asset_id. Each asset value carries an `asset_type` discriminator that selects the matching asset schema.
    */
   assets: {
-    /**
-     * This interface was referenced by `undefined`'s JSON-Schema definition
-     * via the `patternProperty` "^[a-z0-9_]+$".
-     */
-    [k: string]:
-      | ImageAsset
-      | VideoAsset
-      | AudioAsset
-      | VASTAsset1
-      | TextAsset
-      | URLAsset
-      | HTMLAsset
-      | JavaScriptAsset
-      | WebhookAsset
-      | CSSAsset
-      | DAASTAsset1
-      | MarkdownAsset
-      | BriefAsset1
-      | CatalogAsset1;
+    [k: string]: AssetVariant1 | undefined;
   };
   /**
    * Preview contexts for generative formats - defines what scenarios to generate previews for
@@ -14660,7 +14651,7 @@ export interface OfferingAssetGroup {
   asset_group_id: string;
   asset_type: AssetContentType;
   /**
-   * The assets in this group. Each item carries an `asset_type` discriminator that selects the matching asset schema. Note: the group-level `asset_type` declares the expected type; individual items must also self-tag so validators can narrow errors.
+   * The assets in this group. Each item carries an `asset_type` discriminator that selects the matching asset schema. Note: the group-level `asset_type` declares the expected type; individual items must also self-tag so validators can narrow errors. Intentionally excludes `brief-asset` and `catalog-asset` — those are campaign-input metadata types, not delivery-ready creative assets suitable for a pooled offering group. See core/assets/asset-union.json for the full asset-variant union.
    */
   items: (
     | TextAsset
@@ -16358,7 +16349,7 @@ export interface DAASTAssetRequirements {
  */
 export interface URLAssetRequirements {
   /**
-   * Standard role for this URL asset. Use this to constrain which purposes are valid for this URL slot. Complements asset_role (which is a human-readable label) by providing a machine-readable enum.
+   * Purpose this URL slot serves in the format — distinct from `url_type` on the manifest-side asset (which declares the receiver's invocation mechanism). A slot can be `click_tracker` (purpose) and accept a `tracker_pixel` (mechanism) URL, or `clickthrough` (purpose) and accept a `clickthrough` (mechanism) URL. Complements `asset_role` (human-readable label) by providing a machine-readable enum and serves as the receiver's fallback signal when a manifest URL asset omits `url_type`.
    */
   role?:
     | 'clickthrough'
@@ -17030,7 +17021,7 @@ export type SignalSource = 'catalog' | 'agent';
 /**
  * Recommended details shape for ACCOUNT_SETUP_REQUIRED errors. Provides setup URL and remaining steps.
  */
-export interface ACCOUNT_SETUP_REQUIREDDetails {
+export interface AccountSetupRequiredDetails {
   /**
    * URL where account setup can be completed
    */
@@ -17046,7 +17037,7 @@ export interface ACCOUNT_SETUP_REQUIREDDetails {
 /**
  * Recommended details shape for AUDIENCE_TOO_SMALL errors. Provides size thresholds so agents can broaden targeting.
  */
-export interface AUDIENCE_TOO_SMALLDetails {
+export interface AudienceTooSmallDetails {
   /**
    * Minimum audience size required
    */
@@ -17062,7 +17053,7 @@ export interface AUDIENCE_TOO_SMALLDetails {
 /**
  * Recommended details shape for BUDGET_TOO_LOW errors. Provides the seller's minimum budget so agents can adjust.
  */
-export interface BUDGET_TOO_LOWDetails {
+export interface BudgetTooLowDetails {
   /**
    * Seller's minimum budget for this product
    */
@@ -17078,7 +17069,7 @@ export interface BUDGET_TOO_LOWDetails {
 /**
  * Recommended details shape for CONFLICT errors. Provides version information so agents can re-read the resource and retry.
  */
-export interface CONFLICTDetails {
+export interface ConflictDetails {
   /**
    * Identifier of the conflicting resource
    */
@@ -17098,7 +17089,7 @@ export interface CONFLICTDetails {
 /**
  * Recommended details shape for POLICY_VIOLATION errors. Provides policy reference and violated rules so agents can adjust requests.
  */
-export interface POLICY_VIOLATIONDetails {
+export interface PolicyViolationDetails {
   /**
    * Identifier for the violated policy
    */
@@ -17370,6 +17361,150 @@ export interface PolicyReference {
    * Brand-specific parameter overrides for configurable policies. The accepted shape depends on the policy's config_schema.
    */
   config?: {};
+}
+
+
+// manifest.json
+export interface Manifest {
+  [k: string]: unknown | undefined;
+}
+
+
+// manifest.schema.json
+/**
+ * Machine-readable registry of every AdCP tool, error code, and specialism for a given AdCP version. SDKs consume this artifact at codegen time to derive their tool/error tables instead of hand-transcribing the spec. Replaces three categories of drift documented in adcp#3725: hand-rolled tool-by-protocol arrays, hand-classified error recovery, and hand-listed specialism→tool mappings.
+ */
+export interface AdCPManifest {
+  /**
+   * Reference to this manifest meta-schema.
+   */
+  $schema?: string;
+  /**
+   * Full semver of the AdCP release this manifest describes.
+   */
+  adcp_version: string;
+  /**
+   * ISO-8601 timestamp the manifest was generated. SDKs MAY use this for cache invalidation.
+   */
+  generated_at: string;
+  /**
+   * Every tool the AdCP spec defines, keyed by tool name (the snake_case name used in MCP/A2A invocations).
+   */
+  tools: {
+    [k: string]:
+      | {
+          /**
+           * The protocol surface this tool belongs to. Derived from the source directory: media-buy, signals, governance, account, creative, brand, content-standards, property, collection, sponsored-intelligence, protocol, compliance, tmp.
+           */
+          protocol:
+            | 'media-buy'
+            | 'signals'
+            | 'governance'
+            | 'account'
+            | 'creative'
+            | 'brand'
+            | 'content-standards'
+            | 'property'
+            | 'collection'
+            | 'sponsored-intelligence'
+            | 'protocol'
+            | 'compliance'
+            | 'tmp'
+            | 'a2ui';
+          /**
+           * True if invoking this tool with identical inputs more than once is unsafe — i.e., the tool changes server-side state. Mutating tools MUST declare an idempotency_key on the request schema (or carry an explicit `naturally idempotent` exemption marker in the schema's description). Read-only tools (verbs `get-`, `list-`, `check-`, `validate-`, `preview-`, `search-`) are safe to retry without an idempotency key.
+           */
+          mutating: boolean;
+          /**
+           * Path to the request schema, relative to the manifest's directory (e.g., 'media-buy/create-media-buy-request.json').
+           */
+          request_schema: string;
+          /**
+           * Path to the synchronous response schema, relative to the manifest's directory.
+           */
+          response_schema: string;
+          /**
+           * Paths to the tool's async response variants (typically -submitted, -working, -input-required). Empty array if the tool has no async surface. Buyer agents MUST handle every entry — a tool with async_response_schemas non-empty can return any of these from a non-final task state.
+           */
+          async_response_schemas: string[];
+          /**
+           * Specialism IDs that include this tool in their required_tools (or via inherited scenarios). Lets SDKs answer "if I claim specialism X, which tools must I implement?" without re-deriving from the compliance cache.
+           */
+          specialisms?: string[];
+          /**
+           * Semver of the AdCP release that introduced this tool. Optional; absent means "present since 1.0".
+           */
+          added_in?: string;
+          /**
+           * Semver of the AdCP release that deprecated this tool. Absent means active.
+           */
+          deprecated_in?: string;
+        }
+      | undefined;
+  };
+  /**
+   * How SDKs should handle codes outside the standard set. The error vocabulary is open: sellers MAY return platform-specific codes that aren't in `error_codes`. Agents MUST fall back to `default_unknown_recovery` for unknown codes — they SHOULD NOT throw or treat unknown codes as malformed responses.
+   */
+  error_code_policy: {
+    /**
+     * The recovery classification an agent MUST apply to a code that is not present in this manifest's `error_codes` block. `transient` is the safe default — unknown codes from a non-conforming seller should be retried with backoff, not classified as fatal.
+     */
+    default_unknown_recovery: 'correctable' | 'transient' | 'terminal';
+    /**
+     * Human-readable summary of the open-set policy.
+     */
+    note: string;
+  };
+  /**
+   * Every standard error code in the AdCP error vocabulary, keyed by the SCREAMING_SNAKE code. Mirrors enums/error-code.json's enum + enumMetadata + enumDescriptions. Open-set: see error_code_policy for unknown-code handling.
+   */
+  error_codes: {
+    [k: string]:
+      | {
+          /**
+           * How the caller should respond. correctable: fix the request and retry. transient: retry with backoff. terminal: no autonomous recovery — operator intervention required.
+           */
+          recovery: 'correctable' | 'transient' | 'terminal';
+          /**
+           * Human-readable description of the error. Sourced from enumDescriptions in enums/error-code.json.
+           */
+          description: string;
+          /**
+           * Short remediation hint a buyer agent can act on. Sourced from enumMetadata in enums/error-code.json.
+           */
+          suggestion: string;
+          /**
+           * Semver of the AdCP release that introduced this code. Optional.
+           */
+          added_in?: string;
+        }
+      | undefined;
+  };
+  /**
+   * Every storyboard specialism declared in static/compliance/source/specialisms/, keyed by specialism ID. Lets SDKs declare which specialisms they implement and verify their tool surface covers the required tools.
+   */
+  specialisms: {
+    [k: string]:
+      | {
+          /**
+           * The protocol surface this specialism belongs to. Sourced from index.yaml's `protocol` field. Note: this is the specialism's home protocol; individual `exercised_tools` may belong to other protocols (e.g., a sales-track specialism may exercise an account-protocol tool like sync_accounts).
+           */
+          protocol: string;
+          /**
+           * Human-readable title. Sourced from index.yaml's `title` field.
+           */
+          title?: string;
+          /**
+           * The minimal contract: tools the spec asserts an implementer MUST ship to claim this specialism. Sourced from index.yaml's `required_tools` field. An agent declaring this specialism in its capabilities MUST respond to every tool listed here.
+           */
+          entry_point_tools: string[];
+          /**
+           * The full surface the conformance kit will call: union of entry_point_tools, the specialism's own phases[].steps[].task, and every linked scenario's tasks. An agent declaring this specialism MUST be prepared to handle every call here, even though some are inherited via storyboard scenarios rather than declared in `required_tools`. Use this set to size your tool registration, not entry_point_tools.
+           */
+          exercised_tools: string[];
+        }
+      | undefined;
+  };
 }
 
 
