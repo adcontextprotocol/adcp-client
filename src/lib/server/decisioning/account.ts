@@ -28,6 +28,7 @@ import type {
   GetAccountFinancialsSuccess,
 } from '../../types/tools.generated';
 import type { CursorPage, CursorRequest } from './pagination';
+import type { BuyerAgent } from './buyer-agent';
 
 /**
  * Account — framework's rich representation. A strict superset of the wire
@@ -218,6 +219,16 @@ export interface ResolveContext {
   authInfo?: ResolvedAuthInfo;
   /** Tool the buyer is calling — useful for tool-aware tenant routing. */
   toolName?: string;
+  /**
+   * Resolved buyer agent from `BuyerAgentRegistry.resolve()`, when an
+   * `agentRegistry` is configured (Phase 1 of #1269). The framework calls
+   * the registry once per request before `accounts.resolve` and threads the
+   * resolved record here so adopters can route tenant resolution against
+   * the durable buyer-agent identity rather than re-deriving it from
+   * `authInfo`. Undefined when no registry is configured OR when the
+   * registry returns null for the request's credential.
+   */
+  agent?: BuyerAgent;
 }
 
 /**
