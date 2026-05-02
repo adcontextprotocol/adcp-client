@@ -17085,6 +17085,26 @@ export interface ConflictDetails {
 }
 
 
+// error-details/creative-rejected.json
+/**
+ * Recommended details shape for CREATIVE_REJECTED errors. Provides policy reference and rejection reasons so agents can adjust creative content.
+ */
+export interface CreativeRejectedDetails {
+  /**
+   * Identifier for the policy that rejected the creative
+   */
+  policy_id?: string;
+  /**
+   * URL where the rejecting policy can be reviewed
+   */
+  policy_url?: string;
+  /**
+   * Human-readable rejection reasons
+   */
+  reasons?: string[];
+}
+
+
 // error-details/policy-violation.json
 /**
  * Recommended details shape for POLICY_VIOLATION errors. Provides policy reference and violated rules so agents can adjust requests.

@@ -1437,17 +1437,39 @@ async function compileGapSchemas(generatedTypes: Set<string>, refResolver: any):
 
     const typeName = schemaPathToTypeName(relPath);
 
-    // Skip if this type was already generated
-    if (generatedTypes.has(typeName)) continue;
-
     // Skip deprecated schemas
     if (DEPRECATED_SCHEMAS.has(path.basename(relPath, '.json'))) continue;
 
+    // Load schema early to determine the title-derived type name.
+    // json-schema-to-typescript uses the schema title (when present) as the
+    // emitted interface name rather than our file-path-derived hint. Checking
+    // generatedTypes against only the path-derived name silently drops schemas
+    // whose path name collides with an existing type but whose title-derived
+    // name does not (e.g. error-details/creative-rejected.json → path gives
+    // "CreativeRejected" which collides with a brand-domain type, while title
+    // "Creative Rejected Details" gives "CreativeRejectedDetails" which is new).
+    let schema: any;
     try {
-      const schemaPath = path.join(LATEST_CACHE_DIR, relPath);
-      let schema = JSON.parse(readFileSync(schemaPath, 'utf8'));
+      schema = JSON.parse(readFileSync(path.join(LATEST_CACHE_DIR, relPath), 'utf8'));
+    } catch (error: any) {
+      console.warn(`⚠️  Failed to compile gap schema ${relPath}: ${error.message}`);
+      continue;
+    }
 
-      // Apply same preprocessing as other schema passes
+    const titleTypeName = schema.title
+      ? schema.title
+          .replace(/[^a-zA-Z0-9\s]/g, ' ')
+          .split(/\s+/)
+          .filter(Boolean)
+          .map((w: string) => w.charAt(0).toUpperCase() + w.slice(1))
+          .join('')
+      : typeName;
+
+    // Skip if this type was already generated
+    if (generatedTypes.has(titleTypeName)) continue;
+
+    try {
+      // Apply same preprocessing as other schema passes (schema already loaded above)
       const fileName = path.basename(relPath, '.json');
       if (DEPRECATED_ENUM_VALUES[fileName]) {
         schema = removeDeprecatedFields(schema, fileName);
@@ -1461,7 +1483,7 @@ async function compileGapSchemas(generatedTypes: Set<string>, refResolver: any):
       }
 
       const strictSchema = enforceStrictSchema(removeArrayLengthConstraints(schema));
-      const types = await compile(strictSchema, typeName, {
+      const types = await compile(strictSchema, titleTypeName, {
         bannerComment: '',
         style: { semi: true, singleQuote: true },
         additionalProperties: false,

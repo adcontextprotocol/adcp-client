@@ -3735,6 +3735,12 @@ export const ConflictDetailsSchema = z.object({
     current_version: z.union([z.number(), z.string()]).optional()
 }).passthrough();
 
+export const CreativeRejectedDetailsSchema = z.object({
+    policy_id: z.string().optional(),
+    policy_url: z.string().optional(),
+    reasons: z.array(z.string()).optional()
+}).passthrough();
+
 export const PolicyViolationDetailsSchema = z.object({
     policy_id: z.string().optional(),
     policy_url: z.string().optional(),
