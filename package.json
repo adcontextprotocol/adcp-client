@@ -115,6 +115,11 @@
       "require": "./dist/lib/mock-server/index.js",
       "types": "./dist/lib/mock-server/index.d.ts"
     },
+    "./upstream-recorder": {
+      "import": "./dist/lib/upstream-recorder/index.js",
+      "require": "./dist/lib/upstream-recorder/index.js",
+      "types": "./dist/lib/upstream-recorder/index.d.ts"
+    },
     "./package.json": "./package.json"
   },
   "typesVersions": {
@@ -172,6 +177,9 @@
       ],
       "mock-server": [
         "dist/lib/mock-server/index.d.ts"
+      ],
+      "upstream-recorder": [
+        "dist/lib/upstream-recorder/index.d.ts"
       ]
     }
   },

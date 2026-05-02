@@ -845,6 +845,52 @@ For production test controllers with persisted-session state (Postgres/Redis/JSO
 
 Key SDK pieces you'll import from `@adcp/sdk`: `CONTROLLER_SCENARIOS`, `enforceMapCap`, `SESSION_ENTRY_CAP`, `handleTestControllerRequest`, `toMcpResponse`, `TOOL_INPUT_SHAPE`.
 
+### Opting into `upstream_traffic` (anti-façade contract)
+
+Storyboards on `audience-sync`, `sales-social`, `signal-marketplace`, and any specialism with a real upstream platform may declare `check: upstream_traffic` validations (per spec PR adcontextprotocol/adcp#3816). The runner queries your `comply_test_controller`'s `query_upstream_traffic` scenario after each step and asserts your adapter actually called the upstream platform with the storyboard-supplied identifiers — distinguishing a real adapter from one that returns shape-valid AdCP responses without touching upstream.
+
+**Opt-in is voluntary** — adopters who don't advertise `query_upstream_traffic` in `list_scenarios` grade the check `not_applicable`. But adopters who advertise and observe zero calls grade `failed` (the façade signal). Since the storyboards exist to verify your adapter does what it claims, opting in is the load-bearing way to claim the specialism.
+
+The SDK ships `@adcp/sdk/upstream-recorder` to handle the recording side — a sandbox-only-by-default helper that wraps your HTTP layer with per-principal isolation, record-time secret redaction, ring-buffer + TTL eviction, and a `query()` method that maps directly onto the controller's response shape. Wire-up:
+
+```ts
+import { createUpstreamRecorder } from '@adcp/sdk/upstream-recorder';
+
+// 1. One-time at adapter boot
+const recorder = createUpstreamRecorder({
+  enabled: process.env.NODE_ENV !== 'production',
+});
+const fetch = recorder.wrapFetch(globalThis.fetch);
+
+// 2. Scope outbound calls to the resolving principal at the AdCP request handler
+async function syncAudiences(req, ctx) {
+  await recorder.runWithPrincipal(ctx.account.id, async () => {
+    await fetch('https://platform.example/v1/audience/upload', { /* ... */ });
+  });
+}
+
+// 3. In your `comply_test_controller` handler for `query_upstream_traffic`:
+function handleQueryUpstreamTraffic(req, callerPrincipal) {
+  const { items, total, truncated, since_timestamp } = recorder.query({
+    principal: callerPrincipal,
+    sinceTimestamp: req.params?.since_timestamp,
+    endpointPattern: req.params?.endpoint_pattern,
+    limit: req.params?.limit,
+  });
+  return {
+    success: true,
+    recorded_calls: items,
+    total_count: total,
+    truncated,
+    since_timestamp,
+  };
+}
+
+// 4. Add 'query_upstream_traffic' to your `list_scenarios` response — that's the opt-in flag.
+```
+
+`enabled: false` returns a no-op recorder for production builds — zero per-call overhead. See `@adcp/sdk/upstream-recorder`'s module-level docs for the full surface (custom `redactPattern`, `purpose` classifier hook, `bufferSize` / `ttlMs` tuning).
+
 ## SDK Quick Reference
 
 | SDK piece                                                                 | Usage                                                                          |
