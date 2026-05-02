@@ -11,10 +11,7 @@ const { describe, test } = require('node:test');
 const assert = require('node:assert/strict');
 
 const { runValidations } = require('../../dist/lib/testing/storyboard/validations');
-const {
-  applyContextOutputs,
-  applyContextOutputsWithProvenance,
-} = require('../../dist/lib/testing/storyboard/context');
+const { applyContextOutputs, applyContextOutputsWithProvenance } = require('../../dist/lib/testing/storyboard/context');
 const { isJsonContentType } = require('../../dist/lib/testing/test-controller');
 
 // ────────────────────────────────────────────────────────────
@@ -23,9 +20,7 @@ const { isJsonContentType } = require('../../dist/lib/testing/test-controller');
 
 describe('forward-compat default — unknown check kinds grade not_applicable', () => {
   test('unknown check kind grades passed: true with not_applicable: true', () => {
-    const validations = [
-      { check: 'some_future_check_added_in_a_later_spec', description: 'future check' },
-    ];
+    const validations = [{ check: 'some_future_check_added_in_a_later_spec', description: 'future check' }];
     const ctx = {
       taskName: 'get_signals',
       taskResult: { success: true, data: {} },
@@ -177,7 +172,16 @@ describe('upstream_traffic — controller-backed anti-façade assertion', () => 
       contributions: new Set(),
       upstreamTraffic: {
         advertised: opts.advertised !== false,
-        queries: new Map([['since', { request: { transport: 'mcp', operation: 'comply_test_controller', payload: {} }, response: { transport: 'mcp', payload }, payload }]]),
+        queries: new Map([
+          [
+            'since',
+            {
+              request: { transport: 'mcp', operation: 'comply_test_controller', payload: {} },
+              response: { transport: 'mcp', payload },
+              payload,
+            },
+          ],
+        ]),
         thisStepSince: 'since',
         ...(opts.unresolvedSinceRefs && { unresolvedSinceRefs: opts.unresolvedSinceRefs }),
       },
@@ -208,20 +212,14 @@ describe('upstream_traffic — controller-backed anti-façade assertion', () => 
 
   test('passes when min_count satisfied and no other constraints', () => {
     const ctx = ctxWithTraffic({ success: true, recorded_calls: [makeCall()], total_count: 1 });
-    const [result] = runValidations(
-      [{ check: 'upstream_traffic', description: 'min 1 call', min_count: 1 }],
-      ctx
-    );
+    const [result] = runValidations([{ check: 'upstream_traffic', description: 'min 1 call', min_count: 1 }], ctx);
     assert.equal(result.passed, true);
     assert.equal(result.actual.matched_count, 1);
   });
 
   test('fails when zero recorded calls (façade signal — controller present, observed nothing)', () => {
     const ctx = ctxWithTraffic({ success: true, recorded_calls: [], total_count: 0 });
-    const [result] = runValidations(
-      [{ check: 'upstream_traffic', description: 'min 1 call', min_count: 1 }],
-      ctx
-    );
+    const [result] = runValidations([{ check: 'upstream_traffic', description: 'min 1 call', min_count: 1 }], ctx);
     assert.equal(result.passed, false);
     assert.equal(result.actual.matched_count, 0);
     assert.match(result.error, /at least 1 matching call/);
@@ -366,9 +364,7 @@ describe('upstream_traffic — controller-backed anti-façade assertion', () => 
         {
           check: 'upstream_traffic',
           description: 'region in allowlist',
-          payload_must_contain: [
-            { path: 'region', match: 'contains_any', allowed_values: ['us-east', 'us-west'] },
-          ],
+          payload_must_contain: [{ path: 'region', match: 'contains_any', allowed_values: ['us-east', 'us-west'] }],
         },
       ],
       ctx
@@ -387,9 +383,7 @@ describe('upstream_traffic — controller-backed anti-façade assertion', () => 
         {
           check: 'upstream_traffic',
           description: 'region in allowlist',
-          payload_must_contain: [
-            { path: 'region', match: 'contains_any', allowed_values: ['us-east', 'us-west'] },
-          ],
+          payload_must_contain: [{ path: 'region', match: 'contains_any', allowed_values: ['us-east', 'us-west'] }],
         },
       ],
       ctx
@@ -569,10 +563,7 @@ describe('upstream_traffic — controller-backed anti-façade assertion', () => 
         thisStepSince: 'since',
       },
     };
-    const [result] = runValidations(
-      [{ check: 'upstream_traffic', description: 'expect traffic', min_count: 1 }],
-      ctx
-    );
+    const [result] = runValidations([{ check: 'upstream_traffic', description: 'expect traffic', min_count: 1 }], ctx);
     assert.equal(result.passed, false);
     assert.match(result.error, /query_upstream_traffic failed/);
     assert.ok(result.request);
@@ -601,10 +592,7 @@ describe('upstream_traffic — controller-backed anti-façade assertion', () => 
         thisStepSince: 'since',
       },
     };
-    const [result] = runValidations(
-      [{ check: 'upstream_traffic', description: 'expect traffic', min_count: 1 }],
-      ctx
-    );
+    const [result] = runValidations([{ check: 'upstream_traffic', description: 'expect traffic', min_count: 1 }], ctx);
     assert.ok(result.error.length <= 2050);
     assert.match(result.error, /\[truncated\]/);
   });

@@ -29,11 +29,7 @@ import {
   type UpstreamTrafficQueryResult,
 } from './validations';
 import { toJsonPointer } from './path';
-import {
-  queryUpstreamTraffic,
-  type ControllerScenario,
-  type UpstreamTrafficSuccess,
-} from '../test-controller';
+import { queryUpstreamTraffic, type ControllerScenario, type UpstreamTrafficSuccess } from '../test-controller';
 import { enrichRequest, hasRequestEnricher } from './request-builder';
 import { resolveAccount, resolveBrand } from '../client';
 import { isMutatingTask, generateIdempotencyKey } from '../../utils/idempotency';
@@ -1583,9 +1579,7 @@ async function runMultiPass(
       passed_count: result.passed_count,
       failed_count: result.failed_count,
       skipped_count: result.skipped_count,
-      ...(result.validations_not_applicable
-        ? { validations_not_applicable: result.validations_not_applicable }
-        : {}),
+      ...(result.validations_not_applicable ? { validations_not_applicable: result.validations_not_applicable } : {}),
       duration_ms: result.total_duration_ms,
     });
   }

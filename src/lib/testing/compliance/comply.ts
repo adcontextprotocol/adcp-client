@@ -1288,10 +1288,7 @@ function buildSummary(tracks: TrackResult[], storyboardResults: StoryboardResult
   const stepsPassed = storyboardResults.reduce((s, r) => s + r.passed_count, 0);
   const stepsFailed = storyboardResults.reduce((s, r) => s + r.failed_count, 0);
   const stepsSkipped = storyboardResults.reduce((s, r) => s + r.skipped_count, 0);
-  const validationsNotApplicable = storyboardResults.reduce(
-    (s, r) => s + (r.validations_not_applicable ?? 0),
-    0
-  );
+  const validationsNotApplicable = storyboardResults.reduce((s, r) => s + (r.validations_not_applicable ?? 0), 0);
   const totalSteps = stepsPassed + stepsFailed + stepsSkipped;
   const schemasUsed: Array<{ schema_id: string; schema_url: string }> = [];
   const seenSchemas = new Set<string>();

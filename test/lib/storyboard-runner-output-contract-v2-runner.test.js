@@ -36,7 +36,10 @@ function buildStubClient(handlers, controllerHandler) {
   };
 }
 
-const stubProfile = { name: 'stub', tools: ['comply_test_controller', 'sync_audiences', 'get_signals', 'activate_signal'] };
+const stubProfile = {
+  name: 'stub',
+  tools: ['comply_test_controller', 'sync_audiences', 'get_signals', 'activate_signal'],
+};
 
 // ────────────────────────────────────────────────────────────
 // upstream_traffic — runner pre-fetch end-to-end
@@ -99,7 +102,10 @@ describe('runStoryboardStep — upstream_traffic pre-fetch end-to-end', () => {
     ];
     const { client, calls } = buildStubClient(
       {
-        sync_audiences: async () => ({ success: true, data: { audiences: [{ audience_id: 'aud_1', status: 'syncing' }] } }),
+        sync_audiences: async () => ({
+          success: true,
+          data: { audiences: [{ audience_id: 'aud_1', status: 'syncing' }] },
+        }),
       },
       params => ({
         success: true,
@@ -159,20 +165,17 @@ describe('runStoryboardStep — upstream_traffic pre-fetch end-to-end', () => {
   });
 
   test('grades failed when controller advertises but observes zero recorded calls (façade signal)', async () => {
-    const { client } = buildStubClient(
-      { sync_audiences: async () => ({ success: true, data: {} }) },
-      () => ({
-        success: true,
-        data: {
-          content: [
-            {
-              type: 'text',
-              text: JSON.stringify({ success: true, recorded_calls: [], total_count: 0 }),
-            },
-          ],
-        },
-      })
-    );
+    const { client } = buildStubClient({ sync_audiences: async () => ({ success: true, data: {} }) }, () => ({
+      success: true,
+      data: {
+        content: [
+          {
+            type: 'text',
+            text: JSON.stringify({ success: true, recorded_calls: [], total_count: 0 }),
+          },
+        ],
+      },
+    }));
     const result = await runStoryboardStep('https://stub.example/mcp', storyboard, 'sync', {
       protocol: 'mcp',
       _client: client,
@@ -186,18 +189,15 @@ describe('runStoryboardStep — upstream_traffic pre-fetch end-to-end', () => {
 
   test('runner subtracts clock-skew tolerance from since_timestamp before sending to controller', async () => {
     let capturedSince;
-    const { client } = buildStubClient(
-      { sync_audiences: async () => ({ success: true, data: {} }) },
-      params => {
-        capturedSince = params.params?.since_timestamp;
-        return {
-          success: true,
-          data: {
-            content: [{ type: 'text', text: JSON.stringify({ success: true, recorded_calls: [], total_count: 0 }) }],
-          },
-        };
-      }
-    );
+    const { client } = buildStubClient({ sync_audiences: async () => ({ success: true, data: {} }) }, params => {
+      capturedSince = params.params?.since_timestamp;
+      return {
+        success: true,
+        data: {
+          content: [{ type: 'text', text: JSON.stringify({ success: true, recorded_calls: [], total_count: 0 }) }],
+        },
+      };
+    });
     const beforeMs = Date.now();
     await runStoryboardStep('https://stub.example/mcp', storyboard, 'sync', {
       protocol: 'mcp',
@@ -210,7 +210,10 @@ describe('runStoryboardStep — upstream_traffic pre-fetch end-to-end', () => {
     // earlier than the wall clock when the step started (loose lower bound).
     assert.ok(capturedSince, 'controller received since_timestamp');
     const sinceMs = new Date(capturedSince).getTime();
-    assert.ok(sinceMs <= beforeMs, `expected since (${capturedSince}) <= test start (${new Date(beforeMs).toISOString()})`);
+    assert.ok(
+      sinceMs <= beforeMs,
+      `expected since (${capturedSince}) <= test start (${new Date(beforeMs).toISOString()})`
+    );
   });
 });
 

@@ -2334,7 +2334,12 @@ function validateUpstreamTraffic(validation: StoryboardValidation, ctx: Validati
     missingPayloadPaths.length === 0;
   const not_applicable = passed && allPathsNotApplicable && countOk && echoOk;
 
-  const actual = { matched_count: matchedCount, total_calls: totalCalls, missing_payload_paths: missingPayloadPaths, missing_identifier_values: missingIdentifierValues };
+  const actual = {
+    matched_count: matchedCount,
+    total_calls: totalCalls,
+    missing_payload_paths: missingPayloadPaths,
+    missing_identifier_values: missingIdentifierValues,
+  };
 
   // RFC 6901 pointer: when one specific call's payload failed
   // payload_must_contain, point at that call's payload; null when the
@@ -2365,7 +2370,8 @@ function validateUpstreamTraffic(validation: StoryboardValidation, ctx: Validati
   const errParts: string[] = [];
   if (!countOk) errParts.push(`expected at least ${minCount} matching call(s); observed ${matchedCount}`);
   if (!payloadOk) errParts.push(`missing payload paths: ${missingPayloadPaths.join(', ')}`);
-  if (!echoOk) errParts.push(`identifier values not echoed: ${missingIdentifierValues.map(v => JSON.stringify(v)).join(', ')}`);
+  if (!echoOk)
+    errParts.push(`identifier values not echoed: ${missingIdentifierValues.map(v => JSON.stringify(v)).join(', ')}`);
 
   return {
     check: 'upstream_traffic',
@@ -2391,9 +2397,7 @@ function validateUpstreamTraffic(validation: StoryboardValidation, ctx: Validati
 const VALIDATION_ERROR_MAX_LENGTH = 2000;
 
 function truncateValidationError(s: string): string {
-  return s.length > VALIDATION_ERROR_MAX_LENGTH
-    ? s.slice(0, VALIDATION_ERROR_MAX_LENGTH) + '...[truncated]'
-    : s;
+  return s.length > VALIDATION_ERROR_MAX_LENGTH ? s.slice(0, VALIDATION_ERROR_MAX_LENGTH) + '...[truncated]' : s;
 }
 
 function buildUpstreamTrafficExpected(validation: StoryboardValidation): Record<string, unknown> {
