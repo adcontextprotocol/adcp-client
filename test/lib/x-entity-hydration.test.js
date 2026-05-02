@@ -51,48 +51,27 @@ describe('TOOL_ENTITY_FIELDS map (#1109)', () => {
   });
 
   it('every x-entity value is either mapped to a ResourceKind or in the documented skip allowlist', async () => {
-    // Sources of truth: the runtime mapping table (`ENTITY_TO_RESOURCE_KIND`)
-    // plus the documented skip set (`INTENTIONALLY_UNHYDRATED_ENTITIES`).
-    // Together they MUST cover every distinct `xEntity` the codegen emits;
-    // a new spec entity tag must land here as a coordinated change so a
-    // silent skip doesn't go unnoticed.
+    // Coverage assertion: every distinct `xEntity` the codegen emits MUST
+    // land in either the runtime mapping table (`ENTITY_TO_RESOURCE_KIND`)
+    // or the documented skip set (`INTENTIONALLY_UNHYDRATED_ENTITIES`).
+    // A new spec entity tag must show up in one of those two places — a
+    // silent skip is a bug class this test exists to prevent.
     //
-    // We assert via the public surface: any unmapped, un-allowlisted
-    // entity will surface as a value that's neither in the SDK's
-    // `ResourceKind` union (covered by the mapping) nor in the
-    // hand-curated allowlist below.
+    // Imports both constants directly from `from-platform.ts` (single
+    // source of truth — no parallel hardcoded list to drift).
+    const fromPlatform = await import('../../dist/lib/server/decisioning/runtime/from-platform.js');
+    const { ENTITY_TO_RESOURCE_KIND, INTENTIONALLY_UNHYDRATED_ENTITIES } = fromPlatform;
+    assert.ok(ENTITY_TO_RESOURCE_KIND, 'ENTITY_TO_RESOURCE_KIND must be exported from from-platform');
+    assert.ok(INTENTIONALLY_UNHYDRATED_ENTITIES, 'INTENTIONALLY_UNHYDRATED_ENTITIES must be exported');
+
     const distinctEntities = new Set();
     for (const fields of Object.values(TOOL_ENTITY_FIELDS)) {
       for (const f of fields) distinctEntities.add(f.xEntity);
     }
 
-    // Mirrors `ENTITY_TO_RESOURCE_KIND` keys + `INTENTIONALLY_UNHYDRATED_ENTITIES`
-    // members in `from-platform.ts`. Test failure here means the runtime
-    // tables drifted from the spec — coordinated update required.
-    const knownEntities = new Set([
-      // Mapped to a ResourceKind:
-      'media_buy',
-      'package',
-      'creative',
-      'audience',
-      'signal_activation_id',
-      'rights_grant',
-      'property_list',
-      'collection_list',
-      'account',
-      'product',
-      // Documented intentional skips:
-      'vendor_pricing_option',
-      'governance_plan',
-      'governance_check',
-      'event_source',
-      'si_session',
-      'offering',
-      'rights_holder_brand',
-      'advertiser_brand',
-    ]);
-
-    const unknown = [...distinctEntities].filter(e => !knownEntities.has(e));
+    const unknown = [...distinctEntities].filter(
+      e => !(e in ENTITY_TO_RESOURCE_KIND) && !INTENTIONALLY_UNHYDRATED_ENTITIES.has(e)
+    );
     assert.deepEqual(
       unknown,
       [],
@@ -179,19 +158,14 @@ describe('rename-firewall: codegen rebuilds the map when a fixture schema rename
         );
       }
 
-      // Run the generator pointing at our fixture cache.
-      const tmpVersion = path.basename(fixtureRoot);
-      const tmpCacheRoot = path.dirname(fixtureRoot);
-      // Symlink-style: copy fixture into cache/<version>/ so the generator
-      // resolves `schemas/cache/<version>/manifest.json` per the production
-      // path. We do this by setting ADCP_VERSION env to the temp dir basename
-      // and the SCHEMA_CACHE_DIR via override — but the script uses fixed
-      // paths. Instead: invoke a helper extraction directly on the fixture.
-
-      // Direct invocation: import the generator's library function with
-      // overridden paths. The script ships its `main` only; reusing the
-      // walker requires a small re-impl. For this fixture we test via
-      // inline JSON-schema walking that mirrors the script's logic.
+      // The codegen script reads from a fixed `schemas/cache/<ADCP_VERSION>/`
+      // path; reusing its walker on a fixture without exposing the helper
+      // would require re-running the whole script under a swapped working
+      // directory. We instead exercise the same extraction logic inline —
+      // top-level properties with `type: 'string'` AND an `x-entity` tag —
+      // which mirrors `extractTopLevelEntityFields` in the script. If the
+      // walker logic diverges, the codegen-determinism test below catches
+      // it at the production-cache level.
       const properties = renamedSchema.properties || {};
       const fields = [];
       for (const [field, propSchema] of Object.entries(properties)) {

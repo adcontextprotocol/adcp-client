@@ -2572,7 +2572,8 @@ async function hydrateSingleResource(
  * Adding a new `ResourceKind` for hydration is a coordinated change: add
  * it to `ResourceKind` (in `ctx-metadata/store.ts`) and to this map.
  */
-const ENTITY_TO_RESOURCE_KIND: Readonly<Record<string, ResourceKind>> = {
+/** @internal Exported for the coverage test in `test/lib/x-entity-hydration.test.js`. */
+export const ENTITY_TO_RESOURCE_KIND: Readonly<Record<string, ResourceKind>> = {
   media_buy: 'media_buy',
   package: 'package',
   creative: 'creative',
@@ -2603,9 +2604,11 @@ const ENTITY_TO_RESOURCE_KIND: Readonly<Record<string, ResourceKind>> = {
  * The codegen-derived `TOOL_ENTITY_FIELDS` map carries every `x-entity`
  * the spec emits; this allowlist + `ENTITY_TO_RESOURCE_KIND` together
  * must cover the full set, enforced by a test
- * (`test/lib/x-entity-hydration.test.js`).
+ * (`test/lib/x-entity-hydration.test.js`) that imports both.
+ *
+ * @internal Exported for the coverage test; not part of the public API.
  */
-const INTENTIONALLY_UNHYDRATED_ENTITIES: ReadonlySet<string> = new Set([
+export const INTENTIONALLY_UNHYDRATED_ENTITIES: ReadonlySet<string> = new Set([
   'vendor_pricing_option', // Scoped to issuing vendor agent; adopters seed pricing context themselves.
   'governance_plan', // No SDK ResourceKind yet; campaign-governance follow-up.
   'governance_check', // Transient request envelope; not stored.
