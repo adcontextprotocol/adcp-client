@@ -431,9 +431,7 @@ export function validateRequest(toolName: string, payload: unknown, version?: st
   if (valid) return { valid: true, issues: [], variant: 'request' };
   const rootSchema = (validator as { schema?: unknown }).schema;
   const schemaId =
-    rootSchema != null && typeof rootSchema === 'object'
-      ? ((rootSchema as { $id?: string }).$id ?? undefined)
-      : undefined;
+    rootSchema != null && typeof rootSchema === 'object' ? (rootSchema as { $id?: string }).$id : undefined;
   const { errors: compacted, selectedBranch } = compactUnionErrors(validator.errors ?? [], rootSchema);
   return {
     valid: false,
@@ -537,9 +535,7 @@ export function validateResponse(toolName: string, payload: unknown, version?: s
     : {};
   if (valid) return { valid: true, issues: [], variant: usedVariant, ...fallbackFields };
   const schemaId =
-    rootSchema != null && typeof rootSchema === 'object'
-      ? ((rootSchema as { $id?: string }).$id ?? undefined)
-      : undefined;
+    rootSchema != null && typeof rootSchema === 'object' ? (rootSchema as { $id?: string }).$id : undefined;
   const { errors: compacted, selectedBranch } = compactUnionErrors(effective.errors ?? [], rootSchema);
   return {
     valid: false,
