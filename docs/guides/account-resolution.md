@@ -199,10 +199,12 @@ buyer that calls `sync_accounts`.
 Resolve from `ref.account_id` or `ref.brand`/`ref.operator`:
 
 ```ts
+import { refAccountId } from '@adcp/sdk/server';
+
 accounts: {
   resolution: 'explicit',  // or omit — 'explicit' is the default
   resolve: async (ref, ctx) => {
-    const id = refAccountId(ref);   // helper from @adcp/sdk/server
+    const id = refAccountId(ref);
     if (id) return db.findById(id);
     if (ref?.brand && ref?.operator) return db.findByBrandOperator(ref.brand, ref.operator);
     return null;

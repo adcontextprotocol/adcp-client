@@ -200,6 +200,13 @@ export class InMemoryImplicitAccountStore<TCtxMeta = Record<string, unknown>> im
    * - No prior `sync_accounts` was called for this principal
    * - The stored entry has exceeded `ttlMs`
    * - `ctx.authInfo` is absent or carries no extractable key
+   *
+   * **Multi-account note.** When a buyer synced multiple refs in one
+   * `sync_accounts` call, this implementation returns the _first_ stored
+   * account. If your platform requires per-request account disambiguation
+   * (e.g., different brands on the same buyer), switch to `'explicit'` mode
+   * so buyers pass `ext.account_ref` on each request, or override `keyFn`
+   * to encode the brand into the key.
    */
   async resolve(_ref: AccountReference | undefined, ctx?: ResolveContext): Promise<Account<TCtxMeta> | null> {
     const authInfo = ctx?.authInfo;
@@ -219,15 +226,45 @@ export class InMemoryImplicitAccountStore<TCtxMeta = Record<string, unknown>> im
    * Process a `sync_accounts` payload: build accounts from refs and store
    * them under the caller's auth key.
    *
-   * The auth key is extracted from `ctx.authInfo` via `keyFn`. When
-   * `ctx.authInfo` is absent (e.g., unauthenticated call), accounts are
-   * built but NOT stored — the buyer cannot retrieve them via `resolve()`.
-   * Your `authenticate` callback in `serve({ authenticate })` should reject
-   * unauthenticated `sync_accounts` calls before reaching this method.
+   * The auth key is extracted from `ctx.authInfo` via `keyFn`. When the
+   * key cannot be derived (no credential or unrecognized credential kind),
+   * all refs are returned as `SYNC_FAILED` rows — a silent-success-then-
+   * mystery-failure sequence is worse than an explicit error. Check your
+   * `authenticate` callback and `keyFn` if you see this error.
+   *
+   * When `ctx.authInfo` is absent (unauthenticated call), all refs fail
+   * with `UNAUTHENTICATED`. Your `authenticate` callback in
+   * `serve({ authenticate })` should reject unauthenticated requests before
+   * reaching this method.
    */
   async upsert(refs: AccountReference[], ctx?: ResolveContext): Promise<SyncAccountsResultRow[]> {
     const authInfo = ctx?.authInfo;
+
+    // Derive the key before building any accounts. If the key cannot be
+    // extracted, fail all rows explicitly — returning success rows here
+    // would cause a mysterious ACCOUNT_NOT_FOUND on the next tool call.
     const key = authInfo !== undefined ? this._keyFn(authInfo) : undefined;
+    if (key === undefined) {
+      return refs.map(ref => {
+        const r = ref as Record<string, unknown>;
+        return {
+          brand: (r['brand'] as BrandReference | undefined) ?? ({ domain: 'unknown' } as BrandReference),
+          operator: (r['operator'] as string | undefined) ?? '',
+          action: 'failed' as const,
+          status: 'rejected' as AdcpAccountStatus,
+          errors: [
+            {
+              code: 'SYNC_FAILED',
+              message:
+                authInfo === undefined
+                  ? 'Unauthenticated: no authInfo on ctx — check authenticate configuration'
+                  : 'Could not derive principal key from auth credential — check keyFn or credential kind',
+            },
+          ],
+        };
+      });
+    }
+
     const accounts: Account<TCtxMeta>[] = [];
     const rows: SyncAccountsResultRow[] = [];
 
@@ -264,10 +301,7 @@ export class InMemoryImplicitAccountStore<TCtxMeta = Record<string, unknown>> im
       }
     }
 
-    if (key !== undefined) {
-      this._store.set(key, { accounts, storedAt: Date.now() });
-    }
-
+    this._store.set(key, { accounts, storedAt: Date.now() });
     return rows;
   }
 
