@@ -215,8 +215,24 @@ export interface ToolInfo {
  * These map to task names in the AdCP schema index (kebab-case -> snake_case).
  *
  * Note: Some tools appear in multiple arrays (e.g., list_creative_formats is in
- * both MEDIA_BUY_TOOLS and CREATIVE_TOOLS). This is intentional - these tools
- * serve multiple domains, and their presence should activate all relevant protocols.
+ * both MEDIA_BUY_TOOLS and CREATIVE_TOOLS). This is intentional — these tools
+ * serve multiple domains, and their presence should activate all relevant
+ * protocols when `detectProtocols()` runs.
+ *
+ * **Why these aren't manifest-derived (#1192).** The AdCP manifest
+ * (`schemas/cache/{version}/manifest.json`) carries a single primary `protocol`
+ * per tool — `list_creative_formats` is `media-buy` there, never `creative`.
+ * That's an authoring convenience (where does the tool's spec page live), not
+ * a capability-declaration semantic. The cross-listing here captures
+ * operator reality: a CMP that exposes only `build_creative` /
+ * `list_creative_formats` / `sync_creatives` IS a creative agent, and a buyer
+ * discovering it via `tools/list` should see the `creative` protocol family.
+ * Migrating to manifest-primary would silently flip `detectProtocols()`
+ * results for cross-listed tools and break CMP↔DSP discovery flows. The
+ * drift guard at `test/lib/capabilities-tools-drift.test.js` keeps the arrays
+ * locked to recognized manifest tools (catches typos and removed-upstream
+ * tools) without forcing the arrays to match the manifest's single-valued
+ * view. See PR #1298 for the design rationale.
  */
 export const MEDIA_BUY_TOOLS = [
   'get_products',
