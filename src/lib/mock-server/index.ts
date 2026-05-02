@@ -1,5 +1,10 @@
 import { bootCreativeTemplate } from './creative-template/server';
 import { DEFAULT_API_KEY as CREATIVE_TEMPLATE_DEFAULT_API_KEY, WORKSPACES } from './creative-template/seed-data';
+import { bootSalesGuaranteed } from './sales-guaranteed/server';
+import {
+  DEFAULT_API_KEY as SALES_GUARANTEED_DEFAULT_API_KEY,
+  NETWORKS as SALES_GUARANTEED_NETWORKS,
+} from './sales-guaranteed/seed-data';
 import { bootSalesSocial } from './sales-social/server';
 import { ADVERTISERS, OAUTH_CLIENTS } from './sales-social/seed-data';
 import { bootSignalMarketplace } from './signal-marketplace/server';
@@ -138,9 +143,29 @@ export async function bootMockServer(options: MockServerOptions): Promise<MockSe
         })),
       };
     }
+    case 'sales-guaranteed': {
+      const { url, close } = await bootSalesGuaranteed({
+        port: options.port,
+        apiKey: options.apiKey,
+      });
+      const apiKey = options.apiKey ?? SALES_GUARANTEED_DEFAULT_API_KEY;
+      return {
+        url,
+        auth: { kind: 'static_bearer', apiKey },
+        close,
+        summary: () => formatSalesGuaranteedSummary(url, apiKey),
+        principalScope: 'X-Network-Code header (required on every request)',
+        principalMapping: SALES_GUARANTEED_NETWORKS.map(net => ({
+          adcpField: 'account.publisher',
+          adcpValue: net.adcp_publisher,
+          upstreamField: 'X-Network-Code',
+          upstreamValue: net.network_code,
+        })),
+      };
+    }
     default:
       throw new Error(
-        `Unknown mock-server specialism: "${options.specialism}". Supported: signal-marketplace, creative-template, sales-social.`
+        `Unknown mock-server specialism: "${options.specialism}". Supported: signal-marketplace, creative-template, sales-social, sales-guaranteed.`
       );
   }
 }
@@ -198,9 +223,6 @@ function formatCreativeTemplateSummary(url: string, apiKey: string): string {
 }
 
 function formatSalesSocialSummary(url: string, client: { client_id: string; client_secret: string }): string {
-  const advertiserLines = ADVERTISERS.map(
-    adv => `  ${adv.advertiser_id}  →  AdCP account.advertiser: "${adv.adcp_advertiser}"`
-  ).join('\n');
   return [
     `Mock social platform (TikTok-flavored) running at ${url}`,
     ``,
@@ -211,12 +233,16 @@ function formatSalesSocialSummary(url: string, client: { client_id: string; clie
     `  Then attach the issued access_token as Authorization: Bearer <token>`,
     `  Refresh via same endpoint with grant_type=refresh_token (token rotation on use).`,
     ``,
-    `Advertiser mapping (path-scoped):`,
-    advertiserLines,
+    `Path-scoped multi-tenancy: /v1.3/advertiser/{advertiser_id}/...`,
+    `Resolve {advertiser_id} from AdCP-side identifier at runtime via:`,
+    `  GET ${url}/_lookup/advertiser?adcp_advertiser=<adcp-side-value>`,
+    `(Specific advertiser values are not exposed to adapters — see issue #1225.)`,
     ``,
     `OpenAPI spec: src/lib/mock-server/sales-social/openapi.yaml`,
     `Key routes:`,
     `  POST   ${url}/oauth/token                                                  (no auth)`,
+    `  GET    ${url}/_lookup/advertiser?adcp_advertiser=<value>                  (no auth)`,
+    `  GET    ${url}/_debug/traffic                                              (no auth)`,
     `  GET    ${url}/v1.3/advertiser/{advertiser_id}/info`,
     `  POST   ${url}/v1.3/advertiser/{advertiser_id}/custom_audience/create`,
     `  POST   ${url}/v1.3/advertiser/{advertiser_id}/custom_audience/upload      (hashed PII)`,
@@ -225,5 +251,41 @@ function formatSalesSocialSummary(url: string, client: { client_id: string; clie
     `  POST   ${url}/v1.3/advertiser/{advertiser_id}/creative/create`,
     `  POST   ${url}/v1.3/advertiser/{advertiser_id}/pixel/create`,
     `  POST   ${url}/v1.3/advertiser/{advertiser_id}/event/track                  (CAPI)`,
+  ].join('\n');
+}
+
+function formatSalesGuaranteedSummary(url: string, apiKey: string): string {
+  const networkLines = SALES_GUARANTEED_NETWORKS.map(
+    net => `  ${net.network_code}  →  AdCP account.publisher: "${net.adcp_publisher}"`
+  ).join('\n');
+  return [
+    `Mock guaranteed-sales platform (GAM-flavored) running at ${url}`,
+    ``,
+    `Auth:`,
+    `  Authorization: Bearer ${apiKey}`,
+    `  X-Network-Code: <network_code> (required on every call)`,
+    ``,
+    `Network mapping:`,
+    networkLines,
+    ``,
+    `OpenAPI spec: src/lib/mock-server/sales-guaranteed/openapi.yaml`,
+    `Key routes:`,
+    `  GET    ${url}/v1/inventory                                                # ad units`,
+    `  GET    ${url}/v1/products                                                 # productized inventory`,
+    `  GET    ${url}/v1/orders                                                   # list orders`,
+    `  POST   ${url}/v1/orders                                                   # create (returns pending_approval + task_id)`,
+    `  GET    ${url}/v1/orders/{order_id}                                        # poll order status`,
+    `  POST   ${url}/v1/orders/{order_id}/lineitems                              # add line items`,
+    `  POST   ${url}/v1/orders/{order_id}/lineitems/{li}/creative-attach         # attach creative`,
+    `  GET    ${url}/v1/orders/{order_id}/delivery                               # delivery reporting`,
+    `  POST   ${url}/v1/orders/{order_id}/conversions                            # CAPI delivery validation`,
+    `  GET    ${url}/v1/tasks/{task_id}                                          # poll approval task`,
+    `  GET    ${url}/v1/creatives                                                # list creatives`,
+    `  POST   ${url}/v1/creatives                                                # upload creative`,
+    ``,
+    `Order state machine: draft → pending_approval → approved → delivering → completed`,
+    `Approval is async: POST /orders returns pending_approval + approval_task_id;`,
+    `poll /tasks/{id} (mock auto-promotes submitted → working → completed after 2 polls)`,
+    `or poll /orders/{id} directly to detect transition.`,
   ].join('\n');
 }

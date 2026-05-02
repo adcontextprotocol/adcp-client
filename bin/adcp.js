@@ -1022,6 +1022,12 @@ ARGUMENTS:
                                             with OAuth 2.0 client_credentials,
                                             sync_audiences (hashed-PII upload),
                                             and CAPI / Conversion API ingestion.
+                       sales-guaranteed     GAM/FreeWheel-shaped guaranteed-sales
+                                            platform with multi-step order
+                                            approval state machine, async IO
+                                            signing tasks, inventory-list
+                                            targeting, and CAPI for delivery
+                                            validation.
 
 OPTIONS:
   --port N           Listen port. Default: 4500.

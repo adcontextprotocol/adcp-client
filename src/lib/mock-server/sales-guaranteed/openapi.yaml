@@ -1,0 +1,551 @@
+openapi: 3.1.0
+info:
+  title: Premium Publisher Order Management API
+  version: '1.0.0'
+  description: |
+    HTTP API for a fictional GAM/FreeWheel-flavored guaranteed-sales platform —
+    publisher-direct ad sales with human-in-the-loop IO approval, multi-step
+    state machine on orders/line items, inventory-list targeting, and delivery
+    reporting with CAPI conversion ingestion.
+
+    Two SDK surfaces this fixture stresses that the existing mocks
+    (signal-marketplace, creative-template, sales-social) don't cover:
+
+    1. **Multi-step approval state machine.** Orders progress through
+       `draft → pending_approval → approved → delivering → completed`.
+       Approval is async — submitting an order returns a `task_id`; the
+       buyer polls until human sign-off completes. State transitions are
+       monotonic (no `delivering → pending_approval` rollback) — adapters
+       must respect the lifecycle graph.
+
+    2. **CAPI for delivery validation, not audience activation.** Distinct
+       from sales-social's CAPI which ingests conversion events for
+       targeting. Here CAPI ingests delivery measurements (impressions,
+       clicks, viewable %) that the publisher uses to validate billing.
+       Different flow, different semantics.
+
+    Plus: inventory-list targeting (publisher-defined ad units the buyer
+    can target by id), package update flow (line-item updates after order
+    creation), and the standard supporting surface (products, line items,
+    creatives).
+
+    Multi-tenancy via header: `X-Network-Code` (matches GAM's network-id
+    pattern). Different from sales-social's path-based scoping.
+
+servers:
+  - url: http://127.0.0.1:{port}
+    variables:
+      port:
+        default: '4503'
+        description: Port the mock-server boots on (override with --port)
+
+components:
+  securitySchemes:
+    bearerApiKey:
+      type: http
+      scheme: bearer
+      description: |
+        Customer-level API key. Same key authorizes calls across all
+        networks the customer has access to; the X-Network-Code header
+        scopes per-call.
+  parameters:
+    NetworkCode:
+      name: X-Network-Code
+      in: header
+      required: true
+      schema: { type: string }
+      description: |
+        Network identifier. MUST be present on every request. Different
+        networks see different inventory, products, and orders. Requests
+        with an unknown network return 403.
+  schemas:
+    AdUnit:
+      type: object
+      required: [ad_unit_id, name, sizes, environment]
+      properties:
+        ad_unit_id: { type: string, example: 'au_premium_video_preroll' }
+        name: { type: string }
+        path: { type: string, example: '/network/sports/preroll' }
+        sizes:
+          type: array
+          items:
+            type: object
+            required: [width, height]
+            properties:
+              width: { type: integer }
+              height: { type: integer }
+        environment:
+          type: string
+          enum: [web, mobile_app, ctv, audio]
+        targetable: { type: boolean }
+
+    Product:
+      type: object
+      required: [product_id, name, delivery_type, channel, ad_unit_ids, pricing]
+      properties:
+        product_id: { type: string, example: 'sports_preroll_q2_guaranteed' }
+        name: { type: string }
+        delivery_type:
+          type: string
+          enum: [guaranteed, non_guaranteed]
+        channel:
+          type: string
+          enum: [video, ctv, display, audio]
+        format_ids:
+          type: array
+          items: { type: string }
+        ad_unit_ids:
+          type: array
+          items: { type: string }
+        pricing:
+          type: object
+          required: [model, cpm, currency]
+          properties:
+            model: { type: string, enum: [cpm, cpv] }
+            cpm: { type: number }
+            currency: { type: string }
+            min_spend: { type: number }
+        availability:
+          type: object
+          properties:
+            start_date: { type: string, format: date }
+            end_date: { type: string, format: date }
+            available_impressions: { type: integer }
+
+    Order:
+      type: object
+      required: [order_id, name, status, advertiser_id, currency, created_at]
+      properties:
+        order_id: { type: string, example: 'ord_q2_volta_launch' }
+        name: { type: string }
+        status:
+          type: string
+          enum: [draft, pending_approval, approved, delivering, completed, canceled, rejected]
+        advertiser_id:
+          type: string
+          description: Adopter-side advertiser key. Adapter maps from AdCP `account`.
+        currency: { type: string }
+        budget: { type: number }
+        approval_task_id:
+          type: string
+          description: |
+            Set when status is `pending_approval`. The buyer-side adapter
+            polls /tasks/{task_id} OR the order itself to detect status
+            transitions. Cleared once status reaches `approved` (or terminal).
+        rejection_reason: { type: string }
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+
+    LineItem:
+      type: object
+      required: [line_item_id, order_id, product_id, status, budget, created_at]
+      properties:
+        line_item_id: { type: string }
+        order_id: { type: string }
+        product_id: { type: string }
+        status:
+          type: string
+          enum: [pending_creatives, ready, paused, delivering, completed]
+        budget: { type: number }
+        ad_unit_targeting:
+          type: array
+          description: Inventory-list targeting — explicit ad-unit ids the buyer wants this line item to serve on.
+          items: { type: string }
+        creative_ids:
+          type: array
+          items: { type: string }
+        created_at: { type: string, format: date-time }
+
+    Creative:
+      type: object
+      required: [creative_id, name, format_id, advertiser_id, status, created_at]
+      properties:
+        creative_id: { type: string }
+        name: { type: string }
+        format_id: { type: string }
+        advertiser_id: { type: string }
+        snippet: { type: string }
+        status: { type: string, enum: [active, paused, archived] }
+        created_at: { type: string, format: date-time }
+
+    ApprovalTask:
+      type: object
+      required: [task_id, order_id, status, created_at]
+      properties:
+        task_id: { type: string }
+        order_id: { type: string }
+        status:
+          type: string
+          enum: [submitted, working, completed, rejected]
+        result:
+          type: object
+          description: Populated when status is `completed` or `rejected`.
+          properties:
+            outcome: { type: string, enum: [approved, rejected] }
+            reviewer_note: { type: string }
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+
+    DeliveryReport:
+      type: object
+      required: [order_id, currency, reporting_period, totals]
+      properties:
+        order_id: { type: string }
+        currency: { type: string }
+        reporting_period:
+          type: object
+          required: [start, end]
+          properties:
+            start: { type: string, format: date-time }
+            end: { type: string, format: date-time }
+        totals:
+          type: object
+          required: [impressions, clicks, spend]
+          properties:
+            impressions: { type: integer }
+            clicks: { type: integer }
+            spend: { type: number }
+            viewable_impressions: { type: integer }
+            video_completions: { type: integer }
+            conversions:
+              type: integer
+              description: Conversions ingested via /conversions for this order.
+        line_item_breakdown:
+          type: array
+          items:
+            type: object
+            properties:
+              line_item_id: { type: string }
+              impressions: { type: integer }
+              spend: { type: number }
+
+    ConversionBatch:
+      type: object
+      required: [order_id, conversions]
+      properties:
+        order_id: { type: string }
+        conversions:
+          type: array
+          minItems: 1
+          maxItems: 1000
+          items:
+            type: object
+            required: [event_name, event_time, value]
+            properties:
+              event_name: { type: string }
+              event_time: { type: integer }
+              value: { type: number }
+              currency: { type: string }
+              dedup_key:
+                type: string
+                description: Buyer-supplied event id. Re-sending the same dedup_key
+                  for an order does not double-count.
+
+    Error:
+      type: object
+      required: [code, message]
+      properties:
+        code: { type: string }
+        message: { type: string }
+
+security:
+  - bearerApiKey: []
+
+paths:
+  /v1/inventory:
+    get:
+      summary: List ad units (publisher inventory)
+      operationId: listInventory
+      parameters: [{ $ref: '#/components/parameters/NetworkCode' }]
+      responses:
+        '200':
+          content:
+            {
+              application/json:
+                {
+                  schema:
+                    {
+                      type: object,
+                      properties: { ad_units: { type: array, items: { $ref: '#/components/schemas/AdUnit' } } },
+                    },
+                },
+            }
+
+  /v1/products:
+    get:
+      summary: List productized inventory (get_products mapping)
+      operationId: listProducts
+      parameters:
+        - $ref: '#/components/parameters/NetworkCode'
+        - in: query
+          name: delivery_type
+          schema: { type: string, enum: [guaranteed, non_guaranteed] }
+        - in: query
+          name: channel
+          schema: { type: string }
+      responses:
+        '200':
+          content:
+            {
+              application/json:
+                {
+                  schema:
+                    {
+                      type: object,
+                      properties: { products: { type: array, items: { $ref: '#/components/schemas/Product' } } },
+                    },
+                },
+            }
+
+  /v1/orders:
+    get:
+      summary: List orders
+      operationId: listOrders
+      parameters: [{ $ref: '#/components/parameters/NetworkCode' }]
+      responses:
+        '200':
+          content:
+            {
+              application/json:
+                {
+                  schema:
+                    {
+                      type: object,
+                      properties: { orders: { type: array, items: { $ref: '#/components/schemas/Order' } } },
+                    },
+                },
+            }
+    post:
+      summary: |
+        Create order. Returns the order in `pending_approval` status with
+        an `approval_task_id`. Buyer polls /tasks/{id} or /orders/{id}
+        to detect approval. Status transitions: pending_approval → approved
+        (success) | rejected (terminal).
+      operationId: createOrder
+      parameters: [{ $ref: '#/components/parameters/NetworkCode' }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name, advertiser_id, currency, budget]
+              properties:
+                name: { type: string }
+                advertiser_id: { type: string }
+                currency: { type: string }
+                budget: { type: number }
+                client_request_id:
+                  type: string
+                  description: Idempotency key. Replay returns the existing order;
+                    body mismatch returns 409.
+      responses:
+        '201':
+          content: { application/json: { schema: { $ref: '#/components/schemas/Order' } } }
+        '200':
+          content: { application/json: { schema: { $ref: '#/components/schemas/Order' } } }
+        '409': { content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
+
+  /v1/orders/{order_id}:
+    get:
+      summary: Fetch order status (poll for approval)
+      operationId: getOrder
+      parameters:
+        - $ref: '#/components/parameters/NetworkCode'
+        - in: path
+          name: order_id
+          required: true
+          schema: { type: string }
+      responses:
+        '200':
+          content: { application/json: { schema: { $ref: '#/components/schemas/Order' } } }
+        '404': { content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
+
+  /v1/orders/{order_id}/lineitems:
+    get:
+      summary: List line items under an order
+      operationId: listLineItems
+      parameters:
+        - $ref: '#/components/parameters/NetworkCode'
+        - in: path
+          name: order_id
+          required: true
+          schema: { type: string }
+      responses:
+        '200':
+          content:
+            {
+              application/json:
+                {
+                  schema:
+                    {
+                      type: object,
+                      properties: { line_items: { type: array, items: { $ref: '#/components/schemas/LineItem' } } },
+                    },
+                },
+            }
+    post:
+      summary: |
+        Create a line item under an order. Order must be in `approved`,
+        `delivering`, or `pending_approval` status (line items can be drafted
+        before approval; they go `delivering` once both order is approved
+        and the line item has at least one creative attached).
+      operationId: createLineItem
+      parameters:
+        - $ref: '#/components/parameters/NetworkCode'
+        - in: path
+          name: order_id
+          required: true
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [product_id, budget]
+              properties:
+                product_id: { type: string }
+                budget: { type: number }
+                ad_unit_targeting:
+                  type: array
+                  items: { type: string }
+                client_request_id: { type: string }
+      responses:
+        '201':
+          content: { application/json: { schema: { $ref: '#/components/schemas/LineItem' } } }
+        '409': { content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
+        '422':
+          description: Invalid state transition (e.g., adding line items to a completed order).
+          content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } }
+
+  /v1/orders/{order_id}/lineitems/{line_item_id}/creative-attach:
+    post:
+      summary: Attach a creative to a line item
+      operationId: attachCreative
+      parameters:
+        - $ref: '#/components/parameters/NetworkCode'
+        - in: path
+          name: order_id
+          required: true
+          schema: { type: string }
+        - in: path
+          name: line_item_id
+          required: true
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [creative_id]
+              properties: { creative_id: { type: string } }
+      responses:
+        '200':
+          content: { application/json: { schema: { $ref: '#/components/schemas/LineItem' } } }
+
+  /v1/creatives:
+    get:
+      summary: List creatives
+      operationId: listCreatives
+      parameters: [{ $ref: '#/components/parameters/NetworkCode' }]
+      responses:
+        '200':
+          content:
+            {
+              application/json:
+                {
+                  schema:
+                    {
+                      type: object,
+                      properties: { creatives: { type: array, items: { $ref: '#/components/schemas/Creative' } } },
+                    },
+                },
+            }
+    post:
+      summary: Upload a creative
+      operationId: createCreative
+      parameters: [{ $ref: '#/components/parameters/NetworkCode' }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name, format_id, advertiser_id]
+              properties:
+                name: { type: string }
+                format_id: { type: string }
+                advertiser_id: { type: string }
+                snippet: { type: string }
+                client_request_id: { type: string }
+      responses:
+        '201':
+          content: { application/json: { schema: { $ref: '#/components/schemas/Creative' } } }
+
+  /v1/tasks/{task_id}:
+    get:
+      summary: Poll an async approval task
+      operationId: getTask
+      parameters:
+        - $ref: '#/components/parameters/NetworkCode'
+        - in: path
+          name: task_id
+          required: true
+          schema: { type: string }
+      responses:
+        '200':
+          content: { application/json: { schema: { $ref: '#/components/schemas/ApprovalTask' } } }
+        '404': { content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
+
+  /v1/orders/{order_id}/delivery:
+    get:
+      summary: Delivery reporting for an order
+      operationId: getDelivery
+      parameters:
+        - $ref: '#/components/parameters/NetworkCode'
+        - in: path
+          name: order_id
+          required: true
+          schema: { type: string }
+        - in: query
+          name: start
+          schema: { type: string, format: date }
+        - in: query
+          name: end
+          schema: { type: string, format: date }
+      responses:
+        '200':
+          content: { application/json: { schema: { $ref: '#/components/schemas/DeliveryReport' } } }
+        '404': { content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
+
+  /v1/orders/{order_id}/conversions:
+    post:
+      summary: |
+        Server-to-server conversion ingestion (CAPI). Distinct from
+        sales-social's CAPI: this feeds delivery validation, not audience
+        activation. Conversions count toward the order's delivery report.
+      operationId: ingestConversions
+      parameters:
+        - $ref: '#/components/parameters/NetworkCode'
+        - in: path
+          name: order_id
+          required: true
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/ConversionBatch' }
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  order_id: { type: string }
+                  events_received: { type: integer }
+                  events_deduplicated: { type: integer }
+        '404': { content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }

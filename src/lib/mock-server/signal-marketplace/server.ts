@@ -38,6 +38,15 @@ export async function bootSignalMarketplace(options: BootOptions): Promise<BootR
   // so two operators can use the same client_request_id and not collide.
   const idempotency = new Map<string, string>();
 
+  // Traffic counters keyed by `<METHOD> <route-template>`. Harness queries
+  // `GET /_debug/traffic` after the storyboard run and asserts headline
+  // routes were hit ≥1. Façade adapters that skip the upstream produce zero
+  // counters and fail the assertion. adcontextprotocol/adcp-client#1225.
+  const traffic = new Map<string, number>();
+  const bump = (routeTemplate: string): void => {
+    traffic.set(routeTemplate, (traffic.get(routeTemplate) ?? 0) + 1);
+  };
+
   const server = createServer((req, res) => {
     handleRequest(req, res, {
       apiKey,
@@ -46,6 +55,8 @@ export async function bootSignalMarketplace(options: BootOptions): Promise<BootR
       operators,
       activations,
       idempotency,
+      traffic,
+      bump,
     }).catch(err => {
       // Defense-in-depth — handlers should never throw, but if one does we
       // emit a 500 with a request_id so adopter logs can still trace it.
@@ -87,6 +98,8 @@ interface HandlerCtx {
   operators: MockOperator[];
   activations: Map<string, MockActivation>;
   idempotency: Map<string, string>;
+  traffic: Map<string, number>;
+  bump: (routeTemplate: string) => void;
 }
 
 interface MockActivation {
@@ -106,7 +119,50 @@ interface MockActivation {
 }
 
 async function handleRequest(req: IncomingMessage, res: ServerResponse, ctx: HandlerCtx): Promise<void> {
-  // Authentication first. Order matters — surface bad-credential errors before
+  const url = new URL(req.url ?? '/', `http://127.0.0.1`);
+  const path = url.pathname;
+  const method = req.method ?? 'GET';
+
+  // Façade-detection traffic dump — harness-only, no auth required.
+  // Returns per-endpoint hit counts so the matrix runner can assert that
+  // façade adapters (which never call upstream) fail.
+  if (method === 'GET' && path === '/_debug/traffic') {
+    writeJson(res, 200, { traffic: Object.fromEntries(ctx.traffic) });
+    return;
+  }
+
+  // Discovery endpoint — replaces the hardcoded principal-mapping table the
+  // harness used to inline into Claude's prompt. Adapters resolve at runtime
+  // by querying with the AdCP-side identifier they receive from buyers
+  // (`account.operator`, `account.brand.domain`, etc.). No auth required —
+  // discovery happens before the agent has any operator context. Issue #1225.
+  if (method === 'GET' && path === '/_lookup/operator') {
+    ctx.bump('GET /_lookup/operator');
+    const adcpOperator = url.searchParams.get('adcp_operator');
+    if (!adcpOperator) {
+      writeJson(res, 400, {
+        code: 'invalid_request',
+        message: 'adcp_operator query parameter is required.',
+      });
+      return;
+    }
+    const match = ctx.operators.find(o => o.adcp_operator === adcpOperator);
+    if (!match) {
+      writeJson(res, 404, {
+        code: 'operator_not_found',
+        message: `No upstream operator registered for adcp_operator=${adcpOperator}.`,
+      });
+      return;
+    }
+    writeJson(res, 200, {
+      adcp_operator: match.adcp_operator,
+      operator_id: match.operator_id,
+      display_name: match.display_name,
+    });
+    return;
+  }
+
+  // Authentication. Order matters — surface bad-credential errors before
   // operator/cohort lookups so adopters can debug auth in isolation.
   const auth = req.headers['authorization'];
   if (!auth || !auth.startsWith('Bearer ') || auth.slice(7) !== ctx.apiKey) {
@@ -132,30 +188,28 @@ async function handleRequest(req: IncomingMessage, res: ServerResponse, ctx: Han
     return;
   }
 
-  const url = new URL(req.url ?? '/', `http://127.0.0.1`);
-  const path = url.pathname;
-  const method = req.method ?? 'GET';
-
-  // GET /v2/cohorts
+  // Bump traffic counters on each real-route hit so /_debug/traffic can
+  // later report which endpoints the adapter actually exercised.
   if (method === 'GET' && path === '/v2/cohorts') {
+    ctx.bump('GET /v2/cohorts');
     return handleListCohorts(url, ctx, operator, res);
   }
-  // GET /v2/cohorts/{id}
   const cohortMatch = path.match(/^\/v2\/cohorts\/([^/]+)$/);
   if (method === 'GET' && cohortMatch && cohortMatch[1]) {
+    ctx.bump('GET /v2/cohorts/{id}');
     return handleGetCohort(decodeURIComponent(cohortMatch[1]), ctx, operator, res);
   }
-  // GET /v2/destinations
   if (method === 'GET' && path === '/v2/destinations') {
+    ctx.bump('GET /v2/destinations');
     return handleListDestinations(ctx, operator, res);
   }
-  // POST /v2/activations
   if (method === 'POST' && path === '/v2/activations') {
+    ctx.bump('POST /v2/activations');
     return handleCreateActivation(req, ctx, operator, res);
   }
-  // GET /v2/activations/{id}
   const activationMatch = path.match(/^\/v2\/activations\/([^/]+)$/);
   if (method === 'GET' && activationMatch && activationMatch[1]) {
+    ctx.bump('GET /v2/activations/{id}');
     return handleGetActivation(decodeURIComponent(activationMatch[1]), ctx, operator, res);
   }
 

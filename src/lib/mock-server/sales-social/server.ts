@@ -99,6 +99,17 @@ export async function bootSalesSocial(options: BootOptions): Promise<BootResult>
   // so cross-advertiser collisions are isolated.
   const idempotency = new Map<string, string>();
 
+  // Traffic counters keyed by `<METHOD> <route-template>`. The harness queries
+  // `GET /_debug/traffic` after a storyboard run and asserts the headline
+  // endpoints (custom_audience/upload, event/track, etc.) were called ≥1 time.
+  // Façade adapters that never call upstream produce zero counters and fail
+  // the assertion — façade detection without depending on storyboard data
+  // shape. See adcontextprotocol/adcp-client#1225.
+  const traffic = new Map<string, number>();
+  function bump(routeTemplate: string): void {
+    traffic.set(routeTemplate, (traffic.get(routeTemplate) ?? 0) + 1);
+  }
+
   function issueTokens(client: MockOAuthClient): IssuedAccessToken {
     const now = Date.now();
     const t: IssuedAccessToken = {
@@ -162,9 +173,49 @@ export async function bootSalesSocial(options: BootOptions): Promise<BootResult>
     const path = url.pathname;
     const method = req.method ?? 'GET';
 
+    // Façade-detection traffic dump — harness-only, no auth required.
+    // Returns per-endpoint hit counts for assertion in the matrix runner.
+    if (method === 'GET' && path === '/_debug/traffic') {
+      writeJson(res, 200, { traffic: Object.fromEntries(traffic) });
+      return;
+    }
+
     // OAuth token endpoint — no Bearer required.
     if (method === 'POST' && path === '/oauth/token') {
+      bump('POST /oauth/token');
       return handleOauthToken(req, res);
+    }
+
+    // Discovery endpoint — replaces the hardcoded principal-mapping table
+    // the harness used to inline into Claude's prompt. Adapters look up the
+    // upstream advertiser_id at runtime by querying with the AdCP-side
+    // identifier they receive from buyers (`account.advertiser`,
+    // `account.brand.domain`, etc.). No auth required — discovery is the
+    // entry point before the agent has any account context. Issue #1225.
+    if (method === 'GET' && path === '/_lookup/advertiser') {
+      bump('GET /_lookup/advertiser');
+      const adcpAdvertiser = url.searchParams.get('adcp_advertiser');
+      if (!adcpAdvertiser) {
+        writeJson(res, 400, {
+          code: 'invalid_request',
+          message: 'adcp_advertiser query parameter is required.',
+        });
+        return;
+      }
+      const match = advertisers.find(a => a.adcp_advertiser === adcpAdvertiser);
+      if (!match) {
+        writeJson(res, 404, {
+          code: 'advertiser_not_found',
+          message: `No upstream advertiser registered for adcp_advertiser=${adcpAdvertiser}.`,
+        });
+        return;
+      }
+      writeJson(res, 200, {
+        adcp_advertiser: match.adcp_advertiser,
+        advertiser_id: match.advertiser_id,
+        display_name: match.display_name,
+      });
+      return;
     }
 
     // Everything else requires a valid access token.
@@ -201,29 +252,68 @@ export async function bootSalesSocial(options: BootOptions): Promise<BootResult>
       return;
     }
 
-    // Sub-path routing.
-    if (method === 'GET' && subPath === '/info') return handleGetAdvertiser(advertiser, res);
+    // Sub-path routing — bump traffic counters on each route hit so
+    // /_debug/traffic can later report which endpoints the adapter actually
+    // exercised. Façade adapters return shape-valid AdCP responses without
+    // calling these endpoints; the harness's post-run check catches that.
+    if (method === 'GET' && subPath === '/info') {
+      bump('GET /v1.3/advertiser/{id}/info');
+      return handleGetAdvertiser(advertiser, res);
+    }
 
     // Audiences
-    if (method === 'GET' && subPath === '/custom_audience/list') return handleListAudiences(advertiser, res);
-    if (method === 'POST' && subPath === '/custom_audience/create') return handleCreateAudience(req, advertiser, res);
-    if (method === 'POST' && subPath === '/custom_audience/upload') return handleUploadAudience(req, advertiser, res);
+    if (method === 'GET' && subPath === '/custom_audience/list') {
+      bump('GET /v1.3/advertiser/{id}/custom_audience/list');
+      return handleListAudiences(advertiser, res);
+    }
+    if (method === 'POST' && subPath === '/custom_audience/create') {
+      bump('POST /v1.3/advertiser/{id}/custom_audience/create');
+      return handleCreateAudience(req, advertiser, res);
+    }
+    if (method === 'POST' && subPath === '/custom_audience/upload') {
+      bump('POST /v1.3/advertiser/{id}/custom_audience/upload');
+      return handleUploadAudience(req, advertiser, res);
+    }
 
     // Catalogs
-    if (method === 'GET' && subPath === '/catalog/list') return handleListCatalogs(advertiser, res);
-    if (method === 'POST' && subPath === '/catalog/create') return handleCreateCatalog(req, advertiser, res);
-    if (method === 'POST' && subPath === '/catalog/upload') return handleUploadCatalog(req, advertiser, res);
+    if (method === 'GET' && subPath === '/catalog/list') {
+      bump('GET /v1.3/advertiser/{id}/catalog/list');
+      return handleListCatalogs(advertiser, res);
+    }
+    if (method === 'POST' && subPath === '/catalog/create') {
+      bump('POST /v1.3/advertiser/{id}/catalog/create');
+      return handleCreateCatalog(req, advertiser, res);
+    }
+    if (method === 'POST' && subPath === '/catalog/upload') {
+      bump('POST /v1.3/advertiser/{id}/catalog/upload');
+      return handleUploadCatalog(req, advertiser, res);
+    }
 
     // Creatives
-    if (method === 'GET' && subPath === '/creative/list') return handleListCreatives(advertiser, res);
-    if (method === 'POST' && subPath === '/creative/create') return handleCreateCreative(req, advertiser, res);
+    if (method === 'GET' && subPath === '/creative/list') {
+      bump('GET /v1.3/advertiser/{id}/creative/list');
+      return handleListCreatives(advertiser, res);
+    }
+    if (method === 'POST' && subPath === '/creative/create') {
+      bump('POST /v1.3/advertiser/{id}/creative/create');
+      return handleCreateCreative(req, advertiser, res);
+    }
 
     // Pixels (event sources)
-    if (method === 'GET' && subPath === '/pixel/list') return handleListPixels(advertiser, res);
-    if (method === 'POST' && subPath === '/pixel/create') return handleCreatePixel(req, advertiser, res);
+    if (method === 'GET' && subPath === '/pixel/list') {
+      bump('GET /v1.3/advertiser/{id}/pixel/list');
+      return handleListPixels(advertiser, res);
+    }
+    if (method === 'POST' && subPath === '/pixel/create') {
+      bump('POST /v1.3/advertiser/{id}/pixel/create');
+      return handleCreatePixel(req, advertiser, res);
+    }
 
     // Conversion API
-    if (method === 'POST' && subPath === '/event/track') return handleTrackEvents(req, advertiser, res);
+    if (method === 'POST' && subPath === '/event/track') {
+      bump('POST /v1.3/advertiser/{id}/event/track');
+      return handleTrackEvents(req, advertiser, res);
+    }
 
     writeJson(res, 404, { code: 'not_found', message: `No route for ${method} ${path}` });
   }

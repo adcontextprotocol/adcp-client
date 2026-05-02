@@ -43,8 +43,17 @@ export async function bootCreativeTemplate(options: BootOptions): Promise<BootRe
   // client_request_id idempotency table — keyed by `<workspace_id>::<key>`.
   const idempotency = new Map<string, string>();
 
+  // Traffic counters keyed by `<METHOD> <route-template>`. Harness queries
+  // `GET /_debug/traffic` after the storyboard run and asserts headline
+  // routes were hit ≥1. Façade adapters that skip the upstream produce zero
+  // counters and fail the assertion. adcontextprotocol/adcp-client#1225.
+  const traffic = new Map<string, number>();
+  const bump = (routeTemplate: string): void => {
+    traffic.set(routeTemplate, (traffic.get(routeTemplate) ?? 0) + 1);
+  };
+
   const server = createServer((req, res) => {
-    handleRequest(req, res, { apiKey, templates, workspaces, renders, idempotency }).catch(err => {
+    handleRequest(req, res, { apiKey, templates, workspaces, renders, idempotency, traffic, bump }).catch(err => {
       const requestId = (req.headers['x-request-id'] as string | undefined) ?? randomUUID();
       writeJson(res, 500, {
         code: 'internal_error',
@@ -81,19 +90,58 @@ interface HandlerCtx {
   workspaces: MockWorkspace[];
   renders: Map<string, MockRender>;
   idempotency: Map<string, string>;
+  traffic: Map<string, number>;
+  bump: (routeTemplate: string) => void;
 }
 
 async function handleRequest(req: IncomingMessage, res: ServerResponse, ctx: HandlerCtx): Promise<void> {
-  // Authentication first.
+  const url = new URL(req.url ?? '/', `http://127.0.0.1`);
+  const path = url.pathname;
+  const method = req.method ?? 'GET';
+
+  // Façade-detection traffic dump — harness-only, no auth required.
+  if (method === 'GET' && path === '/_debug/traffic') {
+    writeJson(res, 200, { traffic: Object.fromEntries(ctx.traffic) });
+    return;
+  }
+
+  // Discovery endpoint — replaces the hardcoded principal-mapping table the
+  // harness used to inline into Claude's prompt. Adapters resolve at runtime
+  // by querying with the AdCP-side identifier they receive from buyers
+  // (`account.advertiser`, `account.brand.domain`). No auth required —
+  // discovery happens before the agent has any workspace context. Issue #1225.
+  if (method === 'GET' && path === '/_lookup/workspace') {
+    ctx.bump('GET /_lookup/workspace');
+    const adcpAdvertiser = url.searchParams.get('adcp_advertiser');
+    if (!adcpAdvertiser) {
+      writeJson(res, 400, {
+        code: 'invalid_request',
+        message: 'adcp_advertiser query parameter is required.',
+      });
+      return;
+    }
+    const match = ctx.workspaces.find(w => w.adcp_advertiser === adcpAdvertiser);
+    if (!match) {
+      writeJson(res, 404, {
+        code: 'workspace_not_found',
+        message: `No upstream workspace registered for adcp_advertiser=${adcpAdvertiser}.`,
+      });
+      return;
+    }
+    writeJson(res, 200, {
+      adcp_advertiser: match.adcp_advertiser,
+      workspace_id: match.workspace_id,
+      display_name: match.display_name,
+    });
+    return;
+  }
+
+  // Authentication.
   const auth = req.headers['authorization'];
   if (!auth || !auth.startsWith('Bearer ') || auth.slice(7) !== ctx.apiKey) {
     writeJson(res, 401, { code: 'unauthorized', message: 'Missing or invalid bearer credential.' });
     return;
   }
-
-  const url = new URL(req.url ?? '/', `http://127.0.0.1`);
-  const path = url.pathname;
-  const method = req.method ?? 'GET';
 
   // Path-based workspace scoping. Matches /v3/workspaces/{ws}/...
   const wsMatch = path.match(/^\/v3\/workspaces\/([^/]+)(\/.*)?$/);
@@ -109,22 +157,24 @@ async function handleRequest(req: IncomingMessage, res: ServerResponse, ctx: Han
     return;
   }
 
-  // GET /v3/workspaces/{ws}/templates
+  // Bump traffic counters on each real-route hit so /_debug/traffic can later
+  // report which endpoints the adapter actually exercised.
   if (method === 'GET' && subPath === '/templates') {
+    ctx.bump('GET /v3/workspaces/{ws}/templates');
     return handleListTemplates(url, ctx, workspace, res);
   }
-  // GET /v3/workspaces/{ws}/templates/{tpl_id}
   const tplMatch = subPath.match(/^\/templates\/([^/]+)$/);
   if (method === 'GET' && tplMatch && tplMatch[1]) {
+    ctx.bump('GET /v3/workspaces/{ws}/templates/{id}');
     return handleGetTemplate(decodeURIComponent(tplMatch[1]), ctx, workspace, res);
   }
-  // POST /v3/workspaces/{ws}/renders
   if (method === 'POST' && subPath === '/renders') {
+    ctx.bump('POST /v3/workspaces/{ws}/renders');
     return handleCreateRender(req, ctx, workspace, res);
   }
-  // GET /v3/workspaces/{ws}/renders/{render_id}
   const rMatch = subPath.match(/^\/renders\/([^/]+)$/);
   if (method === 'GET' && rMatch && rMatch[1]) {
+    ctx.bump('GET /v3/workspaces/{ws}/renders/{id}');
     return handleGetRender(decodeURIComponent(rMatch[1]), ctx, workspace, res);
   }
 
