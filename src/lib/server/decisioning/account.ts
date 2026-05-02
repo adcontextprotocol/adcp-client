@@ -383,6 +383,15 @@ export interface AccountStore<TCtxMeta = Record<string, unknown>> {
    * implementing principal-keyed gates (e.g., per-buyer-agent
    * `BILLING_NOT_PERMITTED_FOR_AGENT` on the spec's billing surfaces) read
    * the principal here — same threading as `accounts.resolve`.
+   *
+   * **Prefer `ctx.agent` over `ctx.authInfo.credential` for commercial-
+   * relationship decisions.** `ctx.agent` is the registry-resolved durable
+   * identity (status, billing capabilities, default account terms);
+   * `ctx.authInfo.credential` is the raw transport-level credential. For
+   * billing gates the registry-resolved identity is canonical. Use
+   * `credential` only for transport-level branching (e.g., reading the
+   * verified `agent_url` from `credential.kind === 'http_sig'` when
+   * `agentRegistry` is not configured).
    */
   upsert?(refs: AccountReference[], ctx?: ResolveContext): Promise<SyncAccountsResultRow[]>;
 
@@ -536,6 +545,12 @@ export interface AccountFilter {
  * `billing_entity`, `payment_terms`, etc. on creation. The framework
  * projects these through `toWireSyncAccountRow` before emit, applying the
  * same `billing_entity.bank` strip as `toWireAccount` (write-only contract).
+ *
+ * **MUST NOT carry `authInfo` or other auth-derived fields.** This shape is
+ * emitted on the `sync_accounts` response wire. The framework's projector
+ * does not read `authInfo`, but adopters MUST NOT add an `authInfo` key on
+ * returned rows — same MUST-NOT-LEAK rule the framework enforces on
+ * `Account.authInfo`.
  */
 export interface SyncAccountsResultRow {
   account_id?: string;
