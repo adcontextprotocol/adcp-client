@@ -15,7 +15,7 @@ This directory contains practical examples of how to use the `@adcp/sdk` library
 
 Minimal server-side adapters — fork one to wire your own backend. Each boots via `npx tsx`, passes its specialism storyboard against the local compliance cache, and is documented with `// SWAP:` comments at every seam to replace.
 
-- **`hello_seller_adapter_signal_marketplace.ts`** — `signal-marketplace` specialism, port 3001. Wraps an upstream HTTP client; demo with `npx @adcp/sdk@latest mock-server signal-marketplace --port 4150`.
+- **`hello_seller_adapter_signal_marketplace.ts`** — `signal-marketplace` specialism, port 3001. Wraps an upstream HTTP client; demo with `npx @adcp/sdk@latest mock-server signal-marketplace --port 4150` then `UPSTREAM_URL=http://127.0.0.1:4150 npx tsx examples/hello_seller_adapter_signal_marketplace.ts`.
 - **`hello_seller_adapter_brand.ts`** — `brand-rights` specialism, port 3005. In-memory backend (no upstream server required); implements `get_brand_identity`, `get_rights`, `acquire_rights` + governance.
 
 ### Agent testing (`comply_test_controller`)

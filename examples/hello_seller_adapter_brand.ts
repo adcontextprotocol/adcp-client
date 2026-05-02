@@ -31,11 +31,9 @@ import {
   type Account,
   type BuyerAgent,
   type CachedBuyerAgentRegistry,
-} from '@adcp/sdk/server';
-import type {
-  GetBrandIdentitySuccess,
-  GetRightsSuccess,
-  AcquireRightsAcquired,
+  type GetBrandIdentitySuccess,
+  type GetRightsSuccess,
+  type AcquireRightsAcquired,
 } from '@adcp/sdk/server';
 import { createHash, randomUUID } from 'node:crypto';
 
@@ -219,8 +217,8 @@ class BrandRightsAdapter implements DecisioningPlatform<Record<string, never>, B
     getRights: async req => {
       const filtered = RIGHTS_CATALOG.filter(r => {
         if (req.brand_id && req.brand_id !== r.brand_id) return false;
-        if (Array.isArray(req.available_uses) && req.available_uses.length > 0) {
-          return req.available_uses.some(u => (r.available_uses as readonly string[]).includes(u));
+        if (Array.isArray(req.uses) && req.uses.length > 0) {
+          return req.uses.some(u => (r.available_uses as readonly string[]).includes(u));
         }
         return true;
       });
@@ -235,15 +233,18 @@ class BrandRightsAdapter implements DecisioningPlatform<Record<string, never>, B
       const accountKey = `${ctx.account.ctx_metadata.brand_domain}:${ctx.account.ctx_metadata.operator}`;
       const govAgents = governanceStore.get(accountKey);
       if (govAgents?.length) {
-        const planId = (req as unknown as { plan_id?: string }).plan_id ?? '';
+        // AcquireRightsRequest has no plan_id; use rights_id as the governance
+        // plan identifier — adequate for storyboard validation. SWAP: thread
+        // the real plan_id from your campaign state if your governance agent
+        // requires continuity across lifecycle checks.
         const gov = await checkGovernance({
           agentUrl: govAgents[0].url,
-          planId,
+          planId: req.rights_id,
           caller: AGENT_URL,
           tool: 'acquire_rights',
           payload: { rights_id: req.rights_id, pricing_option_id: req.pricing_option_id },
         });
-        if (gov.approved === false) {
+        if (gov.approved !== true) {
           throw new AdcpError('GOVERNANCE_DENIED', {
             message: gov.explanation,
           });
@@ -273,18 +274,15 @@ class BrandRightsAdapter implements DecisioningPlatform<Record<string, never>, B
 
       const grantId = `grant_${Date.now()}_${randomUUID().slice(0, 8)}`;
 
-      // Persist revocation_webhook — `revocation_webhook` is a required field
-      // on AcquireRightsRequest. Store it so you can call it on credential
-      // rotation or brand takedown. SWAP: persist to DB keyed by grantId.
-      if (req.revocation_webhook) {
-        grantStore.set(grantId, {
-          rights_id: req.rights_id,
-          revocation_webhook: req.revocation_webhook as {
-            url: string;
-            authentication?: { schemes?: string[]; credentials?: string };
-          },
-        });
-      }
+      // Persist revocation_webhook so you can call it on credential rotation
+      // or brand takedown. SWAP: persist to DB keyed by grantId.
+      grantStore.set(grantId, {
+        rights_id: req.rights_id,
+        revocation_webhook: req.revocation_webhook as {
+          url: string;
+          authentication?: { schemes?: string[]; credentials?: string };
+        },
+      });
 
       return {
         rights_id: req.rights_id,
