@@ -25,7 +25,8 @@ import {
   DEFAULT_REPORTING_CAPABILITIES,
   publishStatusChange,
   type DecisioningPlatform,
-  type SalesPlatform,
+  type SalesCorePlatform,
+  type SalesIngestionPlatform,
   type AccountStore,
   type SyncCreativesRow,
 } from '@adcp/sdk/server';
@@ -94,7 +95,7 @@ export class ProgrammaticSeller implements DecisioningPlatform<ProgrammaticConfi
     },
   };
 
-  sales: SalesPlatform<ProgrammaticMeta> = {
+  sales: SalesCorePlatform<ProgrammaticMeta> & SalesIngestionPlatform<ProgrammaticMeta> = {
     /** Sync discovery: catalog read; no async ceremony. */
     getProducts: async (_req: GetProductsRequest): Promise<GetProductsResponse> => ({
       products: [
