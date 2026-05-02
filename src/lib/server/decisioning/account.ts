@@ -376,15 +376,26 @@ export interface AccountStore<TCtxMeta = Record<string, unknown>> {
    * **Optional.** Stateless platforms (creative-template, signal-marketplace
    * proxies) that don't manage account lifecycle can omit this; framework
    * surfaces `UNSUPPORTED_FEATURE` to buyers calling `sync_accounts`.
+   *
+   * `ctx.authInfo` carries the caller's authenticated principal (when
+   * `serve({ authenticate })` is wired); `ctx.agent` carries the resolved
+   * `BuyerAgent` record (when an `agentRegistry` is configured). Adopters
+   * implementing principal-keyed gates (e.g., per-buyer-agent
+   * `BILLING_NOT_PERMITTED_FOR_AGENT` on the spec's billing surfaces) read
+   * the principal here — same threading as `accounts.resolve`.
    */
-  upsert?(refs: AccountReference[]): Promise<SyncAccountsResultRow[]>;
+  upsert?(refs: AccountReference[], ctx?: ResolveContext): Promise<SyncAccountsResultRow[]>;
 
   /**
    * list_accounts API surface. Framework wraps with cursor envelope.
    *
    * **Optional.** Same rationale as `upsert` — stateless platforms can omit.
+   *
+   * `ctx.authInfo` and `ctx.agent` carry the caller's principal — adopters
+   * scope the listing per-principal (e.g., return only accounts visible to
+   * the calling buyer agent) without re-deriving identity from the request.
    */
-  list?(filter: AccountFilter & CursorRequest): Promise<CursorPage<Account<TCtxMeta>>>;
+  list?(filter: AccountFilter & CursorRequest, ctx?: ResolveContext): Promise<CursorPage<Account<TCtxMeta>>>;
 
   /**
    * report_usage API surface. Operator-billed platforms accept usage rows
