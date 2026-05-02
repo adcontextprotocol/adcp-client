@@ -15,7 +15,7 @@
  * @public
  */
 
-import type { Account } from '../account';
+import type { Account, NoAccountCtx } from '../account';
 import type { RequestContext } from '../context';
 import type { TaskHandoff } from '../async-outcome';
 import type {
@@ -26,6 +26,8 @@ import type {
   BuildCreativeMultiSuccess,
   PreviewCreativeRequest,
   PreviewCreativeResponse,
+  ListCreativeFormatsRequest,
+  ListCreativeFormatsResponse,
 } from '../../../types/tools.generated';
 import type { SyncCreativesRow } from './sales';
 
@@ -124,8 +126,33 @@ export interface CreativeBuilderPlatform<TCtxMeta = Record<string, unknown>> {
    * preview ahead of generation can omit it; the framework returns
    * `UNSUPPORTED_FEATURE` to buyers calling `preview_creative` against
    * a platform that didn't wire this.
+   *
+   * ⚠️  NO-ACCOUNT TOOL — `ctx: NoAccountCtx<TCtxMeta>`. The wire request
+   * does not carry an `account` field, so `ctx.account` may be `undefined`
+   * when `accounts.resolve(undefined)` returned null. Narrow before reading
+   * `ctx.account.ctx_metadata`. See {@link NoAccountCtx}.
    */
-  previewCreative?(req: PreviewCreativeRequest, ctx: Ctx<TCtxMeta>): Promise<PreviewCreativeResponse>;
+  previewCreative?(req: PreviewCreativeRequest, ctx: NoAccountCtx<TCtxMeta>): Promise<PreviewCreativeResponse>;
+
+  /**
+   * Format catalog. Buyers call `list_creative_formats` to discover the
+   * formats this agent supports. Optional because adopters who declare
+   * their formats via `capabilities.creative_agents` (delegating to a
+   * separate creative agent) don't own format definitions; the framework
+   * surfaces `UNSUPPORTED_FEATURE` when omitted.
+   *
+   * ⚠️  NO-ACCOUNT TOOL — `ctx: NoAccountCtx<TCtxMeta>`. The wire request
+   * does not carry an `account` field. The framework dispatches with
+   * `ctx.account === undefined` for `'explicit'`-resolution adopters that
+   * don't return a synthetic singleton from `accounts.resolve(undefined)`.
+   * Format catalogs are typically publisher-wide and account-independent;
+   * read configuration from your platform's static catalog rather than
+   * `ctx.account.ctx_metadata`.
+   */
+  listCreativeFormats?(
+    req: ListCreativeFormatsRequest,
+    ctx: NoAccountCtx<TCtxMeta>
+  ): Promise<ListCreativeFormatsResponse>;
 
   /**
    * Refine a prior generation. `taskId` references a prior submission.

@@ -343,6 +343,64 @@ type _ct_opts_requires_complytest =
   CreateAdcpServerFromPlatformOptions extends RequiredOptsFor<_PlatformWithCT> ? 'assignable' : 'not-assignable';
 const _check_ct_opts_requires: _ct_opts_requires_complytest = 'not-assignable';
 
+// ── #1325: Format.renders[] codegen tight enough for typed builders ──
+
+// Positive: typed `displayRender({...})` value is assignable to `Format.renders[]`.
+// Pre-#1325, codegen produced `{ [k: string]: unknown } | { parameters_from_format_id: true }`,
+// which rejected the closed-shape DimensionsRender returned by displayRender.
+import { displayRender, parameterizedRender } from '../../utils/format-render-builders';
+import type { Format, PreviewCreativeResponse } from '../../types/tools.generated';
+function _format_renders_accept_display_render(): void {
+  type FormatRenders = NonNullable<Format['renders']>;
+  const renders: FormatRenders = [
+    displayRender({ role: 'primary', dimensions: { width: 300, height: 250 } }),
+    parameterizedRender({ role: 'companion' }),
+  ];
+  void renders;
+}
+
+// ── #1327: NoAccountCtx narrows ctx.account on no-account tools ──
+
+import { defineCreativeBuilderPlatform } from './platform-helpers';
+
+// Stub return values — not under test here. The interesting assertion is
+// the typed `ctx.account` narrowing inside the handler body.
+const _previewStub: PreviewCreativeResponse = {} as PreviewCreativeResponse;
+
+// Positive: a previewCreative handler reading `ctx.account.ctx_metadata` MUST
+// narrow first — `ctx.account` is `Account | undefined` for no-account tools.
+function _preview_creative_requires_account_narrow(): void {
+  defineCreativeBuilderPlatform<{ workspace_id: string }>({
+    buildCreative: async () => ({}) as never,
+    previewCreative: async (_req, ctx) => {
+      // ctx.account: Account<{ workspace_id: string }> | undefined
+      if (ctx.account == null) {
+        return _previewStub;
+      }
+      // After narrow, ctx_metadata is readable.
+      const _ws: string = ctx.account.ctx_metadata.workspace_id;
+      void _ws;
+      return _previewStub;
+    },
+  });
+}
+
+// Negative: reading `ctx.account.ctx_metadata` WITHOUT narrowing is a TS error.
+// This is the regression alarm — pre-#1327, ctx.account was non-optional and
+// adopters would write this code, then crash at runtime when accounts.resolve(undefined)
+// returned null. The type now forces the narrow at authorship.
+function _preview_creative_rejects_unnarrowed_access(): void {
+  defineCreativeBuilderPlatform<{ workspace_id: string }>({
+    buildCreative: async () => ({}) as never,
+    previewCreative: async (_req, ctx) => {
+      // @ts-expect-error — ctx.account is `Account | undefined`; reading without narrowing fails.
+      const _ws: string = ctx.account.ctx_metadata.workspace_id;
+      void _ws;
+      return _previewStub;
+    },
+  });
+}
+
 // Reference all symbols once so eslint-disable is targeted.
 export const _references = [
   _signals_only_capabilities_compiles,
@@ -381,4 +439,7 @@ export const _references = [
   _check_opts_no_ct,
   _check_opts_with_ct,
   _check_ct_opts_requires,
+  _format_renders_accept_display_render,
+  _preview_creative_requires_account_narrow,
+  _preview_creative_rejects_unnarrowed_access,
 ] as const;

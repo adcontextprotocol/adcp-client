@@ -1,5 +1,5 @@
 // Generated AdCP core types from official schemas v3.0.4
-// Generated at: 2026-05-02T16:13:43.797Z
+// Generated at: 2026-05-02T20:06:01.742Z
 
 // MEDIA-BUY SCHEMA
 /**
@@ -15053,6 +15053,10 @@ export interface FlightItem {
  */
 export type FormatIDParameter = 'dimensions' | 'duration';
 /**
+ * Unit of measurement for width/height values. Defaults to 'px' when absent. Print formats use 'inches' or 'cm'.
+ */
+export type DimensionUnit = 'px' | 'dp' | 'inches' | 'cm' | 'mm' | 'pt';
+/**
  * Image asset
  */
 export type IndividualImageAsset = BaseIndividualAsset;
@@ -15182,9 +15186,57 @@ export interface Format {
    */
   renders?: (
     | {
-        [k: string]: unknown | undefined;
+        /**
+         * Semantic role of this rendered piece (e.g., 'primary', 'companion', 'mobile_variant')
+         */
+        role: string;
+        /**
+         * Dimensions for this rendered piece. Defaults to pixels when unit is absent.
+         */
+        dimensions: {
+          /**
+           * Fixed width. Interpretation depends on unit (default: pixels).
+           */
+          width?: number;
+          /**
+           * Fixed height. Interpretation depends on unit (default: pixels).
+           */
+          height?: number;
+          /**
+           * Minimum width for responsive renders
+           */
+          min_width?: number;
+          /**
+           * Minimum height for responsive renders
+           */
+          min_height?: number;
+          /**
+           * Maximum width for responsive renders
+           */
+          max_width?: number;
+          /**
+           * Maximum height for responsive renders
+           */
+          max_height?: number;
+          unit?: DimensionUnit;
+          /**
+           * Indicates which dimensions are responsive/fluid
+           */
+          responsive?: {
+            width: boolean;
+            height: boolean;
+          };
+          /**
+           * Fixed aspect ratio constraint (e.g., '16:9', '4:3', '1:1', '1.91:1')
+           */
+          aspect_ratio?: string;
+        };
       }
     | {
+        /**
+         * Semantic role of this rendered piece (e.g., 'primary', 'companion', 'mobile_variant')
+         */
+        role: string;
         parameters_from_format_id: true;
       }
   )[];
@@ -15959,10 +16011,6 @@ export type AssetRequirements =
   | DAASTAssetRequirements
   | URLAssetRequirements
   | WebhookAssetRequirements;
-/**
- * Unit of measurement for width/height values. Defaults to 'px' when absent. Print formats use 'inches' or 'cm'.
- */
-export type DimensionUnit = 'px' | 'dp' | 'inches' | 'cm' | 'mm' | 'pt';
 /**
  * Requirements for image creative assets. These define the technical constraints for image files.
  */

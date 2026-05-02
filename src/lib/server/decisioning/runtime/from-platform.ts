@@ -1081,9 +1081,9 @@ export function createAdcpServerFromPlatform<P extends DecisioningPlatform<any, 
     },
     // Merge: platform-derived handlers WIN per-key over adopter-supplied
     // custom handlers. Adopter handlers fill gaps for tools the v6 platform
-    // doesn't yet model (getMediaBuys, listCreativeFormats, content-standards
-    // CRUD, sync_event_sources, etc.). See `CreateAdcpServerFromPlatformOptions`
-    // JSDoc for the migration-seam contract.
+    // doesn't yet model (content-standards CRUD, sync_event_sources, etc.).
+    // See `CreateAdcpServerFromPlatformOptions` JSDoc for the migration-seam
+    // contract.
     mediaBuy: mergeHandlers(
       opts.mediaBuy,
       buildMediaBuyHandlers(
@@ -3095,6 +3095,24 @@ function buildCreativeHandlers<P extends DecisioningPlatform<any, any>>(
       return projectSync(
         () => (creative as CreativeBuilderPlatform).previewCreative!(params, reqCtx),
         preview => preview
+      );
+    },
+
+    // No-account tool — `list_creative_formats` request schema doesn't carry
+    // `account`. The framework's `resolveAccountFromAuth` runs and accepts a
+    // null return; the platform method receives `ctx.account` possibly
+    // undefined per `NoAccountCtx`. Wired identically on both
+    // `CreativeBuilderPlatform` and `CreativeAdServerPlatform`.
+    listCreativeFormats: async (params, ctx) => {
+      if (!('listCreativeFormats' in creative) || creative.listCreativeFormats == null) {
+        return adcpError('UNSUPPORTED_FEATURE', {
+          message: 'list_creative_formats not supported by this creative platform',
+        });
+      }
+      const reqCtx = ctxFor(ctx);
+      return projectSync(
+        () => (creative as CreativeBuilderPlatform).listCreativeFormats!(params, reqCtx),
+        r => r
       );
     },
 
