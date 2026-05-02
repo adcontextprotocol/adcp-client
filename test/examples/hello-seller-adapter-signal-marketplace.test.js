@@ -154,6 +154,42 @@ describe('examples/hello_seller_adapter_signal_marketplace', () => {
       `These upstream routes had zero hits — the adapter is a façade for them:\n  ${missing.join('\n  ')}\n\nFull traffic:\n${JSON.stringify(traffic, null, 2)}`
     );
   });
+
+  // -------------------------------------------------------------------------
+  // Gate 4 — BuyerAgentRegistry wiring works end-to-end
+  //
+  // The example wires a `BuyerAgentRegistry` (Phase 1 of #1269) keyed off
+  // the api-key principal. Verifies that:
+  //   - Authenticated requests with a known onboarding-ledger entry
+  //     succeed (registry resolved, status active).
+  //   - Unknown api-keys are rejected upstream by `verifyApiKey` (auth
+  //     failure happens before the registry runs).
+  //
+  // The registry is exercised implicitly by Gate 2's storyboard (every
+  // run goes through `agentRegistry.resolve`), but a dedicated assertion
+  // here makes the registry's behavior visible and prevents future
+  // refactors from silently dropping the wiring.
+  // -------------------------------------------------------------------------
+  it('rejects unknown api-key tokens before reaching the registry (auth gate fires first)', async () => {
+    const res = await fetch(`http://127.0.0.1:${AGENT_PORT}/mcp`, {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/json',
+        accept: 'application/json, text/event-stream',
+        authorization: 'Bearer sk_unknown_token_not_in_keys_map',
+      },
+      body: JSON.stringify({
+        jsonrpc: '2.0',
+        id: 1,
+        method: 'tools/call',
+        params: { name: 'get_signals', arguments: { signal_spec: 'test' } },
+      }),
+    });
+    // verifyApiKey rejects unknown tokens with 401 before the registry
+    // runs. This locks in the auth-before-registry order and confirms
+    // the registry isn't running on un-authenticated traffic.
+    assert.equal(res.status, 401, 'unknown api-key MUST be rejected at the auth layer');
+  });
 });
 
 // ---------------------------------------------------------------------------

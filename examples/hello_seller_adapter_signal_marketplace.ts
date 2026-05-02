@@ -26,14 +26,17 @@ import {
   createUpstreamHttpClient,
   memoryBackend,
   AdcpError,
+  BuyerAgentRegistry,
   defineSignalsPlatform,
   type DecisioningPlatform,
   type SignalsPlatform,
   type AccountStore,
   type Account,
+  type BuyerAgent,
+  type CachedBuyerAgentRegistry,
 } from '@adcp/sdk/server';
 import type { GetSignalsResponse, ActivateSignalRequest, ActivateSignalSuccess } from '@adcp/sdk/types';
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 
 const UPSTREAM_URL = process.env['UPSTREAM_URL'] ?? 'http://127.0.0.1:4150';
 const UPSTREAM_API_KEY = process.env['UPSTREAM_API_KEY'] ?? 'mock_signal_market_key_do_not_use_in_prod';
@@ -131,6 +134,73 @@ const upstream = {
 };
 
 // ---------------------------------------------------------------------------
+// Buyer-agent registry — every seller needs one.
+//
+// The registry models the seller's commercial relationship with each buyer
+// agent it accepts traffic from: who they are, what their status is
+// (active / suspended / blocked), what billing modes they're permitted to
+// request, and any default account terms applied during onboarding. Distinct
+// from the per-request credential — the credential proves "who is calling
+// right now"; the registry record says "who they are to us."
+//
+// SWAP: replace the in-memory map with your seller's onboarding-ledger DB
+// query. The shape stays the same; only the storage changes.
+// ---------------------------------------------------------------------------
+
+/**
+ * Compute the same `credential.key_id` value `verifyApiKey` will stamp.
+ * The seller stores this hash (NOT the raw token) in their onboarding
+ * ledger so an attacker who reads the ledger can't extract a usable
+ * credential.
+ */
+function hashApiKey(token: string): string {
+  return createHash('sha256').update(token).digest('hex').slice(0, 32);
+}
+
+/**
+ * In-memory onboarding ledger. Production sellers replace this with a
+ * Postgres table keyed by `key_id`. The cached decorator below makes the
+ * per-request lookup cheap regardless of backing store.
+ */
+const ONBOARDING_LEDGER = new Map<string, BuyerAgent>([
+  [
+    hashApiKey(ADCP_AUTH_TOKEN),
+    {
+      agent_url: 'https://compliance-runner.adcp-test.com',
+      display_name: 'Compliance harness',
+      status: 'active',
+      // Set-valued: this agent is allowed to request operator-billed
+      // accounts only. A real holdco might be `new Set(['operator',
+      // 'agent', 'advertiser'])`. Phase 2 (#1292) wires framework-level
+      // enforcement; today the field documents commercial intent.
+      billing_capabilities: new Set(['operator']),
+    },
+  ],
+]);
+
+/**
+ * `bearerOnly` because this example authenticates via `verifyApiKey`.
+ * Sellers wiring `verifySignatureAsAuthenticator` swap to `signingOnly`
+ * (or `mixed` during the bearer→signed migration); the resolver shape
+ * adapts accordingly.
+ *
+ * Wrapped in `cached` so a buyer's traffic burst doesn't spam the
+ * onboarding ledger. `invalidate(credential)` purges a stale entry when
+ * the seller mutates an agent's record (status flip, etc.).
+ */
+const agentRegistry: CachedBuyerAgentRegistry = BuyerAgentRegistry.cached(
+  BuyerAgentRegistry.bearerOnly({
+    resolveByCredential: async credential => {
+      // bearerOnly receives every credential kind; MUST kind-discriminate
+      // and reject anything you don't recognize.
+      if (credential.kind !== 'api_key') return null;
+      return ONBOARDING_LEDGER.get(credential.key_id) ?? null;
+    },
+  }),
+  { ttlSeconds: 60 }
+);
+
+// ---------------------------------------------------------------------------
 // AdCP-side adapter — typed against SignalsPlatform.
 // ---------------------------------------------------------------------------
 
@@ -173,12 +243,31 @@ class SignalMarketplaceAdapter implements DecisioningPlatform<Record<string, nev
     config: {},
   };
 
+  /**
+   * Buyer-agent registry — framework runs `agentRegistry.resolve(authInfo)`
+   * once per request and threads the resolved record through `ctx.agent`
+   * to specialism handlers AND to `accounts.resolve` (below). When the
+   * resolved agent's `status` is `suspended` / `blocked`, the framework
+   * rejects the request with PERMISSION_DENIED before invoking any
+   * handler — adopters don't reimplement that gate.
+   */
+  agentRegistry = agentRegistry;
+
   accounts: AccountStore<OperatorMeta> = {
     /** Translate AdCP `account.operator` → upstream `operator_id`, cache on
-     *  the Account so handlers read from `ctx.account.ctx_metadata`. */
-    resolve: async ref => {
+     *  the Account so handlers read from `ctx.account.ctx_metadata`. The
+     *  resolved buyer agent (if any) is on `ctx.agent` — adopters route
+     *  tenant resolution against the durable buyer-agent identity here
+     *  rather than re-deriving from the credential. */
+    resolve: async (ref, ctx) => {
       const adcpOperator = (ref as { operator?: string })?.operator;
       if (!adcpOperator) return null;
+      // Optional: gate the operator on the buyer agent's allowed_brands /
+      // billing_capabilities. Sellers who don't cross-check operator vs.
+      // agent here let any onboarded agent operate on any operator —
+      // legitimate for some marketplaces, a leak for others.
+      const buyerAgent = ctx?.agent;
+      void buyerAgent; // demonstration site — wire your own checks here.
       const operatorId = await upstream.lookupOperator(adcpOperator);
       if (!operatorId) return null;
       return {
