@@ -185,11 +185,16 @@ function validateContextOutputs(
 }
 
 /**
- * Authoring-time validation for `peer_substitutes_for` (#1144). The runner
- * treats the field as same-phase-only and substitution-only-when-stateful;
- * surface those constraints at parse time so storyboard authors see typos
- * and cross-phase references on build, not as a silent no-rescue at run
- * time.
+ * Authoring-time validation for `provides_state_for` (the AdCP 3.0.3 spec
+ * field — adcp#3734) and the legacy `peer_substitutes_for` synonym. The
+ * runner treats the field as same-phase-only and substitution-only-when-
+ * stateful; surface those constraints at parse time so storyboard authors
+ * see typos and cross-phase references on build, not as a silent no-rescue
+ * at run time.
+ *
+ * Both field names parse to the same canonical normalized form on the step
+ * object (the spec name `provides_state_for` is preferred when both are
+ * declared). The deprecation alias is documented in `types.ts`.
  *
  * Rules:
  *   - Each target must reference a step that exists in the same phase.
@@ -199,40 +204,69 @@ function validateContextOutputs(
  *   - The target step must be `stateful: true` — non-stateful targets
  *     don't participate in cascade gating, so a substitution declaration
  *     would be a no-op.
+ *   - When both fields are declared on the same step, they must match
+ *     element-for-element (the deprecation contract is "synonym for", not
+ *     "additive with").
  */
 function validatePeerSubstitutesFor(
   storyboardId: string,
   phase: Storyboard['phases'][number],
   step: Storyboard['phases'][number]['steps'][number]
 ): void {
-  if (step.peer_substitutes_for === undefined) return;
-  const targets = Array.isArray(step.peer_substitutes_for) ? step.peer_substitutes_for : [step.peer_substitutes_for];
+  const newField = step.provides_state_for;
+  const legacyField = step.peer_substitutes_for;
+  if (newField === undefined && legacyField === undefined) return;
+
+  if (newField !== undefined && legacyField !== undefined) {
+    const a = JSON.stringify(Array.isArray(newField) ? newField : [newField]);
+    const b = JSON.stringify(Array.isArray(legacyField) ? legacyField : [legacyField]);
+    if (a !== b) {
+      throw new Error(
+        `[${storyboardId}] phase '${phase.id}' step '${step.id}': both provides_state_for and ` +
+          `peer_substitutes_for declared with different values — pick one (provides_state_for is the ` +
+          `spec field; peer_substitutes_for is a deprecated synonym)`
+      );
+    }
+  }
+
+  // Normalize onto provides_state_for so the runner can read a single field.
+  // peer_substitutes_for stays for back-compat with any consumer code that
+  // already reads it.
+  if (newField === undefined && legacyField !== undefined) {
+    step.provides_state_for = legacyField;
+  } else if (newField !== undefined && legacyField === undefined) {
+    step.peer_substitutes_for = newField;
+  }
+
+  const sourceFieldName = newField !== undefined ? 'provides_state_for' : 'peer_substitutes_for';
+  const declared = step.provides_state_for!;
+  const targets = Array.isArray(declared) ? declared : [declared];
   if (!step.stateful) {
     throw new Error(
-      `[${storyboardId}] phase '${phase.id}' step '${step.id}': peer_substitutes_for is only legal on stateful steps`
+      `[${storyboardId}] phase '${phase.id}' step '${step.id}': ${sourceFieldName} is only legal on stateful steps`
     );
   }
   const phaseStepIds = new Map(phase.steps.map(s => [s.id, s]));
   for (const target of targets) {
     if (typeof target !== 'string' || target.length === 0) {
       throw new Error(
-        `[${storyboardId}] phase '${phase.id}' step '${step.id}': peer_substitutes_for entries must be non-empty strings`
+        `[${storyboardId}] phase '${phase.id}' step '${step.id}': ${sourceFieldName} entries must be non-empty strings`
       );
     }
     if (target === step.id) {
       throw new Error(
-        `[${storyboardId}] phase '${phase.id}' step '${step.id}': peer_substitutes_for cannot reference itself`
+        `[${storyboardId}] phase '${phase.id}' step '${step.id}': ${sourceFieldName} cannot reference itself`
       );
     }
     const targetStep = phaseStepIds.get(target);
     if (!targetStep) {
       throw new Error(
-        `[${storyboardId}] phase '${phase.id}' step '${step.id}': peer_substitutes_for target '${target}' is not a step in this phase (same-phase only)`
+        `[${storyboardId}] phase '${phase.id}' step '${step.id}': ${sourceFieldName} target '${target}' is not a step in this phase (same-phase only)`
       );
     }
     if (!targetStep.stateful) {
       throw new Error(
-        `[${storyboardId}] phase '${phase.id}' step '${step.id}': peer_substitutes_for target '${target}' must be stateful`
+        `[${storyboardId}] phase '${phase.id}' step '${step.id}': ${sourceFieldName} target '${target}' must be stateful`
       );
     }
   }
