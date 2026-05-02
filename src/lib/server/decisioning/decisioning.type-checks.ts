@@ -185,6 +185,18 @@ function _account_store_resolution_invalid_value(): Pick<AccountStore<GAMAccount
   return { resolution: 'auto' };
 }
 
+// ── Signals-only platforms omit media-buy fields ─────────────────────
+
+// Positive: a signals-only platform doesn't need creative_agents, channels,
+// or pricingModels — those fields are optional and inapplicable to platforms
+// that sell audience data access rather than media inventory.
+function _signals_only_capabilities_compiles(): DecisioningCapabilities {
+  return {
+    specialisms: ['signal-marketplace'] as const,
+    config: {},
+  };
+}
+
 // ── DecisioningCapabilities.supportedBillings is a closed enum ────────
 
 function _capabilities_supported_billings_operator(): Pick<DecisioningCapabilities, 'supportedBillings'> {
@@ -276,6 +288,7 @@ function _define_audience_platform_rejects_wrong_shape() {
 
 // Reference all symbols once so eslint-disable is targeted.
 export const _references = [
+  _signals_only_capabilities_compiles,
   _adcp_error_minimum,
   _adcp_error_full_fields,
   _adcp_error_accepts_unknown_code,

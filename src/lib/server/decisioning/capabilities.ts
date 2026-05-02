@@ -38,14 +38,26 @@ export interface DecisioningCapabilities<TConfig = unknown> {
    * Useful when a creative agent hosts 50 formats but this seller only accepts
    * 10 of them. Filter scope is per-creative-agent: `[{ agent_url: A, format_ids: ['x'] }, { agent_url: B }]`
    * means "from A only format x; from B all formats."
+   *
+   * Omit for signals-only platforms (`signal-marketplace`, `signal-owned`) — they
+   * sell audience data access, not media inventory, and don't compose with creative agents.
    */
-  creative_agents: readonly CreativeAgentRef[];
+  creative_agents?: readonly CreativeAgentRef[];
 
-  /** Channels this platform sells. */
-  channels: readonly MediaChannel[];
+  /**
+   * Channels this platform sells.
+   *
+   * Omit for signals-only platforms — they don't sell media channels.
+   */
+  channels?: readonly MediaChannel[];
 
-  /** Pricing models this platform supports. */
-  pricingModels: readonly PricingModel[];
+  /**
+   * Pricing models this platform supports.
+   *
+   * Omit for signals-only platforms — signal pricing is declared per-signal
+   * in `pricing_options[]`, not here.
+   */
+  pricingModels?: readonly PricingModel[];
 
   /** Targeting capabilities. Optional — framework infers reasonable defaults if omitted. */
   targeting?: TargetingCapabilities;
