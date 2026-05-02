@@ -226,7 +226,8 @@ export interface AccountStore<TCtxMeta = Record<string, unknown>> {
    * `ctx.authInfo` carries the caller's OAuth principal (when
    * `serve({ authenticate })` is wired). Multi-tenant platforms extract
    * the buyer's `org_id` / `clientId` from `ctx.authInfo` to tenant-scope
-   * writes — same pattern as `accounts.resolve`. Implementors that don't
+   * writes — same pattern as `accounts.resolve`. `ctx.toolName` is
+   * `'sync_accounts'` for dispatch or logging. Implementors that don't
    * need tenant scoping can ignore the second argument.
    */
   upsert?(refs: AccountReference[], ctx?: ResolveContext): Promise<SyncAccountsResultRow[]>;
@@ -240,8 +241,9 @@ export interface AccountStore<TCtxMeta = Record<string, unknown>> {
    * `serve({ authenticate })` is wired). Multi-tenant platforms filter the
    * account roster to those belonging to the calling buyer's organization
    * using `ctx.authInfo.clientId` / `ctx.authInfo.extra` — same pattern as
-   * `accounts.resolve`. Implementors that don't need tenant scoping can
-   * ignore the second argument.
+   * `accounts.resolve`. `ctx.toolName` is `'list_accounts'` for dispatch
+   * or logging. Implementors that don't need tenant scoping can ignore the
+   * second argument.
    */
   list?(filter: AccountFilter & CursorRequest, ctx?: ResolveContext): Promise<CursorPage<Account<TCtxMeta>>>;
 
