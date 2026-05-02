@@ -1676,9 +1676,16 @@ async function runWithTokenRefresh<TCtxMeta, T>(
         recovery: 'correctable',
       });
     }
-    refresh.account.authInfo.token = refreshed.token;
-    if (refreshed.expiresAt !== undefined) {
-      refresh.account.authInfo.expiresAt = refreshed.expiresAt;
+    // `authInfo` became optional in #1286. Token refresh only fires after an
+    // AUTH_REQUIRED throw — meaning an upstream call attempted to use a
+    // token, which means `authInfo` was populated before the throw.
+    // Defensive guard: if for some reason it isn't, the refreshed token
+    // still flows on the next request rather than crashing here.
+    if (refresh.account.authInfo) {
+      refresh.account.authInfo.token = refreshed.token;
+      if (refreshed.expiresAt !== undefined) {
+        refresh.account.authInfo.expiresAt = refreshed.expiresAt;
+      }
     }
     return fn();
   }

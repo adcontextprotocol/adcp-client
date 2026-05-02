@@ -178,8 +178,19 @@ export interface Account<TCtxMeta = Record<string, unknown>> {
    */
   ctx_metadata: TCtxMeta;
 
-  /** Caller's authenticated principal. **Stripped before emitting on the wire.** */
-  authInfo: AuthPrincipal;
+  /**
+   * Caller's authenticated principal. **Stripped before emitting on the wire.**
+   *
+   * Optional from the adopter's perspective: when `accounts.resolve` returns
+   * an `Account` without `authInfo`, the framework auto-attaches the
+   * principal from `ctx.authInfo` (the auth shape extracted by
+   * `serve({ authenticate })`). Adopters that need to *transform* the
+   * principal — e.g. derive a tenant-scoped sub-principal from the OAuth
+   * client — set it explicitly; adopters that just want the
+   * `serve({ authenticate })` principal threaded through resource handlers
+   * can omit the field and rely on the framework default.
+   */
+  authInfo?: AuthPrincipal;
 }
 
 /**
