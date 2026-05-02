@@ -196,6 +196,8 @@ function runValidation(validation: StoryboardValidation, ctx: ValidationContext)
       return validateFieldValue(validation, resolveTarget(ctx));
     case 'field_value_or_absent':
       return validateFieldValueOrAbsent(validation, resolveTarget(ctx));
+    case 'field_contains':
+      return validateFieldContains(validation, resolveTarget(ctx));
     case 'status_code':
       return requireTaskResult(ctx, validation, tr => validateStatusCode(validation, tr));
     case 'error_code':
@@ -848,6 +850,76 @@ function validateFieldValueOrAbsent(validation: StoryboardValidation, taskResult
     json_pointer: pointer,
     expected: validation.value,
     actual,
+  };
+}
+
+// ────────────────────────────────────────────────────────────
+// field_contains: wildcard-aware membership check
+//
+// Resolves `path` via `resolvePathAll` (which understands `[*]` segments)
+// and passes when ANY resolved value matches `value` or any of
+// `allowed_values`. Lets storyboards assert "this code appears somewhere
+// in errors[]" without pinning a positional index that breaks if the
+// seller's emit order shifts or co-emits additional errors.
+// ────────────────────────────────────────────────────────────
+
+function validateFieldContains(validation: StoryboardValidation, taskResult: TaskResult): ValidationResult {
+  const checkName = validation.check;
+  if (!validation.path) {
+    return {
+      check: checkName,
+      passed: false,
+      description: validation.description,
+      path: validation.path,
+      error: `No path specified for ${checkName} validation`,
+      json_pointer: null,
+      expected: 'path must be set in storyboard validation entry',
+      actual: null,
+    };
+  }
+
+  if (validation.value === undefined && !validation.allowed_values?.length) {
+    return {
+      check: checkName,
+      passed: false,
+      description: validation.description,
+      path: validation.path,
+      error: `${checkName} requires either \`value\` or \`allowed_values\``,
+      json_pointer: toJsonPointer(validation.path),
+      expected: '`value` or `allowed_values` must be set',
+      actual: null,
+    };
+  }
+
+  const resolved = resolvePathAll(taskResult.data, validation.path);
+  const pointer = toJsonPointer(validation.path);
+
+  const candidates = validation.allowed_values?.length ? validation.allowed_values : [validation.value];
+  const matched = resolved.some(actual => candidates.some(c => valuesMatch(actual, c)));
+
+  if (matched) {
+    return {
+      check: checkName,
+      passed: true,
+      description: validation.description,
+      path: validation.path,
+      json_pointer: pointer,
+    };
+  }
+
+  const expected = validation.allowed_values?.length ? validation.allowed_values : validation.value;
+  const errMsg = validation.allowed_values?.length
+    ? `Expected one of ${JSON.stringify(validation.allowed_values)} to appear in path; got ${JSON.stringify(resolved)}`
+    : `Expected ${JSON.stringify(validation.value)} to appear in path; got ${JSON.stringify(resolved)}`;
+  return {
+    check: checkName,
+    passed: false,
+    description: validation.description,
+    path: validation.path,
+    error: errMsg,
+    json_pointer: pointer,
+    expected,
+    actual: resolved,
   };
 }
 

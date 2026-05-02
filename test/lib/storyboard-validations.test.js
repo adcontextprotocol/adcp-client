@@ -303,3 +303,144 @@ describe('field_absent / envelope_field_absent (adcp#3429)', () => {
     assert.match(result.error, /No path specified for envelope_field_absent/);
   });
 });
+
+describe('field_contains (adcp#3803 item 2)', () => {
+  it('passes when value matches any element via [*] wildcard', () => {
+    const taskResult = {
+      success: true,
+      data: {
+        creatives: [
+          {
+            errors: [
+              { code: 'PROVENANCE_DISCLOSURE_MISSING', message: 'no disclosure' },
+              { code: 'PROVENANCE_VERIFIER_NOT_ACCEPTED', message: 'verifier off-list' },
+            ],
+          },
+        ],
+      },
+    };
+    const [result] = runOne(
+      [{
+        check: 'field_contains',
+        path: 'creatives[0].errors[*].code',
+        value: 'PROVENANCE_VERIFIER_NOT_ACCEPTED',
+        description: 'verifier-not-accepted appears regardless of cascade order',
+      }],
+      'sync_creatives',
+      taskResult
+    );
+    assert.strictEqual(result.passed, true, result.error);
+    assert.strictEqual(result.check, 'field_contains');
+  });
+
+  it('passes when any allowed_values entry matches', () => {
+    const taskResult = {
+      success: true,
+      data: {
+        creatives: [{ errors: [{ code: 'PROVENANCE_DISCLOSURE_MISSING' }] }],
+      },
+    };
+    const [result] = runOne(
+      [{
+        check: 'field_contains',
+        path: 'creatives[0].errors[*].code',
+        allowed_values: ['PROVENANCE_DIGITAL_SOURCE_TYPE_MISSING', 'PROVENANCE_DISCLOSURE_MISSING'],
+        description: 'either disclosure code is acceptable',
+      }],
+      'sync_creatives',
+      taskResult
+    );
+    assert.strictEqual(result.passed, true, result.error);
+  });
+
+  it('fails when no resolved value matches', () => {
+    const taskResult = {
+      success: true,
+      data: {
+        creatives: [{ errors: [{ code: 'PROVENANCE_DISCLOSURE_MISSING' }] }],
+      },
+    };
+    const [result] = runOne(
+      [{
+        check: 'field_contains',
+        path: 'creatives[0].errors[*].code',
+        value: 'PROVENANCE_VERIFIER_NOT_ACCEPTED',
+        description: 'expected verifier-not-accepted',
+      }],
+      'sync_creatives',
+      taskResult
+    );
+    assert.strictEqual(result.passed, false);
+    assert.match(result.error, /PROVENANCE_VERIFIER_NOT_ACCEPTED/);
+    assert.deepStrictEqual(result.actual, ['PROVENANCE_DISCLOSURE_MISSING']);
+  });
+
+  it('fails when path resolves to empty (no array elements)', () => {
+    const taskResult = { success: true, data: { creatives: [{ errors: [] }] } };
+    const [result] = runOne(
+      [{
+        check: 'field_contains',
+        path: 'creatives[0].errors[*].code',
+        value: 'PROVENANCE_DISCLOSURE_MISSING',
+        description: 'expected disclosure error',
+      }],
+      'sync_creatives',
+      taskResult
+    );
+    assert.strictEqual(result.passed, false);
+    assert.deepStrictEqual(result.actual, []);
+  });
+
+  it('reduces to scalar equality when path has no wildcard', () => {
+    const taskResult = { success: true, data: { status: 'completed' } };
+    const [hit] = runOne(
+      [{ check: 'field_contains', path: 'status', value: 'completed', description: 'status matches' }],
+      'create_media_buy',
+      taskResult
+    );
+    assert.strictEqual(hit.passed, true, hit.error);
+
+    const [miss] = runOne(
+      [{ check: 'field_contains', path: 'status', value: 'submitted', description: 'status mismatch' }],
+      'create_media_buy',
+      taskResult
+    );
+    assert.strictEqual(miss.passed, false);
+  });
+
+  it('reports an error when path is missing', () => {
+    const [result] = runOne(
+      [{ check: 'field_contains', value: 'X', description: 'no path given' }],
+      'create_media_buy',
+      { success: true, data: {} }
+    );
+    assert.strictEqual(result.passed, false);
+    assert.match(result.error, /No path specified for field_contains/);
+  });
+
+  it('reports an error when neither value nor allowed_values is set', () => {
+    const [result] = runOne(
+      [{ check: 'field_contains', path: 'errors[*].code', description: 'no expectations' }],
+      'create_media_buy',
+      { success: true, data: { errors: [] } }
+    );
+    assert.strictEqual(result.passed, false);
+    assert.match(result.error, /requires either `value` or `allowed_values`/);
+  });
+
+  it('emits the canonical JSON pointer for the path', () => {
+    const [result] = runOne(
+      [{
+        check: 'field_contains',
+        path: 'creatives[0].errors[*].code',
+        value: 'X',
+        description: 'pointer test',
+      }],
+      'sync_creatives',
+      { success: true, data: { creatives: [{ errors: [{ code: 'X' }] }] } }
+    );
+    assert.strictEqual(result.passed, true);
+    // toJsonPointer renders [*] as /* per RFC 6901 string-encoding rules
+    assert.match(result.json_pointer, /^\/creatives\/0\/errors\/.*\/code$/);
+  });
+});
