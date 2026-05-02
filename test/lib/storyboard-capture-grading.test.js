@@ -9,7 +9,10 @@
 const { describe, test } = require('node:test');
 const assert = require('node:assert/strict');
 
-const { applyContextOutputsWithProvenance, extractContextWithProvenance } = require('../../dist/lib/testing/storyboard/context');
+const {
+  applyContextOutputsWithProvenance,
+  extractContextWithProvenance,
+} = require('../../dist/lib/testing/storyboard/context');
 const { runStoryboard } = require('../../dist/lib/testing/storyboard/runner');
 
 // ─── Stub client factory (mirrors storyboard-step-provenance-threading pattern) ─
@@ -21,7 +24,8 @@ function buildStubClient(taskResponses = {}) {
     // Runner dispatches typed methods by camelCase name when available.
     getSignals: async params => taskResponses.get_signals?.(params) ?? { success: false, error: 'no handler' },
     activateSignal: async params => taskResponses.activate_signal?.(params) ?? { success: false, error: 'no handler' },
-    getAdcpCapabilities: async () => taskResponses.get_adcp_capabilities?.() ?? { success: true, data: { version: '1.0' } },
+    getAdcpCapabilities: async () =>
+      taskResponses.get_adcp_capabilities?.() ?? { success: true, data: { version: '1.0' } },
     executeTask: async (name, params) =>
       taskResponses[name]?.(params) ?? { success: false, error: `no handler for ${name}` },
   };
@@ -101,11 +105,7 @@ describe('applyContextOutputsWithProvenance — failures field', () => {
   });
 
   test('extractContextWithProvenance returns empty failures array', () => {
-    const { failures } = extractContextWithProvenance(
-      'get_products',
-      { products: [{ product_id: 'p1' }] },
-      'step1'
-    );
+    const { failures } = extractContextWithProvenance('get_products', { products: [{ product_id: 'p1' }] }, 'step1');
     assert.ok(Array.isArray(failures));
     assert.equal(failures.length, 0);
   });
