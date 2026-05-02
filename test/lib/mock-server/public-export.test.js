@@ -34,3 +34,31 @@ describe('@adcp/sdk/mock-server public sub-export', () => {
     assert.ok('traffic' in body, 'expected traffic field on debug endpoint');
   });
 });
+
+describe('@adcp/sdk/mock-server boots a different specialism', () => {
+  // Catch a switch-case regression in bootMockServer's specialism dispatch:
+  // smoke-tests one non-signal-marketplace specialism so a refactor that
+  // breaks one branch doesn't ride along behind a passing signal-marketplace
+  // test.
+  let handle;
+  before(async () => {
+    const { bootMockServer } = require('@adcp/sdk/mock-server');
+    handle = await bootMockServer({ specialism: 'sales-guaranteed', port: 0 });
+  });
+  after(async () => {
+    if (handle) await handle.close();
+  });
+
+  it('boots and exposes a url', () => {
+    assert.match(handle.url, /^http:\/\/127\.0\.0\.1:\d+$/);
+  });
+});
+
+describe('@adcp/sdk/mock-server rejects unknown specialism', () => {
+  it('throws when specialism is not registered', async () => {
+    const { bootMockServer } = require('@adcp/sdk/mock-server');
+    await assert.rejects(() => bootMockServer({ specialism: 'not-a-real-specialism', port: 0 }), {
+      message: /Unknown mock-server specialism/,
+    });
+  });
+});
