@@ -106,6 +106,14 @@ function ruleMatches(rule: HintRule, issue: ValidationIssue, toolName: string | 
 }
 
 /**
+ * Hint string for the `activation_key.type='key_value'` flatness gotcha
+ * — used by both the missing-`key` and missing-`value` rules so a wording
+ * tweak to one updates both. Issue #1283's headline example.
+ */
+const KEY_VALUE_FLATNESS_HINT =
+  "type='key_value' requires top-level `key` and `value` strings; do not nest under a `key_value` field.";
+
+/**
  * Rules in order — first match wins. Order more-specific patterns first
  * so `activation_key` `key_value` lands before a generic `required` hint
  * could shadow it. New rules: prepend if more specific than every other,
@@ -117,13 +125,13 @@ const RULES: readonly HintRule[] = [
     keyword: 'required',
     discriminatorContains: { field: 'type', value: 'key_value' },
     missingProperty: 'key',
-    hint: "type='key_value' requires top-level `key` and `value` strings; do not nest under a `key_value` field.",
+    hint: KEY_VALUE_FLATNESS_HINT,
   },
   {
     keyword: 'required',
     discriminatorContains: { field: 'type', value: 'key_value' },
     missingProperty: 'value',
-    hint: "type='key_value' requires top-level `key` and `value` strings; do not nest under a `key_value` field.",
+    hint: KEY_VALUE_FLATNESS_HINT,
   },
   // 2. activation_key — type='segment_id' missing segment_id.
   {
@@ -132,12 +140,21 @@ const RULES: readonly HintRule[] = [
     missingProperty: 'segment_id',
     hint: "type='segment_id' requires a top-level `segment_id` string under the same flatness as `key_value`.",
   },
-  // 3. VAST/DAAST — missing delivery_type discriminator.
+  // 3. VAST/DAAST — missing delivery_type discriminator. Pinned to the
+  // two asset types that actually require `delivery_type` so a future
+  // `asset_type` value with different requirements doesn't false-fire
+  // the hint.
   {
     keyword: 'required',
     missingProperty: 'delivery_type',
-    discriminatorContains: { field: 'asset_type' },
-    hint: "VAST/DAAST assets require `delivery_type: 'inline' | 'redirect'`. Pair `inline` with `content`; pair `redirect` with `vast_url` (or `daast_url`).",
+    discriminatorContains: { field: 'asset_type', value: 'vast' },
+    hint: "VAST assets require `delivery_type: 'inline' | 'redirect'`. Pair `inline` with `content`; pair `redirect` with `vast_url`.",
+  },
+  {
+    keyword: 'required',
+    missingProperty: 'delivery_type',
+    discriminatorContains: { field: 'asset_type', value: 'daast' },
+    hint: "DAAST assets require `delivery_type: 'inline' | 'redirect'`. Pair `inline` with `content`; pair `redirect` with `daast_url`.",
   },
   // 4. idempotency_key — every mutating tool requires it.
   {

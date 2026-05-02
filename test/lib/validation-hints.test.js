@@ -159,7 +159,7 @@ describe('curated validation hints (issue #1309)', () => {
       },
       'sync_creatives'
     );
-    assert.match(hint ?? '', /VAST\/DAAST assets require `delivery_type/);
+    assert.match(hint ?? '', /VAST assets require `delivery_type/);
     assert.match(hint ?? '', /inline.*content/);
   });
 
@@ -198,6 +198,52 @@ describe('curated validation hints (issue #1309)', () => {
     assert.ok(
       _hintRuleCount > 5,
       `expected at least 5 curated rules, got ${_hintRuleCount} — rule table may have failed to load`
+    );
+  });
+
+  test('regression: nested activation_key under `key_value` still gets the flatness hint', () => {
+    // The DX expert flagged this as a possible gap — adopters who write
+    // `{type: 'key_value', key_value: {key, value}}` (the EXACT mistake
+    // #1283 warns about). The schema declares `additionalProperties: true`
+    // on each variant, so the extra `key_value` field is allowed and the
+    // missing top-level `key`/`value` produce the standard `required`
+    // errors my hint catches. Lock that in.
+    const outcome = validateResponse('activate_signal', {
+      deployments: [
+        {
+          type: 'platform',
+          platform: 'dsp1',
+          is_live: true,
+          activation_key: { type: 'key_value', key_value: { key: 'x', value: 'y' } },
+        },
+      ],
+    });
+    const leaf = outcome.issues.find(
+      i => i.pointer === '/deployments/0/activation_key/key' && i.keyword === 'required'
+    );
+    assert.ok(leaf, `expected the flatness hint to fire on nested case, got: ${JSON.stringify(outcome.issues)}`);
+    assert.match(leaf.hint ?? '', /do not nest under a `key_value` field/);
+  });
+
+  test("regression: a synthetic issue outside every rule's shape returns undefined", () => {
+    // Two-pronged guard:
+    //   (a) catches a contributor accidentally appending a wildcard rule
+    //       (no conditions = matches everything).
+    //   (b) catches a future change to `findHint` that defaults to a
+    //       non-undefined fallback.
+    // The synthetic issue uses a pointer + keyword + tool combo no
+    // shipped rule cares about. If `findHint` ever returns a string
+    // here, something has gone wrong.
+    const cleanIssue = {
+      pointer: '/zzz_unrelated_field_no_rule_matches',
+      message: 'must be at least 8 characters',
+      keyword: 'minLength',
+      schemaPath: '#/zzz/minLength',
+    };
+    assert.strictEqual(
+      findHint(cleanIssue, 'zzz_unrelated_tool'),
+      undefined,
+      'a no-condition rule would catch every issue and break the no-hint contract'
     );
   });
 });
