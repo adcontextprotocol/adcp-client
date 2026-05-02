@@ -22,7 +22,7 @@ import type {
   SalesPlatform,
   AudiencePlatform,
 } from './index';
-import { AdcpError, AccountNotFoundError } from './index';
+import { AdcpError, AccountNotFoundError, defineSalesPlatform, defineAudiencePlatform } from './index';
 
 // ── AdcpError construction ────────────────────────────────────────────
 
@@ -251,6 +251,29 @@ type _missing_sales_required =
   RequiredPlatformsFor<'sales-non-guaranteed'> extends infer R ? (R extends { sales: unknown } ? true : false) : false;
 const _check_sales_required: _missing_sales_required = true;
 
+// ── Platform identity helpers — defineSalesPlatform / defineAudiencePlatform ─
+
+interface _SocialMeta {
+  advertiserId: string;
+  pixelId: string;
+}
+
+// Positive: defineSalesPlatform<TCtxMeta> is pure identity — input type equals output type.
+function _define_sales_platform_identity(p: SalesPlatform<_SocialMeta>): SalesPlatform<_SocialMeta> {
+  return defineSalesPlatform<_SocialMeta>(p);
+}
+
+// Positive: defineAudiencePlatform<TCtxMeta> is pure identity.
+function _define_audience_platform_identity(p: AudiencePlatform<_SocialMeta>): AudiencePlatform<_SocialMeta> {
+  return defineAudiencePlatform<_SocialMeta>(p);
+}
+
+// Negative: defineAudiencePlatform rejects a method typed as a non-function.
+function _define_audience_platform_rejects_wrong_shape() {
+  // @ts-expect-error — syncAudiences must be a function, not a string.
+  return defineAudiencePlatform<_SocialMeta>({ syncAudiences: 'not-a-function' });
+}
+
 // Reference all symbols once so eslint-disable is targeted.
 export const _references = [
   _adcp_error_minimum,
@@ -278,4 +301,7 @@ export const _references = [
   _check_sales_required,
   _check_brand_rights_requires_brand,
   _check_sales_no_required_caps,
+  _define_sales_platform_identity,
+  _define_audience_platform_identity,
+  _define_audience_platform_rejects_wrong_shape,
 ] as const;

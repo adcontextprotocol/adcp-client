@@ -28,10 +28,16 @@ const SKILLS_DIR = path.join(REPO_ROOT, 'skills');
 const REGISTRY_SPEC_PATH = path.join(REPO_ROOT, 'schemas/registry/registry.yaml');
 
 // Sigstore keyless identity used by the upstream release workflow (adcontextprotocol/adcp#2273).
-// Branch alternation must mirror release.yml's `on.push.branches` exactly — when a new release
-// line is added upstream (e.g. a future LTS branch), update both ends together.
+// Accepts any branch or tag ref — the trust gate is upstream `release.yml`'s
+// `on.push.branches` allowlist (currently main, 3.0.x, 2.6.x), which is what
+// determines which refs can produce a signature in the first place. Mirroring
+// that list here added no defense and silently broke whenever a new release
+// line was added (e.g. v3.0.1+ signed from refs/heads/3.0.x rejected by an
+// older `(main|2.6.x)` regex). Aligned with adcp-client-python and adcp-go,
+// which both use the wildcard form. `refs/tags/*` is forward-compat for any
+// future post-tag re-signing flow.
 const COSIGN_IDENTITY_REGEX =
-  '^https://github\\.com/adcontextprotocol/adcp/\\.github/workflows/release\\.yml@refs/heads/(main|2\\.6\\.x)$';
+  '^https://github\\.com/adcontextprotocol/adcp/\\.github/workflows/release\\.yml@refs/(heads|tags)/.*$';
 const COSIGN_OIDC_ISSUER = 'https://token.actions.githubusercontent.com';
 
 function getTargetAdCPVersion(): string {

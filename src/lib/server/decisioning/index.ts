@@ -230,6 +230,28 @@ export {
 export { batchPoll, validationError, upstreamError } from './helpers';
 export type { RequestShape } from './helpers';
 
+// Platform identity helpers — fix TypeScript's contextual-typing gap when
+// building a DecisioningPlatform (or sub-interface) as an object literal.
+// Without these, `createAdcpServerFromPlatform({ sales: { syncEventSources:
+// async (req, ctx) => {...} } })` gives `req: unknown` because the generic
+// `P extends DecisioningPlatform<any,any>` is inferred, not declared.
+// Wrapping the sub-object with e.g. `defineSalesPlatform<MyMeta>({...})`
+// forces the concrete type annotation TypeScript needs. The helpers are
+// pure identity functions — zero runtime cost.
+export {
+  definePlatform,
+  defineSalesPlatform,
+  defineAudiencePlatform,
+  defineSignalsPlatform,
+  defineCreativeBuilderPlatform,
+  defineCreativeAdServerPlatform,
+  defineCampaignGovernancePlatform,
+  defineContentStandardsPlatform,
+  definePropertyListsPlatform,
+  defineCollectionListsPlatform,
+  defineBrandRightsPlatform,
+} from './platform-helpers';
+
 // Wire-shape assembly helpers — emit correct Product / PricingOption /
 // package shapes from intent-shaped input. Reduces 30+ lines of wire
 // boilerplate per resource. Used in slim skill examples so LLMs scaffold

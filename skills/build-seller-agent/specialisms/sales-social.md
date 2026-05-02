@@ -18,11 +18,41 @@ Storyboard: `social_platform` (category `sales_social`, track `audiences`).
 - `sync_accounts` with `account_scope`, `payment_terms`, `setup` fields — advertiser onboarding with identity verification setup_url when pending
 - `list_accounts` with brand filter — buyers listing their accounts on your platform
 - `sync_audiences` → returns `{ audiences: [{ audience_id, name, status: 'active', action: 'created' }] }` — buyer pushes audience segment definitions for platform match
-- `sync_catalogs` → product catalog push for dynamic product ads (Meta DPA, Snap Dynamic Ads, TikTok Dynamic Showcase). The storyboard's catalog-item macros (`{SKU}`, `{GTIN}`) resolve per-impression at render time.
 - `sync_creatives` for platform-native assemblies with `{ creative_id, action, status: 'pending_review' }` — image + headline + description slots assembled into the native unit
 - `log_event` → returns `{ events: [{ event_id, status: 'accepted' }] }` — server-side conversion events for attribution / optimization
 - `get_account_financials` → returns `{ account, financials: { currency, current_spend, remaining_balance, payment_status } }` — prepaid-balance monitoring typical of walled gardens
 
-**Handler grouping in `createAdcpServer`:** `sync_audiences`, `sync_catalogs`, and `log_event` live under `eventTracking`, NOT `mediaBuy`. `get_account_financials` and `sync_accounts` live under `accounts`. Baseline `get_products`/`create_media_buy`/etc. stay under `mediaBuy`.
+**Method mapping in `createAdcpServerFromPlatform`:** every `sales-social` tool maps to a typed method on the platform object — no manual handler-bag grouping required:
+
+| Wire tool | Platform field | Method |
+|---|---|---|
+| `sync_audiences` | `audiences` (`AudiencePlatform<TCtxMeta>`) | `audiences.syncAudiences` |
+| `log_event` | `sales` (`SalesPlatform<TCtxMeta>`) | `sales.logEvent` |
+| `sync_event_sources` | `sales` | `sales.syncEventSources` |
+| `get_account_financials` | `accounts` (`AccountStore<TCtxMeta>`) | `accounts.getAccountFinancials` |
+| `sync_accounts` | `accounts` | `accounts.upsert` |
+
+(`sync_catalogs` → `sales.syncCatalogs` is only needed if you also claim `sales-catalog-driven` / `sales-retail-media` for DPA support.)
+
+Declare `TCtxMeta` once as your advertiser-metadata shape (e.g., `interface SocialMeta { advertiserId: string; pixelId: string }`) on `DecisioningPlatform<Config, SocialMeta>` and every handler's `ctx.account.ctx_metadata` is fully typed — no casts needed.
+
+When building inline with object literals, wrap both sub-objects with typed helpers to preserve typed `req` parameters in handler bodies:
+
+```ts
+createAdcpServerFromPlatform({
+  capabilities: { specialisms: ['sales-social', 'sales-non-guaranteed', 'audience-sync'] as const, ... },
+  accounts: { resolve: async (ref) => ..., upsert: async (refs) => ..., getAccountFinancials: async (req, ctx) => ... },
+  sales: defineSalesPlatform<SocialMeta>({
+    getProducts: async (req, ctx) => ...,  // req: GetProductsRequest ✓
+    syncEventSources: async (req, ctx) => { const sources = req.event_sources ?? []; ... },
+    logEvent: async (req, ctx) => ...,
+    // ... other sales methods
+  }),
+  audiences: defineAudiencePlatform<SocialMeta>({
+    syncAudiences: async (audiences, ctx) => { /* audiences: Audience[] ✓ */ },
+    pollAudienceStatuses: async (ids, ctx) => ...,
+  }),
+}, opts);
+```
 
 **Don't** rip out `get_products` or `create_media_buy` when adding `sales-social` — you need them. The failure mode from doing so: buyers who discover your agent via `get_adcp_capabilities` expecting a media-buy seller hit immediate compliance failures when every baseline storyboard fails with "tool not registered," and your entire `sales-non-guaranteed` bundle regresses to 0/N passing.
