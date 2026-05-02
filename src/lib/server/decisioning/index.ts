@@ -72,6 +72,7 @@ export {
 // Capabilities (single source of truth for get_adcp_capabilities)
 export type {
   DecisioningCapabilities,
+  ComplianceTestingCapabilities,
   CreativeAgentRef,
   TargetingCapabilities,
   ReportingCapabilities,

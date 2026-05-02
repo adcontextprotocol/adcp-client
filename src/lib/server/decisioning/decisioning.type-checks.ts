@@ -23,6 +23,7 @@ import type {
   SalesPlatform,
   AudiencePlatform,
   CreateAdcpServerFromPlatformOptions,
+  ComplianceTestingCapabilities,
 } from './index';
 import {
   AdcpError,
@@ -31,6 +32,7 @@ import {
   defineAudiencePlatform,
   definePlatformWithCompliance,
 } from './index';
+import type { ComplyControllerConfig } from '../../testing/comply-controller';
 
 // ── AdcpError construction ────────────────────────────────────────────
 
@@ -287,16 +289,17 @@ function _define_audience_platform_rejects_wrong_shape() {
 // Positive: definePlatformWithCompliance accepts a platform with compliance_testing.
 type _PlatformBase = DecisioningPlatform<unknown, Record<string, unknown>>;
 type _PlatformWithCT = _PlatformBase & {
-  capabilities: { compliance_testing: { scenarios?: [] } };
+  capabilities: { compliance_testing: ComplianceTestingCapabilities };
 };
 function _define_platform_with_compliance_accepts_ct(p: _PlatformWithCT): _PlatformWithCT {
   return definePlatformWithCompliance(p);
 }
 
-// Negative: definePlatformWithCompliance rejects a platform missing compliance_testing.
+// Negative: definePlatformWithCompliance rejects a platform missing compliance_testing
+// (compliance_testing is optional on DecisioningPlatformCapabilities, required by the helper).
 function _define_platform_with_compliance_rejects_missing_ct() {
   const p: _PlatformBase = {} as unknown as _PlatformBase;
-  // @ts-expect-error — compliance_testing is required; plain DecisioningPlatform has it optional.
+  // @ts-expect-error — compliance_testing is required by the helper but optional on the base type.
   return definePlatformWithCompliance(p);
 }
 
@@ -305,8 +308,16 @@ type _opts_no_ct = RequiredOptsFor<_PlatformBase>;
 const _check_opts_no_ct: _opts_no_ct extends CreateAdcpServerFromPlatformOptions ? true : false = true;
 
 // Positive: RequiredOptsFor resolves to require complyTest when P has compliance_testing.
+// Uses ComplyControllerConfig (not object) to assert the exact required type.
 type _opts_with_ct = RequiredOptsFor<_PlatformWithCT>;
-const _check_opts_with_ct: _opts_with_ct extends { complyTest: object } ? true : false = true;
+const _check_opts_with_ct: _opts_with_ct extends { complyTest: ComplyControllerConfig } ? true : false = true;
+
+// Negative: base opts (complyTest optional) is NOT assignable to CT opts (complyTest required).
+// This is the call-site regression alarm: if RequiredOptsFor stops requiring complyTest,
+// this would flip to 'assignable' and fail to match the 'not-assignable' literal type.
+type _ct_opts_requires_complytest =
+  CreateAdcpServerFromPlatformOptions extends RequiredOptsFor<_PlatformWithCT> ? 'assignable' : 'not-assignable';
+const _check_ct_opts_requires: _ct_opts_requires_complytest = 'not-assignable';
 
 // Reference all symbols once so eslint-disable is targeted.
 export const _references = [
@@ -342,4 +353,5 @@ export const _references = [
   _define_platform_with_compliance_rejects_missing_ct,
   _check_opts_no_ct,
   _check_opts_with_ct,
+  _check_ct_opts_requires,
 ] as const;
