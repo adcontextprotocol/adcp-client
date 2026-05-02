@@ -156,7 +156,7 @@ export type {
   Deployment,
   ActivationKey,
   VendorPricingOption,
-  SignalFilters,   // embedded in GetSignalsRequest.filters
+  SignalFilters, // embedded in GetSignalsRequest.filters
   SignalTargeting, // embedded in ActivateSignalRequest.signal_targeting
 } from './tools.generated';
 
