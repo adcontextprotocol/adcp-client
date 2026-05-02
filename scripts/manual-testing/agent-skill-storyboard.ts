@@ -415,68 +415,106 @@ async function waitForPort(host: string, port: number, timeoutMs: number): Promi
   throw new Error(`timed out waiting for ${host}:${port}`);
 }
 
-function runGrader(url: string, storyboardId: string): { passed: boolean; raw: string } {
+async function runGrader(url: string, storyboardId: string): Promise<{ passed: boolean; raw: string }> {
   const cliPath = join(REPO_ROOT, 'bin', 'adcp.js');
+  // Async `spawn` (not `spawnSync`) is mandatory: the harness boots the mock
+  // upstream HTTP server in the same Node process. `spawnSync` blocks the
+  // event loop, so while the grader runs, the in-process upstream can't
+  // respond to requests from the agent — agent's upstream calls hang, grader
+  // times out waiting on agent, full deadlock at the 120s mark. Async spawn
+  // keeps the loop alive so the upstream serves alongside the grader.
+  // (Original symptom thread: #1237 / #1241.)
+  //
   // `--allow-http` is mandatory — the grader hard-refuses plain-http URLs
   // otherwise (production agents MUST terminate TLS). Harness-tested agents
-  // bind on loopback, so we opt in explicitly.
-  // Presents the harness key wired by the generated server — symmetric with
-  // the `verifyApiKey` block in buildPrompt(). The scary token name exists so
-  // anyone who encounters it in logs or --keep output workspaces recognizes
-  // it's a harness-only credential, not a production pattern.
-  const res = spawnSync(
-    'node',
-    [
-      cliPath,
-      'storyboard',
-      'run',
-      url,
-      storyboardId,
-      '--json',
-      '--allow-http',
-      '--auth',
-      'sk_harness_do_not_use_in_prod',
-      // Host a loopback webhook receiver so storyboards that assert outbound
-      // webhook conformance (webhook_emission, idempotency) can grade instead
-      // of skipping with "Test-kit contract 'webhook_receiver_runner' is not
-      // configured on this runner". Storyboards that don't need it ignore the
-      // receiver.
-      '--webhook-receiver',
-    ],
-    {
-      encoding: 'utf8',
-      timeout: 120_000,
-      // Close stdin so the child doesn't stall on TTY/stdin probing — without
-      // this, spawnSync's default ('pipe') hands the child an open never-
-      // written stdin pipe, on which some library the CLI loads stalls. Direct
-      // shell invocation works because the child inherits the parent's TTY
-      // (issue #1237).
-      stdio: ['ignore', 'pipe', 'pipe'],
-      // Bump from the 1 MiB default. A passing webhook-bundle JSON report
-      // approaches that on its own; on overflow, spawnSync kills with SIGTERM
-      // and returns *truncated* stdout — which would silently mis-grade as
-      // fail (JSON.parse trips on the truncation).
-      maxBuffer: 16 * 1024 * 1024,
-    }
-  );
-  const raw = (res.stdout ?? '') + (res.stderr ?? '');
-  // Use ETIMEDOUT, not `signal === 'SIGTERM'`, to identify the timeout path.
-  // Node sets `error.code === 'ETIMEDOUT'` only when `options.timeout` fires;
-  // `signal === 'SIGTERM'` would also match Ctrl-C, OOM, external kill, or
-  // maxBuffer overflow — none of which deserve the "timed out" message. This
-  // also distinguishes the diagnostic from maxBuffer overflow, which has its
-  // own error code (`ERR_CHILD_PROCESS_STDIO_MAXBUFFER`).
-  if ((res as { error?: NodeJS.ErrnoException }).error?.code === 'ETIMEDOUT') {
+  // bind on loopback, so we opt in explicitly. The harness key in `--auth`
+  // is symmetric with the `verifyApiKey` block in buildPrompt(); the scary
+  // token name makes accidental copy-paste obvious.
+  const args = [
+    cliPath,
+    'storyboard',
+    'run',
+    url,
+    storyboardId,
+    '--json',
+    '--allow-http',
+    '--auth',
+    'sk_harness_do_not_use_in_prod',
+    // Host a loopback webhook receiver so storyboards that assert outbound
+    // webhook conformance (webhook_emission, idempotency) can grade instead
+    // of skipping with "Test-kit contract 'webhook_receiver_runner' is not
+    // configured on this runner". Storyboards that don't need it ignore the
+    // receiver.
+    '--webhook-receiver',
+  ];
+
+  const child = spawn('node', args, {
+    // Close stdin (legacy of #1237 — some library on the CLI side stalled on
+    // an open never-written stdin pipe). stdout/stderr piped so we can
+    // capture and parse.
+    stdio: ['ignore', 'pipe', 'pipe'],
+  });
+
+  const stdoutChunks: Buffer[] = [];
+  const stderrChunks: Buffer[] = [];
+  child.stdout.on('data', c => stdoutChunks.push(c));
+  child.stderr.on('data', c => stderrChunks.push(c));
+
+  let timedOut = false;
+  // Wrap in an object so TS doesn't narrow the closure-assigned `let` to
+  // `null` at the read site (control-flow analysis can't see across async
+  // boundaries on `let` reassignment).
+  const spawnFailure: { error: NodeJS.ErrnoException | null } = { error: null };
+  const timer = setTimeout(() => {
+    timedOut = true;
+    child.kill('SIGTERM');
+  }, 120_000);
+
+  // Wire `'error'` (spawn-fail: ENOENT, EACCES, …) and `'close'` (normal
+  // exit, after stdio drain) together. Without an `'error'` listener Node
+  // throws on emit; without resolving the awaiter on `'error'`, a failed
+  // spawn could hang the harness. `'close'` always fires after `'error'`
+  // for processes that started, so we settle on whichever comes first.
+  const exitCode: number | null = await new Promise<number | null>(resolveFn => {
+    let settled = false;
+    const settle = (code: number | null): void => {
+      if (settled) return;
+      settled = true;
+      resolveFn(code);
+    };
+    child.on('error', err => {
+      spawnFailure.error = err;
+      settle(null);
+    });
+    child.on('close', code => settle(code));
+  });
+  clearTimeout(timer);
+
+  const stdout = Buffer.concat(stdoutChunks).toString('utf8');
+  const stderr = Buffer.concat(stderrChunks).toString('utf8');
+  const raw = stdout + stderr + (spawnFailure.error ? `\n[spawn error] ${spawnFailure.error.message}` : '');
+
+  if (spawnFailure.error) {
+    log(`grader: spawn failed — ${spawnFailure.error.code ?? '?'}: ${spawnFailure.error.message}`);
+  } else if (timedOut) {
+    // Reconstruct the direct-invocation command from the actual args array
+    // so this hint can't drift from the spawn call above. The operator's
+    // recovery loop is `--mode build --keep` then `--mode verify` — flagged
+    // here so the hint is actionable without re-reading the file header.
     log(
       `grader: subprocess timed out after 120s (storyboard=${storyboardId}). ` +
         `This is a harness-level kill, not an agent conformance failure. ` +
-        `To debug, run the grader directly: ` +
-        `node bin/adcp.js storyboard run ${url} ${storyboardId} --json --allow-http --auth sk_harness_do_not_use_in_prod --webhook-receiver`
+        `To debug, run the grader directly (workspace must still be up — ` +
+        `re-run with --keep + --mode verify if the agent was torn down):\n  ` +
+        `node ${args.join(' ')}`
     );
+  } else if (exitCode !== 0) {
+    log(`grader: exited with code ${exitCode} (storyboard=${storyboardId})`);
   }
+
   let passed = false;
   try {
-    const parsed = JSON.parse(res.stdout);
+    const parsed = JSON.parse(stdout);
     // Pass criteria, in order:
     //   1. `overall_status === 'passing'` — explicit pass from the grader
     //   2. `overall_status === 'partial'` AND zero step/track failures — all
@@ -690,7 +728,7 @@ async function main(): Promise<void> {
 
     const url = `http://127.0.0.1:${args.port}/mcp`;
     log(`grading storyboard ${args.storyboard}`);
-    const { passed: storyboardPassed, raw } = runGrader(url, args.storyboard);
+    const { passed: storyboardPassed, raw } = await runGrader(url, args.storyboard);
     process.stdout.write(raw);
 
     // Façade-detection check (issue #1225). Even if the storyboard passes,
