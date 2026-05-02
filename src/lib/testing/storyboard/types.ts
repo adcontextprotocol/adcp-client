@@ -993,6 +993,16 @@ export interface StoryboardRunOptions extends TestOptions {
    *   - `proxy_url`: operator-supplied public URL (tunnel / ingress) routes
    *     to a local HTTP listener on the configured port. Suitable for AdCP
    *     Verified grading where the agent under test is remote.
+   *
+   * **Multi-agent topology** (`options.agents` set): the receiver is **shared**
+   * across all tenants in the routing map — one HTTP server, one base URL,
+   * bound once at storyboard start. This works correctly for cross-specialism
+   * flows because delivery correlation is by **step-keyed URL** (the receiver
+   * mints `/step/<step_id>/<operation_id>` paths), not by source agent. If a
+   * `sync_governance` step on the governance tenant and an `activate_signal`
+   * step on the signals tenant both emit webhooks, the runner disambiguates by
+   * step ID, not tenant identity. Per-tenant receivers are not supported and
+   * are not needed for any current cross-specialism storyboard in the corpus.
    */
   webhook_receiver?: {
     /** Endpoint mode (default: `loopback_mock`). */

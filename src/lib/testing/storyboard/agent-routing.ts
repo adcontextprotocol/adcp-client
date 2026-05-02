@@ -16,6 +16,29 @@
  * Multi-claim conflicts (two agents claim the same protocol AND a step
  * relying on that protocol lacks an explicit `agent:` override) fail-fast
  * at routing-context build time, BEFORE any non-discovery network calls.
+ *
+ * ## Webhook receiver topology in routed mode
+ *
+ * When `StoryboardRunOptions.webhook_receiver` is set alongside `agents`,
+ * the receiver is **shared** across all tenants — one HTTP server, one base
+ * URL. The runner does not create per-tenant receivers and does not need to:
+ * delivery correlation is by **step-keyed URL** (`/step/<step_id>/<op_id>`),
+ * not by source agent. If both a governance tenant and a signals tenant
+ * emit webhooks during the same run, the assertion harness matches each
+ * delivery to its `expect_webhook*` step by URL path, regardless of which
+ * tenant posted it. This means:
+ *
+ *   - `{{runner.webhook_base}}` substitutes the same URL for every step
+ *     across all agents — no per-agent variable needed.
+ *   - `{{runner.webhook_url:<step_id>}}` is always sufficient to pin a
+ *     delivery to the step that requested it, even when multiple tenants
+ *     emit concurrently.
+ *   - Per-tenant receivers are not supported; if a future storyboard needs
+ *     delivery-source disambiguation, use distinct step IDs (they already
+ *     produce distinct URL paths).
+ *
+ * See `StoryboardRunOptions.webhook_receiver` JSDoc and `webhook-receiver.ts`
+ * for implementation details.
  */
 import type { TestClient } from '../client';
 import { getOrCreateClient, getOrDiscoverProfile } from '../client';
