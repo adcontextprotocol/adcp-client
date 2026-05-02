@@ -124,15 +124,20 @@ function defaultBuildAccount<TCtxMeta>(
   const r = ref as Record<string, unknown>;
   const brand = r['brand'] as BrandReference | undefined;
   const operator = (r['operator'] as string | undefined) ?? '';
+  const sandbox = r['sandbox'] === true;
+  const sandboxSuffix = sandbox ? ':sandbox' : '';
   const account_id =
     (r['account_id'] as string | undefined) ??
-    (brand && 'domain' in brand ? `${(brand as { domain: string }).domain}:${operator}` : `ref:${operator}`);
+    (brand && 'domain' in brand
+      ? `${(brand as { domain: string }).domain}:${operator}${sandboxSuffix}`
+      : `ref:${operator}${sandboxSuffix}`);
   return {
     id: account_id,
     name: account_id,
     status: 'active' as AdcpAccountStatus,
     ...(brand !== undefined && { brand }),
     ...(operator !== '' && { operator }),
+    ...(sandbox && { sandbox: true }),
     ctx_metadata: {} as TCtxMeta & Record<string, unknown>,
   };
 }
