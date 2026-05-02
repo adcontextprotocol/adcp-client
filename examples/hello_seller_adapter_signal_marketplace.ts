@@ -194,38 +194,26 @@ function toAdcpSignal(c: UpstreamCohort): GetSignalsResponse['signals'][number] 
 }
 
 class SignalMarketplaceAdapter implements DecisioningPlatform<Record<string, never>, OperatorMeta> {
-  // DecisioningCapabilities requires creative_agents/channels/pricingModels
-  // even for signals-only platforms. Empty arrays are correct here — this
-  // platform doesn't sell media or compose with creative agents. (Filed at
-  // adcontextprotocol/adcp-client as a DX issue: these should be optional
-  // when the claimed specialisms don't sell media inventory.)
   capabilities = {
     specialisms: ['signal-marketplace'] as const,
-    creative_agents: [] as const,
-    channels: [] as const,
-    pricingModels: ['cpm'] as const,
     config: {},
   };
 
   accounts: AccountStore<OperatorMeta> = {
     /** Translate AdCP `account.operator` → upstream `operator_id`, cache on
      *  the Account so handlers read from `ctx.account.ctx_metadata`. */
-    resolve: async (ref, ctx) => {
+    resolve: async ref => {
       const adcpOperator = (ref as { operator?: string })?.operator;
       if (!adcpOperator) return null;
       const operatorId = await upstream.lookupOperator(adcpOperator);
       if (!operatorId) return null;
-      // `authInfo` is required on Account (the framework strips it before
-      // emitting on the wire — adapters thread the principal through so
-      // resource handlers can authorize against it).
       return {
         id: operatorId,
         name: adcpOperator,
         status: 'active',
         operator: adcpOperator,
         ctx_metadata: { operator_id: operatorId },
-        authInfo: ctx?.authInfo ?? { principal: 'anonymous' },
-      } as Account<OperatorMeta>;
+      };
     },
   };
 
@@ -239,9 +227,9 @@ class SignalMarketplaceAdapter implements DecisioningPlatform<Record<string, nev
       const cohorts = await upstream.listCohorts(operatorId);
       const filtered = cohorts.filter(c => {
         if (!Array.isArray(req.signal_ids) || req.signal_ids.length === 0) return true;
-        // signal_ids is signal_id[] (provenance objects), NOT strings.
-        // SignalID is a discriminated union; only the `source: 'catalog'`
-        // variant has data_provider_domain. Narrow before reading.
+        // signal_ids is signal_id[] — provenance objects, not strings.
+        // Narrow on the catalog variant before reading data_provider_domain.
+        // See skills/SHAPE-GOTCHAS.md §2.
         return req.signal_ids.some(
           sid =>
             sid.source === 'catalog' &&
@@ -295,9 +283,9 @@ class SignalMarketplaceAdapter implements DecisioningPlatform<Record<string, nev
             client_request_id: `${idempotency}.${i}`,
           });
           if (dest.type === 'agent') {
-            // ActivationKey oneOf for `type: 'key_value'`: `key` and `value`
-            // sit at the TOP level of activation_key (not nested), and
-            // `value` MUST be a string. See core/activation-key.json.
+            // ActivationKey oneOf — for `type: 'key_value'`, `key` and `value`
+            // sit at the TOP level (not nested under a `key_value` field).
+            // `value` MUST be string. See skills/SHAPE-GOTCHAS.md §1.
             return {
               type: 'agent' as const,
               agent_url: dest.agent_url,

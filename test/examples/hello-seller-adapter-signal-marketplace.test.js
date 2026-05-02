@@ -22,7 +22,9 @@ const { describe, it, before, after } = require('node:test');
 const assert = require('node:assert/strict');
 const path = require('node:path');
 const { spawn, spawnSync } = require('node:child_process');
-const { bootMockServer } = require('../../dist/lib/mock-server/index.js');
+// Public sub-export (per #1287/#1294) — adopters use this exact import path
+// in their own integration tests.
+const { bootMockServer } = require('@adcp/sdk/mock-server');
 
 const REPO_ROOT = path.resolve(__dirname, '..', '..');
 const EXAMPLE_FILE = path.join(REPO_ROOT, 'examples', 'hello_seller_adapter_signal_marketplace.ts');
