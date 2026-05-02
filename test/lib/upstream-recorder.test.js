@@ -295,7 +295,10 @@ describe('wrapFetch end-to-end', () => {
     assert.deepEqual(call.payload, { users: [{ hashed_email: 'vec-1' }] });
     // Authorization header should never have leaked through to the recorded
     // call's payload via any path — it was a header, not a payload key.
-    assert.ok(!JSON.stringify(call).includes('fake_test_fixture_not_a_real_token_eee'), 'no plaintext bearer in record');
+    assert.ok(
+      !JSON.stringify(call).includes('fake_test_fixture_not_a_real_token_eee'),
+      'no plaintext bearer in record'
+    );
   });
 
   test('passes through unchanged when called outside runWithPrincipal', async () => {
