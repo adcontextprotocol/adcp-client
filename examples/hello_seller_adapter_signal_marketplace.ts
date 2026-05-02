@@ -93,11 +93,7 @@ const upstream = {
 
   // SWAP: catalog list.
   async listCohorts(operatorId: string): Promise<UpstreamCohort[]> {
-    const { body } = await http.get<{ cohorts: UpstreamCohort[] }>(
-      '/v2/cohorts',
-      undefined,
-      tenantHeader(operatorId)
-    );
+    const { body } = await http.get<{ cohorts: UpstreamCohort[] }>('/v2/cohorts', undefined, tenantHeader(operatorId));
     return body?.cohorts ?? [];
   },
 
