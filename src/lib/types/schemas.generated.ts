@@ -1,5 +1,5 @@
 // Generated Zod v4 schemas from TypeScript types
-// Generated at: 2026-05-02T15:11:33.149Z
+// Generated at: 2026-05-02T16:13:48.842Z
 // Sources:
 //   - core.generated.ts (core types)
 //   - tools.generated.ts (tool types)
@@ -3713,6 +3713,12 @@ export const ConflictDetailsSchema = z.object({
     resource_id: z.string().optional(),
     expected_version: z.union([z.number(), z.string()]).optional(),
     current_version: z.union([z.number(), z.string()]).optional()
+}).passthrough();
+
+export const CreativeRejectedDetailsSchema = z.object({
+    policy_id: z.string().optional(),
+    policy_url: z.string().optional(),
+    reasons: z.array(z.string()).optional()
 }).passthrough();
 
 export const PolicyViolationDetailsSchema = z.object({
