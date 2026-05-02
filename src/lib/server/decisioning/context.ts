@@ -31,6 +31,7 @@ import type {
 } from '../../types/tools.generated';
 import type { TaskHandoff, TaskHandoffContext } from './async-outcome';
 import type { CtxMetadataRef, ResourceKind } from '../ctx-metadata';
+import type { BuyerAgent } from './buyer-agent';
 
 // Unconstrained `TAccount` (no `extends Account`) so adopters with metadata
 // types that don't extend `Record<string, unknown>` (interfaces without index
@@ -40,6 +41,17 @@ import type { CtxMetadataRef, ResourceKind } from '../ctx-metadata';
 export interface RequestContext<TAccount = Account> {
   /** Resolved account for this request. */
   account: TAccount;
+
+  /**
+   * Resolved buyer agent for this request, when an `agentRegistry` is
+   * configured on the platform (Phase 1 of #1269). Carries the durable
+   * commercial relationship — status, billing capabilities, default
+   * account terms — distinct from the per-request credential. Undefined
+   * when no registry is configured OR when the registry returned null
+   * for the request's credential. Phase 2 (#1292) wires framework-level
+   * billing-capability enforcement to the AdCP-3.1 error codes.
+   */
+  agent?: BuyerAgent;
 
   /** Sync reads of in-flight state. */
   state: WorkflowStateReader;

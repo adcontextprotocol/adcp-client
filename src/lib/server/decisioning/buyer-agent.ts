@@ -258,10 +258,14 @@ export type ResolveBuyerAgentByAgentUrl = (agent_url: string) => Promise<BuyerAg
  *
  * **Credential exposure.** This callback receives unredacted credential
  * payloads (token, key_id, client_id). Adopters MUST NOT log raw credential
- * values. The framework redacts credential payloads in any log line emitted
- * from registry-resolution code (Stage 4); adopter implementations are
- * expected to do the same (or to use prepared-statement parameters that
- * don't log).
+ * values AND MUST NOT include them in thrown `Error` messages — the
+ * framework projects `err.message` into `error.details.reason` on the wire
+ * when `exposeErrorDetails` is on (default: non-production). Throw with
+ * a generic message and log the credential separately if you need it for
+ * server-side debugging. The framework redacts credential payloads in any
+ * log line emitted from registry-resolution code (Stage 4); adopter
+ * implementations are expected to do the same (or to use prepared-statement
+ * parameters that don't log).
  *
  * @public
  */
