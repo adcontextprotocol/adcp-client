@@ -380,9 +380,11 @@ export interface AccountStore<TCtxMeta = Record<string, unknown>> {
    * `ctx.authInfo` carries the caller's OAuth principal (when
    * `serve({ authenticate })` is wired). `ctx.agent` is the resolved buyer
    * agent from `BuyerAgentRegistry` (when configured) — use it for per-agent
-   * billing gates such as `BILLING_NOT_PERMITTED_FOR_AGENT` (adcp spec
-   * PR #3851), which fires when the caller's onboarded commercial state doesn't
-   * permit the requested billing value.
+   * billing gates such as `BILLING_NOT_PERMITTED_FOR_AGENT` (adcp#3831,
+   * Phase 2 enforcement via #1292), which fires when the caller's onboarded
+   * commercial state doesn't permit the requested billing value. Phase 2
+   * (#1292) will add framework-level enforcement; adopters can implement the
+   * gate adoptyer-side today via `ctx.agent?.billing_capabilities`.
    */
   upsert?(refs: AccountReference[], ctx?: ResolveContext): Promise<SyncAccountsResultRow[]>;
 
