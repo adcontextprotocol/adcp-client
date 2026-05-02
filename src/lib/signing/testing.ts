@@ -1,6 +1,7 @@
-import { createHash, createPrivateKey, sign as nodeSign, type JsonWebKey } from 'crypto';
+import { createHash, createPrivateKey, randomUUID, sign as nodeSign, type JsonWebKey } from 'crypto';
 import type { SigningProvider } from './provider';
 import type { SignerKey } from './signer';
+import type { AdcpUse } from './jwks-helpers';
 import type { AdcpJsonWebKey, AdcpSignAlg } from './types';
 
 /**
@@ -91,4 +92,100 @@ export function signerKeyToProvider(key: SignerKey): SigningProvider {
     algorithm: key.alg,
     privateKey: key.privateKey,
   });
+}
+
+export interface EphemeralSigningKey {
+  /** The `kid` embedded in both JWKs. */
+  kid: string;
+  /** Public JWK — publish at `/.well-known/jwks.json` or pass to JWKS discovery. */
+  publicKey: AdcpJsonWebKey;
+  /**
+   * Private JWK with `d` scalar. Pass to
+   * `new InMemorySigningProvider({ keyid, algorithm, privateKey })`.
+   * Never publish this value.
+   */
+  privateKey: AdcpJsonWebKey;
+}
+
+export interface MintEphemeralSigningKeyOptions {
+  /**
+   * Stable key ID embedded in both JWKs. Defaults to a random UUID so each
+   * call produces a unique kid. Pass a stable value for deterministic IDs
+   * across test restarts — the `keyid` passed to `InMemorySigningProvider`
+   * must match the `kid` in the published public JWK.
+   */
+  kid?: string;
+  /**
+   * AdCP purpose binding tagged on both JWKs.
+   * - `'webhook-signing'` (default) — outbound webhook callbacks.
+   * - `'request-signing'` — buyer-to-seller signed requests (AdCP step 8).
+   *
+   * For production request-signing keys use `pemToAdcpJwk()` or a KMS-backed
+   * `SigningProvider` instead.
+   */
+  adcp_use?: AdcpUse;
+}
+
+/**
+ * Mint an ephemeral Ed25519 keypair as `AdcpJsonWebKey` pairs, ready for
+ * dev/test signing.
+ *
+ * Handles the Node `KeyObject.export({ format: 'jwk' })` → `AdcpJsonWebKey`
+ * reshape: Node's `JsonWebKey` has `kty?: string` (optional), while
+ * `AdcpJsonWebKey` requires `kty: string`. Without this helper, callers must
+ * write a manual spread + non-null assertion on every key-generation site —
+ * easy to typo on the most critical JWK field.
+ *
+ * Both JWKs are tagged with the correct AdCP fields:
+ * - `alg: 'EdDSA'` — JOSE algorithm name required by AdCP verifiers (step 8).
+ * - `use: 'sig'` — RFC 7517 §4.2 intent hint.
+ * - `adcp_use` — AdCP purpose binding; enforced at step 8. Defaults to
+ *   `'webhook-signing'`; pass `'request-signing'` for buyer-to-seller keys.
+ * - `key_ops`: `['verify']` on `publicKey`, `['sign']` on `privateKey`.
+ *
+ * Usage with {@link InMemorySigningProvider}:
+ * ```ts
+ * import { mintEphemeralSigningKey, InMemorySigningProvider } from '@adcp/sdk/signing/testing';
+ *
+ * const { kid, privateKey, publicKey } = await mintEphemeralSigningKey();
+ * const provider = new InMemorySigningProvider({ keyid: kid, algorithm: 'ed25519', privateKey });
+ * // Publish publicKey in your /.well-known/jwks.json `keys` array.
+ * ```
+ */
+export async function mintEphemeralSigningKey(opts?: MintEphemeralSigningKeyOptions): Promise<EphemeralSigningKey> {
+  const { generateKeyPair, exportJWK } = await import('jose');
+  const resolvedKid = opts?.kid ?? randomUUID();
+  const adcpUse: AdcpUse = opts?.adcp_use ?? 'webhook-signing';
+  const { publicKey: pubKeyObj, privateKey: privKeyObj } = await generateKeyPair('EdDSA', {
+    crv: 'Ed25519',
+    extractable: true,
+  });
+  const [pubJwk, privJwk] = await Promise.all([exportJWK(pubKeyObj), exportJWK(privKeyObj)]);
+
+  if (!pubJwk.kty) throw new Error('mintEphemeralSigningKey: jose exportJWK returned publicKey without kty');
+  if (!privJwk.kty) throw new Error('mintEphemeralSigningKey: jose exportJWK returned privateKey without kty');
+
+  const publicKey: AdcpJsonWebKey = {
+    ...(pubJwk as Record<string, unknown>),
+    kid: resolvedKid,
+    kty: pubJwk.kty,
+    alg: 'EdDSA',
+    use: 'sig',
+    adcp_use: adcpUse,
+    key_ops: ['verify'],
+  };
+
+  const privateKey: AdcpJsonWebKey = {
+    ...(privJwk as Record<string, unknown>),
+    kid: resolvedKid,
+    kty: privJwk.kty,
+    alg: 'EdDSA',
+    use: 'sig',
+    adcp_use: adcpUse,
+    // RFC 7517 §4.3: private JWK states signing intent. Node's createPrivateKey
+    // ignores key_ops at runtime; the field is present for JWK consumers that honour it.
+    key_ops: ['sign'],
+  };
+
+  return { kid: resolvedKid, publicKey, privateKey };
 }

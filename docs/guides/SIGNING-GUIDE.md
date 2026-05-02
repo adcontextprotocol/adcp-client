@@ -301,19 +301,24 @@ For non-GCP runtimes that lack OIDC and where the org policy blocks SA keys, the
 
 ### Testing — `InMemorySigningProvider`
 
-The SDK ships `InMemorySigningProvider` under a separate import path so production imports surface the KMS path first:
+The SDK ships `InMemorySigningProvider` under a separate import path so production imports surface the KMS path first. Use `mintEphemeralSigningKey` to generate a typed keypair ready for use with the provider — it handles the Node `JsonWebKey.kty?: string` → `AdcpJsonWebKey.kty: string` reshape so you don't have to:
 
 ```typescript
-import { InMemorySigningProvider } from '@adcp/sdk/signing/testing';
+import { mintEphemeralSigningKey, InMemorySigningProvider } from '@adcp/sdk/signing/testing';
+
+const { kid, privateKey, publicKey } = await mintEphemeralSigningKey();
+// Publish `publicKey` in your /.well-known/jwks.json `keys` array.
 
 const provider = new InMemorySigningProvider({
-  keyid: 'test-2026',
+  keyid: kid,
   algorithm: 'ed25519',
-  privateKey: testJwk,
+  privateKey,
 });
 ```
 
-The constructor refuses to instantiate when `NODE_ENV=production` unless `ADCP_ALLOW_IN_MEMORY_SIGNER=1` is set explicitly — defense-in-depth so a copy-paste from a test file doesn't accidentally ship to prod. The gate is a self-discipline aid for the bundled implementation; the SDK can't enforce hygiene on third-party providers.
+Pass `{ adcp_use: 'request-signing' }` to `mintEphemeralSigningKey` when generating buyer-to-seller request-signing keys for tests. The default `adcp_use` is `'webhook-signing'`.
+
+The `InMemorySigningProvider` constructor refuses to instantiate when `NODE_ENV=production` unless `ADCP_ALLOW_IN_MEMORY_SIGNER=1` is set explicitly — defense-in-depth so a copy-paste from a test file doesn't accidentally ship to prod. The gate is a self-discipline aid for the bundled implementation; the SDK can't enforce hygiene on third-party providers.
 
 ### Validating a signer before going live — `adcp grade signer`
 
