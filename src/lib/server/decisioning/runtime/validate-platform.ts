@@ -108,7 +108,7 @@ export function validatePlatform(platform: DecisioningPlatform): void {
   // platforms (signals, governance, creative-only) can omit them, but a
   // sales platform that omits them will emit a broken get_adcp_capabilities
   // response that buyers cannot interpret.
-  const claimedSales = claimed.filter(s => SALES_SPECIALISMS.has(s as AdCPSpecialism));
+  const claimedSales = claimed.filter(s => SALES_SPECIALISMS.has(s));
   if (claimedSales.length > 0) {
     if (platform.capabilities?.channels == null) {
       errors.push(
