@@ -86,10 +86,7 @@ describe('compactUnionErrors — oneOf variant selection (issue #1337)', () => {
       message: 'must NOT be valid',
     });
 
-    const compacted = _compactUnionErrors(
-      [oneOfRoot, successCurrencyErr, successTimezoneErr, errorNotErr],
-      rootSchema
-    );
+    const compacted = _compactUnionErrors([oneOfRoot, successCurrencyErr, successTimezoneErr, errorNotErr], rootSchema);
 
     const surviving = compacted.filter(e => e.keyword !== 'oneOf');
     const survivingPaths = surviving.map(e => e.schemaPath);
@@ -105,9 +102,17 @@ describe('compactUnionErrors — oneOf variant selection (issue #1337)', () => {
     );
 
     // The specific missing fields should be surfaced.
-    const pointers = surviving.map(e => e.instancePath + (e.params?.missingProperty ? `/${e.params.missingProperty}` : ''));
-    assert.ok(pointers.some(p => p.includes('currency')), `expected /currency in surviving issues, got ${JSON.stringify(pointers)}`);
-    assert.ok(pointers.some(p => p.includes('timezone')), `expected /timezone in surviving issues, got ${JSON.stringify(pointers)}`);
+    const pointers = surviving.map(
+      e => e.instancePath + (e.params?.missingProperty ? `/${e.params.missingProperty}` : '')
+    );
+    assert.ok(
+      pointers.some(p => p.includes('currency')),
+      `expected /currency in surviving issues, got ${JSON.stringify(pointers)}`
+    );
+    assert.ok(
+      pointers.some(p => p.includes('timezone')),
+      `expected /timezone in surviving issues, got ${JSON.stringify(pointers)}`
+    );
   });
 
   test('regression: error variant with mixed residuals (not + required) can still win on count', () => {
@@ -155,7 +160,13 @@ describe('compactUnionErrors — oneOf variant selection (issue #1337)', () => {
     });
     const notA = makeErr({ keyword: 'not', instancePath: '', schemaPath: '#/oneOf/0/not', params: {} });
     const notB1 = makeErr({ keyword: 'not', instancePath: '', schemaPath: '#/oneOf/1/not', params: {} });
-    const notB2 = makeErr({ keyword: 'not', instancePath: '', schemaPath: '#/oneOf/1/not', params: {}, message: 'not2' });
+    const notB2 = makeErr({
+      keyword: 'not',
+      instancePath: '',
+      schemaPath: '#/oneOf/1/not',
+      params: {},
+      message: 'not2',
+    });
 
     const compacted = _compactUnionErrors([oneOfRoot, notA, notB1, notB2], rootSchema);
     const surviving = compacted.filter(e => e.keyword !== 'oneOf');
@@ -182,7 +193,11 @@ describe('compactUnionErrors — oneOf variant selection (issue #1337)', () => {
       params: { passingSchemas: null },
     });
     // Variant 0: nested `not` at /account (not at root) + required
-    const nestedNot = makeErr({ keyword: 'not', instancePath: '/account', schemaPath: '#/oneOf/0/properties/account/not' });
+    const nestedNot = makeErr({
+      keyword: 'not',
+      instancePath: '/account',
+      schemaPath: '#/oneOf/0/properties/account/not',
+    });
     // Variant 1: required (fewer errors)
     const req = makeErr({ schemaPath: '#/oneOf/1/required', params: { missingProperty: 'errors' } });
 
