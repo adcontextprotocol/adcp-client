@@ -285,23 +285,28 @@ export class InMemoryImplicitAccountStore<TCtxMeta = Record<string, unknown>> im
           status: account.status,
         });
       } catch (err) {
+        // Suppress adopter-originated error details from the wire response —
+        // buildAccount exceptions may include upstream credentials, SQL text,
+        // or internal identifiers. Log server-side; emit a fixed string.
+        console.error('[InMemoryImplicitAccountStore] buildAccount threw:', err);
         const r = ref as Record<string, unknown>;
         rows.push({
           brand: (r['brand'] as BrandReference | undefined) ?? ({ domain: 'unknown' } as BrandReference),
           operator: (r['operator'] as string | undefined) ?? '',
           action: 'failed',
           status: 'rejected' as AdcpAccountStatus,
-          errors: [
-            {
-              code: 'SYNC_FAILED',
-              message: err instanceof Error ? err.message : String(err),
-            },
-          ],
+          errors: [{ code: 'SYNC_FAILED', message: 'Account sync failed — check server logs' }],
         });
       }
     }
 
-    this._store.set(key, { accounts, storedAt: Date.now() });
+    // Only overwrite a previously-valid entry when at least one account was
+    // successfully built. An all-fail batch (every buildAccount threw) leaves
+    // the prior sync linkage intact so the buyer can retry without losing
+    // their existing account mapping.
+    if (accounts.length > 0) {
+      this._store.set(key, { accounts, storedAt: Date.now() });
+    }
     return rows;
   }
 

@@ -776,7 +776,9 @@ function projectGovernanceAgent(agent: WireGovernanceAgent): WireGovernanceAgent
  * resolve: async (ref, ctx) => {
  *   const id = refAccountId(ref);
  *   if (id) return this.db.findById(id);
- *   return this.db.findByOAuthClient(ctx?.authInfo?.clientId ?? '');
+ *   const cred = ctx?.authInfo?.credential;
+ *   const key = cred?.kind === 'oauth' ? cred.client_id : cred?.kind === 'api_key' ? cred.key_id : undefined;
+ *   return key ? this.db.findByClientKey(key) : null;
  * }
  * ```
  *
