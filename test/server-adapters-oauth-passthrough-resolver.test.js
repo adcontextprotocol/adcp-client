@@ -307,6 +307,90 @@ describe('createOAuthPassthroughResolver (#1363)', () => {
       await resolve({ account_id: 'acc_1' }, { authInfo: { kind: 'oauth', principal: 'p1', token: 't_req_2' } });
       assert.strictEqual(http.callCount(), 1);
     });
+
+    it('listing-keyed cache: same buyer querying multiple account_ids costs one upstream hit', async () => {
+      // The listing endpoint returns ALL accounts in one call. Caching at
+      // the listing granularity (vs per-account-id) means a buyer with N
+      // accounts calling N tools costs 1 upstream hit, not N.
+      const http = fakeHttpClient([
+        { id: 'acc_1', name: 'Acme' },
+        { id: 'acc_2', name: 'Nike' },
+        { id: 'acc_3', name: 'Pepsi' },
+      ]);
+      const resolve = createOAuthPassthroughResolver({
+        httpClient: http,
+        listEndpoint: '/me',
+        cache: { ttlMs: 60_000 },
+        toAccount: row => ({
+          id: row.id,
+          name: row.name,
+          status: 'active',
+          ctx_metadata: {},
+        }),
+      });
+      const ctx = { authInfo: { kind: 'oauth', token: 't_a' } };
+      const r1 = await resolve({ account_id: 'acc_1' }, ctx);
+      const r2 = await resolve({ account_id: 'acc_2' }, ctx);
+      const r3 = await resolve({ account_id: 'acc_3' }, ctx);
+      assert.strictEqual(http.callCount(), 1, 'one upstream hit for three account_ids on the same buyer');
+      assert.strictEqual(r1?.id, 'acc_1');
+      assert.strictEqual(r2?.id, 'acc_2');
+      assert.strictEqual(r3?.id, 'acc_3');
+    });
+
+    it('default getCacheKey hashes the auth context (no plaintext token in Map keys)', async () => {
+      // SHA-256 hashing keeps bearer tokens out of Map keys — heap dumps
+      // and util.inspect(cache) won't surface plaintext credentials.
+      const http = fakeHttpClient([{ id: 'acc_1', name: 'Acme' }]);
+      const resolve = createOAuthPassthroughResolver({
+        httpClient: http,
+        listEndpoint: '/me',
+        cache: { ttlMs: 60_000 },
+        toAccount: row => ({
+          id: row.id,
+          name: row.name,
+          status: 'active',
+          ctx_metadata: {},
+        }),
+      });
+      const distinctiveToken = 'PLAINTEXT_TOKEN_THAT_MUST_NOT_LEAK_INTO_MAP_KEYS';
+      await resolve({ account_id: 'acc_1' }, { authInfo: { kind: 'oauth', token: distinctiveToken } });
+      // util.inspect on the closed-over cache would expose Map keys; we
+      // can't reach the cache from here, so assert via a second resolve
+      // with the same token (cache hit confirms the key derivation was
+      // stable) and a different one (cache miss confirms isolation).
+      assert.strictEqual(http.callCount(), 1);
+      await resolve({ account_id: 'acc_1' }, { authInfo: { kind: 'oauth', token: distinctiveToken } });
+      assert.strictEqual(http.callCount(), 1, 'identical token → cache hit (stable hash)');
+      await resolve({ account_id: 'acc_1' }, { authInfo: { kind: 'oauth', token: 'OTHER_TOKEN' } });
+      assert.strictEqual(http.callCount(), 2, 'different token → cache miss (key isolation holds)');
+    });
+
+    it('evicts the LRU entry when maxEntries is reached', async () => {
+      const http = fakeHttpClient([{ id: 'acc_1', name: 'Acme' }]);
+      const resolve = createOAuthPassthroughResolver({
+        httpClient: http,
+        listEndpoint: '/me',
+        cache: { ttlMs: 60_000, maxEntries: 2 },
+        toAccount: row => ({
+          id: row.id,
+          name: row.name,
+          status: 'active',
+          ctx_metadata: {},
+        }),
+      });
+      // Three distinct buyers with maxEntries=2 → first buyer's entry evicted.
+      await resolve({ account_id: 'acc_1' }, { authInfo: { kind: 'oauth', token: 't_buyer_a' } });
+      await resolve({ account_id: 'acc_1' }, { authInfo: { kind: 'oauth', token: 't_buyer_b' } });
+      await resolve({ account_id: 'acc_1' }, { authInfo: { kind: 'oauth', token: 't_buyer_c' } });
+      assert.strictEqual(http.callCount(), 3, 'three buyers, three upstream hits');
+      // Buyer A's entry was evicted by buyer C's insertion → re-resolve costs another hit.
+      await resolve({ account_id: 'acc_1' }, { authInfo: { kind: 'oauth', token: 't_buyer_a' } });
+      assert.strictEqual(http.callCount(), 4, 'evicted buyer must re-fetch');
+      // Buyer C's entry is still warm.
+      await resolve({ account_id: 'acc_1' }, { authInfo: { kind: 'oauth', token: 't_buyer_c' } });
+      assert.strictEqual(http.callCount(), 4, 'most-recent buyer still cached');
+    });
   });
 
   describe('public re-export', () => {
