@@ -47,6 +47,23 @@ export const NETWORKS: MockNetwork[] = [
     display_name: 'Premium Sports Network — UK',
     adcp_publisher: 'premium-sports.uk',
   },
+  // Storyboard-fixture-aligned entries — the `sales_guaranteed` storyboard
+  // sends payloads with these publisher domains. Without them, every
+  // `_lookup/network` returns 404 and a blind agent has to invent a fallback
+  // that contradicts the skill's "fail closed on 404" advice. Issue
+  // adcontextprotocol/adcp#3822. Until the storyboard runner exposes a
+  // setup phase that primes the upstream, we seed the fixture domains
+  // here so blind agents can pass the traffic gate without contradiction.
+  {
+    network_code: 'net_acmeoutdoor',
+    display_name: 'Acme Outdoor Media',
+    adcp_publisher: 'acmeoutdoor.example',
+  },
+  {
+    network_code: 'net_pinnacle',
+    display_name: 'Pinnacle Agency',
+    adcp_publisher: 'pinnacle-agency.example',
+  },
 ];
 
 export const AD_UNITS: MockAdUnit[] = [
@@ -82,6 +99,25 @@ export const AD_UNITS: MockAdUnit[] = [
     name: 'UK Sports Preroll',
     path: '/premium/uk/sports/preroll',
     network_code: 'net_premium_uk',
+    sizes: [{ width: 1920, height: 1080 }],
+    environment: 'web',
+    targetable: true,
+  },
+  // Storyboard-fixture-aligned ad units (see NETWORKS comment + adcp#3822).
+  {
+    ad_unit_id: 'au_acmeoutdoor_billboards',
+    name: 'Acme Outdoor — Programmatic DOOH Billboards',
+    path: '/acme/outdoor/billboards',
+    network_code: 'net_acmeoutdoor',
+    sizes: [{ width: 1920, height: 1080 }],
+    environment: 'web',
+    targetable: true,
+  },
+  {
+    ad_unit_id: 'au_pinnacle_video_preroll',
+    name: 'Pinnacle Premium Video Preroll',
+    path: '/pinnacle/video/preroll',
+    network_code: 'net_pinnacle',
     sizes: [{ width: 1920, height: 1080 }],
     environment: 'web',
     targetable: true,
@@ -128,6 +164,37 @@ export const PRODUCTS: MockProduct[] = [
     format_ids: ['display_300x250'],
     ad_unit_ids: ['au_us_display_300x250'],
     pricing: { model: 'cpm', cpm: 4.5, currency: 'USD' },
+  },
+  // Storyboard-fixture-aligned products (see NETWORKS comment + adcp#3822).
+  {
+    product_id: 'acme_dooh_billboards_q2',
+    name: 'Acme Outdoor — DOOH Billboards Q2',
+    network_code: 'net_acmeoutdoor',
+    delivery_type: 'guaranteed',
+    channel: 'video',
+    format_ids: ['video_30s'],
+    ad_unit_ids: ['au_acmeoutdoor_billboards'],
+    pricing: { model: 'cpm', cpm: 28.0, currency: 'USD', min_spend: 15_000 },
+    availability: {
+      start_date: '2026-04-01',
+      end_date: '2026-06-30',
+      available_impressions: 30_000_000,
+    },
+  },
+  {
+    product_id: 'pinnacle_video_preroll_q2',
+    name: 'Pinnacle Premium Video Preroll Q2',
+    network_code: 'net_pinnacle',
+    delivery_type: 'guaranteed',
+    channel: 'video',
+    format_ids: ['video_30s', 'video_15s'],
+    ad_unit_ids: ['au_pinnacle_video_preroll'],
+    pricing: { model: 'cpm', cpm: 42.0, currency: 'USD', min_spend: 30_000 },
+    availability: {
+      start_date: '2026-04-01',
+      end_date: '2026-06-30',
+      available_impressions: 25_000_000,
+    },
   },
 ];
 
