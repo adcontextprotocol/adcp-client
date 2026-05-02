@@ -23,6 +23,14 @@ import type { AgentProfile } from '../types';
 import { TASK_FEATURE_MAP, type AdcpProtocol } from '../../utils/capabilities';
 import type { AgentEntry, Storyboard, StoryboardRunOptions, StoryboardStep } from './types';
 
+// `compliance_testing` is on the wire as a top-level capability block, NOT
+// in `supported_protocols`. `parseCapabilitiesResponse`
+// (`src/lib/utils/capabilities.ts`) normalizes the block into the
+// `protocols[]` list before `getOrDiscoverProfile` writes it onto the
+// profile, so by the time routing reads `profile.supported_protocols`
+// the value is present. Any future refactor that strips that
+// normalization needs to either preserve it or drop `compliance_testing`
+// from this set.
 const KNOWN_PROTOCOLS: ReadonlySet<AdcpProtocol> = new Set([
   'media_buy',
   'signals',
@@ -33,6 +41,36 @@ const KNOWN_PROTOCOLS: ReadonlySet<AdcpProtocol> = new Set([
   'compliance_testing',
   'brand',
 ]);
+
+/**
+ * Redact common auth-token patterns before propagating an upstream error
+ * message into runner output / CI logs / `StoryboardResult.error`. The
+ * concrete leak path: a misconfigured agent that echoes its received
+ * `Authorization: Bearer <token>` header in a 401 body would put the
+ * caller's own bearer for that tenant into CI artifacts. The bearer is
+ * already in the caller's CI environment, so this is parity with single-
+ * agent mode rather than a fix for a new leak — but defense-in-depth is
+ * cheap and the regex is bounded.
+ *
+ * Patterns covered:
+ *   - `Authorization: Bearer <token>` (any case, common in 401 echoes)
+ *   - `Bearer <token>` standalone
+ *   - `?token=<value>` / `&token=<value>` query-string tokens
+ *
+ * Best-effort. Anything unusual (custom-header schemes, base64-encoded
+ * blobs in JSON bodies) is not caught — operators should still treat
+ * upstream-error CI logs as sensitive.
+ */
+function scrubAuthSecrets(text: string): string {
+  // The character class `[A-Za-z0-9._~+/=-]+` looks like high-entropy
+  // content to entropy-based secret scanners (GitGuardian/gitleaks). It
+  // is the redaction pattern itself — no secret is encoded here.
+  // ggignore
+  return text
+    .replace(/(authorization\s*:\s*bearer\s+)[A-Za-z0-9._~+/=-]+/gi, '$1[REDACTED]') // ggignore
+    .replace(/\bbearer\s+[A-Za-z0-9._~+/=-]+/gi, 'Bearer [REDACTED]') // ggignore
+    .replace(/([?&]token=)[A-Za-z0-9._~+/=-]+/gi, '$1[REDACTED]'); // ggignore
+}
 
 /** Per-agent options view: per-entry overrides shadow run-level defaults. */
 function buildAgentOptions(entry: AgentEntry, options: StoryboardRunOptions): StoryboardRunOptions {
@@ -125,14 +163,18 @@ export async function buildRoutingContext(
         return {
           key,
           profile: undefined,
-          step: { step: 'Discover agent capabilities', passed: false, error: (err as Error)?.message || String(err) },
+          step: {
+            step: 'Discover agent capabilities',
+            passed: false,
+            error: scrubAuthSecrets((err as Error)?.message || String(err)),
+          },
         };
       }
     })
   );
   for (const r of discoveryResults) {
     if (!r.profile || r.step.passed === false) {
-      const detail = r.step.error ?? 'Discovery returned no profile.';
+      const detail = scrubAuthSecrets(r.step.error ?? 'Discovery returned no profile.');
       throw new DiscoveryFailure(
         `Discovery failed for agent "${r.key}" (${agents[r.key]!.url}): ${detail}`,
         r.key,

@@ -2322,15 +2322,20 @@ function parseAgentsMapArgs(args) {
   const fileIdx = args.indexOf('--agents-map');
   const inlineIdx = args.indexOf('--agent');
   const defaultIdx = args.indexOf('--default-agent');
-  if (fileIdx === -1 && inlineIdx === -1 && defaultIdx === -1) return null;
+  // Env var fallback (`ADCP_AGENTS_MAP=./agents.yaml`) for CI matrices that
+  // prefer env injection over file-mount or argv plumbing. CLI flags
+  // override the env var when both are set.
+  const envMap = process.env.ADCP_AGENTS_MAP;
+  if (fileIdx === -1 && inlineIdx === -1 && defaultIdx === -1 && !envMap) return null;
 
   const allowHttp = args.includes('--allow-http');
   const agents = {};
 
-  if (fileIdx !== -1) {
-    const filePath = args[fileIdx + 1];
-    if (!filePath || filePath.startsWith('--')) {
-      console.error('ERROR: --agents-map requires a file path');
+  const effectiveFilePath = fileIdx !== -1 ? args[fileIdx + 1] : envMap;
+  if (effectiveFilePath !== undefined) {
+    const filePath = effectiveFilePath;
+    if (!filePath || (fileIdx !== -1 && filePath.startsWith('--'))) {
+      console.error('ERROR: --agents-map (or ADCP_AGENTS_MAP) requires a file path');
       process.exit(2);
     }
     let raw;

@@ -529,6 +529,24 @@ function validateAgentsMap(
     );
   }
 
+  // Controller seeding (`prerequisites.controller_seeding: true`) currently
+  // dispatches against the FIRST per-agent client only, which works for
+  // single-tenant runs but is the wrong shape under routed mode: a
+  // cross-specialism storyboard's `fixtures:` block typically declares
+  // seeds owned by different tenants (e.g., `seed_product` for sales,
+  // `seed_signal_provider` for signals). Per-tenant seed dispatch is a
+  // larger change tracked separately. Until that lands, fail-fast and
+  // tell the operator to seed each tenant out-of-band and pass
+  // `skip_controller_seeding: true`.
+  if (storyboard.prerequisites?.controller_seeding === true && options.skip_controller_seeding !== true) {
+    throw new Error(
+      'runStoryboard: `agents` + `prerequisites.controller_seeding: true` is not yet supported. ' +
+        'Controller seeding currently targets a single tenant; cross-tenant seed routing is a ' +
+        'follow-up. Pre-seed each tenant out-of-band and pass `skip_controller_seeding: true` to ' +
+        'opt out of the runner-side seeding loop.'
+    );
+  }
+
   // First positional arg must be empty when `agents` is set. Allowing a
   // non-empty value is ambiguous: is the map authoritative, or is the
   // positional arg a hidden default? Reject and require the caller to
