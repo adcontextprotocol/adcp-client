@@ -195,6 +195,30 @@ function _account_store_resolution_invalid_value(): Pick<AccountStore<GAMAccount
   return { resolution: 'auto' };
 }
 
+// ── Signals-only platforms omit media-buy fields ─────────────────────
+
+// Positive: a signals-only platform doesn't need creative_agents, channels,
+// or pricingModels — those fields are optional and inapplicable to platforms
+// that sell audience data access rather than media inventory.
+function _signals_only_capabilities_compiles(): DecisioningCapabilities {
+  return {
+    specialisms: ['signal-marketplace'] as const,
+    config: {},
+  };
+}
+
+// Negative: channels rejects values outside the MediaChannel union.
+function _channels_rejects_unknown_channel(): Pick<DecisioningCapabilities, 'channels'> {
+  // @ts-expect-error — 'billboard' is not a known MediaChannel value.
+  return { channels: ['billboard'] as const };
+}
+
+// Negative: pricingModels rejects values outside the PricingModel union.
+function _pricing_models_rejects_unknown_model(): Pick<DecisioningCapabilities, 'pricingModels'> {
+  // @ts-expect-error — 'rev_share' is not a known PricingModel value.
+  return { pricingModels: ['rev_share'] as const };
+}
+
 // ── DecisioningCapabilities.supportedBillings is a closed enum ────────
 
 function _capabilities_supported_billings_operator(): Pick<DecisioningCapabilities, 'supportedBillings'> {
@@ -321,6 +345,9 @@ const _check_ct_opts_requires: _ct_opts_requires_complytest = 'not-assignable';
 
 // Reference all symbols once so eslint-disable is targeted.
 export const _references = [
+  _signals_only_capabilities_compiles,
+  _channels_rejects_unknown_channel,
+  _pricing_models_rejects_unknown_model,
   _adcp_error_minimum,
   _adcp_error_full_fields,
   _adcp_error_accepts_unknown_code,
