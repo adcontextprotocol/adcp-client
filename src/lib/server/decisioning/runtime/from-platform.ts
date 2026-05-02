@@ -3458,23 +3458,33 @@ function buildAccountHandlers<P extends DecisioningPlatform<any, any>>(
   const handlers: AccountHandlers<Account> = {};
 
   if (accounts.upsert) {
-    handlers.syncAccounts = async (params, _ctx) => {
+    handlers.syncAccounts = async (params, ctx) => {
       const refs = (params.accounts ?? []) as AccountReference[];
+      const resolveCtx = {
+        ...(ctx.authInfo !== undefined && { authInfo: ctx.authInfo }),
+        ...(ctx.agent != null && { agent: ctx.agent }),
+        toolName: 'sync_accounts',
+      };
       return projectSync(
-        () => accounts.upsert!(refs),
+        () => accounts.upsert!(refs, resolveCtx),
         rows => ({ accounts: rows.map(toWireSyncAccountRow) })
       );
     };
   }
 
   if (accounts.list) {
-    handlers.listAccounts = async (params, _ctx) => {
+    handlers.listAccounts = async (params, ctx) => {
       const filter = params as Parameters<NonNullable<typeof accounts.list>>[0];
+      const resolveCtx = {
+        ...(ctx.authInfo !== undefined && { authInfo: ctx.authInfo }),
+        ...(ctx.agent != null && { agent: ctx.agent }),
+        toolName: 'list_accounts',
+      };
       // Wrap in projectSync so adopter `throw new AdcpError('PERMISSION_DENIED', ...)`
       // from the list impl projects to the structured wire envelope rather
       // than falling through to the framework's `SERVICE_UNAVAILABLE` mapping.
       return projectSync(
-        () => accounts.list!(filter),
+        () => accounts.list!(filter, resolveCtx),
         page => ({
           accounts: page.items.map(toWireAccount),
           ...(page.nextCursor != null && { next_cursor: page.nextCursor }),
@@ -3487,7 +3497,8 @@ function buildAccountHandlers<P extends DecisioningPlatform<any, any>>(
     handlers.reportUsage = async (params, ctx) => {
       const resolveCtx = {
         ...(ctx.authInfo !== undefined && { authInfo: ctx.authInfo }),
-        toolName: 'report_usage' as const,
+        ...(ctx.agent != null && { agent: ctx.agent }),
+        toolName: 'report_usage',
       };
       return projectSync(
         () => accounts.reportUsage!(params, resolveCtx),
@@ -3504,7 +3515,8 @@ function buildAccountHandlers<P extends DecisioningPlatform<any, any>>(
       // having to re-resolve from `params.account`.
       const resolveCtx = {
         ...(ctx.authInfo !== undefined && { authInfo: ctx.authInfo }),
-        toolName: 'get_account_financials' as const,
+        ...(ctx.agent != null && { agent: ctx.agent }),
+        toolName: 'get_account_financials',
       };
       const resolved = await accounts.resolve(params.account, resolveCtx);
       if (!resolved) {

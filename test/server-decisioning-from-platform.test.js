@@ -1521,6 +1521,69 @@ describe('Custom-handler merge seam (incremental migration)', () => {
     assert.ok(sawCall, 'opts.accounts.listAccounts MUST run when platform.accounts.list is undefined');
   });
 
+  it('accounts.upsert receives authInfo and toolName via ctx (#1310)', async () => {
+    let receivedCtx;
+    const platform = buildPlatform({
+      accounts: {
+        resolve: async ref => ({ id: ref?.account_id ?? 'acc_1', metadata: {}, authInfo: { kind: 'api_key' } }),
+        upsert: async (refs, ctx) => {
+          receivedCtx = ctx;
+          return [];
+        },
+      },
+    });
+    const server = createAdcpServerFromPlatform(platform, {
+      name: 'ctx-fwd',
+      version: '0.0.1',
+      validation: { requests: 'off', responses: 'off' },
+    });
+    await server.dispatchTestRequest(
+      {
+        method: 'tools/call',
+        params: {
+          name: 'sync_accounts',
+          arguments: {
+            account: { account_id: 'acc_1' },
+            accounts: [{ brand: { domain: 'acme.com' }, operator: 'acme.com' }],
+            idempotency_key: '22222222-2222-2222-2222-222222222222',
+          },
+        },
+      },
+      { authInfo: { clientId: 'buyer_abc', token: 'tok_xyz' } }
+    );
+    assert.ok(receivedCtx, 'accounts.upsert must receive ctx');
+    assert.strictEqual(receivedCtx.authInfo?.clientId, 'buyer_abc', 'ctx.authInfo.clientId forwarded');
+    assert.strictEqual(receivedCtx.toolName, 'sync_accounts', 'ctx.toolName is sync_accounts');
+  });
+
+  it('accounts.list receives authInfo and toolName via ctx (#1310)', async () => {
+    let receivedCtx;
+    const platform = buildPlatform({
+      accounts: {
+        resolve: async ref => ({ id: ref?.account_id ?? 'acc_1', metadata: {}, authInfo: { kind: 'api_key' } }),
+        list: async (filter, ctx) => {
+          receivedCtx = ctx;
+          return { items: [], nextCursor: null };
+        },
+      },
+    });
+    const server = createAdcpServerFromPlatform(platform, {
+      name: 'ctx-fwd',
+      version: '0.0.1',
+      validation: { requests: 'off', responses: 'off' },
+    });
+    await server.dispatchTestRequest(
+      {
+        method: 'tools/call',
+        params: { name: 'list_accounts', arguments: { account: { account_id: 'acc_1' } } },
+      },
+      { authInfo: { clientId: 'buyer_abc', token: 'tok_xyz' } }
+    );
+    assert.ok(receivedCtx, 'accounts.list must receive ctx');
+    assert.strictEqual(receivedCtx.authInfo?.clientId, 'buyer_abc', 'ctx.authInfo.clientId forwarded');
+    assert.strictEqual(receivedCtx.toolName, 'list_accounts', 'ctx.toolName is list_accounts');
+  });
+
   it('platform-derived handler wins when both define the same key', async () => {
     const platform = buildPlatform({
       sales: {
