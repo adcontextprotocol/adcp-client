@@ -463,13 +463,11 @@ export function toWireAccount<TCtxMeta>(account: Account<TCtxMeta>): WireAccount
   if (account.account_scope !== undefined) wire.account_scope = account.account_scope;
   if (account.governance_agents !== undefined) wire.governance_agents = account.governance_agents;
 
-  if (process.env.NODE_ENV !== 'production') {
-    // Safety net: catches future refactors that assign billing_entity directly
-    // without stripping bank. Dead code under the current destructure, but
-    // protects against someone switching to a shallower copy.
-    if (wire.billing_entity !== undefined && 'bank' in wire.billing_entity) {
-      throw new Error('toWireAccount: billing_entity.bank present after strip — invariant violated');
-    }
+  // Always check — a bank-data leak in production is worse than a 500.
+  // Dead code under the current destructure, but protects against a future
+  // refactor that copies billing_entity without stripping bank.
+  if (wire.billing_entity !== undefined && 'bank' in wire.billing_entity) {
+    throw new Error('toWireAccount: billing_entity.bank present after strip — invariant violated');
   }
   return wire;
 }

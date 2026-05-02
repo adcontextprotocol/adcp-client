@@ -41,8 +41,8 @@ describe('toWireAccount — v3 field projection', () => {
         vat_id: 'DE123456789',
         bank: {
           account_holder: 'Acme Legal GmbH',
-          iban: 'DE89370400440532013000',
-          bic: 'COBADEFFXXX',
+          iban: 'XX00000000000000000000',
+          bic: 'TESTBIC0XXX',
         },
       },
     });

@@ -3361,7 +3361,16 @@ function buildAccountHandlers<P extends DecisioningPlatform<any, any>>(
       const refs = (params.accounts ?? []) as AccountReference[];
       return projectSync(
         () => accounts.upsert!(refs),
-        rows => ({ accounts: rows })
+        rows => ({
+          accounts: rows.map(row => {
+            // billing_entity.bank is write-only per spec — strip it defensively
+            // so an adopter who echoes the inbound request back can't leak it.
+            const be = (row as { billing_entity?: Record<string, unknown> }).billing_entity;
+            if (!be) return row;
+            const { bank: _bank, ...restBe } = be;
+            return { ...row, billing_entity: restBe } as unknown as typeof row;
+          }),
+        })
       );
     };
   }
