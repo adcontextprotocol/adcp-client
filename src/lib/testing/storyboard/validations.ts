@@ -22,8 +22,11 @@ import type {
   StoryboardContext,
   StoryboardValidation,
   StrictValidationVerdict,
+  UpstreamTrafficPayloadMatch,
   ValidationResult,
 } from './types';
+import type { RecordedCall, UpstreamTrafficSuccess } from '../test-controller';
+import { isJsonContentType } from '../test-controller';
 import { resolvePath, resolvePathAll, toJsonPointer } from './path';
 import { detectShapeDriftHints } from './shape-drift-hints';
 import { PROBE_TASK_ALLOWLIST } from './test-kit';
@@ -81,6 +84,68 @@ export interface ValidationContext {
    * against.
    */
   priorA2aStepId?: string;
+  /**
+   * Pre-fetched data for `upstream_traffic` validations. Populated by the
+   * runner before validations fire so the dispatcher stays synchronous.
+   * Keyed by `since_timestamp` so the runner can de-dupe identical
+   * windows across multiple validations on the same step. Absent when
+   * the step has no `upstream_traffic` validations. The `advertised`
+   * field is the controller's `list_scenarios` capability flag — when
+   * false, every `upstream_traffic` validation grades not_applicable.
+   * Per runner-output-contract.yaml v2.0.0, the missing-controller path
+   * is opt-in by adopter, not a conformance failure.
+   */
+  upstreamTraffic?: UpstreamTrafficValidationContext;
+  /**
+   * Storyboard step (raw YAML) — used by `upstream_traffic` to scan
+   * `sample_request` for buyer-identifier vectors when
+   * `buyer_identifier_echo: true` is asserted.
+   */
+  storyboardStep?: { sample_request?: Record<string, unknown> };
+}
+
+/**
+ * Pre-fetched controller traffic data the runner stashes on the validation
+ * context so the synchronous dispatcher can grade `upstream_traffic`
+ * checks without making controller calls itself.
+ */
+export interface UpstreamTrafficValidationContext {
+  /** Whether the controller advertises `query_upstream_traffic` in `list_scenarios`. */
+  advertised: boolean;
+  /**
+   * Pre-fetched controller responses keyed by ISO `since_timestamp`. Each
+   * entry carries the request the runner issued, the response observed,
+   * and the parsed payload (or an error string when the call failed).
+   */
+  queries: Map<string, UpstreamTrafficQueryResult>;
+  /**
+   * The ISO timestamp the runner used as the default `since_timestamp`
+   * for THIS step (the step's own request start). Validations that don't
+   * declare `since: prior_step_id` use this key into `queries`.
+   */
+  thisStepSince: string;
+  /**
+   * Resolved ISO timestamps for `since: prior_step_id` references. The
+   * runner pre-resolves these so the validation can index `queries` by
+   * the same timestamp. Absent when the validation has no `since:`
+   * declaration or the named prior step did not record a timestamp.
+   */
+  priorStepSinceMap?: Map<string, string>;
+  /**
+   * `since:` step IDs declared by storyboard validations that did not
+   * resolve to any recorded prior step. Surfaced as a typed failure on
+   * the validation result rather than silently widened to the current
+   * step's window — a misspelled reference would otherwise pass vacuously
+   * (the contract treats unresolved references as authoring bugs).
+   */
+  unresolvedSinceRefs?: Set<string>;
+}
+
+export interface UpstreamTrafficQueryResult {
+  request: RunnerRequestRecord;
+  response: RunnerResponseRecord;
+  /** Successful payload from the controller, or an error placeholder when the call failed. */
+  payload: UpstreamTrafficSuccess | { error: string };
 }
 
 /**
@@ -155,12 +220,24 @@ function runValidation(validation: StoryboardValidation, ctx: ValidationContext)
       return validateFieldLessThan(validation, ctx);
     case 'field_equals_context':
       return validateFieldEqualsContext(validation, ctx);
+    case 'upstream_traffic':
+      return validateUpstreamTraffic(validation, ctx);
     default:
+      // Forward-compat default per runner-output-contract.yaml v2.0.0:
+      // when the runner does not implement an authored check kind (e.g. a
+      // storyboard declares a check added in a later spec minor version),
+      // grade `not_applicable` rather than failing the step. Additive
+      // check-type extensions are explicitly part of the spec evolution
+      // model — failing on unknown values would brick older runners every
+      // time the spec adds a check.
       return {
         check: validation.check,
-        passed: false,
+        passed: true,
+        not_applicable: true,
         description: validation.description,
-        error: `Unknown validation check: ${validation.check}`,
+        note:
+          `runner does not implement check type '${validation.check}' — ` +
+          `graded as not_applicable to preserve forward compatibility`,
         json_pointer: null,
       };
   }
@@ -2098,6 +2175,443 @@ function validateFieldEqualsContext(validation: StoryboardValidation, ctx: Valid
     expected,
     actual: actual ?? null,
   };
+}
+
+// ────────────────────────────────────────────────────────────
+// upstream_traffic — anti-façade side-effect assertion
+// ────────────────────────────────────────────────────────────
+
+/**
+ * Authored check that asserts side-effects against the adopter's
+ * `comply_test_controller`'s `query_upstream_traffic` scenario.
+ *
+ * Adopters who do not advertise `query_upstream_traffic` in
+ * `list_scenarios` opt out — every `upstream_traffic` validation grades
+ * `not_applicable`. Adopters who advertise it but return zero recorded
+ * calls in the assertion window grade `failed` (the façade signal).
+ *
+ * The runner pre-fetches the controller's response per
+ * `since_timestamp` window and stashes it on `ctx.upstreamTraffic` so
+ * this synchronous dispatcher can grade without itself making controller
+ * calls. Per runner-output-contract.yaml v2.0.0, `request` / `response`
+ * on the validation_result point to the CONTROLLER call, not the
+ * storyboard step's AdCP request.
+ */
+function validateUpstreamTraffic(validation: StoryboardValidation, ctx: ValidationContext): ValidationResult {
+  const expected = buildUpstreamTrafficExpected(validation);
+  const upstream = ctx.upstreamTraffic;
+  // Adopter opted out (or controller wasn't detected): grade not_applicable.
+  // missing_test_controller controller-side, not failed — opt-in by adopter
+  // capability per the spec.
+  if (!upstream || !upstream.advertised) {
+    return {
+      check: 'upstream_traffic',
+      passed: true,
+      not_applicable: true,
+      description: validation.description,
+      note: 'adopter did not advertise query_upstream_traffic in list_scenarios — graded as not_applicable',
+      json_pointer: null,
+      expected,
+      actual: null,
+      schema_id: null,
+      schema_url: null,
+    };
+  }
+
+  // A `since: prior_step_id` reference that didn't resolve to any recorded
+  // prior step is a storyboard authoring bug — fail loudly rather than
+  // silently widen to this step's window (which would let misspelled refs
+  // pass vacuously).
+  if (validation.since && upstream.unresolvedSinceRefs?.has(validation.since)) {
+    return {
+      check: 'upstream_traffic',
+      passed: false,
+      description: validation.description,
+      error: `since: "${validation.since}" did not resolve to any prior step's recorded request timestamp.`,
+      json_pointer: null,
+      expected,
+      actual: null,
+      schema_id: null,
+      schema_url: null,
+    };
+  }
+
+  const sinceKey = upstream.priorStepSinceMap?.get(validation.since ?? '') ?? upstream.thisStepSince;
+  const query = upstream.queries.get(sinceKey);
+  if (!query) {
+    return {
+      check: 'upstream_traffic',
+      passed: false,
+      description: validation.description,
+      error: `Runner did not pre-fetch query_upstream_traffic for since_timestamp=${sinceKey}.`,
+      json_pointer: null,
+      expected,
+      actual: null,
+      schema_id: null,
+      schema_url: null,
+    };
+  }
+
+  // Controller call itself errored (transport or controller-side fault).
+  // Surface the error rather than treating an empty result as "no traffic".
+  // Truncate the agent-controlled error string to match the runner's
+  // `MAX_ERROR_LENGTH` posture on every other validation_result.error.
+  if (!('success' in query.payload) || query.payload.success !== true) {
+    const errMsg = 'error' in query.payload ? query.payload.error : 'controller returned a non-success response';
+    return {
+      check: 'upstream_traffic',
+      passed: false,
+      description: validation.description,
+      error: truncateValidationError(`query_upstream_traffic failed: ${errMsg}`),
+      json_pointer: null,
+      expected,
+      actual: { matched_count: 0, total_calls: 0, missing_payload_paths: [], missing_identifier_values: [] },
+      schema_id: null,
+      schema_url: null,
+      request: query.request,
+      response: query.response,
+    };
+  }
+
+  const all = query.payload.recorded_calls ?? [];
+  const totalCalls = all.length;
+  const matched = filterByEndpointPattern(all, validation.endpoint_pattern);
+  const matchedCount = matched.length;
+  const minCount = validation.min_count ?? 1;
+
+  // payload_must_contain results bucket two ways: paths that no matched
+  // call satisfied (failure), and paths whose only matched calls were
+  // non-JSON for an `equals` / `contains_any` assertion (`not_applicable`).
+  // Per spec, the assertion grades `not_applicable` only when *every*
+  // path-based check downgraded that way; mixed payload+content_type
+  // results still fail the validation if any required path is missing.
+  const missingPayloadPaths: string[] = [];
+  const notApplicablePaths: string[] = [];
+  if (validation.payload_must_contain && validation.payload_must_contain.length > 0) {
+    for (const spec of validation.payload_must_contain) {
+      const result = anyMatchedCallSatisfies(matched, spec);
+      if (result.satisfied) continue;
+      if (result.not_applicable) {
+        notApplicablePaths.push(spec.path);
+      } else {
+        missingPayloadPaths.push(spec.path);
+      }
+    }
+  }
+
+  // identifier_paths: extract every value at each declared path against the
+  // storyboard's sample_request (author-controlled vectors), then assert each
+  // resolved value appears at any depth in some matched call's payload. Spec
+  // is explicit: ALL resolved values must be present — single-placeholder
+  // fabrication is the threat. Replaces the earlier `buyer_identifier_echo`
+  // boolean shorthand per spec PR adcp#3816.
+  const missingIdentifierValues: unknown[] = [];
+  if (validation.identifier_paths && validation.identifier_paths.length > 0) {
+    const sample = ctx.storyboardStep?.sample_request;
+    for (const path of validation.identifier_paths) {
+      const vectors = sample !== undefined ? resolveJsonPathLite(sample, path) : [];
+      for (const vector of vectors) {
+        if (vector === undefined || vector === null) continue;
+        if (!anyMatchedCallEchoesValue(matched, vector)) {
+          missingIdentifierValues.push(vector);
+        }
+      }
+    }
+  }
+
+  const countOk = matchedCount >= minCount;
+  const payloadOk = missingPayloadPaths.length === 0;
+  const echoOk = missingIdentifierValues.length === 0;
+  const passed = countOk && payloadOk && echoOk;
+
+  // Per spec: a payload_must_contain assertion whose ONLY checks were
+  // path-based against non-JSON content_types grades not_applicable. When
+  // EVERY declared path landed in that bucket (and count + echo also
+  // passed), the whole validation grades not_applicable rather than passed.
+  const allPathsNotApplicable =
+    (validation.payload_must_contain?.length ?? 0) > 0 &&
+    notApplicablePaths.length === (validation.payload_must_contain?.length ?? 0) &&
+    missingPayloadPaths.length === 0;
+  const not_applicable = passed && allPathsNotApplicable && countOk && echoOk;
+
+  const actual = {
+    matched_count: matchedCount,
+    total_calls: totalCalls,
+    missing_payload_paths: missingPayloadPaths,
+    missing_identifier_values: missingIdentifierValues,
+  };
+
+  // RFC 6901 pointer: when one specific call's payload failed
+  // payload_must_contain, point at that call's payload; null when the
+  // failure is a count mismatch or no specific call is implicated.
+  let jsonPointer: string | null = null;
+  if (!payloadOk && matched.length > 0) {
+    const idx = all.indexOf(matched[0]!);
+    if (idx >= 0) jsonPointer = `/recorded_calls/${idx}/payload`;
+  }
+
+  if (passed) {
+    return {
+      check: 'upstream_traffic',
+      passed: true,
+      ...(not_applicable && { not_applicable: true }),
+      ...(not_applicable && {
+        note: `payload_must_contain paths only matched non-JSON content_types — graded not_applicable`,
+      }),
+      description: validation.description,
+      json_pointer: null,
+      expected,
+      actual,
+      schema_id: null,
+      schema_url: null,
+    };
+  }
+
+  const errParts: string[] = [];
+  if (!countOk) errParts.push(`expected at least ${minCount} matching call(s); observed ${matchedCount}`);
+  if (!payloadOk) errParts.push(`missing payload paths: ${missingPayloadPaths.join(', ')}`);
+  if (!echoOk)
+    errParts.push(`identifier values not echoed: ${missingIdentifierValues.map(v => JSON.stringify(v)).join(', ')}`);
+
+  return {
+    check: 'upstream_traffic',
+    passed: false,
+    description: validation.description,
+    error: errParts.join('; '),
+    json_pointer: jsonPointer,
+    expected,
+    actual,
+    schema_id: null,
+    schema_url: null,
+    request: query.request,
+    response: query.response,
+  };
+}
+
+/**
+ * Cap on agent / controller-controlled error strings inlined into a
+ * `validation_result.error` field. Mirrors the runner's `MAX_ERROR_LENGTH`
+ * posture so a hostile or buggy controller can't bloat the compliance
+ * report (or LLM context window) by returning a megabyte error message.
+ */
+const VALIDATION_ERROR_MAX_LENGTH = 2000;
+
+function truncateValidationError(s: string): string {
+  return s.length > VALIDATION_ERROR_MAX_LENGTH ? s.slice(0, VALIDATION_ERROR_MAX_LENGTH) + '...[truncated]' : s;
+}
+
+function buildUpstreamTrafficExpected(validation: StoryboardValidation): Record<string, unknown> {
+  const expected: Record<string, unknown> = {};
+  if (validation.min_count !== undefined) expected.min_count = validation.min_count;
+  else expected.min_count = 1;
+  if (validation.endpoint_pattern !== undefined) expected.endpoint_pattern = validation.endpoint_pattern;
+  if (validation.payload_must_contain !== undefined) expected.payload_must_contain = validation.payload_must_contain;
+  if (validation.identifier_paths !== undefined) expected.identifier_paths = validation.identifier_paths;
+  return expected;
+}
+
+/**
+ * Filter `recorded_calls` by an `endpoint_pattern` glob. The pattern is
+ * matched against `recorded_calls[].endpoint` (`<METHOD> <URL>`). `*`
+ * expands to any-character-run; other regex metacharacters are escaped
+ * literally. Returns the input unchanged when no pattern is set.
+ */
+function filterByEndpointPattern(calls: RecordedCall[], pattern: string | undefined): RecordedCall[] {
+  if (!pattern) return calls;
+  const re = globToRegExp(pattern);
+  return calls.filter(c => re.test(c.endpoint));
+}
+
+function globToRegExp(pattern: string): RegExp {
+  // Escape every regex metacharacter (including `?` so it doesn't slip
+  // through as a 0-or-1 quantifier), then map `*` to `.*` as the only
+  // intended wildcard.
+  const escaped = pattern.replace(/[.+?^${}()|[\]\\]/g, '\\$&').replace(/\*/g, '.*');
+  return new RegExp(`^${escaped}$`);
+}
+
+/**
+ * Returns whether at least one matched call's payload satisfies the
+ * `payload_must_contain` predicate, plus a flag indicating the assertion
+ * graded `not_applicable` (every matched call was non-JSON and the spec
+ * required JSONPath path-based matching). Per spec PR adcp#3816:
+ *   - JSONPath path-based matching is valid ONLY when `content_type` is
+ *     `application/json` or `*+json`.
+ *   - Non-JSON calls + `match: present`: substring fallback. The terminal
+ *     identifier segment of the path is the substring searched against the
+ *     raw payload string (e.g. `users[*].hashed_email` → `hashed_email`).
+ *   - Non-JSON calls + `match: equals` / `contains_any`: skipped (cannot
+ *     resolve a path-based equality without a structured payload).
+ *
+ * Path syntax is dotted-with-`[*]` only; RFC 9535 descendant operator
+ * (`$..foo`) is explicitly NOT supported per the storyboard-schema patch.
+ */
+function anyMatchedCallSatisfies(
+  calls: RecordedCall[],
+  spec: UpstreamTrafficPayloadMatch
+): { satisfied: boolean; not_applicable: boolean } {
+  let sawApplicableCall = false;
+  for (const call of calls) {
+    const isJson = isJsonContentType(call.content_type);
+    if (spec.match === 'present') {
+      // present is applicable to every call — JSON via path, non-JSON via
+      // substring fallback. Either way, the assertion can be graded.
+      sawApplicableCall = true;
+      if (isJson) {
+        const candidates = resolveJsonPathLite(call.payload, spec.path);
+        if (candidates.length > 0) return { satisfied: true, not_applicable: false };
+      } else {
+        const raw = typeof call.payload === 'string' ? call.payload : JSON.stringify(call.payload);
+        const needle = terminalPathKey(spec.path);
+        if (needle && raw.includes(needle)) return { satisfied: true, not_applicable: false };
+      }
+    } else {
+      // equals / contains_any require JSON — non-JSON calls don't contribute.
+      if (!isJson) continue;
+      sawApplicableCall = true;
+      const candidates = resolveJsonPathLite(call.payload, spec.path);
+      if (candidates.length === 0) continue;
+      if (spec.match === 'equals') {
+        if (candidates.some(v => deepEqual(v, spec.value))) return { satisfied: true, not_applicable: false };
+      } else if (spec.match === 'contains_any') {
+        const allowed = spec.allowed_values ?? [];
+        if (candidates.some(v => allowed.some(a => deepEqual(v, a)))) return { satisfied: true, not_applicable: false };
+      }
+    }
+  }
+  return { satisfied: false, not_applicable: !sawApplicableCall };
+}
+
+/**
+ * Extract the terminal identifier-shaped segment of a dotted-with-`[*]`
+ * path. Used as the substring-fallback needle when a non-JSON payload is
+ * graded against `match: present`. Returns null if the path has no
+ * alpha-leading terminal token.
+ */
+function terminalPathKey(path: string): string | null {
+  const tokens = path.split(/[.\[\]]/).filter(Boolean);
+  for (let i = tokens.length - 1; i >= 0; i--) {
+    const t = tokens[i]!;
+    if (/^[A-Za-z_][A-Za-z0-9_]*$/.test(t)) return t;
+  }
+  return null;
+}
+
+/**
+ * JSONPath-lite resolver — dotted-with-`[*]` form only, per spec PR
+ * adcp#3816's pin to `parsePathWithWildcards` semantics. RFC 9535
+ * descendant operator (`$..foo`) is explicitly NOT supported. A leading
+ * `$.` / `$` prefix is tolerated and stripped; the canonical form authors
+ * are encouraged to write is the bare positional path.
+ */
+function resolveJsonPathLite(root: unknown, path: string): unknown[] {
+  if (!path) return [];
+  let p = path;
+  if (p.startsWith('$.')) p = p.slice(2);
+  else if (p.startsWith('$')) p = p.slice(1);
+  if (p.startsWith('.')) p = p.slice(1);
+  return walkLitePath(root, p);
+}
+
+/**
+ * Cap on the number of terminal values JSONPath-lite emission can produce
+ * across all wildcard fan-out, defending the runner against a hostile
+ * `recorded_calls[].payload` shaped to maximize fan-out. Mirrors the
+ * existing `RESOLVE_PATH_ALL_MAX` cap in path.ts.
+ */
+const JSONPATH_LITE_MAX_RESULTS = 10_000;
+
+function walkLitePath(root: unknown, path: string): unknown[] {
+  if (path === '') return root === undefined ? [] : [root];
+  // Split on `.` but keep `[*]` and `[N]` attached to their keys.
+  const tokens = path.split(/(?=\.)|(?<=\])/g).filter(Boolean);
+  let frontier: unknown[] = [root];
+  for (const rawToken of tokens) {
+    const token = rawToken.startsWith('.') ? rawToken.slice(1) : rawToken;
+    const next: unknown[] = [];
+    for (const cur of frontier) {
+      if (next.length >= JSONPATH_LITE_MAX_RESULTS) break;
+      if (cur === undefined || cur === null) continue;
+      if (token === '[*]') {
+        if (Array.isArray(cur)) next.push(...cur);
+      } else if (/^\[\d+\]$/.test(token)) {
+        const idx = parseInt(token.slice(1, -1), 10);
+        if (Array.isArray(cur)) next.push(cur[idx]);
+      } else if (token.includes('[*]')) {
+        const [key, ...rest] = token.split('[*]');
+        const keyVal = key && typeof cur === 'object' && cur !== null ? (cur as Record<string, unknown>)[key] : cur;
+        if (Array.isArray(keyVal)) {
+          const tail = rest.join('[*]');
+          if (tail === '') next.push(...keyVal);
+          else next.push(...keyVal.flatMap(v => walkLitePath(v, tail)));
+        }
+      } else if (typeof cur === 'object' && cur !== null) {
+        next.push((cur as Record<string, unknown>)[token]);
+      }
+    }
+    frontier = next.slice(0, JSONPATH_LITE_MAX_RESULTS).filter(v => v !== undefined);
+  }
+  return frontier;
+}
+
+/**
+ * Depth cap for any-depth value containment check. Defends the runner
+ * against a hostile `recorded_calls[].payload` shaped as a 100k-deep
+ * nested object that would blow the recursion stack.
+ */
+const CONTAINS_VALUE_MAX_DEPTH = 256;
+
+function anyMatchedCallEchoesValue(calls: RecordedCall[], value: unknown): boolean {
+  for (const call of calls) {
+    // Non-JSON payloads land as raw strings — substring-match the
+    // stringified vector. Defensible best-effort downgrade per the spec's
+    // non-JSON fallback note.
+    if (typeof call.payload === 'string') {
+      if (typeof value === 'string' && call.payload.includes(value)) return true;
+      continue;
+    }
+    if (containsValueAnyDepth(call.payload, value, 0)) return true;
+  }
+  return false;
+}
+
+function containsValueAnyDepth(root: unknown, target: unknown, depth: number): boolean {
+  if (depth > CONTAINS_VALUE_MAX_DEPTH) return false;
+  if (deepEqual(root, target)) return true;
+  if (Array.isArray(root)) {
+    for (const item of root) if (containsValueAnyDepth(item, target, depth + 1)) return true;
+    return false;
+  }
+  if (root !== null && typeof root === 'object') {
+    for (const v of Object.values(root as Record<string, unknown>)) {
+      if (containsValueAnyDepth(v, target, depth + 1)) return true;
+    }
+  }
+  return false;
+}
+
+function deepEqual(a: unknown, b: unknown): boolean {
+  if (a === b) return true;
+  if (a === null || b === null || typeof a !== typeof b) return false;
+  if (typeof a !== 'object') return false;
+  if (Array.isArray(a)) {
+    if (!Array.isArray(b) || a.length !== (b as unknown[]).length) return false;
+    for (let i = 0; i < a.length; i++) {
+      if (!deepEqual(a[i], (b as unknown[])[i])) return false;
+    }
+    return true;
+  }
+  if (Array.isArray(b)) return false;
+  const ao = a as Record<string, unknown>;
+  const bo = b as Record<string, unknown>;
+  const ak = Object.keys(ao);
+  const bk = Object.keys(bo);
+  if (ak.length !== bk.length) return false;
+  for (const k of ak) {
+    if (!Object.prototype.hasOwnProperty.call(bo, k)) return false;
+    if (!deepEqual(ao[k], bo[k])) return false;
+  }
+  return true;
 }
 
 // resolvePath re-exported from ./path for backwards compat

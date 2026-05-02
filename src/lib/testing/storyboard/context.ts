@@ -472,13 +472,21 @@ function expandMustache(input: string, runnerVars: RunnerVariables): string {
  * Apply explicit context_outputs rules to extract values from response data.
  * Entries with `generate` set are skipped — use `applyContextOutputsWithProvenance`
  * (which accepts a context for alias-cache access) to handle those.
+ *
+ * Per runner-output-contract.yaml v2.0.0, paths that resolve to `undefined`,
+ * `null`, or `""` are equally non-resolvable — capturing null or "" produces
+ * fabricated downstream state. The provenance-aware variant additionally
+ * surfaces the failures on `ContextWriteResult.failures` so the runner can
+ * synthesize a `capture_path_not_resolvable` validation result; this lower-
+ * level form drops them silently and is kept for callers that don't need
+ * the structured failure surface.
  */
 export function applyContextOutputs(data: unknown, outputs: ContextOutput[]): Record<string, unknown> {
   const result: Record<string, unknown> = {};
   for (const output of outputs) {
     if (!output.path) continue;
     const value = resolvePath(data, output.path);
-    if (value !== undefined && value !== null) {
+    if (value !== undefined && value !== null && value !== '') {
       result[output.key] = value;
     }
   }
@@ -496,6 +504,16 @@ export function applyContextOutputs(data: unknown, outputs: ContextOutput[]): Re
 export interface ContextWriteResult {
   values: Record<string, unknown>;
   provenance: Record<string, ContextProvenanceEntry>;
+  /**
+   * `path:` entries whose declared response path did not resolve to a usable
+   * value (absent, `null`, or `""`). Per runner-output-contract.yaml v2.0.0,
+   * the runner synthesizes a `capture_path_not_resolvable` validation result
+   * for each entry — capturing null or "" produces fabricated downstream
+   * state and is as incorrect as a missing path. Generator entries do not
+   * appear here; they cannot fail to resolve. Absent or empty when every
+   * `path:` entry produced a value.
+   */
+  failures?: Array<{ key: string; path: string; resolved: unknown }>;
 }
 
 /**
@@ -542,6 +560,7 @@ export function applyContextOutputsWithProvenance(
 ): ContextWriteResult {
   const values: Record<string, unknown> = {};
   const provenance: Record<string, ContextProvenanceEntry> = {};
+  const failures: Array<{ key: string; path: string; resolved: unknown }> = [];
   for (const output of outputs) {
     if (output.generate !== undefined) {
       // Generator entries require a context — without one the alias cache
@@ -571,7 +590,12 @@ export function applyContextOutputsWithProvenance(
       };
     } else if (output.path) {
       const value = resolvePath(data, output.path);
-      if (value !== undefined && value !== null) {
+      // Per runner-output-contract.yaml v2.0.0 / storyboard-schema.yaml,
+      // null, "", and structurally-absent paths are equally non-resolvable
+      // for capture purposes — capturing null or "" produces fabricated
+      // downstream state and is as incorrect as a missing path.
+      const resolved = value === undefined || value === null || value === '';
+      if (!resolved) {
         values[output.key] = value;
         provenance[output.key] = {
           source_step_id: stepId,
@@ -579,10 +603,16 @@ export function applyContextOutputsWithProvenance(
           response_path: output.path,
           source_task: taskName,
         };
+      } else {
+        failures.push({
+          key: output.key,
+          path: output.path,
+          resolved: value === undefined ? null : value,
+        });
       }
     }
   }
-  return { values, provenance };
+  return { values, provenance, ...(failures.length > 0 ? { failures } : {}) };
 }
 
 // ────────────────────────────────────────────────────────────

@@ -517,7 +517,37 @@ export type StoryboardValidationCheck =
    * `context_key_absent` observation.
    * Added for adcp#2642 cross-step comparison primitives.
    */
-  | 'field_equals_context';
+  | 'field_equals_context'
+  /**
+   * Asserts upstream side-effects against the adopter's
+   * `comply_test_controller`'s `query_upstream_traffic` scenario. The
+   * load-bearing anti-façade contract: a fully-conformant adapter and a
+   * façade returning shape-valid AdCP responses with synthetic data are
+   * indistinguishable on the AdCP wire — only what the adapter caused
+   * upstream tells them apart. Adopters who do not advertise
+   * `query_upstream_traffic` in `list_scenarios` grade the check
+   * `not_applicable`. Adopters who do but return zero recorded calls in
+   * the assertion window grade `failed` (the façade signal). Spec:
+   * runner-output-contract.yaml v2.0.0, storyboard-schema.yaml >
+   * "upstream_traffic".
+   */
+  | 'upstream_traffic';
+
+/**
+ * Path/value match predicate for `upstream_traffic.payload_must_contain`.
+ * Each entry asserts a JSONPath (`$.users[*].hashed_email`) and a match
+ * mode against the recorded call's payload.
+ */
+export interface UpstreamTrafficPayloadMatch {
+  /** JSONPath into recorded_calls[].payload. */
+  path: string;
+  /** Match mode: `present` checks the path resolves; `equals` compares; `contains_any` checks list membership. */
+  match: 'present' | 'equals' | 'contains_any';
+  /** Expected value when `match: equals`. */
+  value?: unknown;
+  /** Allowed values when `match: contains_any`. */
+  allowed_values?: unknown[];
+}
 
 /**
  * Captured A2A wire shape from a `message/send` JSON-RPC response. The
@@ -624,6 +654,44 @@ export interface StoryboardValidation {
    * that was supposed to populate the key may have been legitimately skipped.
    */
   context_key?: string;
+  // ─── upstream_traffic fields ──────────────────────────────
+  /**
+   * Minimum number of recorded calls (matching `endpoint_pattern` if set)
+   * the runner MUST observe in the assertion window. Default 1. Use 0 only
+   * for negative assertions ("step MUST NOT cause upstream traffic").
+   * Spec: storyboard-schema.yaml > "upstream_traffic".
+   */
+  min_count?: number;
+  /**
+   * Glob/path pattern matched against `recorded_calls[].endpoint`
+   * (`<METHOD> <URL>`). Examples: `POST <star>/audience/upload`,
+   * `POST <star>` (where `<star>` is a literal asterisk). When omitted,
+   * every recorded call in the window matches.
+   */
+  endpoint_pattern?: string;
+  /**
+   * Each entry asserts a path/value pair that MUST appear in at least one
+   * matching call's payload. See `UpstreamTrafficPayloadMatch`.
+   */
+  payload_must_contain?: UpstreamTrafficPayloadMatch[];
+  /**
+   * Paths into the storyboard's `sample_request` that name the load-bearing
+   * identifiers the adapter MUST forward upstream. The runner extracts the
+   * values at these paths and asserts each resolved value appears in at
+   * least one matching `recorded_call`'s payload at any depth. Each path
+   * MAY resolve to a single value or an array; ALL resolved values MUST be
+   * present in the recorded payload — single-placeholder fabrication is
+   * the threat model. Path syntax: same dotted-with-`[*]` form as
+   * `payload_must_contain.path`. Per spec PR adcontextprotocol/adcp#3816,
+   * replaces the earlier `buyer_identifier_echo: boolean` shorthand.
+   */
+  identifier_paths?: string[];
+  /**
+   * Bound the lookup window to traffic recorded since this step's request
+   * timestamp (default) or since the request timestamp of `prior_step_id`
+   * for cumulative-effect assertions.
+   */
+  since?: string;
 }
 
 // ────────────────────────────────────────────────────────────
@@ -1086,6 +1154,22 @@ export interface ValidationResult {
   response?: RunnerResponseRecord;
   /** Optional remediation hint. */
   remediation?: string;
+  /**
+   * Forward-compat marker: set when the runner did not implement the
+   * authored check kind and graded it as `not_applicable` (passed: true)
+   * to preserve forward compatibility with future spec additions. The
+   * companion `note` describes the coverage gap. Per
+   * runner-output-contract.yaml v2.0.0 these contribute to the run
+   * summary's `validations_not_applicable` counter so consumers can
+   * distinguish "runner is older than the storyboard" from clean passes.
+   */
+  not_applicable?: boolean;
+  /**
+   * Human-readable note attached to a passing-but-not-applicable result
+   * (forward-compat path) or other informational annotations. Distinct
+   * from `warning` which signals a soft issue on a successful check.
+   */
+  note?: string;
   /**
    * Non-fatal notes emitted by the check — e.g. `refs_resolve` records the
    * out-of-scope refs it skipped when `on_out_of_scope: warn`. Present only
@@ -1565,6 +1649,13 @@ export interface StoryboardResult {
   passed_count: number;
   failed_count: number;
   skipped_count: number;
+  /**
+   * Validation results graded `not_applicable` because the runner did not
+   * implement the authored `check` kind (forward-compat default). Surfaces
+   * "runner is older than the storyboard" as a distinct signal from clean
+   * passes. Per runner-output-contract.yaml v2.0.0 run_summary.
+   */
+  validations_not_applicable?: number;
   tested_at: string;
   /**
    * Schemas applied during this run. Per the runner-output contract, runners
@@ -1688,5 +1779,7 @@ export interface StoryboardPassResult {
   passed_count: number;
   failed_count: number;
   skipped_count: number;
+  /** Validations graded `not_applicable` (forward-compat default). */
+  validations_not_applicable?: number;
   duration_ms: number;
 }

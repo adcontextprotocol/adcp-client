@@ -49,6 +49,7 @@ export type {
   AssertionResult,
   StrictValidationSummary,
   StrictValidationVerdict,
+  UpstreamTrafficPayloadMatch,
 } from './types';
 export { WEBHOOK_IDEMPOTENCY_KEY_PATTERN } from './types';
 

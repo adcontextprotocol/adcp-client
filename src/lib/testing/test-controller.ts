@@ -23,7 +23,15 @@ export type ControllerScenario =
   | 'force_media_buy_status'
   | 'force_session_status'
   | 'simulate_delivery'
-  | 'simulate_budget_spend';
+  | 'simulate_budget_spend'
+  /**
+   * Returns outbound HTTP calls the agent has made since session start
+   * (or since a caller-supplied timestamp). Backs the `upstream_traffic`
+   * storyboard validation — adopters who advertise this scenario opt into
+   * the upstream-traffic conformance contract. Spec:
+   * runner-output-contract.yaml v2.0.0, comply-test-controller-request.json.
+   */
+  | 'query_upstream_traffic';
 
 /** What capabilities the seller's test controller exposes */
 export interface ControllerCapabilities {
@@ -198,6 +206,79 @@ export async function simulate(
   }
 
   return result.data as SimulationSuccess | ControllerError;
+}
+
+/**
+ * Single recorded outbound HTTP call returned by `query_upstream_traffic`.
+ * Mirrors `comply-test-controller-response.json > UpstreamTrafficSuccess`.
+ */
+export interface RecordedCall {
+  method: string;
+  endpoint: string;
+  url: string;
+  host?: string;
+  path?: string;
+  /**
+   * Media type of the recorded `payload`, mirroring the agent's outbound
+   * `Content-Type` header. Required by the spec so the runner picks the
+   * right matcher deterministically: `payload_must_contain` JSONPath is
+   * valid only when this is `application/json` or `*+json`. Non-JSON
+   * payloads fall back to substring matching for `match: present` and
+   * grade `not_applicable` for `match: equals` / `match: contains_any`.
+   */
+  content_type: string;
+  /** Decoded JSON object when content_type is JSON-shaped; raw string otherwise. */
+  payload: unknown;
+  timestamp: string;
+  status_code?: number;
+  [key: string]: unknown;
+}
+
+/**
+ * Per spec PR adcontextprotocol/adcp#3816: `payload_must_contain` JSONPath
+ * is valid only when `content_type` is `application/json` or has a `+json`
+ * suffix.
+ */
+export function isJsonContentType(contentType: string | undefined): boolean {
+  if (!contentType) return false;
+  const base = contentType.split(';')[0]?.trim().toLowerCase() ?? '';
+  return base === 'application/json' || /\+json$/.test(base);
+}
+
+export interface UpstreamTrafficSuccess {
+  success: true;
+  recorded_calls: RecordedCall[];
+  total_count: number;
+  truncated?: boolean;
+  since_timestamp?: string;
+}
+
+export interface UpstreamTrafficQueryParams {
+  since_timestamp?: string;
+  endpoint_pattern?: string;
+  limit?: number;
+}
+
+/**
+ * Call the controller's `query_upstream_traffic` scenario. Returns the
+ * typed success branch on success, or a `ControllerError` on transport /
+ * controller-side failure. The runner uses this to back the
+ * `upstream_traffic` storyboard validation.
+ */
+export async function queryUpstreamTraffic(
+  client: TestClient,
+  params: UpstreamTrafficQueryParams,
+  options?: TestOptions
+): Promise<UpstreamTrafficSuccess | ControllerError> {
+  const result = await callController(client, { scenario: 'query_upstream_traffic', params }, options);
+  if (!result.success || !result.data) {
+    return {
+      success: false,
+      error: 'INTERNAL_ERROR',
+      error_detail: result.error || 'query_upstream_traffic call failed',
+    } as ControllerError;
+  }
+  return result.data as UpstreamTrafficSuccess | ControllerError;
 }
 
 /** Type guard: is the response a success? */
