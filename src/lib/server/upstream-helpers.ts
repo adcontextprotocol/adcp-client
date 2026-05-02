@@ -91,17 +91,45 @@ export function createTranslationMap<const M extends Record<string, string>>(
 // ---------------------------------------------------------------------------
 
 /**
+ * Per-request context passed from the handler to the auth resolver.
+ *
+ * Adopters define their own shape — common fields include the AdCP
+ * principal (`principal`), resolved tenant id (`operatorId`), or any
+ * adapter-specific routing key. The SDK does not interpret this; it
+ * simply forwards it to `dynamic_bearer.getToken` so the resolver can
+ * pick the right credential per call.
+ *
+ * @example multi-tenant credential lookup
+ * ```ts
+ * upstream.get('/items', undefined, undefined, {
+ *   authContext: { operatorId: ctx.account.id }
+ * });
+ * ```
+ *
+ * @example pass-through of caller-presented credential
+ * ```ts
+ * upstream.get('/items', undefined, undefined, {
+ *   authContext: { principal: ctx.auth.principal }
+ * });
+ * ```
+ */
+export type AuthContext = Record<string, unknown>;
+
+/**
  * Authentication configuration for the upstream HTTP client.
  *
  * - `static_bearer` — fixed Bearer token injected into every request.
- * - `dynamic_bearer` — async token factory; called per-request, so token
- *   refresh (OAuth client-credentials, etc.) is handled transparently.
+ * - `dynamic_bearer` — async token factory; called per-request. Receives
+ *   the optional `authContext` passed to the method call, so the same
+ *   resolver can return a master key for tenant-fan-out, a
+ *   per-operator key, or pass-through of the caller's principal.
+ *   OAuth client-credentials refresh is handled transparently.
  * - `api_key` — fixed key injected into a named header.
  * - `none` — no authentication header injected.
  */
 export type UpstreamAuth =
   | { kind: 'static_bearer'; token: string }
-  | { kind: 'dynamic_bearer'; getToken: () => Promise<string> }
+  | { kind: 'dynamic_bearer'; getToken: (ctx?: AuthContext) => Promise<string> }
   | { kind: 'api_key'; header: string; key: string }
   | { kind: 'none' };
 
@@ -133,23 +161,47 @@ export interface UpstreamHttpResult<T> {
   body: T | null;
 }
 
+/** Per-call options that don't fit naturally into positional method args. */
+export interface UpstreamCallOptions {
+  /**
+   * Forwarded to `dynamic_bearer.getToken(ctx)` so handlers can pick
+   * the right credential per call. Ignored by other auth kinds.
+   */
+  authContext?: AuthContext;
+}
+
 export interface UpstreamHttpClient {
   get<T>(
     path: string,
     params?: Record<string, string | number | boolean | undefined>,
-    headers?: Record<string, string>
+    headers?: Record<string, string>,
+    options?: UpstreamCallOptions
   ): Promise<UpstreamHttpResult<T>>;
-  post<T>(path: string, body: unknown, headers?: Record<string, string>): Promise<UpstreamHttpResult<T>>;
-  put<T>(path: string, body: unknown, headers?: Record<string, string>): Promise<UpstreamHttpResult<T>>;
-  delete<T>(path: string, headers?: Record<string, string>): Promise<UpstreamHttpResult<T>>;
+  post<T>(
+    path: string,
+    body: unknown,
+    headers?: Record<string, string>,
+    options?: UpstreamCallOptions
+  ): Promise<UpstreamHttpResult<T>>;
+  put<T>(
+    path: string,
+    body: unknown,
+    headers?: Record<string, string>,
+    options?: UpstreamCallOptions
+  ): Promise<UpstreamHttpResult<T>>;
+  delete<T>(
+    path: string,
+    headers?: Record<string, string>,
+    options?: UpstreamCallOptions
+  ): Promise<UpstreamHttpResult<T>>;
 }
 
-async function resolveAuthHeader(auth: UpstreamAuth): Promise<Record<string, string>> {
+async function resolveAuthHeader(auth: UpstreamAuth, ctx?: AuthContext): Promise<Record<string, string>> {
   switch (auth.kind) {
     case 'static_bearer':
       return { Authorization: `Bearer ${auth.token}` };
     case 'dynamic_bearer': {
-      const token = await auth.getToken();
+      const token = await auth.getToken(ctx);
       return { Authorization: `Bearer ${token}` };
     }
     case 'api_key':
@@ -169,9 +221,10 @@ async function doRequest<T>(
     params?: Record<string, string | number | boolean | undefined>;
     body?: unknown;
     headers?: Record<string, string>;
+    authContext?: AuthContext;
   }
 ): Promise<UpstreamHttpResult<T>> {
-  const authHeader = await resolveAuthHeader(auth);
+  const authHeader = await resolveAuthHeader(auth, options.authContext);
   const mergedHeaders: Record<string, string> = {
     ...defaultHeaders,
     ...authHeader,
@@ -233,9 +286,13 @@ async function doRequest<T>(
 export function createUpstreamHttpClient(options: UpstreamHttpClientOptions): UpstreamHttpClient {
   const { baseUrl, auth, defaultHeaders = {} } = options;
   return {
-    get: (path, params, headers) => doRequest(baseUrl, auth, defaultHeaders, 'GET', path, { params, headers }),
-    post: (path, body, headers) => doRequest(baseUrl, auth, defaultHeaders, 'POST', path, { body, headers }),
-    put: (path, body, headers) => doRequest(baseUrl, auth, defaultHeaders, 'PUT', path, { body, headers }),
-    delete: (path, headers) => doRequest(baseUrl, auth, defaultHeaders, 'DELETE', path, { headers }),
+    get: (path, params, headers, opts) =>
+      doRequest(baseUrl, auth, defaultHeaders, 'GET', path, { params, headers, authContext: opts?.authContext }),
+    post: (path, body, headers, opts) =>
+      doRequest(baseUrl, auth, defaultHeaders, 'POST', path, { body, headers, authContext: opts?.authContext }),
+    put: (path, body, headers, opts) =>
+      doRequest(baseUrl, auth, defaultHeaders, 'PUT', path, { body, headers, authContext: opts?.authContext }),
+    delete: (path, headers, opts) =>
+      doRequest(baseUrl, auth, defaultHeaders, 'DELETE', path, { headers, authContext: opts?.authContext }),
   };
 }

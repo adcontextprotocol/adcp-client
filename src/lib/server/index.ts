@@ -380,6 +380,8 @@ export { createTranslationMap, createUpstreamHttpClient } from './upstream-helpe
 export type {
   TranslationMap,
   UpstreamAuth,
+  AuthContext,
+  UpstreamCallOptions,
   UpstreamHttpClientOptions,
   UpstreamHttpClient,
   UpstreamHttpResult,

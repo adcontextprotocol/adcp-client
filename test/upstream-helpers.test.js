@@ -229,4 +229,70 @@ describe('createUpstreamHttpClient', () => {
     await client.get('/items');
     assert.ok(!capturedRequests[0].init.headers['Content-Type']);
   });
+
+  it('dynamic_bearer.getToken receives authContext from per-call options', async () => {
+    mockResponses.push({ status: 200, body: JSON.stringify({}) });
+    let captured;
+    const client = createUpstreamHttpClient({
+      baseUrl: 'https://api.example.com',
+      auth: {
+        kind: 'dynamic_bearer',
+        getToken: async ctx => {
+          captured = ctx;
+          return 'tok_for_acme';
+        },
+      },
+    });
+    await client.get('/items', undefined, undefined, { authContext: { operatorId: 'acme' } });
+    assert.deepEqual(captured, { operatorId: 'acme' });
+    assert.equal(capturedRequests[0].init.headers['Authorization'], 'Bearer tok_for_acme');
+  });
+
+  it('dynamic_bearer.getToken receives undefined ctx when no authContext passed', async () => {
+    mockResponses.push({ status: 200, body: JSON.stringify({}) });
+    let captured = 'sentinel';
+    const client = createUpstreamHttpClient({
+      baseUrl: 'https://api.example.com',
+      auth: {
+        kind: 'dynamic_bearer',
+        getToken: async ctx => {
+          captured = ctx;
+          return 'master_key';
+        },
+      },
+    });
+    await client.get('/items');
+    assert.equal(captured, undefined);
+    assert.equal(capturedRequests[0].init.headers['Authorization'], 'Bearer master_key');
+  });
+
+  it('per-call authContext routes to per-operator credential', async () => {
+    mockResponses.push({ status: 200, body: JSON.stringify({}) });
+    mockResponses.push({ status: 200, body: JSON.stringify({}) });
+    const keys = { acme: 'tok_acme', globex: 'tok_globex' };
+    const client = createUpstreamHttpClient({
+      baseUrl: 'https://api.example.com',
+      auth: {
+        kind: 'dynamic_bearer',
+        getToken: async ctx => keys[ctx?.operatorId] ?? 'master',
+      },
+    });
+    await client.get('/items', undefined, undefined, { authContext: { operatorId: 'acme' } });
+    await client.post('/items', { x: 1 }, undefined, { authContext: { operatorId: 'globex' } });
+    assert.equal(capturedRequests[0].init.headers['Authorization'], 'Bearer tok_acme');
+    assert.equal(capturedRequests[1].init.headers['Authorization'], 'Bearer tok_globex');
+  });
+
+  it('passthrough: authContext.principal becomes the upstream Bearer', async () => {
+    mockResponses.push({ status: 200, body: JSON.stringify({}) });
+    const client = createUpstreamHttpClient({
+      baseUrl: 'https://api.example.com',
+      auth: {
+        kind: 'dynamic_bearer',
+        getToken: async ctx => ctx?.principal ?? 'fallback',
+      },
+    });
+    await client.get('/items', undefined, undefined, { authContext: { principal: 'caller_token_xyz' } });
+    assert.equal(capturedRequests[0].init.headers['Authorization'], 'Bearer caller_token_xyz');
+  });
 });
