@@ -461,26 +461,52 @@ async function runGrader(url: string, storyboardId: string): Promise<{ passed: b
   child.stderr.on('data', c => stderrChunks.push(c));
 
   let timedOut = false;
+  // Wrap in an object so TS doesn't narrow the closure-assigned `let` to
+  // `null` at the read site (control-flow analysis can't see across async
+  // boundaries on `let` reassignment).
+  const spawnFailure: { error: NodeJS.ErrnoException | null } = { error: null };
   const timer = setTimeout(() => {
     timedOut = true;
     child.kill('SIGTERM');
   }, 120_000);
 
-  const exitCode: number | null = await new Promise(resolveFn => {
-    child.on('close', code => resolveFn(code));
+  // Wire `'error'` (spawn-fail: ENOENT, EACCES, …) and `'close'` (normal
+  // exit, after stdio drain) together. Without an `'error'` listener Node
+  // throws on emit; without resolving the awaiter on `'error'`, a failed
+  // spawn could hang the harness. `'close'` always fires after `'error'`
+  // for processes that started, so we settle on whichever comes first.
+  const exitCode: number | null = await new Promise<number | null>(resolveFn => {
+    let settled = false;
+    const settle = (code: number | null): void => {
+      if (settled) return;
+      settled = true;
+      resolveFn(code);
+    };
+    child.on('error', err => {
+      spawnFailure.error = err;
+      settle(null);
+    });
+    child.on('close', code => settle(code));
   });
   clearTimeout(timer);
 
   const stdout = Buffer.concat(stdoutChunks).toString('utf8');
   const stderr = Buffer.concat(stderrChunks).toString('utf8');
-  const raw = stdout + stderr;
+  const raw = stdout + stderr + (spawnFailure.error ? `\n[spawn error] ${spawnFailure.error.message}` : '');
 
-  if (timedOut) {
+  if (spawnFailure.error) {
+    log(`grader: spawn failed — ${spawnFailure.error.code ?? '?'}: ${spawnFailure.error.message}`);
+  } else if (timedOut) {
+    // Reconstruct the direct-invocation command from the actual args array
+    // so this hint can't drift from the spawn call above. The operator's
+    // recovery loop is `--mode build --keep` then `--mode verify` — flagged
+    // here so the hint is actionable without re-reading the file header.
     log(
       `grader: subprocess timed out after 120s (storyboard=${storyboardId}). ` +
         `This is a harness-level kill, not an agent conformance failure. ` +
-        `To debug, run the grader directly: ` +
-        `node bin/adcp.js storyboard run ${url} ${storyboardId} --json --allow-http --auth sk_harness_do_not_use_in_prod --webhook-receiver`
+        `To debug, run the grader directly (workspace must still be up — ` +
+        `re-run with --keep + --mode verify if the agent was torn down):\n  ` +
+        `node ${args.join(' ')}`
     );
   } else if (exitCode !== 0) {
     log(`grader: exited with code ${exitCode} (storyboard=${storyboardId})`);
