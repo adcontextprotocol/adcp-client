@@ -185,6 +185,27 @@ export function verifySignatureAsAuthenticator(options: VerifySignatureAsAuthent
       ...(result.agent_url !== undefined ? { agent_url: result.agent_url } : {}),
     };
 
+    // Stamp the kind-discriminated `credential` variant for the framework's
+    // dispatcher and `BuyerAgentRegistry` resolution (Phase 1 Stage 3 of
+    // #1269). Per adcontextprotocol/adcp#3831, `agent_url` here is the
+    // verifier's `agentUrlForKeyid` lookup result — derived from the
+    // `agents[]` entry whose `jwks_uri` resolved the keyid.
+    //
+    // When `agent_url` is unset (verifier wired without a keyid→agent URL
+    // resolver), we OMIT the `credential` rather than synthesize an
+    // `http_sig` variant that would otherwise carry an empty agent_url —
+    // Stage 1's runtime guard rejects malformed http_sig credentials, so
+    // emitting one would just trip the guard and confuse the audit trail.
+    const credential =
+      signer.agent_url !== undefined
+        ? {
+            kind: 'http_sig' as const,
+            keyid: signer.keyid,
+            agent_url: signer.agent_url,
+            verified_at: signer.verified_at,
+          }
+        : undefined;
+
     const principal = options.makePrincipal
       ? options.makePrincipal(signer)
       : {
@@ -196,6 +217,7 @@ export function verifySignatureAsAuthenticator(options: VerifySignatureAsAuthent
               ...(signer.agent_url !== undefined ? { agent_url: signer.agent_url } : {}),
             },
           },
+          ...(credential !== undefined && { credential }),
         };
 
     // Write the side-channel state only after the principal is fully built so

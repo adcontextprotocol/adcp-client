@@ -54,7 +54,8 @@ import {
 import { createTaskCapableServer } from './tasks';
 import type { TaskStore, TaskMessageQueue } from './tasks';
 import { adcpError } from './errors';
-import type { BuyerAgent, BuyerAgentRegistry } from './decisioning/buyer-agent';
+import type { AdcpCredential, BuyerAgent, BuyerAgentRegistry } from './decisioning/buyer-agent';
+import type { ResolvedAuthInfo } from './decisioning/account';
 import { ADCP_ERROR_FIELD_ALLOWLIST } from './envelope-allowlist';
 import { InMemoryStateStore } from './state-store';
 import type { AdcpStateStore } from './state-store';
@@ -350,10 +351,33 @@ export interface HandlerContext<TAccount = unknown> {
    * Authentication info for the caller, when `ServeOptions.authenticate` is configured.
    * Populated from the MCP SDK's `extra.authInfo`, which `serve()` sets from the auth
    * principal. Use this to enforce per-principal authorization in handlers.
+   *
+   * Stage 3 of #1269 added the kind-discriminated `credential`,
+   * informational `agent_url` (set post-resolution by `BuyerAgentRegistry`),
+   * and `operator` fields. The legacy `token` / `clientId` / `scopes` are
+   * preserved for the two-minor deprecation cycle; new code should read
+   * `credential` and switch on its `kind`.
    */
   authInfo?: {
+    /**
+     * Kind-discriminated credential. Built-in authenticators stamp this;
+     * custom `authenticate` callbacks may stamp it directly. Adopters who
+     * want the `BuyerAgentRegistry` factory routing to work need this set.
+     */
+    credential?: AdcpCredential;
+    /**
+     * Buyer-agent URL stamped post-resolution by `BuyerAgentRegistry`
+     * (informational). Security checks MUST read `credential.agent_url`
+     * (verified, http_sig only) instead.
+     */
+    agent_url?: string;
+    /** Optional operator seat within the buyer agent. Reserved for future use. */
+    operator?: string;
+    /** @deprecated Use `credential` instead; removed in two minors per #1269. */
     token: string;
+    /** @deprecated Use `credential.client_id` (oauth) or `credential.key_id` (api_key) instead. */
     clientId: string;
+    /** @deprecated Use `credential.scopes` (oauth) instead. */
     scopes: string[];
     expiresAt?: number;
     extra?: Record<string, unknown>;
@@ -2685,7 +2709,27 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
       const wrap = meta?.wrap ?? ((data: any, summary?: string) => genericResponse(toolName, data, summary));
       const toolHandler = async (params: any, extra: any) => {
         const ctx: HandlerContext<TAccount> = { store: stateStore };
-        if (extra?.authInfo) ctx.authInfo = extra.authInfo;
+        if (extra?.authInfo) {
+          ctx.authInfo = extra.authInfo;
+          // Hoist the kind-discriminated credential from MCP's `extra`
+          // shape onto top-level `ctx.authInfo.credential` so adopter
+          // `resolveAccount` callbacks and the `BuyerAgentRegistry` can
+          // route on it directly without unpacking `extra`. Stage 3 of
+          // #1269 — the built-in authenticators stamp this in
+          // `serve.ts:attachAuthInfo`. Custom `authenticate` callbacks
+          // that don't populate `credential` see `ctx.authInfo.credential`
+          // stay undefined; downstream code branches on `credential
+          // !== undefined` for the new path and falls back to the
+          // `@deprecated` legacy fields (`token`, `clientId`, `scopes`)
+          // for the old path. Both paths coexist for two minors.
+          const authInfo = ctx.authInfo;
+          if (authInfo !== undefined) {
+            const inboundCredential = authInfo.extra?.credential;
+            if (inboundCredential !== undefined && authInfo.credential === undefined) {
+              authInfo.credential = inboundCredential as ResolvedAuthInfo['credential'];
+            }
+          }
+        }
         if (webhookEmitter) ctx.emitWebhook = webhookEmitter.emit.bind(webhookEmitter);
 
         // Echo params.context into any response (success or error) so buyers
@@ -2710,24 +2754,24 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
         // --- Buyer-agent registry resolution (Phase 1 of #1269) ---
         // Runs after `authInfo` is populated and before account resolution
         // so adopters' `resolveAccount` callbacks see `ctx.agent`. The
-        // registry receives the legacy `ResolvedAuthInfo` shape; Stage 3
-        // wires the kind-discriminated `credential` field that the
-        // factory functions route on. Until then, all factories return
-        // null for `credential === undefined`, so the seam is structurally
-        // present but functionally inert until adopters wire credential
-        // synthesis themselves (or wait for Stage 3).
+        // registry receives the kind-discriminated `credential` (Stage 3)
+        // synthesized by the framework's built-in authenticators in
+        // `serve.ts:attachAuthInfo`; factories route on `credential.kind`
+        // and return null when no credential was stamped (custom adopter
+        // auth callbacks that haven't migrated).
         //
         // Phase 1 does NOT enforce status (suspended/blocked → 403) or
         // billing capability — those land in Stage 4 and Phase 2 (#1292).
         if (agentRegistry !== undefined) {
           try {
-            // `credential` is intentionally omitted at this stage. Stage 3
-            // (#1269) wires `ResolvedAuthInfo.credential` synthesis from the
-            // auth principal so the factory functions can route by kind.
-            // Until then, the registry's `resolve` will return `null` for
-            // every request without a credential — the seam runs but stays
-            // functionally inert.
+            // Stage 3 of #1269: pass the kind-discriminated `credential`
+            // synthesized in `serve.ts:attachAuthInfo` (and hoisted to
+            // top-level above) into the registry. Factory functions
+            // (`signingOnly` / `bearerOnly` / `mixed`) route on
+            // `credential.kind`; absent credential → factories return
+            // null → ctx.agent stays undefined.
             const resolved = await agentRegistry.resolve({
+              ...(ctx.authInfo?.credential !== undefined && { credential: ctx.authInfo.credential }),
               ...(ctx.authInfo?.extra !== undefined && { extra: ctx.authInfo.extra }),
             });
             if (resolved != null) {
@@ -2751,6 +2795,15 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
                 Object.freeze(resolved);
               }
               ctx.agent = resolved;
+              // Stamp the informational top-level `agent_url` on
+              // `ctx.authInfo` so adopters reading it see the registry's
+              // canonical view. Security checks MUST still read from
+              // `credential.agent_url` (verified) — the field is
+              // documented as informational. Only set when authInfo
+              // exists; the registry runs after authInfo is populated.
+              if (ctx.authInfo !== undefined && ctx.authInfo.agent_url === undefined) {
+                ctx.authInfo.agent_url = resolved.agent_url;
+              }
             }
           } catch (err) {
             const reason = err instanceof Error ? err.message : String(err);

@@ -30,6 +30,7 @@ import type { IncomingMessage, ServerResponse } from 'http';
 import { createRemoteJWKSet, jwtVerify, type JWTPayload, type JWTVerifyOptions } from 'jose';
 import type { RequestSignatureErrorCode } from '../signing/errors';
 import { RequestSignatureError } from '../signing/errors';
+import type { AdcpCredential } from './decisioning/buyer-agent';
 
 /**
  * Default JWT algorithm allowlist. Asymmetric only — HS-family is intentionally
@@ -75,6 +76,29 @@ export interface AuthPrincipal {
   claims?: JWTPayload;
   /** Token expiry (seconds since epoch) when known — propagated to MCP `AuthInfo.expiresAt`. */
   expiresAt?: number;
+  /**
+   * Kind-discriminated credential variant — Phase 1 Stage 3 of #1269.
+   *
+   * Built-in authenticators stamp this:
+   * - {@link verifyApiKey} → `{ kind: 'api_key', key_id }`
+   * - {@link verifyBearer} → `{ kind: 'oauth', client_id, scopes, expires_at }`
+   * - {@link verifySignatureAsAuthenticator} → `{ kind: 'http_sig', keyid, agent_url, verified_at }`
+   *
+   * `serve()` propagates this into `req.auth.extra.credential`, where the
+   * dispatcher hoists it onto `ctx.authInfo.credential` for adopter
+   * `resolveAccount` callbacks AND for the `BuyerAgentRegistry.resolve`
+   * call. Adopters with custom `authenticate` functions can populate this
+   * directly to opt into the discriminated-credential surface; otherwise
+   * `BuyerAgentRegistry` factories return `null` (no credential = no
+   * known agent) and the framework's request flow is unchanged.
+   *
+   * The `http_sig.agent_url` is cryptographically verified (the verifier
+   * derives it from the `agents[]` entry whose `jwks_uri` resolved the
+   * `keyid` per adcontextprotocol/adcp#3831). Security-relevant decisions
+   * MUST read it from this variant, not from any informational field
+   * elsewhere on the request.
+   */
+  credential?: AdcpCredential;
   [key: string]: unknown;
 }
 
@@ -264,11 +288,25 @@ export function verifyApiKey(options: VerifyApiKeyOptions): Authenticator {
     const token = extractBearerToken(req);
     if (!token) return null;
     if (options.keys && Object.prototype.hasOwnProperty.call(options.keys, token)) {
-      return { ...options.keys[token]!, token };
+      const matched = options.keys[token]!;
+      return {
+        ...matched,
+        token,
+        // Stamp `credential` so the dispatcher and `BuyerAgentRegistry`
+        // see a kind-discriminated variant. Adopters who provided their
+        // own `credential` on the matched principal win; otherwise
+        // synthesize from the api-key shape.
+        credential: matched.credential ?? { kind: 'api_key', key_id: token },
+      };
     }
     if (options.verify) {
       const result = await options.verify(token);
-      return result ? { ...result, token: result.token ?? token } : null;
+      if (!result) return null;
+      return {
+        ...result,
+        token: result.token ?? token,
+        credential: result.credential ?? { kind: 'api_key', key_id: token },
+      };
     }
     return null;
   };
@@ -387,11 +425,18 @@ export function verifyBearer(options: VerifyBearerOptions): Authenticator {
         });
       }
     }
+    const clientId = typeof payload.sub === 'string' ? payload.sub : 'unknown';
     const principal: AuthPrincipal = {
-      principal: typeof payload.sub === 'string' ? payload.sub : 'unknown',
+      principal: clientId,
       token,
       scopes,
       claims: payload,
+      credential: {
+        kind: 'oauth',
+        client_id: clientId,
+        scopes,
+        ...(typeof payload.exp === 'number' && { expires_at: payload.exp }),
+      },
     };
     if (typeof payload.exp === 'number') principal.expiresAt = payload.exp;
     return principal;

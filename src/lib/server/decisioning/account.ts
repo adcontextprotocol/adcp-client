@@ -28,7 +28,7 @@ import type {
   GetAccountFinancialsSuccess,
 } from '../../types/tools.generated';
 import type { CursorPage, CursorRequest } from './pagination';
-import type { BuyerAgent } from './buyer-agent';
+import type { AdcpCredential, BuyerAgent } from './buyer-agent';
 
 /**
  * Account — framework's rich representation. A strict superset of the wire
@@ -207,9 +207,56 @@ export interface Account<TCtxMeta = Record<string, unknown>> {
  * @public
  */
 export interface ResolvedAuthInfo {
+  /**
+   * Kind-discriminated credential — Phase 1 Stage 3 of #1269. Populated by
+   * the framework's built-in authenticators (`verifyApiKey`, `verifyBearer`,
+   * `verifySignatureAsAuthenticator`); custom `authenticate` callbacks can
+   * stamp this directly on the returned `AuthPrincipal` to opt into the
+   * discriminated-credential surface. The framework propagates it from
+   * `req.auth.extra.credential` to this top-level field on every request.
+   *
+   * Security-relevant decisions (mutating-tool authorization, brand-side
+   * authorization checks once `BrandAuthorizationResolver` lands) MUST read
+   * `agent_url` from `credential.kind === 'http_sig'` rather than the
+   * top-level `agent_url` field below — `credential.agent_url` is
+   * cryptographically verified per adcontextprotocol/adcp#3831.
+   */
+  credential?: AdcpCredential;
+
+  /**
+   * Buyer-agent URL stamped post-resolution by `BuyerAgentRegistry`
+   * (Phase 1 of #1269). Informational — security checks MUST read
+   * `credential.agent_url` (verified) instead. Undefined when no registry
+   * is configured OR when the credential is non-`http_sig` and the
+   * registry didn't resolve a record.
+   */
+  agent_url?: string;
+
+  /**
+   * Optional operator seat within the buyer agent. Stamped only when the
+   * authenticator's claims include a `sub` / `oid` / equivalent identifying
+   * a sub-principal within the agent. Reserved for future use; v1 of
+   * `BuyerAgentRegistry` doesn't consume it.
+   */
+  operator?: string;
+
+  /**
+   * @deprecated Use `credential.kind === 'oauth' ? credential.client_id : ...`
+   * for the discriminated shape. Removed in two minors per the migration
+   * plan in #1269. The framework continues to populate this field for
+   * adopter compatibility through the deprecation cycle.
+   */
   token: string;
+
+  /**
+   * @deprecated Use `credential.client_id` (oauth) or `credential.key_id`
+   * (api_key) instead.
+   */
   clientId: string;
+
+  /** @deprecated Use `credential.scopes` (oauth) instead. */
   scopes: string[];
+
   expiresAt?: number;
   extra?: Record<string, unknown>;
 }
