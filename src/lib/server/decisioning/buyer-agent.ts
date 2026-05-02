@@ -475,6 +475,12 @@ export interface BuyerAgentCacheOptions {
    * one request when nulls aren't cached; sellers willing to delay
    * recognition by N seconds in exchange for fewer DB hits set this to
    * a small positive value.
+   *
+   * **Timing-oracle note.** When null caching is enabled, an
+   * unauthenticated prober comparing hit vs. miss latency on null
+   * returns can infer "this credential was probed recently." Pair with
+   * rate-limiting at the edge if your deployment runs in a hostile
+   * environment. The default (0) avoids the oracle entirely.
    */
   cacheNullsTtlSeconds?: number;
 
@@ -496,6 +502,35 @@ interface CacheEntry {
 }
 
 /**
+ * Cached registry surface. Strict superset of {@link BuyerAgentRegistry}
+ * with explicit invalidation hooks adopters call when they mutate the
+ * backing record (status flip, billing-capability change). Without
+ * `invalidate`, adopters could only purge stale entries by waiting for
+ * `ttlSeconds` to expire — for status changes that's exactly the
+ * window during which a now-suspended agent retains access.
+ *
+ * `BuyerAgentRegistry.cached(...)` returns this richer type so adopters
+ * can hold a reference and call the invalidation methods directly.
+ *
+ * @public
+ */
+export interface CachedBuyerAgentRegistry extends BuyerAgentRegistry {
+  /**
+   * Drop the cache entry for a single credential. No-op when the
+   * credential isn't currently cached. Use this when the agent's
+   * record is mutated in your backing store so the next request
+   * re-resolves rather than serving the stale entry.
+   */
+  invalidate(credential: AdcpCredential): void;
+
+  /**
+   * Drop all cached entries. Use on bulk record mutations (onboarding-
+   * record migration, daily reset) or test-environment cleanup.
+   */
+  clear(): void;
+}
+
+/**
  * Compute a cache key from a credential. Returns null when the
  * credential is undefined — uncacheable, falls through to the inner
  * registry on each call. Keys are namespaced by kind so an api_key
@@ -512,6 +547,14 @@ function cacheKeyForCredential(credential: AdcpCredential | undefined): string |
       return `api_key:${credential.key_id}`;
     case 'oauth':
       return `oauth:${credential.client_id}`;
+    default: {
+      // Exhaustiveness check — adding a new credential kind without
+      // updating this switch produces a compile error here, not a
+      // runtime cache-miss bug.
+      const _exhaustive: never = credential;
+      void _exhaustive;
+      return null;
+    }
   }
 }
 
@@ -546,13 +589,20 @@ function cacheKeyForCredential(credential: AdcpCredential | undefined): string |
  *   `resolve()` falls through to the inner registry on each call —
  *   adopters wiring custom auth without `credential` synthesis (Stage 3
  *   migration cycle) see no behavior change.
+ * - **Explicit invalidation.** Returns a {@link CachedBuyerAgentRegistry}
+ *   with `.invalidate(credential)` and `.clear()` methods. Call
+ *   `invalidate` when you mutate an agent's record (status flip,
+ *   billing-capability change) so the next request re-resolves rather
+ *   than serving the stale entry. Without this, the stale-status window
+ *   is bounded by `ttlSeconds` — a now-suspended agent retains access
+ *   for up to that long.
  *
  * Mirrors the `AsyncCachingJwksResolver` over `JwksResolver` pattern
  * already in `src/lib/signing/`.
  *
  * @public
  */
-export function cached(inner: BuyerAgentRegistry, options: BuyerAgentCacheOptions = {}): BuyerAgentRegistry {
+export function cached(inner: BuyerAgentRegistry, options: BuyerAgentCacheOptions = {}): CachedBuyerAgentRegistry {
   if (typeof inner !== 'object' || inner === null || typeof inner.resolve !== 'function') {
     throw new TypeError('BuyerAgentRegistry.cached: `inner` must be a BuyerAgentRegistry');
   }
@@ -594,7 +644,11 @@ export function cached(inner: BuyerAgentRegistry, options: BuyerAgentCacheOption
 
       // Coalesce concurrent resolves: subsequent callers on the same
       // key await the existing in-flight promise rather than firing
-      // their own upstream lookup.
+      // their own upstream lookup. If the upstream rejects, all
+      // coalesced callers see the same rejection; the `finally` below
+      // releases `inFlight` so the next caller retries upstream
+      // (rejected promises do NOT poison the cache — `cache.set`
+      // inside the IIFE is unreachable on rejection).
       const existing = inFlight.get(key);
       if (existing !== undefined) return existing;
 
@@ -602,6 +656,19 @@ export function cached(inner: BuyerAgentRegistry, options: BuyerAgentCacheOption
         const value = await inner.resolve(authInfo);
         const entryTtlMs = value === null ? nullsTtlMs : ttlMs;
         if (entryTtlMs > 0) {
+          // Defense-in-depth: freeze the resolved record before
+          // sharing across coalesced callers. The dispatcher seam
+          // also freezes per-request (Stage 2), but freezing here
+          // makes the cached-shared-reference invariant load-
+          // bearing rather than coincidental — a future caller
+          // mutating `BuyerAgent.status` would otherwise corrupt
+          // every other cached-hit consumer's view.
+          if (value !== null && !Object.isFrozen(value)) {
+            if (value.billing_capabilities instanceof Set) {
+              Object.freeze(value.billing_capabilities);
+            }
+            Object.freeze(value);
+          }
           cache.set(key, { value, expiresAtMs: now() + entryTtlMs });
           while (cache.size > maxSize) {
             const oldestKey = cache.keys().next().value;
@@ -617,6 +684,15 @@ export function cached(inner: BuyerAgentRegistry, options: BuyerAgentCacheOption
       } finally {
         inFlight.delete(key);
       }
+    },
+
+    invalidate(credential) {
+      const key = cacheKeyForCredential(credential);
+      if (key !== null) cache.delete(key);
+    },
+
+    clear() {
+      cache.clear();
     },
   };
 }

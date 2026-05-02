@@ -124,34 +124,23 @@ describe('BuyerAgentRegistry.cached — basic semantics', () => {
     assert.equal(upstreamCalls, 1, 'nulls cached for cacheNullsTtlSeconds');
   });
 
-  it('skips caching when credential is undefined (pass-through)', async () => {
-    let upstreamCalls = 0;
-    const inner = BuyerAgentRegistry.signingOnly({
-      resolveByAgentUrl: async () => {
-        upstreamCalls++;
-        return sampleAgent();
+  it('skips caching when credential is undefined (pass-through to inner)', async () => {
+    // signingOnly's guard returns null before invoking the resolver,
+    // so we count cache-side calls via inner.resolve invocations.
+    let innerResolveCalls = 0;
+    const inner = {
+      async resolve() {
+        innerResolveCalls++;
+        return null;
       },
-    });
+    };
     const registry = BuyerAgentRegistry.cached(inner, { ttlSeconds: 60 });
 
     await registry.resolve({}); // no credential
     await registry.resolve({}); // no credential
-    // Inner returns null for undefined credential without invoking the resolver
-    // (signingOnly's first guard); the cache skips both. The point: every call
-    // hits the inner registry rather than caching a null result.
-    assert.equal(upstreamCalls, 0); // inner's signingOnly short-circuits before resolver
-    // But the cache MUST NOT have stored a null here either; verify by
-    // returning a real agent next and checking it's invoked.
-    const inner2 = BuyerAgentRegistry.bearerOnly({
-      resolveByCredential: async () => {
-        upstreamCalls++;
-        return sampleAgent();
-      },
-    });
-    const registry2 = BuyerAgentRegistry.cached(inner2, { ttlSeconds: 60 });
-    await registry2.resolve({}); // no credential → bearerOnly returns null without resolver
-    await registry2.resolve({ credential: apiKeyCredential() }); // now real call
-    assert.equal(upstreamCalls, 1, "pass-through path doesn't poison the cache");
+    // Pass-through: every call hits inner.resolve directly; the cache
+    // is never consulted because the credential is uncacheable.
+    assert.equal(innerResolveCalls, 2, 'undefined credential MUST pass through to inner on every call');
   });
 });
 
@@ -252,19 +241,144 @@ describe('BuyerAgentRegistry.cached — concurrent resolve coalescing', () => {
     assert.strictEqual(b, c);
   });
 
-  it('inFlight entry is released after the resolve completes (no leak)', async () => {
+  it('expired entry triggers re-resolve without deadlock (inFlight released after settle)', async () => {
+    let nowMs = 1_000_000;
+    let upstreamCalls = 0;
+    const inner = BuyerAgentRegistry.signingOnly({
+      resolveByAgentUrl: async () => {
+        upstreamCalls++;
+        return sampleAgent();
+      },
+    });
+    const registry = BuyerAgentRegistry.cached(inner, { ttlSeconds: 1, now: () => nowMs });
+
+    await registry.resolve({ credential: sigCredential() });
+    nowMs += 2_000; // expire
+    await registry.resolve({ credential: sigCredential() }); // must succeed, not deadlock
+    assert.equal(upstreamCalls, 2, 'expired entry → re-resolve');
+  });
+
+  it('rejected upstream propagates to all coalesced callers AND does not poison the cache', async () => {
+    let upstreamCalls = 0;
+    let mode = 'reject';
+    const inner = {
+      async resolve() {
+        upstreamCalls++;
+        // Yield once so concurrent callers can land in the inFlight map
+        // before this one settles, then dispatch on the current mode.
+        await new Promise(resolve => setImmediate(resolve));
+        if (mode === 'reject') throw new Error('upstream DB outage');
+        return sampleAgent();
+      },
+    };
+    const registry = BuyerAgentRegistry.cached(inner, { ttlSeconds: 60 });
+
+    // Phase 1: fire 5 parallel resolves; all should coalesce and reject.
+    const promises = Array.from({ length: 5 }, () => registry.resolve({ credential: sigCredential() }));
+    const settled = await Promise.allSettled(promises);
+    assert.equal(upstreamCalls, 1, 'coalesced to one upstream call');
+    assert.equal(
+      settled.every(r => r.status === 'rejected' && r.reason.message === 'upstream DB outage'),
+      true,
+      'all coalesced callers see the same rejection'
+    );
+
+    // Phase 2: cache MUST NOT carry a poisoned entry; next call retries.
+    mode = 'resolve';
+    const result = await registry.resolve({ credential: sigCredential() });
+    assert.equal(upstreamCalls, 2, 'rejected upstream did not cache; next call hits upstream again');
+    assert.ok(result);
+  });
+
+  it('returned BuyerAgent is the same reference for coalesced callers AND for cache hits', async () => {
+    const agent = sampleAgent();
+    const inner = BuyerAgentRegistry.signingOnly({
+      resolveByAgentUrl: async () => agent,
+    });
+    const registry = BuyerAgentRegistry.cached(inner, { ttlSeconds: 60 });
+
+    const first = await registry.resolve({ credential: sigCredential() });
+    const second = await registry.resolve({ credential: sigCredential() });
+    assert.strictEqual(first, second, 'cache hit must return the same reference');
+    // The cache freezes the value before sharing — defense-in-depth
+    // against future mutation across coalesced callers.
+    assert.equal(Object.isFrozen(first), true);
+  });
+});
+
+describe('BuyerAgentRegistry.cached — invalidate / clear API', () => {
+  it('invalidate(credential) drops the matching cache entry; next resolve hits upstream', async () => {
+    let upstreamCalls = 0;
+    const inner = BuyerAgentRegistry.signingOnly({
+      resolveByAgentUrl: async url => {
+        upstreamCalls++;
+        return sampleAgent({ agent_url: url });
+      },
+    });
+    const registry = BuyerAgentRegistry.cached(inner, { ttlSeconds: 60 });
+
+    const cred = sigCredential();
+    await registry.resolve({ credential: cred });
+    await registry.resolve({ credential: cred });
+    assert.equal(upstreamCalls, 1, 'second call cached');
+
+    registry.invalidate(cred);
+    await registry.resolve({ credential: cred });
+    assert.equal(upstreamCalls, 2, 'invalidated key MUST re-resolve upstream');
+  });
+
+  it('invalidate(other) does NOT drop unrelated entries', async () => {
+    let upstreamCalls = 0;
+    const inner = BuyerAgentRegistry.signingOnly({
+      resolveByAgentUrl: async url => {
+        upstreamCalls++;
+        return sampleAgent({ agent_url: url });
+      },
+    });
+    const registry = BuyerAgentRegistry.cached(inner, { ttlSeconds: 60 });
+
+    await registry.resolve({ credential: sigCredential({ agent_url: 'https://a.com' }) });
+    await registry.resolve({ credential: sigCredential({ agent_url: 'https://b.com' }) });
+    assert.equal(upstreamCalls, 2);
+
+    registry.invalidate(sigCredential({ agent_url: 'https://a.com' }));
+    // b is still cached.
+    await registry.resolve({ credential: sigCredential({ agent_url: 'https://b.com' }) });
+    assert.equal(upstreamCalls, 2, 'invalidate(a) MUST NOT drop b');
+    // a re-resolves.
+    await registry.resolve({ credential: sigCredential({ agent_url: 'https://a.com' }) });
+    assert.equal(upstreamCalls, 3);
+  });
+
+  it('clear() drops every entry', async () => {
+    let upstreamCalls = 0;
+    const inner = BuyerAgentRegistry.signingOnly({
+      resolveByAgentUrl: async url => {
+        upstreamCalls++;
+        return sampleAgent({ agent_url: url });
+      },
+    });
+    const registry = BuyerAgentRegistry.cached(inner, { ttlSeconds: 60 });
+
+    await registry.resolve({ credential: sigCredential({ agent_url: 'https://a.com' }) });
+    await registry.resolve({ credential: sigCredential({ agent_url: 'https://b.com' }) });
+    assert.equal(upstreamCalls, 2);
+
+    registry.clear();
+
+    await registry.resolve({ credential: sigCredential({ agent_url: 'https://a.com' }) });
+    await registry.resolve({ credential: sigCredential({ agent_url: 'https://b.com' }) });
+    assert.equal(upstreamCalls, 4, 'clear() MUST evict all cached entries');
+  });
+
+  it('invalidate() on a never-cached credential is a no-op', async () => {
     const inner = BuyerAgentRegistry.signingOnly({
       resolveByAgentUrl: async () => sampleAgent(),
     });
     const registry = BuyerAgentRegistry.cached(inner, { ttlSeconds: 60 });
-
-    await registry.resolve({ credential: sigCredential() });
-    // Force TTL expiration via a fresh registry to test re-resolve path.
-    let nowMs = 1_000_000;
-    const registry2 = BuyerAgentRegistry.cached(inner, { ttlSeconds: 1, now: () => nowMs });
-    await registry2.resolve({ credential: sigCredential() });
-    nowMs += 2_000;
-    await registry2.resolve({ credential: sigCredential() }); // must succeed, not deadlock
+    // No resolves have happened — invalidate must not throw.
+    registry.invalidate(sigCredential());
+    registry.clear();
   });
 });
 
