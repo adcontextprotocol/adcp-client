@@ -80,6 +80,7 @@ import type {
 } from '../../../types/tools.generated';
 import { adcpError, type AdcpErrorResponse } from '../../errors';
 import { validatePlatform, PlatformConfigError } from './validate-platform';
+import { validateSpecialismRequiredTools, formatSpecialismIssue } from '../validate-specialisms';
 import type { AdcpLogger } from '../../create-adcp-server';
 import { buildRequestContext, buildHandoffContext } from './to-context';
 import {
@@ -463,6 +464,22 @@ export interface CreateAdcpServerFromPlatformOptions extends Omit<
   allowPrivateWebhookUrls?: boolean;
 
   /**
+   * When `true`, throw `PlatformConfigError` at construction if any
+   * specialism declared in `capabilities.specialisms[]` is missing a
+   * platform method matching one of its required tools (per the manifest's
+   * `SPECIALISM_REQUIRED_TOOLS`). Default `false` — the framework emits a
+   * `console.warn` for each missing method instead, so adopters mid-
+   * implementation aren't blocked on incomplete specialism coverage.
+   *
+   * Recommended for production CI builds: catches "claimed sales-non-
+   * guaranteed but forgot to implement getProducts" before the deploy.
+   * Recommended off in dev / sandbox where adopters are iterating.
+   *
+   * Tracked: adcp-client#1299 (manifest adoption stage 3).
+   */
+  strictSpecialismValidation?: boolean;
+
+  /**
    * Auto-fire a completion webhook on the sync-success arm of mutating
    * tools when the request supplied `push_notification_config.url`.
    * Default is `true` — buyers passing the URL expect notification
@@ -613,6 +630,39 @@ export function createAdcpServerFromPlatform<P extends DecisioningPlatform<any, 
   opts: RequiredOptsFor<P>
 ): DecisioningAdcpServer {
   validatePlatform(platform);
+
+  // Specialism→required-tools coverage check (adcp-client#1299).
+  //
+  // For each specialism declared in `capabilities.specialisms[]`, verify the
+  // platform exposes a method matching every tool the manifest's
+  // `SPECIALISM_REQUIRED_TOOLS` lists for that specialism. Catches the
+  // common adopter mistake of declaring `'sales-non-guaranteed'` while
+  // forgetting to implement `getProducts` / `createMediaBuy` / etc. —
+  // would otherwise surface as a runtime error when a buyer actually
+  // calls the missing tool.
+  //
+  // Default behavior is console.warn — strictSpecialismValidation: true
+  // escalates to a thrown `PlatformConfigError`. The check is method-
+  // presence-anywhere on the platform (not method-on-specific-field) so
+  // adopters with non-standard layouts (e.g., a single mega-platform vs.
+  // the conventional sales/creative/accounts split) aren't false-positively
+  // flagged.
+  {
+    const specialisms = (platform.capabilities as { specialisms?: readonly string[] }).specialisms;
+    const issues = validateSpecialismRequiredTools(platform, specialisms);
+    if (issues.length > 0) {
+      const messages = issues.map(formatSpecialismIssue);
+      if (opts.strictSpecialismValidation === true) {
+        throw new PlatformConfigError(
+          `Platform missing methods for ${issues.length} specialism-required tool(s). ` +
+            `Strict mode (\`strictSpecialismValidation: true\`) treats this as fatal.\n` +
+            messages.map(m => `  - ${m}`).join('\n')
+        );
+      }
+      // eslint-disable-next-line no-console
+      for (const message of messages) console.warn(message);
+    }
+  }
 
   // Compliance-testing capability/adapter consistency.
   //

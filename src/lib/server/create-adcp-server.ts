@@ -55,6 +55,7 @@ import { createTaskCapableServer } from './tasks';
 import type { TaskStore, TaskMessageQueue } from './tasks';
 import { adcpError } from './errors';
 import type { BuyerAgent, BuyerAgentRegistry } from './decisioning/buyer-agent';
+import type { ResolvedAuthInfo } from './decisioning/account';
 import { ADCP_ERROR_FIELD_ALLOWLIST } from './envelope-allowlist';
 import { InMemoryStateStore } from './state-store';
 import type { AdcpStateStore } from './state-store';
@@ -347,17 +348,22 @@ export interface HandlerContext<TAccount = unknown> {
   /** State store for persisting domain objects (media buys, accounts, creatives). */
   store: AdcpStateStore;
   /**
-   * Authentication info for the caller, when `ServeOptions.authenticate` is configured.
-   * Populated from the MCP SDK's `extra.authInfo`, which `serve()` sets from the auth
-   * principal. Use this to enforce per-principal authorization in handlers.
+   * Authentication info for the caller, when `ServeOptions.authenticate` is
+   * configured. Populated from the MCP SDK's `extra.authInfo`, which
+   * `serve()` sets from the auth principal. Use this to enforce
+   * per-principal authorization in handlers.
+   *
+   * Stage 3 of #1269 added the kind-discriminated `credential` and the
+   * `operator` fields. The legacy `token` / `clientId` / `scopes` are
+   * preserved as optional fields through the deprecation cycle; new code
+   * should read `credential` and switch on its `kind`.
+   *
+   * Buyer-agent identity post-resolution is on `ctx.agent` (the resolved
+   * `BuyerAgent` record), NOT here — this surface only carries
+   * authentication information about the credential, not the registry
+   * lookup result.
    */
-  authInfo?: {
-    token: string;
-    clientId: string;
-    scopes: string[];
-    expiresAt?: number;
-    extra?: Record<string, unknown>;
-  };
+  authInfo?: ResolvedAuthInfo;
   /**
    * Emit a signed webhook to a buyer's `push_notification_config.url`.
    * Populated when `AdcpServerConfig.webhooks` is configured. Handles
@@ -2685,7 +2691,27 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
       const wrap = meta?.wrap ?? ((data: any, summary?: string) => genericResponse(toolName, data, summary));
       const toolHandler = async (params: any, extra: any) => {
         const ctx: HandlerContext<TAccount> = { store: stateStore };
-        if (extra?.authInfo) ctx.authInfo = extra.authInfo;
+        if (extra?.authInfo) {
+          ctx.authInfo = extra.authInfo;
+          // Hoist the kind-discriminated credential from MCP's `extra`
+          // shape onto top-level `ctx.authInfo.credential` so adopter
+          // `resolveAccount` callbacks and the `BuyerAgentRegistry` can
+          // route on it directly without unpacking `extra`. Stage 3 of
+          // #1269 — the built-in authenticators stamp this in
+          // `serve.ts:attachAuthInfo`. Custom `authenticate` callbacks
+          // that don't populate `credential` see `ctx.authInfo.credential`
+          // stay undefined; downstream code branches on `credential
+          // !== undefined` for the new path and falls back to the
+          // `@deprecated` legacy fields (`token`, `clientId`, `scopes`)
+          // for the old path. Both paths coexist for two minors.
+          const authInfo = ctx.authInfo;
+          if (authInfo !== undefined) {
+            const inboundCredential = authInfo.extra?.credential;
+            if (inboundCredential !== undefined && authInfo.credential === undefined) {
+              authInfo.credential = inboundCredential as ResolvedAuthInfo['credential'];
+            }
+          }
+        }
         if (webhookEmitter) ctx.emitWebhook = webhookEmitter.emit.bind(webhookEmitter);
 
         // Echo params.context into any response (success or error) so buyers
@@ -2710,24 +2736,24 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
         // --- Buyer-agent registry resolution (Phase 1 of #1269) ---
         // Runs after `authInfo` is populated and before account resolution
         // so adopters' `resolveAccount` callbacks see `ctx.agent`. The
-        // registry receives the legacy `ResolvedAuthInfo` shape; Stage 3
-        // wires the kind-discriminated `credential` field that the
-        // factory functions route on. Until then, all factories return
-        // null for `credential === undefined`, so the seam is structurally
-        // present but functionally inert until adopters wire credential
-        // synthesis themselves (or wait for Stage 3).
+        // registry receives the kind-discriminated `credential` (Stage 3)
+        // synthesized by the framework's built-in authenticators in
+        // `serve.ts:attachAuthInfo`; factories route on `credential.kind`
+        // and return null when no credential was stamped (custom adopter
+        // auth callbacks that haven't migrated).
         //
         // Phase 1 does NOT enforce status (suspended/blocked → 403) or
         // billing capability — those land in Stage 4 and Phase 2 (#1292).
         if (agentRegistry !== undefined) {
           try {
-            // `credential` is intentionally omitted at this stage. Stage 3
-            // (#1269) wires `ResolvedAuthInfo.credential` synthesis from the
-            // auth principal so the factory functions can route by kind.
-            // Until then, the registry's `resolve` will return `null` for
-            // every request without a credential — the seam runs but stays
-            // functionally inert.
+            // Stage 3 of #1269: pass the kind-discriminated `credential`
+            // synthesized in `serve.ts:attachAuthInfo` (and hoisted to
+            // top-level above) into the registry. Factory functions
+            // (`signingOnly` / `bearerOnly` / `mixed`) route on
+            // `credential.kind`; absent credential → factories return
+            // null → ctx.agent stays undefined.
             const resolved = await agentRegistry.resolve({
+              ...(ctx.authInfo?.credential !== undefined && { credential: ctx.authInfo.credential }),
               ...(ctx.authInfo?.extra !== undefined && { extra: ctx.authInfo.extra }),
             });
             if (resolved != null) {
@@ -2751,6 +2777,17 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
                 Object.freeze(resolved);
               }
               ctx.agent = resolved;
+              // Adopters reading the registry's view of `agent_url` get it
+              // from `ctx.agent.agent_url` (the resolved `BuyerAgent`
+              // record). Stage 3 of #1269 deliberately does NOT stamp a
+              // top-level `agent_url` on `ctx.authInfo` — that would
+              // invite handler code to gate on a non-cryptographically-
+              // verified URL while the spec (adcontextprotocol/adcp#3831)
+              // requires verified `agent_url` reads to come from the
+              // `http_sig` credential variant. Adopters who use bearer or
+              // OAuth credentials get a registry-resolved `ctx.agent` but
+              // NO verified `agent_url` — that's correct: bearer auth
+              // doesn't prove the agent_url cryptographically.
             }
           } catch (err) {
             const reason = err instanceof Error ? err.message : String(err);
@@ -2877,13 +2914,17 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
                 // stripped schemaPath even in dev — asymmetric with response-side.
                 const payload = buildAdcpValidationErrorPayload(toolName, 'request', issues, {
                   exposeSchemaPath: exposeErrorDetails,
+                  rootSchemaId: outcome.schemaId,
                 });
                 return finalize(adcpError('VALIDATION_ERROR', payload));
               }
-              logger.warn(`Schema validation warning (request) for ${toolName}: ${formatIssues(issues)}`, {
-                tool: toolName,
-                issues,
-              });
+              logger.warn(
+                `Schema validation warning (request) for ${toolName}: ${formatIssues(issues, 3, { rootSchemaId: outcome.schemaId })}`,
+                {
+                  tool: toolName,
+                  issues,
+                }
+              );
             }
           }
         }
@@ -3185,14 +3226,18 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
             const payload = formatted.structuredContent;
             const outcome = validateResponse(toolName, payload, adcpVersion);
             if (!outcome.valid) {
-              logger.warn(`Schema validation warning (response) for ${toolName}: ${formatIssues(outcome.issues)}`, {
-                tool: toolName,
-                issues: outcome.issues,
-                variant: outcome.variant,
-              });
+              logger.warn(
+                `Schema validation warning (response) for ${toolName}: ${formatIssues(outcome.issues, 3, { rootSchemaId: outcome.schemaId })}`,
+                {
+                  tool: toolName,
+                  issues: outcome.issues,
+                  variant: outcome.variant,
+                }
+              );
               if (responseValidationMode === 'strict') {
                 const errPayload = buildAdcpValidationErrorPayload(toolName, 'response', outcome.issues, {
                   exposeSchemaPath: exposeErrorDetails,
+                  rootSchemaId: outcome.schemaId,
                 });
                 const errEnvelope = adcpError('VALIDATION_ERROR', errPayload);
                 if (idempotencyCheck && idempotency) {

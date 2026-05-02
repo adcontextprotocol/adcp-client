@@ -6,7 +6,7 @@
  */
 
 import type { ErrorObject } from 'ajv';
-import { getValidator, type Direction, type ResponseVariant } from './schema-loader';
+import { getValidator, getRegisteredSchemaIds, type Direction, type ResponseVariant } from './schema-loader';
 import { parseAdcpMajorVersion } from '../version';
 
 /**
@@ -43,6 +43,43 @@ export interface ValidationIssue {
   keyword: string;
   /** Path inside the schema that rejected the payload. */
   schemaPath: string;
+  /**
+   * `$id` of the rejecting schema. Resolved by finding the longest
+   * registered AJV `$id` that prefixes {@link schemaPath}.
+   *
+   * Bundling caveat: AdCP ships most tools through `schemas/cache/<v>/bundled/`
+   * with `$ref`s pre-resolved and inner `$id`s stripped at bundle time. For
+   * those tools, `schemaId` resolves to the response root (e.g.
+   * `/schemas/3.0.4/bundled/signals/activate-signal-response.json`), not
+   * the deeper sub-schema. Tools served from the flat tree (`governance/`,
+   * `brand/`, etc.) preserve sub-schema `$id`s, so `schemaId` can land on
+   * something deeper like `/schemas/3.0.4/core/activation-key.json`. Either
+   * way, the field names exactly the schema the validator looked at.
+   *
+   * Always projected — the `$id` is the published spec URI, not internal
+   * handler shape. (Same precedent as {@link ValidationIssue.variants} and
+   * {@link ValidationIssue.allowedValues}, both of which already ship
+   * always-on with the same rationale.)
+   *
+   * Absent only when the rejecting schema didn't declare an `$id`.
+   */
+  schemaId?: string;
+  /**
+   * Discriminator field/value pair(s) of a `oneOf`/`anyOf` that the payload
+   * was inferred to be targeting. Populated by {@link compactUnionErrors}
+   * when a const-discriminator collapse picks a "best surviving variant" —
+   * the variant the user matched the discriminator of but missed required
+   * fields or other constraints in. Compound discriminators like
+   * `audience-selector`'s `(type, value_type)` produce multi-entry arrays.
+   *
+   * Names align with OpenAPI 3.x `discriminator.propertyName`.
+   *
+   * Absent when no discriminator could be resolved — either the keyword
+   * isn't a union, the union has no `const`-asserting properties, or the
+   * payload didn't match any branch's discriminator (in which case the
+   * synthetic `enum`-keyword issue carries `allowedValues` instead).
+   */
+  discriminator?: ReadonlyArray<{ field: string; value: unknown }>;
   /**
    * Variants a caller can pick from when `keyword === 'oneOf'` or
    * `'anyOf'`. Each entry carries the variant's required fields + known
@@ -81,6 +118,15 @@ export interface ValidationOutcome {
   /** Which schema variant was selected — useful for logging/debugging. */
   variant: Direction | 'skipped';
   /**
+   * `$id` of the root validator that produced this outcome (e.g.
+   * `/schemas/3.0.4/bundled/signals/activate-signal-response.json`). Lets
+   * downstream callers suppress redundant `(schema: ...)` prose suffixes
+   * on issues that landed on the response root — typical for the bundled
+   * tree, where most issues do. Absent when no schema was applied
+   * (`variant: 'skipped'`) or the root schema didn't declare an `$id`.
+   */
+  schemaId?: string;
+  /**
    * True when the response's `status` field named an async variant
    * (`submitted` / `working` / `input-required`) but no compiled schema
    * existed for that variant, so validation fell back to the sync
@@ -96,7 +142,61 @@ export interface ValidationOutcome {
 
 const OK: ValidationOutcome = Object.freeze({ valid: true, issues: [], variant: 'skipped' });
 
-function formatIssue(err: ErrorObject): ValidationIssue {
+/**
+ * Marker attached by {@link compactUnionErrors} to the residual errors of
+ * the variant it picked as the best surviving branch. Carries the
+ * discriminator field+value pair(s) that variant requires, so
+ * {@link formatIssue} can surface the branch identifier on every issue
+ * inherited from that variant. Marker key is namespaced with `__adcp_` to
+ * avoid colliding with anything Ajv may add.
+ */
+type AdcpDiscriminatedError = ErrorObject & {
+  __adcp_discriminator?: ReadonlyArray<{ field: string; value: unknown }>;
+};
+
+/**
+ * Find the longest registered AJV `$id` that prefixes `schemaPath` — that
+ * `$id` belongs to the schema (or `$ref`'d sub-schema) responsible for the
+ * failure. Returns `undefined` for inline (`#/...`) paths when the root
+ * schema doesn't declare an `$id`.
+ *
+ * AJV 8 prefixes a `$ref`'d schema's errors with the target schema's `$id`
+ * (e.g. `/schemas/3.0.4/core/activation-key.json/oneOf/1/required`), so
+ * the prefix search resolves cleanly without re-traversing the schema
+ * graph. The match must end at a path boundary — `'/'` or `'#'` — so an
+ * `$id` ending in `.json` can't false-match a sibling whose `$id` is a
+ * proper extension of it.
+ */
+function extractSchemaId(
+  schemaPath: string,
+  rootSchema: unknown,
+  registeredIds: readonly string[]
+): string | undefined {
+  if (schemaPath.startsWith('#') || schemaPath === '') {
+    const id = (rootSchema as { $id?: unknown } | null | undefined)?.$id;
+    return typeof id === 'string' ? id : undefined;
+  }
+  // The Ajv registry includes the JSON Schema meta-schema
+  // (`http://json-schema.org/draft-07/schema`) alongside AdCP `$id`s. Ajv
+  // never emits schemaPaths prefixed with the meta-schema URL — those
+  // paths use the relative `#/...` form and take the branch above — so
+  // the meta-schema entry never false-matches here.
+  let best: string | undefined;
+  for (const id of registeredIds) {
+    if (!id) continue;
+    if (schemaPath === id || schemaPath.startsWith(`${id}/`) || schemaPath.startsWith(`${id}#`)) {
+      if (best === undefined || id.length > best.length) best = id;
+    }
+  }
+  return best;
+}
+
+interface FormatContext {
+  rootSchema: unknown;
+  registeredIds: readonly string[];
+}
+
+function formatIssue(err: ErrorObject, ctx: FormatContext): ValidationIssue {
   const instancePath = err.instancePath || '';
   const missingProperty =
     err.keyword === 'required' &&
@@ -120,11 +220,16 @@ function formatIssue(err: ErrorObject): ValidationIssue {
     ? `must be one of: ${allowedValues!.map(v => JSON.stringify(v)).join(', ')}`
     : (err.message ?? 'validation failed');
 
+  const schemaId = extractSchemaId(err.schemaPath, ctx.rootSchema, ctx.registeredIds);
+  const discriminator = (err as AdcpDiscriminatedError).__adcp_discriminator;
+
   return {
     pointer: `${instancePath}${missingProperty}` || '/',
     message,
     keyword: err.keyword,
     schemaPath: err.schemaPath,
+    ...(schemaId !== undefined && { schemaId }),
+    ...(discriminator !== undefined && discriminator.length > 0 && { discriminator }),
     ...(allowedValues !== undefined && { allowedValues }),
   };
 }
@@ -358,6 +463,40 @@ function compactUnionErrors(errors: readonly ErrorObject[], rootSchema: unknown)
     for (const [idx, residual] of residualByVariant) {
       if (idx !== bestIdx) for (const e of residual) dropped.add(e);
     }
+
+    // Tag the surviving variant's residuals with the discriminator
+    // field+value pair(s) it requires. Adopters reading the projected
+    // issue see "branch: type='key_value'" alongside the missing-required
+    // error, so they know which branch the seller's payload was inferred
+    // to be targeting (issue #1283). Compound discriminators (e.g.,
+    // `audience-selector`'s (type, value_type)) become multi-entry
+    // arrays — order follows iteration of `constAsserters`, which mirrors
+    // the variant's `properties` declaration order.
+    if (bestIdx >= 0) {
+      const pairs: Array<{ field: string; value: unknown }> = [];
+      for (const [relPath, asserters] of constAsserters) {
+        const constValue = asserters.get(bestIdx);
+        if (constValue === undefined) continue;
+        const field = relPath.startsWith('/') ? relPath.slice(1) : relPath;
+        pairs.push({ field, value: constValue });
+      }
+      if (pairs.length > 0) {
+        const surviving = residualByVariant.get(bestIdx) ?? [];
+        for (const e of surviving) {
+          // Deepest-first ordering means inner unions tag first; if a
+          // residual is already tagged it carries the more specific
+          // (deeper) discriminator, which is what the adopter needs to
+          // fix. Don't clobber it with the outer union's tag — the outer
+          // discriminator is context, not the actionable lever.
+          // Bucketing-by-deepest-prefix in `errorsByOneOfPath` already
+          // protects most leaf errors from entering this loop, but the
+          // explicit guard makes the invariant resilient to future
+          // changes in that bucket scheme.
+          if ((e as AdcpDiscriminatedError).__adcp_discriminator !== undefined) continue;
+          (e as AdcpDiscriminatedError).__adcp_discriminator = pairs;
+        }
+      }
+    }
   }
 
   return [...errors.filter(e => !dropped.has(e)), ...added];
@@ -400,13 +539,20 @@ export function validateRequest(toolName: string, payload: unknown, version?: st
   const validator = getValidator(toolName, 'request', version);
   if (!validator) return OK;
   const valid = validator(payload) as boolean;
-  if (valid) return { valid: true, issues: [], variant: 'request' };
   const rootSchema = (validator as { schema?: unknown }).schema;
+  const rootSchemaId =
+    rootSchema && typeof rootSchema === 'object' && typeof (rootSchema as { $id?: unknown }).$id === 'string'
+      ? ((rootSchema as { $id: string }).$id as string)
+      : undefined;
+  if (valid) return { valid: true, issues: [], variant: 'request', ...(rootSchemaId && { schemaId: rootSchemaId }) };
+  const registeredIds = getRegisteredSchemaIds(version);
+  const ctx: FormatContext = { rootSchema, registeredIds };
   const compacted = compactUnionErrors(validator.errors ?? [], rootSchema);
   return {
     valid: false,
-    issues: compacted.map(formatIssue).map(i => enrichWithVariants(i, rootSchema)),
+    issues: compacted.map(e => formatIssue(e, ctx)).map(i => enrichWithVariants(i, rootSchema)),
     variant: 'request',
+    ...(rootSchemaId && { schemaId: rootSchemaId }),
   };
 }
 
@@ -495,21 +641,90 @@ export function validateResponse(toolName: string, payload: unknown, version?: s
   const fallbackFields: Pick<ValidationOutcome, 'variant_fallback_applied' | 'requested_variant'> = variantFallback
     ? { variant_fallback_applied: true, requested_variant: variant }
     : {};
-  if (valid) return { valid: true, issues: [], variant: usedVariant, ...fallbackFields };
+  const rootSchemaId =
+    rootSchema && typeof rootSchema === 'object' && typeof (rootSchema as { $id?: unknown }).$id === 'string'
+      ? ((rootSchema as { $id: string }).$id as string)
+      : undefined;
+  if (valid) {
+    return {
+      valid: true,
+      issues: [],
+      variant: usedVariant,
+      ...(rootSchemaId && { schemaId: rootSchemaId }),
+      ...fallbackFields,
+    };
+  }
+  const registeredIds = getRegisteredSchemaIds(version);
+  const ctx: FormatContext = { rootSchema, registeredIds };
   const compacted = compactUnionErrors(effective.errors ?? [], rootSchema);
   return {
     valid: false,
-    issues: compacted.map(formatIssue).map(i => enrichWithVariants(i, rootSchema)),
+    issues: compacted.map(e => formatIssue(e, ctx)).map(i => enrichWithVariants(i, rootSchema)),
     variant: usedVariant,
+    ...(rootSchemaId && { schemaId: rootSchemaId }),
     ...fallbackFields,
   };
 }
 
-/** Render a compact one-line summary of the failures — useful for logs. */
-export function formatIssues(issues: ValidationIssue[], limit = 3): string {
+/**
+ * Render `discriminator[]` as `field='value', other='x'`. Strings are
+ * single-quoted (matches the issue #1283 example shape) with embedded
+ * apostrophes backslash-escaped so a future spec const containing `'`
+ * can't produce ambiguous output. Other JSON-safe values use
+ * `JSON.stringify` so booleans and numbers stay unambiguous. Returns an
+ * empty string when the array is empty so callers can compose
+ * conditionally.
+ */
+export function formatDiscriminator(
+  discriminator: ReadonlyArray<{ field: string; value: unknown }> | undefined
+): string {
+  if (!discriminator || discriminator.length === 0) return '';
+  return discriminator
+    .map(({ field, value }) => {
+      if (typeof value !== 'string') return `${field}=${JSON.stringify(value)}`;
+      const escaped = value.replace(/\\/g, '\\\\').replace(/'/g, "\\'");
+      return `${field}='${escaped}'`;
+    })
+    .join(', ');
+}
+
+/**
+ * One-line render of a validation issue with `(schema: <$id>)` and
+ * `(discriminator: <field>='<value>')` suffixes when the issue carries
+ * them. Used by both {@link formatIssues} and the prose `message` field on
+ * `VALIDATION_ERROR` envelopes (issue #1283), so adopters debugging from
+ * the wire envelope alone see the rejecting schema and union discriminator
+ * without having to walk `issues[]`.
+ *
+ * The `(schema: ...)` suffix is suppressed for inline failures whose
+ * `schemaId` is the response root — the tool name already conveys that,
+ * and AdCP's bundled tree strips inner `$id`s so most issues land on the
+ * root. Suppressing keeps the prose tight on the cases where the schema
+ * field would just restate the tool the adopter already knows. Adopters
+ * who want the field unconditionally read it from the structured
+ * `issues[].schemaId`.
+ */
+export function formatIssueLine(issue: ValidationIssue, options: { rootSchemaId?: string } = {}): string {
+  const parts: string[] = [`${issue.pointer} ${issue.message}`];
+  if (issue.schemaId && issue.schemaId !== options.rootSchemaId) {
+    parts.push(`(schema: ${issue.schemaId})`);
+  }
+  const discriminator = formatDiscriminator(issue.discriminator);
+  if (discriminator) parts.push(`(discriminator: ${discriminator})`);
+  return parts.join(' ');
+}
+
+/**
+ * Render a compact one-line summary of the failures — useful for logs.
+ *
+ * `rootSchemaId`, when supplied, suppresses the `(schema: ...)` suffix on
+ * issues whose `schemaId` matches it (typical for issues that landed on
+ * the response root). Pass `undefined` to always emit the suffix.
+ */
+export function formatIssues(issues: ValidationIssue[], limit = 3, options: { rootSchemaId?: string } = {}): string {
   const head = issues
     .slice(0, limit)
-    .map(i => `${i.pointer} ${i.message}`)
+    .map(i => formatIssueLine(i, options))
     .join('; ');
   const rest = issues.length - limit;
   return rest > 0 ? `${head} (+${rest} more)` : head;
