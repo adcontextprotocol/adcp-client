@@ -9,6 +9,8 @@ description: Use when building an AdCP creative agent — an ad server, creative
 
 A creative agent manages the creative lifecycle: accepts assets from buyers, stores them in a library, builds serving tags, and renders previews. Unlike a generative seller (which also sells inventory), a creative agent is a standalone creative platform — it manages creatives but doesn't sell media.
 
+> **Common shape gotchas:** `PreviewCreativeResponse` is a three-way discriminated union (`single` | `batch` | `variant`); `BuildCreativeReturn` has 4 valid shapes (framework auto-wraps bare manifests); `VASTAsset` requires `delivery_type` (`'inline'` or `'redirect'`) before `content`/`vast_url`. See [SHAPE-GOTCHAS.md](../SHAPE-GOTCHAS.md) for the patterns adopters consistently get wrong on first pass — schema validators catch these at runtime; type checkers don't.
+
 ## When to Use
 
 - User wants to build an ad server, creative management platform, or creative rendering service

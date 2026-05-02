@@ -1,7 +1,7 @@
 # Ad Context Protocol (AdCP)
 
-> Generated at: 2026-05-01
-> Library: @adcp/sdk v6.1.0
+> Generated at: 2026-05-02
+> Library: @adcp/sdk v6.6.0
 > AdCP major version: 3
 > Canonical URL: https://adcontextprotocol.github.io/adcp-client/llms.txt
 
@@ -1073,51 +1073,51 @@ Agents use the `recovery` classification to decide what to do: `transient` → r
 
 | Code | Recovery | Description |
 |------|----------|-------------|
-| `INVALID_REQUEST` | correctable | Request is malformed, missing required fields, or violates schema constraints |
-| `AUTH_REQUIRED` | correctable | Authentication is required to access this resource |
-| `RATE_LIMITED` | transient | Request rate exceeded; retry after the retry_after interval |
-| `SERVICE_UNAVAILABLE` | transient | Seller service is temporarily unavailable |
-| `POLICY_VIOLATION` | correctable | Request violates the seller's content or advertising policies |
-| `PRODUCT_NOT_FOUND` | correctable | One or more referenced product IDs are unknown or expired |
-| `PRODUCT_UNAVAILABLE` | correctable | The requested product is sold out or no longer available |
-| `PROPOSAL_EXPIRED` | correctable | A referenced proposal ID has passed its expires_at timestamp |
-| `BUDGET_TOO_LOW` | correctable | Budget is below the seller's minimum |
-| `CREATIVE_REJECTED` | correctable | Creative failed content policy review |
-| `UNSUPPORTED_FEATURE` | correctable | A requested feature or field is not supported by this seller |
-| `AUDIENCE_TOO_SMALL` | correctable | Audience segment is below the minimum required size for targeting |
-| `ACCOUNT_NOT_FOUND` | terminal | The account reference could not be resolved |
-| `ACCOUNT_SETUP_REQUIRED` | correctable | Natural key resolved but the account needs setup before use |
-| `ACCOUNT_AMBIGUOUS` | correctable | Natural key resolves to multiple accounts |
-| `ACCOUNT_PAYMENT_REQUIRED` | terminal | Account has an outstanding balance requiring payment before new buys |
-| `ACCOUNT_SUSPENDED` | terminal | Account has been suspended |
-| `COMPLIANCE_UNSATISFIED` | correctable | A required disclosure from the brief's compliance section cannot be satisfied by the target format |
-| `GOVERNANCE_DENIED` | correctable | A registered governance agent denied the transaction |
-| `BUDGET_EXHAUSTED` | terminal | Account or campaign budget has been fully spent |
-| `BUDGET_EXCEEDED` | correctable | Operation would exceed the allocated budget for the media buy or package |
-| `CONFLICT` | transient | Concurrent modification detected; the resource was modified between read and write |
-| `IDEMPOTENCY_CONFLICT` | correctable | An earlier request with the same idempotency_key was processed with a different canonical payload. Use a fresh UUID v4 for the new request, or resend the exact original payload to get the cached response. |
-| `IDEMPOTENCY_EXPIRED` | correctable | The idempotency_key is past the seller's replay window. If the prior call succeeded, look up the resource by natural key before retrying; otherwise mint a fresh UUID v4. |
-| `CREATIVE_DEADLINE_EXCEEDED` | correctable | Creative change submitted after the package's creative_deadline |
-| `INVALID_STATE` | correctable | Operation is not permitted for the resource's current status |
-| `MEDIA_BUY_NOT_FOUND` | correctable | Referenced media buy does not exist or is not accessible |
-| `NOT_CANCELLABLE` | correctable | The media buy or package cannot be canceled in its current state |
-| `PACKAGE_NOT_FOUND` | correctable | Referenced package does not exist within the specified media buy |
-| `CREATIVE_NOT_FOUND` | correctable | Referenced creative does not exist in the agent's creative library |
-| `SIGNAL_NOT_FOUND` | correctable | Referenced signal does not exist in the agent's catalog |
-| `SESSION_NOT_FOUND` | correctable | SI session ID is invalid, expired, or does not exist |
-| `PLAN_NOT_FOUND` | correctable | Referenced governance plan does not exist or is not accessible |
-| `REFERENCE_NOT_FOUND` | correctable | Generic fallback for a referenced identifier, grant, session, or other resource that does not exist or is not accessible by the caller |
-| `SESSION_TERMINATED` | correctable | SI session has already been terminated and cannot accept further messages |
-| `VALIDATION_ERROR` | correctable | Request contains invalid field values or violates business rules beyond schema validation |
-| `PRODUCT_EXPIRED` | correctable | One or more referenced products have passed their expires_at timestamp |
-| `PROPOSAL_NOT_COMMITTED` | correctable | The referenced proposal has proposal_status 'draft' and cannot be used to create a media buy |
-| `IO_REQUIRED` | correctable | The committed proposal requires a signed insertion order but no io_acceptance was provided |
-| `TERMS_REJECTED` | correctable | Buyer-proposed measurement_terms were rejected by the seller |
-| `REQUOTE_REQUIRED` | correctable | An update_media_buy request changes the parameter envelope (budget, flight dates, volume, targeting) the original quote was priced against |
-| `VERSION_UNSUPPORTED` | correctable | The declared adcp_major_version is not supported by this seller |
-| `CAMPAIGN_SUSPENDED` | transient | Campaign governance has been suspended pending human review |
-| `GOVERNANCE_UNAVAILABLE` | transient | A registered governance agent is unreachable and the seller cannot obtain a governance decision |
-| `PERMISSION_DENIED` | correctable | The authenticated caller is not authorized for the requested action under the seller's policies, or a required signed credential is missing or invalid |
+| `ACCOUNT_AMBIGUOUS` | correctable | Natural key resolves to multiple accounts. |
+| `ACCOUNT_NOT_FOUND` | terminal | The account reference could not be resolved. |
+| `ACCOUNT_PAYMENT_REQUIRED` | terminal | Account has an outstanding balance requiring payment before new buys. |
+| `ACCOUNT_SETUP_REQUIRED` | correctable | Natural key resolved but the account needs setup before use. |
+| `ACCOUNT_SUSPENDED` | terminal | Account has been suspended. |
+| `AUDIENCE_TOO_SMALL` | correctable | Audience segment is below the minimum required size for targeting. |
+| `AUTH_REQUIRED` | correctable | Authentication is required, or presented credentials were rejected. Two operational sub-cases share this code: (a) credentials missing — agent provides credentials and retries; (b) credentials presented but rejected (expired / revoked / malformed signature) — agent SHOULD NOT auto-retry, since re-presenting a rejected credential against an SSO endpoint creates retry-storm patterns indistinguishable from brute-force probes. In sub-case (b) the agent SHOULD escalate to operator for credential rotation rather than loop. A future minor release splits this code into AUTH_MISSING (correctable) and AUTH_INVALID (terminal); agents handling 3.0.x sellers SHOULD apply the same operational distinction at the application layer. |
+| `BUDGET_EXCEEDED` | correctable | Operation would exceed the allocated budget for the media buy or package. Distinct from BUDGET_EXHAUSTED (already spent) and BUDGET_TOO_LOW (below minimum). |
+| `BUDGET_EXHAUSTED` | terminal | Account or campaign budget has been fully spent. Distinct from BUDGET_TOO_LOW (rejected at submission). |
+| `BUDGET_TOO_LOW` | correctable | Budget is below the seller's minimum. |
+| `CAMPAIGN_SUSPENDED` | transient | Campaign governance has been suspended pending human review; the governance agent MUST reject `check_governance` and `report_plan_outcome` calls on the affected plan until the escalation is resolved. Distinct from `ACCOUNT_SUSPENDED` (account-wide) — this is scoped to a single plan/campaign. |
+| `COMPLIANCE_UNSATISFIED` | correctable | A required disclosure from the brief's compliance section cannot be satisfied by the target format — either the required position or the required persistence mode is not in the format's disclosure_capabilities. |
+| `CONFLICT` | transient | Concurrent modification detected. The resource was modified by another request between read and write. |
+| `CREATIVE_DEADLINE_EXCEEDED` | correctable | Creative change submitted after the package's creative_deadline. Distinct from CREATIVE_REJECTED (content policy failure). |
+| `CREATIVE_NOT_FOUND` | correctable | Referenced creative does not exist in the agent's creative library. Sellers MUST return this code uniformly for any creative_id not owned by the calling account — never distinguish 'exists in another tenant' from 'does not exist', which would enable cross-tenant enumeration. |
+| `CREATIVE_REJECTED` | correctable | Creative failed content policy review. For deadline violations, see CREATIVE_DEADLINE_EXCEEDED. |
+| `GOVERNANCE_DENIED` | correctable | A registered governance agent denied the transaction. The buyer may restructure the buy (e.g., reduce budget, split into smaller transactions), escalate to human spending authority, or contact the governance agent for details. |
+| `GOVERNANCE_UNAVAILABLE` | transient | A registered governance agent is unreachable (timeout, network error, or repeated failure) and the seller cannot obtain a governance decision for the spend-commit. Distinct from `GOVERNANCE_DENIED` (agent reachable and explicitly denied). |
+| `IDEMPOTENCY_CONFLICT` | correctable | An earlier request with the same idempotency_key was processed with a different canonical payload within the seller's replay window. Distinct from CONFLICT (concurrent write) — this indicates the client reused a key across semantically different requests. |
+| `IDEMPOTENCY_EXPIRED` | correctable | The idempotency_key was seen previously but its cached response has been evicted because it is past the seller's declared replay_ttl_seconds. Distinct from IDEMPOTENCY_CONFLICT (different payload within window) — this indicates the retry arrived too late for at-most-once guarantees. If the buyer has any evidence the prior call succeeded (partial response received before crash, entry in the buyer's own DB, a webhook fired), the buyer MUST do the natural-key check BEFORE minting a new key — minting a new key in that situation is exactly how double-creation happens. |
+| `INVALID_REQUEST` | correctable | Request is malformed, missing required fields, or violates schema constraints. |
+| `INVALID_STATE` | correctable | Operation is not permitted for the resource's current status (e.g., updating a completed or canceled media buy, or modifying a canceled package). |
+| `IO_REQUIRED` | correctable | The committed proposal requires a signed insertion order but no io_acceptance was provided. |
+| `MEDIA_BUY_NOT_FOUND` | correctable | Referenced media buy does not exist or is not accessible to the requesting agent. |
+| `NOT_CANCELLABLE` | correctable | The media buy or package cannot be canceled in its current state. The seller may have contractual or operational constraints that prevent cancellation. |
+| `PACKAGE_NOT_FOUND` | correctable | Referenced package does not exist within the specified media buy. |
+| `PERMISSION_DENIED` | correctable | The authenticated caller is not authorized for the requested action under the seller's own policies, or a required signed credential (e.g., a `governance_context` token on a spend-commit) is missing, fails verification, or was issued for a different plan, seller, or phase. Distinct from `AUTH_REQUIRED` (no credentials presented) and `GOVERNANCE_DENIED` (governance agent denied). |
+| `PLAN_NOT_FOUND` | correctable | Referenced governance plan does not exist or is not accessible to the requesting agent. Sellers MUST return this code uniformly for any plan_id not accessible to the calling account — never distinguish 'exists but unauthorized' from 'does not exist', which would enable cross-tenant enumeration of governance plans. |
+| `POLICY_VIOLATION` | correctable | Request violates the seller's content or advertising policies. |
+| `PRODUCT_EXPIRED` | correctable | One or more referenced products have passed their expires_at timestamp and are no longer available for purchase. |
+| `PRODUCT_NOT_FOUND` | correctable | One or more referenced product IDs are unknown or expired. |
+| `PRODUCT_UNAVAILABLE` | correctable | The requested product is sold out or no longer available. |
+| `PROPOSAL_EXPIRED` | correctable | A referenced proposal ID has passed its expires_at timestamp. |
+| `PROPOSAL_NOT_COMMITTED` | correctable | The referenced proposal has proposal_status 'draft' and cannot be used to create a media buy. |
+| `RATE_LIMITED` | transient | Request rate exceeded. Retry after the retry_after interval. |
+| `REFERENCE_NOT_FOUND` | correctable | Generic fallback for a referenced identifier, grant, session, or other resource that does not exist or is not accessible by the caller. Use when no resource-specific not-found code applies (e.g., property lists, content standards, rights grants, SI offerings, proposals, catalogs, event sources, collection lists, brands, individual properties). Typed parameters that lack a dedicated standard code MUST also use REFERENCE_NOT_FOUND rather than minting a custom *_NOT_FOUND code. See 'Uniform response for inaccessible references' in error-handling.mdx for the full MUST list. Summary of the uniform-response MUST: sellers MUST return the same response for 'exists but the caller lacks access' as for 'does not exist' across every observable channel — error.code/message/field/details (message MUST be generic; error.field MUST be identical across both cases on typed parameters); HTTP status, A2A task.status.state, and MCP isError; response headers (ETag, Cache-Control, per-type rate-limit buckets, CDN tags); side effects (webhook/audit writes, background-job enqueues, per-type quota counters, DB-shard routing); and observability (logs, APM spans, third-party error telemetry like Sentry/Datadog). Sellers MUST perform the same resolution-and-authorization work on both paths (resolve-then-authorize; on true-miss still run an authorization decision of equivalent shape against an empty principal set so authorizer latency is not a side channel). Cache population MUST NOT be gated on authorization. Polymorphism is evaluated against the tool-schema's declared parameter shape before any lookup, and a tool's declared shape MUST be identical across all callers. |
+| `REQUOTE_REQUIRED` | correctable | An update_media_buy request changes the parameter envelope (budget, flight dates, volume, targeting) the original quote was priced against. The pricing_option remains locked; the seller is declining the requested shape at that price. Distinct from TERMS_REJECTED (measurement) and POLICY_VIOLATION (content). Sellers SHOULD populate error.details.envelope_field with the field path(s) that breached the envelope (e.g., 'packages[0].budget', 'end_time') so the buyer's agent can autonomously re-discover. |
+| `SERVICE_UNAVAILABLE` | transient | Seller service is temporarily unavailable. Retry with exponential backoff. |
+| `SESSION_NOT_FOUND` | correctable | SI session ID is invalid, expired, or does not exist. |
+| `SESSION_TERMINATED` | correctable | SI session has already been terminated and cannot accept further messages. |
+| `SIGNAL_NOT_FOUND` | correctable | Referenced signal does not exist in the agent's catalog. Sellers MUST return this code uniformly for any signal_id not accessible to the calling account — never distinguish 'exists but unauthorized' from 'does not exist', which would enable cross-tenant enumeration. |
+| `TERMS_REJECTED` | correctable | Buyer-proposed measurement_terms were rejected by the seller. The error details SHOULD identify which specific term was rejected and the seller's acceptable range or supported vendors. |
+| `UNSUPPORTED_FEATURE` | correctable | A requested feature or field is not supported by this seller. |
+| `VALIDATION_ERROR` | correctable | Request contains invalid field values or violates business rules beyond schema validation. |
+| `VERSION_UNSUPPORTED` | correctable | The declared adcp_major_version is not supported by this seller. |
 
 Unknown codes: fall back to the HTTP status code (4xx = correctable, 5xx = transient).
 

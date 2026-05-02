@@ -779,8 +779,12 @@ describe('runStoryboard: #1144 peer_substitutes_for — declared-substitute resc
     });
     const [syncStep, listStep] = result.phases[0].steps;
     const audienceStep = result.phases[1].steps[0];
-    assert.strictEqual(syncStep.skipped, true, 'sync_accounts skipped missing_tool');
-    assert.strictEqual(syncStep.skip_reason, 'missing_tool');
+    assert.strictEqual(syncStep.skipped, true, 'sync_accounts skipped after rescue');
+    // adcp-client#1267: when a substitute passes and rescues a missing_tool
+    // target, the runner re-grades the target with `peer_substituted` per the
+    // AdCP 3.0.3 spec contract (adcp#3734) — was `missing_tool` pre-#1267.
+    assert.strictEqual(syncStep.skip_reason, 'peer_substituted');
+    assert.match(syncStep.skip.detail ?? '', /sync state provided by account_setup\.list/);
     assert.strictEqual(listStep.passed, true, 'list_accounts substitute passes');
     assert.ok(!audienceStep.skipped, 'no cascade — declared substitute established state');
   });
@@ -954,8 +958,12 @@ describe('runStoryboard: #1144 peer_substitutes_for — declared-substitute resc
     });
     const [syncAcc, syncEvt, bulk] = result.phases[0].steps;
     const downstream = result.phases[1].steps[0];
-    assert.strictEqual(syncAcc.skip_reason, 'missing_tool');
-    assert.strictEqual(syncEvt.skip_reason, 'missing_tool');
+    // adcp-client#1267: bulk substitute rescues both — both targets re-graded
+    // to `peer_substituted` per AdCP 3.0.3 contract (was `missing_tool` pre-#1267).
+    assert.strictEqual(syncAcc.skip_reason, 'peer_substituted');
+    assert.strictEqual(syncEvt.skip_reason, 'peer_substituted');
+    assert.match(syncAcc.skip.detail ?? '', /sync_accounts_step state provided by setup_phase\.bulk/);
+    assert.match(syncEvt.skip.detail ?? '', /sync_event_sources_step state provided by setup_phase\.bulk/);
     assert.strictEqual(bulk.passed, true, 'bulk substitute passes');
     assert.ok(!downstream.skipped, 'no cascade — bulk substitute rescued both targets');
   });
@@ -1844,7 +1852,9 @@ describe('runStoryboard: #1161 phase.depends_on cascade scoping', () => {
     const up = result.phases[0].steps[0];
     const [syncStep, listStep] = result.phases[1].steps;
     assert.strictEqual(up.passed, true, 'upstream passed');
-    assert.strictEqual(syncStep.skip_reason, 'missing_tool', 'sync skipped missing_tool');
+    // adcp-client#1267: sync rescued by list — re-graded to peer_substituted.
+    assert.strictEqual(syncStep.skip_reason, 'peer_substituted', 'sync re-graded after rescue');
+    assert.match(syncStep.skip.detail ?? '', /sync state provided by account_setup\.list/);
     assert.strictEqual(listStep.passed, true, 'list (substitute) passed — phase 2 not cascade-tripped');
   });
 

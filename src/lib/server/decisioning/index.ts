@@ -72,6 +72,7 @@ export {
 // Capabilities (single source of truth for get_adcp_capabilities)
 export type {
   DecisioningCapabilities,
+  ComplianceTestingCapabilities,
   CreativeAgentRef,
   TargetingCapabilities,
   ReportingCapabilities,
@@ -91,6 +92,25 @@ export type {
 } from './account';
 
 export { AccountNotFoundError, refAccountId } from './account';
+
+// Buyer-agent identity surface — Phase 1 of #1269. Durable commercial
+// relationship records keyed off the request credential. Factory-pattern
+// registry (signing-only / bearer-only / mixed) encodes the implementer
+// posture at construction; framework calls `BuyerAgentRegistry.resolve`
+// once per request before `accounts.resolve`. Phase 1 ships the shape and
+// resolution; framework-level billing-capability enforcement and the
+// AdCP-3.1 error-code emission land in Phase 2 (#1292).
+export type {
+  BuyerAgent,
+  BuyerAgentBillingMode,
+  BuyerAgentStatus,
+  BuyerAgentRegistry as BuyerAgentRegistryProtocol,
+  BuyerAgentResolveInput,
+  AdcpCredential,
+  ResolveBuyerAgentByAgentUrl,
+  ResolveBuyerAgentByCredential,
+} from './buyer-agent';
+export { BuyerAgentRegistry } from './buyer-agent';
 
 // Native status mapping
 export type { StatusMappers, AdcpMediaBuyStatus, AdcpCreativeStatus, AdcpPlanStatus } from './status-mappers';
@@ -167,6 +187,7 @@ export {
   createAdcpServerFromPlatform,
   getAllAdcpMigrations,
   type CreateAdcpServerFromPlatformOptions,
+  type RequiredOptsFor,
   type DecisioningAdcpServer,
   type DecisioningObservabilityHooks,
 } from './runtime/from-platform';
@@ -250,6 +271,7 @@ export {
   definePropertyListsPlatform,
   defineCollectionListsPlatform,
   defineBrandRightsPlatform,
+  definePlatformWithCompliance,
 } from './platform-helpers';
 
 // Wire-shape assembly helpers — emit correct Product / PricingOption /

@@ -13,10 +13,17 @@
  */
 
 import type {
+  Account as WireAccount,
+  AccountScope,
+  BillingParty,
   BrandReference,
   AccountReference,
+  BusinessEntity,
+  ExtensionObject,
+  PaymentTerms,
   ReportUsageRequest,
   ReportUsageResponse,
+  SyncAccountsSuccess,
   GetAccountFinancialsRequest,
   GetAccountFinancialsSuccess,
 } from '../../types/tools.generated';
@@ -60,6 +67,14 @@ export interface Account<TCtxMeta = Record<string, unknown>> {
   advertiser?: string;
 
   /**
+   * Optional intermediary who receives invoices on behalf of the advertiser
+   * (e.g., agency holdco). Distinct from `advertiser` (whose rates apply)
+   * and from `billing.invoicedTo` (the legal billing party). Use when the
+   * invoice recipient differs from both — common in agency-handled flows.
+   */
+  billing_proxy?: string;
+
+  /**
    * Settlement boundary for operator-billed retail-media platforms.
    * `'agent'` = pass-through (buyer's agent settles directly with the platform).
    * `'operator'` = retail-media model (operator pays publisher, bills brand).
@@ -70,6 +85,80 @@ export interface Account<TCtxMeta = Record<string, unknown>> {
    * assert the right party is billed.
    */
   billing?: { invoicedTo: 'agent' | 'operator' | BrandReference };
+
+  /**
+   * Business entity invoiced on this account. Carries legal name, tax IDs,
+   * address, contacts, and (write-only) bank details for B2B invoicing.
+   *
+   * **`bank` is write-only.** The wire schema marks `BusinessEntity.bank` as
+   * MUST NOT be echoed in responses (sellers store and confirm receipt
+   * without returning the details). `toWireAccount` strips it on emit, so
+   * adopters who store the full entity here will not leak bank details to
+   * buyers — but DO NOT rely on the strip for anything beyond response
+   * projection. Adopters loading the entity from their own DB SHOULD apply
+   * the same rule at retrieval time, especially for non-list endpoints.
+   */
+  billing_entity?: BusinessEntity;
+
+  /**
+   * Identifier for the rate card applied to this account. Opaque seller-side
+   * string; emitted unchanged on the wire.
+   */
+  rate_card?: string;
+
+  /** Payment terms applied to this account. */
+  payment_terms?: PaymentTerms;
+
+  /** Maximum outstanding balance allowed on this account. */
+  credit_limit?: WireAccount['credit_limit'];
+
+  /**
+   * Setup payload for accounts in `pending_approval`. Carries the URL/message
+   * the buyer surfaces to a human to complete activation (credit-app, legal
+   * agreement, fund-add). Required-shape: `message` is mandatory; `url` and
+   * `expires_at` are optional.
+   *
+   * The framework does NOT validate that `setup` is populated when status is
+   * `pending_approval` — that's an adopter contract with the spec. It also
+   * does NOT clear `setup` when status leaves `pending_approval`; adopters
+   * who echo the same `Account` across status transitions should drop the
+   * field themselves.
+   */
+  setup?: WireAccount['setup'];
+
+  /** Account scope (operator / brand / operator_brand / agent). */
+  account_scope?: AccountScope;
+
+  /**
+   * Governance agent endpoints registered on this account. Auth credentials
+   * are write-only on the wire and not modeled here — adopters set/update
+   * via `sync_governance`, not by re-emitting the Account.
+   */
+  governance_agents?: WireAccount['governance_agents'];
+
+  /**
+   * Cloud storage bucket for offline reporting delivery. Only present when
+   * the seller's capabilities advertise `reporting_delivery_methods`
+   * including `'offline'`. Per-account access MUST be IAM-scoped — see the
+   * schema description for security constraints.
+   */
+  reporting_bucket?: WireAccount['reporting_bucket'];
+
+  /**
+   * Sandbox account marker. For implicit accounts the wire schema treats
+   * this as part of the natural key — the same brand/operator pair can have
+   * separate production and sandbox accounts. For explicit accounts, sandbox
+   * accounts are pre-existing test accounts the seller surfaces via
+   * `list_accounts`.
+   */
+  sandbox?: boolean;
+
+  /**
+   * Wire `ext` extension hatch. Carries forward-compatible additions the
+   * codegen'd type doesn't model yet. Adopters who don't need extensions
+   * leave this undefined.
+   */
+  ext?: ExtensionObject;
 
   /**
    * Adapter-internal opaque state. Framework doesn't read this; **stripped
@@ -89,8 +178,19 @@ export interface Account<TCtxMeta = Record<string, unknown>> {
    */
   ctx_metadata: TCtxMeta;
 
-  /** Caller's authenticated principal. **Stripped before emitting on the wire.** */
-  authInfo: AuthPrincipal;
+  /**
+   * Caller's authenticated principal. **Stripped before emitting on the wire.**
+   *
+   * Optional from the adopter's perspective: when `accounts.resolve` returns
+   * an `Account` without `authInfo`, the framework auto-attaches the
+   * principal from `ctx.authInfo` (the auth shape extracted by
+   * `serve({ authenticate })`). Adopters that need to *transform* the
+   * principal — e.g. derive a tenant-scoped sub-principal from the OAuth
+   * client — set it explicitly; adopters that just want the
+   * `serve({ authenticate })` principal threaded through resource handlers
+   * can omit the field and rely on the framework default.
+   */
+  authInfo?: AuthPrincipal;
 }
 
 /**
@@ -361,13 +461,38 @@ export interface AccountFilter {
   status?: AdcpAccountStatus[];
 }
 
+/**
+ * Per-account result row returned by an adopter's `accounts.upsert`
+ * implementation. Maps to one element of the wire `sync_accounts` response's
+ * `accounts[]` array.
+ *
+ * Carries the same optional commercial / lifecycle fields as the wire shape
+ * so adopters can echo `setup` (for `pending_approval` accounts), `billing`,
+ * `billing_entity`, `payment_terms`, etc. on creation. The framework
+ * projects these through `toWireSyncAccountRow` before emit, applying the
+ * same `billing_entity.bank` strip as `toWireAccount` (write-only contract).
+ */
 export interface SyncAccountsResultRow {
   account_id?: string;
   brand: BrandReference;
   operator: string;
+  /** Human-readable account name assigned by the seller. */
+  name?: string;
   action: 'created' | 'updated' | 'unchanged' | 'failed';
   status: AdcpAccountStatus;
+  /** Invoiced-to party. Echoes the request's `billing` after seller acceptance. */
+  billing?: BillingParty;
+  /** Business entity invoiced. `bank` is stripped on emit (write-only). */
+  billing_entity?: BusinessEntity;
+  account_scope?: AccountScope;
+  /** Setup payload for `pending_approval` accounts (URL/message/expiry). */
+  setup?: WireAccount['setup'];
+  rate_card?: string;
+  payment_terms?: PaymentTerms;
+  credit_limit?: WireAccount['credit_limit'];
   errors?: { code: string; message: string }[];
+  warnings?: string[];
+  sandbox?: boolean;
 }
 
 export type AdcpAccountStatus =
@@ -382,14 +507,14 @@ export type AdcpAccountStatus =
 // Wire projection — strip framework-internal fields before emit
 // ---------------------------------------------------------------------------
 
-import type { Account as WireAccount } from '../../types/tools.generated';
-
 /**
  * Project a framework `Account<TCtxMeta>` to the wire `Account` shape.
  *
- * Strips `metadata` and `authInfo` (framework-internal); renames `id` →
- * `account_id`; passes through `name`, `status`, `brand`, `operator`,
- * `advertiser`, and `billing.invoicedTo` mappings.
+ * Strips `ctx_metadata` and `authInfo` (framework-internal); renames `id` →
+ * `account_id`; passes through wire-shaped fields. Strips
+ * `billing_entity.bank` per the schema's write-only constraint — bank
+ * coordinates flow buyer→seller in `sync_accounts` requests but MUST NOT
+ * appear in any response payload.
  *
  * Used by the framework when emitting `list_accounts` and other wire
  * responses that include account data. Adopters never call this directly —
@@ -405,6 +530,7 @@ export function toWireAccount<TCtxMeta>(account: Account<TCtxMeta>): WireAccount
   if (account.brand !== undefined) wire.brand = account.brand;
   if (account.operator !== undefined) wire.operator = account.operator;
   if (account.advertiser !== undefined) wire.advertiser = account.advertiser;
+  if (account.billing_proxy !== undefined) wire.billing_proxy = account.billing_proxy;
   if (account.billing !== undefined) {
     // Wire `Account.billing: 'operator' | 'agent' | 'advertiser'` is the
     // invoiced-to party. Internal `billing.invoicedTo` collapses string +
@@ -413,7 +539,92 @@ export function toWireAccount<TCtxMeta>(account: Account<TCtxMeta>): WireAccount
     const t = account.billing.invoicedTo;
     wire.billing = typeof t === 'string' ? t : 'advertiser';
   }
+  const projectedEntity = projectBillingEntity(account.billing_entity);
+  if (projectedEntity !== undefined) wire.billing_entity = projectedEntity;
+  if (account.rate_card !== undefined) wire.rate_card = account.rate_card;
+  if (account.payment_terms !== undefined) wire.payment_terms = account.payment_terms;
+  if (account.credit_limit !== undefined) wire.credit_limit = account.credit_limit;
+  if (account.setup !== undefined) wire.setup = account.setup;
+  if (account.account_scope !== undefined) wire.account_scope = account.account_scope;
+  if (account.governance_agents !== undefined) {
+    wire.governance_agents = account.governance_agents.map(projectGovernanceAgent);
+  }
+  if (account.reporting_bucket !== undefined) wire.reporting_bucket = account.reporting_bucket;
+  if (account.sandbox !== undefined) wire.sandbox = account.sandbox;
+  if (account.ext !== undefined) wire.ext = account.ext;
   return wire;
+}
+
+type WireSyncAccountRow = SyncAccountsSuccess['accounts'][number];
+
+/**
+ * Project an adopter `SyncAccountsResultRow` to the wire shape returned by
+ * `sync_accounts`. Applies the same `billing_entity.bank` strip as
+ * `toWireAccount` — the wire schema marks bank coordinates write-only on
+ * EVERY response, not just `list_accounts`. Adopters returning a row that
+ * spreads a DB record carrying `bank` (e.g.,
+ * `{ ...db.findByBrand(r.brand), action: 'updated' }`) have it stripped
+ * before emit.
+ *
+ * Used by the framework when emitting `sync_accounts` responses. Adopters
+ * never call this directly — they return `SyncAccountsResultRow[]` from
+ * `accounts.upsert` and the framework projects.
+ */
+export function toWireSyncAccountRow(row: SyncAccountsResultRow): WireSyncAccountRow {
+  const wire: WireSyncAccountRow = {
+    brand: row.brand,
+    operator: row.operator,
+    action: row.action,
+    status: row.status,
+  };
+  if (row.account_id !== undefined) wire.account_id = row.account_id;
+  if (row.name !== undefined) wire.name = row.name;
+  if (row.billing !== undefined) wire.billing = row.billing;
+  const projectedEntity = projectBillingEntity(row.billing_entity);
+  if (projectedEntity !== undefined) wire.billing_entity = projectedEntity;
+  if (row.account_scope !== undefined) wire.account_scope = row.account_scope;
+  if (row.setup !== undefined) wire.setup = row.setup;
+  if (row.rate_card !== undefined) wire.rate_card = row.rate_card;
+  if (row.payment_terms !== undefined) wire.payment_terms = row.payment_terms;
+  if (row.credit_limit !== undefined) wire.credit_limit = row.credit_limit;
+  if (row.errors !== undefined) wire.errors = row.errors;
+  if (row.warnings !== undefined) wire.warnings = row.warnings;
+  if (row.sandbox !== undefined) wire.sandbox = row.sandbox;
+  return wire;
+}
+
+/**
+ * Strip `BusinessEntity.bank` per the schema's write-only constraint, and
+ * skip emission entirely when nothing else is populated. Bank-only inputs
+ * project to `undefined`, signaling the caller to omit `billing_entity`
+ * rather than emit an empty object that would fail `legal_name` validation.
+ *
+ * Destructure-and-rest excludes `bank` regardless of source shape: own
+ * non-enumerable, getter, prototype-chain, and Proxy-backed bank fields
+ * are all excluded by the ES rest-spread evaluation order
+ * (`CopyDataProperties` walks own-enumerable keys and skips the
+ * destructured names).
+ */
+function projectBillingEntity(entity: BusinessEntity | undefined): BusinessEntity | undefined {
+  if (entity === undefined) return undefined;
+  const { bank: _bank, ...rest } = entity;
+  return Object.keys(rest).length > 0 ? rest : undefined;
+}
+
+type WireGovernanceAgent = NonNullable<WireAccount['governance_agents']>[number];
+
+/**
+ * Project a governance-agent element to the wire shape, dropping any keys
+ * the wire schema doesn't model. The schema notes that authentication
+ * credentials are write-only and not included in responses; the wire type
+ * already carries only `url` and `categories`, but TS is erased at runtime
+ * so adopters using JS or `as any` could otherwise smuggle a `credentials`
+ * field straight to the wire. Explicit projection closes that gap.
+ */
+function projectGovernanceAgent(agent: WireGovernanceAgent): WireGovernanceAgent {
+  const projected: WireGovernanceAgent = { url: agent.url };
+  if (agent.categories !== undefined) projected.categories = agent.categories;
+  return projected;
 }
 
 // ---------------------------------------------------------------------------

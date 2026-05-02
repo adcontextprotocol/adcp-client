@@ -110,6 +110,11 @@
       "require": "./dist/lib/express-mcp/index.js",
       "types": "./dist/lib/express-mcp/index.d.ts"
     },
+    "./mock-server": {
+      "import": "./dist/lib/mock-server/index.js",
+      "require": "./dist/lib/mock-server/index.js",
+      "types": "./dist/lib/mock-server/index.d.ts"
+    },
     "./package.json": "./package.json"
   },
   "typesVersions": {
@@ -164,6 +169,9 @@
       ],
       "express-mcp": [
         "dist/lib/express-mcp/index.d.ts"
+      ],
+      "mock-server": [
+        "dist/lib/mock-server/index.d.ts"
       ]
     }
   },
@@ -212,7 +220,8 @@
     "sync-schemas:all": "npm run sync-schemas && npm run sync-schemas:v2.5",
     "schemas:ensure": "tsx scripts/schemas-ensure.ts",
     "schema-diff": "tsx scripts/schema-diff.ts",
-    "generate-types": "tsx scripts/generate-types.ts && tsx scripts/generate-enum-arrays.ts",
+    "generate-types": "tsx scripts/generate-types.ts && tsx scripts/generate-enum-arrays.ts && tsx scripts/generate-manifest-derived.ts",
+    "generate-manifest-derived": "tsx scripts/generate-manifest-derived.ts",
     "generate-types:v2.5": "tsx scripts/generate-v2-5-types.ts",
     "generate-types:all": "npm run generate-types && npm run generate-types:v2.5",
     "generate-registry-types": "tsx scripts/generate-registry-types.ts",
@@ -338,5 +347,5 @@
     },
     "minimatch": "^10.2.1"
   },
-  "adcp_version": "3.0.1"
+  "adcp_version": "3.0.4"
 }
