@@ -32,6 +32,8 @@ If all five pass and your skill's specialism-specific checks below pass, you're 
 
 **Working on the agent locally?** Before you reach for the remote-agent commands above, see [`VALIDATE-LOCALLY.md`](./VALIDATE-LOCALLY.md) — the same storyboards, zero tunnel setup, ten lines of code. Point `--local-agent <module>` at your handlers or call `runAgainstLocalAgent` directly from a test file.
 
+**Wrapping an upstream platform (DSP, SSP, retail data warehouse, creative server)?** Storyboards check your AdCP wire contract; they cannot tell whether the adapter behind the wire actually integrates with the upstream or returns shape-valid responses with synthetic data. See [`VALIDATE-WITH-MOCK-FIXTURES.md`](./VALIDATE-WITH-MOCK-FIXTURES.md) — the published `adcp mock-server <specialism>` CLI plus traffic counters give you a façade-resistant compliance check that works for agents in any language.
+
 **Why `@latest` in every `npx` command?** Without the pin, `npx` reuses whatever version happens to be cached in `~/.npm/_npx/` — and it never re-checks. If you ran `npx @adcp/sdk` six months ago, you're still on that version today. `npx @adcp/sdk@latest` forces npx to resolve the `latest` dist-tag against the registry on every run. If an old cache is causing confusing behavior, `rm -rf ~/.npm/_npx` clears all cached CLI versions.
 
 ---
