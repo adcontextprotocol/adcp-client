@@ -366,16 +366,6 @@
   },
   {
     "source": "skills/build-governance-agent/SKILL.md",
-    "errorCode": "TS2345",
-    "messagePrefix": "Argument of type 'MyGovernance' is not assignable to parameter of type 'Decision"
-  },
-  {
-    "source": "skills/build-governance-agent/SKILL.md",
-    "errorCode": "TS2416",
-    "messagePrefix": "Property 'capabilities' in type 'MyGovernance' is not assignable to the same pro"
-  },
-  {
-    "source": "skills/build-governance-agent/SKILL.md",
     "errorCode": "TS2739",
     "messagePrefix": "Type '{ syncPlans: (req: SyncPlansRequest, ctx: Ctx<Record<string, unknown>>) =>"
   },
@@ -473,16 +463,6 @@
     "source": "skills/build-retail-media-agent/SKILL.md",
     "errorCode": "TS2339",
     "messagePrefix": "Property 'store' does not exist on type 'Ctx<Record<string, unknown>>'."
-  },
-  {
-    "source": "skills/build-retail-media-agent/SKILL.md",
-    "errorCode": "TS2345",
-    "messagePrefix": "Argument of type 'MyRetailMedia' is not assignable to parameter of type 'Decisio"
-  },
-  {
-    "source": "skills/build-retail-media-agent/SKILL.md",
-    "errorCode": "TS2416",
-    "messagePrefix": "Property 'capabilities' in type 'MyRetailMedia' is not assignable to the same pr"
   },
   {
     "source": "skills/build-seller-agent/deployment.md",
@@ -797,6 +777,11 @@
   {
     "source": "skills/build-seller-agent/SKILL.md",
     "errorCode": "TS2322",
+    "messagePrefix": "Type '{ kid: string; alg: string; adcp_use: string; key_ops: string[]; crv?: str"
+  },
+  {
+    "source": "skills/build-seller-agent/SKILL.md",
+    "errorCode": "TS2322",
     "messagePrefix": "Type 'CreateMediaBuyRequest' is not assignable to type 'Record<string, unknown>'"
   },
   {
@@ -873,36 +858,6 @@
     "source": "skills/build-seller-agent/SKILL.md",
     "errorCode": "TS2345",
     "messagePrefix": "Argument of type '{ field: string; }' is not assignable to parameter of type 'Ad"
-  },
-  {
-    "source": "skills/build-seller-agent/SKILL.md",
-    "errorCode": "TS2345",
-    "messagePrefix": "Argument of type 'MySeller' is not assignable to parameter of type 'DecisioningP"
-  },
-  {
-    "source": "skills/build-seller-agent/SKILL.md",
-    "errorCode": "TS2345",
-    "messagePrefix": "Argument of type 'RegulatedPublisher' is not assignable to parameter of type 'De"
-  },
-  {
-    "source": "skills/build-seller-agent/SKILL.md",
-    "errorCode": "TS2345",
-    "messagePrefix": "Argument of type 'WebhookSeller' is not assignable to parameter of type 'Decisio"
-  },
-  {
-    "source": "skills/build-seller-agent/SKILL.md",
-    "errorCode": "TS2416",
-    "messagePrefix": "Property 'capabilities' in type 'MySeller' is not assignable to the same propert"
-  },
-  {
-    "source": "skills/build-seller-agent/SKILL.md",
-    "errorCode": "TS2416",
-    "messagePrefix": "Property 'capabilities' in type 'RegulatedPublisher' is not assignable to the sa"
-  },
-  {
-    "source": "skills/build-seller-agent/SKILL.md",
-    "errorCode": "TS2416",
-    "messagePrefix": "Property 'capabilities' in type 'WebhookSeller' is not assignable to the same pr"
   },
   {
     "source": "skills/build-seller-agent/SKILL.md",
@@ -1023,15 +978,5 @@
     "source": "skills/build-signals-agent/SKILL.md",
     "errorCode": "TS2322",
     "messagePrefix": "Type 'Promise<{ id: string; operator: string; ctx_metadata: {}; }>' is not assig"
-  },
-  {
-    "source": "skills/build-signals-agent/SKILL.md",
-    "errorCode": "TS2345",
-    "messagePrefix": "Argument of type 'MySignals' is not assignable to parameter of type 'Decisioning"
-  },
-  {
-    "source": "skills/build-signals-agent/SKILL.md",
-    "errorCode": "TS2416",
-    "messagePrefix": "Property 'capabilities' in type 'MySignals' is not assignable to the same proper"
   }
 ]
