@@ -71,11 +71,16 @@ export interface DecisioningPlatform<TConfig = unknown, TCtxMeta = Record<string
   accounts: AccountStore<TCtxMeta>;
 
   /**
-   * Server-level instructions surfaced on the MCP `initialize` response and
-   * the A2A agent card. Use to publish platform facts, decision policy, and
-   * trends that buying agents should read before issuing tool calls (e.g.,
-   * "publisher-wide brand safety: alcohol disallowed", "carbon-aware pricing
-   * applies to display impressions only", "weekly cutoff Thursday 17:00 UTC").
+   * Server-level instructions surfaced on the MCP `initialize` response.
+   * Use to publish platform facts, decision policy, and trends that buying
+   * agents should read before issuing tool calls (e.g., "publisher-wide
+   * brand safety: alcohol disallowed", "carbon-aware pricing applies to
+   * display impressions only", "weekly cutoff Thursday 17:00 UTC").
+   *
+   * MCP-only today. The A2A `AgentCard` analog is `description` (and
+   * per-skill `description`); threading platform.instructions into the
+   * agent-card builder is tracked separately so MCP and A2A buyers see
+   * the same prose.
    *
    * When set on the platform, takes precedence over any `instructions`
    * supplied via `createAdcpServerFromPlatform` opts — same precedence as
