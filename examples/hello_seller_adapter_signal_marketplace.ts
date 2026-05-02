@@ -145,6 +145,27 @@ const upstream = {
 //
 // SWAP: replace the in-memory map with your seller's onboarding-ledger DB
 // query. The shape stays the same; only the storage changes.
+//
+// HOW CREDENTIALS GET ISSUED (this is adopter-side admin work, NOT modeled
+// here — but every adopter needs to build it):
+//
+//   1. Seller's admin UI / API generates a fresh bearer token (32+ bytes
+//      of CSPRNG entropy is sufficient).
+//   2. Seller computes `hashApiKey(token)` to get the `key_id` that
+//      `verifyApiKey` will stamp on every request from this caller.
+//   3. Seller inserts a `BuyerAgent` row into the ledger keyed by that
+//      `key_id`, populated with the agent's onboarded relationship state.
+//   4. Seller hands the raw token to the buyer agent OUT-OF-BAND (signed
+//      contract, secure delivery, etc.) — the token is the credential;
+//      the ledger only stores the hash so a leak of the ledger doesn't
+//      yield a usable credential.
+//   5. Subsequent requests from the buyer carry `Authorization: Bearer
+//      <token>`; the framework hashes, looks up the row, and threads the
+//      resolved `BuyerAgent` through `ctx.agent`.
+//
+// Real implementations also support invalidation (`registry.invalidate(...)`
+// when the row mutates) and rotation (issue new token, leave old one valid
+// for a grace window, then drop the old `key_id` from the ledger).
 // ---------------------------------------------------------------------------
 
 /**
@@ -161,13 +182,20 @@ function hashApiKey(token: string): string {
  * In-memory onboarding ledger. Production sellers replace this with a
  * Postgres table keyed by `key_id`. The cached decorator below makes the
  * per-request lookup cheap regardless of backing store.
+ *
+ * The seed entry is `Addie` — the canonical AdCP buyer-agent persona used
+ * by the storyboard runner and signing docs. Storyboards driving this
+ * adapter authenticate with the harness token, hash to this `key_id`, and
+ * resolve to this record. Real adopters add real buyer agents (their
+ * partner DSPs, internal test agents, etc.) keyed off the tokens they
+ * issue.
  */
 const ONBOARDING_LEDGER = new Map<string, BuyerAgent>([
   [
     hashApiKey(ADCP_AUTH_TOKEN),
     {
-      agent_url: 'https://compliance-runner.adcp-test.com',
-      display_name: 'Compliance harness',
+      agent_url: 'https://addie.example.com',
+      display_name: 'Addie (storyboard runner)',
       status: 'active',
       // Set-valued: this agent is allowed to request operator-billed
       // accounts only. A real holdco might be `new Set(['operator',
