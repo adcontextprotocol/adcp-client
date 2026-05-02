@@ -111,9 +111,7 @@ export function validatePlatform(platform: DecisioningPlatform): void {
   const claimedSales = claimed.filter(s => SALES_SPECIALISMS.has(s));
   if (claimedSales.length > 0) {
     if (platform.capabilities?.channels == null) {
-      errors.push(
-        `capabilities.channels is required for media-buy platforms (claimed: ${claimedSales.join(', ')})`
-      );
+      errors.push(`capabilities.channels is required for media-buy platforms (claimed: ${claimedSales.join(', ')})`);
     }
     if (platform.capabilities?.pricingModels == null) {
       errors.push(
