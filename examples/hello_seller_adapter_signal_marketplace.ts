@@ -327,7 +327,7 @@ class SignalMarketplaceAdapter implements DecisioningPlatform<Record<string, nev
         // framework's sandbox-only gate composes `agent.sandbox_only
         // && account.sandbox !== true → reject`, so production
         // accounts on a sandbox-only agent fail.
-        sandbox: true,
+        sandbox: true, // FIXME(adopter): replace with your real sandbox flag from backing store
       };
     },
   };
