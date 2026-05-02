@@ -8,6 +8,7 @@ import { redactSecrets, SECRET_KEY_PATTERN } from '../utils/redact-secrets';
 import { globToRegExp } from '../utils/glob';
 import {
   UpstreamRecorderScopeError,
+  type QueryUpstreamTrafficResponse,
   type RecordInput,
   type RecordedCall,
   type UpstreamRecorder,
@@ -377,6 +378,38 @@ export function createUpstreamRecorder(options: UpstreamRecorderOptions = {}): U
     clear,
     debug,
     enabled: true,
+  };
+}
+
+/**
+ * Project a `recorder.query()` result onto the spec wire shape returned
+ * by `comply_test_controller`'s `query_upstream_traffic` scenario
+ * (`UpstreamTrafficSuccess` in `comply-test-controller-response.json`,
+ * spec PR adcontextprotocol/adcp#3816). Eliminates the
+ * `items → recorded_calls` / `total → total_count` field-rename footgun
+ * — adopters return this directly:
+ *
+ * ```ts
+ * scenarios: {
+ *   query_upstream_traffic: ({ params }, ctx) =>
+ *     toQueryUpstreamTrafficResponse(
+ *       recorder.query({
+ *         principal: resolvePrincipal(ctx),
+ *         sinceTimestamp: params?.since_timestamp,
+ *         endpointPattern: params?.endpoint_pattern,
+ *         limit: params?.limit,
+ *       })
+ *     ),
+ * }
+ * ```
+ */
+export function toQueryUpstreamTrafficResponse(result: UpstreamRecorderQueryResult): QueryUpstreamTrafficResponse {
+  return {
+    success: true,
+    recorded_calls: result.items,
+    total_count: result.total,
+    truncated: result.truncated,
+    since_timestamp: result.since_timestamp,
   };
 }
 

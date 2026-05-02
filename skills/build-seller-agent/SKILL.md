@@ -849,54 +849,115 @@ Key SDK pieces you'll import from `@adcp/sdk`: `CONTROLLER_SCENARIOS`, `enforceM
 
 Storyboards on `audience-sync`, `sales-social`, `signal-marketplace`, and any specialism with a real upstream platform may declare `check: upstream_traffic` validations (per spec PR adcontextprotocol/adcp#3816). The runner queries your `comply_test_controller`'s `query_upstream_traffic` scenario after each step and asserts your adapter actually called the upstream platform with the storyboard-supplied identifiers — distinguishing a real adapter from one that returns shape-valid AdCP responses without touching upstream.
 
+**Prereq:** you've already wired `comply_test_controller` per [§ Compliance Testing](#compliance-testing-required-for-deterministic_testing-storyboard) above. The recorder plugs into the existing controller's scenario dispatch — it doesn't stand up a new tool. If you skipped that section, go back and finish it before continuing here.
+
 **Opt-in is voluntary** — adopters who don't advertise `query_upstream_traffic` in `list_scenarios` grade the check `not_applicable`. But adopters who advertise and observe zero calls grade `failed` (the façade signal). Since the storyboards exist to verify your adapter does what it claims, opting in is the load-bearing way to claim the specialism.
 
-The SDK ships `@adcp/sdk/upstream-recorder` to handle the recording side — a sandbox-only-by-default helper that wraps your HTTP layer with per-principal isolation, record-time secret redaction, ring-buffer + TTL eviction, and a `query()` method that maps directly onto the controller's response shape. Wire-up:
+#### Two traffic surfaces — don't conflate them
 
-```ts
-import { createUpstreamRecorder } from '@adcp/sdk/upstream-recorder';
+The SDK has two anti-façade-traffic patterns. They're complementary, not alternatives:
 
-// 1. One-time at adapter boot
-const recorder = createUpstreamRecorder({
-  enabled: process.env.NODE_ENV !== 'production',
-});
-const fetch = recorder.wrapFetch(globalThis.fetch);
-
-// 2. Scope outbound calls to the resolving principal at the AdCP request handler
-async function syncAudiences(req, ctx) {
-  await recorder.runWithPrincipal(ctx.account.id, async () => {
-    await fetch('https://platform.example/v1/audience/upload', { /* ... */ });
-  });
-}
-
-// 3. In your `comply_test_controller` handler for `query_upstream_traffic`:
-function handleQueryUpstreamTraffic(req, callerPrincipal) {
-  const { items, total, truncated, since_timestamp } = recorder.query({
-    principal: callerPrincipal,
-    sinceTimestamp: req.params?.since_timestamp,
-    endpointPattern: req.params?.endpoint_pattern,
-    limit: req.params?.limit,
-  });
-  return {
-    success: true,
-    recorded_calls: items,
-    total_count: total,
-    truncated,
-    since_timestamp,
-  };
-}
-
-// 4. Add 'query_upstream_traffic' to your `list_scenarios` response — that's the opt-in flag.
+```
+buyer-agent / runner
+        │
+        │  AdCP wire
+        ▼
+  ┌──────────────┐         outbound HTTP            ┌──────────────────┐
+  │   adopter    │ ────────────────────────────►   │     upstream     │
+  │   adapter    │     (recorder.wrapFetch here)    │   platform / mock │
+  └──────────────┘                                   └──────────────────┘
+        │                                                    │
+        │  comply_test_controller.query_upstream_traffic     │  GET /_debug/traffic
+        │  (recorder.query() here)                           │  (mock-server only)
+        ▼                                                    ▼
+   runner verifies                                    matrix harness verifies
+   adopter's outbound                                 mock received inbound
+   calls + payloads                                   route hits
 ```
 
-**Adopters not on `fetch`**: same model, drop the recorder into your existing client's interceptor / hook surface and call `recorder.record()` manually. Auto-fills timestamp, host/path, redaction, purpose tagging — same wire shape as `wrapFetch`.
+- **Adopter-side `query_upstream_traffic`** (this section): full request payloads with JSONPath assertions, per-principal scoping. Required when the runner can't reach upstream (production sandbox, real platform). The recorder records adapter outbound calls.
+- **Mock-side `/_debug/traffic`** (`src/lib/mock-server/*/server.ts`): per-route hit counts on the mock platform itself. Used by the matrix harness which has direct access to the mock. Anonymous, no payload detail.
+
+Don't try to use one for the other. The recorder is an adapter-side concern; mocks expose `_debug/traffic` because they ARE the upstream and have nothing to record outbound.
+
+#### What the runner asserts (and what it can't catch)
+
+Per spec PR adcontextprotocol/adcp#3816, the runner's `upstream_traffic` validator on each storyboard step:
+
+1. Queries `comply_test_controller.query_upstream_traffic` with `since_timestamp = step request start − 250ms`, scoped to the calling principal.
+2. Filters `recorded_calls[]` by the optional `endpoint_pattern` glob.
+3. Checks `min_count` (default 1) — adopters who advertise the scenario but observe zero calls grade `failed` here.
+4. Checks each `payload_must_contain` entry's JSONPath against at least one matching call's `payload`. Non-JSON payloads fall back to substring matching for `match: present`; `equals` / `contains_any` against non-JSON grade `not_applicable`.
+5. Checks `identifier_paths` — extracts every value at each path from the storyboard's `sample_request` and asserts ALL resolved values appear at any depth in some matched call's payload. The recorder records what your adapter sent; the runner matches against what the storyboard sent. Forward identifiers as-received (don't transform them mid-flight, or your recorded payloads won't match).
+
+What the recorder CAN'T catch on its own: a thoughtful façade can call `recorder.record()` synthetically with fabricated payloads, or replay-attack with hardcoded recorded_calls, or wrap fetch but never invoke it. The load-bearing anti-façade defense is the storyboard's `identifier_paths` matching against payloads only a real adapter integration would produce. The recorder is the *surfacing primitive*; the storyboards are where the contract is enforced. Treat opt-in honestly.
+
+#### Wire-up — the four steps
 
 ```ts
-// Axios
-axiosInstance.interceptors.request.use(config => {
-  config.metadata = { startedAt: Date.now() }; // for status-code-on-response wiring
-  return config;
+import { createUpstreamRecorder, toQueryUpstreamTrafficResponse } from '@adcp/sdk/upstream-recorder';
+import { registerTestController } from '@adcp/sdk/server';
+
+// ─── 1. Boot the recorder (sandbox-only)
+const recorder = createUpstreamRecorder({
+  enabled: process.env.NODE_ENV !== 'production',
+  // strict: true during integration tests — calls outside runWithPrincipal
+  // throw UpstreamRecorderScopeError instead of silently dropping. Surfaces
+  // the unwrapped call site as a stack trace, not a mystery zero-result.
+  strict: process.env.ADCP_RECORDER_STRICT === '1',
 });
+
+// ─── 2. Wrap your HTTP layer (one-time at boot, replaces step 2 if you don't use fetch — see below)
+const recordedFetch = recorder.wrapFetch(globalThis.fetch);
+
+// ─── 3. Scope every outbound call inside your AdCP handler to the resolving principal
+async function syncAudiences(req, ctx) {
+  await recorder.runWithPrincipal(resolvePrincipal(ctx), async () => {
+    await recordedFetch('https://platform.example/v1/audience/upload', { /* ... */ });
+  });
+}
+
+/**
+ * The same string MUST be returned at record-time (here) and at
+ * query-time (step 4). Mismatch returns zero — that's the spec's
+ * security floor (cross-tenant isolation), not a bug.
+ *
+ *   - OAuth client_credentials sellers: return the resolved `client_id`.
+ *   - Session-token sellers: return `ctx.account.id`.
+ *   - Anonymous / public sandbox: a stable per-session identifier
+ *     (literal "anonymous" collides across tenants and defeats isolation).
+ */
+function resolvePrincipal(ctx) {
+  return ctx.account.id; // adjust per your auth layer
+}
+
+// ─── 4. Add `queryUpstreamTraffic` as a method on your existing TestControllerStore
+// (this is an entry in the SAME store you registered above for force/seed/simulate
+// scenarios — NOT a separate handler. registerTestController auto-advertises
+// `query_upstream_traffic` in list_scenarios when this method is present).
+registerTestController(adcpServer, {
+  // ... your existing force_*, seed_*, simulate_* methods ...
+
+  queryUpstreamTraffic: async params =>
+    toQueryUpstreamTrafficResponse(
+      recorder.query({
+        principal: resolvePrincipal(ctxFromInput(params)), // same resolver as step 3
+        sinceTimestamp: params.since_timestamp,
+        endpointPattern: params.endpoint_pattern,
+        limit: params.limit,
+      })
+    ),
+});
+```
+
+For multi-tenant adopters where principal varies per request, use the factory shape — `createStore: async input => ({ queryUpstreamTraffic: ... })` — so the resolver runs once per request with access to the controller request's `account` block.
+
+#### Adopters not on `fetch`
+
+`recorder.wrapFetch` covers most adapters. If you use `axios` / `got` / native `node:http`, **replace step 2** with a per-client interceptor + manual `recorder.record()` (don't combine with `wrapFetch` — pick one):
+
+```ts
+// Axios — interceptor on the response side so we have the status code
 axiosInstance.interceptors.response.use(
   resp => {
     recorder.record({
@@ -912,7 +973,7 @@ axiosInstance.interceptors.response.use(
   err => { /* still record on error — same shape, omit status_code */ throw err; }
 );
 
-// got
+// got — afterResponse hook
 got.extend({
   hooks: {
     afterResponse: [
@@ -932,9 +993,19 @@ got.extend({
 });
 ```
 
-**Debugging "my storyboard says zero calls but I see them in my logs"**: enable `strict: true` during integration test runs — `record()` and the wrapped fetch then throw `UpstreamRecorderScopeError` instead of silently dropping calls made outside `runWithPrincipal`. Or call `recorder.debug()` from inside your handler to see the buffer state, distinct principals, and active principal at that point — `console.log(recorder.debug())` is enough to pinpoint a missing scope wrapper or a record-time / query-time principal mismatch.
+`runWithPrincipal` (step 3) still applies — adapters not on fetch still need to scope their handler bodies so the recorder knows which principal each call belongs to.
 
-`enabled: false` returns a no-op recorder for production builds — zero per-call overhead. See `@adcp/sdk/upstream-recorder`'s module-level docs for the full surface (`strict`, `debug()`, `onError` hook, `redactPattern`, `maxPayloadBytes`, `purpose` classifier, `bufferSize` / `ttlMs` tuning).
+#### Debugging "my storyboard says zero calls but I see them in my logs"
+
+Three checks, in order:
+
+1. **`recorder.debug()` from inside your handler.** Returns `{ enabled, bufferSize, bufferedEntries, principals, lastRecordedAt, activePrincipal, strict }`. Verify `enabled: true`, `bufferedEntries > 0`, and that `activePrincipal` matches what your controller handler will pass at query time. Mismatch is the most common adopter bug — a typo or stale-cache resolver that returns a different string at record vs query time silently returns `[]`.
+2. **`strict: true`** during integration test runs. Calls outside `runWithPrincipal` throw `UpstreamRecorderScopeError` instead of silently dropping. Surfaces unwrapped call sites as stack traces.
+3. **`onError` hook** for production-style observability — fires on classifier throws, URL parse failures, payload-build failures, and unscoped records. Wire to your logger.
+
+`enabled: false` returns a no-op recorder for production builds — zero per-call overhead. See `@adcp/sdk/upstream-recorder`'s module-level docs for the full surface (`strict`, `debug()`, `onError`, `redactPattern`, `maxPayloadBytes`, `purpose` classifier, `bufferSize` / `ttlMs` tuning).
+
+**Worked reference adapter**: [`examples/hello_seller_adapter_signal_marketplace.ts`](../../examples/hello_seller_adapter_signal_marketplace.ts) wires the recorder end-to-end against the SDK's `signal-marketplace` mock. CI gates that example via `test/examples/hello-seller-adapter-signal-marketplace.test.js` — type-checks under strictest tsc, runs the storyboard with zero failed steps, asserts every expected upstream route was hit. Fork the example and replace `UpstreamClient` with your real backend.
 
 ## SDK Quick Reference
 

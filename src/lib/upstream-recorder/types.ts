@@ -196,9 +196,11 @@ export interface UpstreamRecorderQueryParams {
 }
 
 /**
- * Result of `recorder.query`. Maps directly onto the
- * `UpstreamTrafficSuccess` controller-response branch — adopters can
- * return this verbatim from their `query_upstream_traffic` handler.
+ * Result of `recorder.query`. Adopter-side ergonomic shape (camelCase
+ * field names, `items` not `recorded_calls`). Use
+ * `toQueryUpstreamTrafficResponse(result)` to project this onto the
+ * spec's `UpstreamTrafficSuccess` controller-response wire shape rather
+ * than reinventing the field renames in every adopter's handler.
  */
 export interface UpstreamRecorderQueryResult {
   /** Calls matching all filters, ordered by `timestamp` ascending. */
@@ -216,6 +218,21 @@ export interface UpstreamRecorderQueryResult {
    * `sinceTimestamp` was passed). Lets the runner verify the controller
    * honored the bound.
    */
+  since_timestamp: string;
+}
+
+/**
+ * Wire shape returned by the `comply_test_controller`'s
+ * `query_upstream_traffic` scenario, mirroring `UpstreamTrafficSuccess`
+ * in `comply-test-controller-response.json` (spec PR
+ * adcontextprotocol/adcp#3816). Adopter handlers can `return
+ * toQueryUpstreamTrafficResponse(recorder.query(...))` directly.
+ */
+export interface QueryUpstreamTrafficResponse {
+  success: true;
+  recorded_calls: RecordedCall[];
+  total_count: number;
+  truncated: boolean;
   since_timestamp: string;
 }
 

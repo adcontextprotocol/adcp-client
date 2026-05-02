@@ -1,0 +1,66 @@
+# Test-only storyboard fixture exercising the full `upstream_traffic` round-trip.
+#
+# Used by `test/lib/upstream-recorder-e2e.test.js` to verify the producer
+# (`@adcp/sdk/upstream-recorder`) → controller (`query_upstream_traffic`) →
+# runner (`upstream_traffic` validation) integration. Lives in
+# `test/fixtures/` rather than `compliance/cache/` because:
+#
+#   1. The compliance cache is synced from spec releases — anything we
+#      put there is overwritten on `npm run sync-schemas`.
+#   2. The runner's `upstream_traffic` check landed in spec PR
+#      adcontextprotocol/adcp#3816 (merged to main) but isn't in any
+#      released 3.0.x cache yet. Once 3.0.5+ ships and follow-up adcp
+#      PRs land `upstream_traffic` validations on the real audience-sync
+#      / sales-social storyboards, this fixture stops being load-bearing.
+#
+# Until then this fixture proves the integration works end-to-end. The
+# `audience-sync` storyboard's `sync_audiences` step is the closest
+# real-world analogue — same task, same identifier_paths shape.
+
+id: upstream_traffic_fixture
+version: "1.0.0"
+title: "Upstream-traffic round-trip fixture"
+protocol: media-buy
+category: audience_sync
+summary: "Test-only storyboard pinning recorder → controller → runner round-trip."
+track: audiences
+required_tools:
+  - sync_audiences
+  - comply_test_controller
+
+agent:
+  interaction_model: media_buy_seller
+  capabilities: []
+caller:
+  role: buyer_agent
+
+prerequisites:
+  description: "Adopter must register comply_test_controller with query_upstream_traffic scenario."
+
+phases:
+  - id: sync
+    title: "Sync audiences and verify upstream call"
+    steps:
+      - id: sync_audiences
+        title: "Sync hashed-PII audience and verify the adapter forwarded the right identifiers upstream"
+        task: sync_audiences
+        sample_request:
+          account:
+            brand:
+              domain: "acmeoutdoor.example"
+            operator: "test.example"
+          idempotency_key: "$generate:uuid_v4#upstream_traffic_sync"
+          audiences:
+            - audience_id: "aud_test_1"
+              add:
+                - hashed_email: "vec-real-1"
+                - hashed_email: "vec-real-2"
+        validations:
+          - check: upstream_traffic
+            description: "Adapter MUST forward audience hashed_email identifiers to upstream"
+            min_count: 1
+            payload_must_contain:
+              - path: "users[*].hashed_email"
+                match: present
+            identifier_paths:
+              - "audiences[*].add[*].hashed_email"
