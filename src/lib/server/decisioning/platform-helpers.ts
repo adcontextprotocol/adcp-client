@@ -44,6 +44,7 @@
  */
 
 import type { DecisioningPlatform } from './platform';
+import type { ComplianceTestingCapabilities } from './capabilities';
 import type { SalesPlatform } from './specialisms/sales';
 import type { AudiencePlatform } from './specialisms/audiences';
 import type { SignalsPlatform } from './specialisms/signals';
@@ -226,5 +227,49 @@ export function defineCollectionListsPlatform<TCtxMeta = Record<string, unknown>
 export function defineBrandRightsPlatform<TCtxMeta = Record<string, unknown>>(
   platform: BrandRightsPlatform<TCtxMeta>
 ): BrandRightsPlatform<TCtxMeta> {
+  return platform;
+}
+
+/**
+ * Type-level identity for a full `DecisioningPlatform` that wires
+ * `comply_test_controller`. Requires `capabilities.compliance_testing`
+ * to be present in the platform object, enforcing the cap/adapter
+ * pairing at compile time.
+ *
+ * When the returned platform is passed to `createAdcpServerFromPlatform`,
+ * `RequiredOptsFor<P>` resolves to require `complyTest` in opts — so
+ * both halves of the invariant are enforced without runtime-only feedback.
+ *
+ * @example
+ * ```ts
+ * import {
+ *   createAdcpServerFromPlatform,
+ *   definePlatformWithCompliance,
+ * } from '@adcp/sdk/server';
+ *
+ * const server = createAdcpServerFromPlatform(
+ *   definePlatformWithCompliance<Config, Meta>({
+ *     capabilities: {
+ *       specialisms: ['sales-guaranteed'],
+ *       compliance_testing: {}, // required by this helper ✓
+ *     },
+ *     accounts: { resolve: async (ref) => ... },
+ *     sales: { ... },
+ *   }),
+ *   {
+ *     name: 'my-seller',
+ *     version: '1.0.0',
+ *     complyTest: { seed: { product: ... } }, // required by RequiredOptsFor<P> ✓
+ *   }
+ * );
+ * ```
+ */
+export function definePlatformWithCompliance<TConfig = unknown, TCtxMeta = Record<string, unknown>>(
+  platform: DecisioningPlatform<TConfig, TCtxMeta> & {
+    capabilities: { compliance_testing: ComplianceTestingCapabilities };
+  }
+): DecisioningPlatform<TConfig, TCtxMeta> & {
+  capabilities: { compliance_testing: ComplianceTestingCapabilities };
+} {
   return platform;
 }
