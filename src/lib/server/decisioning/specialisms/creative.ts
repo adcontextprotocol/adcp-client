@@ -26,6 +26,8 @@ import type {
   BuildCreativeMultiSuccess,
   PreviewCreativeRequest,
   PreviewCreativeResponse,
+  ListCreativeFormatsRequest,
+  ListCreativeFormatsResponse,
 } from '../../../types/tools.generated';
 import type { SyncCreativesRow } from './sales';
 
@@ -146,6 +148,22 @@ export interface CreativeBuilderPlatform<TCtxMeta = Record<string, unknown>> {
     creatives: Creative[],
     ctx: Ctx<TCtxMeta>
   ): Promise<SyncCreativesRow[] | TaskHandoff<SyncCreativesRow[]>>;
+
+  /**
+   * Format catalog. Buyers query what creative formats this builder
+   * supports — same wire shape that sellers expose via
+   * `SalesPlatform.listCreativeFormats`. Optional because adopters who
+   * declare external `creative_agents` in their capabilities can let the
+   * framework discover formats via those references; self-hosted creative
+   * builders implement this directly.
+   *
+   * ⚠️  NO-ACCOUNT TOOL. The wire request does not carry an `account` field.
+   * `ctx.account` may be `undefined` for `'explicit'`-resolution adopters
+   * — see {@link AccountStore} JSDoc for safe patterns (`'derived'`
+   * resolution returning a singleton, or returning a synthetic publisher-
+   * wide Account from `accounts.resolve(undefined)`).
+   */
+  listCreativeFormats?(req: ListCreativeFormatsRequest, ctx: Ctx<TCtxMeta>): Promise<ListCreativeFormatsResponse>;
 }
 
 /**
