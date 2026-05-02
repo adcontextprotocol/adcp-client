@@ -9,6 +9,8 @@ description: Use when building an AdCP signals agent, creating an audience data 
 
 A signals agent serves audience segments to buyers for campaign targeting. Two tools: `get_signals` (discovery) and `activate_signal` (push to DSPs or sales agents). The business model — marketplace vs owned data — shapes every implementation decision. Determine that first.
 
+> **Common shape gotchas:** `signal_ids[]` in `get_signals` is `signal_id[]` (provenance objects with `source`/`data_provider_domain`/`id`), not bare strings. `activate_signal` returns deployments with `ActivationKey` `oneOf` — for `type: 'key_value'` the `key` and `value` fields sit at the TOP level of `activation_key`, NOT nested under a `key_value` sub-field. See [SHAPE-GOTCHAS.md](../SHAPE-GOTCHAS.md) for the patterns adopters consistently get wrong on first pass.
+
 ## When to Use
 
 - User wants to build an agent that serves audience/targeting data
