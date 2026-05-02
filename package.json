@@ -110,6 +110,11 @@
       "require": "./dist/lib/express-mcp/index.js",
       "types": "./dist/lib/express-mcp/index.d.ts"
     },
+    "./mock-server": {
+      "import": "./dist/lib/mock-server/index.js",
+      "require": "./dist/lib/mock-server/index.js",
+      "types": "./dist/lib/mock-server/index.d.ts"
+    },
     "./package.json": "./package.json"
   },
   "typesVersions": {
@@ -164,6 +169,9 @@
       ],
       "express-mcp": [
         "dist/lib/express-mcp/index.d.ts"
+      ],
+      "mock-server": [
+        "dist/lib/mock-server/index.d.ts"
       ]
     }
   },
