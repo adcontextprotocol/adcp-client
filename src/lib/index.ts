@@ -1158,6 +1158,9 @@ export {
   type CommittedCheckRequest,
   GovernanceAdapterErrorCodes,
   isGovernanceAdapterError,
+  // OAuth pass-through resolver (Shape B accounts.resolve factory)
+  createOAuthPassthroughResolver,
+  type OAuthPassthroughResolverOptions,
 } from './adapters';
 
 // ====== BACKWARD COMPATIBILITY & ENVIRONMENT LOADING ======

@@ -63,3 +63,9 @@ export {
   SIErrorCodes,
   defaultSISessionManager,
 } from './si-session-manager';
+
+// OAuth pass-through resolver — closes adcp-client#1363. Standardizes the
+// canonical "Shape B" account-resolution pattern so adapters wrapping a
+// vendor OAuth + ad-account API don't each re-derive the same ~30 LOC of
+// bearer-extract + listing-fetch + match-by-id boilerplate.
+export { createOAuthPassthroughResolver, type OAuthPassthroughResolverOptions } from './oauth-passthrough-resolver';
