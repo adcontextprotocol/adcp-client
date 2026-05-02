@@ -474,14 +474,38 @@ function compactUnionErrors(errors: readonly ErrorObject[], rootSchema: unknown)
       }
     }
 
+    // Variants with a `not` keyword failure are excluded from candidacy:
+    // the payload populates fields the variant forbids by design (e.g. an
+    // Error variant whose `not` clause rejects payloads that carry the
+    // Success variant's `account` / `currency` / `period` fields). The
+    // adopter's actionable lever is the OTHER variant's residuals (missing
+    // required fields they need to add) — surfacing the `not` failure
+    // points at a path the adopter shouldn't take. See adcp-client#1337.
+    //
+    // If every variant has a `not` failure, fall back to the unconstrained
+    // pick — preserves diagnostic on contrived schemas where mutual-
+    // exclusion is the only signal.
+    const variantsWithNotFailure = new Set<number>();
+    for (const [idx, errs] of byVariant) {
+      for (const e of errs) {
+        if (e.keyword === 'not') {
+          variantsWithNotFailure.add(idx);
+          break;
+        }
+      }
+    }
+    const allVariantsHaveNot = variantsWithNotFailure.size === byVariant.size && byVariant.size > 0;
+
     // Pick the best surviving variant; prefer fewest residuals, tie-break
     // by fewest residual `const` errors (so variants whose discriminator
     // the user actually picked win over siblings whose discriminator they
-    // violated).
+    // violated). Excluded variants (mutual-exclusion `not` rejections) are
+    // skipped unless all variants are excluded.
     let bestIdx = -1;
     let bestCount = Infinity;
     let bestConsts = Infinity;
     for (const [idx, residual] of residualByVariant) {
+      if (!allVariantsHaveNot && variantsWithNotFailure.has(idx)) continue;
       const constCount = residual.reduce((n, e) => (e.keyword === 'const' ? n + 1 : n), 0);
       if (residual.length < bestCount || (residual.length === bestCount && constCount < bestConsts)) {
         bestIdx = idx;
