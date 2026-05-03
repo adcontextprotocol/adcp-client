@@ -31,4 +31,6 @@ The implementation:
 - `allowPrivateIp: true` is gated by `NODE_ENV in {test, development}` plus an explicit `ADCP_RESOLVER_ALLOW_PRIVATE_IP=1` ack, matching the existing pattern around `createAdcpServer`'s in-memory state — a security-critical entry point should fail closed when the carve-out gets wired from a misconfigured env var.
 - The field is forward-compat: 3.0-conformant operators can populate `identity.brand_json_url` today (the schema bump lands in 3.x's next minor; this SDK reads the field via a narrow accessor that codegen will catch up to on the next schema pin). No version bump required to adopt.
 
+**Schema pin: 3.0.4 → 3.0.5.** Picks up the `identity.additionalProperties: true` relaxation (upstream changeset `a4bd513`) so a 3.0-pinned seller emitting `identity.brand_json_url` on its `get_adcp_capabilities` response passes our strict response-validation gate. Without 3.0.5, the spec's "3.0 implementers can adopt the field today" narrative would have contradicted the SDK's default validator. Test `test/agent-resolver-publisher-side.test.js` asserts the publisher-side path; would have failed on 3.0.4 and earlier.
+
 Closes #1268.
