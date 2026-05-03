@@ -23,13 +23,16 @@ const CLI = path.join(REPO_ROOT, 'bin', 'adcp.js');
  * @property {Parameters<typeof bootMockServer>[0]['specialism']} specialism
  * @property {string} storyboardId            — storyboard id passed to `adcp storyboard run`
  * @property {string} adcpAuthToken           — bearer the agent verifies + the grader sends
- * @property {number} agentPort               — high port the agent binds to
- * @property {number} upstreamPort            — high port the mock binds to
  * @property {string[]} expectedRoutes        — façade gate: routes that must show ≥1 hit
  * @property {Record<string, string|undefined>} [extraEnv]  — extra env vars for the agent child
  * @property {Parameters<typeof bootMockServer>[0]} [mockOptions] — extra mock-server boot opts
  * @property {(grader: any) => any[]} [filterFailures] — narrow the failures list (default: all)
  * @property {string} [storyboardSummary]     — optional storyboard description for the test name
+ *
+ * Ports are picked dynamically per test run (kernel-assigned via `pickFreePort()`)
+ * so concurrent test-file workers never race on the same hardcoded number. See
+ * adcontextprotocol/adcp-client#1361 CI runs 25266540111 / 25266762789 / 25266848405
+ * for the original EADDRINUSE-on-41504 + agent-port-timeout-on-35004 flakes.
  */
 
 /**
@@ -43,8 +46,6 @@ function runHelloAdapterGates(config) {
     specialism,
     storyboardId,
     adcpAuthToken,
-    agentPort,
-    upstreamPort,
     expectedRoutes,
     extraEnv = {},
     mockOptions = {},
@@ -84,9 +85,20 @@ function runHelloAdapterGates(config) {
     // ── Gates 2 + 3 — runtime: storyboard + traffic ──
     let mockHandle;
     let agent;
+    let agentPort;
 
     before(async () => {
-      mockHandle = await bootMockServer({ specialism, port: upstreamPort, ...mockOptions });
+      // Pick free ports per-run so concurrent test-file workers never race
+      // on a hardcoded number. The mock server gets `port: 0` directly (its
+      // boot helper reads `server.address()` and surfaces the bound port via
+      // `mockHandle.url`); the spawned agent is a child process that reads
+      // `PORT` from env, so we must hand it a concrete number — `pickFreePort`
+      // asks the kernel for one and closes immediately, leaving a small
+      // race window between close and the agent's `listen()`. Acceptable for
+      // tests; the rare collision falls back into `waitForPort`'s timeout
+      // and reports cleanly.
+      agentPort = await pickFreePort();
+      mockHandle = await bootMockServer({ specialism, port: 0, ...mockOptions });
       agent = spawn('npx', ['tsx', exampleFile], {
         cwd: REPO_ROOT,
         env: {
@@ -158,6 +170,27 @@ function waitForPort(host, port, timeoutMs) {
       });
     };
     tick();
+  });
+}
+
+/**
+ * Ask the kernel for a free TCP port on 127.0.0.1: open a server on port 0,
+ * read what was assigned, close it, and hand the number back. There's a small
+ * race window between close and whoever uses the port next — acceptable for
+ * test fixtures, much better than fighting hardcoded numbers across
+ * concurrent test-file workers.
+ */
+function pickFreePort() {
+  const { createServer } = require('node:net');
+  return new Promise((resolve, reject) => {
+    const s = createServer();
+    s.unref();
+    s.once('error', reject);
+    s.listen(0, '127.0.0.1', () => {
+      const addr = s.address();
+      const port = typeof addr === 'object' && addr ? addr.port : 0;
+      s.close(err => (err ? reject(err) : resolve(port)));
+    });
   });
 }
 

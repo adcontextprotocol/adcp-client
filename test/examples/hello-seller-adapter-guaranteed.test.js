@@ -21,8 +21,6 @@ runHelloAdapterGates({
   specialism: 'sales-guaranteed',
   storyboardId: 'sales_guaranteed',
   adcpAuthToken: 'sk_harness_do_not_use_in_prod',
-  agentPort: 35004,
-  upstreamPort: 41504,
   mockOptions: { apiKey: 'mock_sales_guaranteed_key_do_not_use_in_prod' },
   extraEnv: { UPSTREAM_API_KEY: 'mock_sales_guaranteed_key_do_not_use_in_prod' },
   expectedRoutes: [

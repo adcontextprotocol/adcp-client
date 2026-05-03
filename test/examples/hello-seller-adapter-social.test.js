@@ -26,8 +26,6 @@ runHelloAdapterGates({
   specialism: 'sales-social',
   storyboardId: 'sales_social',
   adcpAuthToken: 'sk_harness_do_not_use_in_prod',
-  agentPort: 35003,
-  upstreamPort: 41503,
   extraEnv: {
     UPSTREAM_OAUTH_CLIENT_ID,
     UPSTREAM_OAUTH_CLIENT_SECRET,

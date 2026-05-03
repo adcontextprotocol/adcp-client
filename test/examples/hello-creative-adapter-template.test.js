@@ -20,8 +20,6 @@ runHelloAdapterGates({
   specialism: 'creative-template',
   storyboardId: 'creative_template',
   adcpAuthToken: 'sk_harness_do_not_use_in_prod',
-  agentPort: 35002,
-  upstreamPort: 41502,
   mockOptions: { apiKey: 'mock_creative_template_key_do_not_use_in_prod' },
   extraEnv: { UPSTREAM_API_KEY: 'mock_creative_template_key_do_not_use_in_prod' },
   expectedRoutes: [
