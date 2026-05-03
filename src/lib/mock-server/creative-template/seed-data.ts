@@ -5,7 +5,7 @@ export interface MockTemplate {
   channel: 'display' | 'video' | 'audio' | 'ctv' | 'native';
   dimensions?: { width: number; height: number };
   duration_seconds?: { min: number; max: number };
-  output_kind: 'html_tag' | 'javascript_tag' | 'vast_xml';
+  output_kind: 'html_tag' | 'javascript_tag' | 'vast_xml' | 'audio_url';
   slots: MockTemplateSlot[];
   sample_inputs?: Record<string, unknown>;
 }
@@ -155,6 +155,49 @@ export const TEMPLATES: MockTemplate[] = [
         required: true,
       },
     ],
+  },
+  // Audio template — TTS / mix / master pattern. Mirrors AudioStack /
+  // ElevenLabs / Resemble shape: text script in, audio file out.
+  // No dimensions (audio has no width/height); the renderer's queued →
+  // running → complete state machine simulates the multi-minute TTS
+  // pipeline production audio platforms run.
+  {
+    template_id: 'tpl_audiostack_spot_30s_v1',
+    name: 'Audio Spot (30s, voiceover + music bed)',
+    description:
+      'Text-to-speech voiceover mixed with a music bed and mastered to 30-second spot. No visual dimensions.',
+    channel: 'audio',
+    duration_seconds: { min: 15, max: 30 },
+    output_kind: 'audio_url',
+    slots: [
+      {
+        slot_id: 'script',
+        asset_type: 'text',
+        required: true,
+        constraints: { max_chars: 600 },
+      },
+      {
+        slot_id: 'voice',
+        asset_type: 'text',
+        required: false,
+        constraints: { allowed_values: ['narrator-warm', 'narrator-energetic', 'announcer-classic'] },
+      },
+      {
+        slot_id: 'music_bed',
+        asset_type: 'audio',
+        required: false,
+        constraints: { mime_types: ['audio/mpeg', 'audio/wav'] },
+      },
+      {
+        slot_id: 'click_through',
+        asset_type: 'click_url',
+        required: false,
+      },
+    ],
+    sample_inputs: {
+      script: 'Built for the trail. Acme Outdoor — premium gear for every adventure.',
+      voice: 'narrator-warm',
+    },
   },
 ];
 

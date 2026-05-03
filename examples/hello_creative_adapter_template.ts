@@ -50,6 +50,7 @@ import {
   parameterizedRender,
   htmlAsset,
   javascriptAsset,
+  audioAsset,
   urlRender,
   type Format,
   type ListCreativeFormatsResponse,
@@ -82,9 +83,13 @@ interface UpstreamTemplate {
   name: string;
   description: string;
   channel: 'display' | 'video' | 'audio' | 'ctv' | 'native';
+  // SWAP: include any output_kinds your platform emits. The mock supports
+  // four (display HTML, JS, VAST, audio URL); production audio platforms
+  // (AudioStack, ElevenLabs, Resemble) typically output `audio_url` to a
+  // signed CDN endpoint.
   dimensions?: { width: number; height: number };
   duration_seconds?: { min: number; max: number };
-  output_kind: 'html_tag' | 'javascript_tag' | 'vast_xml';
+  output_kind: 'html_tag' | 'javascript_tag' | 'vast_xml' | 'audio_url';
   slots: Array<{
     slot_id: string;
     asset_type: 'image' | 'video' | 'audio' | 'text' | 'click_url';
@@ -102,6 +107,7 @@ interface UpstreamRender {
     tag_html?: string;
     tag_javascript?: string;
     vast_xml?: string;
+    audio_url?: string;
     preview_url?: string;
     assets?: Array<Record<string, unknown>>;
   };
@@ -284,6 +290,13 @@ function projectRenderToManifest(
     // creative-template storyboard's build step asserts `assets` presence
     // rather than a specific asset_type.
     assets['serving_tag'] = htmlAsset({ content: out.vast_xml });
+  } else if (out.audio_url) {
+    // Audio templates render to a hosted MP3. Real audio platforms (AudioStack,
+    // ElevenLabs, Resemble) return signed CDN URLs with TTL — the buyer
+    // must fetch within the lifetime. The `audioAsset` builder injects the
+    // `asset_type: 'audio'` discriminator that the AdCP creative-manifest
+    // oneOf requires.
+    assets['serving_audio'] = audioAsset({ url: out.audio_url });
   }
   return { format_id: formatId, assets };
 }
