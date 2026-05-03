@@ -59,6 +59,9 @@ export function isLegalMediaBuyTransition(from: MediaBuyStatus, to: MediaBuyStat
 export function assertMediaBuyTransition(from: MediaBuyStatus, to: MediaBuyStatus, mediaBuyId?: string): void {
   if (isLegalMediaBuyTransition(from, to)) return;
   const label = mediaBuyId ? `Media buy ${mediaBuyId}` : 'Media buy';
+  // NOT_CANCELLABLE is reserved for cancel-of-already-canceled (duplicate cancel
+  // request). Other terminal→canceled paths (completed→canceled, rejected→canceled)
+  // are not "cancel requests" but illegal state jumps — they use INVALID_STATE.
   if (from === 'canceled' && to === 'canceled') {
     throw adcpError('NOT_CANCELLABLE', {
       message: `${label} is already canceled; canceled is terminal.`,

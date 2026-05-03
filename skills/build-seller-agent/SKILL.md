@@ -768,7 +768,7 @@ registerTestController(server, store);
 The storyboard tests state machine correctness:
 
 - `NOT_FOUND` when forcing transitions on unknown entities
-- `INVALID_TRANSITION` when transitioning from terminal states (completed, rejected, canceled for media buys; archived blocks active states like processing/pending_review/approved, but archived → rejected is valid)
+- `INVALID_STATE` when transitioning from terminal states (completed, rejected, canceled for media buys; archived blocks active states like processing/pending_review/approved, but archived → rejected is valid); `NOT_CANCELLABLE` specifically when a buy is already `canceled` and the request tries to cancel it again
 - Successful transitions between valid states
 
 Throw `TestControllerError` from store methods for typed errors. The SDK validates status enum values before calling your store.

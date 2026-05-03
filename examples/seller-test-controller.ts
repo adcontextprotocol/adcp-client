@@ -33,6 +33,8 @@ import {
 } from '@adcp/sdk/testing';
 import { createTaskCapableServer, serve, type ServeContext } from '@adcp/sdk';
 import {
+  MEDIA_BUY_TRANSITIONS,
+  CREATIVE_ASSET_TRANSITIONS,
   assertMediaBuyTransition,
   assertCreativeTransition,
 } from '@adcp/sdk/server';
@@ -239,11 +241,11 @@ const storeFactory: TestControllerStoreFactory = {
 };
 
 function isMediaBuyStatus(value: unknown): value is MediaBuyStatus {
-  return typeof value === 'string' && value in MEDIA_BUY_TRANSITIONS;
+  return typeof value === 'string' && MEDIA_BUY_TRANSITIONS.has(value as MediaBuyStatus);
 }
 
 function isCreativeStatus(value: unknown): value is CreativeStatus {
-  return typeof value === 'string' && value in CREATIVE_TRANSITIONS;
+  return typeof value === 'string' && CREATIVE_ASSET_TRANSITIONS.has(value as CreativeStatus);
 }
 
 // ---------------------------------------------------------------------------
