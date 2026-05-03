@@ -142,7 +142,9 @@ What's in it:
   retry, idempotency, and signature.
 - **Conformance test surface**: `comply_test_controller` (sandbox-only)
   exposes `seed_*` / `force_*` / `simulate_*` so storyboards can drive
-  state deterministically.
+  state deterministically. See
+  [`docs/guides/CONFORMANCE.md`](../guides/CONFORMANCE.md) for the
+  storyboard + fuzzer model.
 - **Response envelope**: `context`, `task_id`, `status` field, error
   envelope shape, `adcp_version` echo, capability advertisement.
 
@@ -238,6 +240,13 @@ Different language SDKs cover different subsets of L0–L3. There is no
 single SDK every implementer must use; what matters is that an
 implementation reaches the conformance bar at L3, regardless of how
 much hand-rolling it took to get there.
+
+Within a given language, the full-stack SDK is the default starting
+point. The layered model in this doc exists to explain what you'd be
+reimplementing if you went lower (special-purpose proxies,
+custom-stack integrations) or ported the SDK to a new language —
+not to suggest there's a meaningful win in starting lower for a
+typical agent build.
 
 A coverage matrix template:
 
@@ -361,8 +370,10 @@ much:
 1. **L3 is most of the work.** State machines, idempotency, error
    catalog, async tasks — ~4 person-months before any L4 differentiation.
 2. **Conformance is L3-driven.** Storyboards probe state transitions
-   and error shapes. Without an SDK's transition validators you
-   re-derive the spec from test failures.
+   and error shapes (see
+   [`docs/guides/CONFORMANCE.md`](../guides/CONFORMANCE.md)). Without
+   an SDK's transition validators you re-derive the spec from test
+   failures.
 3. **Versioning compounds.** Each spec rev that adds a tool, a
    lifecycle edge, or an error code is a new translation row your
    adapters carry. Bypassing the SDK means owning that matrix
