@@ -2,6 +2,17 @@
 
 Every `build-*-agent` skill points here. These rules apply regardless of which specialism you're building. The hello-adapter fork targets in `examples/hello_*_adapter_*.ts` wire all of them — read this section once if you're forking, every time if you're building from scratch.
 
+**Quick reference** — deep-link to a specific rule from your skill or PR review:
+
+- [§ idempotency_key](#idempotency_key-is-required-on-every-mutating-call) — required on mutating tools (28 tools, table below)
+- [§ Resolve-then-authorize](#resolve-then-authorize--uniform-errors-for-not-found--not-yours) — byte-equivalent errors for cross-tenant lookups
+- [§ Authentication](#authentication-is-mandatory) — `serve({ authenticate })` baseline
+- [§ RFC 9421 Signature headers](#dont-break-when-rfc-9421-signature-headers-arrive) — transparent pass-through even if not claimed
+- [§ ctx_metadata safety](#ctx_metadata-is-not-for-credentials) — re-derive bearers per request, never store in ctx_metadata
+- [§ Account resolution](#account-resolution-pick-a-security-preset) — four `AccountStore` security presets
+- [§ Webhooks](#webhooks-stable-operation_id-across-retries) — stable `operation_id` across retries
+- [§ Spec reference](#spec-reference) — `docs/llms.txt` is the canonical shape source
+
 ## `idempotency_key` is required on every mutating call
 
 Every mutating tool requires a client-supplied `idempotency_key`. The full list (authoritative — derived at runtime from `MUTATING_TASKS` in `src/lib/utils/idempotency.ts`, 28 tools grouped by skill domain):

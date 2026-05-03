@@ -2711,59 +2711,87 @@ export type DimensionUnit = 'px' | 'dp' | 'inches' | 'cm' | 'mm' | 'pt';
 /**
  * Image asset
  */
-export type IndividualImageAsset = BaseIndividualAsset;
+export type IndividualImageAsset = BaseIndividualAsset & {
+  asset_type: 'image';
+};
 /**
  * Video asset
  */
-export type IndividualVideoAsset = BaseIndividualAsset;
+export type IndividualVideoAsset = BaseIndividualAsset & {
+  asset_type: 'video';
+};
 /**
  * Audio asset
  */
-export type IndividualAudioAsset = BaseIndividualAsset;
+export type IndividualAudioAsset = BaseIndividualAsset & {
+  asset_type: 'audio';
+};
 /**
  * Text asset
  */
-export type IndividualTextAsset = BaseIndividualAsset;
+export type IndividualTextAsset = BaseIndividualAsset & {
+  asset_type: 'text';
+};
 /**
  * Markdown asset
  */
-export type IndividualMarkdownAsset = BaseIndividualAsset;
+export type IndividualMarkdownAsset = BaseIndividualAsset & {
+  asset_type: 'markdown';
+};
 /**
  * HTML asset
  */
-export type IndividualHtmlAsset = BaseIndividualAsset;
+export type IndividualHtmlAsset = BaseIndividualAsset & {
+  asset_type: 'html';
+};
 /**
  * CSS asset
  */
-export type IndividualCssAsset = BaseIndividualAsset;
+export type IndividualCssAsset = BaseIndividualAsset & {
+  asset_type: 'css';
+};
 /**
  * JavaScript asset
  */
-export type IndividualJavaScriptAsset = BaseIndividualAsset;
+export type IndividualJavaScriptAsset = BaseIndividualAsset & {
+  asset_type: 'javascript';
+};
 /**
  * VAST asset
  */
-export type IndividualVastAsset = BaseIndividualAsset;
+export type IndividualVastAsset = BaseIndividualAsset & {
+  asset_type: 'vast';
+};
 /**
  * DAAST asset
  */
-export type IndividualDaastAsset = BaseIndividualAsset;
+export type IndividualDaastAsset = BaseIndividualAsset & {
+  asset_type: 'daast';
+};
 /**
  * URL asset
  */
-export type IndividualUrlAsset = BaseIndividualAsset;
+export type IndividualUrlAsset = BaseIndividualAsset & {
+  asset_type: 'url';
+};
 /**
  * Webhook asset
  */
-export type IndividualWebhookAsset = BaseIndividualAsset;
+export type IndividualWebhookAsset = BaseIndividualAsset & {
+  asset_type: 'webhook';
+};
 /**
  * Brief asset
  */
-export type IndividualBriefAsset = BaseIndividualAsset;
+export type IndividualBriefAsset = BaseIndividualAsset & {
+  asset_type: 'brief';
+};
 /**
  * Catalog asset
  */
-export type IndividualCatalogAsset = BaseIndividualAsset;
+export type IndividualCatalogAsset = BaseIndividualAsset & {
+  asset_type: 'catalog';
+};
 /**
  * Image asset in group
  */

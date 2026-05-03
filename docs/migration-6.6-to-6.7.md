@@ -2,13 +2,18 @@
 
 > **Status: GA in 6.7.** Most changes are additive — adopters running on
 > 6.6 today see no behavior change on `npm update @adcp/sdk` unless they
-> opt in. **Three exceptions** require attention before bumping:
+> opt in. **Four exceptions** require attention before bumping:
 >
 > - **`accounts.resolution: 'implicit'` adopters**: the framework now
 >   actually refuses inline `{account_id}` references (the docstring
 >   was aspirational pre-6.7). If your platform declared `'implicit'`
 >   but accepted inline ids, those calls now reject with
 >   `INVALID_REQUEST`. See recipe **#10** below.
+> - **`accounts.resolution: 'derived'` adopters**: the same refusal now
+>   applies to derived-mode (single-tenant) platforms — buyers passing
+>   inline `{account_id}` against a derived-mode agent reject with
+>   `INVALID_REQUEST` instead of being silently dropped. See recipe
+>   **#10b**.
 > - **Adopters with `: SalesPlatform<Meta>` field annotations claiming
 >   `sales-guaranteed` / `sales-non-guaranteed` / `sales-broadcast-tv` /
 >   `sales-catalog-driven`**: `SalesPlatform` is now structurally
@@ -22,16 +27,22 @@
 >   client probe — including discovery — masquerading as a transport bug.
 >   See recipe **#16**.
 
-## Audit first — the three breaking recipes
+## Audit first — the four breaking recipes
 
-Before bumping, read recipes **#10**, **#11**, and **#16**. Everything
-else is additive and can be applied incrementally.
+Before bumping, read recipes **#10**, **#10b**, **#11**, and **#16**.
+Everything else is additive and can be applied incrementally.
 
 - **#10 — `accounts.resolution: 'implicit'` enforces inline-`account_id`
   refusal** (runtime). Inline `{account_id}` references against an
   `'implicit'`-resolution platform now reject with `INVALID_REQUEST`.
   Pre-6.7 this was aspirational — the docstring claimed the framework
   would refuse, but nothing checked it.
+- **#10b — `accounts.resolution: 'derived'` enforces inline-`account_id`
+  refusal** (runtime). Same wire-contract enforcement extended to
+  single-tenant agents. Buyers passing inline `account_id` against a
+  declared `'derived'` platform now reject with `INVALID_REQUEST`
+  instead of being silently dropped. The `{brand, operator}` arm is
+  still permitted.
 - **#11 — `SalesPlatform` split into `SalesCorePlatform &
   SalesIngestionPlatform`** (TS-only, self-announcing under
   `tsc --noEmit`). Adopters with `: SalesPlatform<Meta>` field
@@ -657,10 +668,48 @@ const accounts = createDerivedAccountStore<AudioStackAccountMeta>({
 Closes adcp-client#1462. The factory throws `AUTH_REQUIRED` when
 `ctx.authInfo.credential` is absent — set `skipAuthCheck: true` for
 unauthenticated single-tenant agents (rare; public format catalogs).
-Buyer-supplied `account_id` is ignored (single-tenant by definition);
-adopters who want a wire-shape error for that case wrap `resolve` and
-throw `INVALID_REQUEST`. Framework-side refusal (matching `'implicit'`'s
-`refuseImplicitAccountId`) is tracked at adcp-client#1468.
+Framework-side refusal of buyer-supplied `account_id` (matching
+`'implicit'`'s) shipped in 6.7 via adcp-client#1475 — see recipe
+**#10b** below for the full wire-contract entry.
+
+### 10b. **breaking** — `accounts.resolution: 'derived'` enforces inline-`account_id` refusal
+
+The wire-contract enforcement that recipe **#10** added for
+`'implicit'`-resolution platforms now also covers `'derived'`. Both
+modes share the same wire shape: the buyer does **not** pass
+`account_id` inline; the framework derives the tenant from the
+authenticated principal. Pre-6.7 a buyer sending `{ account_id: "foo" }`
+to a derived-mode agent received the singleton response with the
+field silently dropped. 6.7 wires the refusal — derived-resolution
+platforms now reject inline `{account_id}` references with
+`AdcpError('INVALID_REQUEST', { field: 'account.account_id' })`
+*before* the request reaches your `accounts.resolve`.
+
+The error message is mode-specific: `'implicit'` adopters get the
+`sync_accounts`-first guidance; `'derived'` adopters get the
+single-tenant explanation (no `sync_accounts` step exists in derived
+mode). The `{brand, operator}` arm is still permitted in both modes —
+only `account_id`-shaped references are refused.
+
+**Action required.** Audit `accounts.resolution`:
+
+| Your pre-6.7 setup                                                                                | What to do                                                                                                                                       |
+|---------------------------------------------------------------------------------------------------|--------------------------------------------------------------------------------------------------------------------------------------------------|
+| `resolution: 'derived'` declared, all buyers omit `account_id`                                    | Nothing — calls flow as before; you no longer need to defensively branch on `ref?.account_id` in your resolver.                                  |
+| `resolution: 'derived'` declared but adopters' callers passed inline `account_id` (silently dropped pre-6.7) | **Behavior change.** Either drop the `'derived'` declaration to `'explicit'` (callers continue passing inline) or fix callers to omit `account_id` on a single-tenant agent. |
+| Hand-rolled `'derived'` store that read `ref.account_id` for any reason                           | Remove that branch — the framework refuses these refs before `resolve()` is called. Use `createDerivedAccountStore` for the canonical shape.     |
+
+Audit recipe (mirrors #10's `grep`-as-pre-flight pattern):
+
+```bash
+grep -rn "resolution: 'derived'" src/
+```
+
+Then audit each call site for any caller-supplied `account_id` that
+may have been silently dropped pre-6.7 — those callers will now
+receive `INVALID_REQUEST` and need to be fixed buyer-side.
+
+Closes adcp-client#1468 / adcp-client#1469.
 
 **Security-posture upgrade — drop bearers out of `ctx_metadata`.** The
 real value of swapping to Shape D is the credential-discipline shift,

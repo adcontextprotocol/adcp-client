@@ -1,5 +1,5 @@
 // Generated Zod v4 schemas from TypeScript types
-// Generated at: 2026-05-02T20:06:19.119Z
+// Generated at: 2026-05-03T20:22:15.243Z
 // Sources:
 //   - core.generated.ts (core types)
 //   - tools.generated.ts (tool types)
@@ -3260,6 +3260,123 @@ export const FormatIDParameterSchema = z.union([z.literal("dimensions"), z.liter
 
 export const DimensionUnitSchema = z.union([z.literal("px"), z.literal("dp"), z.literal("inches"), z.literal("cm"), z.literal("mm"), z.literal("pt")]);
 
+export const ImageAssetRequirementsSchema = z.object({
+    min_width: z.number().optional(),
+    max_width: z.number().optional(),
+    min_height: z.number().optional(),
+    max_height: z.number().optional(),
+    unit: DimensionUnitSchema.optional(),
+    aspect_ratio: z.string().optional(),
+    formats: z.array(z.union([z.literal("jpg"), z.literal("jpeg"), z.literal("png"), z.literal("gif"), z.literal("webp"), z.literal("svg"), z.literal("avif"), z.literal("tiff"), z.literal("pdf"), z.literal("eps")])).optional(),
+    min_dpi: z.number().optional(),
+    bleed: z.union([z.object({
+            uniform: z.number()
+        }).passthrough(), z.object({
+            top: z.number(),
+            right: z.number(),
+            bottom: z.number(),
+            left: z.number()
+        }).passthrough()]).optional(),
+    color_space: z.union([z.literal("rgb"), z.literal("cmyk"), z.literal("grayscale")]).optional(),
+    max_file_size_kb: z.number().optional(),
+    transparency_required: z.boolean().optional(),
+    animation_allowed: z.boolean().optional(),
+    max_animation_duration_ms: z.number().optional(),
+    max_weight_grams: z.number().optional()
+}).passthrough();
+
+export const VideoAssetRequirementsSchema = z.object({
+    min_width: z.number().optional(),
+    max_width: z.number().optional(),
+    min_height: z.number().optional(),
+    max_height: z.number().optional(),
+    aspect_ratio: z.string().optional(),
+    min_duration_ms: z.number().optional(),
+    max_duration_ms: z.number().optional(),
+    containers: z.array(z.union([z.literal("mp4"), z.literal("webm"), z.literal("mov"), z.literal("avi"), z.literal("mkv")])).optional(),
+    codecs: z.array(z.union([z.literal("h264"), z.literal("h265"), z.literal("vp8"), z.literal("vp9"), z.literal("av1"), z.literal("prores")])).optional(),
+    max_file_size_kb: z.number().optional(),
+    min_bitrate_kbps: z.number().optional(),
+    max_bitrate_kbps: z.number().optional(),
+    frame_rates: z.array(z.number()).optional(),
+    audio_required: z.boolean().optional(),
+    frame_rate_type: FrameRateTypeSchema.optional(),
+    scan_type: ScanTypeSchema.optional(),
+    gop_type: GOPTypeSchema.optional(),
+    min_gop_interval_seconds: z.number().optional(),
+    max_gop_interval_seconds: z.number().optional(),
+    moov_atom_position: MoovAtomPositionSchema.optional(),
+    audio_codecs: z.array(z.union([z.literal("aac"), z.literal("pcm"), z.literal("ac3"), z.literal("eac3"), z.literal("mp3"), z.literal("opus"), z.literal("vorbis"), z.literal("flac")])).optional(),
+    audio_sample_rates: z.array(z.number()).optional(),
+    audio_channels: z.array(AudioChannelLayoutSchema).optional(),
+    loudness_lufs: z.number().optional(),
+    loudness_tolerance_db: z.number().optional(),
+    true_peak_dbfs: z.number().optional()
+}).passthrough();
+
+export const AudioAssetRequirementsSchema = z.object({
+    min_duration_ms: z.number().optional(),
+    max_duration_ms: z.number().optional(),
+    formats: z.array(z.union([z.literal("mp3"), z.literal("aac"), z.literal("wav"), z.literal("ogg"), z.literal("flac")])).optional(),
+    max_file_size_kb: z.number().optional(),
+    sample_rates: z.array(z.number()).optional(),
+    channels: z.array(z.union([z.literal("mono"), z.literal("stereo")])).optional(),
+    min_bitrate_kbps: z.number().optional(),
+    max_bitrate_kbps: z.number().optional()
+}).passthrough();
+
+export const TextAssetRequirementsSchema = z.object({
+    min_length: z.number().optional(),
+    max_length: z.number().optional(),
+    min_lines: z.number().optional(),
+    max_lines: z.number().optional(),
+    character_pattern: z.string().optional(),
+    prohibited_terms: z.array(z.string()).optional()
+}).passthrough();
+
+export const MarkdownAssetRequirementsSchema = z.object({
+    max_length: z.number().optional()
+}).passthrough();
+
+export const HTMLAssetRequirementsSchema = z.object({
+    max_file_size_kb: z.number().optional(),
+    sandbox: z.union([z.literal("none"), z.literal("iframe"), z.literal("safeframe"), z.literal("fencedframe")]).optional(),
+    external_resources_allowed: z.boolean().optional(),
+    allowed_external_domains: z.array(z.string()).optional()
+}).passthrough();
+
+export const CSSAssetRequirementsSchema = z.object({
+    max_file_size_kb: z.number().optional()
+}).passthrough();
+
+export const JavaScriptAssetRequirementsSchema = z.object({
+    max_file_size_kb: z.number().optional(),
+    module_type: z.union([z.literal("script"), z.literal("module"), z.literal("iife")]).optional(),
+    strict_mode_required: z.boolean().optional(),
+    external_resources_allowed: z.boolean().optional(),
+    allowed_external_domains: z.array(z.string()).optional()
+}).passthrough();
+
+export const VASTAssetRequirementsSchema = z.object({
+    vast_version: z.union([z.literal("2.0"), z.literal("3.0"), z.literal("4.0"), z.literal("4.1"), z.literal("4.2")]).optional()
+}).passthrough();
+
+export const DAASTAssetRequirementsSchema = z.object({
+    daast_version: z.literal("1.0").optional()
+}).passthrough();
+
+export const URLAssetRequirementsSchema = z.object({
+    role: z.union([z.literal("clickthrough"), z.literal("landing_page"), z.literal("impression_tracker"), z.literal("click_tracker"), z.literal("viewability_tracker"), z.literal("third_party_tracker")]).optional(),
+    protocols: z.array(z.union([z.literal("https"), z.literal("http")])).optional(),
+    allowed_domains: z.array(z.string()).optional(),
+    max_length: z.number().optional(),
+    macro_support: z.boolean().optional()
+}).passthrough();
+
+export const WebhookAssetRequirementsSchema = z.object({
+    methods: z.array(z.union([z.literal("GET"), z.literal("POST")])).optional()
+}).passthrough();
+
 export const OverlaySchema = z.object({
     id: z.string(),
     description: z.string().optional(),
@@ -3439,122 +3556,7 @@ export const RealEstateItemSchema = z.object({
     ext: ExtensionObjectSchema.optional()
 }).passthrough();
 
-export const ImageAssetRequirementsSchema = z.object({
-    min_width: z.number().optional(),
-    max_width: z.number().optional(),
-    min_height: z.number().optional(),
-    max_height: z.number().optional(),
-    unit: DimensionUnitSchema.optional(),
-    aspect_ratio: z.string().optional(),
-    formats: z.array(z.union([z.literal("jpg"), z.literal("jpeg"), z.literal("png"), z.literal("gif"), z.literal("webp"), z.literal("svg"), z.literal("avif"), z.literal("tiff"), z.literal("pdf"), z.literal("eps")])).optional(),
-    min_dpi: z.number().optional(),
-    bleed: z.union([z.object({
-            uniform: z.number()
-        }).passthrough(), z.object({
-            top: z.number(),
-            right: z.number(),
-            bottom: z.number(),
-            left: z.number()
-        }).passthrough()]).optional(),
-    color_space: z.union([z.literal("rgb"), z.literal("cmyk"), z.literal("grayscale")]).optional(),
-    max_file_size_kb: z.number().optional(),
-    transparency_required: z.boolean().optional(),
-    animation_allowed: z.boolean().optional(),
-    max_animation_duration_ms: z.number().optional(),
-    max_weight_grams: z.number().optional()
-}).passthrough();
-
-export const VideoAssetRequirementsSchema = z.object({
-    min_width: z.number().optional(),
-    max_width: z.number().optional(),
-    min_height: z.number().optional(),
-    max_height: z.number().optional(),
-    aspect_ratio: z.string().optional(),
-    min_duration_ms: z.number().optional(),
-    max_duration_ms: z.number().optional(),
-    containers: z.array(z.union([z.literal("mp4"), z.literal("webm"), z.literal("mov"), z.literal("avi"), z.literal("mkv")])).optional(),
-    codecs: z.array(z.union([z.literal("h264"), z.literal("h265"), z.literal("vp8"), z.literal("vp9"), z.literal("av1"), z.literal("prores")])).optional(),
-    max_file_size_kb: z.number().optional(),
-    min_bitrate_kbps: z.number().optional(),
-    max_bitrate_kbps: z.number().optional(),
-    frame_rates: z.array(z.number()).optional(),
-    audio_required: z.boolean().optional(),
-    frame_rate_type: FrameRateTypeSchema.optional(),
-    scan_type: ScanTypeSchema.optional(),
-    gop_type: GOPTypeSchema.optional(),
-    min_gop_interval_seconds: z.number().optional(),
-    max_gop_interval_seconds: z.number().optional(),
-    moov_atom_position: MoovAtomPositionSchema.optional(),
-    audio_codecs: z.array(z.union([z.literal("aac"), z.literal("pcm"), z.literal("ac3"), z.literal("eac3"), z.literal("mp3"), z.literal("opus"), z.literal("vorbis"), z.literal("flac")])).optional(),
-    audio_sample_rates: z.array(z.number()).optional(),
-    audio_channels: z.array(AudioChannelLayoutSchema).optional(),
-    loudness_lufs: z.number().optional(),
-    loudness_tolerance_db: z.number().optional(),
-    true_peak_dbfs: z.number().optional()
-}).passthrough();
-
-export const AudioAssetRequirementsSchema = z.object({
-    min_duration_ms: z.number().optional(),
-    max_duration_ms: z.number().optional(),
-    formats: z.array(z.union([z.literal("mp3"), z.literal("aac"), z.literal("wav"), z.literal("ogg"), z.literal("flac")])).optional(),
-    max_file_size_kb: z.number().optional(),
-    sample_rates: z.array(z.number()).optional(),
-    channels: z.array(z.union([z.literal("mono"), z.literal("stereo")])).optional(),
-    min_bitrate_kbps: z.number().optional(),
-    max_bitrate_kbps: z.number().optional()
-}).passthrough();
-
-export const TextAssetRequirementsSchema = z.object({
-    min_length: z.number().optional(),
-    max_length: z.number().optional(),
-    min_lines: z.number().optional(),
-    max_lines: z.number().optional(),
-    character_pattern: z.string().optional(),
-    prohibited_terms: z.array(z.string()).optional()
-}).passthrough();
-
-export const MarkdownAssetRequirementsSchema = z.object({
-    max_length: z.number().optional()
-}).passthrough();
-
-export const HTMLAssetRequirementsSchema = z.object({
-    max_file_size_kb: z.number().optional(),
-    sandbox: z.union([z.literal("none"), z.literal("iframe"), z.literal("safeframe"), z.literal("fencedframe")]).optional(),
-    external_resources_allowed: z.boolean().optional(),
-    allowed_external_domains: z.array(z.string()).optional()
-}).passthrough();
-
-export const CSSAssetRequirementsSchema = z.object({
-    max_file_size_kb: z.number().optional()
-}).passthrough();
-
-export const JavaScriptAssetRequirementsSchema = z.object({
-    max_file_size_kb: z.number().optional(),
-    module_type: z.union([z.literal("script"), z.literal("module"), z.literal("iife")]).optional(),
-    strict_mode_required: z.boolean().optional(),
-    external_resources_allowed: z.boolean().optional(),
-    allowed_external_domains: z.array(z.string()).optional()
-}).passthrough();
-
-export const VASTAssetRequirementsSchema = z.object({
-    vast_version: z.union([z.literal("2.0"), z.literal("3.0"), z.literal("4.0"), z.literal("4.1"), z.literal("4.2")]).optional()
-}).passthrough();
-
-export const DAASTAssetRequirementsSchema = z.object({
-    daast_version: z.literal("1.0").optional()
-}).passthrough();
-
-export const URLAssetRequirementsSchema = z.object({
-    role: z.union([z.literal("clickthrough"), z.literal("landing_page"), z.literal("impression_tracker"), z.literal("click_tracker"), z.literal("viewability_tracker"), z.literal("third_party_tracker")]).optional(),
-    protocols: z.array(z.union([z.literal("https"), z.literal("http")])).optional(),
-    allowed_domains: z.array(z.string()).optional(),
-    max_length: z.number().optional(),
-    macro_support: z.boolean().optional()
-}).passthrough();
-
-export const WebhookAssetRequirementsSchema = z.object({
-    methods: z.array(z.union([z.literal("GET"), z.literal("POST")])).optional()
-}).passthrough();
+export const AssetRequirementsSchema = z.union([ImageAssetRequirementsSchema, VideoAssetRequirementsSchema, AudioAssetRequirementsSchema, TextAssetRequirementsSchema, MarkdownAssetRequirementsSchema, HTMLAssetRequirementsSchema, CSSAssetRequirementsSchema, JavaScriptAssetRequirementsSchema, VASTAssetRequirementsSchema, DAASTAssetRequirementsSchema, URLAssetRequirementsSchema, WebhookAssetRequirementsSchema]);
 
 export const ScalarBindingSchema = z.object({
     kind: z.literal("scalar"),
@@ -3570,6 +3572,16 @@ export const AssetPoolBindingSchema = z.object({
     ext: ExtensionObjectSchema.optional()
 }).passthrough();
 
+export const OfferingAssetConstraintSchema = z.object({
+    asset_group_id: z.string(),
+    asset_type: AssetContentTypeSchema,
+    required: z.boolean().optional(),
+    min_count: z.number().optional(),
+    max_count: z.number().optional(),
+    asset_requirements: AssetRequirementsSchema.optional(),
+    ext: ExtensionObjectSchema.optional()
+}).passthrough();
+
 export const CatalogFieldBindingSchema = z.union([ScalarBindingSchema, AssetPoolBindingSchema, z.object({
         kind: z.literal("catalog_group"),
         format_group_id: z.string(),
@@ -3577,8 +3589,6 @@ export const CatalogFieldBindingSchema = z.union([ScalarBindingSchema, AssetPool
         per_item_bindings: z.array(z.union([ScalarBindingSchema, AssetPoolBindingSchema])).optional(),
         ext: ExtensionObjectSchema.optional()
     }).passthrough()]);
-
-export const AssetRequirementsSchema = z.union([ImageAssetRequirementsSchema, VideoAssetRequirementsSchema, AudioAssetRequirementsSchema, TextAssetRequirementsSchema, MarkdownAssetRequirementsSchema, HTMLAssetRequirementsSchema, CSSAssetRequirementsSchema, JavaScriptAssetRequirementsSchema, VASTAssetRequirementsSchema, DAASTAssetRequirementsSchema, URLAssetRequirementsSchema, WebhookAssetRequirementsSchema]);
 
 export const ProtocolResponseSchema = z.object({
     message: z.string(),
@@ -4024,31 +4034,57 @@ export const BaseIndividualAssetSchema = z.object({
     overlays: z.array(OverlaySchema).optional()
 }).passthrough();
 
-export const IndividualVideoAssetSchema = BaseIndividualAssetSchema;
+export const IndividualVideoAssetSchema = BaseIndividualAssetSchema.and(z.object({
+    asset_type: z.literal("video")
+}).passthrough());
 
-export const IndividualAudioAssetSchema = BaseIndividualAssetSchema;
+export const IndividualAudioAssetSchema = BaseIndividualAssetSchema.and(z.object({
+    asset_type: z.literal("audio")
+}).passthrough());
 
-export const IndividualTextAssetSchema = BaseIndividualAssetSchema;
+export const IndividualTextAssetSchema = BaseIndividualAssetSchema.and(z.object({
+    asset_type: z.literal("text")
+}).passthrough());
 
-export const IndividualMarkdownAssetSchema = BaseIndividualAssetSchema;
+export const IndividualMarkdownAssetSchema = BaseIndividualAssetSchema.and(z.object({
+    asset_type: z.literal("markdown")
+}).passthrough());
 
-export const IndividualHtmlAssetSchema = BaseIndividualAssetSchema;
+export const IndividualHtmlAssetSchema = BaseIndividualAssetSchema.and(z.object({
+    asset_type: z.literal("html")
+}).passthrough());
 
-export const IndividualCssAssetSchema = BaseIndividualAssetSchema;
+export const IndividualCssAssetSchema = BaseIndividualAssetSchema.and(z.object({
+    asset_type: z.literal("css")
+}).passthrough());
 
-export const IndividualJavaScriptAssetSchema = BaseIndividualAssetSchema;
+export const IndividualJavaScriptAssetSchema = BaseIndividualAssetSchema.and(z.object({
+    asset_type: z.literal("javascript")
+}).passthrough());
 
-export const IndividualVastAssetSchema = BaseIndividualAssetSchema;
+export const IndividualVastAssetSchema = BaseIndividualAssetSchema.and(z.object({
+    asset_type: z.literal("vast")
+}).passthrough());
 
-export const IndividualDaastAssetSchema = BaseIndividualAssetSchema;
+export const IndividualDaastAssetSchema = BaseIndividualAssetSchema.and(z.object({
+    asset_type: z.literal("daast")
+}).passthrough());
 
-export const IndividualUrlAssetSchema = BaseIndividualAssetSchema;
+export const IndividualUrlAssetSchema = BaseIndividualAssetSchema.and(z.object({
+    asset_type: z.literal("url")
+}).passthrough());
 
-export const IndividualWebhookAssetSchema = BaseIndividualAssetSchema;
+export const IndividualWebhookAssetSchema = BaseIndividualAssetSchema.and(z.object({
+    asset_type: z.literal("webhook")
+}).passthrough());
 
-export const IndividualBriefAssetSchema = BaseIndividualAssetSchema;
+export const IndividualBriefAssetSchema = BaseIndividualAssetSchema.and(z.object({
+    asset_type: z.literal("brief")
+}).passthrough());
 
-export const IndividualCatalogAssetSchema = BaseIndividualAssetSchema;
+export const IndividualCatalogAssetSchema = BaseIndividualAssetSchema.and(z.object({
+    asset_type: z.literal("catalog")
+}).passthrough());
 
 export const GroupImageAssetSchema = BaseGroupAssetSchema;
 
@@ -4078,7 +4114,9 @@ export const VendorPricingOptionSchema = z.object({
     pricing_option_id: z.string()
 }).passthrough().and(VendorPricingSchema);
 
-export const IndividualImageAssetSchema = BaseIndividualAssetSchema;
+export const IndividualImageAssetSchema = BaseIndividualAssetSchema.and(z.object({
+    asset_type: z.literal("image")
+}).passthrough());
 
 export const RepeatableGroupAssetSchema = z.object({
     item_type: z.literal("repeatable_group"),
@@ -6265,14 +6303,15 @@ export const FormatSchema = z.object({
     pricing_options: z.array(VendorPricingOptionSchema).optional()
 }).passthrough();
 
-export const OfferingAssetConstraintSchema = z.object({
-    asset_group_id: z.string(),
-    asset_type: AssetContentTypeSchema,
+export const CatalogRequirementsSchema = z.object({
+    catalog_type: CatalogTypeSchema,
     required: z.boolean().optional(),
-    min_count: z.number().optional(),
-    max_count: z.number().optional(),
-    asset_requirements: AssetRequirementsSchema.optional(),
-    ext: ExtensionObjectSchema.optional()
+    min_items: z.number().optional(),
+    max_items: z.number().optional(),
+    required_fields: z.array(z.string()).optional(),
+    feed_formats: z.array(FeedFormatSchema).optional(),
+    offering_asset_constraints: z.array(OfferingAssetConstraintSchema).optional(),
+    field_bindings: z.array(CatalogFieldBindingSchema).optional()
 }).passthrough();
 
 export const SignalPricingOptionSchema = z.object({
@@ -6539,17 +6578,6 @@ export const ValidatePropertyDeliveryResponseSchema = z.object({
     list_resolved_at: z.string().optional(),
     context: ContextObjectSchema.optional(),
     ext: ExtensionObjectSchema.optional()
-}).passthrough();
-
-export const CatalogRequirementsSchema = z.object({
-    catalog_type: CatalogTypeSchema,
-    required: z.boolean().optional(),
-    min_items: z.number().optional(),
-    max_items: z.number().optional(),
-    required_fields: z.array(z.string()).optional(),
-    feed_formats: z.array(FeedFormatSchema).optional(),
-    offering_asset_constraints: z.array(OfferingAssetConstraintSchema).optional(),
-    field_bindings: z.array(CatalogFieldBindingSchema).optional()
 }).passthrough();
 
 export const ComplyTestControllerRequestSchema = z.object({
