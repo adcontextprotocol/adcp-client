@@ -185,6 +185,22 @@ describe('applyBrandInvariant', () => {
     assert.deepStrictEqual(result.account, { operator: 'pinnacle-agency.example', brand: BRAND });
   });
 
+  // Issue #1419 — natural-key arm of AccountReference requires `operator`.
+  // A fixture or sync_accounts extractor that produced `{brand, sandbox}`
+  // without operator would otherwise pass through and be rejected by a
+  // strict-validating seller. The merge must default operator to brand.domain.
+  test('fills in operator when the natural-key account omits it (#1419)', () => {
+    const result = applyBrandInvariant(
+      { account: { brand: { domain: 'other.example' }, sandbox: true } },
+      { brand: BRAND }
+    );
+    assert.deepStrictEqual(result.account, {
+      brand: BRAND,
+      operator: BRAND.domain,
+      sandbox: true,
+    });
+  });
+
   test('merges brand into a natural-key account that already carries brand', () => {
     const result = applyBrandInvariant(
       { account: { brand: { domain: 'other.example' }, operator: 'pinnacle-agency.example' } },

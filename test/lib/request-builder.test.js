@@ -524,6 +524,26 @@ describe('Request Builder', () => {
       const result = buildRequest(s, {}, DEFAULT_OPTIONS);
       assert.strictEqual(result.account.sandbox, true);
     });
+
+    // Issue #1419 — natural-key arm of AccountReference requires `operator`.
+    // When context.account came from a sync_accounts response that omitted
+    // operator (or was authored without it), the controller call would ship
+    // a synthetic ref missing operator and fail strict-validating sellers.
+    test('fills in operator when context.account is a natural-key ref missing operator (#1419)', () => {
+      const context = { account: { brand: { domain: 'acme.example' } } };
+      const result = buildRequest(step('comply_test_controller'), context, DEFAULT_OPTIONS);
+      assert.deepStrictEqual(result.account.brand, { domain: 'acme.example' });
+      assert.strictEqual(result.account.operator, 'acme.example');
+      assert.strictEqual(result.account.sandbox, true);
+    });
+
+    test('does not add operator when context.account uses the {account_id} arm (#1419)', () => {
+      const context = { account: { account_id: 'acct-1' } };
+      const result = buildRequest(step('comply_test_controller'), context, DEFAULT_OPTIONS);
+      assert.strictEqual(result.account.account_id, 'acct-1');
+      assert.strictEqual(result.account.operator, undefined);
+      assert.strictEqual(result.account.sandbox, true);
+    });
   });
 
   describe('get_signals', () => {

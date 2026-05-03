@@ -29,11 +29,15 @@ export const CONTEXT_EXTRACTORS: Record<string, ContextExtractor> = {
     const extracted: Record<string, unknown> = {};
     if (first.account_id) extracted.account_id = first.account_id;
     if (first.status) extracted.account_status = first.status;
-    // Build an account reference for downstream steps
-    extracted.account = {
-      brand: first.brand,
-      operator: first.operator,
-    };
+    // Build an account reference for downstream steps. Only include fields
+    // the response actually carries — propagating `operator: undefined`
+    // would serialize away on the wire (JSON.stringify drops undefined),
+    // leaving the natural-key arm short of its required `operator` field
+    // (#1419). The brand/operator pair stays paired or both absent.
+    const accountRef: Record<string, unknown> = {};
+    if (first.brand) accountRef.brand = first.brand;
+    if (first.operator) accountRef.operator = first.operator;
+    extracted.account = accountRef;
     return extracted;
   },
 
