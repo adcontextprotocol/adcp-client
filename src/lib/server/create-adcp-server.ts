@@ -1119,15 +1119,17 @@ export interface SessionContext {
 }
 
 /**
- * Behavior when a function-form `instructions` callback throws.
+ * Behavior when a function-form `instructions` callback throws or its
+ * returned Promise rejects.
  *
  * - `'skip'` (default) — log server-side, treat as `undefined` (no
  *   instructions). Right for prose-of-flavor (brand manifests, marketing
  *   copy) where a registry fetch failure must not kill the buyer's session.
- * - `'fail'` — rethrow. The MCP `initialize` handshake then fails at the
- *   transport layer (this is NOT an `adcp_error` envelope — it kills the
- *   session). Right for adopters whose instructions carry load-bearing
- *   policy where stale/missing guidance is worse than a connection retry.
+ * - `'fail'` — rethrow (sync) / re-reject (async). The MCP `initialize`
+ *   handshake then fails at the transport layer (this is NOT an
+ *   `adcp_error` envelope — it kills the session). Right for adopters
+ *   whose instructions carry load-bearing policy where stale/missing
+ *   guidance is worse than a connection retry.
  *
  * @public
  */

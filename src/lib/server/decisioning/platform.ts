@@ -13,7 +13,7 @@
 import type { DecisioningCapabilities, BrandCapabilities } from './capabilities';
 import type { Account, AccountStore } from './account';
 import type { BuyerAgentRegistry } from './buyer-agent';
-import type { SessionContext, OnInstructionsError } from '../create-adcp-server';
+import type { SessionContext, OnInstructionsError, MaybePromise } from '../create-adcp-server';
 import type { StatusMappers } from './status-mappers';
 import type { SalesPlatform, SalesCorePlatform, SalesIngestionPlatform } from './specialisms/sales';
 import type { CreativeBuilderPlatform } from './specialisms/creative';
@@ -139,13 +139,17 @@ export interface DecisioningPlatform<TConfig = unknown, TCtxMeta = Record<string
    * Two forms:
    *
    * 1. **Static string** — captured once at construction.
-   * 2. **Function** `(ctx: SessionContext) => string | undefined` — re-evaluated
-   *    each time `createAdcpServerFromPlatform` runs. Under the canonical
-   *    `serve({ reuseAgent: false })` flow that is per session, so the
+   * 2. **Function** `(ctx: SessionContext) => MaybePromise<string | undefined>` —
+   *    re-evaluated each time `createAdcpServerFromPlatform` runs. Under the
+   *    canonical `serve({ reuseAgent: false })` flow that is per session, so the
    *    closure can surface tenant-shaped prose (per-buyer brand manifests,
    *    storefront-platform copy). `serve()` refuses `reuseAgent: true`
    *    when this is a function — the function would only fire once for
    *    the lifetime of the shared agent.
+   *
+   *    Async functions are supported: the framework calls the function at
+   *    construction and awaits the returned Promise during MCP `initialize`.
+   *    A rejected Promise is governed by `onInstructionsError`.
    *
    * MCP-only today. The A2A `AgentCard` analog is `description` (and
    * per-skill `description`); threading platform.instructions into the
@@ -159,7 +163,7 @@ export interface DecisioningPlatform<TConfig = unknown, TCtxMeta = Record<string
    *
    * @see {@link OnInstructionsError} for `onInstructionsError` (default `'skip'`).
    */
-  instructions?: string | ((ctx: SessionContext) => string | undefined);
+  instructions?: string | ((ctx: SessionContext) => MaybePromise<string | undefined>);
 
   /**
    * Behavior when a function-form `instructions` callback throws.
