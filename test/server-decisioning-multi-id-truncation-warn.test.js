@@ -1,6 +1,8 @@
-// Tests for #1399 — dev-mode warning when getMediaBuyDelivery / getMediaBuys
-// returns fewer rows than the buyer requested. Catches the canonical
-// `media_buy_ids[0]`-truncation bug class at adapter-development time.
+// Tests for #1399 (getMediaBuyDelivery / getMediaBuys) and #1410 (extension
+// to listCreatives / getCreativeDelivery / getSignals) — dev-mode warning
+// when a multi-id read tool returns fewer rows than the buyer requested.
+// Catches the canonical `<id_field>[0]`-truncation bug class at
+// adapter-development time.
 
 process.env.NODE_ENV = 'test';
 
@@ -50,7 +52,9 @@ function captureWarnings() {
     debug: () => {},
   };
   const truncationCalls = () =>
-    allCalls.filter(c => c.msg.includes('platform returned') && c.msg.includes('media_buy_ids'));
+    allCalls.filter(
+      c => c.msg.includes('platform returned') && /requested (media_buy_ids|creative_ids|signal_ids)/.test(c.msg)
+    );
   return { logger, truncationCalls, allCalls };
 }
 
@@ -237,6 +241,63 @@ describe('#1399 — dev-mode multi-id truncation warning', () => {
         },
       });
       assert.strictEqual(cap.truncationCalls().length, 0, 'env-suppression must silence the warn');
+    });
+  });
+
+  // ---------------------------------------------------------------------
+  // #1410 — extend the warn to listCreatives / getCreativeDelivery / getSignals.
+  // The helper is already tested across getMediaBuyDelivery / getMediaBuys
+  // above; one test per new surface is enough to lock the wiring at each
+  // dispatch site. getSignals is distinctive because `signal_ids` is
+  // `SignalID[]` (objects), not bare strings — the helper must compare on
+  // length only.
+  // ---------------------------------------------------------------------
+
+  describe('getSignals (signal_ids — SignalID[] objects)', () => {
+    it('warns when adapter truncates a 3-signal request to 1 signal', async () => {
+      const cap = captureWarnings();
+      const platform = buildPlatform();
+      platform.signals = {
+        getSignals: async req => ({
+          // BUG: only returns the first signal_id's row, regardless of the
+          // 3 SignalID objects the buyer asked for.
+          signals: [
+            {
+              signal_agent_segment_id: 'seg_1',
+              signal_id: req.signal_ids[0],
+              name: 'Demo',
+              description: '...',
+              value_type: 'binary',
+              signal_type: 'owned',
+              data_provider: 'Acme',
+              coverage_percentage: 10,
+              deployments: [],
+              pricing_options: [{ pricing_option_id: 'po_1', model: 'cpm', currency: 'USD', cpm: 1 }],
+            },
+          ],
+        }),
+        activateSignal: async () => ({}),
+      };
+      // Signals-only platforms claim signal-* specialisms; swap the capability claim.
+      platform.capabilities.specialisms = ['signal-marketplace'];
+      const server = createAdcpServerFromPlatform(platform, { ...SERVER_OPTS_BASE, logger: cap.logger });
+      await server.dispatchTestRequest({
+        method: 'tools/call',
+        params: {
+          name: 'get_signals',
+          arguments: {
+            account: { account_id: 'acc_1' },
+            signal_ids: [
+              { source: 'catalog', data_provider_domain: 'acme.example', id: 'a' },
+              { source: 'catalog', data_provider_domain: 'acme.example', id: 'b' },
+              { source: 'catalog', data_provider_domain: 'acme.example', id: 'c' },
+            ],
+          },
+        },
+      });
+      const warns = cap.truncationCalls();
+      assert.strictEqual(warns.length, 1, `expected exactly one warn, got ${warns.length}`);
+      assert.match(warns[0].msg, /getSignals: platform returned 1 row for 3 requested signal_ids/);
     });
   });
 });
