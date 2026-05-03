@@ -99,8 +99,6 @@ import type {
   DeletePropertyListRequest,
   DeletePropertyListResponse,
   PropertyList,
-} from '@adcp/sdk/types';
-import type {
   GetBrandIdentityRequest,
   GetBrandIdentitySuccess,
   GetRightsRequest,
@@ -108,9 +106,15 @@ import type {
   AcquireRightsRequest,
   AcquireRightsAcquired,
   AcquireRightsRejected,
+  UpdateRightsRequest,
+  UpdateRightsSuccess,
+  CreativeApprovalRequest,
+  CreativeApproved,
+  CreativeRejected,
+  CreativePendingReview,
   RightUse,
   RightType,
-} from '@adcp/sdk/types/core.generated';
+} from '@adcp/sdk/types';
 import { createHash, randomUUID } from 'node:crypto';
 
 const PORT = Number(process.env['PORT'] ?? 3003);
@@ -541,7 +545,7 @@ class MultiTenantAdapter implements DecisioningPlatform<Record<string, never>, T
           // SWAP: row-level write under tenant transaction.
           tenant.governanceBindings.set(brandDomain, {
             governance_agent_url: govUrl,
-            active_plan_id: tenant.active_plan_id,
+            ...(tenant.active_plan_id !== undefined && { active_plan_id: tenant.active_plan_id }),
           });
         } else {
           tenant.governanceBindings.delete(brandDomain);
@@ -665,7 +669,7 @@ class MultiTenantAdapter implements DecisioningPlatform<Record<string, never>, T
       plan.audit.push({
         timestamp: new Date().toISOString(),
         kind: 'outcome',
-        check_id: req.check_id,
+        ...(req.check_id !== undefined && { check_id: req.check_id }),
         detail: { outcome: req.outcome, purchase_type: req.purchase_type, committed_budget: committed },
       });
       return {
@@ -905,6 +909,34 @@ class MultiTenantAdapter implements DecisioningPlatform<Record<string, never>, T
           ...(req.campaign.start_date && { valid_from: toDateTime(req.campaign.start_date, 'start') }),
           ...(req.campaign.end_date && { valid_until: toDateTime(req.campaign.end_date, 'end') }),
         },
+      };
+    },
+
+    updateRights: async (req: UpdateRightsRequest, _ctx): Promise<UpdateRightsSuccess> => {
+      // Hello adapter doesn't persist a grant ledger; production adopters
+      // hydrate by `req.rights_id`, apply the patch (extend dates, adjust
+      // impression cap, change pricing, pause/resume), and re-issue
+      // `generation_credentials` + `rights_constraint`.
+      throw new AdcpError('INVALID_REQUEST', {
+        message:
+          'update_rights is not supported by the hello multi-tenant adapter — fork and persist a grant ledger to enable.',
+        field: 'rights_id',
+        details: { rights_id: req.rights_id },
+      });
+    },
+
+    reviewCreativeApproval: async (
+      req: CreativeApprovalRequest,
+      _ctx
+    ): Promise<CreativeApproved | CreativeRejected | CreativePendingReview> => {
+      // Webhook handler dispatched from the adopter's HTTP route at
+      // `acquire_rights.approval_webhook`. Hello adapter auto-approves; real
+      // adopters validate brand-guideline compliance, queue for human review,
+      // or reject with structured `reason` + `suggestions[]`.
+      return {
+        status: 'approved',
+        rights_id: req.rights_id,
+        ...(req.creative_id !== undefined && { creative_id: req.creative_id }),
       };
     },
   });

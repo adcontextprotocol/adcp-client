@@ -9,11 +9,11 @@ A brand rights agent represents a brand's identity and licensing. Buyers discove
 
 ## Pick your fork target
 
-| Specialism | Status | Fork pattern | Storyboard |
+| Specialism | Status | Fork this | Storyboard |
 | --- | --- | --- | --- |
-| `brand-rights` | stable | Seller-adapter wiring + `brandRights` domain group + `creative_approval` webhook receiver | `brand_rights` |
+| `brand-rights` | stable | [`hello_seller_adapter_multi_tenant.ts`](../../examples/hello_seller_adapter_multi_tenant.ts) — `brandRights` block | `brand_rights` |
 
-A worked brand-rights fork target is tracked as a follow-up. Until then, use [`hello_seller_adapter_guaranteed.ts`](../../examples/hello_seller_adapter_guaranteed.ts) as the wiring reference (`createAdcpServerFromPlatform`, `serve`, idempotency store) and add the `brandRights` domain group via `defineBrandRightsPlatform` from `@adcp/sdk/server`.
+The multi-tenant adapter is the canonical fork target. Its `brandRights` block implements all five operations (`getBrandIdentity`, `getRights`, `acquireRights`, `updateRights`, `reviewCreativeApproval`) plus the cross-specialism governance check (`enforceGovernance`) called from `acquireRights`. Single-specialism adopters delete `campaignGovernance` / `propertyLists` and the cross-specialism dispatch helper; the brand-rights surface stays. Tenant isolation via `createTenantStore` translates to single-tenant by passing one entry to the registry.
 
 The storyboard tests identity discovery → rights search → acquisition → enforcement (including expired-campaign denial).
 
@@ -64,12 +64,15 @@ The receiver must validate `idempotency_key` itself (the framework's auto-idempo
 ## Validate locally
 
 ```bash
+# Run the fork-matrix gate (tsc strict)
+npm run compliance:fork-matrix -- --test-name-pattern="hello-seller-adapter-multi-tenant"
+
 # Run your forked agent against the brand_rights storyboard
-adcp storyboard run http://127.0.0.1:3009/mcp brand_rights \
+adcp storyboard run http://127.0.0.1:3003/mcp brand_rights \
   --bearer "$ADCP_AUTH_TOKEN" --include-bundles --json
 ```
 
-The fork-matrix gate pattern from [`docs/guides/EXAMPLE-TEST-CONTRACT.md`](../../docs/guides/EXAMPLE-TEST-CONTRACT.md) (tsc strict / storyboard zero-failures / upstream façade) applies — when the worked brand-rights adapter lands, it'll plug into the same gate.
+The fork-matrix gate is the three-gate contract from [`docs/guides/EXAMPLE-TEST-CONTRACT.md`](../../docs/guides/EXAMPLE-TEST-CONTRACT.md). The multi-tenant adapter currently runs the strict-tsc gate only (no brand-rights mock-server today); storyboard-grader gates land alongside the next mock-server family.
 
 For deeper validation: [`docs/guides/VALIDATE-YOUR-AGENT.md`](../../docs/guides/VALIDATE-YOUR-AGENT.md).
 

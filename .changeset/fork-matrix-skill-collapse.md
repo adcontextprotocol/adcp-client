@@ -18,4 +18,8 @@ The fork-matrix is the canonical compliance gate going forward. Each `test/examp
 
 **Adopter impact:** If you were running `npm run compliance:skill-matrix`, switch to `npm run compliance:fork-matrix`. The fork-matrix is faster, deterministic, and tests the same compliance question against the workflow adopters actually use (fork → swap upstream → ship).
 
+**Additive type exports:** `RightUse` and `RightType` are now re-exported from `@adcp/sdk/types` (previously available only via `@adcp/sdk/types/core.generated`, which was not in the package exports map). Pure additive — existing imports keep working.
+
+**Multi-tenant adapter fixes:** `examples/hello_seller_adapter_multi_tenant.ts` had pre-existing strict-tsc drift — fixed the import path, two `exactOptionalPropertyTypes` mismatches, and added stub `updateRights` / `reviewCreativeApproval` methods to satisfy the `BrandRightsPlatform` interface that grew in #1349. Adapter now passes the strict-tsc gate (`npm run compliance:fork-matrix` 23/23). Governance and brand-rights skills repointed at it as the canonical fork target.
+
 Tracked at adcp-client#595 (closed by this change). The original "full vs reference-linked vs rules-only" experiment was the right question for the world where Claude built from scratch; in a fork-target world it's measuring noise.

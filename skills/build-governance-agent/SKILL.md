@@ -9,16 +9,18 @@ A governance agent enforces policy on the buy side. It evaluates spending author
 
 ## Pick your fork target
 
-| Specialism | Status | Fork pattern | Storyboard |
+| Specialism | Status | Fork this | Storyboard |
 | --- | --- | --- | --- |
-| `governance-spend-authority` | stable | Seller adapter pattern + `campaignGovernance` domain group | `governance_spend_authority` |
-| `governance-delivery-monitor` | stable | Same + `phase: 'delivery'` branch | `governance_delivery_monitor` |
-| `property-lists` | stable | `propertyLists` domain group + CRUD + `validate_property_delivery` | `property_lists` |
-| `collection-lists` | stable | `collectionLists` domain group + IMDb/Gracenote/EIDR resolution | placeholder |
-| `content-standards` | stable | `contentStandards` domain group + `validate_content_delivery` | placeholder |
+| `governance-spend-authority` | stable | [`hello_seller_adapter_multi_tenant.ts`](../../examples/hello_seller_adapter_multi_tenant.ts) — `campaignGovernance` block | `governance_spend_authority` |
+| `governance-delivery-monitor` | stable | Same; add `phase: 'delivery'` branch on `checkGovernance` | `governance_delivery_monitor` |
+| `property-lists` | stable | [`hello_seller_adapter_multi_tenant.ts`](../../examples/hello_seller_adapter_multi_tenant.ts) — `propertyLists` block | `property_lists` |
+| `collection-lists` | stable | Same shape as property-lists; add IMDb/Gracenote/EIDR resolution | placeholder |
+| `content-standards` | stable | Add `contentStandards` domain group via `defineContentStandardsPlatform` | placeholder |
 | `measurement-verification` | preview | v3.1 placeholder. Baseline only. | placeholder |
 
-A worked governance fork target is tracked as a follow-up. Until then, use [`hello_seller_adapter_guaranteed.ts`](../../examples/hello_seller_adapter_guaranteed.ts) as the wiring reference (`createAdcpServerFromPlatform`, `serve`, idempotency store, `comply_test_controller` block) and add the governance domain groups via `defineCampaignGovernancePlatform` / `definePropertyListsPlatform` / `defineContentStandardsPlatform` from `@adcp/sdk/server`.
+The multi-tenant adapter is the canonical fork target — it implements `campaignGovernance` (sync_plans, check_governance, report_plan_outcome, get_plan_audit_logs), `propertyLists` (CRUD + `validate_property_delivery`), and `brandRights` against a per-tenant in-memory store with full tenant isolation via `createTenantStore`. Single-specialism adopters delete the cross-specialism dispatch helper (`enforceGovernance`) and the unused domain groups; everything else stays.
+
+For `content-standards` and `collection-lists`, no worked fork target ships yet — wire `defineContentStandardsPlatform` / `defineCollectionListsPlatform` from `@adcp/sdk/server` against the multi-tenant scaffolding.
 
 For exact response shapes, error codes, and optional fields, `docs/llms.txt` is the canonical reference.
 
@@ -61,16 +63,19 @@ Without the test controller, every business-logic step skips with `missing_test_
 ## Validate locally
 
 ```bash
+# Run the fork-matrix gate (tsc strict)
+npm run compliance:fork-matrix -- --test-name-pattern="hello-seller-adapter-multi-tenant"
+
 # Run your forked agent against the matching storyboard
-adcp storyboard run http://127.0.0.1:3008/mcp governance_spend_authority \
+adcp storyboard run http://127.0.0.1:3003/mcp governance_spend_authority \
   --bearer "$ADCP_AUTH_TOKEN" --include-bundles --json
 
 # Property-lists track
-adcp storyboard run http://127.0.0.1:3008/mcp property_lists \
+adcp storyboard run http://127.0.0.1:3003/mcp property_lists \
   --bearer "$ADCP_AUTH_TOKEN" --include-bundles --json
 ```
 
-The fork-matrix gate pattern from [`docs/guides/EXAMPLE-TEST-CONTRACT.md`](../../docs/guides/EXAMPLE-TEST-CONTRACT.md) (tsc strict / storyboard zero-failures / upstream façade) applies — when the worked governance adapter lands, it'll plug into the same gate.
+The fork-matrix gate is the three-gate contract from [`docs/guides/EXAMPLE-TEST-CONTRACT.md`](../../docs/guides/EXAMPLE-TEST-CONTRACT.md). The multi-tenant adapter currently runs the strict-tsc gate only (no governance / brand-rights mock-server today); storyboard-grader gates land alongside the next mock-server family.
 
 For deeper validation: [`docs/guides/VALIDATE-YOUR-AGENT.md`](../../docs/guides/VALIDATE-YOUR-AGENT.md).
 
