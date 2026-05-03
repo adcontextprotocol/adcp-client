@@ -48,7 +48,7 @@ else is additive and can be applied incrementally.
   error body, which clients report as `discovery_failed`. Audit with
   `grep -rn 'customTools.*update_rights'` before bumping.
 
-## tl;dr — sixteen recipes to apply
+## tl;dr — seventeen recipes to apply
 
 | #  | If you had 6.6 …                                                                         | Do this in 6.7                                                                                                            | Mechanical?                  |
 |----|------------------------------------------------------------------------------------------|---------------------------------------------------------------------------------------------------------------------------|------------------------------|
@@ -68,7 +68,7 @@ else is additive and can be applied incrementally.
 | 14 | Local copy of the media-buy / creative status-transition graph                           | Import `MEDIA_BUY_TRANSITIONS` / `assertMediaBuyTransition` (and the creative pair) from `@adcp/sdk/server`.              | mechanical                   |
 | 15 | Sellers claiming `property-lists` / `collection-lists` echoing `targeting_overlay` by hand | `mediaBuyStore: createMediaBuyStore({ store })` opt-in framework wiring.                                                | mechanical (narrow)          |
 | 16 | Brand-rights adopter with `customTools: { update_rights: ... }`                          | Drop the customTools entry and wire `BrandRightsPlatform.updateRights` instead. The framework now owns the tool name.   | **breaking**                 |
-| 17 | Single-tenant adapter (audiostack, flashtalking, single-namespace retail-media) hand-rolling `AccountStore` with `'explicit'` (wrong) resolution | `createDerivedAccountStore({ toAccount })` — Shape D factory; sets `'derived'`, gates on `AUTH_REQUIRED`, ignores buyer-supplied `account_id`. | mechanical                   |
+| 17 | Single-tenant adapter (audiostack, flashtalking, single-namespace retail-media) hand-rolling `AccountStore` with `'explicit'` (wrong) resolution | `createDerivedAccountStore({ toAccount })` — Shape D factory; sets `'derived'`, gates on `AUTH_REQUIRED`, ignores buyer-supplied `account_id`. While here, move any bearer tokens out of `ctx_metadata` — see [CTX-METADATA-SAFETY](./guides/CTX-METADATA-SAFETY.md). | mechanical (security-relevant) |
 
 `refAccountId` already shipped in 6.6 (recipe #2); it's listed because
 the eight-item list in #1344 included it as a "stop reinventing this"
