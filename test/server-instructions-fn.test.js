@@ -273,7 +273,9 @@ describe('instructions — async function form (createAdcpServer)', () => {
 
   it("onInstructionsError 'skip' (default) swallows async rejection", async () => {
     const server = makeDirectServer({
-      instructions: async () => { throw new Error('registry down'); },
+      instructions: async () => {
+        throw new Error('registry down');
+      },
     });
     await assert.doesNotReject(() => simulateInitialize(server));
     assert.equal(readInstructions(server), undefined);
@@ -281,7 +283,9 @@ describe('instructions — async function form (createAdcpServer)', () => {
 
   it("onInstructionsError 'fail' propagates async rejection to initialize", async () => {
     const server = makeDirectServer({
-      instructions: async () => { throw new Error('load-bearing policy unreachable'); },
+      instructions: async () => {
+        throw new Error('load-bearing policy unreachable');
+      },
       onInstructionsError: 'fail',
     });
     await assert.rejects(() => simulateInitialize(server), /load-bearing policy unreachable/);

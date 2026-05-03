@@ -2830,7 +2830,9 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
     resolvedInstructions = instructionsOption;
   } else if (instructionsIsFn) {
     try {
-      const result = (instructionsOption as (ctx: SessionContext) => string | undefined | Promise<string | undefined>)({});
+      const result = (instructionsOption as (ctx: SessionContext) => string | undefined | Promise<string | undefined>)(
+        {}
+      );
       // Promise detection — must guard for null + non-object before reading
       // `.then`, otherwise `typeof null.then` throws TypeError and the user
       // sees a confusing framework-internal stack instead of their own bug.

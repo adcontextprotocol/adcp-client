@@ -395,10 +395,7 @@ interface McpServerPrivates {
 }
 
 /** @internal */
-type McpRequestHandler = (
-  request: { method: string; params?: unknown },
-  extra: unknown
-) => unknown | Promise<unknown>;
+type McpRequestHandler = (request: { method: string; params?: unknown }, extra: unknown) => unknown | Promise<unknown>;
 
 /**
  * Write the instructions string onto the low-level SDK server backing
@@ -432,7 +429,11 @@ export function setSdkServerInstructions(mcpServer: McpServer, value: string | u
  */
 export function wrapInitializeHandler(
   mcpServer: McpServer,
-  wrapper: (origHandler: McpRequestHandler, req: { method: string; params?: unknown }, extra: unknown) => unknown | Promise<unknown>
+  wrapper: (
+    origHandler: McpRequestHandler,
+    req: { method: string; params?: unknown },
+    extra: unknown
+  ) => unknown | Promise<unknown>
 ): void {
   const priv = mcpServer as unknown as McpServerPrivates;
   const handlers = priv.server?._requestHandlers;
