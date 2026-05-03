@@ -47,6 +47,8 @@
 
 import {
   createAdcpServerFromPlatform,
+  createMediaBuyStore,
+  InMemoryStateStore,
   serve,
   verifyApiKey,
   createIdempotencyStore,
@@ -995,6 +997,15 @@ const simulatedDelivery = new Map<
 >();
 // ─── /TEST-ONLY ──────────────────────────────────────────────────────────
 
+// Persist `packages[].targeting_overlay` from create_media_buy and echo it
+// on get_media_buys. The seller spec MANDATES this echo for any seller
+// claiming property-lists / collection-lists, and SHOULD echo any persisted
+// targeting regardless. SWAP `InMemoryStateStore` for `PostgresStateStore`
+// in production — in-memory loss after restart silently strips the echo
+// from buyers who created buys before the bounce.
+const stateStore = new InMemoryStateStore();
+const mediaBuyStore = createMediaBuyStore({ store: stateStore });
+
 serve(
   ({ taskStore }) =>
     createAdcpServerFromPlatform(platform, {
@@ -1002,6 +1013,7 @@ serve(
       version: '1.0.0',
       taskStore,
       idempotency: idempotencyStore,
+      mediaBuyStore,
       resolveSessionKey: ctx => {
         const acct = ctx.account as Account<NetworkMeta> | undefined;
         return acct?.id ?? 'anonymous';
