@@ -1,14 +1,5 @@
 # Build an AdCP Agent
 
-> **Should you be reading this?** This guide assumes you've decided
-> to build an agent at **L4** — using the SDK to handle L0–L3 of the
-> protocol stack so your code only owns business logic. If you're
-> still weighing whether to use the SDK at all, or whether to start
-> at a lower layer, read [Where to start](../where-to-start.md)
-> first. The [architecture deep-dive](../architecture/adcp-stack.md)
-> covers what each layer of the SDK provides and what *"from scratch"*
-> would actually require.
-
 ## Overview
 
 This guide walks through building an AdCP agent (server) using `@adcp/sdk`. While most documentation covers the client side — calling existing agents — this guide covers the server side: implementing an agent that other clients can discover and call.
