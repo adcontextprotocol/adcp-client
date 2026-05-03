@@ -142,7 +142,9 @@ What's in it:
   retry, idempotency, and signature.
 - **Conformance test surface**: `comply_test_controller` (sandbox-only)
   exposes `seed_*` / `force_*` / `simulate_*` so storyboards can drive
-  state deterministically.
+  state deterministically. See
+  [`docs/guides/CONFORMANCE.md`](../guides/CONFORMANCE.md) for the
+  storyboard + fuzzer model.
 - **Response envelope**: `context`, `task_id`, `status` field, error
   envelope shape, `adcp_version` echo, capability advertisement.
 
@@ -239,16 +241,46 @@ single SDK every implementer must use; what matters is that an
 implementation reaches the conformance bar at L3, regardless of how
 much hand-rolling it took to get there.
 
-A coverage matrix template:
+Within a given language, the full-stack SDK is the default starting
+point. The layered model in this doc exists to explain what you'd be
+reimplementing if you went lower (special-purpose proxies,
+custom-stack integrations) or ported the SDK to a new language —
+not to suggest there's a meaningful win in starting lower for a
+typical agent build.
 
-| SDK | L0 | L1 | L2 | L3 | Adopter writes |
+### Current SDK coverage
+
+Snapshot of what each language SDK ships today. Refresh this table on
+SDK majors and on AdCP spec revs.
+
+*Last updated: 2026-05-03 — `@adcp/sdk` 6.7.0 GA on npm; `adcp` (Python) 4.x in flight; `adcp-go` in active development.*
+
+| SDK | Version | L0 | L1 | L2 | L3 | Adopter writes |
+|---|---|---|---|---|---|---|
+| **`@adcp/sdk`** (TypeScript) | 6.7.0 GA | ✅ | ✅ | ✅ | ✅ | L4 only |
+| **`adcp`** (Python) | 4.x in flight | ✅ | ⚠️ | ⚠️ | ⚠️ | Row to refresh on 4.0 GA |
+| **`adcp-go`** | dev | ⚠️ | ❌ | ❌ | ❌ | Types + transport only today; L1–L3 in scope |
+
+Legend: ✅ shipped · ⚠️ partial / in flight · ❌ not yet covered.
+
+What "shipped" means at each layer is the L0–L3 checklist above —
+these rows should not claim ✅ until every checklist item is satisfied
+in the published SDK build.
+
+For coverage detail beyond this snapshot, see each SDK's repo:
+
+- `@adcp/sdk` — [adcontextprotocol/adcp-client](https://github.com/adcontextprotocol/adcp-client)
+- `adcp` (Python) — [adcontextprotocol/adcp-client-python](https://github.com/adcontextprotocol/adcp-client-python)
+- `adcp-go` — [adcontextprotocol/adcp-go](https://github.com/adcontextprotocol/adcp-go)
+
+For shape comparison purposes, here are the three coverage archetypes
+an SDK can land in regardless of language:
+
+| Archetype | L0 | L1 | L2 | L3 | Adopter writes |
 |---|---|---|---|---|---|
 | Full-stack SDK | ✅ | ✅ | ✅ | ✅ | L4 only |
 | Transport + signing only | ✅ | ✅ | ⚠️ | ❌ | L2 + L3 + L4 |
 | Types-only / generated bindings | ✅ | ❌ | ❌ | ❌ | L1 + L2 + L3 + L4 |
-
-(Specific SDKs and their current coverage live in each SDK's repo;
-this template is the framing.)
 
 The choice is a tradeoff between leverage and control. A full-stack
 SDK ships you the most code for free but couples you to its choices.
@@ -298,9 +330,30 @@ AdCP's L3 is large:
   surface.
 - **Webhook emission**: signed, retried, idempotent.
 
-A from-scratch AdCP agent is ~4 person-months of L3 alone, before any
-L4 differentiation. Most teams that say *"I'll build from scratch"*
-underestimate L3 by an order of magnitude.
+A from-scratch AdCP agent is ~3–4 person-months of L3 work alone,
+before any L4 differentiation. The breakdown, for one senior engineer
+to a mock-mode conformance bar, is roughly:
+
+| L3 component | Honest estimate |
+|---|---|
+| 7 lifecycle state machines (define edges, validate transitions, emit the right `NOT_CANCELLABLE` / `INVALID_STATE` codes) | ~1 week each = **6–7 weeks** |
+| Idempotency cache (cross-payload conflict detection + no-payload-echo invariant) | **1 week** |
+| Async-task store + dispatcher (correct terminal-artifact contract per tool) | **1–2 weeks** |
+| Error-code catalog wiring (47 codes, recovery classification, code precedence) | **1–2 weeks** |
+| `comply_test_controller` conformance surface (`seed_*` / `force_*` / `simulate_*`) | **1–2 weeks** |
+| Webhook emission (signed, retried, idempotent, dedup-keyed) | **1 week** |
+| RFC 9421 signing + verification + replay-window + key rotation (counted separately as L1, but commonly bundled in the same scope) | **2–3 weeks** |
+| Integration, conformance debugging, spec re-reading | **2–3 weeks** |
+
+That's **~14–18 weeks**, depending on team familiarity with HTTP
+message-signatures and lifecycle modeling. The estimate excludes
+**version-adaptation work** — every spec rev that adds a tool, an
+edge, or an error code adds rows to a translation matrix you carry
+forever. SDK adopters get those for free; from-scratch implementers
+pay them every release.
+
+Most teams that say *"I'll build from scratch"* count the wire
+shape (L0) and underestimate L3 by an order of magnitude.
 
 ## Version adaptation
 
@@ -345,8 +398,8 @@ The spec itself has already done one of these crossings:
   `comply_test_controller` conformance surface, published lifecycle
   state machines, RFC 9421 signatures as a baseline, and an expanded
   error catalog with recovery classifications. A from-scratch 2.5
-  agent was tractable; a from-scratch 3.0 agent is roughly 4
-  person-months of L3 alone.
+  agent was tractable; a from-scratch 3.0 agent is the
+  ~3–4 person-month L3 build [decomposed above](#why-sdks-matter-more-in-adcp-than-in-eg-http).
 
 The from-scratch path that worked for 2.5 doesn't scale to 3.0, and
 3.0 isn't where the spec stops. SDKs exist because L3 grew faster
@@ -359,10 +412,15 @@ Rough order of pain, for adopters who built before the SDKs covered
 much:
 
 1. **L3 is most of the work.** State machines, idempotency, error
-   catalog, async tasks — ~4 person-months before any L4 differentiation.
+   catalog, async tasks — ~3–4 person-months before any L4
+   differentiation. See the
+   [decomposition](#why-sdks-matter-more-in-adcp-than-in-eg-http) for
+   the per-component breakdown.
 2. **Conformance is L3-driven.** Storyboards probe state transitions
-   and error shapes. Without an SDK's transition validators you
-   re-derive the spec from test failures.
+   and error shapes (see
+   [`docs/guides/CONFORMANCE.md`](../guides/CONFORMANCE.md)). Without
+   an SDK's transition validators you re-derive the spec from test
+   failures.
 3. **Versioning compounds.** Each spec rev that adds a tool, a
    lifecycle edge, or an error code is a new translation row your
    adapters carry. Bypassing the SDK means owning that matrix
