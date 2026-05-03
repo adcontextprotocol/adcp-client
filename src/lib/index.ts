@@ -567,6 +567,9 @@ export {
   isLegalCreativeTransition,
   assertMediaBuyTransition,
   assertCreativeTransition,
+  getAccountMode,
+  isSandboxOrMockAccount,
+  assertSandboxAccount,
   taskToolResponse,
   registerAdcpTaskTool,
   createTaskCapableServer,
@@ -695,6 +698,7 @@ export type {
   A2AAgentCardOverrides,
   A2AMountOptions,
   ExpressAppLike,
+  AccountMode,
 } from './server';
 
 // ====== ERROR HANDLING & RETRY ======
