@@ -36,7 +36,10 @@ For exact response shapes, error codes, and optional fields, `docs/llms.txt` is 
 
 ## Cross-cutting rules
 
-Every retail-media agent hits the cross-cutting rules in [`../cross-cutting.md`](../cross-cutting.md). Plus all the seller cross-cutting from [`../build-seller-agent/SKILL.md`](../build-seller-agent/SKILL.md) — retail-media is additive on top of the seller baseline.
+Every retail-media agent hits the cross-cutting rules in [`../cross-cutting.md`](../cross-cutting.md). Plus all the seller cross-cutting from [`../build-seller-agent/SKILL.md`](../build-seller-agent/SKILL.md) — retail-media is additive on top of the seller baseline. The high-traffic ones for retail-media (deep-linked to the rule):
+
+- [`idempotency_key`](../cross-cutting.md#idempotency_key-is-required-on-every-mutating-call) on `sync_catalogs`, `sync_event_sources`, `log_event`, `provide_performance_feedback` (in addition to the seller-side mutating tools)
+- [Webhooks](../cross-cutting.md#webhooks-stable-operation_id-across-retries) — for catalog-ingestion completions, use `catalog_sync.${catalog_id}.${batch_id}` as a stable `operation_id`
 
 ## Specialism deltas at a glance
 

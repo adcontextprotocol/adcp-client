@@ -37,7 +37,10 @@ For exact response shapes, error codes, and optional fields, `docs/llms.txt` is 
 
 ## Cross-cutting rules
 
-Every generative seller hits the cross-cutting rules in [`../cross-cutting.md`](../cross-cutting.md). Plus the seller cross-cutting from [`../build-seller-agent/SKILL.md`](../build-seller-agent/SKILL.md) — generative-seller is additive on top of the seller baseline.
+Every generative seller hits the cross-cutting rules in [`../cross-cutting.md`](../cross-cutting.md). Plus the seller cross-cutting from [`../build-seller-agent/SKILL.md`](../build-seller-agent/SKILL.md) — generative-seller is additive on top of the seller baseline. The high-traffic ones for generative-seller (deep-linked to the rule):
+
+- [`idempotency_key`](../cross-cutting.md#idempotency_key-is-required-on-every-mutating-call) on `build_creative` and `sync_creatives` (in addition to the seller-side mutating tools)
+- [Webhooks](../cross-cutting.md#webhooks-stable-operation_id-across-retries) — for async generation completions, use `creative_review.${creative_id}` as a stable `operation_id`
 
 ## Specialism deltas at a glance
 

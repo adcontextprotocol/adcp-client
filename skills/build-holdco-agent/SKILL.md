@@ -34,7 +34,11 @@ The reference adapter is `examples/hello_seller_adapter_multi_tenant.ts` — for
 
 ## Cross-cutting rules
 
-Every holdco hub hits the cross-cutting rules in [`../cross-cutting.md`](../cross-cutting.md). The most relevant for a holdco is **account resolution: pick a security preset** — `createTenantStore` (covered in detail below) is the right answer for any multi-tenant adopter.
+Every holdco hub hits the cross-cutting rules in [`../cross-cutting.md`](../cross-cutting.md). The most relevant for a holdco (deep-linked to the rule):
+
+- [Account resolution](../cross-cutting.md#account-resolution-pick-a-security-preset) — `createTenantStore` is the right answer for any multi-tenant adopter (covered in detail below)
+- [Resolve-then-authorize](../cross-cutting.md#resolve-then-authorize--uniform-errors-for-not-found--not-yours) — byte-equivalent errors on cross-tenant id lookups; the multi-tenant attack surface makes this load-bearing
+- [`ctx_metadata` is not for credentials](../cross-cutting.md#ctx_metadata-is-not-for-credentials) — particularly important for holdcos because per-tenant credentials must NOT travel through `ctx_metadata`; re-derive from `ctx.authInfo` per request
 
 ## The shape: one DecisioningPlatform, three specialism interfaces
 

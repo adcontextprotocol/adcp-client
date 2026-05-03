@@ -53,7 +53,13 @@ For exact response shapes, error codes, and optional fields, `docs/llms.txt` is 
 
 ## Cross-cutting rules
 
-Every governance agent hits the cross-cutting rules in [`../cross-cutting.md`](../cross-cutting.md). One governance-specific rule on top:
+Every governance agent hits the cross-cutting rules in [`../cross-cutting.md`](../cross-cutting.md). The high-traffic ones for governance (deep-linked to the rule):
+
+- [`idempotency_key`](../cross-cutting.md#idempotency_key-is-required-on-every-mutating-call) on `sync_plans`, `sync_governance`, `report_plan_outcome`, `create_property_list` / `update_property_list` / `delete_property_list`, `create_collection_list` / `update_collection_list` / `delete_collection_list`, `create_content_standards` / `update_content_standards` / `calibrate_content`
+- [Resolve-then-authorize](../cross-cutting.md#resolve-then-authorize--uniform-errors-for-not-found--not-yours) — byte-equivalent errors on `property_list_id` / `collection_list_id` / `plan_id` cross-tenant lookups
+- [Account resolution](../cross-cutting.md#account-resolution-pick-a-security-preset) — `createTenantStore` for multi-tenant policy hubs
+
+One governance-specific rule on top:
 
 ### `comply_test_controller` is required
 

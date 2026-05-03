@@ -45,7 +45,13 @@ For exact response shapes, error codes, and optional fields, `docs/llms.txt` is 
 
 ## Cross-cutting rules
 
-Every brand-rights agent hits the cross-cutting rules in [`../cross-cutting.md`](../cross-cutting.md). One brand-rights-specific note:
+Every brand-rights agent hits the cross-cutting rules in [`../cross-cutting.md`](../cross-cutting.md). The high-traffic ones for brand-rights (deep-linked to the rule):
+
+- [`idempotency_key`](../cross-cutting.md#idempotency_key-is-required-on-every-mutating-call) on `acquire_rights` and `update_rights`
+- [Authentication](../cross-cutting.md#authentication-is-mandatory) — `serve({ authenticate })` baseline
+- [Webhooks](../cross-cutting.md#webhooks-stable-operation_id-across-retries) — `creative_approval.${creative_id}` operation_id must be stable across retries; the `creative_approval` webhook receiver itself validates idempotency manually (the framework's auto-idempotency middleware applies to MCP/A2A tools, not arbitrary HTTP receivers)
+
+One brand-rights-specific note:
 
 ### `creative_approval` is webhook-only
 

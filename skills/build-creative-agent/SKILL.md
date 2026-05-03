@@ -33,7 +33,13 @@ For exact response shapes, error codes, and optional fields, `docs/llms.txt` is 
 
 ## Cross-cutting rules
 
-Every creative agent hits the cross-cutting rules in [`../cross-cutting.md`](../cross-cutting.md). Two creative-specific notes on top of those:
+Every creative agent hits the cross-cutting rules in [`../cross-cutting.md`](../cross-cutting.md). The high-traffic ones for creative agents (deep-linked to the rule):
+
+- [`idempotency_key`](../cross-cutting.md#idempotency_key-is-required-on-every-mutating-call) on `sync_creatives`, `build_creative`, `report_usage`
+- [Authentication](../cross-cutting.md#authentication-is-mandatory) — `serve({ authenticate })` baseline
+- [Webhooks](../cross-cutting.md#webhooks-stable-operation_id-across-retries) — `creative_review.${creative_id}` and `report_usage.${report_batch_id}` operation_ids must be stable across retries
+
+Two creative-specific notes on top of those:
 
 ### Webhooks for async review pipelines
 

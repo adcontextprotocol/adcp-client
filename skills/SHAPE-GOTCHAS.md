@@ -215,6 +215,24 @@ The `examples/hello_seller_adapter_social.ts` reference adapter codifies all thr
 
 ---
 
+## 7. `signal_type`: `marketplace` vs `owned` vs `custom`
+
+`signal_type` is the catalog-type discriminator on every `Signal` returned from `get_signals`. It's a closed enum (`marketplace | custom | owned` per `schemas/cache/3.0.5/enums/signal-catalog-type.json`) and adopters consistently mis-pick because the spec descriptions read like overlapping concepts.
+
+The spec definitions:
+
+| Value | Use when | Example adopter |
+| --- | --- | --- |
+| `marketplace` | Resold third-party segments. Provider's authorization is verifiable via their `adagents.json`. | LiveRamp marketplace; Oracle Data Cloud catalog; reseller of third-party panels |
+| `owned` | First-party segments derived from data the signal agent **directly owns**. | Retailer purchase data (Kroger 84.51°, Walmart Connect); publisher behavioral data (NYT subscribers); telco data |
+| `custom` | Agent-native segment built **on demand** from models, composites, or buyer inputs. Not attributable to a standing upstream provider. | Contextual classifier you train per-request; lookalike model output computed from a buyer's seed audience |
+
+**`owned` is the default for first-party data agents.** Most non-marketplace adopters mis-classify their segments as `custom` because the segment was "built" — but the test is provenance, not lifecycle. If you can point at a stable data-asset you own (a customer table, a pixel, a panel), it's `owned`. `custom` is reserved for segments that don't have a standing data asset behind them — the agent computed them per-call.
+
+**`marketplace` requires `data_provider_domain` to resolve.** Buyers fetch `https://{data_provider_domain}/adagents.json` to verify the provider's authorization. If you can't surface a verifiable provider domain (the segment is yours, or it's synthetic), the value isn't `marketplace`.
+
+---
+
 ## How to debug a "Field not found at path: …" error fast
 
 The validator's path naming is precise. When you see:

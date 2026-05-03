@@ -38,7 +38,13 @@ For exact response shapes, error codes, and optional fields, `docs/llms.txt` is 
 
 ## Cross-cutting rules
 
-Every sales-* seller hits the cross-cutting rules in [`../cross-cutting.md`](../cross-cutting.md) — `idempotency_key` on every mutating request, resolve-then-authorize uniform errors, mandatory authentication, signed-requests transparency, `ctx_metadata` is not for credentials, account-resolution security presets, webhook `operation_id` stability. Read it once.
+Every sales-* seller hits the cross-cutting rules in [`../cross-cutting.md`](../cross-cutting.md). The high-traffic ones for sellers (deep-linked to the rule):
+
+- [`idempotency_key`](../cross-cutting.md#idempotency_key-is-required-on-every-mutating-call) on every mutating request — `create_media_buy`, `update_media_buy`, `sync_creatives`, `sync_audiences`, etc.
+- [Resolve-then-authorize](../cross-cutting.md#resolve-then-authorize--uniform-errors-for-not-found--not-yours) — byte-equivalent errors for `media_buy_id` cross-tenant lookups
+- [Authentication](../cross-cutting.md#authentication-is-mandatory) — `serve({ authenticate })` baseline
+- [Account resolution](../cross-cutting.md#account-resolution-pick-a-security-preset) — `createTenantStore` for multi-advertiser sellers
+- [Webhooks](../cross-cutting.md#webhooks-stable-operation_id-across-retries) — stable `operation_id` for IO-approval / delivery-completion notifications
 
 ## Specialism deltas
 
