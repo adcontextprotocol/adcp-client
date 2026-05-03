@@ -4,6 +4,8 @@ Companion to [`../SKILL.md`](../SKILL.md). The SKILL.md baseline applies; this f
 
 **Fork target**: `examples/hello_seller_adapter_guaranteed.ts` is the worked, passing reference adapter for this specialism. It demonstrates the IO-signing handoff via `ctx.handoffToTask(fn)`, the `SalesCorePlatform & SalesIngestionPlatform` field-annotation pattern, and structured `MEDIA_BUY_NOT_FOUND` / `PACKAGE_NOT_FOUND` / `TERMS_REJECTED` error shapes. Replace the `// SWAP:` markers with calls to your real ad-server backend.
 
+**Forecast surface**: `'availability'`. Guaranteed sellers don't quote spend curves — they confirm reserved inventory against a targeting + dates request. `Product.forecast` should be a single point with `metrics.impressions` / `metrics.audience_size` populated and `metrics.spend` expressing the seller's quoted cost; budget is omitted. Set `valid_until` to within 24 hours so buyers refresh their view. See [`../../docs/guides/FORECASTING.md`](../../../docs/guides/FORECASTING.md) § Availability for the canonical projection.
+
 Storyboard: `sales_guaranteed`. `create_media_buy` has **three return shapes**. Route on request signals FIRST — the specialism's name is about IO signing, but the baseline `media_buy_seller` storyboard exercises all three in sequence.
 
 | Request signal                                                         | Return                                                                                                                  | Why                                                                                                     |

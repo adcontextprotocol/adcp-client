@@ -4,6 +4,8 @@ Companion to [`../SKILL.md`](../SKILL.md). The SKILL.md baseline applies; this f
 
 Storyboard: `media_buy_broadcast_seller`. Broadcast has four protocol surfaces not used in digital.
 
+**Forecast surface**: `'reach_freq'` or `'package'`. Broadcast plans aren't quoted in spend curves — buyers want unique reach and frequency at a planned weight (GRPs), or a fully-priced package. Project your reach/freq tool (Nielsen, etc.) onto `Product.forecast` points where each point's `metrics` includes `reach_unique`, `frequency_avg`, `grps`, `spend`, and a `package: { spots, dayparts }` breakdown. Use `'package'` when the seller quotes a fixed bundle of spots; use `'reach_freq'` when the buyer is exploring weight levels. See [`../../docs/guides/FORECASTING.md`](../../../docs/guides/FORECASTING.md) § Reverse forecast (for `'reach_freq'`) and § Package for the canonical projections.
+
 **Pricing** — unit-based (cost per spot). Until a `pricing_model: 'unit'` lands, express as CPM with a very high `fixed_price` that represents the cost per thousand spots equivalent, or use a custom pricing option ID and clarify in `description`.
 
 **Agency estimate number** — top-level on `create_media_buy`. Echo it on the response:

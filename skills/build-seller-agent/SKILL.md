@@ -29,18 +29,18 @@ Every sales-_ specialism (including `sales-social`, `sales-broadcast-tv`, `sales
 
 **Required tools** (tested by the `media_buy_seller` storyboard bundle at `compliance/cache/3.0.0/protocols/media-buy/`):
 
-| Tool                     | Purpose                                                                            | `SalesPlatform` method   |
-| ------------------------ | ---------------------------------------------------------------------------------- | ------------------------ |
-| `get_adcp_capabilities`  | Declare protocols + specialisms + features                                         | auto (framework)         |
-| `sync_accounts`          | Advertiser onboarding, per-tenant account creation                                 | `accounts.upsert`        |
-| `list_accounts`          | Account lookup by brand/operator; buyers listing their accounts on your platform   | `accounts.list`          |
-| `get_products`           | Product catalog discovery from a brief; returns `{ products: [...] }`              | `sales.getProducts`      |
+| Tool                     | Purpose                                                                            | `SalesPlatform` method      |
+| ------------------------ | ---------------------------------------------------------------------------------- | --------------------------- |
+| `get_adcp_capabilities`  | Declare protocols + specialisms + features                                         | auto (framework)            |
+| `sync_accounts`          | Advertiser onboarding, per-tenant account creation                                 | `accounts.upsert`           |
+| `list_accounts`          | Account lookup by brand/operator; buyers listing their accounts on your platform   | `accounts.list`             |
+| `get_products`           | Product catalog discovery from a brief; returns `{ products: [...] }`              | `sales.getProducts`         |
 | `list_creative_formats`  | Formats your agent accepts                                                         | `sales.listCreativeFormats` |
-| `create_media_buy`       | Accept a campaign with packages, budget, flight dates                              | `sales.createMediaBuy`   |
-| `update_media_buy`       | Bid, budget, status, package mutations over the campaign lifecycle                 | `sales.updateMediaBuy`   |
-| `get_media_buys`         | Read campaigns back with full state (status, budget, packages, targeting overlays) | `sales.getMediaBuys`     |
-| `sync_creatives`         | Accept creative assets and return per-asset status                                 | `sales.syncCreatives`    |
-| `list_creatives`         | Read the creative library back with pagination                                     | `sales.listCreatives`    |
+| `create_media_buy`       | Accept a campaign with packages, budget, flight dates                              | `sales.createMediaBuy`      |
+| `update_media_buy`       | Bid, budget, status, package mutations over the campaign lifecycle                 | `sales.updateMediaBuy`      |
+| `get_media_buys`         | Read campaigns back with full state (status, budget, packages, targeting overlays) | `sales.getMediaBuys`        |
+| `sync_creatives`         | Accept creative assets and return per-asset status                                 | `sales.syncCreatives`       |
+| `list_creatives`         | Read the creative library back with pagination                                     | `sales.listCreatives`       |
 | `get_media_buy_delivery` | Delivery + spend reporting with `reporting_period`, per-package billing rows       | `sales.getMediaBuyDelivery` |
 
 > **`sales-guaranteed` minimum tool surface** — register ALL of these or storyboard scenarios will cascade-skip with `skip_reason: missing_tool`:
@@ -101,7 +101,7 @@ Your compliance obligations come from the specialisms you claim in `get_adcp_cap
 
 | Specialism             | Status  | Delta from baseline                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          | See                                                        |
 | ---------------------- | ------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------- |
-| `sales-guaranteed`     | stable  | `create_media_buy` has **three return shapes** (IO-task envelope / `pending_creatives` / `active`) plus `TERMS_REJECTED` for aggressive `measurement_terms`. **Read the companion before coding** — applying only the task-envelope path fails 5 storyboard `create_media_buy` steps that probe the synchronous branches.                                                                                                                                                                                                                                              | [§ sales-guaranteed](#specialism-sales-guaranteed)         |
+| `sales-guaranteed`     | stable  | `create_media_buy` has **three return shapes** (IO-task envelope / `pending_creatives` / `active`) plus `TERMS_REJECTED` for aggressive `measurement_terms`. **Read the companion before coding** — applying only the task-envelope path fails 5 storyboard `create_media_buy` steps that probe the synchronous branches.                                                                                                                                                                                                                    | [§ sales-guaranteed](#specialism-sales-guaranteed)         |
 | `sales-non-guaranteed` | stable  | Instant `status: 'active'` with `confirmed_at`; accept `bid_price` on packages; expose `update_media_buy` for bid/budget changes                                                                                                                                                                                                                                                                                                                                                                                                             | [§ sales-non-guaranteed](#specialism-sales-non-guaranteed) |
 | `sales-broadcast-tv`   | stable  | Top-level `agency_estimate_number`; per-package `measurement_terms.billing_measurement`; Ad-ID `industry_identifiers` on creatives; `measurement_windows` (Live/C3/C7) on delivery                                                                                                                                                                                                                                                                                                                                                           | [§ sales-broadcast-tv](#specialism-sales-broadcast-tv)     |
 | `sales-streaming-tv`   | preview | v3.1 placeholder (empty `phases`) — ship the baseline, declare `channels: ['ctv'] as const` on products                                                                                                                                                                                                                                                                                                                                                                                                                                      | Baseline only                                              |
@@ -357,9 +357,7 @@ class WebhookSeller implements DecisioningPlatform {
             task: {
               task_id: taskId,
               status: outcome.approved ? 'completed' : 'rejected',
-              result: outcome.approved
-                ? { media_buy_id: outcome.media_buy_id, packages: outcome.packages }
-                : undefined,
+              result: outcome.approved ? { media_buy_id: outcome.media_buy_id, packages: outcome.packages } : undefined,
             },
           },
           operation_id: `create_media_buy.${taskId}`, // stable across retries — framework reuses same idempotency_key
@@ -438,7 +436,23 @@ Each pricing option can set `min_spend_per_package` to enforce minimum budgets.
 
 For all `PricingOption` variants and `Product` required fields, see [`docs/TYPE-SUMMARY.md`](../../docs/TYPE-SUMMARY.md).
 
-### 4. Approval Workflow
+### 4. Forecast & planning surface
+
+`Product.forecast: DeliveryForecast` is the AdCP wire path for the planning question every real buyer asks first — "what reach can I get for $X" or "what budget hits Y conversions" or "is this guaranteed inventory still available." The surface supports forward, reverse, availability, package, and reach/frequency curves via `forecast_range_unit`. **Read [`docs/guides/FORECASTING.md`](../../docs/guides/FORECASTING.md) before deciding to omit it** — most sellers should populate it for at least one unit.
+
+Per-specialism canonical units:
+
+| Specialism             | `forecast_range_unit`         | What the curve says                           |
+| ---------------------- | ----------------------------- | --------------------------------------------- |
+| `sales-non-guaranteed` | `'spend'`                     | Forward — impressions/clicks per budget tier  |
+| `sales-guaranteed`     | `'availability'`              | Reserved inventory check, budget omitted      |
+| `sales-broadcast-tv`   | `'reach_freq'` or `'package'` | GRP curves OR daypart packages                |
+| `sales-social`         | `'conversions'` / `'clicks'`  | Reverse — Meta-style goal-based planning      |
+| `sales-retail-media`   | `'conversions'`               | Outcome-based (purchase-attribution use case) |
+
+Adapters can populate this from existing upstream forecast/availability/reach-estimation endpoints (GAM `forecastService.getDeliveryForecast`, Meta `/delivery_estimate`, TikTok `/audience_reach_estimate`, etc.). The mapping is one-to-one once you pick the right unit.
+
+### 5. Approval Workflow
 
 For guaranteed buys, choose one:
 
@@ -448,7 +462,7 @@ For guaranteed buys, choose one:
 
 Non-guaranteed buys are always instant confirmation.
 
-### 5. Creative Management
+### 6. Creative Management
 
 - **Standard** — `list_creative_formats` + `sync_creatives`. Buyer uploads assets, seller validates.
 - **Catalog-driven** — buyer syncs product catalog via `sync_catalogs`. Common for retail media.
@@ -531,15 +545,15 @@ productsResponse({
 
 Return `adcpError(...)` for all business validation failures. Error-code matrix — all spec-defined rejections on `create_media_buy` / `update_media_buy`:
 
-| Tool | Condition | Code |
-| --- | --- | --- |
-| `create_media_buy` | `performance_standards` or `measurement_terms` on a package are unacceptable | `adcpError('TERMS_REJECTED', { message: '...' })` |
-| `create_media_buy` | `product_id` on a package not in catalog | `adcpError('PRODUCT_NOT_FOUND', { field: 'packages[N].product_id' })` |
+| Tool               | Condition                                                                    | Code                                                                    |
+| ------------------ | ---------------------------------------------------------------------------- | ----------------------------------------------------------------------- |
+| `create_media_buy` | `performance_standards` or `measurement_terms` on a package are unacceptable | `adcpError('TERMS_REJECTED', { message: '...' })`                       |
+| `create_media_buy` | `product_id` on a package not in catalog                                     | `adcpError('PRODUCT_NOT_FOUND', { field: 'packages[N].product_id' })`   |
 | `create_media_buy` | product exists but inventory sold out / unavailable for the requested flight | `adcpError('PRODUCT_UNAVAILABLE', { field: 'packages[N].product_id' })` |
-| `create_media_buy` | budget below the product's floor price | `adcpError('BUDGET_TOO_LOW', { message: '...' })` |
-| `create_media_buy` | reversed dates, schema violation | `adcpError('INVALID_REQUEST', { message: '...' })` |
-| `update_media_buy` | `media_buy_id` not found | `adcpError('MEDIA_BUY_NOT_FOUND', { field: 'media_buy_id' })` |
-| `update_media_buy` | `package_id` within a valid buy not found | `adcpError('PACKAGE_NOT_FOUND', { field: 'package_id' })` |
+| `create_media_buy` | budget below the product's floor price                                       | `adcpError('BUDGET_TOO_LOW', { message: '...' })`                       |
+| `create_media_buy` | reversed dates, schema violation                                             | `adcpError('INVALID_REQUEST', { message: '...' })`                      |
+| `update_media_buy` | `media_buy_id` not found                                                     | `adcpError('MEDIA_BUY_NOT_FOUND', { field: 'media_buy_id' })`           |
+| `update_media_buy` | `package_id` within a valid buy not found                                    | `adcpError('PACKAGE_NOT_FOUND', { field: 'package_id' })`               |
 
 ```
 // Success — revision, confirmed_at, and valid_actions are auto-set:
@@ -761,7 +775,11 @@ productRepo.upsert(merged.product_id, merged);
 **2. `bridgeFromTestControllerStore`** — wires your seeded `Map` into `get_products` responses automatically. Sandbox requests see seeded + handler products merged (with seeded winning collisions); production traffic (no sandbox marker, or resolved non-sandbox account) skips the bridge entirely.
 
 ```ts
-import { createAdcpServerFromPlatform, bridgeFromTestControllerStore, DEFAULT_REPORTING_CAPABILITIES } from '@adcp/sdk/server';
+import {
+  createAdcpServerFromPlatform,
+  bridgeFromTestControllerStore,
+  DEFAULT_REPORTING_CAPABILITIES,
+} from '@adcp/sdk/server';
 
 const seedStore = new Map<string, unknown>();
 
@@ -890,7 +908,7 @@ Per spec PR adcontextprotocol/adcp#3816, the runner's `upstream_traffic` validat
 4. Checks each `payload_must_contain` entry's JSONPath against at least one matching call's `payload`. Non-JSON payloads fall back to substring matching for `match: present`; `equals` / `contains_any` against non-JSON grade `not_applicable`.
 5. Checks `identifier_paths` — extracts every value at each path from the storyboard's `sample_request` and asserts ALL resolved values appear at any depth in some matched call's payload. The recorder records what your adapter sent; the runner matches against what the storyboard sent. Forward identifiers as-received (don't transform them mid-flight, or your recorded payloads won't match).
 
-What the recorder CAN'T catch on its own: a thoughtful façade can call `recorder.record()` synthetically with fabricated payloads, or replay-attack with hardcoded recorded_calls, or wrap fetch but never invoke it. The load-bearing anti-façade defense is the storyboard's `identifier_paths` matching against payloads only a real adapter integration would produce. The recorder is the *surfacing primitive*; the storyboards are where the contract is enforced. Treat opt-in honestly.
+What the recorder CAN'T catch on its own: a thoughtful façade can call `recorder.record()` synthetically with fabricated payloads, or replay-attack with hardcoded recorded*calls, or wrap fetch but never invoke it. The load-bearing anti-façade defense is the storyboard's `identifier_paths` matching against payloads only a real adapter integration would produce. The recorder is the \_surfacing primitive*; the storyboards are where the contract is enforced. Treat opt-in honestly.
 
 #### Wire-up — the four steps
 
@@ -913,7 +931,9 @@ const recordedFetch = recorder.wrapFetch(globalThis.fetch);
 // ─── 3. Scope every outbound call inside your AdCP handler to the resolving principal
 async function syncAudiences(req, ctx) {
   await recorder.runWithPrincipal(resolvePrincipal(ctx), async () => {
-    await recordedFetch('https://platform.example/v1/audience/upload', { /* ... */ });
+    await recordedFetch('https://platform.example/v1/audience/upload', {
+      /* ... */
+    });
   });
 }
 
@@ -1020,7 +1040,9 @@ On the AdCP-handler side, call the **same** `resolvePrincipal` from `runWithPrin
 async function syncAudiences(req, ctx) {
   const principal = await resolvePrincipal(adcpCtxToControllerInput(ctx));
   await recorder.runWithPrincipal(principal, async () => {
-    await fetch('https://platform.example/v1/audience/upload', { /* ... */ });
+    await fetch('https://platform.example/v1/audience/upload', {
+      /* ... */
+    });
   });
 }
 ```
@@ -1045,7 +1067,9 @@ axiosInstance.interceptors.response.use(
     });
     return resp;
   },
-  err => { /* still record on error — same shape, omit status_code */ throw err; }
+  err => {
+    /* still record on error — same shape, omit status_code */ throw err;
+  }
 );
 
 // got — afterResponse hook
@@ -1084,25 +1108,25 @@ Three checks, in order:
 
 ## SDK Quick Reference
 
-| SDK piece                                                                 | Usage                                                                          |
-| ------------------------------------------------------------------------- | ------------------------------------------------------------------------------ |
+| SDK piece                                                                 | Usage                                                                                                                                                                                |
+| ------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
 | `createAdcpServerFromPlatform(platform, opts)`                            | Build a server from a typed `DecisioningPlatform` — compile-time specialism enforcement, ctx_metadata round-trip, idempotency-principal synthesis, status mappers, webhook auto-emit |
-| `createAdcpServer(config)` *(legacy)*                                     | v5 handler-bag entry. Mid-migration / escape-hatch only; reach via `@adcp/sdk/server/legacy/v5`                                                                                       |
-| `serve(() => createAdcpServerFromPlatform(platform, opts))`               | Start HTTP server on `:3001/mcp`                                               |
-| `ctx.store`                                                               | State store in every handler — `get`, `put`, `patch`, `delete`, `list`         |
-| `InMemoryStateStore`                                                      | Default state store (dev/testing)                                              |
-| `PostgresStateStore`                                                      | Production state store (shared across instances)                               |
-| `DEFAULT_REPORTING_CAPABILITIES`                                          | Use as `reporting_capabilities: DEFAULT_REPORTING_CAPABILITIES` on products    |
-| `checkGovernance(options)`                                                | Call governance agent before financial commits                                 |
-| `governanceDeniedError(result)`                                           | Convert governance denial to GOVERNANCE_DENIED error                           |
-| `mediaBuyResponse(data)`                                                  | Auto-applied for `createMediaBuy` (sets revision, confirmed_at, valid_actions) |
-| `adcpError(code, { message })`                                            | Structured error (e.g., `BUDGET_TOO_LOW`, `PRODUCT_NOT_FOUND`)                 |
-| `registerTestController(server, store \| { scenarios, createStore })`     | Add `comply_test_controller`. Plain store or per-request factory.              |
-| `TestControllerError(code, message)`                                      | Typed error from store methods                                                 |
-| `handleTestControllerRequest(store, input)`                               | Low-level dispatch for custom MCP wrappers                                     |
-| `toMcpResponse(response)` / `TOOL_INPUT_SHAPE`                            | MCP envelope + Zod input schema for custom wrappers                            |
-| `enforceMapCap(map, key, label, cap?)`                                    | Reject net-new keys once a session Map hits `SESSION_ENTRY_CAP` (1000)         |
-| `expectControllerError(result, code)` / `expectControllerSuccess(result)` | Unit-test assertions — narrow responses to error or success arms               |
+| `createAdcpServer(config)` _(legacy)_                                     | v5 handler-bag entry. Mid-migration / escape-hatch only; reach via `@adcp/sdk/server/legacy/v5`                                                                                      |
+| `serve(() => createAdcpServerFromPlatform(platform, opts))`               | Start HTTP server on `:3001/mcp`                                                                                                                                                     |
+| `ctx.store`                                                               | State store in every handler — `get`, `put`, `patch`, `delete`, `list`                                                                                                               |
+| `InMemoryStateStore`                                                      | Default state store (dev/testing)                                                                                                                                                    |
+| `PostgresStateStore`                                                      | Production state store (shared across instances)                                                                                                                                     |
+| `DEFAULT_REPORTING_CAPABILITIES`                                          | Use as `reporting_capabilities: DEFAULT_REPORTING_CAPABILITIES` on products                                                                                                          |
+| `checkGovernance(options)`                                                | Call governance agent before financial commits                                                                                                                                       |
+| `governanceDeniedError(result)`                                           | Convert governance denial to GOVERNANCE_DENIED error                                                                                                                                 |
+| `mediaBuyResponse(data)`                                                  | Auto-applied for `createMediaBuy` (sets revision, confirmed_at, valid_actions)                                                                                                       |
+| `adcpError(code, { message })`                                            | Structured error (e.g., `BUDGET_TOO_LOW`, `PRODUCT_NOT_FOUND`)                                                                                                                       |
+| `registerTestController(server, store \| { scenarios, createStore })`     | Add `comply_test_controller`. Plain store or per-request factory.                                                                                                                    |
+| `TestControllerError(code, message)`                                      | Typed error from store methods                                                                                                                                                       |
+| `handleTestControllerRequest(store, input)`                               | Low-level dispatch for custom MCP wrappers                                                                                                                                           |
+| `toMcpResponse(response)` / `TOOL_INPUT_SHAPE`                            | MCP envelope + Zod input schema for custom wrappers                                                                                                                                  |
+| `enforceMapCap(map, key, label, cap?)`                                    | Reject net-new keys once a session Map hits `SESSION_ENTRY_CAP` (1000)                                                                                                               |
+| `expectControllerError(result, code)` / `expectControllerSuccess(result)` | Unit-test assertions — narrow responses to error or success arms                                                                                                                     |
 
 Response builders (`productsResponse`, `mediaBuyResponse`, `deliveryResponse`, etc.) are auto-applied by the framework — you return the data, the framework wraps it. You only need to call them directly for tools without a dedicated builder.
 
@@ -1294,8 +1318,9 @@ class MySeller implements DecisioningPlatform<{}, MySellerMeta> {
         status = 'paused';
       } else if (
         status === 'pending_creatives' &&
-        (patch.packages ?? []).some((p: { creative_assignments?: unknown[] }) =>
-          (p.creative_assignments ?? []).length > 0)
+        (patch.packages ?? []).some(
+          (p: { creative_assignments?: unknown[] }) => (p.creative_assignments ?? []).length > 0
+        )
       ) {
         const startTime = existing.start_time ? new Date(existing.start_time as string) : null;
         status = startTime && startTime > new Date() ? 'pending_start' : 'active';
@@ -1754,7 +1779,7 @@ Common failure decoder:
 | Using `createTaskCapableServer` + `server.tool()`          | Use `createAdcpServerFromPlatform(platform, opts)` — handles schemas, response builders, capabilities, ctx_metadata round-trip, idempotency-principal synthesis                       |
 | Calling `createAdcpServer` directly in new code            | Reach for `createAdcpServerFromPlatform` first; `createAdcpServer` lives at `@adcp/sdk/server/legacy/v5` for mid-migration / escape-hatch use only                                    |
 | Using module-level Maps for state                          | Use `ctx.store` — persists across HTTP requests, swappable for postgres                                                                                                               |
-| Return raw JSON without response builders                  | The framework auto-applies response builders — just return the data                                                                                                                  |
+| Return raw JSON without response builders                  | The framework auto-applies response builders — just return the data                                                                                                                   |
 | Missing `brand`/`operator` in sync_accounts response       | Echo them back from the request — they're required                                                                                                                                    |
 | sync_governance returns wrong shape                        | Must include `status: 'synced'` and `governance_agents` array                                                                                                                         |
 | `sandbox: false` on mock data                              | Buyers may treat mock data as real                                                                                                                                                    |
