@@ -430,6 +430,15 @@ export function createComplyController(config: ComplyControllerConfig): ComplyCo
   const factoryScenarios = Object.freeze([...scenarios]) as readonly ControllerScenario[];
 
   async function handleRaw(input: Record<string, unknown>): Promise<ComplyTestControllerResponse> {
+    const inputCtx = input.context;
+    // Echoes input.context on FORBIDDEN early-returns (sandboxGate denial/throw)
+    // that bypass handleTestControllerRequest. The delegated call at the end of
+    // this function already echoes context internally — addCtx is a no-op there.
+    const addCtx = (r: ComplyTestControllerResponse): ComplyTestControllerResponse =>
+      inputCtx !== undefined && typeof inputCtx === 'object' && inputCtx !== null && r.context === undefined
+        ? ({ ...r, context: inputCtx } as ComplyTestControllerResponse)
+        : r;
+
     // `list_scenarios` is a capability probe — answer it without consulting
     // the gate so buyer tooling can distinguish "controller exists but
     // locked" from "controller missing entirely". State-mutating scenarios
@@ -444,15 +453,17 @@ export function createComplyController(config: ComplyControllerConfig): ComplyCo
         // Don't leak gate-internal errors. Treat as denial — matches how a
         // sandbox would fail closed if its auth layer threw.
         void err;
-        return controllerError('FORBIDDEN', 'Sandbox gate check failed');
+        return addCtx(controllerError('FORBIDDEN', 'Sandbox gate check failed'));
       }
       // Strict equality: anything that is not literally `true` is a denial.
       // Guards against gates that accidentally return a reason string, a
       // number, or a truthy object.
       if (allowed !== true) {
-        return controllerError(
-          'FORBIDDEN',
-          'comply_test_controller is disabled in this environment (non-sandbox or gate denied)'
+        return addCtx(
+          controllerError(
+            'FORBIDDEN',
+            'comply_test_controller is disabled in this environment (non-sandbox or gate denied)'
+          )
         );
       }
     }

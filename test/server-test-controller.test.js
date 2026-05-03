@@ -1283,3 +1283,81 @@ describe('expectControllerSuccess', () => {
     );
   });
 });
+
+describe('handleTestControllerRequest — context echo', () => {
+  it('echoes input.context on list_scenarios (success)', async () => {
+    const store = { async forceAccountStatus() {} };
+    const result = await handleTestControllerRequest(store, {
+      scenario: 'list_scenarios',
+      context: { correlation_id: 'deterministic_testing--list_scenarios' },
+    });
+    assert.strictEqual(result.success, true);
+    assert.deepStrictEqual(result.context, { correlation_id: 'deterministic_testing--list_scenarios' });
+  });
+
+  it('echoes input.context on UNKNOWN_SCENARIO error', async () => {
+    const result = await handleTestControllerRequest(
+      {},
+      {
+        scenario: 'not_a_real_scenario',
+        context: { correlation_id: 'det--unknown' },
+      }
+    );
+    assert.strictEqual(result.success, false);
+    assert.strictEqual(result.error, 'UNKNOWN_SCENARIO');
+    assert.deepStrictEqual(result.context, { correlation_id: 'det--unknown' });
+  });
+
+  it('echoes input.context on INVALID_PARAMS error', async () => {
+    const store = { async forceAccountStatus() {} };
+    const result = await handleTestControllerRequest(store, {
+      scenario: 'force_account_status',
+      params: {},
+      context: { correlation_id: 'det--missing_params' },
+    });
+    assert.strictEqual(result.success, false);
+    assert.strictEqual(result.error, 'INVALID_PARAMS');
+    assert.deepStrictEqual(result.context, { correlation_id: 'det--missing_params' });
+  });
+
+  it('echoes input.context on success transition response', async () => {
+    const store = {
+      async forceAccountStatus() {
+        return { success: true, previous_state: 'active', current_state: 'suspended' };
+      },
+    };
+    const result = await handleTestControllerRequest(store, {
+      scenario: 'force_account_status',
+      params: { account_id: 'acct-1', status: 'suspended' },
+      context: { correlation_id: 'det--transition' },
+    });
+    assert.strictEqual(result.success, true);
+    assert.deepStrictEqual(result.context, { correlation_id: 'det--transition' });
+  });
+
+  it('does not inject context when input has no context field', async () => {
+    const result = await handleTestControllerRequest({}, { scenario: 'list_scenarios' });
+    assert.strictEqual(result.success, true);
+    assert.strictEqual(result.context, undefined);
+  });
+
+  it('does not overwrite context already set by the store method', async () => {
+    const store = {
+      async forceAccountStatus() {
+        return {
+          success: true,
+          previous_state: 'active',
+          current_state: 'suspended',
+          context: { correlation_id: 'from-store' },
+        };
+      },
+    };
+    const result = await handleTestControllerRequest(store, {
+      scenario: 'force_account_status',
+      params: { account_id: 'acct-1', status: 'suspended' },
+      context: { correlation_id: 'from-input' },
+    });
+    assert.strictEqual(result.success, true);
+    assert.deepStrictEqual(result.context, { correlation_id: 'from-store' });
+  });
+});
