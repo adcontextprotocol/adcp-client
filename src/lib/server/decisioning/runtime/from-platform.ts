@@ -59,6 +59,7 @@ import {
   type EventTrackingHandlers,
   type AccountHandlers,
   type SignalsHandlers,
+  type SponsoredIntelligenceHandlers,
   type GovernanceHandlers,
   type BrandRightsHandlers,
   type HandlerContext,
@@ -1252,6 +1253,12 @@ export function createAdcpServerFromPlatform<P extends DecisioningPlatform<any, 
       opts.signals,
       buildSignalsHandlers(platform, ctxFor, effectiveCtxMetadata, fwLogger),
       'signals',
+      mergeOpts
+    ),
+    sponsoredIntelligence: mergeHandlers(
+      opts.sponsoredIntelligence,
+      buildSponsoredIntelligenceHandlers(platform, ctxFor, effectiveCtxMetadata, fwLogger),
+      'sponsoredIntelligence',
       mergeOpts
     ),
     governance: mergeHandlers(opts.governance, buildGovernanceHandlers(platform, ctxFor), 'governance', mergeOpts),
@@ -2795,6 +2802,10 @@ export const ENTITY_TO_RESOURCE_KIND: Readonly<Record<string, ResourceKind>> = {
   collection_list: 'collection_list',
   account: 'account',
   product: 'product',
+  // SI session lifecycle, hydrated on `si_send_message` /
+  // `si_terminate_session` from the entry the framework auto-stores after
+  // `si_initiate_session`. See `buildSponsoredIntelligenceHandlers`.
+  si_session: 'si_session',
 };
 
 /**
@@ -2817,8 +2828,7 @@ export const INTENTIONALLY_UNHYDRATED_ENTITIES: ReadonlySet<string> = new Set([
   'governance_plan', // No SDK ResourceKind yet; campaign-governance follow-up.
   'governance_check', // Transient request envelope; not stored.
   'event_source', // No SDK ResourceKind yet.
-  'si_session', // Session lifecycle owned by `SponsoredIntelligencePlatform`.
-  'offering', // SI offering catalog; not stored as ctx-metadata.
+  'offering', // SI offering catalog; correlation handled by brand-side `offering_token`, not framework hydration.
   'rights_holder_brand', // Read-through `get_brand_identity`; not separately stored.
   'advertiser_brand', // Same as above.
 ]);
@@ -3649,6 +3659,140 @@ function buildSignalsHandlers<P extends DecisioningPlatform<any, any>>(
       await hydrateForTool(ctxMetadataStore, reqCtx.account?.id, 'activate_signal', params, logger);
       return projectSync(
         () => signals.activateSignal(params, reqCtx),
+        r => r
+      );
+    },
+  };
+}
+
+/**
+ * Adapt `SponsoredIntelligencePlatform` (v6 protocol-keyed shape) onto the v5
+ * `SponsoredIntelligenceHandlers` handler-bag the dispatcher consumes.
+ *
+ * Auto-store on `initiateSession`: stash a session record keyed by
+ * `session_id` under `ResourceKind: 'si_session'`. The framework's
+ * schema-driven hydrator (TOOL_ENTITY_FIELDS for `si_send_message` /
+ * `si_terminate_session`) attaches that record at `params.session` on
+ * subsequent calls so the platform reads transcript context from
+ * `req.session` without manual `ctx.store.get`.
+ *
+ * Hydrate on `sendMessage` / `terminateSession`: schema-driven
+ * `hydrateForTool` reads `params.session_id`, looks up the stored
+ * session, and attaches at `params.session`.
+ */
+function buildSponsoredIntelligenceHandlers<P extends DecisioningPlatform<any, any>>(
+  platform: P,
+  ctxFor: CtxForFn,
+  ctxMetadataStore: CtxMetadataStore | undefined,
+  logger: AdcpLogger
+): SponsoredIntelligenceHandlers<Account> | undefined {
+  const si = platform.sponsoredIntelligence;
+  if (!si) return undefined;
+  return {
+    getOffering: async (params, ctx) => {
+      const reqCtx = ctxFor(ctx);
+      return projectSync(
+        () => si.getOffering(params, reqCtx),
+        r => r
+      );
+    },
+    initiateSession: async (params, ctx) => {
+      const reqCtx = ctxFor(ctx);
+      return projectSync(
+        async () => {
+          const result = await si.initiateSession(params, reqCtx);
+          // Auto-store the session record so subsequent `sendMessage` /
+          // `terminateSession` calls hydrate `req.session` without a
+          // manual lookup. Stored payload preserves the bits the brand
+          // engine needs to resume context across turns: identity
+          // consent, offering scoping, negotiated capabilities,
+          // placement provenance, and any media-buy linkage. The full
+          // request intent is stored alongside so brand handlers can
+          // re-read what the user originally asked for. Production
+          // brand engines that own transcript state in their own
+          // backend can ignore this and read from their own store —
+          // see SponsoredIntelligencePlatform JSDoc.
+          if (ctxMetadataStore && reqCtx.account?.id) {
+            const sessionId = (result as { session_id?: unknown })?.session_id;
+            if (typeof sessionId === 'string' && sessionId.length > 0) {
+              const reqRec = params as unknown as Record<string, unknown>;
+              const resRec = result as unknown as Record<string, unknown>;
+              const sessionRecord = {
+                session_id: sessionId,
+                // Request-side scoping the brand engine needs across turns.
+                intent: reqRec.intent,
+                offering_id: reqRec.offering_id,
+                offering_token: reqRec.offering_token,
+                placement: reqRec.placement,
+                media_buy_id: reqRec.media_buy_id,
+                identity: reqRec.identity,
+                supported_capabilities: reqRec.supported_capabilities,
+                // Response-side state.
+                negotiated_capabilities: resRec.negotiated_capabilities,
+                session_status: resRec.session_status,
+                session_ttl_seconds: resRec.session_ttl_seconds,
+              };
+              try {
+                await ctxMetadataStore.setResource(reqCtx.account.id, 'si_session', sessionId, sessionRecord);
+              } catch (err) {
+                const msg = err instanceof Error ? err.message : String(err);
+                logger.warn(`[adcp/decisioning] auto-store si_session ${sessionId} failed: ${msg}`);
+              }
+            }
+          }
+          return result;
+        },
+        r => r
+      );
+    },
+    sendMessage: async (params, ctx) => {
+      const reqCtx = ctxFor(ctx);
+      // Auto-hydrate `req.session` from the stored si_session record. The
+      // schema-driven hydrator reads `params.session_id` and attaches the
+      // stored session at `params.session` (via the `_id` → strip
+      // convention; `session_id` → `session`).
+      await hydrateForTool(ctxMetadataStore, reqCtx.account?.id, 'si_send_message', params, logger);
+      return projectSync(
+        () => si.sendMessage(params, reqCtx),
+        r => r
+      );
+    },
+    terminateSession: async (params, ctx) => {
+      const reqCtx = ctxFor(ctx);
+      await hydrateForTool(ctxMetadataStore, reqCtx.account?.id, 'si_terminate_session', params, logger);
+      return projectSync(
+        async () => {
+          const result = await si.terminateSession(params, reqCtx);
+          // Persist `acp_handoff` and terminal `session_status` onto the
+          // stored session record so a re-terminate replay (which is
+          // naturally idempotent on `session_id` per the spec) hydrates
+          // the same handoff payload via `req.session` without the
+          // adopter having to remember to write through. Honors the
+          // platform interface JSDoc contract:
+          //   "Re-terminating a closed session MUST return the same
+          //    payload, including any acp_handoff block."
+          if (ctxMetadataStore && reqCtx.account?.id) {
+            const sessionId = (params as { session_id?: unknown })?.session_id;
+            if (typeof sessionId === 'string' && sessionId.length > 0) {
+              const resRec = result as unknown as Record<string, unknown>;
+              try {
+                const existing = await ctxMetadataStore.getEntry(reqCtx.account.id, 'si_session', sessionId);
+                const merged = {
+                  ...((existing?.resource as Record<string, unknown>) ?? { session_id: sessionId }),
+                  session_status: resRec.session_status,
+                  acp_handoff: resRec.acp_handoff,
+                  follow_up: resRec.follow_up,
+                  terminated: resRec.terminated,
+                };
+                await ctxMetadataStore.setResource(reqCtx.account.id, 'si_session', sessionId, merged);
+              } catch (err) {
+                const msg = err instanceof Error ? err.message : String(err);
+                logger.warn(`[adcp/decisioning] auto-store si_session ${sessionId} on terminate failed: ${msg}`);
+              }
+            }
+          }
+          return result;
+        },
         r => r
       );
     },

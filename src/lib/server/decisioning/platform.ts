@@ -20,6 +20,7 @@ import type { CreativeBuilderPlatform } from './specialisms/creative';
 import type { CreativeAdServerPlatform } from './specialisms/creative-ad-server';
 import type { AudiencePlatform } from './specialisms/audiences';
 import type { SignalsPlatform } from './specialisms/signals';
+import type { SponsoredIntelligencePlatform } from './specialisms/sponsored-intelligence';
 import type { CampaignGovernancePlatform } from './specialisms/campaign-governance';
 import type { ContentStandardsPlatform } from './specialisms/content-standards';
 import type { BrandRightsPlatform } from './specialisms/brand-rights';
@@ -221,6 +222,13 @@ export interface DecisioningPlatform<TConfig = unknown, TCtxMeta = Record<string
   creative?: CreativeBuilderPlatform<TCtxMeta> | CreativeAdServerPlatform<TCtxMeta>;
   audiences?: AudiencePlatform<TCtxMeta>;
   signals?: SignalsPlatform<TCtxMeta>;
+  /** Sponsored Intelligence is currently a *protocol* in AdCP 3.0
+   * (`supported_protocols: ['sponsored_intelligence']`), not a specialism.
+   * Required IFF the agent declares the protocol — see
+   * `RequiredPlatformsForProtocols`. When AdCP 3.1 promotes SI to a
+   * specialism (adcontextprotocol/adcp#3961), specialism-keyed dispatch
+   * becomes additive without breaking this field. */
+  sponsoredIntelligence?: SponsoredIntelligencePlatform<TCtxMeta>;
   /** @see DecisioningPlatform — § Cross-specialism dispatch (used as the canonical example: `brandRights.acquireRights` consulting `checkGovernance` before granting rights). */
   campaignGovernance?: CampaignGovernancePlatform<TCtxMeta>;
   contentStandards?: ContentStandardsPlatform<TCtxMeta>;
@@ -341,6 +349,34 @@ export type RequiredPlatformsFor<
  * doesn't yet enforce this. Wiring lands in a follow-up PR with the
  * framework refactor.
  */
+
+/**
+ * AdCP supported_protocols values that gate platform requirements. Sister
+ * type to `RequiredPlatformsFor<S>` — that one keys off
+ * `capabilities.specialisms[]`; this one keys off declared protocols.
+ *
+ * @internal Not exported. There is no constraint site consuming this today
+ *   (no `supported_protocols` field on `DecisioningCapabilities`, no
+ *   `createAdcpServer<P>` constraint signature wired). Kept as an internal
+ *   placeholder so the type lands alongside the platform field at the same
+ *   commit; promotion to public + wiring is deferred until either AdCP 3.1
+ *   adds SI to `AdCPSpecialism` (at which point this folds into
+ *   `RequiredPlatformsFor`) or `DecisioningCapabilities` grows an explicit
+ *   `supported_protocols` declaration field. Adopters needing compile-time
+ *   gating today should constrain `platform: P & { sponsoredIntelligence:
+ *   SponsoredIntelligencePlatform }` directly at the call site.
+ *
+ * Note on enum form: `supported_protocols` uses underscore form on the
+ * wire (`'sponsored_intelligence'`), not the kebab-case
+ * `'sponsored-intelligence'` used by `AdCPSpecialism`. The two enums
+ * diverge intentionally — see `core.generated.ts:12520`.
+ */
+type SupportedProtocol = 'sponsored_intelligence';
+
+// eslint-disable-next-line @typescript-eslint/no-explicit-any, @typescript-eslint/no-unused-vars
+type RequiredPlatformsForProtocols<P extends SupportedProtocol, TCtxMeta = any> = P extends 'sponsored_intelligence'
+  ? { sponsoredIntelligence: SponsoredIntelligencePlatform<TCtxMeta> }
+  : Record<string, never>;
 
 /**
  * Compile-time mapping from a claimed specialism to the capability
