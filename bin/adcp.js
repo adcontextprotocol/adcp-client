@@ -1028,14 +1028,26 @@ ARGUMENTS:
                                             signing tasks, inventory-list
                                             targeting, and CAPI for delivery
                                             validation.
+                       sponsored-intelligence
+                                            Brand-agent platform (Salesforce
+                                            Agentforce / OpenAI Assistants
+                                            shaped) with conversational
+                                            offerings, stateful session
+                                            transcripts, and ACP transaction
+                                            handoff. Adapter wraps it to
+                                            expose si_get_offering /
+                                            si_initiate_session /
+                                            si_send_message /
+                                            si_terminate_session.
 
 OPTIONS:
   --port N           Listen port. Default: 4500.
   --api-key KEY      Override the static bearer credential. Only applies to
                      specialisms with static-bearer auth (signal-marketplace,
-                     creative-template). Ignored for OAuth specialisms
-                     (sales-social) — those issue tokens via the OAuth flow.
-                     Defaults to a stable test key printed at boot.
+                     creative-template, sponsored-intelligence). Ignored for
+                     OAuth specialisms (sales-social) — those issue tokens via
+                     the OAuth flow. Defaults to a stable test key printed at
+                     boot.
 
 NOTES:
   These mock servers represent the *upstream* platform an adopter wraps,

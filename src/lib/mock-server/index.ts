@@ -9,6 +9,8 @@ import { bootSalesSocial } from './sales-social/server';
 import { ADVERTISERS, OAUTH_CLIENTS } from './sales-social/seed-data';
 import { bootSignalMarketplace } from './signal-marketplace/server';
 import { DEFAULT_API_KEY as SIGNAL_MARKETPLACE_DEFAULT_API_KEY, OPERATORS } from './signal-marketplace/seed-data';
+import { bootSponsoredIntelligence } from './sponsored-intelligence/server';
+import { BRANDS as SI_BRANDS, DEFAULT_API_KEY as SI_DEFAULT_API_KEY } from './sponsored-intelligence/seed-data';
 
 export interface MockServerOptions {
   specialism: string;
@@ -163,9 +165,29 @@ export async function bootMockServer(options: MockServerOptions): Promise<MockSe
         })),
       };
     }
+    case 'sponsored-intelligence': {
+      const { url, close } = await bootSponsoredIntelligence({
+        port: options.port,
+        apiKey: options.apiKey,
+      });
+      const apiKey = options.apiKey ?? SI_DEFAULT_API_KEY;
+      return {
+        url,
+        auth: { kind: 'static_bearer', apiKey },
+        close,
+        summary: () => formatSponsoredIntelligenceSummary(url, apiKey),
+        principalScope: 'URL path segment /v1/brands/{brand_id}/...',
+        principalMapping: SI_BRANDS.map(b => ({
+          adcpField: 'account.brand',
+          adcpValue: b.adcp_brand,
+          upstreamField: 'path /v1/brands/{brand_id}/',
+          upstreamValue: b.brand_id,
+        })),
+      };
+    }
     default:
       throw new Error(
-        `Unknown mock-server specialism: "${options.specialism}". Supported: signal-marketplace, creative-template, sales-social, sales-guaranteed.`
+        `Unknown mock-server specialism: "${options.specialism}". Supported: signal-marketplace, creative-template, sales-social, sales-guaranteed, sponsored-intelligence.`
       );
   }
 }
@@ -254,6 +276,40 @@ function formatSalesSocialSummary(url: string, client: { client_id: string; clie
     `  POST   ${url}/v1.3/advertiser/{advertiser_id}/delivery_estimate            (forward + reverse forecast)`,
     `  POST   ${url}/v1.3/advertiser/{advertiser_id}/audience_reach_estimate`,
     `  POST   ${url}/v1.3/advertiser/{advertiser_id}/audience/{aud}/lookalike`,
+  ].join('\n');
+}
+
+function formatSponsoredIntelligenceSummary(url: string, apiKey: string): string {
+  const brandLines = SI_BRANDS.map(
+    b =>
+      `  ${b.brand_id}  →  AdCP account.brand: "${b.adcp_brand}"  (offerings: ${b.visible_offering_ids.length}, session_ttl: ${b.session_ttl_seconds}s)`
+  ).join('\n');
+  return [
+    `Mock sponsored-intelligence brand-agent platform running at ${url}`,
+    ``,
+    `Auth:`,
+    `  Authorization: Bearer ${apiKey}`,
+    `  Brand scoping via URL path: /v1/brands/{brand_id}/...`,
+    ``,
+    `Brand mapping:`,
+    brandLines,
+    ``,
+    `OpenAPI spec: src/lib/mock-server/sponsored-intelligence/openapi.yaml`,
+    `Routes:`,
+    `  GET    ${url}/_lookup/brand?adcp_brand=<value>                                (no auth)`,
+    `  GET    ${url}/_debug/traffic                                                  (no auth)`,
+    `  GET    ${url}/v1/brands/{brand}/offerings/{offering_id}                       # si_get_offering`,
+    `  POST   ${url}/v1/brands/{brand}/conversations                                 # si_initiate_session`,
+    `  GET    ${url}/v1/brands/{brand}/conversations/{conv_id}                       # read state`,
+    `  POST   ${url}/v1/brands/{brand}/conversations/{conv_id}/turns                 # si_send_message`,
+    `  POST   ${url}/v1/brands/{brand}/conversations/{conv_id}/close                 # si_terminate_session`,
+    ``,
+    `Conversation lifecycle: active → closed (terminal). Re-closing returns the`,
+    `same payload — naturally idempotent on conversation_id, mirroring AdCP's`,
+    `decision to omit idempotency_key on si_terminate_session. POST /conversations`,
+    `and POST /turns each accept client_request_id for at-most-once execution.`,
+    `Brand "agent" routes user messages by keyword (buy/checkout → transaction`,
+    `handoff hint, thanks/bye → complete hint) — deterministic for fixtures.`,
   ].join('\n');
 }
 
