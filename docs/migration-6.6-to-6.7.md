@@ -16,6 +16,24 @@
 >   individually optional. The widened annotation will fail
 >   `RequiredPlatformsFor<S>` enforcement. See recipe **#11**.
 
+## Audit first — the two breaking recipes
+
+Before bumping, read recipes **#10** and **#11**. Everything else is
+additive and can be applied incrementally.
+
+- **#10 — `accounts.resolution: 'implicit'` enforces inline-`account_id`
+  refusal** (runtime). Inline `{account_id}` references against an
+  `'implicit'`-resolution platform now reject with `INVALID_REQUEST`.
+  Pre-6.7 this was aspirational — the docstring claimed the framework
+  would refuse, but nothing checked it.
+- **#11 — `SalesPlatform` split into `SalesCorePlatform &
+  SalesIngestionPlatform`** (TS-only, self-announcing under
+  `tsc --noEmit`). Adopters with `: SalesPlatform<Meta>` field
+  annotations claiming sales-non-guaranteed / -guaranteed /
+  -broadcast-tv / -catalog-driven need to migrate the annotation.
+  Walled-garden ingestion adopters (Meta CAPI, Snap CAPI, TikTok
+  Events) get to drop their stub-throw boilerplate.
+
 ## tl;dr — twelve recipes to apply
 
 | #  | If you had 6.6 …                                                                         | Do this in 6.7                                                                                                            | Mechanical?                  |
@@ -343,21 +361,36 @@ rate / availability, etc.) and applies a sensible default `message`
 that you can override via `opts.message`.
 
 ```ts
-// Before
-if (!ctx.authInfo) throw new AdcpError('AUTH_REQUIRED', { recovery: 'terminal', message: 'Authentication required.' });
-if (!agentCanRead(ctx.agent, accountId)) {
-  throw new AdcpError('PERMISSION_DENIED', {
-    recovery: 'terminal',
-    message: `Permission denied for read_account.`,
-    details: { action: 'read_account' },
-  });
+// Before — inside a SalesPlatform method
+createMediaBuy: async (req, ctx) => {
+  if (!ctx.account.authInfo) {
+    throw new AdcpError('AUTH_REQUIRED', { recovery: 'terminal', message: 'Authentication required.' });
+  }
+  if (!agentCanRead(ctx.agent, ctx.account.id)) {
+    throw new AdcpError('PERMISSION_DENIED', {
+      recovery: 'terminal',
+      message: `Permission denied for create_media_buy.`,
+      details: { action: 'create_media_buy' },
+    });
+  }
+  // ...
 }
 
 // After
 import { AuthRequiredError, PermissionDeniedError } from '@adcp/sdk/server';
-if (!ctx.authInfo) throw new AuthRequiredError();
-if (!agentCanRead(ctx.agent, accountId)) throw new PermissionDeniedError('read_account');
+
+createMediaBuy: async (req, ctx) => {
+  if (!ctx.account.authInfo) throw new AuthRequiredError();
+  if (!agentCanRead(ctx.agent, ctx.account.id)) throw new PermissionDeniedError('create_media_buy');
+  // ...
+}
 ```
+
+> The principal lives at `ctx.account.authInfo` inside specialism
+> methods (`SalesPlatform` / `AudiencePlatform` / etc.) and at
+> `ctx.authInfo` inside `accounts.resolve(ref, ctx)` (`ResolveContext`).
+> Distinct shapes; same field, different paths — see the 5.x → 6.x
+> migration doc § "Common gotchas" for the full callout.
 
 ### 7. Surface `issues[].hint` in your LLM client, plus oneOf near-miss
 
@@ -480,6 +513,7 @@ initial `sync_accounts` flow).
 |------------------------------------------------------------------------------------------|--------------------------------------------------------------------------------------------------------------------------------------------------|
 | `resolution: 'implicit'` declared, all buyers used `sync_accounts` first                 | Nothing — calls flow as before; you no longer need to reimplement the `if (ref?.account_id) return null` branch in your resolver.                |
 | `resolution: 'implicit'` declared but adopters' callers passed inline `account_id`       | **Behavior change.** Either drop to `'explicit'` (callers continue passing inline) or fix callers to use `sync_accounts` first.                  |
+| Wanted "derive account from auth principal, ignore inline ids entirely"                  | Switch to `resolution: 'derived'` — single-tenant agents and adapters that always identify the tenant from the auth principal alone (LinkedIn-shaped sellers, some retail-media operators). |
 | `resolution: 'explicit'` (default) declared / not declared                               | Nothing — the refusal only applies to declared `'implicit'` platforms.                                                                           |
 | Hand-rolled implicit store                                                               | Consider switching to `InMemoryImplicitAccountStore` or the Postgres pattern in [`docs/guides/account-resolution.md`](./guides/account-resolution.md). |
 
@@ -506,6 +540,14 @@ const accountStore = new InMemoryImplicitAccountStore({
 
 ### 11. **breaking** (TS-only) — `SalesPlatform` split into core + ingestion
 
+**Headline for walled-garden CAPI adopters: you no longer write
+stub-throws for `getProducts` / `createMediaBuy` / `updateMediaBuy` /
+`getMediaBuyDelivery` / `getMediaBuys`.** Meta CAPI, Snap CAPI, TikTok
+Events, and other ingestion-only specialisms shed roughly 40 LOC of
+"throw `UNSUPPORTED_FEATURE`" boilerplate by claiming `sales-social`
+and only implementing the ingestion methods their storyboard
+exercises.
+
 `SalesPlatform` methods are now individually optional. Per-specialism
 enforcement of the core media-buy lifecycle moves up to
 `RequiredPlatformsFor<S>`. Two named subset types:
@@ -527,8 +569,20 @@ preserved as a structural-compat alias.
 `sales: SalesPlatform<Meta> = defineSalesPlatform<Meta>({ ... })` — and
 who claim a specialism whose `RequiredPlatformsFor<S>` requires the
 core methods now hit a TS error: the widened all-optional
-`SalesPlatform<Meta>` annotation no longer satisfies
-`Required<Pick<SalesPlatform<any>, 'getProducts' | ...>>`.
+`SalesPlatform<Meta>` annotation no longer satisfies what
+`RequiredPlatformsFor<'sales-guaranteed'>` (et al.) demands. The
+literal compiler error reads roughly:
+
+```
+Property 'getProducts' is optional in type 'SalesPlatform<Meta>' but
+  required in type 'Required<Pick<SalesCorePlatform<Meta>, 'getProducts'
+  | 'createMediaBuy' | 'updateMediaBuy' | 'getMediaBuyDelivery'
+  | 'getMediaBuys'>>'
+```
+
+`tsc --noEmit` (or `npm run check:adopter-types`) surfaces this on
+upgrade — the breaking change is self-announcing for adopters with a
+typecheck step in CI.
 
 **Two clean migrations:**
 
@@ -591,9 +645,11 @@ will hit a TS error. Three patterns:
 //    Same as #1.
 
 // 3. Defensive narrow inside the handler:
+import { AccountNotFoundError } from '@adcp/sdk/server';
+
 previewCreative: async (req, ctx) => {
   if (ctx.account == null) {
-    throw new AdcpError('ACCOUNT_NOT_FOUND', { recovery: 'correctable', message: '...' });
+    throw new AccountNotFoundError({ message: 'Workspace required for preview.' });
   }
   const ws = ctx.account.ctx_metadata.workspace_id;
   // ...
@@ -610,9 +666,10 @@ populated. Pre-6.7 every adapter wrote ~30 lines of boilerplate. 6.7
 ships a factory:
 
 ```ts
+import { createOAuthPassthroughResolver } from '@adcp/sdk/adapters';
 import {
   createUpstreamHttpClient,
-  createOAuthPassthroughResolver,
+  definePlatform,
   defineSalesCorePlatform,
 } from '@adcp/sdk/server';
 
@@ -653,7 +710,34 @@ recipe #4 — wrap the resolver with
 `composeMethod(resolve, requireAdvertiserMatch(...))` for
 listing-derived resolution + roster gating in one statement.
 
+**What the factory doesn't handle (yet):**
+
+- **Pagination.** `rowsPath` reads a single response shape; vendors
+  paginate differently — Snap returns `paging.next_page`, Meta
+  returns `paging.cursors`, LinkedIn uses `start` + `count`. If your
+  buyer fleet hits accounts beyond the first page, wrap the resolver
+  in your own loop or use `createUpstreamHttpClient` directly to walk
+  pages before handing rows to a custom resolver.
+- **Per-account capability filtering.** Meta's `/me/adaccounts` returns
+  `tasks: ['MANAGE', 'ADVERTISE', ...]` per row; Snap returns
+  `roles[]`; LinkedIn returns `role`. Filter inside `toAccount` (return
+  a row that the calling principal lacks the capability for as a row
+  with `status: 'inactive'` or `null`) — the factory itself just
+  matches on `idField`.
+- **Vendor rate limits on `/me/adaccounts`.** Each vendor rate-limits
+  the listing endpoint per access token (Meta's app-level cap is the
+  tightest in practice). The TTL cache helps, but for high-QPS buyer
+  fleets default `ttlMs: 60_000` may still exceed the cap — tune up
+  or add backoff in the inner `httpClient`.
+
 ## Worked diff — `examples/decisioning-platform-mock-seller.ts`
+
+> **Illustrative — not a verbatim diff against the file.** The
+> snippets below show the recipes layered onto a mock-seller-shaped
+> adapter; the field-level shape is faithful but identifiers like
+> `db.listAccounts` and `MockSellerConfig` are placeholders. Apply
+> the recipes against your own adapter; for a real, runnable
+> end-to-end example see the `hello_*` family below.
 
 The reference adapter's `accounts.resolve` reads cleaner with the
 6.7 primitives applied. Same observable behavior; fewer casts and
@@ -728,31 +812,33 @@ fewer hand-rolled checks.
 
 The `hello_*` adapter family is the copy-paste starting point:
 
-- [`examples/hello_seller_adapter_signal_marketplace.ts`](../examples/hello_seller_adapter_signal_marketplace.ts) — signals + BuyerAgentRegistry + upstream-recorder.
+- [`examples/hello_signals_adapter_marketplace.ts`](../examples/hello_signals_adapter_marketplace.ts) — `signal-marketplace` + BuyerAgentRegistry + upstream-recorder.
 - [`examples/hello_seller_adapter_guaranteed.ts`](../examples/hello_seller_adapter_guaranteed.ts) — `sales-guaranteed` Pattern A annotation.
 - [`examples/hello_seller_adapter_social.ts`](../examples/hello_seller_adapter_social.ts) — `sales-social` (ingestion-only) + OAuth passthrough.
 - [`examples/hello_creative_adapter_template.ts`](../examples/hello_creative_adapter_template.ts) — `creative-template` + `NoAccountCtx` narrows.
-- [`examples/hello_signals_adapter_marketplace.ts`](../examples/hello_signals_adapter_marketplace.ts) — `signal-marketplace`.
 - [`examples/hello-cluster.ts`](../examples/hello-cluster.ts) — orchestrator that boots every per-specialism hello adapter on its declared port; emits the YAML routing manifest the storyboard runner consumes via `runStoryboard({ agents })`.
 
 ## Self-grade checklist
 
 Walk this before declaring 6.6 → 6.7 done:
 
-- [ ] `grep -rn 'as unknown as' src/` returns zero hits inside platform
-      handlers. Use `definePlatform` / `defineSalesCorePlatform` /
-      `defineSalesIngestionPlatform` etc. (recipe 1).
-- [ ] `grep -rnE "'account_id' in ref" src/` returns zero hits. Use
-      `refAccountId(ref)` (recipe 2).
-- [ ] `grep -rn 'new AdcpError' src/` reviewed. Auth / permission /
-      availability / governance throws use the typed-error classes
-      from `@adcp/sdk/server` (recipe 6). `AdcpError` is fine for
-      codes without a typed wrapper.
+- [ ] `grep -rn --include='*.ts' 'as unknown as' src/` reviewed by
+      hand. Zero hits inside platform handler bodies — verify per-hit,
+      since legitimate non-handler casts will match. Use `definePlatform`
+      / `defineSalesCorePlatform` / `defineSalesIngestionPlatform`
+      etc. (recipe 1).
+- [ ] `grep -rnE --include='*.ts' "'account_id' in ref" src/` returns
+      zero hits. Use `refAccountId(ref)` (recipe 2).
+- [ ] `grep -rn --include='*.ts' 'new AdcpError' src/` reviewed. Auth
+      / permission / availability / governance throws use the typed-
+      error classes from `@adcp/sdk/server` (recipe 6). `AdcpError` is
+      fine for codes without a typed wrapper.
 - [ ] If you implement `accounts.upsert` or `accounts.list`, the
-      method body reads `ctx?.agent` or `ctx?.authInfo` for
-      principal-keyed scoping. Multi-tenant adopters: `list` returns
-      only the calling principal's accounts (recipe 5 — security-
-      relevant).
+      method body **reads and acts on** `ctx?.agent` or `ctx?.authInfo`
+      — not just destructures it. Multi-tenant adopters: confirm by
+      sending a test request from a second principal and asserting
+      `list_accounts` returns a smaller / different set than principal
+      A would see (recipe 5 — security-relevant).
 - [ ] Multi-tenant `accounts.resolve` adopters: post-resolve "is this
       principal authorized for this account?" check uses
       `requireAccountMatch` / `requireAdvertiserMatch` /
@@ -800,7 +886,11 @@ These ride along in 6.7 and don't need any adopter action:
 
 - **`Account.authInfo` is now optional.** Adopters who don't persist
   a principal can omit the field and pass strict typecheck. Adopters
-  who do already populate it keep working.
+  who do already populate it keep working. **Footgun**: code that
+  used a non-null assertion (`ctx.account.authInfo!.token`) compiles
+  fine but throws at runtime if you rebuild your `Account` fixture
+  shape from the new optional type and drop the field. Narrow with
+  `if (!ctx.account.authInfo) throw new AuthRequiredError();` instead.
 - **`AccountStore.reportUsage` and `getAccountFinancials` get
   `ctx.agent`.** Same threading as `resolve` / `upsert` / `list`;
   read-only addition for adopters that already wired
@@ -819,9 +909,12 @@ These ride along in 6.7 and don't need any adopter action:
 - **`listCreativeFormats?` on `CreativeBuilderPlatform` and
   `CreativeAdServerPlatform`.** Creative-agent adopters that own a
   format catalog wire it as a typed platform method instead of the
-  v5 `opts.creative.listCreativeFormats` escape hatch. Dispatcher
-  precedence: when both `sales` and `creative` wire it, the
-  sales-side handler wins (mediaBuy domain registers first).
+  v5 `opts.creative.listCreativeFormats` escape hatch. **Footgun**:
+  when both `sales` and `creative` wire `listCreativeFormats`, the
+  sales-side handler wins (mediaBuy domain registers first) and the
+  creative-side handler is silently dropped. Wire it on exactly one
+  surface — pick the one whose specialism actually owns the format
+  catalog.
 - **`update_rights` first-class tool + `creative_approval` webhook
   builders.** Brand-rights adopters wire
   `BrandRightsPlatform.updateRights` instead of the v5 raw-handler
@@ -860,6 +953,24 @@ These ride along in 6.7 and don't need any adopter action:
 - **Manifest-derived error codes.** `STANDARD_ERROR_CODES` is now
   generated from `schemas/cache/<v>/manifest.json` rather than
   hand-curated. Public API unchanged; drift is now impossible.
+
+## What didn't change in 6.7
+
+A few things adopters always look for in a minor bump — explicit "no
+change" callouts so you don't go hunting:
+
+- **Delivery reporting (`getMediaBuyDelivery`)** — wire shape and
+  semantics unchanged. Same `media_buys[].metrics` shape, same
+  filter semantics. Move on.
+- **Idempotency** — `idempotency_key` is still required on every
+  mutating tool per the AdCP 3.0 GA contract (CLAUDE.md § Protocol-
+  Wide Requirements). The 6.7 release adds `IdempotencyConflictError`
+  to the typed-error barrel (recipe #6) but the wire-level replay
+  semantics are unchanged.
+- **Webhook signing** — RFC 9421 surface unchanged. `signed-requests`
+  is still preview; verifier behavior is identical. `TenantConfig.signingKey`
+  is still optional in 3.x (becomes required in 4.0 per the
+  `migration-5.x-to-6.x.md` callout — no shift in 6.7).
 
 ## Need help?
 
