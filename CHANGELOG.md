@@ -1,5 +1,794 @@
 # Changelog
 
+## 6.8.0
+
+### Minor Changes
+
+- 0dd3ca7: Add `Account.mode` convention + sandbox-authority helpers from `@adcp/sdk/server`.
+
+  Phase 1 of the three-account-mode rollout (see `docs/proposals/lifecycle-state-and-sandbox-authority.md`). Establishes the type and the gate primitive; auto-wiring into the comply controller dispatch lands alongside mock-mode routing in Phase 2 (#1435).
+
+  New surface:
+  - `AccountMode` type — `'live' | 'sandbox' | 'mock'`. Resolved-account convention; default `'live'` when unspecified (fail-closed).
+  - `getAccountMode(account)` — reads `mode` off any account-shaped value, with back-compat for legacy `sandbox: boolean`.
+  - `isSandboxOrMockAccount(account)` — predicate: is the account non-production?
+  - `assertSandboxAccount(account, opts?)` — throws `AdcpError('PERMISSION_DENIED')` (with `details: { scope: 'sandbox-gate' }`) for live-mode or missing accounts. Use to gate test-only surfaces.
+
+  Pure additive: existing `account.sandbox === true` adopters keep working — the helpers infer `mode: 'sandbox'` from the legacy flag automatically. No behavior change for shipped code.
+
+  Adopters who want stronger gating today can wire `assertSandboxAccount(ctx.account, { tool: 'comply_test_controller' })` inside their `sandboxGate(input)` (after resolving the account). Phase 2 ships SDK-side auto-wiring so this becomes invisible.
+
+- d359c70: feat(server): `createAdcpServer.instructions` accepts an async function (#1393)
+
+  The function form of `instructions` now supports returning a `Promise<string | undefined>`. The framework awaits the result during the MCP `initialize` handshake — the session does not proceed until the promise settles. This enables per-session prose fetched from an async source (brand-manifest registries, KV stores, real-time policy docs) without blocking server construction.
+
+  ```ts
+  createAdcpServer({
+    // Async function — resolved at MCP initialize time, not at factory construction.
+    instructions: async ctx => {
+      const manifest = await brandManifests.get(ctx.tenant);
+      return manifest?.intro ?? defaultProse;
+    },
+    onInstructionsError: 'skip', // or 'fail' for load-bearing policy
+  });
+  ```
+
+  `onInstructionsError: 'skip' | 'fail'` governs async rejections identically to sync throws. Existing string-form and sync-function-form adopters are unaffected.
+
+  New export: `MaybePromise<T>` type alias (`T | Promise<T>`) for use in async-optional callback signatures.
+
+- 54d2537: BuyerAgentRegistry: surface authenticator-stamped `extra` to `resolveByCredential` (issue #1484)
+
+  `BuyerAgentRegistry.bearerOnly` and `.mixed` now forward `authInfo.extra` as a second
+  optional argument to `resolveByCredential`. Adopters using prefix-based bearer conventions
+  (e.g. demo tokens, tenant-encoded keys) can stamp extension data in their `verifyApiKey.verify`
+  callback and recover it in the resolver without a pre-registered hash lookup.
+
+  `attachAuthInfo` in `serve.ts` is also updated to propagate `principal.extra` from the
+  `AuthPrincipal` returned by `authenticate()` into `info.extra`, closing the forwarding gap
+  at the authenticator boundary.
+
+  `ResolveBuyerAgentByCredential` gains an optional second parameter
+  `extra?: Record<string, unknown>`. Existing single-argument implementations continue to
+  satisfy the widened type without changes.
+
+- a6c71fb: Extend `ComplyControllerConfig.force` with `create_media_buy_arm` and `task_completion` slots, closing the gap between the low-level dispatcher and the structured-config façade.
+
+  **What was missing.** `ComplyControllerConfig.force` (the typed config surface for `createComplyController` and `createAdcpServerFromPlatform({ complyTest })`) previously only exposed four slots — `creative_status`, `account_status`, `media_buy_status`, `session_status`. The dispatcher in `test-controller.ts` already handled `force_create_media_buy_arm` and `force_task_completion` (they are in `CONTROLLER_SCENARIOS`, `SCENARIO_MAP`, and the `switch` dispatch), but `buildStore` and `advertisedScenarios` had no bridge from the typed config to those store methods. Adopters on the structured config who implemented the underlying logic still hit `UNKNOWN_SCENARIO` every time.
+
+  **What's new.**
+  - `ForceCreateMediaBuyArmParams` — `{ arm: 'submitted' | 'input-required'; task_id?: string; message?: string }`
+  - `ForceTaskCompletionParams` — `{ task_id: string; result: Record<string, unknown> }`
+  - `DirectiveAdapter<P>` — adapter type returning `ForcedDirectiveSuccess` (distinct from `ForceAdapter<P>` which returns `StateTransitionSuccess`; `create_media_buy_arm` registers a pre-call directive, not a state transition)
+  - `ComplyControllerConfig.force.create_media_buy_arm?: DirectiveAdapter<ForceCreateMediaBuyArmParams>`
+  - `ComplyControllerConfig.force.task_completion?: ForceAdapter<ForceTaskCompletionParams>`
+  - `buildStore` wires both adapters to `store.forceCreateMediaBuyArm` / `store.forceTaskCompletion`
+  - `advertisedScenarios` pushes `FORCE_CREATE_MEDIA_BUY_ARM` / `FORCE_TASK_COMPLETION` when the corresponding adapter is present
+  - `testing/test-controller.ts` client-side `ControllerScenario` union extended with `'force_create_media_buy_arm'` and `'force_task_completion'`
+
+  All changes are additive (new optional slots, new exported types). No existing API is modified.
+
+  Fixes #1472. Unblocks the `media_buy_seller/create_media_buy_async` storyboard and any other storyboard that drives `force_create_media_buy_arm` or `force_task_completion` through `createComplyController`.
+
+- 5fd83f1: Auto-wire the framework-side sandbox-authority gate inside `createAdcpServerFromPlatform`. Phase 2 of #1435.
+
+  The framework now bypasses `controller.register(server)` for `comply_test_controller` and registers the tool itself, threading `extra.authInfo` through `platform.accounts.resolve` BEFORE dispatching. Under no circumstances does the controller operate on a `live`-mode account, regardless of what the caller claims on the wire — the resolved account is the trust boundary, not buyer-supplied flags like `account.sandbox === true`.
+
+  What the gate does, in order:
+  1. **`list_scenarios` is exempt** — capability probe, no state mutation.
+  2. **Resolve the account** through `platform.accounts.resolve(ref, { authInfo, toolName })`. Reads the ref from top-level `account` (extended shape) or `context.account` (canonical AdCP routing).
+  3. **Admit when** the resolved account's `mode` is `'sandbox'` or `'mock'` (legacy `sandbox: true` honored).
+  4. **Admit when** no account resolves AND `context.sandbox === true` (migration window).
+  5. **Admit when** `process.env.ADCP_SANDBOX === '1'` (deprecated env-fallback for back-compat).
+  6. **Otherwise refuse** with a `FORBIDDEN` controller envelope.
+
+  **Fail-closed guard on the env fallback.** `ADCP_SANDBOX=1` was never meant to coexist with a resolver that names live accounts. The framework tracks every explicit `mode` value returned from `platform.accounts.resolve` in this process; if `ADCP_SANDBOX=1` is set AND any live-mode account has been resolved, the gate THROWS loudly so operators notice in their logs. Remove `ADCP_SANDBOX` from your prod env and gate via `mode: 'sandbox'` on resolved accounts instead.
+
+  **Back-compat.** Existing test platforms relying on `process.env.ADCP_SANDBOX === '1'` continue to work without modification — the env-fallback admits when the resolver doesn't stamp an explicit mode. Implicit-default-to-live (legacy adopter shape) does NOT trip the fail-closed guard; only deliberate `mode: 'live'` from the resolver does.
+
+  **Migration path.** Stop setting `ADCP_SANDBOX` in production. Stamp `mode: 'sandbox'` (or `'live'`) on accounts your `accounts.resolve` returns; the gate then enforces strictly without the env fallback. The fallback emits no warning yet — a future minor will warn on each gate-permission grant; a future major will remove it entirely.
+
+  Non-MCP transports (rare) keep the v5 behavior: when `getSdkServer(server)` returns null, the controller's own `register(server)` runs and the gate is a no-op for that surface. The gate is an MCP-side concern; A2A and other transports are wired separately.
+
+- d7c5767: feat(server): variadic `composeMethod(inner, ...hooks)` overload for stacking multiple guards without nesting
+
+  Adds a variadic form of `composeMethod` so adopters can write `composeMethod(inner, hookA, hookB, hookC)` instead of `composeMethod(composeMethod(composeMethod(inner, hookC), hookB), hookA)`. Semantics are identical to right-to-left manual nesting: `before` hooks run left-to-right, `after` hooks run right-to-left. The two-argument form is unchanged.
+
+  Also adds a "When to use which approach" decision matrix to `docs/recipes/composeMethod-testing.md` covering preset-vs-inline tradeoffs, the `requireOrgScope` undefined-org gotcha, and `onDeny` evaluation-order implications.
+
+  Closes #1444.
+
+- de0becf: Add `creative-ad-server` upstream-shape mock-server. Closes #1459 (sub-issue of #1381 hello-adapter-family completion).
+
+  Pattern: GAM-creative / Innovid / Flashtalking / CM360 model — stateful creative library, format auto-detection, tag generation with macro substitution, real `/serve/{id}` HTML preview, synth delivery reporting with format-specific CTR baselines.
+
+  Routes:
+  - `GET /_lookup/network` — operator-from-domain routing (auth-free).
+  - `GET /_debug/traffic` — façade-detection counters (auth-free).
+  - `GET /v1/formats` — per-network format catalog.
+  - `POST /v1/creatives` — write to library; format auto-detected from `upload_mime` + dimensions when `format_id` omitted; `client_request_id` idempotency with conflict-on-body-mismatch.
+  - `GET /v1/creatives` — list with filters (`advertiser_id`, `format_id`, `status`, `created_after`, `creative_ids`); cursor pagination.
+  - `GET /v1/creatives/{id}` — single fetch.
+  - `PATCH /v1/creatives/{id}` — update snippet/status/click_url/name.
+  - `POST /v1/creatives/{id}/render` — tag generation; substitutes `{click_url}`, `{impression_pixel}`, `{cb}`, `{advertiser_id}`, `{creative_id}`, `{asset_url}`, `{width}`, `{height}`, `{duration_seconds}` macros into the stored or format-template snippet; returns `tag_html` + `tag_url`.
+  - `GET /serve/{id}?ctx=<json>` — real iframe-embeddable HTML response (no bearer auth — capability-by-id, mirrors how real ad servers expose serve URLs to publisher iframes).
+  - `GET /v1/creatives/{id}/delivery?start=&end=` — synth impressions/clicks scaled by days-active; deterministic-seeded `(creative_id, date)`; CTR baselines per channel (display ~0.10%, video ~1.5%, ctv ~3%, audio ~0.5%).
+
+  Auth: static Bearer + `X-Network-Code` header on every `/v1` route. Multi-tenancy by network header (mirrors `sales-guaranteed`). Three networks seeded (US, ACME outdoor, Pinnacle agency) with replicated 6-format catalog and 3 seed library entries.
+
+  Wired into `src/lib/mock-server/index.ts` dispatcher with `formatCreativeAdServerSummary` for boot-log printing. Worked adapter (sub-issue #1460) lands in a follow-up PR.
+
+- 6c47db5: Framework-side refusal of inline `account_id` for `resolution: 'derived'`
+  agents (closes adcp-client#1468). Mirrors the long-standing `'implicit'`
+  enforcement (#1364): the framework now throws
+  `AdcpError('INVALID_REQUEST', { field: 'account.account_id' })` _before_
+  reaching `accounts.resolve` whenever a `'derived'`-mode platform receives
+  a buyer-supplied `account_id` on the wire.
+
+  Single-tenant agents (audiostack, flashtalking, single-namespace
+  retail-media) declare `account_id` is meaningless on the wire; previously
+  the framework silently dropped buyer-supplied ids and the resolver
+  returned the singleton anyway, leaving cargo-culted requests undetectable.
+  The refusal makes the wire-contract violation surface cleanly to the
+  buyer with a single-tenant message (no `sync_accounts`-first guidance,
+  since that step does not exist in derived mode).
+
+  Hand-rolled `'derived'` stores get the enforcement automatically — not
+  just users of `createDerivedAccountStore`. The brand+operator union arm
+  is still permitted.
+
+  Implementation: `refuseImplicitAccountId` (closed #1364) renamed to
+  `refuseInlineAccountIdWhenForbidden` and extended to fire on both
+  `'implicit'` and `'derived'` resolution modes with mode-specific error
+  messaging.
+
+- 0ee3ef2: Add `createDerivedAccountStore` — Shape D `AccountStore` factory for
+  single-tenant `resolution: 'derived'` agents (no `account_id` on the
+  wire; auth principal alone identifies the tenant). Replaces the ~25–30
+  LOC of bearer-extract + throw-`AUTH_REQUIRED` + return-singleton
+  boilerplate that audiostack, flashtalking, single-namespace
+  retail-media adapters re-derive by hand, and standardizes the correct
+  `'derived'` declaration (many such adapters today claim `'explicit'`
+  even though they ignore the wire field).
+
+  Closes adcp-client#1462. Completes the four-shape factory family
+  alongside `InMemoryImplicitAccountStore` (A), `createOAuthPassthroughResolver`
+  (B), and `createRosterAccountStore` (C). Exported from `@adcp/sdk`,
+  `@adcp/sdk/server`, and `@adcp/sdk/adapters`.
+
+- cb638f8: feat(cli+harness): `adcp mock-server sponsored-intelligence` — fifth specialism (brand-agent platform shape)
+
+  Adds the SI mock-server. Brand-agent-platform-shaped upstream (Salesforce
+  Agentforce / OpenAI Assistants / custom-brand-chat family) that hosts
+  conversational brand offerings and exposes them via a stateful HTTP API.
+  Adapter wraps it to project AdCP `si_get_offering`, `si_initiate_session`,
+  `si_send_message`, `si_terminate_session`.
+
+  This is the first matrix-v2 fixture for SI. Lets adopters dogfood SI ahead
+  of `adcontextprotocol.org` standing up a reference SI tenant — and lets
+  the SDK exercise the four SI tools end-to-end against a deterministic
+  fixture.
+
+  **Why a mock now (and not a v6 platform shape):** SI is currently a
+  _protocol_ in AdCP 3.0 (`supported_protocols: ['sponsored_intelligence']`)
+  but not a _specialism_ — `sponsored-intelligence` is absent from
+  `AdCPSpecialism`. That blocks a v6 `SponsoredIntelligencePlatform`
+  interface with parity to the other specialism platforms; adopters wire SI
+  through the v5 `createAdcpServer` handler bag
+  (`SponsoredIntelligenceHandlers`). The mock server is independent of that
+  decision — it represents the upstream brand platform an adapter wraps,
+  regardless of which SDK shape the AdCP-side handler uses. Filed as
+  adcontextprotocol/adcp#3961.
+
+  **Routes** (path-scoped multi-tenancy, parallel to creative-template):
+  - `GET /_lookup/brand?adcp_brand=<value>` — discovery (no auth)
+  - `GET /_debug/traffic` — façade-detection traffic counters
+  - `GET /v1/brands/{brand}/offerings/{offering_id}` — `si_get_offering`
+  - `POST /v1/brands/{brand}/conversations` — `si_initiate_session`
+  - `GET /v1/brands/{brand}/conversations/{conv_id}` — read state
+  - `POST /v1/brands/{brand}/conversations/{conv_id}/turns` — `si_send_message`
+  - `POST /v1/brands/{brand}/conversations/{conv_id}/close` — `si_terminate_session`
+
+  Conversation lifecycle: `active` → `closed` (terminal). Re-closing
+  returns the same payload — naturally idempotent on `conversation_id`,
+  mirroring AdCP's decision to omit `idempotency_key` on
+  `si_terminate_session`. POST `/conversations` and POST `/turns` each
+  accept `client_request_id` (the upstream-side translation of AdCP
+  `idempotency_key`) for at-most-once execution; mismatched body with
+  reused key → `409 idempotency_conflict`.
+
+  **Brand-agent canned responses** (deterministic, keyword-routed):
+  - `buy` / `purchase` / `checkout` / `order` → response with
+    `close_recommended: { type: 'transaction', payload }` — adapter
+    surfaces as AdCP `session_status: 'pending_handoff'` + populated
+    `handoff` block.
+  - `thanks` / `bye` / `done` → `close_recommended: { type: 'complete' }`
+  - `second` / `next` / `other one` → swap product card to next product
+  - otherwise → product card from the configured offering
+
+  When `close` is called with `reason=transaction`, the response includes
+  a `transaction_handoff` block with `checkout_url`, `checkout_token`, and
+  `expires_at` — adapter projects to AdCP `acp_handoff` on
+  `SITerminateSessionResponse`.
+
+  **Two seeded brands** (multi-tenancy assertion): `brand_acme_outdoor`
+  (running shoes, single offering with two products) and
+  `brand_summit_books` (independent bookstore, single offering with one
+  product). Cross-brand offering access returns
+  `404 offering_not_in_brand`.
+
+  **Upstream/AdCP rename pattern** is intentional throughout (exercises
+  the adapter's projection):
+
+  | upstream field                      | AdCP field                                                          |
+  | ----------------------------------- | ------------------------------------------------------------------- |
+  | `conversation_id`                   | `session_id`                                                        |
+  | `assistant_message`                 | `response.message`                                                  |
+  | `components[].kind`                 | `ui_elements[].type`                                                |
+  | `client_request_id`                 | `idempotency_key`                                                   |
+  | `offering_query_id`                 | `offering_token`                                                    |
+  | `transaction_handoff`               | `acp_handoff`                                                       |
+  | `close_recommended.type: txn_ready` | `session_status: 'pending_handoff'` + `handoff.type: 'transaction'` |
+  | `close_recommended.type: done`      | `session_status: 'pending_handoff'` + `handoff.type: 'complete'`    |
+  | `close.reason: txn_ready`           | `SITerminateSessionRequest.reason: 'handoff_transaction'`           |
+  | `close.reason: done`                | `'handoff_complete'`                                                |
+  | `close.reason: user_left`           | `'user_exit'`                                                       |
+  | `close.reason: idle_timeout`        | `'session_timeout'`                                                 |
+  | `close.reason: host_closed`         | `'host_terminated'`                                                 |
+  | `sku`                               | `product_id`                                                        |
+  | `hero_image_url`, `thumbnail_url`   | `image_url`                                                         |
+  | `landing_page_url`                  | `landing_url`                                                       |
+  | `pdp_url`                           | `url`                                                               |
+  | `inventory_status`                  | `availability_summary`                                              |
+
+  The close-reason vocabulary is deliberately distinct from AdCP's enum
+  (rather than identity-mapping `complete` to `complete`) so the adapter's
+  translation is loud — sending an AdCP reason value to the upstream close
+  endpoint returns `400 invalid_close_reason`, forcing the adapter to
+  implement the projection rather than accidentally pass-through.
+
+  **Offering token correlation** (`offering_query_id`): the brand mints a
+  token on every `GET /offerings/{id}` and stores the products-shown
+  record keyed on it. A subsequent `POST /conversations` with the same
+  token resolves "the second one" against what the user actually saw,
+  not the full catalog. Mirrors the AdCP `SIGetOfferingResponse.offering_token`
+  → `SIInitiateSessionRequest.offering_token` correlation primitive.
+
+  Run with:
+
+  ```bash
+  npx @adcp/sdk mock-server sponsored-intelligence --port 4500
+  ```
+
+  **23 smoke tests** in
+  `test/lib/mock-server/sponsored-intelligence.test.js` cover: auth
+  gating, brand lookup, cross-brand offering and conversation isolation,
+  conversation start with idempotent replay and idempotency-conflict
+  rejection (POST /conversations and POST /turns symmetric), turn keyword
+  routing (txn_ready/done close hints), close with txn_ready returning a
+  transaction_handoff, AdCP-vocabulary reason rejection (400
+  `invalid_close_reason`), idempotent re-close, post-close turn
+  rejection, GET-after-close, offering_query_id round-trip from GET
+  /offerings into POST /conversations, unknown-token rejection, cross-brand
+  token rejection, and traffic counter recording.
+
+  **Deferred to follow-up branches** (acknowledged limitations of this v1
+  fixture): A2UI surface support (`SISendMessageResponse.response.surface`),
+  streaming turns (real Agentforce / Assistants emit SSE), consent-version
+  gate (a brand with `requires_identity: true`), anonymous_session_id
+  assertion, multi-brand catalog overlap (one customer fronting many
+  brands with shared products), ACP handoff failure mode, eager
+  `pending_handoff` mid-turn path (mock currently surfaces close hints
+  lazily — adapter chooses whether to project as eager handoff).
+
+  Refs adcontextprotocol/adcp#3961.
+
+- 864eb15: feat(examples): hello_si_adapter_brand — worked SI adapter driving the SI mock through the v6 platform
+
+  Adds the SI reference adapter that wraps the upstream brand-agent
+  mock platform (`mock-server sponsored-intelligence`, #1441) and
+  exposes AdCP's four SI tools through the v6
+  `SponsoredIntelligencePlatform` shape (#1454).
+
+  Demonstrates the full upstream/AdCP rename gap an integrator faces
+  when wrapping a Salesforce Agentforce / OpenAI Assistants / custom
+  brand-chat platform: `conversation_id` ↔ `session_id`,
+  `assistant_message` ↔ `response.message`, `components.kind` ↔
+  `ui_elements.type`, `offering_query_id` ↔ `offering_token`,
+  `transaction_handoff` ↔ `acp_handoff`, `sku` ↔ `product_id`,
+  `hero_image_url` ↔ `image_url`, `pdp_url` ↔ `url`, and the loud
+  close-reason rename (`txn_ready` ↔ `handoff_transaction`, `done` ↔
+  `handoff_complete`, `user_left` ↔ `user_exit`, `idle_timeout` ↔
+  `session_timeout`, `host_closed` ↔ `host_terminated`).
+
+  Per-component-type projection — AdCP `SIUIElement.product_card`
+  requires `data.title` + `data.price`; upstream emits `name` +
+  `display_price`. The example projects per-type so wire validation
+  passes. The same gotcha applies to `action_button` (needs
+  `label` + `action`).
+
+  Eager close-hint projection: upstream `close_recommended.type:
+'txn_ready'` becomes AdCP `session_status: 'pending_handoff'` +
+  `handoff: { type: 'transaction', intent: { action: 'purchase', product, price } }`
+  on the `si_send_message` response. The host then formally closes
+  via `si_terminate_session` to receive the ACP `acp_handoff`
+  payload.
+
+  **New SDK surface this example uses:**
+  - `defineSponsoredIntelligencePlatform<TCtxMeta>` — type-level
+    identity helper, parallel to `defineSignalsPlatform` /
+    `defineCreativeBuilderPlatform`. Exported from
+    `@adcp/sdk/server`.
+
+  **Bug fix in `RequiredPlatformsFor<S>`** that this example surfaced:
+  the fall-through used `Record<string, never>` (rejects any platform
+  with handler fields). Distributive conditional over an empty union
+  also collapsed to `never`. Both branches now resolve to `{}` (the
+  empty-requirements identity, sister-to `RequiredCapabilitiesFor`'s
+  fall-through). Adopters with empty `specialisms: []` (legitimate
+  when the agent's only declared surface is a _protocol_, like SI
+  pre-3.1) now get a working type. Documented inline at the
+  fall-through with reasoning.
+
+  **Tests** — `test/examples/hello-si-adapter-brand.test.js`. SI is
+  preview-only (no compliance storyboard yet), so the test rolls its
+  own runtime gates rather than using the shared three-gate helper:
+  1. **Strict tsc** — `--strict --noUncheckedIndexedAccess
+--exactOptionalPropertyTypes
+--noPropertyAccessFromIndexSignature`. Parallel to peer
+     adapter tests.
+  2. **End-to-end MCP smoke** — boots mock + adapter, drives all
+     four SI tools through the MCP wire (`StreamableHTTPClientTransport`
+     - `Client.callTool`), verifies upstream→AdCP renames project
+       correctly (offering_query_id round-trip, conversation_id →
+       session_id, transaction_handoff → acp_handoff, txn_ready →
+       pending_handoff projection on send_message).
+  3. **Façade gate** — every expected upstream route shows ≥1 hit
+     at `/_debug/traffic`. (`/_lookup/brand` excluded — SI tool
+     schemas don't carry `account` on the wire, so
+     `accounts.resolve(undefined)` falls back to
+     `DEFAULT_LISTING_BRAND` without exercising lookup. That route
+     fires only on production paths binding `account.brand.domain`
+     from `ctx.authInfo`.)
+
+  6 tests, all passing.
+
+  Run the demo:
+
+  ```bash
+  npx @adcp/sdk@latest mock-server sponsored-intelligence --port 4504
+  UPSTREAM_URL=http://127.0.0.1:4504 \
+    npx tsx examples/hello_si_adapter_brand.ts
+  curl http://127.0.0.1:4504/_debug/traffic
+  ```
+
+  Refs adcontextprotocol/adcp#3961, #1441, #1454.
+
+- 0dfbf3c: feat(mock-server+examples): SI storyboard passes — Nova Motors fixture + standard three-gate runner
+
+  Wires `examples/hello_si_adapter_brand.ts` (#1464) into the canonical
+  `adcp storyboard run si_baseline` compliance harness. The
+  `si_baseline` storyboard at
+  `compliance/cache/latest/protocols/sponsored-intelligence/index.yaml`
+  now reports **3/3 scenarios pass** end-to-end against the SI mock
+  server (#1441) wrapped by the v6 SI platform adapter (#1454).
+
+  **Three changes:**
+  1. **Nova Motors fixture in the SI mock** (`brand_nova_motors`,
+     `novamotors.example`, offering `novamotors_conversational_v1`).
+     Matches the canonical compliance test-kit at
+     `compliance/cache/latest/test-kits/nova-motors.yaml`. The SI mock
+     now seeds three brands (Acme Outdoor, Summit Books, Nova Motors)
+     so it's the canonical fixture for SI compliance runs without
+     requiring a separate test-only mock.
+  2. **Adapter default switched to Nova Motors.** SI tool requests
+     don't carry `account` on the wire (the schema omits it — session
+     continuity flows through `session_id`), so
+     `accounts.resolve(undefined)` falls back to a default brand.
+     Previously `brand_acme_outdoor`; now `brand_nova_motors` to match
+     the compliance fixture. Production agents are typically
+     single-brand per deployment, so a hardcoded default is the right
+     shape; multi-brand deployments derive from `ctx.authInfo`
+     per-API-key binding.
+  3. **Top-level `offering_id` mirror on `SIGetOfferingResponse`.**
+     The `si_baseline` storyboard's `context_outputs` capture uses
+     `path: 'offering_id'` at the top level, but the canonical AdCP
+     schema puts the id at `offering.offering_id`. Schema allows
+     `additionalProperties: true` at the response root, so the
+     adapter emits a top-level mirror to satisfy the storyboard's
+     capture pattern. Filed upstream — once the storyboard's path is
+     corrected to `offering.offering_id`, this mirror can be dropped.
+
+  **Test refactor.** `test/examples/hello-si-adapter-brand.test.js`
+  now uses `runHelloAdapterGates` (the standard three-gate helper used
+  by every other `hello_*_adapter_*.ts`) instead of its previous
+  hand-rolled MCP smoke test:
+  1. Strict tsc (`--strict --noUncheckedIndexedAccess
+--exactOptionalPropertyTypes
+--noPropertyAccessFromIndexSignature`)
+  2. `adcp storyboard run si_baseline` reports zero failed steps
+  3. Façade gate — every expected upstream route shows ≥1 hit at
+     `/_debug/traffic`
+
+  This brings SI to parity with the four other `hello_*_adapter_*.ts`
+  examples — same gating shape, same regression contract.
+
+  **Mock-server tests** stay green (23/23) — the seed-data tests
+  assert mapping shape, not specific brand counts. The full server
+  suite remains green at 1158 tests; SI v6 platform tests at 7/7.
+
+  Refs adcontextprotocol/adcp#3961, #1441, #1454, #1464.
+
+- 7a24fc5: feat(server): SponsoredIntelligencePlatform — v6 protocol-keyed dispatch shape for SI
+
+  Adds `SponsoredIntelligencePlatform<TCtxMeta>` to the v6
+  `DecisioningPlatform` config — adopters now wire SI through the v6
+  platform shape with auto-hydrated session state, parity with how every
+  other specialism (signals, sales, creative, governance, brand-rights)
+  already works. Replaces the v5 `SponsoredIntelligenceHandlers` handler-
+  bag as the recommended path, but keeps the v5 escape hatch working for
+  in-flight adopters.
+
+  **Why protocol-keyed and not specialism-keyed.** AdCP 3.0 declares SI as a
+  _protocol_ (`supported_protocols: ['sponsored_intelligence']`), not a
+  _specialism_ — `'sponsored-intelligence'` is absent from
+  `AdCPSpecialism`. Tracked upstream at adcontextprotocol/adcp#3961
+  (targeted at 3.1). Rather than wait or invent local-only behavior, this
+  release dispatches off the SDK's `platform.sponsoredIntelligence` field
+  itself: presence triggers SI tool registration, which the existing
+  `detectProtocols` derivation picks up to emit `'sponsored_intelligence'`
+  in the wire-side `supported_protocols`. When 3.1 promotes SI to a
+  specialism, dispatch becomes additive — adopters can claim either form
+  without code changes.
+
+  **The four method surface** (`src/lib/server/decisioning/specialisms/sponsored-intelligence.ts`):
+
+  ```ts
+  interface SponsoredIntelligencePlatform<TCtxMeta = Record<string, unknown>> {
+    getOffering(req: SIGetOfferingRequest, ctx): Promise<SIGetOfferingResponse>;
+    initiateSession(req: SIInitiateSessionRequest, ctx): Promise<SIInitiateSessionResponse>;
+    sendMessage(req: SISendMessageRequest, ctx): Promise<SISendMessageResponse>;
+    terminateSession(req: SITerminateSessionRequest, ctx): Promise<SITerminateSessionResponse>;
+  }
+  ```
+
+  **Auto-hydrated session state.** `initiateSession` returns trigger an
+  auto-store under `ResourceKind: 'si_session'` keyed on the response's
+  `session_id`. Subsequent `sendMessage` / `terminateSession` calls hit the
+  schema-driven hydrator (already declared in `entity-hydration.generated.ts`
+  for `si_send_message.session_id` and `si_terminate_session.session_id`)
+  which attaches the stored record at `req.session`. Platform implementations
+  read transcript context from `req.session` rather than threading manual
+  `ctx.store.get` calls — same ergonomics as `req.media_buy` /
+  `req.signal` / `req.rights_grant` on the other specialisms.
+
+  The stored payload preserves the bits a brand engine needs to resume
+  context across turns: request-side scoping (`intent`, `offering_id`,
+  `offering_token`, `placement`, `media_buy_id`, `identity` consent
+  state, `supported_capabilities`) and response-side state
+  (`negotiated_capabilities`, `session_status`, `session_ttl_seconds`).
+  On `terminateSession`, the framework also persists `acp_handoff`,
+  `session_status: 'terminated'`, `follow_up`, and `terminated` onto
+  the same record so the spec's "re-terminating a closed session
+  returns the same payload" idempotency contract is honored without
+  adopters having to write through manually.
+
+  **Important caveat on `req.session`.** The auto-store + hydration
+  covers the small fixture / mock case and the lookup-the-original-
+  context case (e.g., "what offering did this session resolve to?").
+  Production brand engines almost always own full transcript state in
+  their own backend (Postgres, Redis, vector store) — full transcripts,
+  RAG embeddings, tool-call logs are too rich for `ctx_metadata` and
+  easily exceed the 16KB blob cap. Treat `req.session` as a
+  convenience, not authoritative state — resolve full transcript state
+  from your own session store keyed by `req.session_id`. Documented
+  explicitly in the platform interface JSDoc.
+
+  **Type-level helper for forward compat.**
+  `RequiredPlatformsForProtocols<P>` parallels the existing
+  `RequiredPlatformsFor<S>`. Currently kept `@internal` (not exported) —
+  there is no constraint site consuming it today (no `supported_protocols`
+  field on `DecisioningCapabilities`, no wired
+  `createAdcpServer<P>` signature). Lands now so the type sits next to
+  the platform field for future wiring; promotion to public happens when
+  either AdCP 3.1 adds SI to `AdCPSpecialism` (at which point this folds
+  into `RequiredPlatformsFor`) or `DecisioningCapabilities` grows an
+  explicit `supported_protocols` declaration field. Adopters needing
+  compile-time gating today can constrain `platform: P & {
+sponsoredIntelligence: SponsoredIntelligencePlatform }` directly at
+  the call site.
+
+  **Wire changes:**
+  - `ResourceKind` gains `'si_session'`. `'si_session'` removed from
+    `INTENTIONALLY_UNHYDRATED_ENTITIES` since the framework now hydrates
+    it. `ENTITY_TO_RESOURCE_KIND` gains `si_session: 'si_session'`.
+  - `'offering'` stays in `INTENTIONALLY_UNHYDRATED_ENTITIES` — the SI
+    spec uses `offering_token` (a brand-side correlation primitive) for
+    offering→session continuity, which doesn't map cleanly to the
+    framework's resource-kind hydration.
+
+  **v5 path unchanged.** The existing v5 `SponsoredIntelligenceHandlers`
+  handler-bag (`src/lib/server/create-adcp-server.ts:855`) keeps working
+  exactly as before; adopters using `createAdcpServer({
+sponsoredIntelligence: { getOffering, initiateSession, sendMessage,
+terminateSession } })` see no behavior change. The v6 platform path
+  adapts onto the same dispatcher slot via `buildSponsoredIntelligenceHandlers`
+  in `from-platform.ts`, mirroring how `buildSignalsHandlers` adapts
+  `SignalsPlatform` onto `SignalsHandlers`.
+
+  **Tests.** New `test/server-si-platform.test.js` covers the v6 surface
+  end-to-end:
+  - All four SI tools register when `platform.sponsoredIntelligence` is
+    present
+  - `'sponsored_intelligence'` appears in `get_adcp_capabilities.supported_protocols`
+  - `initiateSession` auto-stores session record; `sendMessage` receives
+    hydrated `req.session` with original intent / offering_id /
+    negotiated_capabilities / session_status / session_ttl_seconds
+  - `terminateSession` receives the same hydrated `req.session`
+  - No SI tools register when the platform field is absent
+
+  5 tests, all passing. Full `test/server-*.test.js` suite remains green
+  (1171 tests).
+
+  **Tool-name reconciliation.** Stale tool names in
+  `protocol-for-tool.ts:30-33` (`si_end_session` / `si_get_session` —
+  which never matched the spec) corrected to the canonical
+  `si_terminate_session` / `si_get_offering`, and `si_get_offering`
+  added (it was missing from the protocol-routing map). Cosmetic for
+  v6 dispatch (which keys off platform field, not this map) but
+  load-bearing for any telemetry / diagnostics that look up
+  protocol-by-tool-name.
+
+  **Tracking.** Refs adcontextprotocol/adcp#3961 (spec — `sponsored-intelligence`
+  in `AdCPSpecialism` for 3.1).
+
+  **Follow-up release blocker.** `examples/hello_si_adapter_brand.ts`
+  driving the `mock-server sponsored-intelligence` fixture through this
+  v6 platform lands separately and ships in the same release window —
+  not a slip-able item. SI is the most foreign specialism in the
+  catalog (host↔brand handoff, ACP checkout, surface/ui_elements,
+  identity consent gating), so the surface without a worked example
+  will get adopted incorrectly.
+
+- 21f9c07: Add `examples/hello_creative_adapter_ad_server.ts` — worked starting point for an AdCP creative agent (specialism `creative-ad-server`). Closes #1460 (sub-issue of #1381 hello-adapter-family completion).
+
+  Pattern: GAM-creative / Innovid / Flashtalking / CM360 model — stateful library + tag generation. The structural delta from `hello_creative_adapter_template.ts` is additive: promotes `CreativeBuilderPlatform` → `CreativeAdServerPlatform`, adds `listCreatives` + `getCreativeDelivery` + stateful `syncCreatives` library, replaces template-driven `buildCreative` with macro-substitution flow against a stored snippet template.
+
+  Implements all 6 `CreativeAdServerPlatform` methods:
+  - `buildCreative` — pulls stored snippet from `GET /v1/creatives/{id}`, calls upstream `POST /v1/creatives/{id}/render` for macro substitution, returns `BuildCreativeSuccess` with `creative_manifest.assets` carrying the rendered HTML tag.
+  - `previewCreative` — `NoAccountCtx` no-account tool; returns a real iframe-embeddable URL pointing at the mock's `/serve/{id}` endpoint.
+  - `listCreativeFormats` — `NoAccountCtx`; projects upstream catalog to closed-shape `Format.renders[]` (display fixed dimensions, video/CTV 1080p baseline, parameterized 1×1 placeholder).
+  - `syncCreatives` — wraps `POST /v1/creatives`. Library write. `creative_id` round-tripped to upstream `client_request_id`. Typed `CREATIVE_REJECTED` errors when format auto-detection fails.
+  - `listCreatives` — wraps `GET /v1/creatives` with cursor pagination. `filter.creative_ids[]` multi-id pass-through (#1410). Projects to `query_summary` + `pagination` + `creatives[]` per `tools.generated.ListCreativesResponse`.
+  - `getCreativeDelivery` — wraps `GET /v1/creatives/{id}/delivery`. Multi-id fan-out per `filter.creative_ids[]`. Returns currency + reporting_period + per-creative impressions/clicks rows.
+
+  Auth + multi-tenant routing: static Bearer; `accounts.resolve` translates `ref.brand.domain` → `X-Network-Code` via `GET /_lookup/network`. No-account tools fall back to `KNOWN_PUBLISHERS[0]` so `previewCreative` / `listCreativeFormats` resolve cleanly. Sandbox arm in `accounts.resolve` stamps `mode: 'sandbox'` (#1435 phase 3 posture); `account_id` arm routes any opaque id to the ACME network so storyboard fixtures referencing seeded ids resolve cleanly.
+
+  `comply_test_controller` wired via `complyTest:` config — `seed.creative` adapter forwards storyboard fixture entries (`controller_seeding: true`) to the upstream library via `POST /v1/creatives` with the caller-supplied `creative_id` override (test-only path on the mock).
+
+  Three-gate CI test (`test/examples/hello-creative-adapter-ad-server.test.js`) lands alongside: strict tsc / `creative_ad_server` storyboard / upstream-traffic façade. All seven storyboard steps pass on first build (no SDK gaps deferred).
+
+  The mock's `POST /v1/creatives` gains a TEST-ONLY `creative_id` override field so cascade fixtures can reference seeded creatives by their declared alias instead of resolving server-assigned ids. Production-shipped servers should reject this field; the override is gated by being optional + undocumented in the public OpenAPI surface.
+
+- a8a62dd: Add `examples/hello_seller_adapter_non_guaranteed.ts` — worked starting point for an AdCP non-guaranteed sales agent. Closes #1458 (sub-issue of #1381 hello-adapter-family completion).
+
+  Pattern modeled on `hello_seller_adapter_guaranteed.ts` with auction-specific deltas:
+  - **Sync confirmation** — `create_media_buy` returns `media_buy_id` immediately; no IO-review handoff. Auction inventory clears at request time.
+  - **Floor pricing** — `pricing_options[].fixed_price` projected from upstream `min_cpm`; `min_spend` and `target_cpm` flow through to the wire when the upstream sets them.
+  - **Spend-only forecast** — `forecast_range_unit: 'spend'`; no `availability` unit because non-guaranteed inventory isn't pre-committed.
+  - **Pacing propagation** — `even` / `asap` / `front_loaded` forwarded to upstream order; reflected in delivery curve.
+  - **Looser product-validation at order creation** — the upstream mock no longer 404s when `line_items[].product_id` references a product not in the seed catalog. Cascade scenarios under `media_buy_seller/*` seed product fixtures via `comply_test_controller` independent of the seller's static catalog; min_spend is enforced only when the product IS known on the network.
+
+  Three-gate CI test (`test/examples/hello-seller-adapter-non-guaranteed.test.js`) lands alongside: strict tsc / storyboard runner / upstream-traffic façade. Two SDK-side gaps deferred (#1415 `targeting_overlay` echo, #1416 `NOT_CANCELLABLE` state-machine export) — same allowlist as the guaranteed gate.
+
+- 6fd796c: Add `resolveWithoutRef` option to `RosterAccountStoreOptions`. When set, ref-less `accounts.resolve(undefined, ctx)` calls (from `list_creative_formats`, `provide_performance_feedback`, `preview_creative`, and discovery-phase tools) are routed through the hook then through `toAccount`, enabling a synthetic publisher-wide singleton without overriding `resolve` on the returned store. When omitted, existing behavior is unchanged (`null` returned for ref-less calls). Also adds a `## Ref-less resolution` section to `docs/guides/account-resolution.md`.
+- 88125da: feat(mock-server): `sales-non-guaranteed` — programmatic auction with sync confirmation + spend-only forecast. Closes #1457 (sub-issue of #1381).
+
+  Sixth mock-server in the matrix v2 family. Programmatic-auction shape closest to DSP-side sellers, retail-media remnant, header-bidding inventory, and any non-walled-garden seller that doesn't run HITL approval. Companion to the `hello_seller_adapter_non_guaranteed.ts` worked adapter (sub-issue #1458) which wraps it.
+
+  **Pattern modeled on `sales-guaranteed/`** with these auction-specific deltas:
+  - **Order confirmation is sync.** `POST /v1/orders` returns `status: 'confirmed'` immediately. No `pending_approval` task; no `approval_task_id`; no `/v1/tasks/{id}` polling endpoint.
+  - **Pricing is floor-based.** `MockProduct.pricing.min_cpm` (floor) + optional `target_cpm` (typical clearing CPM). Effective CPM at the requested budget = `target_cpm` if set, saturating toward `2 × min_cpm` at high budgets via an auction-pressure curve.
+  - **Forecast is spend-only.** `forecast_range_unit: 'spend'`, `method: 'modeled'`. No `availability` unit — auction mocks don't pre-commit inventory. `min_budget_warning` surfaces when the requested budget is below the product's `min_spend` learning-phase floor.
+  - **Delivery scales with `(budget × elapsed_pct × pacing_curve)`.** Three pacing modes: `even` (linear), `asap` (3× front-load capped at 100%), `front_loaded` (sqrt curve). CTR baselines per channel (display 0.1%, video 0.5%, ctv/audio 0.1%).
+  - **No CAPI / conversions surface.** Out of scope per #1457 — programmatic remnant rarely round-trips conversions to seller.
+
+  **Headline routes:**
+
+  ```
+  GET    /_lookup/network?adcp_publisher=...    # blind-LLM operator routing (no auth)
+  GET    /_debug/traffic                         # façade-detection counters (no auth)
+  GET    /v1/inventory                           # network-scoped ad units
+  GET    /v1/products                            # productized inventory (floor pricing)
+  GET    /v1/products?targeting=&...&budget=     # products with per-query inline forecast
+  POST   /v1/forecast                            # spend-only forecast curve
+  GET    /v1/orders                              # list orders
+  POST   /v1/orders                              # create — sync confirmed (no HITL)
+  GET    /v1/orders/{id}                         # read
+  PATCH  /v1/orders/{id}                         # update budget / pacing / status
+  POST   /v1/orders/{id}/lineitems               # add line items
+  GET    /v1/orders/{id}/delivery                # synth (budget × pacing curve)
+  GET    /v1/creatives                           # list creatives
+  POST   /v1/creatives                           # upload creative
+  ```
+
+  **Multi-tenancy** via `X-Network-Code` header (mirrors `sales-guaranteed`). Default static API key; OpenAPI spec deferred to follow-up. Storyboard-fixture-aligned networks seeded (`acmeoutdoor.example`, `pinnacle-agency.example`) so blind agents pass the lookup gate without contradicting the skill's "fail-closed-on-404" advice.
+
+  **17 smoke tests** in `test/lib/mock-server/sales-non-guaranteed.test.js` covering Bearer + X-Network-Code gating, lookup endpoint hit/miss, network-scoped products with floor-pricing assertion, per-query forecast embedding, deterministic-seeded forecast curves, `min_budget_warning` for sub-floor budgets, sync order confirmation (no `approval_task_id`), `budget_too_low` rejection, idempotency replay + 409 on body mismatch, delivery synthesis with pacing-curve differentiation, cross-network isolation, and traffic-counter façade detection.
+
+  Wire into `src/lib/mock-server/index.ts` via `case 'sales-non-guaranteed'`. Sixth specialism in the family.
+
+  Sub-issue #1458 (the worked adapter) blocks on this; #1461 (wire-up — README, hello-cluster live entry, skill-prose collapse) blocks on both.
+
+  **What's deferred** to follow-up PRs (not in scope for #1457 per the issue carve-out):
+  - `openapi.yaml` formal spec — pattern is straightforward to fill in once the route surface stabilizes.
+  - Storyboard CI gate — wired by sub-issue #1458 (the adapter PR) since the storyboard runner needs the adapter to drive it.
+
+### Patch Changes
+
+- 3a6c853: ci(codegen): regression guard for `{ [k: string]: unknown | undefined }` leaking back into generated `oneOf` arms. Closes #1380.
+
+  `tightenMutualExclusionOneOf` (`scripts/generate-types.ts`, shipped via #1325) inlines parent `properties` into each arm of an `oneOf` with `required + not.required` clauses, so adopters' typed builders compose with `Format['renders']` and similar fields under `--strict --noUncheckedIndexedAccess`. The new `scripts/check-no-loose-oneof.ts` walks `core.generated.ts` and `tools.generated.ts` after codegen and fails the build if any union variant is exactly the bare blob shape — the canonical signal that the preprocessor missed a future `oneOf` regression.
+
+  Wired as `npm run ci:codegen-strict`, runs in CI between the schema-sync check and the skill-sync check, and is included in `ci:pre-push`. The check passes against current generated types (regression baseline). Five unit tests in `test/check-no-loose-oneof.test.js` lock the bug-pattern recognition: union arm flagged, freeform-blob alias allowed, nested property allowed, typed index signature allowed, interface property union flagged.
+
+  Allowlist mechanism present (currently empty) for cases where a bare-blob union arm is intentional — populate per-PR with rationale if any spec change ever genuinely needs it.
+
+- 47bd209: fix(server): echo input.context into comply_test_controller response envelopes
+
+  `handleTestControllerRequest` and `createComplyController.handleRaw` now propagate `input.context` into every response branch (`ListScenariosSuccess`, `StateTransitionSuccess`, `SimulationSuccess`, `ForcedDirectiveSuccess`, `SeedSuccess`, `ControllerError`), matching the `comply-test-controller-response.json` schema. Previously, storyboards asserting `context` echo (e.g. `deterministic_testing`'s correlation_id round-trip) failed with "Field not found at path: context". Fixes #1455.
+
+- f4bb1cd: `createAdcpServer` collision-check error now points at the platform handler that supersedes a colliding `customTools` entry (for example, `BrandRightsPlatform.updateRights` for `customTools["update_rights"]`, which was promoted to a framework-registered first-class tool in 6.7.0). The previous "rename the custom tool or remove the handler from the conflicting domain group" advice was misleading for adopters carrying a pre-6.7 customTool registration across the version boundary — the throw surfaces as HTTP 500 HTML on every MCP probe in lazily-built tenant servers, masquerading as a client-side discovery regression. The hint now names the migration so the next adopter who hits this lands on the right fix.
+
+  `docs/migration-6.6-to-6.7.md` adds recipe **#16** with the audit recipe (`grep -rn 'customTools.*update_rights'`) and the platform-handler swap, and the breaking-changes preamble now lists this alongside #10 and #11.
+
+- b0e3c00: docs(skills): rewrite build-si-agent SKILL.md against the v6 platform
+
+  The SI skill was scaffolded against the v5 handler-bag escape hatch
+  because the v6 `SponsoredIntelligencePlatform` interface didn't exist
+  when the skill landed. v6.7 shipped that interface (#1454) plus the
+  worked example (#1464) and storyboard fixtures (#1471). The skill is
+  now stale — adopters reading it would route through `createAdcpServer`
+  from `@adcp/sdk/server/legacy/v5` and miss auto-hydrated `req.session`,
+  typed dispatch parity with every other specialism, and the
+  storyboard-ready reference adapter.
+
+  This rewrite brings the skill in line with the shipped state:
+  - **SDK Quick Reference** lists `createAdcpServerFromPlatform`,
+    `definePlatform`, and `defineSponsoredIntelligencePlatform`. Drops
+    the `v5 escape hatch` callout (still works but no longer
+    recommended).
+  - **Implementation skeleton** uses the v6 platform shape — single
+    `definePlatform({ capabilities, accounts, sponsoredIntelligence })`
+    literal with `defineSponsoredIntelligencePlatform<BrandMeta>({...})`.
+    Matches the structure of `examples/hello_si_adapter_brand.ts`.
+  - **`req.session` documented** with explicit production caveat:
+    framework auto-hydrates a small record (intent, offering scoping,
+    identity consent, negotiated capabilities, ttl) for the fixture /
+    mock case and the "what was the original scope?" lookup. Production
+    brand engines almost always own full transcript state in their own
+    Postgres / Redis / vector store — modeling full transcripts in
+    `ctx_metadata` will hit the 16KB blob cap.
+  - **Storyboard validation step** points at `si_baseline` (
+    `compliance/cache/latest/protocols/sponsored-intelligence/index.yaml`)
+    with the reference adapter's `3/3 scenarios pass` baseline.
+  - **Specialism vs. protocol** framing clarified: SI is a _protocol_
+    in AdCP 3.0 (`'sponsored_intelligence'` in `supported_protocols`),
+    not yet a specialism (adcp#3961 for 3.1). The platform field's
+    presence is the declaration; framework auto-derives the protocol
+    claim from the four registered SI tools. When 3.1 lands, declaring
+    `specialisms: ['sponsored-intelligence'] as const` becomes additive
+    — both forms work.
+  - **Common Mistakes table** updated: drops "use the v5 path" guidance,
+    adds new gotchas (`product_card.data.title` + `data.price` strict-
+    schema requirements, the "don't model full transcripts in
+    ctx_metadata" trap, the "don't declare the SI specialism yet" trap).
+  - **Tracking** section ties to adcp#3961 + adcp#3981 so adopters can
+    follow upstream movement.
+
+  The skill matrix entry (`scripts/manual-testing/skill-matrix.json`)
+  already maps `build-si-agent/SKILL.md` to the `si_baseline` storyboard
+  — that pairing now passes 3/3 with the rewritten skill driving the v6
+  example.
+
+  Refs adcontextprotocol/adcp#3961, #3981, adcp-client#1441, #1454,
+  #1464, #1471.
+
+- 0932a60: fix(mcp): restore SSE fallback for loopback/private-address MCP servers
+
+  The 6.7.0 `isPrivateAddress` gate assumed all private/loopback servers support
+  StreamableHTTP and skipped SSE fallback for them. This broke discovery against
+  locally-running SSE-only servers (e.g. training-agent endpoints at 127.0.0.1).
+  The `knownStreamableHTTPUrls` guard already handles the "we know this URL speaks
+  StreamableHTTP" case correctly; the address-based gate is removed.
+
+- ff77b65: Wire up `examples/hello-cluster.ts` to boot all 7 hello-adapter specialisms + multi-tenant. Closes #1461 (final sub-issue of #1381 hello-adapter-family completion).
+
+  Cluster manifest now lists 8 live entries (signals 3001, creative-template 3002, sales-social 3003, sales-guaranteed 3004, sales-non-guaranteed 3005, creative-ad-server 3006, sponsored-intelligence 3007, multi-tenant 3008) plus 3 pending placeholders (governance / brand-rights / retail-media — auto-skipped until those examples land). Universal `/_debug/traffic` probe replaces per-specialism lookup paths; every mock-server already exposes it. `npm run hello-cluster` boots 8 adapters in ~2.2s with mocks running.
+
+  Skill prose collapsed onto fork-target pointers per the #1385 collapse pattern:
+  - `skills/build-seller-agent/specialisms/sales-non-guaranteed.md` reduced from 41 → 17 lines; inline code samples removed (the worked adapter is the canonical reference).
+  - `skills/build-creative-agent/SKILL.md` § creative-ad-server reduced from ~100 → ~25 lines; same shape.
+
+  Closes #1381 with all five sub-issues (#1457, #1458, #1459, #1460, #1461) merged.
+
+- 1240099: feat(decisioning): extend multi-id truncation dev-mode warn to `listCreatives`, `getCreativeDelivery`, and `getSignals`. Closes #1410.
+
+  The warn shipped in 6.7 for `getMediaBuyDelivery` and `getMediaBuys` (`media_buy_ids[]`); the same `<id_field>[0]`-truncation hazard applies to every read-by-id surface. The extension fires when adopters' platforms return fewer rows than the buyer's `creative_ids[]` / `signal_ids[]` filter requested, with the same gates: silent in `NODE_ENV=production`, suppressible via `ADCP_SUPPRESS_MULTI_ID_WARN=1`, no-op when the id-array filter is omitted (paginated-list mode).
+
+  Wired at four new dispatch sites in `from-platform.ts`:
+  - `listCreatives` — both the sales-side dispatch (when `SalesPlatform` provides it) and the creative-side ad-server dispatch.
+  - `getCreativeDelivery` — creative-side ad-server only.
+  - `getSignals` — note `signal_ids` is `SignalID[]` (`{source, data_provider_domain, id}` objects), not bare strings; the helper compares on length only so the element type is irrelevant.
+
+  The helper signature gains a typed `idFieldName` parameter so the warn message names the right id field (`media_buy_ids` / `creative_ids` / `signal_ids`); the existing two call sites pass `'media_buy_ids'` explicitly.
+
+  Sync / upsert surfaces (`syncCreatives`, `syncCatalogs`, `syncPlans`) remain out of scope per the issue carve-out — those have a different shape where pass-through is the obvious pattern and "did all rows roundtrip?" isn't a clean question.
+
+  The 6 existing tests in `test/server-decisioning-multi-id-truncation-warn.test.js` still pass; one new test pins the `getSignals` wiring (the distinctive `SignalID[]` object-array shape).
+
+- 5836ad7: test(validation): broad-sweep regression coverage for the `oneOf`-`not`-keyword exclusion shipped via #1337. Closes #1383.
+
+  `compactUnionErrors` (`src/lib/validation/schema-validator.ts`) excludes `oneOf` variants whose only residual is a `not`-keyword failure when picking the "best surviving variant." The fix landed for `get_account_financials` per #1337; the same heuristic applies to every Success/Error response union in AdCP 3.x, but the prior test suite covered the canonical case only.
+
+  This change locks the universal invariant as a parameterized regression suite: for every response schema with a `not` clause in its bundled cache (25 schemas in 3.0.4), an empty-payload response surfaces zero `not`-keyword issues. Pre-#1337, those payloads would surface "must NOT be valid" diagnostics — unactionable for adopters debugging from the wire envelope.
+
+  `get_signals` and `tasks_get` are intentionally absent from the sweep — their response shapes don't use the Success/Error oneOf-with-not pattern.
+
+  Future response unions inherit the coverage automatically when added to the schema cache; the fixture list at the top of the new `describe` block is the single update point.
+
+- 796fa5d: Collapse `examples/hello_seller_adapter_guaranteed.ts` onto the framework-side comply gate (Phase 3 of #1435).
+
+  The Hello seller-guaranteed adapter no longer carries any in-adapter `comply_test_controller` gate logic — it's a worked example of the zero-boilerplate posture Phase 2 made possible.
+
+  Three changes:
+  1. **`accounts.resolve` synthesis branch** — the `if (ref.sandbox === true && process.env.ADCP_SANDBOX === '1')` cascade-scenario synthesis now gates only on `ref.sandbox === true` (the spec-defined `AccountReference.sandbox` flag) and stamps `mode: 'sandbox'` on the returned `Account`. The framework gate's resolver-path admit fires on that mode; no env var is consulted.
+  2. **HITL bypass** — `ctx.account.id.startsWith(SANDBOX_ID_PREFIX) && process.env.ADCP_SANDBOX === '1'` is now `getAccountMode(ctx.account) === 'sandbox'`. Same trust signal, no env var, more robust against any production account whose id happens to share the sandbox prefix.
+  3. **`complyTest:` opts** — dropped `sandboxGate: () => process.env.ADCP_SANDBOX === '1'`. Phase 2's framework gate is strictly stronger; the in-adapter callback was redundant.
+
+  `test/examples/hello-seller-adapter-guaranteed.test.js` no longer sets `ADCP_SANDBOX: '1'` in `extraEnv`. The storyboard now passes purely on the resolver-stamped mode.
+
+  **Other Hello adapters were already clean.** `hello_seller_adapter_social.ts`, `hello_seller_adapter_multi_tenant.ts`, and `hello_creative_adapter_template.ts` did not wire the controller. `hello_signals_adapter_marketplace.ts` uses the lower-level `registerTestController` (which Phase 2's gate doesn't intercept) and is left on the legacy path; migration to `complyTest:` opts is non-mechanical because the recorder integration would need a comply-adapter shape upstream.
+
+  **Mock-server is unchanged.** Account synthesis happens inside the Hello adapter's `resolve`; the mock-server is only the upstream HTTP backend (returns `network_code` / `operator_id`). Stamping `mode: 'sandbox'` lives in the resolver, where it belongs.
+
+  **Existing legacy-path coverage retained.** `test/server-decisioning-comply-test.test.js` continues to exercise the `process.env.ADCP_SANDBOX === '1'` admit path so the deprecated env-fallback bridge stays tested through its life.
+
+- b51c0ab: `hello_seller_adapter_guaranteed` now enforces the `MediaBuyStatus` state machine on `update_media_buy`. Closes the `media_buy_seller/invalid_transitions/second_cancel` storyboard gap that adcp-client#1416 had been tracking.
+
+  Three small changes:
+  1. New `localBuyStatus: Map<string, MediaBuyStatus>` tracker — production sellers swap this for a query against their order DB.
+  2. `createMediaBuy` records `pending_creatives` on success.
+  3. `updateMediaBuy` reads current status (preferring the local tracker for `canceled` / `paused` since the upstream mock doesn't model those, otherwise falling through to `mapMediaBuyStatus(order.status)`), calls `assertMediaBuyTransition` (newly imported from `@adcp/sdk/server`) when the patch sets `canceled: true` or `paused: true`, and updates the tracker on success. Re-cancel now throws `NOT_CANCELLABLE` per `core/state-machine.yaml`.
+
+  Allowlist in `test/examples/hello-seller-adapter-guaranteed.test.js` shrinks from three entries to two. Remaining entries (#1415, #1417) are upstream-fixture issues — the SDK already shipped both fixes (createMediaBuyStore in PR #1424, runner `task_completion.<path>` capture in PR #1426); the storyboards in `adcontextprotocol/adcp` need migration to consume them. Both entries' `reason` strings updated to spell out which side of the boundary closes them.
+
+  The other four hello adapters (`creative-template`, `seller-social`, `signals-marketplace`, `si-brand`) have no allowlist and already pass clean.
+
+- e4af84c: fix(runner): align with adcp#3987 — non-JSON `payload_must_contain` modes grade `not_applicable` (no terminal-key fallback)
+
+  Closes the runner-side gap that adcp#3845 surfaced and adcp#3987 (merged) ratified.
+
+  **Before:** `match: present` against non-JSON `content_type` (form-urlencoded, multipart, plain text) fell back to a terminal-key substring search — extract `hashed_email` from `users[*].hashed_email`, substring-match against the raw payload string. That created false positives (a payload mentioning `hashed_email` in any context — URL fragment, comment, unrelated metadata field — would pass), exactly the loophole the anti-façade contract exists to close.
+
+  **After:** ALL `payload_must_contain` match modes (`present` / `equals` / `contains_any`) grade `not_applicable` against non-JSON content types, consistent with the `equals` / `contains_any` behavior that already shipped. Storyboards needing a non-JSON value-carried signal use `identifier_paths` — substring-searches storyboard-supplied VALUES (not path-derived strings), which is encoding-agnostic and doesn't suffer the false-positive surface.
+
+  **Side effects:**
+  - `terminalPathKey` helper deleted (no remaining callers).
+  - Existing test asserting the substring-fallback behavior updated to assert `not_applicable: true` (matches the equals-mode test already in the suite).
+  - `isJsonContentType` doc updated to reference RFC 6839 §3.1 explicitly — newline-delimited JSON formats (`application/json-seq`, `application/jsonl`) take the non-JSON path; the JSON detection itself was already correct (`application/json` or `*/*+json` suffix).
+  - `globToRegExp` doc updated to note adcp#3987 ratified the wildcard grammar (was previously documented as "candidate semantics filed against the spec at adcp#3845") and added the no-escape-mechanism clarification per the merged spec.
+
+- 91e789d: fix(sync-schemas): preserve SDK-local `call-adcp-agent/SKILL.md` across protocol bundle syncs
+
+  `syncSkillsFromBundle` previously overwrote `skills/call-adcp-agent/` from the upstream protocol tarball whenever the bundle's `manifest.contents.skills` listed it. Because the SDK-maintained copy carries SDK-version-specific addenda (e.g. `SDK ≥6.7` `discriminator`/`schemaId`, `SDK ≥6.8` `hint`), every `npm run sync-schemas` (and every `prepublishOnly`) silently rolled those sections off — letting them ship in the npm package only when the spec bundle happened to include them.
+
+  Add a `SDK_LOCAL_SKILLS` allowlist so `call-adcp-agent` is treated like `build-seller-agent/` and friends: present in `skills/`, but never replaced by the protocol bundle. Per-protocol skills (`adcp-{brand,creative,governance,media-buy,si,signals}`) continue to sync normally.
+
+  Also synchronizes `package-lock.json` to the committed `package.json` 6.7.0 so workspace setup no longer regenerates it on every `npm install`.
+
+- 4f59334: Re-export SI and signals helper types from `@adcp/sdk/types`: `SICapabilities`, `SIIdentity`, `SISessionStatus`, `SIUIElement`, `SignalFilters`, `SignalTargeting`. Adopters typing handler internals no longer need to reach into `tools.generated`. `AssetVariant` is intentionally excluded — it is a narrower generated union (omits `AudioAsset`); prefer the curated `AssetInstance` union already exported from `@adcp/sdk/types`.
+
 ## 6.7.0
 
 ### Minor Changes
