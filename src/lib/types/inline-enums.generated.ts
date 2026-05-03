@@ -39,11 +39,6 @@ export const AudioAssetRequirements_FormatsValues = ["mp3", "aac", "wav", "ogg",
 /** single | AuthorizationResult.status */
 export const AuthorizationResult_StatusValues = ["authorized", "unauthorized", "unknown"] as const;
 
-// ====== BriefAsset1 ======
-
-/** single | BriefAsset1.objective */
-export const BriefAsset1_ObjectiveValues = ["awareness", "consideration", "conversion", "retention", "engagement"] as const;
-
 // ====== BuildCreativeAsyncInputRequired ======
 
 /** single | BuildCreativeAsyncInputRequired.reason */
@@ -140,8 +135,6 @@ export const GetBrandIdentityRequest_FieldsValues = ["description", "industries"
 
 // ====== GetBrandIdentitySuccess ======
 
-/** array of | GetBrandIdentitySuccess.available_fields */
-export const GetBrandIdentitySuccess_AvailableFieldsValues = ["description", "industries", "keller_type", "logos", "colors", "fonts", "visual_guidelines", "tone", "tagline", "voice_synthesis", "assets", "rights"] as const;
 /** single | GetBrandIdentitySuccess.keller_type */
 export const GetBrandIdentitySuccess_KellerTypeValues = ["master", "sub_brand", "endorsed", "independent"] as const;
 
@@ -355,3 +348,13 @@ export const VideoAssetRequirements_AudioCodecsValues = ["aac", "pcm", "ac3", "e
 export const VideoAssetRequirements_CodecsValues = ["h264", "h265", "vp8", "vp9", "av1", "prores"] as const;
 /** array of | VideoAssetRequirements.containers */
 export const VideoAssetRequirements_ContainersValues = ["mp4", "webm", "mov", "avi", "mkv"] as const;
+
+// ====== Deprecated aliases — duplicate literal sets ======
+// Re-exported under their original parent-prefixed names; resolve
+// to the same array reference as the canonical export. Migrate
+// imports to the canonical name; aliases remain for one minor
+// version. (adcp-client#941)
+
+// --- GetBrandIdentitySuccess ---
+/** @deprecated use `GetBrandIdentityRequest_FieldsValues` — same literal set, GetBrandIdentitySuccess.available_fields duplicates the canonical export. */
+export const GetBrandIdentitySuccess_AvailableFieldsValues = GetBrandIdentityRequest_FieldsValues;
