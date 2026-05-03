@@ -182,21 +182,20 @@ function refuseImplicitAccountId(
  * legitimate-miss rate is high (deleted-account-rich datasets, etc.).
  */
 function warnIfTruncatedMultiIdResponse(
-  toolName: 'getMediaBuyDelivery' | 'getMediaBuys',
-  requestedIds: readonly string[] | undefined,
+  toolName: 'getMediaBuyDelivery' | 'getMediaBuys' | 'listCreatives' | 'getSignals',
+  requestedIds: readonly unknown[] | undefined,
   responseArray: readonly unknown[] | undefined,
-  logger: AdcpLogger
+  logger: AdcpLogger,
+  idFieldName: string = 'media_buy_ids'
 ): void {
   if (process.env.NODE_ENV === 'production') return;
   if (process.env.ADCP_SUPPRESS_MULTI_ID_WARN === '1') return;
   if (!requestedIds || requestedIds.length === 0) return;
   const returned = Array.isArray(responseArray) ? responseArray.length : 0;
   if (returned >= requestedIds.length) return;
-  // Empty `media_buy_ids` is filtered above as paginated-mode (no truncation
-  // possible without a request to compare against).
   logger.warn(
-    `[adcp/sdk] ${toolName}: platform returned ${returned} row${returned === 1 ? '' : 's'} for ${requestedIds.length} requested media_buy_ids — ` +
-      `the platform may be silently truncating to media_buy_ids[0]. ` +
+    `[adcp/sdk] ${toolName}: platform returned ${returned} row${returned === 1 ? '' : 's'} for ${requestedIds.length} requested ${idFieldName} — ` +
+      `the platform may be silently truncating to ${idFieldName}[0]. ` +
       `See https://github.com/adcontextprotocol/adcp-client/issues/1342 for the multi-id pass-through contract. ` +
       `Suppress with ADCP_SUPPRESS_MULTI_ID_WARN=1 if legitimate misses (deleted / cross-account) are routine.`
   );
@@ -3250,7 +3249,17 @@ function buildMediaBuyHandlers<P extends DecisioningPlatform<any, any>>(
       listCreatives: async (params, ctx) => {
         const reqCtx = ctxFor(ctx);
         return projectSync(
-          () => sales.listCreatives!(params, reqCtx),
+          async () => {
+            const result = await sales.listCreatives!(params, reqCtx);
+            warnIfTruncatedMultiIdResponse(
+              'listCreatives',
+              (params as { filters?: { creative_ids?: readonly string[] } }).filters?.creative_ids,
+              (result as { creatives?: readonly unknown[] })?.creatives,
+              logger,
+              'creative_ids'
+            );
+            return result;
+          },
           r => r
         );
       },
@@ -3387,7 +3396,17 @@ function buildCreativeHandlers<P extends DecisioningPlatform<any, any>>(
       }
       const reqCtx = ctxFor(ctx);
       return projectSync(
-        () => (creative as CreativeAdServerPlatform).listCreatives(params, reqCtx),
+        async () => {
+          const result = await (creative as CreativeAdServerPlatform).listCreatives(params, reqCtx);
+          warnIfTruncatedMultiIdResponse(
+            'listCreatives',
+            (params as { filters?: { creative_ids?: readonly string[] } }).filters?.creative_ids,
+            (result as { creatives?: readonly unknown[] })?.creatives,
+            logger,
+            'creative_ids'
+          );
+          return result;
+        },
         r => r
       );
     },
@@ -3489,6 +3508,13 @@ function buildSignalsHandlers<P extends DecisioningPlatform<any, any>>(
             (result as { signals?: readonly unknown[] })?.signals,
             'signal_agent_segment_id',
             logger
+          );
+          warnIfTruncatedMultiIdResponse(
+            'getSignals',
+            (params as { signal_ids?: readonly unknown[] }).signal_ids,
+            (result as { signals?: readonly unknown[] })?.signals,
+            logger,
+            'signal_ids'
           );
           return result;
         },

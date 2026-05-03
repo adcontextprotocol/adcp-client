@@ -1,6 +1,7 @@
-// Tests for #1399 — dev-mode warning when getMediaBuyDelivery / getMediaBuys
-// returns fewer rows than the buyer requested. Catches the canonical
-// `media_buy_ids[0]`-truncation bug class at adapter-development time.
+// Tests for #1399 / #1410 — dev-mode warning when multi-id read tools return
+// fewer rows than requested. Catches the canonical `ids[0]`-truncation bug
+// class at adapter-development time across getMediaBuyDelivery, getMediaBuys,
+// listCreatives (sales path), and getSignals.
 
 process.env.NODE_ENV = 'test';
 
@@ -49,8 +50,8 @@ function captureWarnings() {
     error: () => {},
     debug: () => {},
   };
-  const truncationCalls = () =>
-    allCalls.filter(c => c.msg.includes('platform returned') && c.msg.includes('media_buy_ids'));
+  const truncationCalls = (idField = 'media_buy_ids') =>
+    allCalls.filter(c => c.msg.includes('platform returned') && c.msg.includes(idField));
   return { logger, truncationCalls, allCalls };
 }
 
@@ -237,6 +238,138 @@ describe('#1399 — dev-mode multi-id truncation warning', () => {
         },
       });
       assert.strictEqual(cap.truncationCalls().length, 0, 'env-suppression must silence the warn');
+    });
+  });
+
+  describe('listCreatives (sales adapter path) — #1410', () => {
+    it('warns when adapter truncates a creative_ids-scoped request to fewer rows', async () => {
+      const cap = captureWarnings();
+      const platform = buildPlatform({
+        listCreatives: async params => ({
+          query_summary: {},
+          pagination: { total: 1, has_more: false },
+          // BUG: returns only first creative regardless of how many ids were requested
+          creatives: [{ creative_id: params?.filters?.creative_ids?.[0] ?? 'c_1' }],
+        }),
+      });
+      const server = createAdcpServerFromPlatform(platform, { ...SERVER_OPTS_BASE, logger: cap.logger });
+      await server.dispatchTestRequest({
+        method: 'tools/call',
+        params: {
+          name: 'list_creatives',
+          arguments: {
+            account: { account_id: 'acc_1' },
+            filters: { creative_ids: ['c_1', 'c_2', 'c_3'] },
+          },
+        },
+      });
+      const warns = cap.truncationCalls('creative_ids');
+      assert.strictEqual(warns.length, 1, `expected exactly one warn, got ${warns.length}`);
+      assert.match(warns[0].msg, /listCreatives: platform returned 1 row for 3 requested creative_ids/);
+      assert.match(warns[0].msg, /1342/);
+      assert.match(warns[0].msg, /ADCP_SUPPRESS_MULTI_ID_WARN=1/);
+    });
+
+    it('does not warn when listCreatives returns all requested creatives', async () => {
+      const cap = captureWarnings();
+      const platform = buildPlatform({
+        listCreatives: async params => ({
+          query_summary: {},
+          pagination: { total: 3, has_more: false },
+          creatives: (params?.filters?.creative_ids ?? []).map(id => ({ creative_id: id })),
+        }),
+      });
+      const server = createAdcpServerFromPlatform(platform, { ...SERVER_OPTS_BASE, logger: cap.logger });
+      await server.dispatchTestRequest({
+        method: 'tools/call',
+        params: {
+          name: 'list_creatives',
+          arguments: {
+            account: { account_id: 'acc_1' },
+            filters: { creative_ids: ['c_1', 'c_2', 'c_3'] },
+          },
+        },
+      });
+      assert.strictEqual(cap.truncationCalls('creative_ids').length, 0, 'no warn when row count matches');
+    });
+
+    it('does not warn when listCreatives is called without creative_ids filter (browse mode)', async () => {
+      const cap = captureWarnings();
+      const platform = buildPlatform({
+        listCreatives: async () => ({
+          query_summary: {},
+          pagination: { total: 0, has_more: false },
+          creatives: [],
+        }),
+      });
+      const server = createAdcpServerFromPlatform(platform, { ...SERVER_OPTS_BASE, logger: cap.logger });
+      await server.dispatchTestRequest({
+        method: 'tools/call',
+        params: {
+          name: 'list_creatives',
+          arguments: { account: { account_id: 'acc_1' } },
+        },
+      });
+      assert.strictEqual(cap.truncationCalls('creative_ids').length, 0, 'browse mode must not warn');
+    });
+  });
+
+  describe('getSignals — #1410', () => {
+    it('warns when signals adapter truncates a signal_ids request', async () => {
+      const cap = captureWarnings();
+      const platform = {
+        ...buildPlatform(),
+        signals: {
+          getSignals: async () => ({
+            // BUG: returns only one signal even though two signal_ids were requested
+            signals: [{ signal_agent_segment_id: 's_1', name: 'Seg 1' }],
+          }),
+          activateSignal: async () => ({ deployments: [] }),
+        },
+      };
+      const server = createAdcpServerFromPlatform(platform, { ...SERVER_OPTS_BASE, logger: cap.logger });
+      await server.dispatchTestRequest({
+        method: 'tools/call',
+        params: {
+          name: 'get_signals',
+          arguments: {
+            account: { account_id: 'acc_1' },
+            signal_ids: [{ signal_id: 's_1' }, { signal_id: 's_2' }],
+          },
+        },
+      });
+      const warns = cap.truncationCalls('signal_ids');
+      assert.strictEqual(warns.length, 1, `expected exactly one warn, got ${warns.length}`);
+      assert.match(warns[0].msg, /getSignals: platform returned 1 row for 2 requested signal_ids/);
+      assert.match(warns[0].msg, /1342/);
+    });
+
+    it('does not warn when getSignals returns all requested signals', async () => {
+      const cap = captureWarnings();
+      const platform = {
+        ...buildPlatform(),
+        signals: {
+          getSignals: async req => ({
+            signals: (req?.signal_ids ?? []).map((s, i) => ({
+              signal_agent_segment_id: `s_${i}`,
+              name: `Seg ${i}`,
+            })),
+          }),
+          activateSignal: async () => ({ deployments: [] }),
+        },
+      };
+      const server = createAdcpServerFromPlatform(platform, { ...SERVER_OPTS_BASE, logger: cap.logger });
+      await server.dispatchTestRequest({
+        method: 'tools/call',
+        params: {
+          name: 'get_signals',
+          arguments: {
+            account: { account_id: 'acc_1' },
+            signal_ids: [{ signal_id: 's_1' }, { signal_id: 's_2' }],
+          },
+        },
+      });
+      assert.strictEqual(cap.truncationCalls('signal_ids').length, 0, 'no warn when count matches');
     });
   });
 });
