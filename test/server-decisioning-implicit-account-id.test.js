@@ -1,7 +1,6 @@
 // Tests for #1364 — framework refusal of inline account_id references
-// against `accounts.resolution: 'implicit'` platforms. Documented behavior
-// at AccountStore.resolution; previously aspirational (docstring claim
-// without enforcement).
+// against `accounts.resolution: 'implicit'` platforms, and #1468 — same
+// enforcement extended to `accounts.resolution: 'derived'` platforms.
 
 process.env.NODE_ENV = 'test';
 
@@ -284,5 +283,177 @@ describe("#1364 — accounts.resolution: 'implicit' refuses inline account_id", 
     assert.strictEqual(result.isError, true);
     assert.strictEqual(result.structuredContent.adcp_error.code, 'INVALID_REQUEST');
     assert.strictEqual(result.structuredContent.adcp_error.field, 'account.account_id');
+  });
+});
+
+describe("#1468 — accounts.resolution: 'derived' refuses inline account_id", () => {
+  function buildDerivedPlatform(overrides = {}) {
+    return {
+      capabilities: {
+        specialisms: ['sales-non-guaranteed'],
+        creative_agents: [],
+        channels: ['display'],
+        pricingModels: ['cpm'],
+        config: {},
+      },
+      accounts: {
+        resolution: 'derived',
+        resolve: async () => ({
+          id: 'singleton',
+          name: 'My Platform',
+          status: 'active',
+          ctx_metadata: {},
+          authInfo: { kind: 'api_key', principal: 'k1' },
+        }),
+      },
+      statusMappers: {},
+      sales: {
+        getProducts: async () => ({
+          products: [
+            {
+              product_id: 'p1',
+              name: 'sample',
+              description: 'fixture',
+              format_ids: [{ id: 'standard', agent_url: 'https://example.com/mcp' }],
+              delivery_type: 'non_guaranteed',
+              publisher_properties: { reportable: true },
+              reporting_capabilities: { available_dimensions: ['geo'] },
+              pricing_options: [{ pricing_model: 'cpm', rate: 5.0, currency: 'USD' }],
+            },
+          ],
+        }),
+        createMediaBuy: async () => ({ media_buy_id: 'mb_1' }),
+        updateMediaBuy: async () => ({ media_buy_id: 'mb_1' }),
+        syncCreatives: async () => [],
+        getMediaBuyDelivery: async () => ({ media_buys: [] }),
+      },
+      ...overrides,
+    };
+  }
+
+  it('rejects { account_id } on get_products with INVALID_REQUEST and field=account.account_id', async () => {
+    let resolveCalled = false;
+    const platform = buildDerivedPlatform({
+      accounts: {
+        resolution: 'derived',
+        resolve: async () => {
+          resolveCalled = true;
+          return { id: 'singleton', name: 'My Platform', status: 'active', ctx_metadata: {} };
+        },
+      },
+    });
+    const server = createAdcpServerFromPlatform(platform, SERVER_OPTS);
+    const result = await server.dispatchTestRequest({
+      method: 'tools/call',
+      params: {
+        name: 'get_products',
+        arguments: {
+          brief: 'premium',
+          promoted_offering: 'cars',
+          account: { account_id: 'buyer_abc' },
+        },
+      },
+    });
+    assert.strictEqual(result.isError, true);
+    assert.strictEqual(result.structuredContent.adcp_error.code, 'INVALID_REQUEST');
+    assert.strictEqual(result.structuredContent.adcp_error.field, 'account.account_id');
+    assert.match(result.structuredContent.adcp_error.message, /account\.account_id is not accepted/);
+    assert.strictEqual(resolveCalled, false, 'resolve must not be invoked when derived-mode rejects upfront');
+  });
+
+  it('rejects { account_id } on tasks_get with INVALID_REQUEST', async () => {
+    const platform = buildDerivedPlatform();
+    const server = createAdcpServerFromPlatform(platform, SERVER_OPTS);
+    const result = await server.dispatchTestRequest({
+      method: 'tools/call',
+      params: {
+        name: 'tasks_get',
+        arguments: {
+          task_id: 'task_does_not_matter',
+          account: { account_id: 'buyer_abc' },
+        },
+      },
+    });
+    assert.strictEqual(result.isError, true);
+    assert.strictEqual(result.structuredContent.adcp_error.code, 'INVALID_REQUEST');
+    assert.strictEqual(result.structuredContent.adcp_error.field, 'account.account_id');
+  });
+
+  it('rejects { account_id } on get_account_financials with INVALID_REQUEST', async () => {
+    const platform = buildDerivedPlatform({
+      accounts: {
+        resolution: 'derived',
+        resolve: async () => ({ id: 'singleton', name: 'My Platform', status: 'active', ctx_metadata: {} }),
+        getAccountFinancials: async () => ({
+          financials: { spend: { amount: 0, currency: 'USD' } },
+        }),
+      },
+    });
+    const server = createAdcpServerFromPlatform(platform, SERVER_OPTS);
+    const result = await server.dispatchTestRequest({
+      method: 'tools/call',
+      params: {
+        name: 'get_account_financials',
+        arguments: {
+          account: { account_id: 'buyer_abc' },
+        },
+      },
+    });
+    assert.strictEqual(result.isError, true);
+    assert.strictEqual(result.structuredContent.adcp_error.code, 'INVALID_REQUEST');
+    assert.strictEqual(result.structuredContent.adcp_error.field, 'account.account_id');
+  });
+
+  it('omitted account on derived platform succeeds (auth-derived path, no enforcement)', async () => {
+    let resolveCalled = false;
+    const platform = buildDerivedPlatform({
+      accounts: {
+        resolution: 'derived',
+        resolve: async () => {
+          resolveCalled = true;
+          return { id: 'singleton', name: 'My Platform', status: 'active', ctx_metadata: {} };
+        },
+      },
+    });
+    const server = createAdcpServerFromPlatform(platform, SERVER_OPTS);
+    const result = await server.dispatchTestRequest({
+      method: 'tools/call',
+      params: {
+        name: 'get_products',
+        arguments: {
+          brief: 'premium',
+          promoted_offering: 'cars',
+          // no account field
+        },
+      },
+    });
+    assert.notStrictEqual(result.isError, true, `expected success, got ${JSON.stringify(result.structuredContent)}`);
+    assert.strictEqual(resolveCalled, true, 'resolve should be called on the auth-derived path');
+  });
+
+  it("'implicit' enforcement is unchanged — error message still references sync_accounts", async () => {
+    const platform = buildDerivedPlatform({
+      accounts: {
+        resolution: 'implicit',
+        resolve: async () => null,
+        upsert: async () => [],
+        list: async () => ({ items: [], nextCursor: null }),
+      },
+    });
+    const server = createAdcpServerFromPlatform(platform, SERVER_OPTS);
+    const result = await server.dispatchTestRequest({
+      method: 'tools/call',
+      params: {
+        name: 'get_products',
+        arguments: {
+          brief: 'premium',
+          promoted_offering: 'cars',
+          account: { account_id: 'snap_act_123' },
+        },
+      },
+    });
+    assert.strictEqual(result.isError, true);
+    assert.strictEqual(result.structuredContent.adcp_error.code, 'INVALID_REQUEST');
+    assert.match(result.structuredContent.adcp_error.message, /sync_accounts/);
   });
 });

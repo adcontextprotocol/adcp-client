@@ -387,6 +387,9 @@ export interface AccountStore<TCtxMeta = Record<string, unknown>> {
    * - `'derived'` — single-tenant agents where there is no account_id on the
    *   wire at all and the auth principal alone identifies the tenant. Most
    *   self-hosted broadcasters and retail-media operators in proxy mode.
+   *   Framework refuses inline `account_id` references for these platforms —
+   *   emits `AdcpError('INVALID_REQUEST', { field: 'account.account_id' })`
+   *   before reaching `accounts.resolve`.
    *
    * Defaults to `'explicit'` when omitted.
    */

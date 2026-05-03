@@ -560,8 +560,8 @@ initial `sync_accounts` flow).
 |------------------------------------------------------------------------------------------|--------------------------------------------------------------------------------------------------------------------------------------------------|
 | `resolution: 'implicit'` declared, all buyers used `sync_accounts` first                 | Nothing — calls flow as before; you no longer need to reimplement the `if (ref?.account_id) return null` branch in your resolver.                |
 | `resolution: 'implicit'` declared but adopters' callers passed inline `account_id`       | **Behavior change.** Either drop to `'explicit'` (callers continue passing inline) or fix callers to use `sync_accounts` first.                  |
-| Wanted "derive account from auth principal, ignore inline ids entirely"                  | Switch to `resolution: 'derived'` — single-tenant agents and adapters that always identify the tenant from the auth principal alone (LinkedIn-shaped sellers, some retail-media operators). |
-| `resolution: 'explicit'` (default) declared / not declared                               | Nothing — the refusal only applies to declared `'implicit'` platforms.                                                                           |
+| Wanted "derive account from auth principal, ignore inline ids entirely"                  | Switch to `resolution: 'derived'` — single-tenant agents that always identify the tenant from the auth principal alone. **Note:** as of the SDK version that ships recipe #17, `'derived'` platforms also refuse inline `account_id` with `INVALID_REQUEST`. Ensure callers omit the field before switching. |
+| `resolution: 'explicit'` (default) declared / not declared                               | Nothing — the refusal only applies to declared `'implicit'` and `'derived'` platforms.                                                           |
 | Hand-rolled implicit store                                                               | Consider switching to `InMemoryImplicitAccountStore` or the Postgres pattern in [`docs/guides/account-resolution.md`](./guides/account-resolution.md). |
 
 **Companion: `InMemoryImplicitAccountStore` reference adapter.** 6.7
@@ -1030,6 +1030,37 @@ the framework-handler equivalent (`BrandRightsPlatform.updateRights`
 here), so when the next promotion-induced collision lands, follow the
 message: drop the customTools entry, wire the named platform handler.
 The pattern travels even if the migration recipe lags.
+
+### 17. **breaking** — `accounts.resolution: 'derived'` now also enforces inline-`account_id` refusal
+
+The framework's inline-`account_id` refusal (recipe #10, `'implicit'` mode) is
+extended to `'derived'` platforms. A buyer that sends `{ account_id: "foo" }`
+to a `'derived'` agent now receives:
+
+```
+INVALID_REQUEST
+field: account.account_id
+message: "This platform identifies the buyer from the authenticated principal — account.account_id is not accepted on the wire."
+suggestion: "Remove account.account_id from your request; the account is resolved from your auth credentials."
+```
+
+Previously the field was silently dropped and the singleton account was
+returned. The silent-drop was technically correct for single-tenant agents, but
+created a confusing debugging experience for buyers cargo-culting `account_id`
+from Shape B/C calls into Shape D calls.
+
+**Who is affected.** Only `resolution: 'derived'` platforms whose buyers are
+actively sending `account_id` on the wire. If you are running a Shape D adapter
+(audiostack-shaped, flashtalking-shaped, single-namespace retail-media) and your
+buyer integration never sends `account_id`, no action is needed.
+
+**Action required.** Audit `accounts.resolution`:
+
+| Your setup                                                              | What to do                                                                                                                |
+|-------------------------------------------------------------------------|---------------------------------------------------------------------------------------------------------------------------|
+| `resolution: 'derived'`, buyers do not send `account_id`                | Nothing — happy path unaffected.                                                                                          |
+| `resolution: 'derived'`, buyers send `account_id` (cargo-culted from B/C) | Fix callers: remove `account_id` from the wire request. The account is resolved from the auth principal.               |
+| Switched to `'derived'` via recipe #10 to "ignore inline ids"           | Same as above — now enforced; fix callers before bumping.                                                                 |
 
 ## Worked diff — `examples/decisioning-platform-mock-seller.ts`
 

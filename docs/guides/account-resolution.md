@@ -12,7 +12,7 @@ How sellers implement the three `AccountStore.resolution` modes — `'explicit'`
 |---|---|---|
 | `'explicit'` (default) | `ext.account_ref` on every request | `ref.account_id` or `ref.brand`/`ref.operator` |
 | `'implicit'` | Nothing (no `ext.account_ref`) — but must call `sync_accounts` first | `ctx.authInfo` credential key |
-| `'derived'` | Nothing | Single-tenant singleton; no per-request resolution needed |
+| `'derived'` | Nothing (sending `account_id` is refused with `INVALID_REQUEST`) | Single-tenant singleton; no per-request resolution needed |
 
 Declare the mode on `AccountStore`:
 
@@ -191,6 +191,12 @@ accounts: {
 
 No `upsert` needed. The framework returns `UNSUPPORTED_FEATURE` to any
 buyer that calls `sync_accounts`.
+
+The framework also refuses inline `account_id` references for `'derived'`
+platforms — a buyer that sends `{ account_id: "..." }` receives
+`AdcpError('INVALID_REQUEST', { field: 'account.account_id' })` before
+`accounts.resolve` is called. Remove `account_id` from buyer requests; the
+account is resolved from the auth principal alone.
 
 ---
 
