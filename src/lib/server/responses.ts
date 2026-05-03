@@ -687,12 +687,42 @@ export function syncAccountsResponse(data: SyncAccountsResponse, summary?: strin
 /**
  * Build a sync_governance response. The spec permits two top-level shapes
  * (success / error); the type union enforces discrimination on `status`.
+ *
+ * Strips `governance_agents[i].authentication` from every row before emit:
+ * the spec marks `authentication.credentials` write-only (the buyer sends
+ * the bearer; the seller persists it for outbound `check_governance` calls
+ * but MUST NOT echo it back). The natural `{ ...entry.governance_agents[i] }`
+ * echo idiom would compile silently against the typed return shape and ship
+ * credentials over the wire AND into the idempotency replay cache, arming
+ * the buyer (and any subsequent caller hitting the same key) to impersonate
+ * the seller against the governance agent. Strip is enforced at the wire-
+ * emit boundary so both v5 (`opts.accounts.syncGovernance`) and v6
+ * (`AccountStore.syncGovernance`) paths are protected.
  */
 /** @deprecated v6: `createAdcpServerFromPlatform` constructs wire responses from typed platform returns. Direct use is for v5 raw-handler adopters mid-migration only. */
 export function syncGovernanceResponse(data: SyncGovernanceResponse, summary?: string): McpToolResponse {
+  const stripped = stripGovernanceAgentSecrets(data);
   return {
     content: [{ type: 'text', text: summary ?? 'Governance registration synced' }],
-    structuredContent: toStructuredContent(data),
+    structuredContent: toStructuredContent(stripped),
+  };
+}
+
+function stripGovernanceAgentSecrets(data: SyncGovernanceResponse): SyncGovernanceResponse {
+  if (!('accounts' in data) || !Array.isArray(data.accounts)) return data;
+  return {
+    ...data,
+    accounts: data.accounts.map(row => {
+      if (!row.governance_agents) return row;
+      return {
+        ...row,
+        governance_agents: row.governance_agents.map(a => {
+          const stripped: { url: string; categories?: string[] } = { url: a.url };
+          if (a.categories !== undefined) stripped.categories = a.categories;
+          return stripped;
+        }),
+      };
+    }),
   };
 }
 
