@@ -885,9 +885,27 @@ function attachAuthInfo(req: IncomingMessage, principal: AuthPrincipal): void {
   // without a wire-shape change. Adopters with custom authenticators that
   // don't stamp `credential` see the registry resolve to `null` (no
   // credential = no known agent), preserving Stage 2's strict opt-in.
+  //
+  // Also forward `principal.extra` — adopter-provided extension data stamped
+  // in the `verify` callback. This surfaces as `BuyerAgentResolveInput.extra`
+  // in `BuyerAgentRegistry.resolve` (see buyer-agent.ts). `credential` is
+  // always spread last so an adopter cannot overwrite the framework-stamped
+  // credential via their `extra` object.
   const baseExtra = principal.claims !== undefined ? { ...principal.claims } : undefined;
-  const extra =
-    principal.credential !== undefined ? { ...(baseExtra ?? {}), credential: principal.credential } : baseExtra;
+  const adopterExtra =
+    typeof principal.extra === 'object' && principal.extra !== null
+      ? (principal.extra as Record<string, unknown>)
+      : undefined;
+  const hasExtra = baseExtra !== undefined || adopterExtra !== undefined || principal.credential !== undefined;
+  const extra = hasExtra
+    ? {
+        ...(baseExtra ?? {}),
+        ...(adopterExtra ?? {}),
+        // credential last — prevents an adopter's `extra.credential` from
+        // overwriting the framework-enforced kind-discriminated credential.
+        ...(principal.credential !== undefined ? { credential: principal.credential } : {}),
+      }
+    : undefined;
   const info: AuthInfo = {
     token: principal.token ?? '',
     clientId: principal.principal,

@@ -116,6 +116,41 @@ export interface AuthPrincipal {
    * elsewhere on the request.
    */
   credential?: AdcpCredential;
+  /**
+   * Adopter-provided extension data. Stamp this in your `verifyApiKey.verify`
+   * callback (or any custom `authenticate` function) to carry pre-hash data
+   * derived from the raw token — prefix patterns, tenant IDs, test-kit flags —
+   * that you can't recover from the hashed `key_id` in `credential`.
+   *
+   * `serve()` propagates this into `req.auth.extra` and from there to
+   * `BuyerAgentResolveInput.extra`, where `BuyerAgentRegistry.bearerOnly` and
+   * `mixed` factories forward it as the second argument to `resolveByCredential`.
+   *
+   * Do NOT put raw token values, passwords, or other secrets here. Treat it
+   * with the same care as `credential` fields — avoid logging, and never
+   * include in thrown `Error` messages (the framework may project
+   * `err.message` into `error.details.reason` on the wire).
+   *
+   * @example
+   * ```ts
+   * verifyApiKey({
+   *   verify: token => {
+   *     if (!DEMO_PATTERN.test(token)) return null;
+   *     return { principal: `static:demo:${token}`, extra: { demo_token: token } };
+   *   },
+   * })
+   * // Then in bearerOnly:
+   * BuyerAgentRegistry.bearerOnly({
+   *   resolveByCredential: (cred, extra) => {
+   *     const token = extra?.demo_token as string | undefined;
+   *     return token?.startsWith('demo-billing-passthrough-')
+   *       ? Promise.resolve(demoAgent)
+   *       : Promise.resolve(null);
+   *   },
+   * })
+   * ```
+   */
+  extra?: Record<string, unknown>;
   [key: string]: unknown;
 }
 
