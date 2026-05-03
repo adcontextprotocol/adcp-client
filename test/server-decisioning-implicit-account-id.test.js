@@ -463,4 +463,44 @@ describe("#1468 — accounts.resolution: 'derived' refuses inline account_id (mi
     assert.notStrictEqual(result.isError, true, `expected success, got ${JSON.stringify(result.structuredContent)}`);
     assert.deepStrictEqual(sawRef, { brand: { domain: 'acme.com' }, operator: 'pinnacle.com' });
   });
+
+  it('refusal fires regardless of auth posture — authenticated requests with inline account_id still rejected', async () => {
+    // Locks the contract: an authenticated buyer that sends inline account_id
+    // to a derived agent gets the same INVALID_REQUEST as an unauthenticated
+    // one. Prevents future drift where someone might soften the refusal "for
+    // authenticated principals only" — the field is meaningless on the wire
+    // for derived-mode regardless of who's asking.
+    let resolveCalled = false;
+    const platform = buildImplicitPlatform({
+      accounts: {
+        resolution: 'derived',
+        resolve: async () => {
+          resolveCalled = true;
+          return null;
+        },
+      },
+    });
+    const server = createAdcpServerFromPlatform(platform, {
+      ...SERVER_OPTS,
+      authenticate: () => ({
+        kind: 'oauth',
+        credential: { kind: 'oauth', client_id: 'authed-buyer', scopes: [] },
+      }),
+    });
+    const result = await server.dispatchTestRequest({
+      method: 'tools/call',
+      params: {
+        name: 'get_products',
+        arguments: {
+          brief: 'premium',
+          promoted_offering: 'cars',
+          account: { account_id: 'foo' },
+        },
+      },
+    });
+    assert.strictEqual(result.isError, true);
+    assert.strictEqual(result.structuredContent.adcp_error.code, 'INVALID_REQUEST');
+    assert.strictEqual(result.structuredContent.adcp_error.field, 'account.account_id');
+    assert.strictEqual(resolveCalled, false, 'authed principal does not soften the refusal');
+  });
 });
