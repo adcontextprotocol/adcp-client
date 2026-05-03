@@ -25,16 +25,14 @@ const REPO_ROOT = path.resolve(__dirname, '..', '..');
 
 const EXPECTED_FAILURES = [
   {
-    storyboard_id: 'media_buy_seller/inventory_list_targeting',
-    step_id: 'get_after_create',
-    issue: 'adcp-client#1415',
-    reason: 'targeting_overlay.property_list echo on get_media_buys — needs SDK-side mediaBuyStore helper',
-  },
-  {
     storyboard_id: 'media_buy_seller/invalid_transitions',
     step_id: 'second_cancel',
     issue: 'adcp-client#1416',
-    reason: 'NOT_CANCELLABLE on re-cancel — needs SDK-exported MEDIA_BUY_TRANSITIONS / assertMediaBuyTransition',
+    reason:
+      'NOT_CANCELLABLE on re-cancel. The SDK exports `assertMediaBuyTransition` and ' +
+      '`MEDIA_BUY_TRANSITIONS` (PR #1427) and the guaranteed worked example wires them; ' +
+      "the non-guaranteed adapter doesn't yet — tracked as a follow-up to bring this " +
+      'example to parity.',
   },
 ];
 

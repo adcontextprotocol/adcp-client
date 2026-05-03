@@ -7,24 +7,17 @@
  * controller-driven setup they need. Two remaining failures are filtered
  * out here — each maps to a tracked upstream-fixture follow-up:
  *
- *   - #1415 (targeting_overlay echo on get_media_buys — fixture-side: every
- *     step in the storyboard needs `account.sandbox: true` so the create and
- *     get steps resolve to the same namespace in the adapter's synthesis
- *     branch. SDK-side coverage shipped via createMediaBuyStore + framework
- *     auto-echo, PR #1424.)
- *   - #1417 (HITL media_buy_id capture — fixture-side: upstream
- *     sales_guaranteed storyboard uses `path: media_buy_id` instead of the
- *     `task_completion.media_buy_id` prefix the runner now supports per
- *     PR #1426.)
+ * As of AdCP 3.0.6, all known gaps are closed end-to-end:
+ *   - #1415 — adcp#3989 (sandbox:true on every account block in
+ *     inventory_list_targeting) + SDK PR #1424 (createMediaBuyStore auto-echo)
+ *   - #1416 — adcp-client#1480 (assertMediaBuyTransition wired into the
+ *     adapter's update_media_buy cancel path)
+ *   - #1417 — adcp#3990 (task_completion.media_buy_id path) + SDK PR #1426
+ *     (runner-side `task_completion.<path>` context_outputs prefix)
  *
- * #1416 (NOT_CANCELLABLE state machine) closed in this same PR — adapter
- * now wires `assertMediaBuyTransition` against a local per-buy status tracker.
- *
- * Drop the corresponding entry from `EXPECTED_FAILURES` when each upstream
- * fixture lands. The helper enforces that every entry in the allowlist
- * actually appears in the pre-filter failure set — a spec rename or fixture
- * migration that silently eliminates the gap-failure flips the gate to red
- * so the allowlist stays in sync with reality.
+ * The storyboard suite passes unfiltered. The empty allowlist is kept (rather
+ * than removed) so the helper's enforcement runs as a no-op — re-introducing
+ * a gap in the future is a one-line update.
  */
 
 const path = require('node:path');
@@ -41,29 +34,7 @@ const REPO_ROOT = path.resolve(__dirname, '..', '..');
  * in the pre-filter set (so a future spec rename or runner fix is loud,
  * not silent).
  */
-const EXPECTED_FAILURES = [
-  {
-    storyboard_id: 'sales_guaranteed',
-    step_id: 'create_media_buy',
-    issue: 'adcp-client#1417',
-    reason:
-      'HITL completion-artifact capture — SDK runner now supports `task_completion.<path>` ' +
-      'context_outputs (PR #1426), but the upstream sales_guaranteed storyboard fixture in ' +
-      'adcontextprotocol/adcp still uses bare `path: media_buy_id`. Fixture migration is upstream.',
-  },
-  {
-    storyboard_id: 'media_buy_seller/inventory_list_targeting',
-    step_id: 'get_after_create',
-    issue: 'adcp-client#1415',
-    reason:
-      'targeting_overlay echo on get_media_buys — SDK ships createMediaBuyStore + framework ' +
-      'auto-echo (PR #1424) and the Hello adapter wires it. Storyboard still fails because the ' +
-      "create step's account ref (synthesized by the runner with `sandbox: true`) and the get " +
-      "step's account ref (passed through from sample_request without `sandbox`) resolve to " +
-      "different sandbox-vs-prod namespaces in the adapter's synthesis-branch resolver. " +
-      "Fixture migration upstream (every step's account carries `sandbox: true`) closes it.",
-  },
-];
+const EXPECTED_FAILURES = [];
 
 function isExpectedFailure(f) {
   return EXPECTED_FAILURES.some(e => e.storyboard_id === (f.storyboard_id || '') && e.step_id === (f.step_id || ''));

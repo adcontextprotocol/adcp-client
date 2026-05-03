@@ -1295,10 +1295,24 @@ export function createAdcpServerFromPlatform<P extends DecisioningPlatform<any, 
       'brandRights',
       mergeOpts
     ),
-    customTools: {
-      ...opts.customTools,
-      tasks_get: buildTasksGetTool(platform, taskRegistry, platform.agentRegistry, fwLogger),
-    },
+    customTools: (() => {
+      // Register the AdCP `tasks/get` work-status interface under BOTH names:
+      //   - `tasks/get` (slash) — the spec name; what `TaskExecutor.getTaskStatus`
+      //     calls (`src/lib/core/TaskExecutor.ts:1374`). The buyer-side SDK
+      //     uses the spec name verbatim because A2A's transport-native
+      //     `tasks/get` method shares it.
+      //   - `tasks_get`  (underscore) — the snake-case substitute kept for
+      //     adopters who built buyer code against the underscore name in
+      //     pre-6.8 SDKs. Native MCP method dispatch (where `tasks/get`
+      //     lands as a transport method, not a tool) is tracked for v6.1.
+      // Same handler factory; second registration is a no-op alias.
+      const tasksGetTool = buildTasksGetTool(platform, taskRegistry, platform.agentRegistry, fwLogger);
+      return {
+        ...opts.customTools,
+        'tasks/get': tasksGetTool,
+        tasks_get: tasksGetTool,
+      };
+    })(),
   };
 
   const server = createAdcpServer(config);
@@ -1597,15 +1611,26 @@ function buildTasksGetTool<P extends DecisioningPlatform<any, any>>(
       .min(1)
       .max(128)
       .describe('Task identifier returned in the submitted envelope of a HITL tool call.'),
-    // `AccountReference.account_id` per `core/account-ref.json`. Stricter
-    // than `passthrough()` — must be a string when present. We don't
-    // accept the `{ brand, operator }` arm here because tenant scoping
-    // for `tasks_get` is by resolved account id, not by brand identity.
+    // Full canonical `AccountReference` per `core/account-ref.json`:
+    // `oneOf({ account_id }, { brand, operator, sandbox? })`. Modeled as
+    // a single object with all four fields optional so either arm
+    // passes; the resolver narrows on shape at dispatch. `brand` content
+    // is `unknown()` because the inner `brand-ref.json` shape is itself
+    // a oneOf and the resolver validates it. Top-level `.strict()`
+    // blocks unknown keys at the framework boundary.
     account: z
-      .object({ account_id: z.string().min(1).optional() })
+      .object({
+        account_id: z.string().min(1).optional(),
+        brand: z.unknown().optional(),
+        operator: z.string().optional(),
+        sandbox: z.boolean().optional(),
+      })
       .strict()
       .optional()
-      .describe('Optional account reference for tenant scoping. Required for multi-tenant deployments.'),
+      .describe(
+        'Optional account reference for tenant scoping. Either AccountReference arm is accepted: ' +
+          '`{account_id}` for explicit accounts or `{brand, operator, sandbox?}` for implicit accounts.'
+      ),
   };
   return {
     description:
@@ -1631,6 +1656,8 @@ function buildTasksGetTool<P extends DecisioningPlatform<any, any>>(
       args: { task_id: string; account?: { account_id?: string } },
       extra: { authInfo?: ResolvedAuthInfo }
     ) => {
+      // eslint-disable-next-line no-console
+      console.log('[trace.tasks_get]', JSON.stringify({ args, hasAuth: !!extra?.authInfo }));
       const ref = args.account;
       // Resolve the buyer agent (when an `agentRegistry` is configured) so
       // adopters' `accounts.resolve` impl sees `ctx.agent` — same contract as

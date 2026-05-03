@@ -195,6 +195,27 @@ export class AgentClient {
   }
 
   /**
+   * Internal access to the underlying `TaskExecutor`. Used by the storyboard
+   * runner's `pollTaskCompletion` race so it can poll AdCP `tasks/get` against
+   * the agent's transport (see `src/lib/testing/storyboard/runner.ts`'s
+   * `resolveTaskCompletionOutputs`). Without this surface the runner sees
+   * `executor: undefined` on AgentClient and silently falls back to webhook-
+   * only racing — which times out for storyboard fixtures that don't address
+   * a runner-controlled webhook URL.
+   *
+   * Not part of the documented client API; production code goes through the
+   * tool-specific methods on `AgentClient` / `AdCPClient`. The shape may
+   * change without notice if the runner's polling contract evolves.
+   *
+   * @internal
+   */
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any -- runtime-internal accessor
+  get executor(): any {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any -- reach-through to the underlying executor
+    return (this.client as any).executor;
+  }
+
+  /**
    * Returns the AdCP protocol version this client speaks. Mirrors
    * `SingleAgentClient.getAdcpVersion()`. See {@link SingleAgentClientConfig.adcpVersion}.
    */
