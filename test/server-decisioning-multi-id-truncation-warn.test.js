@@ -63,18 +63,6 @@ function basePlatform(overrides = {}) {
   };
 }
 
-function withEnv(key, value, fn) {
-  const saved = process.env[key];
-  if (value === undefined) delete process.env[key];
-  else process.env[key] = value;
-  try {
-    return fn();
-  } finally {
-    if (saved === undefined) delete process.env[key];
-    else process.env[key] = saved;
-  }
-}
-
 // ── getMediaBuyDelivery ──────────────────────────────────────────────────────
 
 describe('#1399 — getMediaBuyDelivery multi-id truncation warn', () => {
@@ -107,6 +95,7 @@ describe('#1399 — getMediaBuyDelivery multi-id truncation warn', () => {
     assert.strictEqual(tw.length, 1, 'expected exactly one truncation warn');
     assert.match(tw[0].msg, /getMediaBuyDelivery/);
     assert.match(tw[0].msg, /1.*row|row.*1/);
+    assert.match(tw[0].msg, /ADCP_DECISIONING_ALLOW_MULTI_ID_TRUNCATION/);
     assert.strictEqual(tw[0].data.requested, 3);
     assert.strictEqual(tw[0].data.returned, 1);
   });
@@ -302,5 +291,50 @@ describe('#1399 — getMediaBuys multi-id truncation warn', () => {
       },
     });
     assert.strictEqual(truncationWarns(calls).length, 0, 'no truncation warn when suppression env var set');
+  });
+
+  it('does not warn when media_buy_ids is omitted (paginated-list contract)', async () => {
+    const { logger, calls } = buildLogger();
+    const platform = basePlatform({
+      getMediaBuys: async () => ({ media_buys: [] }),
+    });
+    const server = createAdcpServerFromPlatform(platform, { ...SERVER_OPTS, logger });
+    await server.dispatchTestRequest({
+      method: 'tools/call',
+      params: { name: 'get_media_buys', arguments: { account: { account_id: 'acc_1' } } },
+    });
+    assert.strictEqual(truncationWarns(calls).length, 0, 'no truncation warn when media_buy_ids omitted');
+  });
+
+  it('does not warn in production (NODE_ENV=production)', async () => {
+    const origNodeEnv = process.env.NODE_ENV;
+    const origTaskAck = process.env.ADCP_DECISIONING_ALLOW_INMEMORY_TASKS;
+    const origStateAck = process.env.ADCP_DECISIONING_ALLOW_INMEMORY_STATE;
+    process.env.NODE_ENV = 'production';
+    process.env.ADCP_DECISIONING_ALLOW_INMEMORY_TASKS = '1';
+    process.env.ADCP_DECISIONING_ALLOW_INMEMORY_STATE = '1';
+    try {
+      const { logger, calls } = buildLogger();
+      const platform = basePlatform({
+        getMediaBuys: async req => ({
+          media_buys: [{ media_buy_id: (req.media_buy_ids ?? [])[0], status: 'active' }],
+        }),
+      });
+      const server = createAdcpServerFromPlatform(platform, { ...SERVER_OPTS, logger });
+      await server.dispatchTestRequest({
+        method: 'tools/call',
+        params: {
+          name: 'get_media_buys',
+          arguments: { account: { account_id: 'acc_1' }, media_buy_ids: ['mb_1', 'mb_2', 'mb_3'] },
+        },
+      });
+      assert.strictEqual(truncationWarns(calls).length, 0, 'no truncation warn in production');
+    } finally {
+      process.env.NODE_ENV = origNodeEnv;
+      if (origTaskAck === undefined) delete process.env.ADCP_DECISIONING_ALLOW_INMEMORY_TASKS;
+      else process.env.ADCP_DECISIONING_ALLOW_INMEMORY_TASKS = origTaskAck;
+      if (origStateAck === undefined) delete process.env.ADCP_DECISIONING_ALLOW_INMEMORY_STATE;
+      else process.env.ADCP_DECISIONING_ALLOW_INMEMORY_STATE = origStateAck;
+    }
   });
 });

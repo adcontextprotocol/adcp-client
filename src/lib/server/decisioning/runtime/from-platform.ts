@@ -2969,7 +2969,7 @@ function warnMultiIdTruncation(
   if (!requestedIds || requestedIds.length === 0) return;
   if (!responseRows || responseRows.length >= requestedIds.length) return;
   logger.warn(
-    `[adcp/sdk] ${tool}: platform returned ${responseRows.length} row${responseRows.length !== 1 ? 's' : ''} for ${requestedIds.length} requested media_buy_ids — verify your implementation returns one row per id, not only the first. See https://github.com/adcontextprotocol/adcp-client/issues/1342`,
+    `[adcp/sdk] ${tool}: platform returned ${responseRows.length} row${responseRows.length !== 1 ? 's' : ''} for ${requestedIds.length} requested media_buy_ids — verify your implementation returns one row per id, not only the first. See https://github.com/adcontextprotocol/adcp-client/issues/1342. Set ADCP_DECISIONING_ALLOW_MULTI_ID_TRUNCATION=1 to silence.`,
     {
       tool,
       requested: requestedIds.length,
