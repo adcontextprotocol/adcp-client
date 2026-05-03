@@ -1158,6 +1158,13 @@ export {
   type CommittedCheckRequest,
   GovernanceAdapterErrorCodes,
   isGovernanceAdapterError,
+  // Implicit Account Store (resolution: 'implicit') — Shape A reference adapter
+  InMemoryImplicitAccountStore,
+  defaultImplicitKeyFn,
+  type ImplicitAccountStoreOptions,
+  // OAuth pass-through resolver — Shape B accounts.resolve factory
+  createOAuthPassthroughResolver,
+  type OAuthPassthroughResolverOptions,
 } from './adapters';
 
 // ====== BACKWARD COMPATIBILITY & ENVIRONMENT LOADING ======

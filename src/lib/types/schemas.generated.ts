@@ -1,5 +1,5 @@
 // Generated Zod v4 schemas from TypeScript types
-// Generated at: 2026-05-02T16:13:48.842Z
+// Generated at: 2026-05-02T20:06:19.119Z
 // Sources:
 //   - core.generated.ts (core types)
 //   - tools.generated.ts (tool types)
@@ -3258,6 +3258,8 @@ export const FlightItemSchema = z.object({
 
 export const FormatIDParameterSchema = z.union([z.literal("dimensions"), z.literal("duration")]);
 
+export const DimensionUnitSchema = z.union([z.literal("px"), z.literal("dp"), z.literal("inches"), z.literal("cm"), z.literal("mm"), z.literal("pt")]);
+
 export const OverlaySchema = z.object({
     id: z.string(),
     description: z.string().optional(),
@@ -3437,6 +3439,31 @@ export const RealEstateItemSchema = z.object({
     ext: ExtensionObjectSchema.optional()
 }).passthrough();
 
+export const ImageAssetRequirementsSchema = z.object({
+    min_width: z.number().optional(),
+    max_width: z.number().optional(),
+    min_height: z.number().optional(),
+    max_height: z.number().optional(),
+    unit: DimensionUnitSchema.optional(),
+    aspect_ratio: z.string().optional(),
+    formats: z.array(z.union([z.literal("jpg"), z.literal("jpeg"), z.literal("png"), z.literal("gif"), z.literal("webp"), z.literal("svg"), z.literal("avif"), z.literal("tiff"), z.literal("pdf"), z.literal("eps")])).optional(),
+    min_dpi: z.number().optional(),
+    bleed: z.union([z.object({
+            uniform: z.number()
+        }).passthrough(), z.object({
+            top: z.number(),
+            right: z.number(),
+            bottom: z.number(),
+            left: z.number()
+        }).passthrough()]).optional(),
+    color_space: z.union([z.literal("rgb"), z.literal("cmyk"), z.literal("grayscale")]).optional(),
+    max_file_size_kb: z.number().optional(),
+    transparency_required: z.boolean().optional(),
+    animation_allowed: z.boolean().optional(),
+    max_animation_duration_ms: z.number().optional(),
+    max_weight_grams: z.number().optional()
+}).passthrough();
+
 export const VideoAssetRequirementsSchema = z.object({
     min_width: z.number().optional(),
     max_width: z.number().optional(),
@@ -3527,33 +3554,6 @@ export const URLAssetRequirementsSchema = z.object({
 
 export const WebhookAssetRequirementsSchema = z.object({
     methods: z.array(z.union([z.literal("GET"), z.literal("POST")])).optional()
-}).passthrough();
-
-export const DimensionUnitSchema = z.union([z.literal("px"), z.literal("dp"), z.literal("inches"), z.literal("cm"), z.literal("mm"), z.literal("pt")]);
-
-export const ImageAssetRequirementsSchema = z.object({
-    min_width: z.number().optional(),
-    max_width: z.number().optional(),
-    min_height: z.number().optional(),
-    max_height: z.number().optional(),
-    unit: DimensionUnitSchema.optional(),
-    aspect_ratio: z.string().optional(),
-    formats: z.array(z.union([z.literal("jpg"), z.literal("jpeg"), z.literal("png"), z.literal("gif"), z.literal("webp"), z.literal("svg"), z.literal("avif"), z.literal("tiff"), z.literal("pdf"), z.literal("eps")])).optional(),
-    min_dpi: z.number().optional(),
-    bleed: z.union([z.object({
-            uniform: z.number()
-        }).passthrough(), z.object({
-            top: z.number(),
-            right: z.number(),
-            bottom: z.number(),
-            left: z.number()
-        }).passthrough()]).optional(),
-    color_space: z.union([z.literal("rgb"), z.literal("cmyk"), z.literal("grayscale")]).optional(),
-    max_file_size_kb: z.number().optional(),
-    transparency_required: z.boolean().optional(),
-    animation_allowed: z.boolean().optional(),
-    max_animation_duration_ms: z.number().optional(),
-    max_weight_grams: z.number().optional()
 }).passthrough();
 
 export const ScalarBindingSchema = z.object({
@@ -4738,8 +4738,24 @@ export const SyncPlansRequestSchema = z.object({
         plan_id: z.string(),
         brand: BrandReferenceSchema,
         objectives: z.string(),
-        budget: z.union([z.record(z.string(), z.unknown()), z.object({
-                reallocation_unlimited: z.literal(true)
+        budget: z.union([z.object({
+                total: z.number(),
+                currency: z.string(),
+                per_seller_max_pct: z.number().optional(),
+                reallocation_threshold: z.number(),
+                allocations: z.record(z.string(), z.object({
+                        amount: z.number().optional(),
+                        max_pct: z.number().optional()
+                    }).passthrough()).optional()
+            }).passthrough(), z.object({
+                total: z.number(),
+                currency: z.string(),
+                per_seller_max_pct: z.number().optional(),
+                reallocation_unlimited: z.literal(true),
+                allocations: z.record(z.string(), z.object({
+                        amount: z.number().optional(),
+                        max_pct: z.number().optional()
+                    }).passthrough()).optional()
             }).passthrough()]),
         channels: z.object({
             required: z.array(MediaChannelSchema).optional(),
@@ -6203,7 +6219,24 @@ export const FormatSchema = z.object({
     description: z.string().optional(),
     example_url: z.string().optional(),
     accepts_parameters: z.array(FormatIDParameterSchema).optional(),
-    renders: z.array(z.union([z.record(z.string(), z.unknown()), z.object({
+    renders: z.array(z.union([z.object({
+            role: z.string(),
+            dimensions: z.object({
+                width: z.number().optional(),
+                height: z.number().optional(),
+                min_width: z.number().optional(),
+                min_height: z.number().optional(),
+                max_width: z.number().optional(),
+                max_height: z.number().optional(),
+                unit: DimensionUnitSchema.optional(),
+                responsive: z.object({
+                    width: z.boolean(),
+                    height: z.boolean()
+                }).passthrough().optional(),
+                aspect_ratio: z.string().optional()
+            }).passthrough()
+        }).passthrough(), z.object({
+            role: z.string(),
             parameters_from_format_id: z.literal(true)
         }).passthrough()])).optional(),
     assets: z.array(z.union([IndividualImageAssetSchema, IndividualVideoAssetSchema, IndividualAudioAssetSchema, IndividualTextAssetSchema, IndividualMarkdownAssetSchema, IndividualHtmlAssetSchema, IndividualCssAssetSchema, IndividualJavaScriptAssetSchema, IndividualVastAssetSchema, IndividualDaastAssetSchema, IndividualUrlAssetSchema, IndividualWebhookAssetSchema, IndividualBriefAssetSchema, IndividualCatalogAssetSchema, RepeatableGroupAssetSchema])).optional(),

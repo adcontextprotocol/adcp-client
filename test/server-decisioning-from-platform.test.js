@@ -370,6 +370,101 @@ describe('CreativeBuilderPlatform + AudiencePlatform wiring', () => {
     assert.ok(sawReq, 'generative builder.buildCreative invoked');
   });
 
+  it('list_creative_formats dispatches through platform.creative.listCreativeFormats (#1324)', async () => {
+    // Creative-template / creative-generative agents that own format
+    // catalogs implement listCreativeFormats on CreativeBuilderPlatform.
+    // Pre-#1324, the only way to wire it was via the v5 escape hatch
+    // (`opts.creative.listCreativeFormats`) — the typed-platform path
+    // didn't model it.
+    let sawReq;
+    const platform = {
+      capabilities: {
+        specialisms: ['creative-template'],
+        creative_agents: [],
+        channels: ['display'],
+        pricingModels: ['cpm'],
+        config: {},
+      },
+      accounts: {
+        resolution: 'derived',
+        resolve: async () => ({
+          id: 'singleton',
+          name: 'Acme',
+          status: 'active',
+          metadata: {},
+          authInfo: { kind: 'api_key' },
+        }),
+      },
+      statusMappers: {},
+      creative: {
+        buildCreative: async () => ({ manifest_id: 'mf_1', assets: [] }),
+        listCreativeFormats: async req => {
+          sawReq = req;
+          return {
+            formats: [
+              {
+                format_id: { id: 'standard_300x250', agent_url: 'https://example.com/mcp' },
+                name: 'Standard Display',
+                renders: [{ role: 'primary', dimensions: { width: 300, height: 250 } }],
+              },
+            ],
+          };
+        },
+      },
+    };
+    const server = createAdcpServerFromPlatform(platform, {
+      name: 'creative-template',
+      version: '0.0.1',
+      validation: { requests: 'off', responses: 'off' },
+    });
+    const result = await server.dispatchTestRequest({
+      method: 'tools/call',
+      params: { name: 'list_creative_formats', arguments: {} },
+    });
+    assert.notStrictEqual(result.isError, true, JSON.stringify(result.structuredContent));
+    assert.ok(sawReq, 'creative.listCreativeFormats should be invoked');
+    assert.strictEqual(result.structuredContent.formats[0].format_id.id, 'standard_300x250');
+  });
+
+  it('list_creative_formats against creative platform without listCreativeFormats returns UNSUPPORTED_FEATURE (#1324)', async () => {
+    const platform = {
+      capabilities: {
+        specialisms: ['creative-template'],
+        creative_agents: [],
+        channels: ['display'],
+        pricingModels: ['cpm'],
+        config: {},
+      },
+      accounts: {
+        resolution: 'derived',
+        resolve: async () => ({
+          id: 'singleton',
+          name: 'Acme',
+          status: 'active',
+          metadata: {},
+          authInfo: { kind: 'api_key' },
+        }),
+      },
+      statusMappers: {},
+      creative: {
+        buildCreative: async () => ({ manifest_id: 'mf_1', assets: [] }),
+        // No listCreativeFormats — adopters who delegate via creative_agents
+        // declarations omit it; framework returns UNSUPPORTED_FEATURE.
+      },
+    };
+    const server = createAdcpServerFromPlatform(platform, {
+      name: 'creative-template',
+      version: '0.0.1',
+      validation: { requests: 'off', responses: 'off' },
+    });
+    const result = await server.dispatchTestRequest({
+      method: 'tools/call',
+      params: { name: 'list_creative_formats', arguments: {} },
+    });
+    assert.strictEqual(result.isError, true);
+    assert.match(result.structuredContent.adcp_error?.code ?? '', /UNSUPPORTED_FEATURE/);
+  });
+
   it('F13: preview_creative against builder without previewCreative returns UNSUPPORTED_FEATURE', async () => {
     // Generative-only platforms that omit previewCreative MUST surface
     // an UNSUPPORTED_FEATURE error to buyers calling preview_creative,

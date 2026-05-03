@@ -10,6 +10,7 @@
  * - PropertyListAdapter: Manage buyer-defined property lists
  * - ProposalManager: Generate and refine media plan proposals
  * - SISessionManager: Handle Sponsored Intelligence conversational sessions
+ * - InMemoryImplicitAccountStore: AccountStore for resolution: 'implicit' platforms
  */
 
 // Content Standards
@@ -63,3 +64,16 @@ export {
   SIErrorCodes,
   defaultSISessionManager,
 } from './si-session-manager';
+
+// Implicit Account Store (resolution: 'implicit') — Shape A reference adapter.
+export {
+  InMemoryImplicitAccountStore,
+  defaultImplicitKeyFn,
+  type ImplicitAccountStoreOptions,
+} from './implicit-account-store';
+
+// OAuth pass-through resolver — closes adcp-client#1363. Shape B factory
+// for adapters wrapping a vendor OAuth + ad-account API; replaces the ~30
+// LOC of bearer-extract + listing-fetch + match-by-id boilerplate every
+// such adapter re-derives by hand.
+export { createOAuthPassthroughResolver, type OAuthPassthroughResolverOptions } from './oauth-passthrough-resolver';

@@ -60,7 +60,7 @@
  * @public
  */
 
-import type { Account } from '../account';
+import type { Account, NoAccountCtx } from '../account';
 import type { RequestContext } from '../context';
 import type { TaskHandoff } from '../async-outcome';
 import type {
@@ -101,6 +101,24 @@ type Ctx<TCtxMeta> = RequestContext<Account<TCtxMeta>>;
 export type SyncCreativesRow = SyncCreativesSuccess['creatives'][number];
 
 export interface SalesPlatform<TCtxMeta = Record<string, unknown>> {
+  // **Method shape — all optional, enforced per-specialism.** Every method on
+  // `SalesPlatform` is declared optional so the type accommodates non-media-
+  // buy walled gardens (sales-social, audience-sync, sales-proposal-mode)
+  // that don't accept inbound media buys but compose ingestion methods on
+  // this same surface. Compile-time enforcement of "you claimed
+  // sales-non-guaranteed, therefore you MUST implement getProducts /
+  // createMediaBuy / updateMediaBuy / getMediaBuyDelivery / getMediaBuys"
+  // moves up to `RequiredPlatformsFor<S>` — see the {@link SalesCorePlatform}
+  // type alias and the per-specialism mapping in `platform.ts`. Runtime
+  // enforcement is preserved: the dispatcher returns `UNSUPPORTED_FEATURE`
+  // for tools whose method is absent, and `validateSpecialismRequiredTools`
+  // throws / warns when a specialism's required tools aren't implemented.
+  //
+  // Adopters who implement the full media-buy surface keep working — their
+  // implementation is a superset of every per-specialism requirement.
+  // Adopters who only do ingestion (e.g. a Meta CAPI integration claiming
+  // `sales-social`) drop the 5 core stubs without compile errors.
+
   // ── get_products: sync only — by design, not just by spec ─────────
   // get_products is a CATALOG LOOKUP — fast read against the seller's
   // existing inventory. It is NOT the right wire surface for proposal
@@ -124,7 +142,7 @@ export interface SalesPlatform<TCtxMeta = Record<string, unknown>> {
   // workflows declare it via `capabilities` so buyers can route
   // appropriately before the first call.
   /** Sync catalog lookup: filters in, products out. NOT for proposal generation. */
-  getProducts(req: GetProductsRequest, ctx: Ctx<TCtxMeta>): Promise<GetProductsResponse>;
+  getProducts?(req: GetProductsRequest, ctx: Ctx<TCtxMeta>): Promise<GetProductsResponse>;
 
   // ── create_media_buy: unified hybrid shape ──────────────────────────
 
@@ -174,7 +192,7 @@ export interface SalesPlatform<TCtxMeta = Record<string, unknown>> {
    * }
    * ```
    */
-  createMediaBuy(
+  createMediaBuy?(
     req: CreateMediaBuyRequest,
     ctx: Ctx<TCtxMeta>
   ): Promise<CreateMediaBuySuccess | TaskHandoff<CreateMediaBuySuccess>>;
@@ -189,7 +207,7 @@ export interface SalesPlatform<TCtxMeta = Record<string, unknown>> {
   // `publishStatusChange` on `resource_type: 'media_buy'` rather than
   // HITL on this tool.
   /** Sync update. Returns the patched buy. */
-  updateMediaBuy(buyId: string, patch: UpdateMediaBuyRequest, ctx: Ctx<TCtxMeta>): Promise<UpdateMediaBuySuccess>;
+  updateMediaBuy?(buyId: string, patch: UpdateMediaBuyRequest, ctx: Ctx<TCtxMeta>): Promise<UpdateMediaBuySuccess>;
 
   // ── sync_creatives: unified hybrid shape ────────────────────────────
 
@@ -224,7 +242,7 @@ export interface SalesPlatform<TCtxMeta = Record<string, unknown>> {
 
   // ── get_media_buy_delivery: sync only ───────────────────────────────
 
-  getMediaBuyDelivery(filter: GetMediaBuyDeliveryRequest, ctx: Ctx<TCtxMeta>): Promise<GetMediaBuyDeliveryResponse>;
+  getMediaBuyDelivery?(filter: GetMediaBuyDeliveryRequest, ctx: Ctx<TCtxMeta>): Promise<GetMediaBuyDeliveryResponse>;
 
   // ── get_media_buys: sync only — REQUIRED ──────────────────────────────
   // Read tool — buyers fetch a list of their media buys (often filtered by
@@ -240,7 +258,7 @@ export interface SalesPlatform<TCtxMeta = Record<string, unknown>> {
   // Proposal-mode adopters (write-only via push channels) return an empty
   // `media_buys: []` array — that's a valid response.
   /** List media buys this account owns. Filter + pagination per the wire shape. */
-  getMediaBuys(req: GetMediaBuysRequest, ctx: Ctx<TCtxMeta>): Promise<GetMediaBuysResponse>;
+  getMediaBuys?(req: GetMediaBuysRequest, ctx: Ctx<TCtxMeta>): Promise<GetMediaBuysResponse>;
 
   // ── provide_performance_feedback: sync only ─────────────────────────
   // Write tool — buyers report aggregate creative-level performance
@@ -249,13 +267,15 @@ export interface SalesPlatform<TCtxMeta = Record<string, unknown>> {
   // buyer expects to be able to call it. Framework returns UNSUPPORTED_FEATURE
   // when omitted.
   //
-  // ⚠️  NO-ACCOUNT TOOL. The wire request does not carry an `account` field.
-  // `ctx.account` is undefined for `'explicit'`-resolution adopters.
-  // See the `SalesPlatform` JSDoc ("No-account tools") for safe patterns.
+  // ⚠️  NO-ACCOUNT TOOL — `ctx: NoAccountCtx<TCtxMeta>`. The wire request
+  // does not carry an `account` field. `ctx.account` may be `undefined` for
+  // `'explicit'`-resolution adopters; narrow before reading
+  // `ctx.account.ctx_metadata`. See {@link NoAccountCtx} and the
+  // `SalesPlatform` JSDoc ("No-account tools") for safe patterns.
   /** Accept buyer-side performance signals on a media buy / creative. */
   providePerformanceFeedback?(
     req: ProvidePerformanceFeedbackRequest,
-    ctx: Ctx<TCtxMeta>
+    ctx: NoAccountCtx<TCtxMeta>
   ): Promise<ProvidePerformanceFeedbackSuccess>;
 
   // ── list_creative_formats: sync only ────────────────────────────────
@@ -265,8 +285,12 @@ export interface SalesPlatform<TCtxMeta = Record<string, unknown>> {
   // own format definitions; framework can resolve from the declared agents.
   // Self-hosted sellers (own creative library) implement this directly.
   //
-  // ⚠️  NO-ACCOUNT TOOL. See `providePerformanceFeedback` note above.
-  listCreativeFormats?(req: ListCreativeFormatsRequest, ctx: Ctx<TCtxMeta>): Promise<ListCreativeFormatsResponse>;
+  // ⚠️  NO-ACCOUNT TOOL — `ctx: NoAccountCtx<TCtxMeta>`. See
+  // `providePerformanceFeedback` note above.
+  listCreativeFormats?(
+    req: ListCreativeFormatsRequest,
+    ctx: NoAccountCtx<TCtxMeta>
+  ): Promise<ListCreativeFormatsResponse>;
 
   // ── list_creatives: sync only ───────────────────────────────────────
   // Read tool — buyers query the seller's creative library. Optional
@@ -296,3 +320,52 @@ export interface SalesPlatform<TCtxMeta = Record<string, unknown>> {
   // Optional — adopters who don't expose conversion tracking omit.
   syncEventSources?(req: SyncEventSourcesRequest, ctx: Ctx<TCtxMeta>): Promise<SyncEventSourcesSuccess>;
 }
+
+/**
+ * Names the **core sales surface** — bidding + media-buy lifecycle. Required
+ * for `sales-*` specialisms that own pricing/pacing
+ * (`sales-non-guaranteed`, `sales-guaranteed`, `sales-broadcast-tv`,
+ * `sales-streaming-tv`, `sales-exchange`, `sales-catalog-driven`,
+ * `sales-retail-media`).
+ *
+ * Walled-garden specialisms whose value surface is asset ingestion
+ * (`sales-social`, the `audience-sync` track, pure conversion-tracking
+ * adopters) DON'T need to implement these — see {@link SalesIngestionPlatform}.
+ *
+ * Used by `RequiredPlatformsFor<S>` to pick the right slice of `SalesPlatform`
+ * per claimed specialism.
+ *
+ * @public
+ */
+export type SalesCorePlatform<TCtxMeta = Record<string, unknown>> = Required<
+  Pick<
+    SalesPlatform<TCtxMeta>,
+    'getProducts' | 'createMediaBuy' | 'updateMediaBuy' | 'getMediaBuyDelivery' | 'getMediaBuys'
+  >
+>;
+
+/**
+ * Names the **asset-ingestion surface** — sync surfaces for creatives,
+ * audiences (via {@link import('./audiences').AudiencePlatform}), catalogs,
+ * events, plus the read/feedback tools. Walled-garden specialisms
+ * (`sales-social`) live here.
+ *
+ * Every method is optional individually. Adopters claiming `sales-social`
+ * pick whichever ingestion surfaces apply (typically `syncCreatives` +
+ * `logEvent` + `syncEventSources`); the rest stay omitted.
+ *
+ * Used by `RequiredPlatformsFor<S>` so claiming `sales-social` only requires
+ * this slice of `SalesPlatform`, not the full {@link SalesCorePlatform}.
+ *
+ * @public
+ */
+export type SalesIngestionPlatform<TCtxMeta = Record<string, unknown>> = Pick<
+  SalesPlatform<TCtxMeta>,
+  | 'syncCreatives'
+  | 'syncCatalogs'
+  | 'syncEventSources'
+  | 'logEvent'
+  | 'listCreativeFormats'
+  | 'listCreatives'
+  | 'providePerformanceFeedback'
+>;

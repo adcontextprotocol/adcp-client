@@ -2,7 +2,7 @@
 
 Discriminated-union and embedded-shape patterns adopters consistently get wrong on the first pass. The strict response validators in the storyboard runner catch these at runtime; type checkers don't, because the types are technically satisfiable in the wrong shape. Each entry below: the wrong shape adopters write first, the right shape, and a one-line "why."
 
-Five patterns surfaced repeatedly while building reference adapters (`examples/hello_seller_adapter_*.ts`) and during blind LLM matrix runs. Catching them costs 1–3 iterations of "why is this field reported missing?" — this page is the shortcut.
+Six patterns surfaced repeatedly while building reference adapters (`examples/hello_{seller,creative,signals}_adapter_*.ts`) and during blind LLM matrix runs. Catching them costs 1–3 iterations of "why is this field reported missing?" — this page is the shortcut.
 
 ---
 
@@ -150,6 +150,68 @@ return {
   expires_at: '2026-05-03T00:00:00Z',
 };
 ```
+
+---
+
+## 6. `log_event` projection for walled-garden CAPIs
+
+Sales-social adopters fronting walled-garden conversion APIs translate AdCP's `log_event` wire shape onto the upstream CAPI's. Three projections trip every walled-garden integration on the first pass — the upstream returns `400` and the AdCP wire surface gives no hint that the field name or encoding was the problem.
+
+| AdCP wire (`Event`)                                                            | Walled-garden CAPI                                                                          | Translation                                                                  |
+| ------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------- |
+| `event_type` (string)                                                          | `event_name` (string)                                                                       | rename on the way out                                                        |
+| `event_time` (ISO 8601 string)                                                 | `event_time` (UNIX seconds, number)                                                         | `Math.floor(new Date(t).getTime() / 1000)`                                   |
+| `user_match` (`hashed_email` / `hashed_phone` / `uids[]` / `click_id` / `client_ip`+`client_user_agent`) | `user_data.{email_sha256,phone_sha256,external_id_sha256}` (≥1 required) | map per the upstream's identifier types; drop events with empty `user_match` |
+
+### 6.1 `event_name`, not `event_type`
+
+✗ Wrong (passes AdCP type-check, fails the walled-garden 400):
+
+```ts
+upstream.trackEvents({ events: req.events });
+```
+
+✓ Right:
+
+```ts
+upstream.trackEvents({
+  events: req.events.map(e => ({
+    event_name: e.event_type,
+    // …other fields…
+  })),
+});
+```
+
+### 6.2 UNIX seconds, not ISO 8601
+
+✗ Wrong:
+
+```ts
+{ event_time: e.event_time }                 // '2026-04-05T14:30:00Z'
+```
+
+✓ Right:
+
+```ts
+{ event_time: Math.floor(new Date(e.event_time).getTime() / 1000) }
+```
+
+### 6.3 Hashed-identifier requirement — read `Event.user_match`, drop on empty
+
+Every walled-garden CAPI rejects events without at least one matchable identifier in `user_data` — typically `email_sha256`, `phone_sha256`, or `external_id_sha256` (64-char lowercase hex SHA-256). The AdCP wire field is `Event.user_match` (per `/schemas/3.0.4/core/user-match.json` — `hashed_email`, `hashed_phone`, `uids[]`, `click_id`, `client_ip`+`client_user_agent`). Project it onto the upstream's `user_data` shape; **drop events with empty `user_match`** rather than synthesize a fake identifier.
+
+```ts
+const userData: { external_id_sha256?: string; email_sha256?: string; phone_sha256?: string } = {};
+if (e.user_match?.hashed_email) userData.email_sha256 = e.user_match.hashed_email;
+if (e.user_match?.hashed_phone) userData.phone_sha256 = e.user_match.hashed_phone;
+const firstUid = e.user_match?.uids?.[0]?.value;
+if (firstUid && /^[a-f0-9]{64}$/.test(firstUid)) userData.external_id_sha256 = firstUid;
+if (Object.keys(userData).length === 0) continue; // drop unmatchable events
+```
+
+✗ **Do not** synthesize `external_id_sha256` from `event_id` (or any non-identity field). `event_id` is a buyer-side dedup string per `/schemas/3.0.4/core/event.json`; hashing it and shipping as a stable user identifier fabricates a matching signal the buyer never granted, joins unrelated events as the "same user" in the platform's identity graph, and pollutes attribution. The defensible behavior is to drop unmatchable events and surface the delta via `events_received` − `events_processed` so the buyer can populate `user_match` and retry.
+
+The `examples/hello_seller_adapter_social.ts` reference adapter codifies all three patterns in its `logEvent` handler; build-seller-agent §sales-social references this section, and AdCP's `createTranslationMap` helper (#1285) handles the buyer→upstream id mapping when the buyer carries a `media_buy_id` that needs translation to an upstream pixel-source id.
 
 ---
 

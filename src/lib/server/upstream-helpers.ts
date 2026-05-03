@@ -147,6 +147,14 @@ export interface UpstreamHttpClientOptions {
    * to individual method calls are merged on top and take precedence.
    */
   defaultHeaders?: Record<string, string>;
+  /**
+   * Override the underlying fetch implementation. Defaults to
+   * `globalThis.fetch`. Adopters wiring `@adcp/sdk/upstream-recorder` pass
+   * `recorder.wrapFetch(globalThis.fetch)` so outbound calls flow through
+   * the recorder's per-principal scoping; production builds with the
+   * recorder disabled fall back to the same global with zero overhead.
+   */
+  fetch?: typeof globalThis.fetch;
 }
 
 /** Result shape returned by every method on the upstream HTTP client. */
@@ -215,6 +223,7 @@ async function doRequest<T>(
   baseUrl: string,
   auth: UpstreamAuth,
   defaultHeaders: Record<string, string>,
+  fetchImpl: typeof globalThis.fetch,
   method: string,
   path: string,
   options: {
@@ -246,7 +255,7 @@ async function doRequest<T>(
     mergedHeaders['Content-Type'] = 'application/json';
   }
 
-  const res = await fetch(url, init);
+  const res = await fetchImpl(url, init);
 
   // 404 → null body (not an error — resource absent is a common upstream signal)
   if (res.status === 404) return { status: 404, body: null };
@@ -284,15 +293,30 @@ async function doRequest<T>(
  * ```
  */
 export function createUpstreamHttpClient(options: UpstreamHttpClientOptions): UpstreamHttpClient {
-  const { baseUrl, auth, defaultHeaders = {} } = options;
+  const { baseUrl, auth, defaultHeaders = {}, fetch: fetchImpl = globalThis.fetch } = options;
   return {
     get: (path, params, headers, opts) =>
-      doRequest(baseUrl, auth, defaultHeaders, 'GET', path, { params, headers, authContext: opts?.authContext }),
+      doRequest(baseUrl, auth, defaultHeaders, fetchImpl, 'GET', path, {
+        params,
+        headers,
+        authContext: opts?.authContext,
+      }),
     post: (path, body, headers, opts) =>
-      doRequest(baseUrl, auth, defaultHeaders, 'POST', path, { body, headers, authContext: opts?.authContext }),
+      doRequest(baseUrl, auth, defaultHeaders, fetchImpl, 'POST', path, {
+        body,
+        headers,
+        authContext: opts?.authContext,
+      }),
     put: (path, body, headers, opts) =>
-      doRequest(baseUrl, auth, defaultHeaders, 'PUT', path, { body, headers, authContext: opts?.authContext }),
+      doRequest(baseUrl, auth, defaultHeaders, fetchImpl, 'PUT', path, {
+        body,
+        headers,
+        authContext: opts?.authContext,
+      }),
     delete: (path, headers, opts) =>
-      doRequest(baseUrl, auth, defaultHeaders, 'DELETE', path, { headers, authContext: opts?.authContext }),
+      doRequest(baseUrl, auth, defaultHeaders, fetchImpl, 'DELETE', path, {
+        headers,
+        authContext: opts?.authContext,
+      }),
   };
 }

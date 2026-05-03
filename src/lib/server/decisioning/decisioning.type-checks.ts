@@ -21,6 +21,8 @@ import type {
   CreativeBuilderPlatform,
   CreativeTemplatePlatform,
   SalesPlatform,
+  SalesCorePlatform,
+  SalesIngestionPlatform,
   AudiencePlatform,
   CreateAdcpServerFromPlatformOptions,
   ComplianceTestingCapabilities,
@@ -29,6 +31,8 @@ import {
   AdcpError,
   AccountNotFoundError,
   defineSalesPlatform,
+  defineSalesCorePlatform,
+  defineSalesIngestionPlatform,
   defineAudiencePlatform,
   definePlatformWithCompliance,
 } from './index';
@@ -297,6 +301,93 @@ function _define_sales_platform_identity(p: SalesPlatform<_SocialMeta>): SalesPl
   return defineSalesPlatform<_SocialMeta>(p);
 }
 
+// ── #1341 sales-guaranteed migration paths ──────────────────────────
+// `SalesPlatform` methods are now optional individually (#1341). Adopters
+// claiming a `RequiredPlatformsFor<'sales-guaranteed'>`-narrowed
+// specialism need to keep the closed shape on the way to the
+// dispatcher. Two patterns work; both are exercised below as
+// regression locks.
+
+// Pattern A — explicit field annotation. The contextual type from the
+// `: SalesCorePlatform<Meta> & SalesIngestionPlatform<Meta>` annotation
+// flows into the literal; the closed shape is enforced at the
+// assignment site.
+function _sales_guaranteed_field_annotation_pattern() {
+  const sales: SalesCorePlatform<_SocialMeta> & SalesIngestionPlatform<_SocialMeta> = {
+    getProducts: async () => ({ products: [] }),
+    createMediaBuy: async () => ({ media_buy_id: 'x', packages: [] }),
+    updateMediaBuy: async () => ({ media_buy_id: 'x' }),
+    getMediaBuyDelivery: async () => ({
+      reporting_period: { start: '2026-01-01', end: '2026-01-31' },
+      media_buy_deliveries: [],
+    }),
+    getMediaBuys: async () => ({ media_buys: [] }),
+    syncCreatives: async () => [],
+  };
+  type _SalesGuaranteedShape = (RequiredPlatformsFor<'sales-guaranteed'> & {
+    sales: unknown;
+  })['sales'];
+  const _check: _SalesGuaranteedShape = sales;
+  return _check;
+}
+
+// Pattern B — spread-helpers. `defineSalesCorePlatform` / `defineSales-
+// IngestionPlatform` each return their closed shape; the spread carries
+// both onto a single `sales` object. Useful when the adopter's class
+// structure splits core from ingestion.
+function _sales_guaranteed_spread_helpers_pattern() {
+  const sales = {
+    ...defineSalesCorePlatform<_SocialMeta>({
+      getProducts: async () => ({ products: [] }),
+      createMediaBuy: async () => ({ media_buy_id: 'x', packages: [] }),
+      updateMediaBuy: async () => ({ media_buy_id: 'x' }),
+      getMediaBuyDelivery: async () => ({
+        reporting_period: { start: '2026-01-01', end: '2026-01-31' },
+        media_buy_deliveries: [],
+      }),
+      getMediaBuys: async () => ({ media_buys: [] }),
+    }),
+    ...defineSalesIngestionPlatform<_SocialMeta>({
+      syncCreatives: async () => [],
+    }),
+  };
+  type _SalesGuaranteedShape = (RequiredPlatformsFor<'sales-guaranteed'> & {
+    sales: unknown;
+  })['sales'];
+  const _check: _SalesGuaranteedShape = sales;
+  return _check;
+}
+
+// Negative: bare `defineSalesPlatform<Meta>({...})` does NOT preserve the
+// closed shape; its return type is the loose `SalesPlatform<TCtxMeta>`
+// (all-optional after #1341). Adopters claiming `sales-guaranteed` need
+// pattern A or B above. This test documents the limitation so future
+// changes that "fix" `defineSalesPlatform`'s return type without proving
+// inference-through-defaults don't silently regress the adopter migration.
+function _define_sales_platform_widens_post_1341() {
+  const sales = defineSalesPlatform<_SocialMeta>({
+    getProducts: async () => ({ products: [] }),
+    createMediaBuy: async () => ({ media_buy_id: 'x', packages: [] }),
+    updateMediaBuy: async () => ({ media_buy_id: 'x' }),
+    getMediaBuyDelivery: async () => ({
+      reporting_period: { start: '2026-01-01', end: '2026-01-31' },
+      media_buy_deliveries: [],
+    }),
+    getMediaBuys: async () => ({ media_buys: [] }),
+  });
+  type _SalesGuaranteedShape = (RequiredPlatformsFor<'sales-guaranteed'> & {
+    sales: unknown;
+  })['sales'];
+  // @ts-expect-error — defineSalesPlatform returns SalesPlatform<TCtxMeta>
+  // (all-optional after #1341) which doesn't satisfy the closed-shape
+  // constraint of RequiredPlatformsFor<'sales-guaranteed'>. The expected
+  // failure here is the regression alarm: if this stops failing, the
+  // helper's return type narrowed and the migration patterns above can
+  // be relaxed.
+  const _check: _SalesGuaranteedShape = sales;
+  return _check;
+}
+
 // Positive: defineAudiencePlatform<TCtxMeta> is pure identity.
 function _define_audience_platform_identity(p: AudiencePlatform<_SocialMeta>): AudiencePlatform<_SocialMeta> {
   return defineAudiencePlatform<_SocialMeta>(p);
@@ -343,6 +434,57 @@ type _ct_opts_requires_complytest =
   CreateAdcpServerFromPlatformOptions extends RequiredOptsFor<_PlatformWithCT> ? 'assignable' : 'not-assignable';
 const _check_ct_opts_requires: _ct_opts_requires_complytest = 'not-assignable';
 
+// ── Format.renders[] accepts typed render builders ──
+
+import { displayRender, parameterizedRender } from '../../utils/format-render-builders';
+import type { Format, PreviewCreativeResponse } from '../../types/tools.generated';
+
+// `displayRender(...)` and `parameterizedRender(...)` produce closed shapes
+// that must be assignable to `Format['renders'][number]` under strict tsc.
+function _format_renders_accept_display_render(): void {
+  type FormatRenders = NonNullable<Format['renders']>;
+  const renders: FormatRenders = [
+    displayRender({ role: 'primary', dimensions: { width: 300, height: 250 } }),
+    parameterizedRender({ role: 'companion' }),
+  ];
+  void renders;
+}
+
+// ── NoAccountCtx narrows ctx.account on no-account tools ──
+
+import { defineCreativeBuilderPlatform } from './platform-helpers';
+
+// `previewCreative` handlers must narrow `ctx.account` before reading
+// `ctx_metadata` — the wire schema does not carry an `account` field, so
+// `ctx.account` is `Account<TCtxMeta> | undefined`.
+function _preview_creative_requires_account_narrow(): void {
+  defineCreativeBuilderPlatform<{ workspace_id: string }>({
+    buildCreative: async () => ({}) as never,
+    previewCreative: async (_req, ctx) => {
+      if (ctx.account == null) {
+        return {} as PreviewCreativeResponse;
+      }
+      const _ws: string = ctx.account.ctx_metadata.workspace_id;
+      void _ws;
+      return {} as PreviewCreativeResponse;
+    },
+  });
+}
+
+// Reading `ctx.account.ctx_metadata` without a narrow MUST fail typecheck
+// — this is the regression alarm guarding the no-account contract.
+function _preview_creative_rejects_unnarrowed_access(): void {
+  defineCreativeBuilderPlatform<{ workspace_id: string }>({
+    buildCreative: async () => ({}) as never,
+    previewCreative: async (_req, ctx) => {
+      // @ts-expect-error — ctx.account is `Account | undefined`; reading without narrowing fails.
+      const _ws: string = ctx.account.ctx_metadata.workspace_id;
+      void _ws;
+      return {} as PreviewCreativeResponse;
+    },
+  });
+}
+
 // Reference all symbols once so eslint-disable is targeted.
 export const _references = [
   _signals_only_capabilities_compiles,
@@ -374,6 +516,9 @@ export const _references = [
   _check_brand_rights_requires_brand,
   _check_sales_no_required_caps,
   _define_sales_platform_identity,
+  _sales_guaranteed_field_annotation_pattern,
+  _sales_guaranteed_spread_helpers_pattern,
+  _define_sales_platform_widens_post_1341,
   _define_audience_platform_identity,
   _define_audience_platform_rejects_wrong_shape,
   _define_platform_with_compliance_accepts_ct,
@@ -381,4 +526,7 @@ export const _references = [
   _check_opts_no_ct,
   _check_opts_with_ct,
   _check_ct_opts_requires,
+  _format_renders_accept_display_render,
+  _preview_creative_requires_account_narrow,
+  _preview_creative_rejects_unnarrowed_access,
 ] as const;

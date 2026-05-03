@@ -1,3 +1,5 @@
+import type { DimensionUnit } from '../types/core.generated';
+
 // Typed factory helpers for `Format.renders[]` entries (format declarations
 // returned by `list_creative_formats`).
 //
@@ -27,7 +29,7 @@ export interface RenderDimensions {
   width: number;
   height: number;
   /** Unit defaults to pixels. Set explicitly for non-pixel formats (e.g. DOOH physical dimensions). */
-  unit?: string;
+  unit?: DimensionUnit;
 }
 
 /** Fixed-dimensions render — display banners, video placements, any format with a known W×H. */

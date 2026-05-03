@@ -54,8 +54,10 @@ import {
 import { createTaskCapableServer } from './tasks';
 import type { TaskStore, TaskMessageQueue } from './tasks';
 import { adcpError } from './errors';
+import { ConfigurationError } from '../errors';
 import type { BuyerAgent, BuyerAgentRegistry } from './decisioning/buyer-agent';
 import type { ResolvedAuthInfo } from './decisioning/account';
+import { AdcpError } from './decisioning/async-outcome';
 import { redactCredentialPatterns } from './redact';
 import { ADCP_ERROR_FIELD_ALLOWLIST } from './envelope-allowlist';
 import { InMemoryStateStore } from './state-store';
@@ -78,6 +80,7 @@ import {
   getSignalsResponse,
   activateSignalResponse,
   acquireRightsResponse,
+  updateRightsResponse,
   syncAccountsResponse,
   syncGovernanceResponse,
   reportUsageResponse,
@@ -183,12 +186,15 @@ import type {
   GetBrandIdentityRequestSchema,
   GetRightsRequestSchema,
   AcquireRightsRequestSchema,
+  UpdateRightsRequestSchema,
 } from '../types/schemas.generated';
 
 import type {
   AcquireRightsAcquired,
   AcquireRightsPendingApproval,
   AcquireRightsRejected,
+  UpdateRightsResponse,
+  UpdateRightsSuccess,
   GetBrandIdentitySuccess,
   GetRightsSuccess,
 } from '../types/core.generated';
@@ -717,6 +723,11 @@ export interface AdcpToolMap {
     result: AcquireRightsAcquired | AcquireRightsPendingApproval | AcquireRightsRejected;
     response: AcquireRightsAcquired | AcquireRightsPendingApproval | AcquireRightsRejected;
   };
+  update_rights: {
+    params: z.input<typeof UpdateRightsRequestSchema>;
+    result: UpdateRightsSuccess;
+    response: UpdateRightsResponse;
+  };
 }
 
 export type AdcpServerToolName = keyof AdcpToolMap;
@@ -849,16 +860,26 @@ export interface SponsoredIntelligenceHandlers<TAccount = unknown> {
 }
 
 /**
- * Brand rights covers identity and licensing workflows. `update_rights` and
- * `creative_approval` are intentionally not exposed here — the spec models
- * creative approval as a webhook (POST to `approval_webhook` returned from
- * `acquire_rights`), and neither has published JSON schemas yet. Implement
- * those as regular HTTP endpoints outside the MCP surface until schemas land.
+ * Brand rights covers identity and licensing workflows.
+ *
+ * `update_rights` is a first-class mutating tool — modify an existing rights
+ * grant (extend dates, adjust impression caps, change pricing, pause/resume).
+ * Schemas published in AdCP 3.0.x; framework dispatch parallels
+ * `acquire_rights`.
+ *
+ * `creative_approval` is intentionally NOT in this handler bag — the spec
+ * models it as an HTTP webhook (the buyer POSTs to the `approval_webhook`
+ * URL returned from `acquire_rights`), not as an MCP/A2A tool. Adopters
+ * wire the receiver to `BrandRightsPlatform.reviewCreativeApproval` and
+ * use `creativeApproved` / `creativeApprovalRejected` /
+ * `creativeApprovalPendingReview` / `creativeApprovalError` from
+ * `@adcp/sdk/server` to build the webhook response.
  */
 export interface BrandRightsHandlers<TAccount = unknown> {
   getBrandIdentity?: DomainHandler<'get_brand_identity', TAccount>;
   getRights?: DomainHandler<'get_rights', TAccount>;
   acquireRights?: DomainHandler<'acquire_rights', TAccount>;
+  updateRights?: DomainHandler<'update_rights', TAccount>;
 }
 
 // ---------------------------------------------------------------------------
@@ -1048,6 +1069,70 @@ export interface AdcpSignedRequestsState {
 export const ADCP_SIGNED_REQUESTS_STATE: unique symbol = Symbol.for('@adcp/client.signedRequestsState');
 
 /**
+ * Symbol marking that a server's `instructions` was supplied as a function
+ * (lazy / per-session form) rather than a static string. `serve()` reads
+ * this to refuse `reuseAgent: true` — the function is captured once at
+ * construction and would not re-evaluate per session under server reuse.
+ *
+ * Internal contract between `createAdcpServer` and `serve()`. Adopters
+ * who instantiate `McpServer` directly (without `createAdcpServer`) and
+ * want their own marker semantics should not import this symbol.
+ */
+export const ADCP_INSTRUCTIONS_FN: unique symbol = Symbol.for('@adcp/client.instructionsFn');
+
+/**
+ * Pre-resolution session context passed to a function-form `instructions`.
+ * Slim by design — no `account` (resolution hasn't run yet at MCP `initialize`
+ * time, which is the natural eval moment for per-session instructions).
+ *
+ * Both fields are reserved: today they are always `undefined` because the
+ * framework's `serve()` does not yet plumb auth + registry state into the
+ * factory before MCP `initialize`. Adopters who need tenant identity should
+ * use closures captured in their factory's HTTP-scoped state. The shape is
+ * forward-compatible: when the framework wires authInfo/agent through, the
+ * fields will populate without breaking existing function bodies.
+ *
+ * @see AdcpServerConfig.instructions
+ * @public
+ */
+export interface SessionContext {
+  /**
+   * @reserved Always `undefined` in v6.x. The framework does not yet plumb
+   * `authInfo` into the factory before MCP `initialize` — use closures
+   * captured in your factory's HTTP-scoped state for tenant identity today.
+   * Forward-compatible: when the framework wires this through, your
+   * `ctx.authInfo?.…` reads start returning real values without breaking
+   * existing function bodies.
+   */
+  readonly authInfo?: ResolvedAuthInfo;
+
+  /**
+   * @reserved Always `undefined` in v6.x. The framework does not yet plumb
+   * the resolved `BuyerAgent` into the factory before MCP `initialize` —
+   * use closures captured in your factory's HTTP-scoped state for tenant
+   * identity today. Forward-compatible: when the framework wires this
+   * through, your `ctx.agent?.…` reads start returning real values without
+   * breaking existing function bodies.
+   */
+  readonly agent?: BuyerAgent;
+}
+
+/**
+ * Behavior when a function-form `instructions` callback throws.
+ *
+ * - `'skip'` (default) — log server-side, treat as `undefined` (no
+ *   instructions). Right for prose-of-flavor (brand manifests, marketing
+ *   copy) where a registry fetch failure must not kill the buyer's session.
+ * - `'fail'` — rethrow. The MCP `initialize` handshake then fails at the
+ *   transport layer (this is NOT an `adcp_error` envelope — it kills the
+ *   session). Right for adopters whose instructions carry load-bearing
+ *   policy where stale/missing guidance is worse than a connection retry.
+ *
+ * @public
+ */
+export type OnInstructionsError = 'skip' | 'fail';
+
+/**
  * Shape of the preTransport function attached by `createAdcpServer` when
  * `signedRequests` is configured. Returns `true` if the middleware has already
  * sent a response (e.g., 401 on verification failure), `false` to continue
@@ -1066,7 +1151,7 @@ export type AdcpPreTransport = (
  * Declarative registration for a tool outside {@link AdcpToolMap} — seller
  * extensions (e.g. collection-list helpers), test-harness endpoints
  * (`comply_test_controller`), or AdCP surfaces whose JSON Schemas haven't
- * landed in the framework yet (`creative_approval`, `update_rights`).
+ * landed in the framework yet.
  *
  * These tools **bypass the framework's spec-tool pipeline**:
  * idempotency middleware, governance pre-checks, account resolution,
@@ -1330,7 +1415,61 @@ export interface AdcpServerConfig<TAccount = unknown> {
     params: IdempotencyPrincipalParams,
     toolName: AdcpServerToolName
   ) => string | undefined;
-  instructions?: string;
+  /**
+   * Server-level prose surfaced on MCP `initialize`. Two forms:
+   *
+   * 1. **Static string** (the historical form) — captured at construction,
+   *    same value for every session.
+   * 2. **Function** `(ctx: SessionContext) => string | undefined` — re-evaluated
+   *    each time `createAdcpServer` is called. Under the canonical
+   *    `serve({ reuseAgent: false })` flow (the default) the factory
+   *    runs per HTTP request, which under streamable-HTTP MCP is per
+   *    session — so the closure can surface tenant-shaped prose (per-buyer
+   *    brand manifests, storefront copy, "premium vs standard" partner
+   *    guidance).
+   *
+   * **Eval moment.** Strictly: once per `createAdcpServer` invocation.
+   * `serve({ reuseAgent: false })` makes that "per HTTP request, which is
+   * per session for streamable-HTTP MCP." Custom transports / hand-rolled
+   * dispatch must invoke `createAdcpServer` per session themselves to
+   * preserve the per-session semantic. `reuseAgent: true` would fire the
+   * function once for the lifetime of the shared agent — which defeats
+   * the purpose, so `serve()` refuses that combination at the first
+   * request.
+   *
+   * **`SessionContext` is reserved.** `authInfo` and `agent` are typed for
+   * forward compatibility but currently always `undefined` — the framework
+   * does not yet plumb auth/registry state into the factory. **Use closures
+   * captured in your factory's HTTP-scoped state for tenant identity today;
+   * `ctx.agent`/`ctx.authInfo` reads silently return `undefined` and ship
+   * empty prose to prod.** The function body will pick up populated fields
+   * when the framework wires them through.
+   *
+   * @example Per-tenant prose via factory closure (recommended pattern):
+   * ```ts
+   * serve(({ taskStore, host }) => createAdcpServer({
+   *   // host is HTTP-scoped — captured in the closure, NOT from ctx.
+   *   instructions: () => brandManifests.get(host)?.intro ?? defaultProse,
+   *   // ... rest of config
+   * }));
+   * ```
+   *
+   * **Async return is not yet supported.** Function MUST return `string |
+   * undefined` synchronously. A returned `Promise` throws `ConfigurationError`.
+   * Pre-resolve before invoking `createAdcpServer` if you need to fetch.
+   *
+   * @see SessionContext
+   * @see onInstructionsError
+   */
+  instructions?: string | ((ctx: SessionContext) => string | undefined);
+  /**
+   * Behavior when a function-form `instructions` callback throws. Defaults
+   * to `'skip'` — best-effort prose (brand manifests, marketing copy)
+   * should not kill the buyer's session on a registry fetch failure.
+   * Set `'fail'` for adopters whose instructions carry load-bearing
+   * policy. See {@link OnInstructionsError}.
+   */
+  onInstructionsError?: OnInstructionsError;
   taskStore?: TaskStore;
   taskMessageQueue?: TaskMessageQueue;
   /**
@@ -1413,8 +1552,7 @@ export interface AdcpServerConfig<TAccount = unknown> {
    * Gives sellers a declarative extension point without reaching for the
    * `getSdkServer()` escape hatch. Typical callers:
    *
-   *   - AdCP surfaces whose JSON Schemas haven't landed yet
-   *     (`creative_approval`, `update_rights`).
+   *   - AdCP surfaces whose JSON Schemas haven't landed yet.
    *   - Governance specialism helpers (`*_collection_list` family).
    *   - Test-harness tools (`comply_test_controller` — prefer
    *     {@link registerTestController} which wraps this).
@@ -1639,6 +1777,25 @@ function isErrorResponse(response: McpToolResponse): boolean {
  * `[object Object]` inside a SERVICE_UNAVAILABLE wrapper — the dispatcher
  * unwraps and returns the envelope directly when the shape matches.
  */
+/**
+ * Project a thrown {@link AdcpError} to the wire envelope. Used by the
+ * account-resolution and tool-handler catch blocks so adopters can throw
+ * typed errors at any depth and have the framework project the structured
+ * fields verbatim — without coercion to `SERVICE_UNAVAILABLE`. Mirrors the
+ * `isThrownAdcpError` unwrap, but for the in-process class throw rather
+ * than the already-projected envelope throw.
+ */
+function projectThrownAdcpError(err: AdcpError): McpToolResponse {
+  return adcpError(err.code, {
+    recovery: err.recovery,
+    message: err.message,
+    ...(err.field !== undefined && { field: err.field }),
+    ...(err.suggestion !== undefined && { suggestion: err.suggestion }),
+    ...(err.retry_after !== undefined && { retry_after: err.retry_after }),
+    ...(err.details !== undefined && { details: err.details }),
+  });
+}
+
 function isThrownAdcpError(value: unknown): value is McpToolResponse {
   if (!value || typeof value !== 'object') return false;
   const sc = (value as { structuredContent?: unknown }).structuredContent;
@@ -1775,6 +1932,7 @@ const TOOL_META: Record<string, ToolMeta> = {
   get_brand_identity: { wrap: null, annotations: RO },
   get_rights: { wrap: null, annotations: RO },
   acquire_rights: { wrap: acquireRightsResponse, annotations: MUT },
+  update_rights: { wrap: updateRightsResponse, annotations: MUT },
 };
 
 // ---------------------------------------------------------------------------
@@ -1860,6 +2018,7 @@ const BRAND_RIGHTS_ENTRIES: HandlerEntry[] = [
   { handlerKey: 'getBrandIdentity', toolName: 'get_brand_identity' },
   { handlerKey: 'getRights', toolName: 'get_rights' },
   { handlerKey: 'acquireRights', toolName: 'acquire_rights' },
+  { handlerKey: 'updateRights', toolName: 'update_rights' },
 ];
 
 // ---------------------------------------------------------------------------
@@ -2378,7 +2537,8 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
     capabilities: capConfig,
     idempotency: idempotencyConfig,
     resolveIdempotencyPrincipal,
-    instructions,
+    instructions: instructionsOption,
+    onInstructionsError = 'skip',
     taskStore,
     taskMessageQueue,
     webhooks,
@@ -2639,10 +2799,64 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
   // knowing about the emitter's construction or options.
   const webhookEmitter = webhooks ? createWebhookEmitter(webhooks) : undefined;
 
+  // Resolve `instructions` — function form is evaluated at construction.
+  // Under `serve({ reuseAgent: false })` (the default) the factory runs
+  // per HTTP request, so the function fires per session. Under
+  // `reuseAgent: true` the function would fire once and never again —
+  // `serve()` refuses that combination via `ADCP_INSTRUCTIONS_FN`.
+  const instructionsIsFn = typeof instructionsOption === 'function';
+  let resolvedInstructions: string | undefined;
+  if (typeof instructionsOption === 'string') {
+    resolvedInstructions = instructionsOption;
+  } else if (instructionsIsFn) {
+    try {
+      const result = (instructionsOption as (ctx: SessionContext) => string | undefined)({});
+      // Promise detection — must guard for null + non-object before reading
+      // `.then`, otherwise `typeof null.then` throws TypeError and the user
+      // sees a confusing framework-internal stack instead of their own bug.
+      const isThenable =
+        result !== null && typeof result === 'object' && typeof (result as { then?: unknown }).then === 'function';
+      if (isThenable) {
+        throw new ConfigurationError(
+          'createAdcpServer: function-form `instructions` returned a Promise, but async resolution is not yet ' +
+            'supported. Pre-resolve before invoking createAdcpServer (e.g., `instructions: await fetchProse()`), ' +
+            'or wrap your async loader in a sync cache.'
+        );
+      }
+      // Reject non-string non-undefined returns instead of silently coercing
+      // (`String({})` → "[object Object]" would ship as instructions otherwise).
+      // The TS signature already constrains return to `string | undefined`;
+      // this catches `as any` escapees and untyped JS callers. Routed through
+      // the same try/catch as user-thrown errors so `onInstructionsError`
+      // governs both — a buggy callback is the same shape of problem either
+      // way (Promise return is the exception: framework can't recover, so
+      // it throws ConfigurationError unconditionally above).
+      if (result !== undefined && typeof result !== 'string') {
+        throw new Error(
+          `function-form \`instructions\` must return string | undefined, got ${result === null ? 'null' : typeof result}. ` +
+            `Return a string for the prose, or undefined for "no instructions on this session."`
+        );
+      }
+      resolvedInstructions = result;
+    } catch (err) {
+      if (err instanceof ConfigurationError) throw err;
+      if (onInstructionsError === 'fail') {
+        throw err;
+      }
+      // 'skip' — log server-side, surface no instructions to MCP `initialize`.
+      logger.warn('[adcp/createAdcpServer] instructions() threw; skipping (onInstructionsError: "skip")', {
+        error: err instanceof Error ? err.message : String(err),
+      });
+      resolvedInstructions = undefined;
+    }
+  } else {
+    resolvedInstructions = undefined;
+  }
+
   const server = createTaskCapableServer(name, version, {
     taskStore,
     taskMessageQueue,
-    instructions,
+    instructions: resolvedInstructions,
   });
 
   const registeredToolNames = new Set<string>();
@@ -2989,6 +3203,18 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
             }
             ctx.account = account;
           } catch (err) {
+            // Typed errors propagate verbatim — both the already-projected
+            // envelope shape (`isThrownAdcpError`) and the raw class throw
+            // (`AdcpError instanceof`). Resolvers can surface
+            // `INVALID_REQUEST` for inline `account_id` against an
+            // `'implicit'`-resolution platform (#1364), or any other typed
+            // wire error, without coercion. Generic exceptions still
+            // project to SERVICE_UNAVAILABLE so upstream leaks don't cross
+            // the trust boundary.
+            if (isThrownAdcpError(err)) return finalize(err);
+            if (err instanceof AdcpError) {
+              return finalize(projectThrownAdcpError(err));
+            }
             const reason = err instanceof Error ? err.message : String(err);
             logger.error('Account resolution failed', { tool: toolName, error: reason });
             return finalize(
@@ -3013,6 +3239,14 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
             });
             if (account != null) ctx.account = account;
           } catch (err) {
+            // Same typed-error pass-through as the explicit `resolveAccount`
+            // catch above — both the already-projected envelope shape and
+            // the raw `AdcpError` class throw propagate verbatim. Generic
+            // exceptions project to SERVICE_UNAVAILABLE.
+            if (isThrownAdcpError(err)) return finalize(err);
+            if (err instanceof AdcpError) {
+              return finalize(projectThrownAdcpError(err));
+            }
             const reason = err instanceof Error ? err.message : String(err);
             logger.error('Auth-derived account resolution failed', { tool: toolName, error: reason });
             return finalize(
@@ -3451,6 +3685,22 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
             });
             return finalize(err);
           }
+          // Raw `AdcpError` class throws — distinct from the
+          // already-projected envelope above. The framework has long
+          // documented `throw new AdcpError(...)` as the canonical way
+          // to signal structured rejection from any specialism method
+          // (see `AdcpError` JSDoc). Project to the typed envelope so
+          // the buyer sees the typed code, not `SERVICE_UNAVAILABLE`.
+          if (err instanceof AdcpError) {
+            logger.warn('Handler threw an AdcpError', {
+              tool: toolName,
+              handler: handlerKey,
+              code: err.code,
+              message: err.message,
+              stack: err.stack,
+            });
+            return finalize(projectThrownAdcpError(err));
+          }
           const reason = err instanceof Error ? err.message : String(err);
           // Log the full stack — `logger.error` with just the message turned
           // every "Handler failed" into a guessing game for agent authors.
@@ -3549,6 +3799,22 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
       const custom = config.customTools[customName];
       if (!custom) continue;
       const { description, title, inputSchema, outputSchema, annotations, handler } = custom;
+      // Wrap the adopter-supplied handler so `throw new AdcpError(...)` and
+      // `throw adcpError(...)` from inside it project to the typed envelope —
+      // matching the behavior framework-registered tools get from the catch
+      // at line ~3494. Without the wrap, AdcpError throws escape to the MCP
+      // SDK as generic JSON-RPC errors and the buyer loses the typed code.
+      // The framework's own `tasks_get` is registered through this path.
+      const rawHandler = handler as (...args: unknown[]) => Promise<McpToolResponse> | McpToolResponse;
+      const wrappedHandler = (async (...args: unknown[]) => {
+        try {
+          return await rawHandler(...args);
+        } catch (err) {
+          if (isThrownAdcpError(err)) return err;
+          if (err instanceof AdcpError) return projectThrownAdcpError(err);
+          throw err;
+        }
+      }) as Parameters<typeof server.registerTool>[2];
       server.registerTool(
         customName,
         {
@@ -3558,7 +3824,7 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
           ...(outputSchema != null && { outputSchema }),
           ...(annotations != null && { annotations }),
         } as Parameters<typeof server.registerTool>[1],
-        handler as Parameters<typeof server.registerTool>[2]
+        wrappedHandler
       );
       registeredToolNames.add(customName);
     }
@@ -3798,6 +4064,17 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
     configurable: true,
     writable: false,
   });
+  // Mark when `instructions` was supplied as a function, so `serve()` can
+  // refuse `reuseAgent: true` — the function is captured once at construction
+  // and would not re-evaluate per session under server reuse.
+  if (instructionsIsFn) {
+    Object.defineProperty(wrapped, ADCP_INSTRUCTIONS_FN, {
+      value: true,
+      enumerable: false,
+      configurable: true,
+      writable: false,
+    });
+  }
   // Expose the capabilitiesData object so post-registration helpers
   // (registerTestController) can add spec-defined capability blocks
   // — comply_test_controller is registered AFTER createAdcpServer,

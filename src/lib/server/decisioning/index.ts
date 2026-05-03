@@ -137,6 +137,12 @@ export type { DecisioningPlatform, RequiredPlatformsFor, RequiredCapabilitiesFor
 export { composeMethod } from './compose';
 export type { ComposeHooks, ComposeShortCircuit } from './compose';
 
+// `accounts.resolve` security presets (closes #1339) — canonical post-resolve
+// guards that standardize the multi-tenant authorization pattern instead of
+// every adopter rolling their own.
+export { requireAccountMatch, requireAdvertiserMatch, requireOrgScope } from './resolve-presets';
+export type { ResolveAccountHooks, ResolveGuardOptions } from './resolve-presets';
+
 // Specialism interfaces (v1.0)
 export type {
   CreativeBuilderPlatform,
@@ -157,7 +163,7 @@ export type { ContentStandardsPlatform } from './specialisms/content-standards';
 
 export type { PropertyListsPlatform, CollectionListsPlatform } from './specialisms/lists';
 
-export type { SalesPlatform } from './specialisms/sales';
+export type { SalesPlatform, SalesCorePlatform, SalesIngestionPlatform } from './specialisms/sales';
 
 export type { AudiencePlatform, Audience, SyncAudiencesRow, AudienceStatus } from './specialisms/audiences';
 
@@ -269,6 +275,8 @@ export type { RequestShape } from './helpers';
 export {
   definePlatform,
   defineSalesPlatform,
+  defineSalesCorePlatform,
+  defineSalesIngestionPlatform,
   defineAudiencePlatform,
   defineSignalsPlatform,
   defineCreativeBuilderPlatform,

@@ -1,5 +1,5 @@
 /**
- * hello_seller_adapter_signal_marketplace — worked starting point for an
+ * hello_signals_adapter_marketplace — worked starting point for an
  * AdCP signals adapter that wraps an upstream signal-marketplace platform.
  *
  * Fork this. Replace `UpstreamClient` with your real backend's HTTP/SDK
@@ -8,14 +8,14 @@
  * Demo:
  *   npx @adcp/sdk@latest mock-server signal-marketplace --port 4150
  *   UPSTREAM_URL=http://127.0.0.1:4150 \
- *     npx tsx examples/hello_seller_adapter_signal_marketplace.ts
+ *     npx tsx examples/hello_signals_adapter_marketplace.ts
  *   adcp storyboard run http://127.0.0.1:3001/mcp signal_marketplace \
  *     --auth sk_harness_do_not_use_in_prod
  *   curl http://127.0.0.1:4150/_debug/traffic
  *
  * Production:
  *   UPSTREAM_URL=https://my-platform.example/api UPSTREAM_API_KEY=… \
- *     npx tsx examples/hello_seller_adapter_signal_marketplace.ts
+ *     npx tsx examples/hello_signals_adapter_marketplace.ts
  */
 
 import {
@@ -28,6 +28,7 @@ import {
   AdcpError,
   BuyerAgentRegistry,
   defineSignalsPlatform,
+  registerTestController,
   type DecisioningPlatform,
   type SignalsPlatform,
   type AccountStore,
@@ -36,6 +37,7 @@ import {
   type CachedBuyerAgentRegistry,
 } from '@adcp/sdk/server';
 import type { GetSignalsResponse, ActivateSignalRequest, ActivateSignalSuccess } from '@adcp/sdk/types';
+import { createUpstreamRecorder, toQueryUpstreamTrafficResponse } from '@adcp/sdk/upstream-recorder';
 import { createHash, randomUUID } from 'node:crypto';
 
 const UPSTREAM_URL = process.env['UPSTREAM_URL'] ?? 'http://127.0.0.1:4150';
@@ -77,9 +79,43 @@ interface UpstreamActivation {
   agent_activation_key?: { agent_segment?: string };
 }
 
+// ---------------------------------------------------------------------------
+// Upstream-traffic recorder (sandbox-only, opts into `upstream_traffic` storyboard checks)
+// ---------------------------------------------------------------------------
+//
+// Wires `@adcp/sdk/upstream-recorder` so the runner-output-contract v2.0.0
+// `upstream_traffic` storyboard validation grades against real outbound calls
+// rather than the AdCP-shaped response. The recorder is sandbox-only; in
+// production builds set `enabled: false` (or run with NODE_ENV=production
+// + the explicit ADCP_RECORDER_PRODUCTION_ACK=1 escape hatch).
+//
+// Strict mode here so `record()` outside scope throws instead of silently
+// dropping — adopters debugging integration runs see the unwrapped call
+// site as a stack trace, not a mysterious "controller present, observed
+// nothing" storyboard failure.
+const recorder = createUpstreamRecorder({
+  enabled: process.env['NODE_ENV'] !== 'production',
+  strict: process.env['ADCP_RECORDER_STRICT'] === '1',
+});
+
+// Record-time and query-time MUST use the same principal string. This
+// example uses a single static API key, so we hardcode the auth
+// principal and use it both inside `runWithPrincipal` (per handler) and
+// when the controller's `query_upstream_traffic` scenario fires. Multi-
+// tenant adopters resolve this per request from their auth context (the
+// `verifyApiKey({ keys: { ... principal } })` value, an OAuth client_id,
+// or the resolved account.id) and pass it via the registerTestController
+// factory shape (`createStore: async input => ...`).
+const RECORDER_PRINCIPAL = 'compliance-runner';
+
+// Pass the recorder-wrapped fetch into `createUpstreamHttpClient` so every
+// outbound call flows through `runWithPrincipal`-scoped recording. With the
+// recorder disabled (production builds), `wrapFetch` returns the input
+// unchanged — zero per-call overhead.
 const http = createUpstreamHttpClient({
   baseUrl: UPSTREAM_URL,
   auth: { kind: 'static_bearer', token: UPSTREAM_API_KEY },
+  fetch: recorder.wrapFetch(fetch),
 });
 
 const tenantHeader = (operatorId: string) => ({ 'X-Operator-Id': operatorId });
@@ -210,8 +246,8 @@ const ONBOARDING_LEDGER = new Map<string, BuyerAgent>([
       status: 'active',
       // Set-valued: this agent is allowed to request operator-billed
       // accounts only. A real holdco might be `new Set(['operator',
-      // 'agent', 'advertiser'])`. Phase 2 (#1292) wires framework-level
-      // enforcement; today the field documents commercial intent.
+      // 'agent', 'advertiser'])`. The framework will gain enforcement of
+      // these capabilities; today the field documents commercial intent.
       billing_capabilities: new Set(['operator']),
       // Test-agent default. Framework rejects any request from this
       // agent whose resolved Account.sandbox !== true. Production
@@ -303,7 +339,13 @@ class SignalMarketplaceAdapter implements DecisioningPlatform<Record<string, nev
      *  tenant resolution against the durable buyer-agent identity here
      *  rather than re-deriving from the credential. */
     resolve: async (ref, ctx) => {
-      const adcpOperator = (ref as { operator?: string })?.operator;
+      if (!ref) return null;
+      // AccountReference discriminated union: `{ account_id }` post-sync,
+      // or `{ brand, operator, sandbox? }` on initial discovery. Mock has
+      // no account_id index; SWAP: production keeps an account_id →
+      // operator_id index populated during list_accounts.
+      if ('account_id' in ref) return null;
+      const adcpOperator = ref.operator;
       if (!adcpOperator) return null;
       // Optional: gate the operator on the buyer agent's allowed_brands /
       // billing_capabilities. Sellers who don't cross-check operator vs.
@@ -333,97 +375,103 @@ class SignalMarketplaceAdapter implements DecisioningPlatform<Record<string, nev
   };
 
   signals: SignalsPlatform<OperatorMeta> = defineSignalsPlatform<OperatorMeta>({
-    getSignals: async (req, ctx) => {
-      const operatorId = ctx.account.ctx_metadata.operator_id;
-      // `signal_spec` is a semantic brief, not a substring keyword. A real
-      // semantic-search backend would consume it; the published mock does
-      // literal substring filtering on /v2/cohorts?q=. Fetch the full
-      // catalog and filter client-side via signal_ids.
-      const cohorts = await upstream.listCohorts(operatorId);
-      const filtered = cohorts.filter(c => {
-        if (!Array.isArray(req.signal_ids) || req.signal_ids.length === 0) return true;
-        // signal_ids is signal_id[] — provenance objects, not strings.
-        // Narrow on the catalog variant before reading data_provider_domain.
-        // See skills/SHAPE-GOTCHAS.md §2.
-        return req.signal_ids.some(
-          sid =>
-            sid.source === 'catalog' &&
-            sid.data_provider_domain === c.data_provider_domain &&
-            sid.id === c.data_provider_id
-        );
-      });
-      return { signals: filtered.map(toAdcpSignal) } satisfies GetSignalsResponse;
-    },
-
-    activateSignal: async (req: ActivateSignalRequest, ctx): Promise<ActivateSignalSuccess> => {
-      const operatorId = ctx.account.ctx_metadata.operator_id;
-      const cohortId = req.signal_agent_segment_id;
-      const cohort = await upstream.getCohort(operatorId, cohortId);
-      if (!cohort) {
-        throw new AdcpError('SIGNAL_NOT_FOUND', {
-          message: `Unknown signal: ${cohortId}`,
-          field: 'signal_agent_segment_id',
+    getSignals: (req, ctx) =>
+      // `recorder.runWithPrincipal` scopes every outbound call inside `fn`
+      // to `ctx.account.id` for `upstream_traffic` storyboard checks. The
+      // SAME principal MUST be passed at query time in the
+      // comply_test_controller handler below — mismatch returns zero.
+      recorder.runWithPrincipal(RECORDER_PRINCIPAL, async () => {
+        const operatorId = ctx.account.ctx_metadata.operator_id;
+        // `signal_spec` is a semantic brief, not a substring keyword. A real
+        // semantic-search backend would consume it; the published mock does
+        // literal substring filtering on /v2/cohorts?q=. Fetch the full
+        // catalog and filter client-side via signal_ids.
+        const cohorts = await upstream.listCohorts(operatorId);
+        const filtered = cohorts.filter(c => {
+          if (!Array.isArray(req.signal_ids) || req.signal_ids.length === 0) return true;
+          // signal_ids is signal_id[] — provenance objects, not strings.
+          // Narrow on the catalog variant before reading data_provider_domain.
+          // See skills/SHAPE-GOTCHAS.md §2.
+          return req.signal_ids.some(
+            sid =>
+              sid.source === 'catalog' &&
+              sid.data_provider_domain === c.data_provider_domain &&
+              sid.id === c.data_provider_id
+          );
         });
-      }
-      const upstreamDests = await upstream.listDestinations(operatorId);
-      const pricingId = req.pricing_option_id ?? cohort.pricing[0]?.pricing_id;
-      if (!pricingId) {
-        throw new AdcpError('INVALID_REQUEST', {
-          message: 'pricing_option_id required and no default pricing on signal',
-          field: 'pricing_option_id',
-        });
-      }
-      const idempotency = req.idempotency_key ?? randomUUID();
+        return { signals: filtered.map(toAdcpSignal) } satisfies GetSignalsResponse;
+      }),
 
-      const deployments = await Promise.all(
-        req.destinations.map(async (dest, i) => {
-          const matched =
-            dest.type === 'platform'
-              ? upstreamDests.find(d => d.platform_type !== 'agent' && d.platform_code === dest.platform)
-              : upstreamDests.find(d => d.platform_type === 'agent' && d.agent_url === dest.agent_url);
-          if (!matched) {
-            const target = dest.type === 'platform' ? dest.platform : dest.agent_url;
-            throw new AdcpError('INVALID_REQUEST', {
-              message: `No upstream destination matches ${target}`,
-              field: 'destinations',
-            });
-          }
-          const activation = await upstream.activate(operatorId, {
-            cohort_id: cohort.cohort_id,
-            destination_id: matched.destination_id,
-            pricing_id: pricingId,
-            client_request_id: `${idempotency}.${i}`,
+    activateSignal: (req: ActivateSignalRequest, ctx): Promise<ActivateSignalSuccess> =>
+      recorder.runWithPrincipal(RECORDER_PRINCIPAL, async () => {
+        const operatorId = ctx.account.ctx_metadata.operator_id;
+        const cohortId = req.signal_agent_segment_id;
+        const cohort = await upstream.getCohort(operatorId, cohortId);
+        if (!cohort) {
+          throw new AdcpError('SIGNAL_NOT_FOUND', {
+            message: `Unknown signal: ${cohortId}`,
+            field: 'signal_agent_segment_id',
           });
-          if (dest.type === 'agent') {
-            // ActivationKey oneOf — for `type: 'key_value'`, `key` and `value`
-            // sit at the TOP level (not nested under a `key_value` field).
-            // `value` MUST be string. See skills/SHAPE-GOTCHAS.md §1.
+        }
+        const upstreamDests = await upstream.listDestinations(operatorId);
+        const pricingId = req.pricing_option_id ?? cohort.pricing[0]?.pricing_id;
+        if (!pricingId) {
+          throw new AdcpError('INVALID_REQUEST', {
+            message: 'pricing_option_id required and no default pricing on signal',
+            field: 'pricing_option_id',
+          });
+        }
+        const idempotency = req.idempotency_key ?? randomUUID();
+
+        const deployments = await Promise.all(
+          req.destinations.map(async (dest, i) => {
+            const matched =
+              dest.type === 'platform'
+                ? upstreamDests.find(d => d.platform_type !== 'agent' && d.platform_code === dest.platform)
+                : upstreamDests.find(d => d.platform_type === 'agent' && d.agent_url === dest.agent_url);
+            if (!matched) {
+              const target = dest.type === 'platform' ? dest.platform : dest.agent_url;
+              throw new AdcpError('INVALID_REQUEST', {
+                message: `No upstream destination matches ${target}`,
+                field: 'destinations',
+              });
+            }
+            const activation = await upstream.activate(operatorId, {
+              cohort_id: cohort.cohort_id,
+              destination_id: matched.destination_id,
+              pricing_id: pricingId,
+              client_request_id: `${idempotency}.${i}`,
+            });
+            if (dest.type === 'agent') {
+              // ActivationKey oneOf — for `type: 'key_value'`, `key` and `value`
+              // sit at the TOP level (not nested under a `key_value` field).
+              // `value` MUST be string. See skills/SHAPE-GOTCHAS.md §1.
+              return {
+                type: 'agent' as const,
+                agent_url: dest.agent_url,
+                is_live: true,
+                activation_key: {
+                  type: 'key_value' as const,
+                  key: 'agent_segment',
+                  value: activation.agent_activation_key?.agent_segment ?? activation.activation_id,
+                },
+                deployed_at: new Date().toISOString(),
+              };
+            }
             return {
-              type: 'agent' as const,
-              agent_url: dest.agent_url,
-              is_live: true,
+              type: 'platform' as const,
+              platform: dest.platform,
+              is_live: false,
               activation_key: {
-                type: 'key_value' as const,
-                key: 'agent_segment',
-                value: activation.agent_activation_key?.agent_segment ?? activation.activation_id,
+                type: 'segment_id' as const,
+                segment_id: activation.segment_id ?? activation.activation_id,
               },
-              deployed_at: new Date().toISOString(),
+              estimated_activation_duration_minutes: 30,
             };
-          }
-          return {
-            type: 'platform' as const,
-            platform: dest.platform,
-            is_live: false,
-            activation_key: {
-              type: 'segment_id' as const,
-              segment_id: activation.segment_id ?? activation.activation_id,
-            },
-            estimated_activation_duration_minutes: 30,
-          };
-        })
-      );
-      return { deployments } satisfies ActivateSignalSuccess;
-    },
+          })
+        );
+        return { deployments } satisfies ActivateSignalSuccess;
+      }),
   });
 }
 
@@ -435,9 +483,9 @@ const platform = new SignalMarketplaceAdapter();
 const idempotencyStore = createIdempotencyStore({ backend: memoryBackend(), ttlSeconds: 86_400 });
 
 serve(
-  ({ taskStore }) =>
-    createAdcpServerFromPlatform(platform, {
-      name: 'hello-seller-adapter-signal-marketplace',
+  ({ taskStore }) => {
+    const adcpServer = createAdcpServerFromPlatform(platform, {
+      name: 'hello-signals-adapter-marketplace',
       version: '1.0.0',
       taskStore,
       idempotency: idempotencyStore,
@@ -446,7 +494,33 @@ serve(
         const acct = ctx.account as Account<OperatorMeta> | undefined;
         return acct?.id ?? 'anonymous';
       },
-    }),
+    });
+
+    // Register `comply_test_controller` with the recorder-backed
+    // `query_upstream_traffic` scenario. The runner queries this after
+    // each step that declares a `check: upstream_traffic` validation;
+    // adopters who don't advertise the scenario grade `not_applicable`.
+    //
+    // Sandbox-only — production builds 404 the controller entirely
+    // (gate via the `if (process.env.ADCP_SANDBOX === '1')` pattern from
+    // the SKILL). For this example adapter we always register since the
+    // example is itself a fixture for the matrix harness.
+    registerTestController(adcpServer, {
+      // Adapter resolves principal from auth context. The same string
+      // MUST be returned by both record-time (runWithPrincipal) and
+      // query-time — mismatch returns zero per cross-tenant isolation.
+      queryUpstreamTraffic: async params => {
+        const result = recorder.query({
+          principal: RECORDER_PRINCIPAL,
+          ...(params.since_timestamp !== undefined && { sinceTimestamp: params.since_timestamp }),
+          ...(params.endpoint_pattern !== undefined && { endpointPattern: params.endpoint_pattern }),
+          ...(params.limit !== undefined && { limit: params.limit }),
+        });
+        return toQueryUpstreamTrafficResponse(result);
+      },
+    });
+    return adcpServer;
+  },
   {
     port: PORT,
     authenticate: verifyApiKey({

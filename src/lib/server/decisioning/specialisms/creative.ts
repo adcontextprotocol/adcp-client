@@ -15,7 +15,7 @@
  * @public
  */
 
-import type { Account } from '../account';
+import type { Account, NoAccountCtx } from '../account';
 import type { RequestContext } from '../context';
 import type { TaskHandoff } from '../async-outcome';
 import type {
@@ -26,6 +26,8 @@ import type {
   BuildCreativeMultiSuccess,
   PreviewCreativeRequest,
   PreviewCreativeResponse,
+  ListCreativeFormatsRequest,
+  ListCreativeFormatsResponse,
 } from '../../../types/tools.generated';
 import type { SyncCreativesRow } from './sales';
 
@@ -124,8 +126,34 @@ export interface CreativeBuilderPlatform<TCtxMeta = Record<string, unknown>> {
    * preview ahead of generation can omit it; the framework returns
    * `UNSUPPORTED_FEATURE` to buyers calling `preview_creative` against
    * a platform that didn't wire this.
+   *
+   * ⚠️  NO-ACCOUNT TOOL — `ctx: NoAccountCtx<TCtxMeta>`. The wire request
+   * does not carry an `account` field, so `ctx.account` may be `undefined`
+   * when `accounts.resolve(undefined)` returned null. Narrow before reading
+   * `ctx.account.ctx_metadata`. See {@link NoAccountCtx}.
    */
-  previewCreative?(req: PreviewCreativeRequest, ctx: Ctx<TCtxMeta>): Promise<PreviewCreativeResponse>;
+  previewCreative?(req: PreviewCreativeRequest, ctx: NoAccountCtx<TCtxMeta>): Promise<PreviewCreativeResponse>;
+
+  /**
+   * Format catalog. Buyers call `list_creative_formats` to discover the
+   * formats this agent supports. Optional because adopters who declare
+   * their formats via `capabilities.creative_agents` (delegating to a
+   * separate creative agent) don't own format definitions; the framework
+   * surfaces `UNSUPPORTED_FEATURE` when omitted.
+   *
+   * ⚠️  NO-ACCOUNT TOOL — `ctx: NoAccountCtx<TCtxMeta>`. The wire request
+   * does not carry an `account` field. The framework dispatches with
+   * `ctx.account === undefined` for `'explicit'`-resolution adopters that
+   * don't return a synthetic singleton from `accounts.resolve(undefined)`.
+   * Format catalogs are typically publisher-wide; if yours is per-tenant
+   * (Bannerflow / Celtra-style multi-tenant catalogs), return a synthetic
+   * account from `accounts.resolve(undefined)` keyed on
+   * `ctx.authInfo.clientId` and narrow `ctx.account` inside the handler.
+   */
+  listCreativeFormats?(
+    req: ListCreativeFormatsRequest,
+    ctx: NoAccountCtx<TCtxMeta>
+  ): Promise<ListCreativeFormatsResponse>;
 
   /**
    * Refine a prior generation. `taskId` references a prior submission.
@@ -146,6 +174,29 @@ export interface CreativeBuilderPlatform<TCtxMeta = Record<string, unknown>> {
     creatives: Creative[],
     ctx: Ctx<TCtxMeta>
   ): Promise<SyncCreativesRow[] | TaskHandoff<SyncCreativesRow[]>>;
+
+  /**
+   * Format catalog. Buyers query what creative formats this builder
+   * supports — same wire shape that sellers expose via
+   * `SalesPlatform.listCreativeFormats`. Optional because adopters who
+   * declare external `creative_agents` in their capabilities can let the
+   * framework discover formats via those references; self-hosted creative
+   * builders implement this directly.
+   *
+   * ⚠️  NO-ACCOUNT TOOL. The wire request does not carry an `account` field.
+   * `ctx.account` may be `undefined` for `'explicit'`-resolution adopters
+   * — see {@link AccountStore} JSDoc for safe patterns (`'derived'`
+   * resolution returning a singleton, or returning a synthetic publisher-
+   * wide Account from `accounts.resolve(undefined)`).
+   *
+   * **Precedence:** when an adopter ALSO wires `SalesPlatform.listCreativeFormats`
+   * on the same platform, the sales-side handler wins (mediaBuy domain
+   * registers before creative). Don't wire both — pick the surface that
+   * matches your specialism. This creative-side wiring exists for adopters
+   * claiming only creative specialisms (`creative-template`, `creative-
+   * generative`, `creative-ad-server`) without a sales platform attached.
+   */
+  listCreativeFormats?(req: ListCreativeFormatsRequest, ctx: Ctx<TCtxMeta>): Promise<ListCreativeFormatsResponse>;
 }
 
 /**

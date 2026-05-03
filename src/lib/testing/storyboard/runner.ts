@@ -29,6 +29,7 @@ import {
   type UpstreamTrafficQueryResult,
 } from './validations';
 import { toJsonPointer } from './path';
+import { redactSecrets } from '../../utils/redact-secrets';
 import { queryUpstreamTraffic, type ControllerScenario, type UpstreamTrafficSuccess } from '../test-controller';
 import { enrichRequest, hasRequestEnricher } from './request-builder';
 import { resolveAccount, resolveBrand } from '../client';
@@ -64,6 +65,7 @@ interface PreSeededInput {
 }
 import type {
   A2ATaskEnvelope,
+  AgentEntry,
   AssertionResult,
   BranchSetSpec,
   ContextProvenanceEntry,
@@ -89,6 +91,13 @@ import type {
   SchemaValidationError,
   ValidationResult,
 } from './types';
+import {
+  buildRoutingContext,
+  DiscoveryFailure,
+  resolveAgentForStep,
+  RoutingError,
+  type AgentRoutingContext,
+} from './agent-routing';
 import { DETAILED_SKIP_TO_CANONICAL } from './types';
 import type { AgentProfile, TaskResult, TestStepResult } from '../types';
 import {
@@ -303,16 +312,6 @@ function extractionFromTaskResult(taskResult: TaskResult | undefined): RunnerExt
   return taskResult.data !== undefined && taskResult.data !== null ? { path: 'structured_content' } : { path: 'none' };
 }
 
-/**
- * Keys whose values must never appear verbatim in a compliance report.
- * Matching is case-insensitive and structural: any property whose final
- * path segment matches is replaced with `'[redacted]'` before the payload
- * is persisted on a step result. The contract spec calls for exactly this:
- * "Secrets SHOULD be redacted with the literal string '[redacted]'".
- */
-const SECRET_KEY_PATTERN =
-  /^(authorization|credentials?|token|api[_-]?key|password|secret|client[_-]secret|refresh[_-]token|access[_-]token|bearer|session[_-]token|session[_-]id|offering[_-]token|cookie|set[_-]cookie)$/i;
-
 export function __redactSecretsForTest(value: unknown): unknown {
   return redactSecrets(value);
 }
@@ -327,22 +326,6 @@ export function __defaultAuthHeadersForRawProbeForTest(
   options: StoryboardRunOptions
 ): Record<string, string> | undefined {
   return defaultAuthHeadersForRawProbe(options);
-}
-
-function redactSecrets(value: unknown, depth = 0): unknown {
-  if (depth > 32) return value; // cheap cycle guard
-  if (Array.isArray(value)) return value.map(v => redactSecrets(v, depth + 1));
-  if (value && typeof value === 'object') {
-    const out: Record<string, unknown> = {};
-    for (const [k, v] of Object.entries(value as Record<string, unknown>)) {
-      out[k] =
-        SECRET_KEY_PATTERN.test(k) && (typeof v === 'string' || typeof v === 'number')
-          ? '[redacted]'
-          : redactSecrets(v, depth + 1);
-    }
-    return out;
-  }
-  return value;
 }
 
 /**
@@ -400,8 +383,17 @@ export async function runStoryboard(
   // fired, and the runtime's grading depends on the invariants holding.
   // `validateStoryboardShape` is idempotent so the double-pass is safe.
   validateStoryboardShape(storyboard);
+
+  // Per-specialism routing (#1066). Mutually exclusive with replica-array
+  // dispatch and `_client`. Validate the shape of `options.agents` here so
+  // misconfigured callers fail fast with a clear error rather than getting
+  // silently routed to the first URL or a stale single-agent client.
+  if (options.agents !== undefined) {
+    validateAgentsMap(agentUrlOrUrls, storyboard, options);
+  }
+
   const agentUrls = Array.isArray(agentUrlOrUrls) ? agentUrlOrUrls : [agentUrlOrUrls];
-  if (agentUrls.length === 0) {
+  if (!options.agents && agentUrls.length === 0) {
     throw new Error('runStoryboard: at least one agent URL required');
   }
   const isMultiInstance = agentUrls.length > 1;
@@ -429,7 +421,119 @@ export async function runStoryboard(
     }
     return runMultiPass(agentUrls, storyboard, options);
   }
+  if (options.agents) {
+    // Project the agents map's URLs into the legacy `agentUrls` array so
+    // downstream signatures (per-step `agent_url:` records, etc.) keep
+    // working unchanged. The routing dispatcher inside
+    // `executeStoryboardPass` reads `options.agents` directly for the
+    // actual per-tool routing.
+    const projected = Object.values(options.agents).map(e => e.url);
+    return executeStoryboardPass(projected, storyboard, options, 0);
+  }
   return executeStoryboardPass(agentUrls, storyboard, options, 0);
+}
+
+/**
+ * Validate the shape and consistency of `StoryboardRunOptions.agents` (#1066).
+ *
+ * Catches the failure modes that would otherwise surface as confusing
+ * runtime errors deep inside discovery or dispatch:
+ *
+ *   - empty map
+ *   - `default_agent` referencing an unknown key
+ *   - `step.agent` referencing an unknown key
+ *   - co-existence with `multi_instance_strategy` (replicas, different concept)
+ *   - co-existence with `_client` (single client cannot serve multiple agents)
+ *   - first positional arg passed alongside the map (ambiguous routing intent)
+ */
+function validateAgentsMap(
+  agentUrlOrUrls: string | string[],
+  storyboard: Storyboard,
+  options: StoryboardRunOptions
+): void {
+  const agents = options.agents!;
+  const keys = Object.keys(agents);
+  if (keys.length === 0) {
+    throw new Error(
+      'runStoryboard: `agents` is set but contains no entries. ' + 'Either remove the key or supply at least one agent.'
+    );
+  }
+  for (const key of keys) {
+    const entry = agents[key];
+    if (!entry || typeof entry.url !== 'string' || entry.url === '') {
+      throw new Error(
+        `runStoryboard: agents['${key}'] missing a non-empty \`url\`. ` + 'Each entry must declare its endpoint URL.'
+      );
+    }
+  }
+
+  if (options.default_agent !== undefined && !(options.default_agent in agents)) {
+    throw new Error(
+      `runStoryboard: \`default_agent\` "${options.default_agent}" is not a key in \`agents\`. ` +
+        `Available keys: ${keys.join(', ')}.`
+    );
+  }
+
+  // Per-step `agent:` overrides must reference an agent that's actually in
+  // the map. Walk the storyboard once at entry so authoring errors surface
+  // before the first network call.
+  for (const phase of storyboard.phases ?? []) {
+    for (const step of phase.steps ?? []) {
+      if (step.agent !== undefined && !(step.agent in agents)) {
+        throw new Error(
+          `runStoryboard: step "${step.id}" declares \`agent: "${step.agent}"\` but ` +
+            `that key is not in the agents map. Available keys: ${keys.join(', ')}.`
+        );
+      }
+    }
+  }
+
+  if (options.multi_instance_strategy !== undefined) {
+    throw new Error(
+      'runStoryboard: `agents` (per-specialism routing) is incompatible with ' +
+        '`multi_instance_strategy` (replica round-robin). They are different concepts — ' +
+        'replicas test horizontal scaling of one agent, the agents map routes per tool ' +
+        'across different agents. Use one or the other.'
+    );
+  }
+  if (options._client) {
+    throw new Error(
+      'runStoryboard: `agents` is incompatible with `_client` override. ' +
+        'A single client cannot serve multiple agents; per-agent clients are ' +
+        'constructed from the map.'
+    );
+  }
+
+  // Controller seeding (`prerequisites.controller_seeding: true`) currently
+  // dispatches against the FIRST per-agent client only, which works for
+  // single-tenant runs but is the wrong shape under routed mode: a
+  // cross-specialism storyboard's `fixtures:` block typically declares
+  // seeds owned by different tenants (e.g., `seed_product` for sales,
+  // `seed_signal_provider` for signals). Per-tenant seed dispatch is a
+  // larger change tracked separately. Until that lands, fail-fast and
+  // tell the operator to seed each tenant out-of-band and pass
+  // `skip_controller_seeding: true`.
+  if (storyboard.prerequisites?.controller_seeding === true && options.skip_controller_seeding !== true) {
+    throw new Error(
+      'runStoryboard: `agents` + `prerequisites.controller_seeding: true` is not yet supported. ' +
+        'Controller seeding currently targets a single tenant; cross-tenant seed routing is a ' +
+        'follow-up. Pre-seed each tenant out-of-band and pass `skip_controller_seeding: true` to ' +
+        'opt out of the runner-side seeding loop.'
+    );
+  }
+
+  // First positional arg must be empty when `agents` is set. Allowing a
+  // non-empty value is ambiguous: is the map authoritative, or is the
+  // positional arg a hidden default? Reject and require the caller to
+  // express intent through `agents` + `default_agent`.
+  const firstArgEmpty = agentUrlOrUrls === '' || (Array.isArray(agentUrlOrUrls) && agentUrlOrUrls.length === 0);
+  if (!firstArgEmpty) {
+    throw new Error(
+      'runStoryboard: pass `""` (or `[]`) as the first argument when using ' +
+        '`options.agents`. The agents map is authoritative for routing; mixing ' +
+        'a positional URL with the map is ambiguous.'
+    );
+  }
 }
 
 /**
@@ -630,39 +734,83 @@ async function executeStoryboardPass(
 ): Promise<StoryboardResult> {
   const start = Date.now();
   const isMultiInstance = agentUrls.length > 1;
+  const useRouting = options.agents !== undefined;
 
-  // Build one client per URL. In single-URL mode `_client` (from comply()) is
-  // honored so the shared MCP transport is reused across storyboards.
-  const clients = agentUrls.map(url => getOrCreateClient(url, options));
-
-  // Discover agent profile against the first instance; all instances are
-  // expected to run the same code behind a shared state store, so one probe
-  // is sufficient. For multi-instance runs, skipping N-1 redundant
-  // get_agent_info calls also keeps CI output clean.
+  // Per-specialism routing builds its own clients + per-agent discovery; the
+  // legacy single/multi-instance path discovers against the first replica.
+  let clients: TestClient[];
+  let routingContext: AgentRoutingContext | undefined;
   let profile: AgentProfile | undefined;
-  if (!options._client) {
-    const discovered = await getOrDiscoverProfile(clients[0]!, options);
-    // Discovery failure must surface as a HARD STORYBOARD FAILURE, not a
-    // silent empty `agentTools: []` that lets every step skip with
-    // `missing_tool`. The latter mode produces "X/X clean" summaries with
-    // 100% skipped — invisible CI failure when transport setup is broken
-    // (auth misconfig, MCP transport-fallback bugs, network policy, etc.).
-    // See: https://github.com/adcontextprotocol/adcp-client/issues/...
-    if (discovered.step.passed === false) {
+
+  if (useRouting) {
+    try {
+      routingContext = await buildRoutingContext(storyboard, options);
+    } catch (err) {
+      const detail = (err as Error)?.message ?? String(err);
+      const failedStep: TestStepResult = {
+        step:
+          err instanceof DiscoveryFailure
+            ? `Discover agent capabilities (${err.agentKey})`
+            : 'Build agent routing index',
+        passed: false,
+        duration_ms: 0,
+        error: detail,
+      };
       if (!options._client) await closeConnections(options.protocol);
-      return buildDiscoveryFailedResult(agentUrls, storyboard, discovered.step);
+      return buildDiscoveryFailedResult(agentUrls, storyboard, failedStep);
     }
-    profile = discovered.profile;
-    // Populate agentTools and _profile from discovered profile if not already set.
-    // _profile is threaded into executeStep so capability-based skip gates
-    // (e.g. account-mode branching) can read raw_capabilities at step time.
-    if (!options.agentTools && profile?.tools) {
-      options = { ...options, agentTools: profile.tools, _profile: profile };
+    clients = [...routingContext.clients.values()];
+    // Pick the first agent's profile as the "primary" for downstream code
+    // that reads single-profile fields (library_version on per-step result
+    // records, raw_capabilities for `requires_capability`). Per-step
+    // accuracy across N agents is a follow-up; today's storyboards that
+    // use `requires_capability` are single-tenant authored.
+    profile = [...routingContext.profiles.values()][0];
+    // For `required_tools` gating, union every agent's advertised tools so
+    // a storyboard that needs ≥1 of [sync_governance, activate_signal]
+    // passes the gate when any tenant in the map serves either one.
+    const unionedTools = new Set<string>();
+    for (const p of routingContext.profiles.values()) {
+      for (const t of p.tools ?? []) unionedTools.add(t);
+    }
+    if (!options.agentTools) {
+      options = { ...options, agentTools: [...unionedTools], _profile: profile };
     } else if (profile && !options._profile) {
       options = { ...options, _profile: profile };
     }
   } else {
-    profile = options._profile;
+    // Build one client per URL. In single-URL mode `_client` (from comply()) is
+    // honored so the shared MCP transport is reused across storyboards.
+    clients = agentUrls.map(url => getOrCreateClient(url, options));
+
+    // Discover agent profile against the first instance; all instances are
+    // expected to run the same code behind a shared state store, so one probe
+    // is sufficient. For multi-instance runs, skipping N-1 redundant
+    // get_agent_info calls also keeps CI output clean.
+    if (!options._client) {
+      const discovered = await getOrDiscoverProfile(clients[0]!, options);
+      // Discovery failure must surface as a HARD STORYBOARD FAILURE, not a
+      // silent empty `agentTools: []` that lets every step skip with
+      // `missing_tool`. The latter mode produces "X/X clean" summaries with
+      // 100% skipped — invisible CI failure when transport setup is broken
+      // (auth misconfig, MCP transport-fallback bugs, network policy, etc.).
+      // See: https://github.com/adcontextprotocol/adcp-client/issues/...
+      if (discovered.step.passed === false) {
+        if (!options._client) await closeConnections(options.protocol);
+        return buildDiscoveryFailedResult(agentUrls, storyboard, discovered.step);
+      }
+      profile = discovered.profile;
+      // Populate agentTools and _profile from discovered profile if not already set.
+      // _profile is threaded into executeStep so capability-based skip gates
+      // (e.g. account-mode branching) can read raw_capabilities at step time.
+      if (!options.agentTools && profile?.tools) {
+        options = { ...options, agentTools: profile.tools, _profile: profile };
+      } else if (profile && !options._profile) {
+        options = { ...options, _profile: profile };
+      }
+    } else {
+      profile = options._profile;
+    }
   }
 
   // Evaluate requires_capability predicate before any phase setup.
@@ -819,8 +967,14 @@ async function executeStoryboardPass(
   const allSteps = flattenSteps(storyboard);
   // Inner passes always dispatch round-robin; only the outer runMultiPass
   // caller knows about the multi-pass strategy. This keeps createDispatcher's
-  // strategy parameter narrow.
-  const dispatch = createDispatcher(agentUrls, clients, 'round-robin', dispatchOffset);
+  // strategy parameter narrow. Per-specialism routing (#1066) takes the
+  // routing dispatcher path, which reads `options.agents` directly and
+  // ignores `agentUrls` ordering for selection (still uses URL list for
+  // result-record `agent_url:` echo).
+  const dispatch =
+    routingContext && options.agents
+      ? createRoutingDispatcher(routingContext, options, options.agents)
+      : createDispatcher(agentUrls, clients, 'round-robin', dispatchOffset);
 
   // Resolve cross-step assertions declared on `storyboard.invariants`.
   // `resolveAssertions` throws on unknown ids — fail fast here rather than
@@ -1168,7 +1322,37 @@ async function executeStoryboardPass(
         continue;
       }
 
-      const assignment = dispatch.nextFor(step);
+      let assignment;
+      try {
+        assignment = dispatch.nextFor(step);
+      } catch (err) {
+        // Routing failures land here when no agent in the map serves a
+        // step's tool's protocol. Build-time conflict detection already
+        // catches the multi-claim case, so this branch covers genuine
+        // coverage gaps (storyboard authored a tool the topology can't
+        // serve) and unmapped tools without a `default_agent`. Render as
+        // a failed step with the routing error verbatim so the report
+        // tells the operator exactly what's missing.
+        const detail = err instanceof RoutingError ? err.message : ((err as Error)?.message ?? String(err));
+        const failed: StoryboardStepResult = {
+          storyboard_id: storyboard.id,
+          step_id: step.id,
+          phase_id: phase.id,
+          title: step.title,
+          task: step.task,
+          passed: false,
+          duration_ms: 0,
+          validations: [],
+          context,
+          error: detail,
+          extraction: { path: 'none' },
+        };
+        stepResults.push(failed);
+        priorStepResults.set(step.id, failed);
+        failedCount++;
+        phasePassed = false;
+        continue;
+      }
       const rawResult = await executeStep(assignment.client, step, phase.id, context, allSteps, options, {
         contributions,
         priorStepResults,
@@ -1182,7 +1366,11 @@ async function executeStoryboardPass(
         agentLibraryVersion: profile?.library_version,
       });
       const result: StoryboardStepResult = { ...rawResult, storyboard_id: storyboard.id };
-      if (isMultiInstance) {
+      if (isMultiInstance || useRouting) {
+        // Echo per-step routing on the result so JUnit/CI consumers and
+        // bug reports show which agent served which tool. In routed mode
+        // every step gets the field; in replica round-robin only when
+        // there are 2+ URLs.
         result.agent_url = assignment.agentUrl;
         result.agent_index = assignment.instanceIndex + 1;
       }
@@ -1540,6 +1728,7 @@ async function executeStoryboardPass(
     // individually); the aggregating wrapper relabels the top-level result
     // `multi-pass`.
     ...(isMultiInstance && { multi_instance_strategy: 'round-robin' as const }),
+    ...(routingContext && { agent_map: { ...routingContext.agentMap } }),
     overall_passed: failedCount === 0 && requiredPhasesPassed && !assertionsFailed,
     phases: phaseResults,
     context,
@@ -3344,6 +3533,45 @@ function createDispatcher(
         client: clients[idx]!,
         agentUrl: agentUrls[idx]!,
         instanceIndex: idx,
+      };
+    },
+  };
+}
+
+/**
+ * Per-specialism routing dispatcher (#1066). Picks the agent that claims
+ * each step's tool's protocol via the routing context. Throws
+ * `RoutingError` mid-step when no route can be determined; the runner's
+ * step loop catches and converts to a synthetic `unroutable_task` skip.
+ *
+ * `instanceIndex` reflects the agent key's insertion order in the map —
+ * deterministic and matches the index used for downstream `agent_urls`
+ * exposure on the storyboard result.
+ */
+function createRoutingDispatcher(
+  ctx: AgentRoutingContext,
+  options: StoryboardRunOptions,
+  agents: Record<string, AgentEntry>
+): Dispatcher {
+  const keyOrder = Object.keys(agents);
+  const keyToIndex = new Map(keyOrder.map((k, i) => [k, i]));
+  return {
+    nextFor(step: StoryboardStep): StepAssignment {
+      const key = resolveAgentForStep(step, options, ctx);
+      const client = ctx.clients.get(key);
+      const url = agents[key]?.url;
+      if (!client || !url) {
+        throw new RoutingError(
+          `Internal: resolved agent key "${key}" has no client/url. ` +
+            `This indicates a bug in routing-context construction.`,
+          step.task,
+          `key ${key} unbound`
+        );
+      }
+      return {
+        client,
+        agentUrl: url,
+        instanceIndex: keyToIndex.get(key) ?? 0,
       };
     },
   };

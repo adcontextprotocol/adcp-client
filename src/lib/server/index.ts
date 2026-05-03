@@ -44,6 +44,13 @@ export {
   acquireRightsAcquired,
   acquireRightsPendingApproval,
   acquireRightsRejected,
+  updateRightsResponse,
+  updateRightsSuccess,
+  creativeApprovalResponse,
+  creativeApprovalApproved,
+  creativeApprovalRejected,
+  creativeApprovalPendingReview,
+  creativeApprovalError,
   syncAccountsResponse,
   syncGovernanceResponse,
   reportUsageResponse,
@@ -197,7 +204,13 @@ export { structuredSerialize, structuredDeserialize } from './structured-seriali
 // escape-hatch only). Breaking change: v5 adopters see a hard import error
 // and update their import path. The migration is one line; the LLM-output
 // quality win is significant. See `docs/migration-5.x-to-6.x.md`.
-export { requireSessionKey, ADCP_PRE_TRANSPORT, ADCP_SIGNED_REQUESTS_STATE } from './create-adcp-server';
+export {
+  requireSessionKey,
+  ADCP_PRE_TRANSPORT,
+  ADCP_SIGNED_REQUESTS_STATE,
+  ADCP_INSTRUCTIONS_FN,
+} from './create-adcp-server';
+export type { SessionContext, OnInstructionsError } from './create-adcp-server';
 export type {
   AdcpServer,
   AdcpServerComplianceApi,
@@ -386,3 +399,12 @@ export type {
   UpstreamHttpClient,
   UpstreamHttpResult,
 } from './upstream-helpers';
+
+// ---------------------------------------------------------------------------
+// Server-side adapters
+// ---------------------------------------------------------------------------
+export {
+  InMemoryImplicitAccountStore,
+  defaultImplicitKeyFn,
+  type ImplicitAccountStoreOptions,
+} from '../adapters/implicit-account-store';
