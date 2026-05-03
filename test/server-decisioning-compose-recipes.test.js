@@ -220,4 +220,165 @@ describe('composeMethod recipes (#1345)', () => {
       assert.strictEqual(await guardedNull({}, {}), null);
     });
   });
+
+  describe('Pattern 7 — variadic composeMethod (hook-chain sugar)', () => {
+    it('three hooks: before runs A→B→C, after runs C→B→A', async () => {
+      const beforeLog = [];
+      const afterLog = [];
+      const inner = async () => ({ ok: true });
+
+      const hookA = {
+        before: async () => {
+          beforeLog.push('A');
+        },
+        after: async result => {
+          afterLog.push('A');
+          return result;
+        },
+      };
+      const hookB = {
+        before: async () => {
+          beforeLog.push('B');
+        },
+        after: async result => {
+          afterLog.push('B');
+          return result;
+        },
+      };
+      const hookC = {
+        before: async () => {
+          beforeLog.push('C');
+        },
+        after: async result => {
+          afterLog.push('C');
+          return result;
+        },
+      };
+
+      const wrapped = composeMethod(inner, hookA, hookB, hookC);
+      const result = await wrapped({}, {});
+
+      assert.deepStrictEqual(beforeLog, ['A', 'B', 'C'], 'before: A first, C last');
+      assert.deepStrictEqual(afterLog, ['C', 'B', 'A'], 'after: C first, A last');
+      assert.deepStrictEqual(result, { ok: true });
+    });
+
+    it('short-circuit from first hook: remaining befores and their afters are skipped', async () => {
+      const log = [];
+      const inner = async () => {
+        log.push('inner');
+        return { from: 'inner' };
+      };
+
+      const hookA = {
+        before: async () => {
+          log.push('A-before');
+          return { shortCircuit: { blocked: 'A' } };
+        },
+        after: async result => {
+          log.push('A-after');
+          return result;
+        },
+      };
+      const hookB = {
+        before: async () => {
+          log.push('B-before');
+        },
+        after: async result => {
+          log.push('B-after');
+          return result;
+        },
+      };
+      const hookC = {
+        before: async () => {
+          log.push('C-before');
+        },
+        after: async result => {
+          log.push('C-after');
+          return result;
+        },
+      };
+
+      const wrapped = composeMethod(inner, hookA, hookB, hookC);
+      const result = await wrapped({}, {});
+
+      // A short-circuits: wrappedBC never called, so B+C before+after all skipped.
+      // Matches nesting equivalent: composeMethod(composeMethod(composeMethod(inner,C),B),A)
+      assert.deepStrictEqual(log, ['A-before', 'A-after']);
+      assert.deepStrictEqual(result, { blocked: 'A' });
+    });
+
+    it('short-circuit from middle hook: later befores+afters skipped, earlier afters still run', async () => {
+      const log = [];
+      const inner = async () => {
+        log.push('inner');
+        return { from: 'inner' };
+      };
+
+      const hookA = {
+        before: async () => {
+          log.push('A-before');
+        },
+        after: async result => {
+          log.push('A-after');
+          return result;
+        },
+      };
+      const hookB = {
+        before: async () => {
+          log.push('B-before');
+          return { shortCircuit: { blocked: 'B' } };
+        },
+        after: async result => {
+          log.push('B-after');
+          return result;
+        },
+      };
+      const hookC = {
+        before: async () => {
+          log.push('C-before');
+        },
+        after: async result => {
+          log.push('C-after');
+          return result;
+        },
+      };
+
+      const wrapped = composeMethod(inner, hookA, hookB, hookC);
+      const result = await wrapped({}, {});
+
+      // B short-circuits: C (inner of B) never called; B.after and A.after still run.
+      assert.deepStrictEqual(log, ['A-before', 'B-before', 'B-after', 'A-after']);
+      assert.deepStrictEqual(result, { blocked: 'B' });
+    });
+
+    it('variadic with one meaningful hook plus an empty no-op matches two-arg form', async () => {
+      const inner = async params => ({ doubled: params.n * 2 });
+      const hook = { after: async result => ({ ...result, tag: 'enriched' }) };
+
+      const twoArg = composeMethod(inner, hook);
+      // Explicitly exercises the variadic path (rest.length > 0) — empty {} is a no-op
+      const variadic = composeMethod(inner, hook, {});
+
+      const r1 = await twoArg({ n: 3 }, {});
+      const r2 = await variadic({ n: 3 }, {});
+      assert.deepStrictEqual(r1, r2);
+    });
+
+    it('empty {} hook in the array is a no-op at that position', async () => {
+      const inner = async () => ({ value: 42 });
+      const meaningful = { after: async result => ({ ...result, tag: 'enriched' }) };
+
+      const wrapped = composeMethod(inner, {}, meaningful, {});
+      const result = await wrapped({}, {});
+      assert.deepStrictEqual(result, { value: 42, tag: 'enriched' });
+    });
+
+    it('non-function inner with variadic hooks throws TypeError', async () => {
+      assert.throws(
+        () => composeMethod(null, {}, {}),
+        err => err instanceof TypeError && err.message.includes("'inner' must be a function")
+      );
+    });
+  });
 });

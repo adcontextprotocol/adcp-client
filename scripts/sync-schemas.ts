@@ -254,6 +254,14 @@ function copyTreeFiltered(srcDir: string, destDir: string): void {
 }
 
 /**
+ * Skills the SDK maintains locally even when the protocol bundle ships its
+ * own copy. `call-adcp-agent` carries SDK-version-specific addenda (e.g.
+ * `SDK ≥6.7` discriminator/schemaId, `SDK ≥6.8` hint) that don't belong in
+ * the protocol bundle, so we never overwrite it from upstream.
+ */
+const SDK_LOCAL_SKILLS = new Set(['call-adcp-agent']);
+
+/**
  * Sync protocol-managed skills from the extracted bundle into the SDK's
  * top-level `skills/` tree. Driven by `manifest.contents.skills` (a list of
  * skill directory names) so we only overwrite the entries the spec repo
@@ -282,6 +290,7 @@ function syncSkillsFromBundle(extractRoot: string): void {
     if (typeof name !== 'string' || name.includes('/') || name.includes('..')) {
       continue;
     }
+    if (SDK_LOCAL_SKILLS.has(name)) continue;
     const src = path.join(skillsInBundle, name);
     const dst = path.join(SKILLS_DIR, name);
     if (!existsSync(src) || !statSync(src).isDirectory()) continue;

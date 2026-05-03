@@ -51,6 +51,31 @@ export interface ComposeHooks<TParams, TCtx, TResult> {
   after?: (result: TResult, params: TParams, ctx: TCtx) => Promise<TResult>;
 }
 
+type MethodFn<TParams, TCtx, TResult> = (params: TParams, ctx: TCtx) => Promise<TResult>;
+
+function composeSingle<TParams, TCtx, TResult>(
+  inner: MethodFn<TParams, TCtx, TResult>,
+  hooks: ComposeHooks<TParams, TCtx, TResult>
+): MethodFn<TParams, TCtx, TResult> {
+  return async (params, ctx) => {
+    let result: TResult;
+    if (hooks.before) {
+      const early = await hooks.before(params, ctx);
+      if (early === undefined) {
+        result = await inner(params, ctx);
+      } else {
+        result = early.shortCircuit;
+      }
+    } else {
+      result = await inner(params, ctx);
+    }
+    if (hooks.after) {
+      result = await hooks.after(result, params, ctx);
+    }
+    return result;
+  };
+}
+
 /**
  * Wrap a single platform method with optional `before` / `after` hooks.
  *
@@ -63,7 +88,22 @@ export interface ComposeHooks<TParams, TCtx, TResult> {
  * implemented on the underlying platform get a clear error at module load
  * rather than the first traffic to hit the method.
  *
- * @example Short-circuit + enrichment
+ * **Variadic overload** — pass multiple hooks to chain them without nesting.
+ * `before` hooks run left-to-right (first argument runs first); `after`
+ * hooks run right-to-left (last argument runs first), matching standard
+ * middleware-stack semantics. A short-circuit from a `before` hook skips
+ * remaining `before` hooks and the `after` hooks of inner wrappers that
+ * were never entered; `after` hooks for the short-circuiting wrapper and
+ * any outer wrappers still run. Equivalent to manually nesting
+ * `composeMethod` calls right-to-left:
+ *
+ * ```ts
+ * // These are identical:
+ * composeMethod(inner, hookA, hookB, hookC)
+ * composeMethod(composeMethod(composeMethod(inner, hookC), hookB), hookA)
+ * ```
+ *
+ * @example Short-circuit + enrichment (single hook)
  * ```ts
  * import { composeMethod } from '@adcp/sdk/server';
  *
@@ -90,33 +130,48 @@ export interface ComposeHooks<TParams, TCtx, TResult> {
  * createAdcpServerFromPlatform(wrapped, opts);
  * ```
  *
+ * @example Stacking multiple security gates (variadic)
+ * ```ts
+ * import { composeMethod, requireAdvertiserMatch } from '@adcp/sdk/server';
+ *
+ * accounts: {
+ *   resolve: composeMethod(
+ *     baseResolve,
+ *     { before: async (_p, ctx) => ctx.token ? undefined : { shortCircuit: null } },
+ *     requireAdvertiserMatch(async (ctx) => tenantRoster.for(ctx?.agent)),
+ *   ),
+ * }
+ * ```
+ *
  * @public
  */
 export function composeMethod<TParams, TCtx, TResult>(
-  inner: (params: TParams, ctx: TCtx) => Promise<TResult>,
+  inner: MethodFn<TParams, TCtx, TResult>,
   hooks: ComposeHooks<TParams, TCtx, TResult>
-): (params: TParams, ctx: TCtx) => Promise<TResult> {
+): MethodFn<TParams, TCtx, TResult>;
+export function composeMethod<TParams, TCtx, TResult>(
+  inner: MethodFn<TParams, TCtx, TResult>,
+  first: ComposeHooks<TParams, TCtx, TResult>,
+  ...rest: ComposeHooks<TParams, TCtx, TResult>[]
+): MethodFn<TParams, TCtx, TResult>;
+export function composeMethod<TParams, TCtx, TResult>(
+  inner: MethodFn<TParams, TCtx, TResult>,
+  first: ComposeHooks<TParams, TCtx, TResult>,
+  ...rest: ComposeHooks<TParams, TCtx, TResult>[]
+): MethodFn<TParams, TCtx, TResult> {
   if (typeof inner !== 'function') {
     throw new TypeError(
       `composeMethod: 'inner' must be a function, got ${inner === null ? 'null' : typeof inner}. ` +
         `Did you reference an optional method that wasn't implemented on the platform?`
     );
   }
-  return async (params, ctx) => {
-    let result: TResult;
-    if (hooks.before) {
-      const early = await hooks.before(params, ctx);
-      if (early === undefined) {
-        result = await inner(params, ctx);
-      } else {
-        result = early.shortCircuit;
-      }
-    } else {
-      result = await inner(params, ctx);
-    }
-    if (hooks.after) {
-      result = await hooks.after(result, params, ctx);
-    }
-    return result;
-  };
+  if (rest.length === 0) {
+    return composeSingle(inner, first);
+  }
+  // Fold right so the first argument becomes the outermost wrapper (runs first).
+  // Equivalent to: composeMethod(composeMethod(composeMethod(inner, hookC), hookB), hookA)
+  return [first, ...rest].reduceRight<MethodFn<TParams, TCtx, TResult>>(
+    (acc, hooks) => composeSingle(acc, hooks),
+    inner
+  );
 }

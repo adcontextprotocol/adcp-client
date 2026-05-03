@@ -55,6 +55,8 @@ import {
   createUpstreamHttpClient,
   memoryBackend,
   AdcpError,
+  getAccountMode,
+  assertMediaBuyTransition,
   type DecisioningPlatform,
   type SalesCorePlatform,
   type SalesIngestionPlatform,
@@ -502,10 +504,15 @@ class SalesGuaranteedAdapter implements DecisioningPlatform<Record<string, never
       // sandbox tenant their IO desk owns; either way, this in-example
       // synthesis isn't appropriate for prod traffic.
       //
-      // Gate is `ADCP_SANDBOX === '1'` exclusively — single-source so
-      // accidentally setting `ADCP_SANDBOX` in any non-sandbox environment
-      // is the only way this branch fires.
-      if (ref.sandbox === true && process.env['ADCP_SANDBOX'] === '1') {
+      // Gate is `ref.sandbox === true` from the wire `AccountReference`
+      // (per `core/account-ref.json`). Stamping `mode: 'sandbox'` on the
+      // returned `Account` is what admits the framework's
+      // `comply_test_controller` gate — see
+      // `src/lib/server/decisioning/runtime/from-platform.ts` and
+      // `docs/proposals/lifecycle-state-and-sandbox-authority.md`. No env
+      // var is consulted; production traffic that doesn't set
+      // `sandbox: true` on the wire never hits this branch.
+      if (ref.sandbox === true) {
         const sandboxDomain = 'acmeoutdoor.example';
         const network = await upstream.lookupNetwork(sandboxDomain);
         if (!network) return null;
@@ -513,6 +520,7 @@ class SalesGuaranteedAdapter implements DecisioningPlatform<Record<string, never
           id: `${SANDBOX_ID_PREFIX}${network.network_code}`,
           name: `Sandbox: ${network.display_name}`,
           status: 'active',
+          mode: 'sandbox',
           ...(ref.operator !== undefined && { operator: ref.operator }),
           brand: { domain: ref.brand.domain ?? sandboxDomain },
           ctx_metadata: {
@@ -789,6 +797,9 @@ class SalesGuaranteedAdapter implements DecisioningPlatform<Record<string, never
         // but no creatives have been assigned. Buyers transition to
         // `active` after `sync_creatives` lands, which the framework
         // surfaces via `publishStatusChange` on `resource_type: 'media_buy'`.
+        // Stamp the buy's lifecycle entry so update_media_buy can enforce
+        // the spec's MediaBuyStatus state machine on subsequent patches.
+        localBuyStatus.set(order.order_id, 'pending_creatives');
         return {
           media_buy_id: order.order_id,
           status: 'pending_creatives',
@@ -805,13 +816,15 @@ class SalesGuaranteedAdapter implements DecisioningPlatform<Record<string, never
       // BASE `sales_guaranteed` storyboard tests the IO-signing async
       // path. Production sellers route every buy through the same path —
       // either always-HITL or always-sync, never both based on a runtime
-      // flag. Belt-and-suspenders env re-check below: if the env flag
-      // isn't set even though the id flowed in marked sandbox, fall
-      // through to the production HITL path. Defends against an
-      // upstream-resolved account that somehow carries the sandbox prefix
-      // without the env being sandbox-mode.
-      const isSandbox = ctx.account.id.startsWith(SANDBOX_ID_PREFIX) && process.env['ADCP_SANDBOX'] === '1';
-      if (isSandbox) {
+      // flag.
+      //
+      // Trust signal is the resolver-stamped `mode: 'sandbox'` on the
+      // resolved account (per `Account.mode`, AdCP 6.7+). The synthesis
+      // branch in `accounts.resolve` is the only path that stamps it, so
+      // a production account whose id happens to share the sandbox prefix
+      // would still flow through the HITL path because its mode would be
+      // unset (defaults to `'live'`).
+      if (getAccountMode(ctx.account) === 'sandbox') {
         return completeIoAndCreateLineItems();
       }
       // ─── /TEST-ONLY ──────────────────────────────────────────────────
@@ -849,12 +862,36 @@ class SalesGuaranteedAdapter implements DecisioningPlatform<Record<string, never
           }
         }
       }
+
+      // State-machine enforcement. Lifecycle states the upstream mock doesn't
+      // track (`canceled`, `paused`) live in the local tracker; everything else
+      // reads from the upstream order.status mapping. Production sellers swap
+      // this for a single durable lookup against their order DB.
+      //
+      // The spec's `core/state-machine.yaml` declares `canceled` as a sink and
+      // a re-cancel as illegal — `assertMediaBuyTransition` throws
+      // `NOT_CANCELLABLE` on `canceled → canceled`, which is the
+      // `media_buy_seller/invalid_transitions` storyboard's contract.
+      const localStatus = localBuyStatus.get(buyId);
+      const currentStatus: MediaBuyStatus =
+        localStatus === 'canceled' || localStatus === 'paused' ? localStatus : mapMediaBuyStatus(order.status);
+      let nextStatus: MediaBuyStatus = currentStatus;
+      if ((patch as { canceled?: boolean }).canceled === true) {
+        assertMediaBuyTransition(currentStatus, 'canceled');
+        nextStatus = 'canceled';
+        localBuyStatus.set(buyId, nextStatus);
+      } else if ((patch as { paused?: boolean }).paused === true && currentStatus === 'active') {
+        assertMediaBuyTransition(currentStatus, 'paused');
+        nextStatus = 'paused';
+        localBuyStatus.set(buyId, nextStatus);
+      }
+
       // Mock doesn't model partial updates; production wires each patch
       // field onto the upstream's OrderService update endpoint. The
-      // worked example just echoes success.
+      // worked example just echoes success with the post-transition status.
       return {
         media_buy_id: buyId,
-        status: mapMediaBuyStatus(order.status),
+        status: nextStatus,
       };
     },
 
@@ -997,6 +1034,26 @@ const simulatedDelivery = new Map<
 >();
 // ─── /TEST-ONLY ──────────────────────────────────────────────────────────
 
+// Local per-buy status tracker for state-machine enforcement on
+// `update_media_buy`. The mock-server doesn't model lifecycle transitions
+// (POST /v1/orders/{id} doesn't exist; cancellation is purely an adapter
+// concern in this worked example). Production sellers track buy state in
+// their order DB and check `MEDIA_BUY_TRANSITIONS` against the current
+// status before applying a patch — this Map stands in for that.
+//
+// SWAP: replace with a query against your order/lifecycle service. The
+// `media_buy_seller/invalid_transitions` storyboard exercises NOT_CANCELLABLE
+// on re-cancel (canceled → canceled is illegal per `core/state-machine.yaml`).
+type MediaBuyStatus =
+  | 'pending_creatives'
+  | 'pending_start'
+  | 'active'
+  | 'paused'
+  | 'completed'
+  | 'rejected'
+  | 'canceled';
+const localBuyStatus = new Map<string, MediaBuyStatus>();
+
 // Persist `packages[].targeting_overlay` from create_media_buy and echo it
 // on get_media_buys. The seller spec MANDATES this echo for any seller
 // claiming property-lists / collection-lists, and SHOULD echo any persisted
@@ -1024,17 +1081,18 @@ serve(
       // state transitions deterministically across cascade scenarios.
       // Production sellers don't need this surface — and shouldn't ship
       // it. Per `examples/comply-controller-seller.ts`, the recommended
-      // production posture is "don't register the controller at all";
-      // a seller running their own sandbox tenant gates registration on
-      // an env flag controlled by the deploy pipeline (`ADCP_SANDBOX=1`).
+      // production posture is "don't register the controller at all".
       //
-      // SECURITY: gate is `ADCP_SANDBOX === '1'` exclusively — single env
-      // var. Don't add an `|| NODE_ENV === 'test'` clause — staging boxes
-      // commonly run with `NODE_ENV=test` and the controller would open
-      // there too. The gate test (`test/examples/hello-seller-adapter-
-      // guaranteed.test.js`) sets `ADCP_SANDBOX=1` in `extraEnv`.
+      // No `sandboxGate` here — the framework gate inside
+      // `createAdcpServerFromPlatform` resolves the calling principal
+      // through `accounts.resolve` and admits only when the resolved
+      // account's `mode` is `'sandbox'` or `'mock'` (per `Account.mode`
+      // in AdCP 6.7+). The synthesis branch in `accounts.resolve` above
+      // stamps `mode: 'sandbox'` on cascade-scenario refs; production
+      // refs flow through the live path with the field unset (default
+      // `'live'`), so the framework gate refuses dispatch for them.
+      // See `docs/proposals/lifecycle-state-and-sandbox-authority.md`.
       complyTest: {
-        sandboxGate: () => process.env['ADCP_SANDBOX'] === '1',
         seed: {
           media_buy: ({ media_buy_id, fixture }) => {
             const existing = seededMediaBuys.get(media_buy_id);

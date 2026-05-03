@@ -80,6 +80,9 @@ export {
   assertCreativeTransition,
 } from './state-machine';
 
+export { getAccountMode, isSandboxOrMockAccount, assertSandboxAccount } from './account-mode';
+export type { AccountMode } from './account-mode';
+
 export {
   taskToolResponse,
   registerAdcpTaskTool,
@@ -229,7 +232,7 @@ export {
   ADCP_SIGNED_REQUESTS_STATE,
   ADCP_INSTRUCTIONS_FN,
 } from './create-adcp-server';
-export type { SessionContext, OnInstructionsError } from './create-adcp-server';
+export type { SessionContext, OnInstructionsError, MaybePromise } from './create-adcp-server';
 export type {
   AdcpServer,
   AdcpServerComplianceApi,
@@ -434,3 +437,5 @@ export {
 } from '../adapters/oauth-passthrough-resolver';
 
 export { createRosterAccountStore, type RosterAccountStoreOptions } from '../adapters/roster-account-store';
+
+export { createDerivedAccountStore, type DerivedAccountStoreOptions } from '../adapters/derived-account-store';

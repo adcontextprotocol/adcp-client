@@ -567,6 +567,9 @@ export {
   isLegalCreativeTransition,
   assertMediaBuyTransition,
   assertCreativeTransition,
+  getAccountMode,
+  isSandboxOrMockAccount,
+  assertSandboxAccount,
   taskToolResponse,
   registerAdcpTaskTool,
   createTaskCapableServer,
@@ -647,6 +650,9 @@ export type {
   ControllerScenario,
   SeedScenario,
   SeedFixtureCache,
+  SessionContext,
+  OnInstructionsError,
+  MaybePromise,
   AdcpServerConfig,
   AdcpToolMap,
   AdcpServerToolName,
@@ -695,6 +701,7 @@ export type {
   A2AAgentCardOverrides,
   A2AMountOptions,
   ExpressAppLike,
+  AccountMode,
 } from './server';
 
 // ====== ERROR HANDLING & RETRY ======
@@ -1174,6 +1181,9 @@ export {
   // Roster-backed AccountStore — Shape C factory for publisher-curated explicit platforms
   createRosterAccountStore,
   type RosterAccountStoreOptions,
+  // Derived AccountStore — Shape D factory for single-tenant `resolution: 'derived'` agents
+  createDerivedAccountStore,
+  type DerivedAccountStoreOptions,
 } from './adapters';
 
 // ====== BACKWARD COMPATIBILITY & ENVIRONMENT LOADING ======

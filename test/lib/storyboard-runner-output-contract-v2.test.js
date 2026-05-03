@@ -150,6 +150,13 @@ describe('applyContextOutputs (non-provenance) — semantics aligned with v2.0.0
 // ────────────────────────────────────────────────────────────
 
 describe('upstream_traffic — controller-backed anti-façade assertion', () => {
+  // Locks the unified `not_applicable` posture across all `payload_must_contain`
+  // match modes (present / equals / contains_any) per adcp#3987. If the runner's
+  // note string changes, every non-JSON test below must update — a deliberate
+  // forcing function so a future refactor can't silently weaken the contract by
+  // emitting a different note for one mode.
+  const NON_JSON_NA_NOTE = 'payload_must_contain paths only matched non-JSON content_types — graded not_applicable';
+
   function makeCall(overrides = {}) {
     return {
       method: 'POST',
@@ -391,7 +398,18 @@ describe('upstream_traffic — controller-backed anti-façade assertion', () => 
     assert.equal(result.passed, false);
   });
 
-  test('non-JSON content_type + match: present — substring fallback against terminal path key', () => {
+  test('non-JSON content_type + match: present — grades not_applicable per adcp#3987', () => {
+    // Earlier behavior: terminal-key substring fallback. The runner
+    // extracted `hashed_email` from `users[*].hashed_email` and
+    // substring-matched it against the raw form-urlencoded body. That
+    // produced false positives — any payload mentioning `hashed_email`
+    // in any context (URL fragment, comment, unrelated metadata field)
+    // would pass, defeating the anti-façade contract. adcp#3987 closes
+    // the loophole: ALL match modes against non-JSON content types
+    // grade `not_applicable`, just like equals / contains_any below.
+    // Storyboards needing a non-JSON value-carried signal use
+    // `identifier_paths` (substring-searches storyboard-supplied VALUES,
+    // encoding-agnostic, no false-positive surface).
     const ctx = ctxWithTraffic({
       success: true,
       total_count: 1,
@@ -406,13 +424,15 @@ describe('upstream_traffic — controller-backed anti-façade assertion', () => 
       [
         {
           check: 'upstream_traffic',
-          description: 'present in form-encoded body',
+          description: 'present graded not_applicable on form-encoded body',
           payload_must_contain: [{ path: 'users[*].hashed_email', match: 'present' }],
         },
       ],
       ctx
     );
     assert.equal(result.passed, true);
+    assert.equal(result.not_applicable, true);
+    assert.equal(result.note, NON_JSON_NA_NOTE);
   });
 
   test('non-JSON content_type + match: equals — grades not_applicable, validation passes overall', () => {
@@ -440,7 +460,33 @@ describe('upstream_traffic — controller-backed anti-façade assertion', () => 
     // path-based assertion downgraded to non-JSON-skip and count + echo passed.
     assert.equal(result.passed, true);
     assert.equal(result.not_applicable, true);
-    assert.match(result.note, /non-JSON content_types/);
+    assert.equal(result.note, NON_JSON_NA_NOTE);
+  });
+
+  test('non-JSON content_type + match: contains_any — grades not_applicable, validation passes overall', () => {
+    const ctx = ctxWithTraffic({
+      success: true,
+      total_count: 1,
+      recorded_calls: [
+        makeCall({
+          content_type: 'application/x-www-form-urlencoded',
+          payload: 'region=us-east',
+        }),
+      ],
+    });
+    const [result] = runValidations(
+      [
+        {
+          check: 'upstream_traffic',
+          description: 'contains_any impossible on non-JSON',
+          payload_must_contain: [{ path: 'region', match: 'contains_any', allowed_values: ['us-east', 'us-west'] }],
+        },
+      ],
+      ctx
+    );
+    assert.equal(result.passed, true);
+    assert.equal(result.not_applicable, true);
+    assert.equal(result.note, NON_JSON_NA_NOTE);
   });
 
   test('identifier_paths fails when storyboard vector is not echoed', () => {

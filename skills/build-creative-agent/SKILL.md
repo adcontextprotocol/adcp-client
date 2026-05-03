@@ -23,6 +23,8 @@ A creative agent manages the creative lifecycle: accepts assets from buyers, sto
 - Selling inventory (no creative management) → `skills/build-seller-agent/`
 - Serving audience segments → `skills/build-signals-agent/`
 
+**Often claimed alongside:** [`creative-generative`](../build-generative-seller-agent/SKILL.md) (hybrid creative platform — template-driven + AI-generated ads share the same library), [`sales-catalog-driven`](../build-retail-media-agent/SKILL.md) (retail-media dynamic-creative rendering). See [Common multi-specialism bundles](../../examples/README.md#common-multi-specialism-bundles).
+
 ## Specialisms This Skill Covers
 
 Creative specialisms are three distinct archetypes with materially different tool contracts. Pick the one that matches your platform — do not try to make one handler cover all three.
@@ -115,6 +117,7 @@ What happens when a creative is synced:
 >       accepted_media_types: ['image/jpeg', 'image/png'],
 >     }] }
 >   ```
+>
 > - `build_creative` response is `{ creative_manifest: { format_id, assets } }` (single) or `{ creative_manifests: [...] }` (multi). Platform-native fields at the top level (`tag_url`, `creative_id`, `media_type`) are **invalid** — use `buildCreativeResponse({ creative_manifest })` / `buildCreativeMultiResponse({ creative_manifests })` from `@adcp/sdk/server` to lock the shape at compile time.
 > - Each asset in `creative_manifest.assets` requires an `asset_type` discriminator. Use the typed factories (`imageAsset`, `videoAsset`, `audioAsset`, `htmlAsset`, `urlAsset`, `textAsset`) so the discriminator is injected for you; a plain `{ serving_tag: { content: '<vast>...' } }` fails validation.
 > - `preview_creative` renders have the same pattern — each `renders[]` entry is a oneOf on `output_format`. Use `urlRender({...})`, `htmlRender({...})`, or `bothRender({...})` to inject the discriminator and require the matching `preview_url` / `preview_html` field automatically.
@@ -124,14 +127,14 @@ What happens when a creative is synced:
 
 **Handler bindings — read the Contract column entry before writing each return:**
 
-| Tool                    | Handler                        | Contract (field list)                                                 | Gotchas                                                                                                                                                                                                                              |
-| ----------------------- | ------------------------------ | --------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `get_adcp_capabilities` | auto-generated                 | n/a                                                                   | Do not register manually.                                                                                                                                                                                                            |
+| Tool                    | Handler                        | Contract (field list)                                                 | Gotchas                                                                                                                                                                                                                                                                                                                                                              |
+| ----------------------- | ------------------------------ | --------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `get_adcp_capabilities` | auto-generated                 | n/a                                                                   | Do not register manually.                                                                                                                                                                                                                                                                                                                                            |
 | `list_creative_formats` | `creative.listCreativeFormats` | [`#list_creative_formats`](../../docs/llms.txt#list_creative_formats) | Each `renders[]` entry MUST have `role` + exactly one of `dimensions` (object) OR `parameters_from_format_id: true` — `{width, height}` shorthand fails. Each `assets[]` entry MUST have `item_type: 'individual' as const` + `asset_id` + `asset_type` (image/video/audio/text/click_url/html) + `required: boolean`. See the strict-shape callout above the table. |
-| `sync_creatives`        | `creative.syncCreatives`       | [`#sync_creatives`](../../docs/llms.txt#sync_creatives)               | Echo `creative_id`; `action` ∈ `created \| updated \| unchanged \| failed \| deleted`.                                                                                                                                               |
-| `list_creatives`        | `creative.listCreatives`       | [`#list_creatives`](../../docs/llms.txt#list_creatives)               | Honor `args.filters?.format_ids` when present. `created_date` + `updated_date` on each row are required ISO timestamps.                                                                                                              |
-| `preview_creative`      | `creative.previewCreative`     | [`#preview_creative`](../../docs/llms.txt#preview_creative)           | `renders[].output_format` is a discriminator — use `urlRender({...})`, `htmlRender({...})`, or `bothRender({...})` so the discriminator is injected and the required `preview_url`/`preview_html` field is enforced at compile time. |
-| `build_creative`        | `creative.buildCreative`       | [`#build_creative`](../../docs/llms.txt#build_creative)               | Check `args.target_format_id` → library lookup; fall back to `args.creative_id`. Response requires `creative_manifest.format_id` + `creative_manifest.assets`.                                                                       |
+| `sync_creatives`        | `creative.syncCreatives`       | [`#sync_creatives`](../../docs/llms.txt#sync_creatives)               | Echo `creative_id`; `action` ∈ `created \| updated \| unchanged \| failed \| deleted`.                                                                                                                                                                                                                                                                               |
+| `list_creatives`        | `creative.listCreatives`       | [`#list_creatives`](../../docs/llms.txt#list_creatives)               | Honor `args.filters?.format_ids` when present. `created_date` + `updated_date` on each row are required ISO timestamps.                                                                                                                                                                                                                                              |
+| `preview_creative`      | `creative.previewCreative`     | [`#preview_creative`](../../docs/llms.txt#preview_creative)           | `renders[].output_format` is a discriminator — use `urlRender({...})`, `htmlRender({...})`, or `bothRender({...})` so the discriminator is injected and the required `preview_url`/`preview_html` field is enforced at compile time.                                                                                                                                 |
+| `build_creative`        | `creative.buildCreative`       | [`#build_creative`](../../docs/llms.txt#build_creative)               | Check `args.target_format_id` → library lookup; fall back to `args.creative_id`. Response requires `creative_manifest.format_id` + `creative_manifest.assets`.                                                                                                                                                                                                       |
 
 Asset values use type-specific shapes, not a generic `asset_type` discriminator:
 
@@ -151,21 +154,21 @@ Some schemas also define an `ext` field for vendor-namespaced extensions. If you
 
 ## SDK Quick Reference
 
-| SDK piece                                               | Usage                                                            |
-| ------------------------------------------------------- | ---------------------------------------------------------------- |
-| `createAdcpServerFromPlatform(platform, opts)`          | Create server from a typed `DecisioningPlatform` — compile-time specialism enforcement, auto-capabilities |
-| `createAdcpServer(config)` *(legacy)*                   | v5 handler-bag entry. Mid-migration / escape-hatch only; reach via `@adcp/sdk/server/legacy/v5`            |
-| `serve(() => createAdcpServerFromPlatform(platform, opts))` | Start HTTP server on `:3001/mcp`                                                                       |
-| `creative: { listCreativeFormats, syncCreatives, ... }` | Domain group — register handlers by name                         |
-| `ctx.store.put(collection, id, data)`                   | Persist state (creative library) across requests                 |
-| `ctx.store.get(collection, id)`                         | Retrieve persisted state                                         |
-| `ctx.store.list(collection)`                            | List all items in a collection (for `list_creatives`)            |
-| `listCreativeFormatsResponse(data)`                     | Auto-applied response builder (don't call manually)              |
-| `syncCreativesResponse(data)`                           | Auto-applied response builder (don't call manually)              |
-| `listCreativesResponse(data)`                           | Auto-applied response builder (don't call manually)              |
-| `buildCreativeResponse(data)`                           | Auto-applied response builder (don't call manually)              |
-| `previewCreativeResponse(data)`                         | Auto-applied response builder (don't call manually)              |
-| `adcpError(code, { message })`                          | Structured error                                                 |
+| SDK piece                                                   | Usage                                                                                                     |
+| ----------------------------------------------------------- | --------------------------------------------------------------------------------------------------------- |
+| `createAdcpServerFromPlatform(platform, opts)`              | Create server from a typed `DecisioningPlatform` — compile-time specialism enforcement, auto-capabilities |
+| `createAdcpServer(config)` _(legacy)_                       | v5 handler-bag entry. Mid-migration / escape-hatch only; reach via `@adcp/sdk/server/legacy/v5`           |
+| `serve(() => createAdcpServerFromPlatform(platform, opts))` | Start HTTP server on `:3001/mcp`                                                                          |
+| `creative: { listCreativeFormats, syncCreatives, ... }`     | Domain group — register handlers by name                                                                  |
+| `ctx.store.put(collection, id, data)`                       | Persist state (creative library) across requests                                                          |
+| `ctx.store.get(collection, id)`                             | Retrieve persisted state                                                                                  |
+| `ctx.store.list(collection)`                                | List all items in a collection (for `list_creatives`)                                                     |
+| `listCreativeFormatsResponse(data)`                         | Auto-applied response builder (don't call manually)                                                       |
+| `syncCreativesResponse(data)`                               | Auto-applied response builder (don't call manually)                                                       |
+| `listCreativesResponse(data)`                               | Auto-applied response builder (don't call manually)                                                       |
+| `buildCreativeResponse(data)`                               | Auto-applied response builder (don't call manually)                                                       |
+| `previewCreativeResponse(data)`                             | Auto-applied response builder (don't call manually)                                                       |
+| `adcpError(code, { message })`                              | Structured error                                                                                          |
 
 Import: `import { createAdcpServerFromPlatform, serve, adcpError } from '@adcp/sdk/server';`
 
@@ -268,63 +271,63 @@ class MyCreative implements DecisioningPlatform {
 
   creative: CreativeAdServerPlatform = {
     listCreativeFormats: async (params, ctx) => {
-        return { formats };
-      },
+      return { formats };
+    },
 
-      syncCreatives: async (params, ctx) => {
-        const results = [];
-        for (const creative of params.creatives) {
-          const now = new Date().toISOString();
-          const existing = await ctx.store.get('creatives', creative.creative_id);
-          await ctx.store.put('creatives', creative.creative_id, {
-            ...creative,
-            status: 'approved',
-            created_date: existing?.created_date ?? now,
-            updated_date: now,
-          });
-          results.push({
-            creative_id: creative.creative_id,
-            action: existing ? ('updated' as const) : ('created' as const),
-          });
-        }
-        return { creatives: results };
-      },
+    syncCreatives: async (params, ctx) => {
+      const results = [];
+      for (const creative of params.creatives) {
+        const now = new Date().toISOString();
+        const existing = await ctx.store.get('creatives', creative.creative_id);
+        await ctx.store.put('creatives', creative.creative_id, {
+          ...creative,
+          status: 'approved',
+          created_date: existing?.created_date ?? now,
+          updated_date: now,
+        });
+        results.push({
+          creative_id: creative.creative_id,
+          action: existing ? ('updated' as const) : ('created' as const),
+        });
+      }
+      return { creatives: results };
+    },
 
-      listCreatives: async (params, ctx) => {
-        // `ctx.store.list` returns `{ items, nextCursor? }` — destructure.
-        let { items: creatives } = await ctx.store.list('creatives');
-        if (params.filters?.format_ids) {
-          creatives = creatives.filter(c => params.filters!.format_ids!.some(fid => fid.id === c.format_id?.id));
-        }
-        return {
-          query_summary: { total_matching: creatives.length, returned: creatives.length, filters_applied: [] },
-          creatives,
-          pagination: { has_more: false },
-        };
-      },
+    listCreatives: async (params, ctx) => {
+      // `ctx.store.list` returns `{ items, nextCursor? }` — destructure.
+      let { items: creatives } = await ctx.store.list('creatives');
+      if (params.filters?.format_ids) {
+        creatives = creatives.filter(c => params.filters!.format_ids!.some(fid => fid.id === c.format_id?.id));
+      }
+      return {
+        query_summary: { total_matching: creatives.length, returned: creatives.length, filters_applied: [] },
+        creatives,
+        pagination: { has_more: false },
+      };
+    },
 
-      buildCreative: async (params, ctx) => {
-        // `ctx.store.list` returns `{ items, nextCursor? }` — destructure.
-        // Calling `.find`/`.map` on the raw result throws `TypeError` and
-        // the dispatcher wraps it as `SERVICE_UNAVAILABLE`.
-        const { items: creatives } = await ctx.store.list('creatives');
-        const match = params.target_format_id
-          ? creatives.find(c => c.format_id?.id === params.target_format_id!.id)
-          : params.creative_id
-            ? await ctx.store.get('creatives', params.creative_id)
-            : null;
-        // Return structured errors — don't throw. The dispatcher now unwraps
-        // thrown envelopes, but throwing still releases the idempotency claim
-        // before the throw is caught. If your handler mutated state before
-        // throwing, a retry with the same key re-executes the write. Returning
-        // an error envelope has the same claim-release semantics, so the rule
-        // holds for both paths: mutate last, or don't mutate at all on error.
-        if (!match) return adcpError('CREATIVE_NOT_FOUND', { message: 'No matching creative' });
-        return {
-          creative_manifest: { format_id: match.format_id, assets: match.assets ?? {} },
-          sandbox: true,
-        };
-      },
+    buildCreative: async (params, ctx) => {
+      // `ctx.store.list` returns `{ items, nextCursor? }` — destructure.
+      // Calling `.find`/`.map` on the raw result throws `TypeError` and
+      // the dispatcher wraps it as `SERVICE_UNAVAILABLE`.
+      const { items: creatives } = await ctx.store.list('creatives');
+      const match = params.target_format_id
+        ? creatives.find(c => c.format_id?.id === params.target_format_id!.id)
+        : params.creative_id
+          ? await ctx.store.get('creatives', params.creative_id)
+          : null;
+      // Return structured errors — don't throw. The dispatcher now unwraps
+      // thrown envelopes, but throwing still releases the idempotency claim
+      // before the throw is caught. If your handler mutated state before
+      // throwing, a retry with the same key re-executes the write. Returning
+      // an error envelope has the same claim-release semantics, so the rule
+      // holds for both paths: mutate last, or don't mutate at all on error.
+      if (!match) return adcpError('CREATIVE_NOT_FOUND', { message: 'No matching creative' });
+      return {
+        creative_manifest: { format_id: match.format_id, assets: match.assets ?? {} },
+        sandbox: true,
+      };
+    },
 
     previewCreative: async params => {
       return {
@@ -560,22 +563,22 @@ Common failure decoder:
 
 ## Common Mistakes
 
-| Mistake                                                                | Fix                                                                                                                                 |
-| ---------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------- |
-| Using `createTaskCapableServer` + `server.tool()`                      | Use `createAdcpServerFromPlatform` with a typed `creative: CreativeAdServerPlatform` (or `CreativeBuilderPlatform`) field           |
+| Mistake                                                                | Fix                                                                                                                                      |
+| ---------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------- |
+| Using `createTaskCapableServer` + `server.tool()`                      | Use `createAdcpServerFromPlatform` with a typed `creative: CreativeAdServerPlatform` (or `CreativeBuilderPlatform`) field                |
 | Calling `createAdcpServer` directly in new code                        | Reach for `createAdcpServerFromPlatform`; `createAdcpServer` lives at `@adcp/sdk/server/legacy/v5` for mid-migration / escape-hatch only |
-| Manually registering `get_adcp_capabilities`                           | Auto-generated by `createAdcpServerFromPlatform` from your typed `DecisioningPlatform` — do not register it                         |
-| Calling `server.registerTool('preview_creative', ...)`                 | `AdcpServer` does not expose `registerTool` — put `previewCreative` in the `creative:` domain group like the other handlers         |
-| Using module-level Maps for state                                      | Use `ctx.store.put/get/list` — framework provides `InMemoryStateStore` by default                                                   |
-| Calling response builders manually in domain handlers                  | Handlers return raw data — response builders are auto-applied across the `creative:` group, including `preview_creative`            |
-| `list_creatives` ignores format filter                                 | Check `args.filters?.format_ids` and filter results                                                                                 |
-| `preview_creative` returns wrong response_type                         | Must be `'single'` for single creative previews                                                                                     |
-| `preview_creative` looks up by creative_id                             | Preview the `creative_manifest` from the request — no library lookup needed                                                         |
-| `build_creative` looks up by `args.creative_id` only                   | Storyboard sends `target_format_id` — find a synced creative matching that format                                                   |
-| `build_creative` missing creative_manifest                             | Required field — contains the built output                                                                                          |
-| `creative_manifest` includes `name` field                              | `CreativeManifest` has no `name` — only `format_id` and `assets`                                                                    |
-| HTML asset uses `{ html: '...' }`                                      | Use `{ content: '...' }` — the schema field is `content`, not `html`                                                                |
-| format_ids in list_creative_formats don't match what sellers reference | Sellers include your format_ids in their products — if the buyer can't look them up via list_creative_formats, creative sync breaks |
+| Manually registering `get_adcp_capabilities`                           | Auto-generated by `createAdcpServerFromPlatform` from your typed `DecisioningPlatform` — do not register it                              |
+| Calling `server.registerTool('preview_creative', ...)`                 | `AdcpServer` does not expose `registerTool` — put `previewCreative` in the `creative:` domain group like the other handlers              |
+| Using module-level Maps for state                                      | Use `ctx.store.put/get/list` — framework provides `InMemoryStateStore` by default                                                        |
+| Calling response builders manually in domain handlers                  | Handlers return raw data — response builders are auto-applied across the `creative:` group, including `preview_creative`                 |
+| `list_creatives` ignores format filter                                 | Check `args.filters?.format_ids` and filter results                                                                                      |
+| `preview_creative` returns wrong response_type                         | Must be `'single'` for single creative previews                                                                                          |
+| `preview_creative` looks up by creative_id                             | Preview the `creative_manifest` from the request — no library lookup needed                                                              |
+| `build_creative` looks up by `args.creative_id` only                   | Storyboard sends `target_format_id` — find a synced creative matching that format                                                        |
+| `build_creative` missing creative_manifest                             | Required field — contains the built output                                                                                               |
+| `creative_manifest` includes `name` field                              | `CreativeManifest` has no `name` — only `format_id` and `assets`                                                                         |
+| HTML asset uses `{ html: '...' }`                                      | Use `{ content: '...' }` — the schema field is `content`, not `html`                                                                     |
+| format_ids in list_creative_formats don't match what sellers reference | Sellers include your format_ids in their products — if the buyer can't look them up via list_creative_formats, creative sync breaks      |
 
 ## Storyboards
 
@@ -592,101 +595,18 @@ Common failure decoder:
 
 Storyboard: `creative_ad_server`. Stateful — the library is pre-loaded; buyers do **not** push assets via `sync_creatives` at runtime. Pricing and billing round-trips are first-class.
 
-**`list_creatives`** with `include_pricing=true` returns per-creative `pricing_options`:
+**Fork target**: [`examples/hello_creative_adapter_ad_server.ts`](../../examples/hello_creative_adapter_ad_server.ts) is the worked, passing reference adapter for this specialism. CI gates strict tsc + storyboard pass + upstream-traffic façade — all 7 storyboard steps pass on the worked build.
 
-```typescript
-listCreatives: async (params, ctx) => {
-  const { items } = await ctx.store.list('creatives');
-  const creatives = items.map((c) => ({
-    creative_id: c.creative_id,
-    name: c.name,
-    format_id: c.format_id,
-    status: 'approved' as const,
-    created_date: c.created_date,
-    updated_date: c.updated_date,
-    ...(params.include_pricing && {
-      pricing_options: [{
-        pricing_option_id: 'standard_cpm',
-        model: 'cpm' as const,
-        cpm: 2.5,
-        currency: 'USD',
-      }],
-    }),
-  }));
-  return {
-    query_summary: { total_matching: creatives.length, returned: creatives.length, filters_applied: [] },
-    creatives,
-    pagination: { has_more: false },
-  };
-},
-```
+The adapter demonstrates the stateful-library deltas vs `creative-template`:
 
-**`build_creative`** receives `media_buy_id`, `package_id`, `target_format_id`, and `pricing_option_id`. Return a VAST tag with macro placeholders, plus `vendor_cost` at CPM = 0 (billing happens via `report_usage`):
+- **Library shape** — `POST /v1/creatives` writes, `GET /v1/creatives` reads (cursor pagination + multi-id pass-through), `PATCH` mutates. Maps directly onto `CreativeAdServerPlatform.{syncCreatives, listCreatives}`. Library state is owned by the adopter's UI / API ingestion; the comply controller's `seed.creative` is the only test path that writes via the adapter.
+- **Tag generation** — `buildCreative` looks up the creative by id, calls upstream `POST /v1/creatives/{id}/render` for macro substitution against a stored snippet template (`{click_url}`, `{impression_pixel}`, `{cb}`, `{advertiser_id}`, `{creative_id}`, `{asset_url}` …), and returns `BuildCreativeSuccess` with `creative_manifest.assets` carrying the rendered tag (HTML / VAST / native). The mock's `tag_url` points at a real iframe-embeddable `/serve/{id}` endpoint adopters can iframe in storyboards.
+- **`previewCreative`** — `NoAccountCtx<TCtxMeta>` no-account tool; returns the same iframe URL as a `preview_url`. The resolver synthesizes a default-listing network so `ctx.account` resolves cleanly inside the no-account handler. See migration recipe #11.
+- **`listCreativeFormats`** — also `NoAccountCtx`. Project upstream catalog to closed-shape `Format.renders[]` (display fixed dims, video/CTV at 1080p baseline, parameterized with `accepts_parameters[]`) per the typed builders from `@adcp/sdk` (#1325).
+- **Per-creative pricing** — when the adopter bills through AdCP, `listCreatives` with `include_pricing=true` surfaces `pricing_options`, `buildCreative` echoes the applied `pricing_option_id`, and `reportUsage` closes the loop. Adopters that bill out of band (CM360-style flat license / SaaS contract) omit these fields and surface `report_usage` records as `not_accepted` rather than fake-accepting.
+- **`getCreativeDelivery`** — multi-id pass-through per #1342 + #1410; required top-level `currency` + `reporting_period` per the response schema.
 
-```typescript
-buildCreative: async (params, ctx) => {
-  const creative = await lookupCreativeForFormat(params.target_format_id, ctx);
-  const vast = `<?xml version="1.0"?>
-<VAST version="4.2">
-  <Ad id="${creative.creative_id}"><InLine>
-    <Impression><![CDATA[https://adserver.example/imp?cb=[CACHEBUSTER]&mb=${params.media_buy_id}]]></Impression>
-    <Creatives><Creative>
-      <Linear><Duration>00:00:30</Duration>
-        <MediaFiles><MediaFile type="video/mp4"><![CDATA[${creative.video_url}]]></MediaFile></MediaFiles>
-        <VideoClicks><ClickThrough><![CDATA[[CLICK_URL]https://landing.example]]></ClickThrough></VideoClicks>
-      </Linear>
-    </Creative></Creatives>
-  </InLine></Ad>
-</VAST>`;
-
-  return {
-    creative_manifest: {
-      format_id: params.target_format_id,
-      assets: { serving_tag: { content: vast } },     // HTML asset shape: { content: string }
-    },
-    pricing_option_id: params.pricing_option_id,      // echo
-    vendor_cost: { amount: 0, currency: 'USD' },      // CPM at build time — billing is separate
-    sandbox: true,
-  };
-},
-```
-
-**`report_usage`** is the billing reconciliation tool. Validate `idempotency_key` (return the same response for the same key) and echo `pricing_option_id` + `reporting_period`:
-
-```typescript
-reportUsage: async (params, ctx) => {
-  const existing = await ctx.store.get('usage_reports', params.idempotency_key);
-  if (existing) return existing;    // idempotent
-  const report = {
-    idempotency_key: params.idempotency_key,
-    creative_id: params.creative_id,
-    pricing_option_id: params.pricing_option_id,
-    reporting_period: params.reporting_period,
-    billable_amount: { amount: params.impressions * 2.5 / 1000, currency: 'USD' },
-    status: 'accepted' as const,
-  };
-  await ctx.store.put('usage_reports', params.idempotency_key, report);
-  return report;
-},
-```
-
-**`get_creative_delivery`** returns impressions/spend, optionally broken down by variant and filtered by `media_buy_ids`:
-
-```typescript
-getCreativeDelivery: async (params, ctx) => ({
-  reporting_period: params.reporting_period,
-  currency: 'USD',                                 // required top-level per get-creative-delivery-response.json
-  creatives: (params.creative_ids ?? []).map((id) => ({
-    creative_id: id,
-    impressions: 12500,
-    spend: { amount: 31.25, currency: 'USD' },
-    by_variant: [],
-  })),
-  sandbox: true,
-}),
-```
-
-Output formats returned by `list_creative_formats` for ad servers are **serving-tag formats** (VAST 4.2, display tag HTML, native JSON payload), not input visual formats.
+Output formats returned by `list_creative_formats` for ad servers are **serving-tag formats** (VAST 4.2, display tag HTML, native JSON payload), not input visual formats. Replace the `// SWAP:` markers with calls to your real backend.
 
 ### <a name="specialism-creative-template"></a>creative-template
 

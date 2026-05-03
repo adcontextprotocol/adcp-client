@@ -176,6 +176,8 @@ export type { AudiencePlatform, Audience, SyncAudiencesRow, AudienceStatus } fro
 
 export type { SignalsPlatform } from './specialisms/signals';
 
+export type { SponsoredIntelligencePlatform } from './specialisms/sponsored-intelligence';
+
 export type { BrandRightsPlatform } from './specialisms/brand-rights';
 
 // Brand-rights wire types — re-exported from `@adcp/sdk/server/decisioning`
@@ -286,6 +288,7 @@ export {
   defineSalesIngestionPlatform,
   defineAudiencePlatform,
   defineSignalsPlatform,
+  defineSponsoredIntelligencePlatform,
   defineCreativeBuilderPlatform,
   defineCreativeAdServerPlatform,
   defineCampaignGovernancePlatform,

@@ -390,7 +390,57 @@ interface McpServerPrivates {
       string,
       (request: { method: string; params?: unknown }, extra: unknown) => unknown | Promise<unknown>
     >;
+    _instructions?: string;
   };
+}
+
+/** @internal */
+type McpRequestHandler = (request: { method: string; params?: unknown }, extra: unknown) => unknown | Promise<unknown>;
+
+/**
+ * Write the instructions string onto the low-level SDK server backing
+ * `mcpServer`. Called by the async-function-form instructions hook to
+ * inject the resolved string just before the MCP `initialize` response.
+ *
+ * @internal
+ * @remarks Pokes an SDK private field — see the "Private-field access" note above.
+ */
+export function setSdkServerInstructions(mcpServer: McpServer, value: string | undefined): void {
+  const priv = mcpServer as unknown as McpServerPrivates;
+  if (priv.server) {
+    priv.server._instructions = value;
+  }
+}
+
+/**
+ * Wrap the `initialize` request handler on `mcpServer` so that `wrapper`
+ * runs (and can await async work) before the original handler responds.
+ * The wrapper receives the original handler as its first argument and must
+ * call it to complete the handshake.
+ *
+ * The wrapper is invoked once per MCP `initialize` call on this server
+ * instance. Under `serve({ reuseAgent: false })` the server is created
+ * fresh per request, so the wrapper fires once per session. Under
+ * `reuseAgent: true` the `ADCP_INSTRUCTIONS_FN` check in `serve.ts`
+ * blocks the combination before the wrapper can be called a second time.
+ *
+ * @internal
+ * @remarks Pokes an SDK private field — see the "Private-field access" note above.
+ */
+export function wrapInitializeHandler(
+  mcpServer: McpServer,
+  wrapper: (
+    origHandler: McpRequestHandler,
+    req: { method: string; params?: unknown },
+    extra: unknown
+  ) => unknown | Promise<unknown>
+): void {
+  const priv = mcpServer as unknown as McpServerPrivates;
+  const handlers = priv.server?._requestHandlers;
+  if (!handlers) return;
+  const orig = handlers.get('initialize');
+  if (!orig) return;
+  handlers.set('initialize', (req, extra) => wrapper(orig, req, extra));
 }
 
 function getRegisteredTool(server: McpServer, name: string): RegisteredTool | undefined {

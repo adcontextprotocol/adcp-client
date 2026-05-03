@@ -286,3 +286,221 @@ describe("#1364 — accounts.resolution: 'implicit' refuses inline account_id", 
     assert.strictEqual(result.structuredContent.adcp_error.field, 'account.account_id');
   });
 });
+
+describe("#1468 — accounts.resolution: 'derived' refuses inline account_id (mirrors #1364)", () => {
+  it('rejects { account_id } reference with INVALID_REQUEST and field=account.account_id', async () => {
+    let resolveCalled = false;
+    const platform = buildImplicitPlatform({
+      accounts: {
+        resolution: 'derived',
+        resolve: async () => {
+          resolveCalled = true;
+          return null;
+        },
+      },
+    });
+    const server = createAdcpServerFromPlatform(platform, SERVER_OPTS);
+    const result = await server.dispatchTestRequest({
+      method: 'tools/call',
+      params: {
+        name: 'get_products',
+        arguments: {
+          brief: 'premium',
+          promoted_offering: 'cars',
+          account: { account_id: 'audiostack_singleton' },
+        },
+      },
+    });
+    assert.strictEqual(result.isError, true);
+    assert.strictEqual(result.structuredContent.adcp_error.code, 'INVALID_REQUEST');
+    assert.strictEqual(result.structuredContent.adcp_error.field, 'account.account_id');
+    assert.strictEqual(resolveCalled, false, 'resolve must not be invoked when derived-mode rejects upfront');
+  });
+
+  it('derived-mode error message names single-tenant / derived (not sync_accounts, which does not exist in derived mode)', async () => {
+    const platform = buildImplicitPlatform({
+      accounts: {
+        resolution: 'derived',
+        resolve: async () => ({ id: 'singleton', name: 'Singleton', status: 'active', ctx_metadata: {} }),
+      },
+    });
+    const server = createAdcpServerFromPlatform(platform, SERVER_OPTS);
+    const result = await server.dispatchTestRequest({
+      method: 'tools/call',
+      params: {
+        name: 'get_products',
+        arguments: {
+          brief: 'premium',
+          promoted_offering: 'cars',
+          account: { account_id: 'foo' },
+        },
+      },
+    });
+    assert.strictEqual(result.isError, true);
+    assert.match(
+      result.structuredContent.adcp_error.message,
+      /single-tenant|derived/i,
+      'derived-mode message should explain single-tenant semantics, not point at sync_accounts'
+    );
+    assert.doesNotMatch(
+      result.structuredContent.adcp_error.message,
+      /sync_accounts/,
+      'derived-mode message must not suggest sync_accounts (no such step in derived mode)'
+    );
+  });
+
+  it('derived + omitted account flows to auth-derived resolution (no enforcement, no rejection)', async () => {
+    let sawRef;
+    const platform = buildImplicitPlatform({
+      accounts: {
+        resolution: 'derived',
+        resolve: async ref => {
+          sawRef = ref;
+          return {
+            id: 'singleton',
+            name: 'Singleton',
+            status: 'active',
+            ctx_metadata: {},
+          };
+        },
+      },
+    });
+    const server = createAdcpServerFromPlatform(platform, SERVER_OPTS);
+    const result = await server.dispatchTestRequest({
+      method: 'tools/call',
+      params: {
+        name: 'get_products',
+        arguments: {
+          brief: 'premium',
+          promoted_offering: 'cars',
+          // no `account` field — auth-derived path
+        },
+      },
+    });
+    assert.notStrictEqual(result.isError, true, `expected success, got ${JSON.stringify(result.structuredContent)}`);
+    assert.strictEqual(sawRef, undefined, 'auth-derived path passes undefined ref');
+  });
+
+  it('tasks_get rejects { account_id } with INVALID_REQUEST on derived platforms', async () => {
+    const platform = buildImplicitPlatform({
+      accounts: {
+        resolution: 'derived',
+        resolve: async () => null,
+      },
+    });
+    const server = createAdcpServerFromPlatform(platform, SERVER_OPTS);
+    const result = await server.dispatchTestRequest({
+      method: 'tools/call',
+      params: {
+        name: 'tasks_get',
+        arguments: {
+          task_id: 'task_does_not_matter',
+          account: { account_id: 'audiostack_singleton' },
+        },
+      },
+    });
+    assert.strictEqual(result.isError, true);
+    assert.strictEqual(result.structuredContent.adcp_error.code, 'INVALID_REQUEST');
+    assert.strictEqual(result.structuredContent.adcp_error.field, 'account.account_id');
+  });
+
+  it('get_account_financials rejects { account_id } with INVALID_REQUEST on derived platforms', async () => {
+    const platform = buildImplicitPlatform({
+      accounts: {
+        resolution: 'derived',
+        resolve: async () => null,
+        getAccountFinancials: async () => ({
+          financials: { spend: { amount: 0, currency: 'USD' } },
+        }),
+      },
+    });
+    const server = createAdcpServerFromPlatform(platform, SERVER_OPTS);
+    const result = await server.dispatchTestRequest({
+      method: 'tools/call',
+      params: {
+        name: 'get_account_financials',
+        arguments: {
+          account: { account_id: 'audiostack_singleton' },
+        },
+      },
+    });
+    assert.strictEqual(result.isError, true);
+    assert.strictEqual(result.structuredContent.adcp_error.code, 'INVALID_REQUEST');
+    assert.strictEqual(result.structuredContent.adcp_error.field, 'account.account_id');
+  });
+
+  it('derived-mode permits brand+operator union arm (no account_id present)', async () => {
+    // Brand+operator refs are not refused by the framework regardless of
+    // resolution mode — only the `{ account_id }` arm is refused. Adopters
+    // who want to additionally reject brand-arm refs do so in their resolver.
+    let sawRef;
+    const platform = buildImplicitPlatform({
+      accounts: {
+        resolution: 'derived',
+        resolve: async ref => {
+          sawRef = ref;
+          return {
+            id: 'singleton',
+            name: 'Singleton',
+            status: 'active',
+            ctx_metadata: {},
+          };
+        },
+      },
+    });
+    const server = createAdcpServerFromPlatform(platform, SERVER_OPTS);
+    const result = await server.dispatchTestRequest({
+      method: 'tools/call',
+      params: {
+        name: 'get_products',
+        arguments: {
+          brief: 'premium',
+          promoted_offering: 'cars',
+          account: { brand: { domain: 'acme.com' }, operator: 'pinnacle.com' },
+        },
+      },
+    });
+    assert.notStrictEqual(result.isError, true, `expected success, got ${JSON.stringify(result.structuredContent)}`);
+    assert.deepStrictEqual(sawRef, { brand: { domain: 'acme.com' }, operator: 'pinnacle.com' });
+  });
+
+  it('refusal fires regardless of auth posture — authenticated requests with inline account_id still rejected', async () => {
+    // Locks the contract: an authenticated buyer that sends inline account_id
+    // to a derived agent gets the same INVALID_REQUEST as an unauthenticated
+    // one. Prevents future drift where someone might soften the refusal "for
+    // authenticated principals only" — the field is meaningless on the wire
+    // for derived-mode regardless of who's asking.
+    let resolveCalled = false;
+    const platform = buildImplicitPlatform({
+      accounts: {
+        resolution: 'derived',
+        resolve: async () => {
+          resolveCalled = true;
+          return null;
+        },
+      },
+    });
+    const server = createAdcpServerFromPlatform(platform, {
+      ...SERVER_OPTS,
+      authenticate: () => ({
+        kind: 'oauth',
+        credential: { kind: 'oauth', client_id: 'authed-buyer', scopes: [] },
+      }),
+    });
+    const result = await server.dispatchTestRequest({
+      method: 'tools/call',
+      params: {
+        name: 'get_products',
+        arguments: {
+          brief: 'premium',
+          promoted_offering: 'cars',
+          account: { account_id: 'foo' },
+        },
+      },
+    });
+    assert.strictEqual(result.isError, true);
+    assert.strictEqual(result.structuredContent.adcp_error.code, 'INVALID_REQUEST');
+    assert.strictEqual(result.structuredContent.adcp_error.field, 'account.account_id');
+    assert.strictEqual(resolveCalled, false, 'authed principal does not soften the refusal');
+  });
+});

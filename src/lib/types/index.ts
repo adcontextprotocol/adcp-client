@@ -156,6 +156,8 @@ export type {
   Deployment,
   ActivationKey,
   VendorPricingOption,
+  SignalFilters, // embedded in GetSignalsRequest.filters
+  SignalTargeting, // embedded in ActivateSignalRequest.signal_targeting
 } from './tools.generated';
 
 // Creative
@@ -254,6 +256,10 @@ export type {
   SISendMessageResponse,
   SITerminateSessionRequest,
   SITerminateSessionResponse,
+  SICapabilities,
+  SIIdentity,
+  SISessionStatus,
+  SIUIElement,
 } from './tools.generated';
 
 // Brand rights — identity discovery + licensing for branded inventory.
@@ -296,6 +302,9 @@ export * from './format-asset-slots';
 // (which describes what a publisher SELLS in `Format.assets[]`). The
 // individual ImageAsset / VideoAsset / etc. interfaces are generated; this
 // file is the missing canonical union over them.
+// Note: tools.generated.ts also has `AssetVariant`, a narrower generated union
+// that omits AudioAsset. `AssetInstance` (this file) is the curated, complete
+// union — prefer it. `AssetVariant` is intentionally not re-exported.
 export * from './asset-instances';
 
 // Strict per-row types for sync_* response success arms. The codegen

@@ -23,6 +23,37 @@ import type { ComposeHooks, ComposeShortCircuit } from '@adcp/sdk/server';
 
 ---
 
+## When to use which approach
+
+| Situation | Recommendation |
+|---|---|
+| Single security gate matching one of the shipped presets exactly | Use the preset via `composeMethod` — see [Pattern 6](#pattern-6--requireadvertisermatch-with-composemethod) |
+| Multiple gates to stack, no per-gate unit testing needed | Consider inlining; chained `composeMethod` nesting is harder to read than equivalent inline guards — see [Pattern 3](#pattern-3--layering-two-composemethod-calls) for the nesting form, [Pattern 7](#pattern-7--variadic-composemethod-hook-chain-sugar) for the variadic sugar |
+| Single gate with policy nuances the preset doesn't express (e.g. public-account fallthrough) | Inline or use `requireAccountMatch` with a custom predicate; presets are for the canonical case |
+| Per-gate testability or reuse across multiple platforms | `composeMethod` per gate — accept the nesting verbosity for the test coverage benefit |
+| `onDeny: 'throw'` needed on a guard | Use the preset with `{ onDeny: 'throw' }` — note that a throwing outer guard bypasses inner guards, making evaluation order load-bearing |
+
+**`requireOrgScope` gotcha:** `requireOrgScope` uses strict equality and denies when _either_ `getAccountOrg` **or** `getCtxOrg` returns `undefined`. An account without an org field is **denied**, not treated as publicly accessible. For a public-account convention (accounts without an org scope are open to any authenticated buyer), use `requireAccountMatch` with a custom predicate instead:
+
+```ts
+import { composeMethod, requireAccountMatch } from '@adcp/sdk/server';
+
+accounts: {
+  resolve: composeMethod(
+    baseResolve,
+    requireAccountMatch((account, ctx) => {
+      // Replace with your account's org field — e.g. account.ctx_metadata?.orgId
+      const accountOrg = account.ctx_metadata?.orgScope;
+      if (!accountOrg) return true; // no org scope → publicly accessible
+      const ctxOrg = ctx?.authInfo?.extra?.orgId as string | undefined;
+      return ctxOrg === accountOrg;
+    })
+  ),
+}
+```
+
+---
+
 ## Pattern 1 — Mock the base, assert pass-through
 
 When neither hook fires the wrapped method is a transparent proxy. Track calls on the inner
@@ -88,7 +119,7 @@ const right = composeMethod(inner, { before: async () => ({ shortCircuit: undefi
 `before` accepts a single function, not an array. To compose independent guards, nest
 `composeMethod` calls. The outer `before` runs first; if it falls through, the inner `before`
 runs. This is how the `requireAdvertiserMatch` / `requireOrgScope` presets are designed to be
-composed.
+composed. For three or more guards, [Pattern 7](#pattern-7--variadic-composemethod-hook-chain-sugar) provides sugar over this nesting.
 
 ```javascript
 const inner = async () => ({ ok: true });
@@ -222,7 +253,7 @@ assert.ok(ok !== null);
 ## Pattern 6 — `requireAdvertiserMatch` with `composeMethod`
 
 The presets shipped in `@adcp/sdk/server` (`requireAccountMatch`, `requireAdvertiserMatch`,
-`requireOrgScope`) are pre-built `ComposeHooks` objects for `accounts.resolve`. Each returns an
+`requireOrgScope`) are pre-built `ComposeHooks` objects for `accounts.resolve`. See [When to use which approach](#when-to-use-which-approach) for guidance on when a preset fits vs. when to inline. Each returns an
 `after` hook that runs _after_ the inner resolver; a null inner result propagates unconditionally
 (no predicate runs on a "not found" account). The snippet below uses `requireAdvertiserMatch`;
 `requireAccountMatch` (general predicate) and `requireOrgScope` (org equality check) follow the
@@ -266,3 +297,61 @@ assert.strictEqual(await guardedNull({}, {}), null);
 ```
 
 The full preset API is documented in the JSDoc of `src/lib/server/decisioning/resolve-presets.ts`.
+
+---
+
+## Pattern 7 — Variadic `composeMethod` (hook-chain sugar)
+
+When stacking three or more independent guards, the nested `composeMethod` calls become
+hard to read. Pass multiple hooks as separate arguments instead — `composeMethod` chains
+them internally, producing the same result as manual nesting.
+
+```ts
+// Equivalent forms:
+composeMethod(inner, hookA, hookB, hookC)
+composeMethod(composeMethod(composeMethod(inner, hookC), hookB), hookA)
+```
+
+**Execution order:** `before` hooks run left-to-right (A first, C last). `after` hooks run
+right-to-left (C first, A last). A short-circuit from a `before` hook skips remaining
+`before` hooks and their corresponding `after` hooks (the inner wrappers that were never
+entered). `after` hooks for wrappers that _were_ entered (the short-circuiting hook itself
+and any outer hooks) still run.
+
+```javascript
+const { composeMethod } = require('@adcp/sdk/server');
+
+const inner = async () => ({ ok: true });
+
+const authGate = {
+  before: async (_params, ctx) =>
+    ctx.token ? undefined : { shortCircuit: null },
+};
+const synthGate = {
+  before: async (params) =>
+    params.account_id?.startsWith('synthetic_') ? { shortCircuit: null } : undefined,
+};
+const orgGate = {
+  before: async (params, ctx) =>
+    ctx.orgId === params.expected_org ? undefined : { shortCircuit: null },
+  after: async (result) => result && { ...result, org_checked: true },
+};
+
+// Sugar: authGate before runs first, orgGate before runs last.
+// orgGate after runs first (closest to inner), authGate after runs last.
+const guarded = composeMethod(inner, authGate, synthGate, orgGate);
+
+// All gates pass — inner result, enriched by orgGate.after
+const ok = await guarded({ account_id: 'acc_1', expected_org: 'org_A' }, { token: 'tok', orgId: 'org_A' });
+assert.deepStrictEqual(ok, { ok: true, org_checked: true });
+
+// authGate short-circuits at the outermost wrapper — synthGate and orgGate are
+// never entered, so neither their before nor their after hooks run. authGate has
+// no after, so the short-circuit value is returned unchanged.
+const denied = await guarded({ account_id: 'acc_1', expected_org: 'org_A' }, { token: null, orgId: 'org_A' });
+assert.strictEqual(denied, null);
+```
+
+When each gate needs its own unit tests or is reused across multiple platform methods, the
+two-argument form with manual nesting (Pattern 3) keeps the test surface cleaner. Use the
+variadic form when you're stacking gates inline and don't need per-gate isolation.

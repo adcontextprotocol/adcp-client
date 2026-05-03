@@ -175,7 +175,28 @@ accountStore.size;                              // number of stored linkages
 
 ## `'derived'` (single-tenant)
 
-Return a fixed singleton regardless of `ref`:
+Return a fixed singleton regardless of `ref`. For the canonical Shape D
+pattern (auth principal IS the tenant — audiostack, flashtalking,
+single-namespace retail-media), use `createDerivedAccountStore`:
+
+```ts
+import { createDerivedAccountStore } from '@adcp/sdk/server';
+
+const accounts = createDerivedAccountStore<MyMeta>({
+  toAccount: ctx => ({
+    id: 'tenant_singleton',
+    name: 'My Platform',
+    status: 'active',
+    ctx_metadata: {},
+  }),
+});
+```
+
+The factory sets `resolution: 'derived'`, throws
+`AdcpError('AUTH_REQUIRED')` when `ctx.authInfo.credential` is absent
+(skip with `skipAuthCheck: true` for genuinely unauthenticated agents),
+and ignores any buyer-supplied `account_id` (single-tenant by
+definition). Hand-rolled equivalent:
 
 ```ts
 accounts: {
@@ -191,6 +212,16 @@ accounts: {
 
 No `upsert` needed. The framework returns `UNSUPPORTED_FEATURE` to any
 buyer that calls `sync_accounts`.
+
+**Inline `account_id` refusal.** Since adcp-client#1468, the framework
+refuses inline `{ account_id }` references for `'derived'` platforms with
+`AdcpError('INVALID_REQUEST', { field: 'account.account_id' })` *before*
+reaching `accounts.resolve` — same shape as `'implicit'`'s refusal (#1364),
+with a single-tenant message instead of the `sync_accounts`-first guidance.
+Hand-rolled `'derived'` stores get this for free; the
+`createDerivedAccountStore` factory's defensive ignore is a belt + braces
+fallback. The brand+operator union arm is still permitted (route through
+your resolver verbatim).
 
 ---
 
@@ -214,3 +245,67 @@ accounts: {
 
 `upsert` is optional for explicit-mode platforms. Implement it if your buyers
 need to pre-register accounts before use (e.g., credit-check gates).
+
+For the Shape C publisher-curated pattern, prefer `createRosterAccountStore`
+over a hand-rolled store — it handles the id-arm dispatch and `list_accounts`
+plumbing, and exposes `resolveWithoutRef` for the ref-less case (see
+[Ref-less resolution](#ref-less-resolution-list_creative_formats-preview_creative-provide_performance_feedback) below).
+
+---
+
+## Ref-less resolution (`list_creative_formats`, `preview_creative`, `provide_performance_feedback`)
+
+These tools send no `account` field on the wire, so the framework calls
+`accounts.resolve(undefined, ctx)`. Publisher-curated (`resolution: 'explicit'`)
+platforms using `createRosterAccountStore` get `null` by default —
+`ctx.account` is `undefined` in those handlers.
+
+Use `resolveWithoutRef` when your platform needs a synthetic publisher-wide
+account for these tools:
+
+```ts
+import { createRosterAccountStore } from '@adcp/sdk/server';
+
+const accounts = createRosterAccountStore({
+  lookup: async (id, ctx) => db.findById(id),
+  toAccount: row => ({
+    id: row.id,
+    name: row.name,
+    status: 'active',
+    ctx_metadata: { tenantId: row.tenant_id },
+  }),
+  // Called when tools resolve with no account_id on the wire.
+  // The returned entry flows through toAccount like any lookup hit.
+  resolveWithoutRef: (_ref, ctx) => ({
+    id: '__publisher__',
+    name: 'Publisher',
+    // tenant_id is a custom TRosterEntry field — toAccount maps it to ctx_metadata
+    tenant_id: ctx?.authInfo?.credential?.client_id ?? 'default',
+  }),
+});
+```
+
+When `resolveWithoutRef` returns `undefined`, the helper falls back to `null`
+(same as omitting the option).
+
+**Auth-derived singleton.** If the publisher singleton must be looked up from
+your roster by a principal-derived id (rather than synthesized inline), use the
+spread-override pattern so the lookup goes through `lookup` + `toAccount`:
+
+```ts
+const base = createRosterAccountStore({ lookup, toAccount });
+const accounts = {
+  ...base,
+  resolve: async (ref, ctx) => {
+    if (ref === undefined) {
+      const id = deriveAccountIdFromAuth(ctx?.authInfo);
+      return id ? base.resolve({ account_id: id }, ctx) : null;
+    }
+    return base.resolve(ref, ctx);
+  },
+};
+```
+
+**Hand-rolled stores.** For stores that don't use `createRosterAccountStore`,
+handle `resolve(undefined, ctx)` in your own `resolve` implementation by
+checking `ref === undefined` before the id-arm branch.

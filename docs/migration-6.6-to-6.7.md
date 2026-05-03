@@ -2,7 +2,7 @@
 
 > **Status: GA in 6.7.** Most changes are additive — adopters running on
 > 6.6 today see no behavior change on `npm update @adcp/sdk` unless they
-> opt in. **Two exceptions** require attention before bumping:
+> opt in. **Three exceptions** require attention before bumping:
 >
 > - **`accounts.resolution: 'implicit'` adopters**: the framework now
 >   actually refuses inline `{account_id}` references (the docstring
@@ -15,11 +15,17 @@
 >   `SalesCorePlatform & SalesIngestionPlatform` with all methods
 >   individually optional. The widened annotation will fail
 >   `RequiredPlatformsFor<S>` enforcement. See recipe **#11**.
+> - **Adopters with `customTools["update_rights"]`**: `update_rights` is
+>   now framework-registered. `createAdcpServer` will throw at build time
+>   with `customTools["update_rights"] collides with a framework-registered
+>   tool`. The throw is server-side and surfaces as HTTP 500 on every
+>   client probe — including discovery — masquerading as a transport bug.
+>   See recipe **#16**.
 
-## Audit first — the two breaking recipes
+## Audit first — the three breaking recipes
 
-Before bumping, read recipes **#10** and **#11**. Everything else is
-additive and can be applied incrementally.
+Before bumping, read recipes **#10**, **#11**, and **#16**. Everything
+else is additive and can be applied incrementally.
 
 - **#10 — `accounts.resolution: 'implicit'` enforces inline-`account_id`
   refusal** (runtime). Inline `{account_id}` references against an
@@ -33,8 +39,16 @@ additive and can be applied incrementally.
   -broadcast-tv / -catalog-driven need to migrate the annotation.
   Walled-garden ingestion adopters (Meta CAPI, Snap CAPI, TikTok
   Events) get to drop their stub-throw boilerplate.
+- **#16 — `customTools["update_rights"]` collides with the new
+  framework-registered `update_rights`** (runtime). Brand-rights
+  adopters who previously registered `update_rights` as a customTool
+  will see `createAdcpServer` throw at server-build time. Because the
+  throw fires inside the request handler (lazy tenant build), every
+  MCP probe — including discovery — gets an HTTP 500 with an HTML
+  error body, which clients report as `discovery_failed`. Audit with
+  `grep -rn 'customTools.*update_rights'` before bumping.
 
-## tl;dr — fifteen recipes to apply
+## tl;dr — seventeen recipes to apply
 
 | #  | If you had 6.6 …                                                                         | Do this in 6.7                                                                                                            | Mechanical?                  |
 |----|------------------------------------------------------------------------------------------|---------------------------------------------------------------------------------------------------------------------------|------------------------------|
@@ -53,6 +67,8 @@ additive and can be applied incrementally.
 | 13 | Hand-rolled `accounts.resolve` + per-entry tenant-isolation gate on `upsert` / `syncGovernance` for a multi-tenant adapter | `createTenantStore({...})` — built-in security gate, fail-closed when auth principal can't be resolved.        | mechanical (security-relevant) |
 | 14 | Local copy of the media-buy / creative status-transition graph                           | Import `MEDIA_BUY_TRANSITIONS` / `assertMediaBuyTransition` (and the creative pair) from `@adcp/sdk/server`.              | mechanical                   |
 | 15 | Sellers claiming `property-lists` / `collection-lists` echoing `targeting_overlay` by hand | `mediaBuyStore: createMediaBuyStore({ store })` opt-in framework wiring.                                                | mechanical (narrow)          |
+| 16 | Brand-rights adopter with `customTools: { update_rights: ... }`                          | Drop the customTools entry and wire `BrandRightsPlatform.updateRights` instead. The framework now owns the tool name.   | **breaking**                 |
+| 17 | Single-tenant adapter (audiostack, flashtalking, single-namespace retail-media) hand-rolling `AccountStore` with `'explicit'` (wrong) resolution | `createDerivedAccountStore({ toAccount })` — Shape D factory; sets `'derived'`, gates on `AUTH_REQUIRED`, ignores buyer-supplied `account_id`. While here, move any bearer tokens out of `ctx_metadata` — see [CTX-METADATA-SAFETY](./guides/CTX-METADATA-SAFETY.md). | mechanical (security-relevant) |
 
 `refAccountId` already shipped in 6.6 (recipe #2); it's listed because
 the eight-item list in #1344 included it as a "stop reinventing this"
@@ -504,6 +520,29 @@ for DB-seeded startup, runtime register / unregister, and concurrent
 recheck is now in
 [`examples/decisioning-platform-multi-tenant-db.ts`](../examples/decisioning-platform-multi-tenant-db.ts).
 
+**Make construction errors observable.**
+`createTenantRegistry.register()` calls `createAdcpServerFromPlatform()`
+synchronously — config errors (collision throws like recipe #16,
+missing required handlers, invalid `signingKey` shape) fire inside
+`register()`. The cleanest path is to register eagerly at process
+boot: in a single-region server, that's the `app.listen` callback or
+a top-level `await` for ESM. DB-seeded tenants load the seed list at
+boot, register each row, then start serving.
+
+Lazy registration is legitimate — autoscaling replicas where eager
+register-all would JWKS-storm cold start, multi-tenant SaaS hosts
+where the tenant table mutates faster than redeploys, serverless
+warm-start where boot *is* first request — but watch what happens
+when `register()` throws inside a request handler. By default the
+host framework returns HTTP 500 with an HTML error body, MCP clients
+classify the HTML as a non-MCP response, and the failure surfaces as
+`discovery_failed` on every probe. If you defer construction, catch
+the throw at the registration site and route it through your error
+pipeline (logs, metrics, alerts) so a config bug fails loudly instead
+of as a buyer-visible 500. Runtime admin-API `register` for tenant
+onboarding is fine — just keep buyer-path requests off the
+registration call site.
+
 ### 10. **breaking** — `accounts.resolution: 'implicit'` enforces inline-`account_id` refusal
 
 The `AccountStore.resolution` docstring has long claimed the framework
@@ -583,13 +622,66 @@ and the framework emits `UNSUPPORTED_FEATURE`); no `upsert` /
 driven writes. Compose a spread for adopters who need both:
 `{ ...createRosterAccountStore(...), refreshToken: ... }`.
 
-The three-shape map adopters now reach for:
+**Ref-less tools (`list_creative_formats`, `preview_creative`,
+`provide_performance_feedback`).** These tools send no `account`
+field on the wire. By default `createRosterAccountStore` returns
+`null` for ref-less calls (`ctx.account` is `undefined` in the
+handler). Use the `resolveWithoutRef` option to return a synthetic
+publisher-wide account instead — the returned entry flows through
+`toAccount` like any `lookup` hit. See
+[Ref-less resolution](./guides/account-resolution.md#ref-less-resolution-list_creative_formats-preview_creative-provide_performance_feedback)
+in `docs/guides/account-resolution.md`.
 
-| Shape  | Resolution  | Helper                              | Use when                                                                         |
-|--------|-------------|-------------------------------------|----------------------------------------------------------------------------------|
+**Companion: `createDerivedAccountStore` for single-tenant agents
+(Shape D).** Adopters whose tenant is the auth principal alone — no
+`account_id` on the wire (audiostack, flashtalking, single-namespace
+retail-media) — get a complete `AccountStore` from one `toAccount(ctx)`
+callback. Replaces ~25–30 LOC of bearer-extract +
+throw-`AUTH_REQUIRED` + return-singleton boilerplate, and standardizes
+the correct `'derived'` resolution declaration (many Shape D adapters
+declare `'explicit'` today even though they ignore the wire field).
+
+```ts
+import { createDerivedAccountStore } from '@adcp/sdk/server';
+
+const accounts = createDerivedAccountStore<AudioStackAccountMeta>({
+  toAccount: ctx => ({
+    id: 'audiostack',
+    name: 'AudioStack',
+    status: 'active',
+    ctx_metadata: {},                       // bearer stays on ctx.authInfo, not here
+  }),
+});
+```
+
+Closes adcp-client#1462. The factory throws `AUTH_REQUIRED` when
+`ctx.authInfo.credential` is absent — set `skipAuthCheck: true` for
+unauthenticated single-tenant agents (rare; public format catalogs).
+Buyer-supplied `account_id` is ignored (single-tenant by definition);
+adopters who want a wire-shape error for that case wrap `resolve` and
+throw `INVALID_REQUEST`. Framework-side refusal (matching `'implicit'`'s
+`refuseImplicitAccountId`) is tracked at adcp-client#1468.
+
+**Security-posture upgrade — drop bearers out of `ctx_metadata`.** The
+real value of swapping to Shape D is the credential-discipline shift,
+not the LOC drop. Hand-rolled `'derived'` stores commonly stash the
+bearer in `ctx_metadata: { accessToken: ctx.authInfo?.token }`; the
+factory's example deliberately keeps `ctx_metadata: {}` and tells you
+to re-derive the bearer per request from `ctx.account.authInfo` (auto-
+attached by the framework) inside specialism methods. While you're in
+there for the mechanical swap, do the credential migration too — see
+[`CTX-METADATA-SAFETY`](./guides/CTX-METADATA-SAFETY.md) for the
+rationale (wire-strip protects buyer responses but does NOT protect
+log lines, error envelopes, or `JSON.stringify(account)` strings).
+
+The four-shape map adopters now reach for:
+
+| Shape  | Resolution    | Helper                              | Use when                                                                         |
+|--------|---------------|-------------------------------------|----------------------------------------------------------------------------------|
 | **A**  | `'implicit'`  | `InMemoryImplicitAccountStore`        | Buyer drives onboarding via `sync_accounts`; framework owns the linkage map.    |
 | **B**  | `'explicit'`  | `createOAuthPassthroughResolver`      | Adapter fronts a vendor OAuth + `/me/adaccounts` listing endpoint (Snap, Meta). |
 | **C**  | `'explicit'`  | `createRosterAccountStore`            | Publisher owns the roster (storefront table, admin UI). Adopter brings `lookup`. |
+| **D**  | `'derived'`   | `createDerivedAccountStore`           | Single-tenant agent — auth principal IS the tenant; no `account_id` on the wire (audiostack, flashtalking, single-namespace retail-media). |
 
 ### 11. **breaking** (TS-only) — `SalesPlatform` split into core + ingestion
 
@@ -912,6 +1004,77 @@ paths produce a value. The store fills the gap for adopters who
 hadn't wired echo yet (the canonical silent-storyboard-failure for
 `media_buy_seller/inventory_list_targeting/get_after_create`).
 
+### 16. **breaking** — drop `customTools["update_rights"]`; wire `BrandRightsPlatform.updateRights`
+
+`update_rights` is now a framework-registered first-class tool (PR
+#1349). The `customTools` collision check at server build time will
+throw with:
+
+```
+createAdcpServer: customTools["update_rights"] collides with a
+framework-registered tool.
+```
+
+The throw is server-side and fires inside `createAdcpServer()` at
+construction. `createTenantRegistry.register()` builds eagerly, so
+adopters who register every tenant at process boot will see this fail
+visibly during deploy. Adopters who wrap `createTenantRegistry()` in a
+per-request lazy-init factory defer construction until first traffic —
+the throw still fires, but inside the request handler, where the host
+framework's default error handler renders it as HTTP 500 HTML to every
+MCP probe. Clients (correctly) classify the HTML as a non-MCP response
+and report `discovery_failed`, which makes the regression look like a
+client-side transport bug. It isn't — see recipe #9 for the
+registration patterns that surface this kind of config error during
+deploy.
+
+**Audit:**
+
+```bash
+grep -rn 'customTools.*update_rights' src/
+```
+
+**Before (6.6):**
+
+```ts
+createAdcpServerFromPlatform(brandPlatform, {
+  customTools: {
+    update_rights: customToolFor(
+      'update_rights',
+      'Update an existing rights grant — extend dates, adjust caps, pause/resume.',
+      UPDATE_RIGHTS_SCHEMA,
+      handleUpdateRights,
+    ),
+    creative_approval: customToolFor(/* ... */),
+  },
+});
+```
+
+**After (6.7):**
+
+```ts
+import { defineBrandRightsPlatform } from '@adcp/sdk/server';
+
+const brandPlatform = defineBrandRightsPlatform<MyMeta>({
+  // ... existing brand-rights handlers ...
+  updateRights: handleUpdateRights, // <- promoted from customTool
+});
+
+createAdcpServerFromPlatform(brandPlatform, {
+  customTools: {
+    creative_approval: customToolFor(/* ... */), // unchanged
+  },
+});
+```
+
+`creative_approval` is still customTool territory in 6.7 — only
+`update_rights` was promoted. Future SDK releases may promote
+additional tools the same way. The collision-check error always names
+the framework-handler equivalent (`BrandRightsPlatform.updateRights`
+here), so when the next promotion-induced collision lands, follow the
+message: drop the customTools entry, wire the named platform handler.
+The pattern travels even if the migration recipe lags.
+
 ## Worked diff — `examples/decisioning-platform-mock-seller.ts`
 
 > **Illustrative — not a verbatim diff against the file.** The
@@ -1125,7 +1288,9 @@ These ride along in 6.7 and don't need any adopter action:
   builders.** Brand-rights adopters wire
   `BrandRightsPlatform.updateRights` instead of the v5 raw-handler
   bag. Per-arm builders for `creativeApproved` /
-  `creativeApprovalRejected` / `creativeApprovalRevoked`.
+  `creativeApprovalRejected` / `creativeApprovalRevoked`. **Breaking
+  for adopters who previously registered `update_rights` as a
+  `customTools` entry — see recipe #16.**
 - **Auto-hydration is now spec-driven.** Hydration call sites read
   `x-entity` annotations from the manifest instead of hand-rolled
   `(field_name, ResourceKind)` literals. Future spec field renames

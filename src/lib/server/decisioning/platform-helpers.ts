@@ -48,6 +48,7 @@ import type { ComplianceTestingCapabilities } from './capabilities';
 import type { SalesPlatform, SalesCorePlatform, SalesIngestionPlatform } from './specialisms/sales';
 import type { AudiencePlatform } from './specialisms/audiences';
 import type { SignalsPlatform } from './specialisms/signals';
+import type { SponsoredIntelligencePlatform } from './specialisms/sponsored-intelligence';
 import type { CreativeBuilderPlatform } from './specialisms/creative';
 import type { CreativeAdServerPlatform } from './specialisms/creative-ad-server';
 import type { CampaignGovernancePlatform } from './specialisms/campaign-governance';
@@ -239,6 +240,28 @@ export function defineAudiencePlatform<TCtxMeta = Record<string, unknown>>(
 export function defineSignalsPlatform<TCtxMeta = Record<string, unknown>>(
   platform: SignalsPlatform<TCtxMeta>
 ): SignalsPlatform<TCtxMeta> {
+  return platform;
+}
+
+/**
+ * Type-level identity for a `SponsoredIntelligencePlatform` sub-object.
+ * SI is currently a *protocol* in AdCP 3.0, not a specialism — adopters
+ * declare SI by providing this field; the framework auto-derives
+ * `'sponsored_intelligence'` into the wire-side `supported_protocols`.
+ *
+ * @example
+ * ```ts
+ * sponsoredIntelligence: defineSponsoredIntelligencePlatform<BrandMeta>({
+ *   getOffering: async (req, ctx) => { ... },
+ *   initiateSession: async (req, ctx) => { ... },
+ *   sendMessage: async (req, ctx) => { ... },
+ *   terminateSession: async (req, ctx) => { ... },
+ * }),
+ * ```
+ */
+export function defineSponsoredIntelligencePlatform<TCtxMeta = Record<string, unknown>>(
+  platform: SponsoredIntelligencePlatform<TCtxMeta>
+): SponsoredIntelligencePlatform<TCtxMeta> {
   return platform;
 }
 

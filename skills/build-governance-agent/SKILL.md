@@ -21,6 +21,8 @@ A governance agent sits between buyers and sellers, evaluating proposed media bu
 - Serving audience segments → `skills/build-signals-agent/`
 - Managing brand identity and licensing → `skills/build-brand-rights-agent/`
 
+**Often claimed alongside:** `measurement-verification` _(preview)_ + `content-standards` — governance vendors (IAS, DV) typically claim all three together. See [Common multi-specialism bundles](../../examples/README.md#common-multi-specialism-bundles).
+
 ## Specialisms This Skill Covers
 
 Your compliance obligations come from the specialisms you claim in `get_adcp_capabilities`. Each maps to a storyboard at `compliance/cache/latest/specialisms/<id>/`:
@@ -460,13 +462,13 @@ Some schemas also define an `ext` field for vendor-namespaced extensions. If you
 
 ## SDK Quick Reference
 
-| SDK piece                                | Usage                                                                      |
-| ---------------------------------------- | -------------------------------------------------------------------------- |
-| `createAdcpServerFromPlatform(platform, opts)` | Create server from a typed `DecisioningPlatform` — compile-time specialism enforcement, auto-generated capabilities, ctx_metadata round-trip |
-| `createAdcpServer(config)` *(legacy)*    | v5 handler-bag entry. Mid-migration / escape-hatch only; reach via `@adcp/sdk/server/legacy/v5`                                              |
-| `serve(() => createAdcpServerFromPlatform(platform, opts))` | Start HTTP server on `:3001/mcp`                                                                              |
-| `ctx.store`                              | State persistence — `get/put/patch/delete/list` domain objects             |
-| `adcpError(code, { message })`           | Structured error                                                           |
+| SDK piece                                                   | Usage                                                                                                                                        |
+| ----------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------- |
+| `createAdcpServerFromPlatform(platform, opts)`              | Create server from a typed `DecisioningPlatform` — compile-time specialism enforcement, auto-generated capabilities, ctx_metadata round-trip |
+| `createAdcpServer(config)` _(legacy)_                       | v5 handler-bag entry. Mid-migration / escape-hatch only; reach via `@adcp/sdk/server/legacy/v5`                                              |
+| `serve(() => createAdcpServerFromPlatform(platform, opts))` | Start HTTP server on `:3001/mcp`                                                                                                             |
+| `ctx.store`                                                 | State persistence — `get/put/patch/delete/list` domain objects                                                                               |
+| `adcpError(code, { message })`                              | Structured error                                                                                                                             |
 
 Handlers return raw data objects. The framework auto-wraps responses and auto-generates `get_adcp_capabilities` from registered handlers.
 
@@ -568,9 +570,15 @@ class MyGovernance implements DecisioningPlatform {
 
   propertyLists: PropertyListsPlatform = {
     listPropertyLists: async (req, ctx) => ({ property_lists: [] }),
-    createPropertyList: async (req, ctx) => ({ /* ... */ }),
-    updatePropertyList: async (req, ctx) => ({ /* ... */ }),
-    deletePropertyList: async (req, ctx) => ({ /* ... */ }),
+    createPropertyList: async (req, ctx) => ({
+      /* ... */
+    }),
+    updatePropertyList: async (req, ctx) => ({
+      /* ... */
+    }),
+    deletePropertyList: async (req, ctx) => ({
+      /* ... */
+    }),
   };
 }
 
@@ -611,7 +619,8 @@ const idempotency = createIdempotencyStore({
 });
 
 const server = createAdcpServerFromPlatform(platform, {
-  name: '...', version: '...',
+  name: '...',
+  version: '...',
   idempotency,
   // MUST never return undefined — or every mutating request rejects as
   // SERVICE_UNAVAILABLE. A constant works for a demo; production uses

@@ -45,7 +45,8 @@ export type ResourceKind =
   | 'signal'
   | 'rights_grant'
   | 'property_list'
-  | 'collection_list';
+  | 'collection_list'
+  | 'si_session';
 
 const ALL_RESOURCE_KINDS: readonly ResourceKind[] = [
   'account',
@@ -58,6 +59,7 @@ const ALL_RESOURCE_KINDS: readonly ResourceKind[] = [
   'rights_grant',
   'property_list',
   'collection_list',
+  'si_session',
 ];
 
 /**
