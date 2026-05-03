@@ -458,9 +458,15 @@ async function resolveTaskCompletionOutputs(
   // the poll. The webhook payload's `result` field is the artifact's
   // `data` (per the framework's task webhook payload shape, mirroring
   // the HITL completion shape from `from-platform.ts`).
-  if (canWebhook) {
+  //
+  // Note: `webhook.wait` keeps an internal `setTimeout(timeout_ms)` that
+  // we can't cancel from here. When the poll wins or the outer timeout
+  // fires first, that internal timer continues until `timeout_ms`
+  // elapses. Acceptable because the receiver is process-scoped (closed
+  // on storyboard exit) and runner-owned receivers aren't injected.
+  if (webhookReceiver) {
     racers.push(
-      webhookReceiver!
+      webhookReceiver
         .wait({ body: { task_id: taskId } }, timeoutMs)
         .then((result): WebhookWin => ({ kind: 'webhook', result }))
     );
@@ -491,16 +497,17 @@ async function resolveTaskCompletionOutputs(
     if (waitResult.timed_out) {
       return { attempted: true, timedOut: true, pollTimeoutMs: timeoutMs };
     }
-    const webhookBody = waitResult.webhook.body as
-      | { status?: unknown; result?: unknown; task_status?: unknown }
-      | undefined;
-    // Treat any non-completed terminal status (failed/canceled/rejected)
-    // surfaced via webhook the same as a poll-side `success: false`.
-    const status = webhookBody?.status ?? webhookBody?.task_status;
-    if (typeof status === 'string' && status !== 'completed') {
-      return { attempted: true, taskFailed: true };
+    const webhookBody = waitResult.webhook.body as { status?: unknown; result?: unknown } | undefined;
+    // Fail-closed on the success path: require `status === 'completed'`.
+    // The framework's `buildTaskWebhookPayload` always emits `status`, so a
+    // missing or non-completed value means either a malformed webhook or a
+    // genuine terminal-failed/canceled/rejected outcome — both should
+    // attribute to `capture_task_failed`, not silently fall through to a
+    // capture against an undefined `result`.
+    if (webhookBody?.status === 'completed') {
+      return { attempted: true, data: webhookBody.result };
     }
-    return { attempted: true, data: webhookBody?.result };
+    return { attempted: true, taskFailed: true };
   } catch {
     return { attempted: true, taskFailed: true };
   } finally {
@@ -2237,7 +2244,7 @@ export async function runStoryboardStep(
 
   // `_webhookReceiver` is a test-only injection point; production callers
   // pass `webhook_receiver` and the runner constructs the listener.
-  const injectedReceiver = options._webhookReceiver as WebhookReceiver | undefined;
+  const injectedReceiver = options._webhookReceiver;
   const webhookReceiver: WebhookReceiver | undefined =
     injectedReceiver ??
     (options.webhook_receiver

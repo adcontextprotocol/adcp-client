@@ -75,6 +75,10 @@ function buildWebhookReceiver({ payload, deliverAfterMs = 0, deliverStatus = 'co
       if (deliverAfterMs > 0) {
         await new Promise(r => setTimeout(r, deliverAfterMs));
       }
+      // `status: deliverStatus` first lets a test override status by
+      // setting it explicitly on `payload` if needed; spreading `payload`
+      // last makes that explicit override authoritative.
+      const body = { status: deliverStatus, ...payload };
       return {
         webhook: {
           id: 'wh1',
@@ -85,8 +89,8 @@ function buildWebhookReceiver({ payload, deliverAfterMs = 0, deliverStatus = 'co
           method: 'POST',
           path: '/',
           headers: {},
-          raw_body: JSON.stringify(payload),
-          body: { ...payload, status: deliverStatus },
+          raw_body: JSON.stringify(body),
+          body,
           response_status: 200,
         },
       };

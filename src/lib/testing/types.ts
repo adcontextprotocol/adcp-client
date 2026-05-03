@@ -4,6 +4,7 @@
 
 import type { FormatReferenceStructuredObject as FormatID } from '../types/core.generated';
 import type { ControllerDetection } from './test-controller';
+import type { WebhookReceiver } from './storyboard/webhook-receiver';
 
 // Test scenarios that can be run
 export type TestScenario =
@@ -208,7 +209,7 @@ export interface TestOptions {
    *  present, the runner skips creating its own listener and does NOT close
    *  the receiver after the run (caller-owned). Production callers pass
    *  `webhook_receiver` instead. */
-  _webhookReceiver?: unknown;
+  _webhookReceiver?: WebhookReceiver;
 }
 
 export interface TestStepResult {
