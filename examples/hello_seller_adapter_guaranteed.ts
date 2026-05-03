@@ -27,6 +27,14 @@
  *      backend; persist `(idempotency_key, lineitem_index) → upstream_lineitem_id`
  *      in your DB so a process restart can reconcile partial completion.
  *   7. Validate: `node --test test/examples/hello-seller-adapter-guaranteed.test.js`
+ *   8. **DELETE the `// TEST-ONLY` blocks** before deploying:
+ *      - sandbox-arm in `accounts.resolve` (resolves storyboard runner's
+ *        synthetic `{brand, sandbox: true}` refs to a known network)
+ *      - HITL bypass in `createMediaBuy` (the `if (isSandbox)` short-circuit)
+ *      - `complyTest:` config block on `createAdcpServerFromPlatform`
+ *      - in-memory `seededMediaBuys` / `simulatedDelivery` Maps
+ *      These exist so the conformance harness can drive cascade scenarios
+ *      deterministically. Production sellers ship without them.
  *
  * Demo:
  *   npx @adcp/sdk@latest mock-server sales-guaranteed --port 4450
@@ -77,6 +85,18 @@ const ADCP_AUTH_TOKEN = process.env['ADCP_AUTH_TOKEN'] ?? 'sk_harness_do_not_use
 const PUBLIC_AGENT_URL = process.env['PUBLIC_AGENT_URL'] ?? `http://127.0.0.1:${PORT}`;
 
 const KNOWN_PUBLISHERS = ['acmeoutdoor.example', 'pinnacle-agency.example', 'premium-sports.example'];
+
+// SWAP: the seller's minimum committable max_variance_percent — the
+// buyer-vs-seller billing-count delta this seller will tolerate before
+// triggering resolution. 5% is industry typical for premium guaranteed
+// inventory; your IO desk owns the real number.
+const MIN_VARIANCE_TOLERANCE = 5;
+
+// TEST-ONLY: id-prefix used by the sandbox arm in `accounts.resolve` so
+// `createMediaBuy` can detect cascade-storyboard requests and bypass the
+// HITL handoff. Production sellers don't need this; remove the sandbox
+// arm + this constant before deploying. See FORK CHECKLIST item 8.
+const SANDBOX_ID_PREFIX = 'sandbox_';
 
 // ---------------------------------------------------------------------------
 // Upstream client — SWAP for production.
@@ -281,6 +301,13 @@ const upstream = {
   // SWAP: list line items under an order. Mock's GET /v1/orders/{id} strips
   // line_items from the response — fetch them via this separate call.
   // Real GAM mirrors this split (OrderService vs LineItemService).
+  //
+  // Note: returns `[]` on null response body. Callers MUST validate the
+  // order exists separately (via `getOrder`) before calling — a missing
+  // order returns `[]` here rather than throwing, so it would surface as
+  // "no packages match" rather than `MEDIA_BUY_NOT_FOUND`. Both
+  // `updateMediaBuy` and `getMediaBuys` below pre-validate by calling
+  // `getOrder` / `listOrders`, so the existence check has already run.
   async listLineItems(networkCode: string, orderId: string): Promise<NonNullable<UpstreamOrder['line_items']>> {
     const { body } = await http.get<{ line_items: NonNullable<UpstreamOrder['line_items']> }>(
       `/v1/orders/${encodeURIComponent(orderId)}/lineitems`,
@@ -462,23 +489,26 @@ class SalesGuaranteedAdapter implements DecisioningPlatform<Record<string, never
       // serve account_id lookups from there.
       if ('account_id' in ref) return null;
 
-      // Cascade-scenario sandbox accounts. The compliance runner injects
+      // ─── TEST-ONLY: cascade-scenario sandbox-arm ─────────────────────
+      // DELETE THIS BLOCK BEFORE DEPLOYING. The compliance runner injects
       // synthetic refs like `{brand: {domain: 'test.example'}, sandbox: true}`
       // for `media_buy_seller/*` cascade scenarios that test wire shape
-      // without depending on test-kit principals. Real sellers gate this
-      // on `process.env.ADCP_SANDBOX === '1'` so production accidentally
-      // accepting sandbox refs isn't possible. The synthetic account maps
-      // to a fixed network so downstream handlers have something concrete
-      // to operate on.
+      // without depending on real test-kit principals. The block routes
+      // those synthetic refs to a fixed seeded network so the rest of the
+      // adapter has something concrete to operate on. Production sellers
+      // either reject sandbox refs entirely or route them to a dedicated
+      // sandbox tenant their IO desk owns; either way, this in-example
+      // synthesis isn't appropriate for prod traffic.
+      //
+      // Gate is `ADCP_SANDBOX === '1'` exclusively — single-source so
+      // accidentally setting `ADCP_SANDBOX` in any non-sandbox environment
+      // is the only way this branch fires.
       if (ref.sandbox === true && process.env['ADCP_SANDBOX'] === '1') {
-        // Pick the first seeded network for sandbox-scope operations. In
-        // production, route to a dedicated sandbox tenant your IO desk
-        // owns so dry-run buys don't pollute real reporting.
         const sandboxDomain = 'acmeoutdoor.example';
         const network = await upstream.lookupNetwork(sandboxDomain);
         if (!network) return null;
         return {
-          id: `sandbox_${network.network_code}`,
+          id: `${SANDBOX_ID_PREFIX}${network.network_code}`,
           name: `Sandbox: ${network.display_name}`,
           status: 'active',
           ...(ref.operator !== undefined && { operator: ref.operator }),
@@ -489,6 +519,7 @@ class SalesGuaranteedAdapter implements DecisioningPlatform<Record<string, never
           },
         };
       }
+      // ─── /TEST-ONLY ──────────────────────────────────────────────────
 
       const publisherDomain = ref.brand.domain;
       if (!publisherDomain) return null;
@@ -631,13 +662,9 @@ class SalesGuaranteedAdapter implements DecisioningPlatform<Record<string, never
       // Opaque "exceed seller commitments" messages get cargo-culted into
       // every adopter's constraint enforcement and produce un-actionable
       // errors at the buyer-agent boundary.
-      // Minimum committable max_variance_percent — the buyer-vs-seller
-      // billing-count delta this seller will tolerate before triggering
-      // resolution. Real numbers come from your IO desk; 5% is industry
-      // typical for premium guaranteed inventory. The cascade
-      // `measurement_terms_rejected` storyboard sends 0% (zero tolerance),
-      // which no operator commits to.
-      const MIN_VARIANCE_TOLERANCE = 5;
+      // The cascade `measurement_terms_rejected` storyboard sends 0% (zero
+      // tolerance), which no operator commits to. Threshold lives at module
+      // scope above for one-grep tunability.
       const packagesArr = (req.packages ?? []) as Array<{
         measurement_terms?: {
           viewability_threshold?: number;
@@ -768,22 +795,24 @@ class SalesGuaranteedAdapter implements DecisioningPlatform<Record<string, never
         };
       };
 
-      // Sandbox/cascade-scenario routing. The compliance runner injects
-      // synthetic sandbox accounts (resolved via `accounts.resolve` to an
-      // id with the `sandbox_` prefix) for `media_buy_seller/*` cascade
-      // scenarios that test wire-shape behaviors needing synchronous
-      // confirmation (`pending_creatives_to_start`, `inventory_list_*`,
-      // `invalid_transitions`, `measurement_terms_rejected` follow-up).
-      // For these, bypass the HITL handoff and return the confirmed buy
-      // directly — the IO-signing path is what the BASE `sales_guaranteed`
-      // storyboard tests, but cascade scenarios need a deterministic
-      // synchronous path. Production sellers route on a similar signal
-      // (sandbox header, dedicated test tenant) to keep production traffic
-      // on the IO-signing path while compliance scenarios get sync.
-      const isSandbox = ctx.account.id.startsWith('sandbox_');
+      // ─── TEST-ONLY: HITL bypass for sandbox accounts ─────────────────
+      // DELETE THIS BLOCK BEFORE DEPLOYING. The compliance runner expects
+      // synchronous `media_buy_id` for `media_buy_seller/*` cascade
+      // scenarios (pending_creatives_to_start / inventory_list_* /
+      // invalid_transitions / measurement_terms_rejected follow-up); the
+      // BASE `sales_guaranteed` storyboard tests the IO-signing async
+      // path. Production sellers route every buy through the same path —
+      // either always-HITL or always-sync, never both based on a runtime
+      // flag. Belt-and-suspenders env re-check below: if the env flag
+      // isn't set even though the id flowed in marked sandbox, fall
+      // through to the production HITL path. Defends against an
+      // upstream-resolved account that somehow carries the sandbox prefix
+      // without the env being sandbox-mode.
+      const isSandbox = ctx.account.id.startsWith(SANDBOX_ID_PREFIX) && process.env['ADCP_SANDBOX'] === '1';
       if (isSandbox) {
         return completeIoAndCreateLineItems();
       }
+      // ─── /TEST-ONLY ──────────────────────────────────────────────────
 
       return ctx.handoffToTask(async (taskCtx): Promise<CreateMediaBuySuccess> => {
         void taskCtx;
@@ -833,6 +862,10 @@ class SalesGuaranteedAdapter implements DecisioningPlatform<Record<string, never
       const filtered = req.media_buy_ids ? orders.filter(o => req.media_buy_ids!.includes(o.order_id)) : orders;
       // Fetch line items per order — mock's GET /v1/orders strips them.
       // Production GAM/FreeWheel similarly splits Order vs LineItem services.
+      // SWAP: this is N+1 against the upstream. Real adapters either batch
+      // (e.g. POST /v1/lineitems:batchGet with order_ids[]) or accept the
+      // round-trip cost. Some platforms expose a `?include=lineitems`
+      // query param on the list endpoint that folds them in.
       const buys = await Promise.all(
         filtered.map(async o => {
           const lineItems = await upstream.listLineItems(networkCode, o.order_id);
@@ -947,15 +980,20 @@ class SalesGuaranteedAdapter implements DecisioningPlatform<Record<string, never
 const platform = new SalesGuaranteedAdapter();
 const idempotencyStore = createIdempotencyStore({ backend: memoryBackend(), ttlSeconds: 86_400 });
 
-// In-memory state for comply_test_controller seed/force/simulate adapters.
-// Production sellers wire these into the same data layer the production
-// handlers read from — the controller and production tools share one
-// source of truth for the test state machine.
+// ─── TEST-ONLY: in-memory state for comply_test_controller adapters ─────
+// DELETE THESE MAPS BEFORE DEPLOYING (or scope per-tenant if you keep the
+// controller wired in a sandbox tenant). Module-scope shared maps leak
+// state across accounts — that's fine for a worked example whose only
+// caller is the conformance harness, but unacceptable in production.
+// SWAP: scope by `account.id` (or your tenant key) and persist via the
+// same data layer your production handlers read from. The controller
+// and production tools should share one source of truth for state.
 const seededMediaBuys = new Map<string, { status: string; revision: number }>();
 const simulatedDelivery = new Map<
   string,
   { impressions: number; clicks: number; reported_spend: { amount: number; currency: string } }
 >();
+// ─── /TEST-ONLY ──────────────────────────────────────────────────────────
 
 serve(
   ({ taskStore }) =>
@@ -968,13 +1006,23 @@ serve(
         const acct = ctx.account as Account<NetworkMeta> | undefined;
         return acct?.id ?? 'anonymous';
       },
-      // SECURITY: production agents gate registration on a server-controlled
-      // signal (env flag, tenant flag from auth). The test harness sends
-      // a deterministic Bearer that the runner expects sandbox-mode for —
-      // gate on either the env flag OR the demo Bearer prefix to keep this
-      // example self-contained for storyboard runs.
+      // ─── TEST-ONLY: comply_test_controller wiring ──────────────────────
+      // DELETE THIS BLOCK BEFORE DEPLOYING. The conformance runner uses
+      // `comply_test_controller` to seed media-buy fixtures and force
+      // state transitions deterministically across cascade scenarios.
+      // Production sellers don't need this surface — and shouldn't ship
+      // it. Per `examples/comply-controller-seller.ts`, the recommended
+      // production posture is "don't register the controller at all";
+      // a seller running their own sandbox tenant gates registration on
+      // an env flag controlled by the deploy pipeline (`ADCP_SANDBOX=1`).
+      //
+      // SECURITY: gate is `ADCP_SANDBOX === '1'` exclusively — single env
+      // var. Don't add an `|| NODE_ENV === 'test'` clause — staging boxes
+      // commonly run with `NODE_ENV=test` and the controller would open
+      // there too. The gate test (`test/examples/hello-seller-adapter-
+      // guaranteed.test.js`) sets `ADCP_SANDBOX=1` in `extraEnv`.
       complyTest: {
-        sandboxGate: () => process.env['ADCP_SANDBOX'] === '1' || process.env['NODE_ENV'] === 'test',
+        sandboxGate: () => process.env['ADCP_SANDBOX'] === '1',
         seed: {
           media_buy: ({ media_buy_id, fixture }) => {
             const existing = seededMediaBuys.get(media_buy_id);
@@ -1007,6 +1055,7 @@ serve(
           },
         },
       },
+      // ─── /TEST-ONLY ──────────────────────────────────────────────────
     }),
   {
     port: PORT,
