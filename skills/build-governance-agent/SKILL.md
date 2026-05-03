@@ -22,16 +22,18 @@ The multi-tenant adapter is the canonical fork target — it implements `campaig
 
 ### What to delete if you're single-specialism
 
+**Forking the multi-tenant adapter for a single specialism? Delete these blocks first** — leaning on stable symbol names rather than line numbers (the adapter evolves; greppable identifiers don't):
+
 A single-specialism `governance-spend-authority` adopter (an in-house policy engine, IAS, DoubleVerify) deletes:
 
-- The `brandRights = defineBrandRightsPlatform({ ... })` block (lines ~780-940 — the entire brand-rights surface)
-- The `propertyLists = definePropertyListsPlatform({ ... })` block if you don't claim `property-lists` (lines ~700-780)
+- The `brandRights = defineBrandRightsPlatform({ ... })` block (the entire brand-rights surface)
+- The `propertyLists = definePropertyListsPlatform({ ... })` block if you don't claim `property-lists`
 - The `private async enforceGovernance(...)` helper and the `interface GovernanceBinding` — these belong to `brandRights` cross-specialism dispatch, not to standalone governance
 - Per-tenant `brands` / `rights` Maps on `TenantState` (no brand-rights catalog to seed)
 
 A single-specialism `property-lists` adopter mirrors this: keep the `propertyLists` block; delete `campaignGovernance`, `brandRights`, `enforceGovernance`, the brand/rights Maps, and the `governanceBindings` map.
 
-Keep the rest as-is: `accounts` (`createTenantStore` translates to single-tenant by passing one tenant entry), `agentRegistry`, the specialism block(s) you claim, `getTenant(ctx)` resolution. **Don't keep `enforceGovernance` if you also delete `brandRights`** — the helper has no caller and wires a non-existent governance binding.
+**Keep**: the `accounts` / `createTenantStore` block (translates to single-tenant by passing one tenant entry — needed for tenant isolation), `agentRegistry`, the specialism block(s) you claim, `getTenant(ctx)` resolution. **Don't keep `enforceGovernance` if you also delete `brandRights`** — the helper has no caller and wires a non-existent governance binding.
 
 For `content-standards` and `collection-lists`, no worked fork target ships yet — wire `defineContentStandardsPlatform` / `defineCollectionListsPlatform` from `@adcp/sdk/server` against the multi-tenant scaffolding.
 
