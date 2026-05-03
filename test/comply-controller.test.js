@@ -624,3 +624,97 @@ describe('createComplyController — register()', () => {
     }
   });
 });
+
+describe('createComplyController — context echo', () => {
+  it('handleRaw echoes input.context on list_scenarios (success)', async () => {
+    const controller = createComplyController({});
+    const result = await controller.handleRaw({
+      scenario: 'list_scenarios',
+      context: { correlation_id: 'deterministic_testing--list_scenarios' },
+    });
+    assert.strictEqual(result.success, true);
+    assert.deepStrictEqual(result.context, { correlation_id: 'deterministic_testing--list_scenarios' });
+  });
+
+  it('handleRaw echoes input.context on UNKNOWN_SCENARIO error', async () => {
+    const controller = createComplyController({});
+    const result = await controller.handleRaw({
+      scenario: 'unknown_scenario_xyz',
+      context: { correlation_id: 'det--unknown' },
+    });
+    assert.strictEqual(result.success, false);
+    assert.strictEqual(result.error, 'UNKNOWN_SCENARIO');
+    assert.deepStrictEqual(result.context, { correlation_id: 'det--unknown' });
+  });
+
+  it('handleRaw echoes input.context on INVALID_PARAMS error', async () => {
+    const controller = createComplyController({
+      force: { account_status: () => ({ success: true, previous_state: 'a', current_state: 'b' }) },
+    });
+    const result = await controller.handleRaw({
+      scenario: 'force_account_status',
+      params: {},
+      context: { correlation_id: 'det--missing_params' },
+    });
+    assert.strictEqual(result.success, false);
+    assert.strictEqual(result.error, 'INVALID_PARAMS');
+    assert.deepStrictEqual(result.context, { correlation_id: 'det--missing_params' });
+  });
+
+  it('handleRaw echoes input.context on sandboxGate denial (FORBIDDEN)', async () => {
+    const controller = createComplyController({
+      sandboxGate: () => false,
+    });
+    const result = await controller.handleRaw({
+      scenario: 'force_account_status',
+      params: { account_id: 'acct-1', status: 'suspended' },
+      context: { correlation_id: 'det--forbidden' },
+    });
+    assert.strictEqual(result.success, false);
+    assert.strictEqual(result.error, 'FORBIDDEN');
+    assert.deepStrictEqual(result.context, { correlation_id: 'det--forbidden' });
+  });
+
+  it('handleRaw echoes input.context on sandboxGate throw (FORBIDDEN)', async () => {
+    const controller = createComplyController({
+      sandboxGate: () => {
+        throw new Error('auth down');
+      },
+    });
+    const result = await controller.handleRaw({
+      scenario: 'force_account_status',
+      params: { account_id: 'acct-1', status: 'suspended' },
+      context: { correlation_id: 'det--gate-error' },
+    });
+    assert.strictEqual(result.success, false);
+    assert.strictEqual(result.error, 'FORBIDDEN');
+    assert.deepStrictEqual(result.context, { correlation_id: 'det--gate-error' });
+  });
+
+  it('handleRaw does not inject context when input has no context', async () => {
+    const controller = createComplyController({});
+    const result = await controller.handleRaw({ scenario: 'list_scenarios' });
+    assert.strictEqual(result.success, true);
+    assert.strictEqual(result.context, undefined);
+  });
+
+  it('handleRaw does not overwrite context already set by the handler', async () => {
+    const controller = createComplyController({
+      force: {
+        account_status: () => ({
+          success: true,
+          previous_state: 'a',
+          current_state: 'b',
+          context: { correlation_id: 'from-handler' },
+        }),
+      },
+    });
+    const result = await controller.handleRaw({
+      scenario: 'force_account_status',
+      params: { account_id: 'acct-1', status: 'suspended' },
+      context: { correlation_id: 'from-input' },
+    });
+    assert.strictEqual(result.success, true);
+    assert.deepStrictEqual(result.context, { correlation_id: 'from-handler' });
+  });
+});

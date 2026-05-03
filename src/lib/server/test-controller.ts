@@ -757,17 +757,7 @@ async function dispatchSeed(
   return { success: true, message: SEED_MESSAGES.fresh };
 }
 
-/**
- * Handle a `comply_test_controller` request. Exported so custom MCP wrappers
- * can compose it with their own middleware (AsyncLocalStorage, sandbox gating,
- * logging) without going through {@link registerTestController}.
- *
- * `list_scenarios` is answered from the static capability set (store method
- * presence for plain stores, `factory.scenarios` for factories) and never
- * invokes `factory.createStore`. Session-backed factories can therefore load
- * real session state unconditionally.
- */
-export async function handleTestControllerRequest(
+async function handleTestControllerRequestImpl(
   storeOrFactory: TestControllerStoreOrFactory,
   input: Record<string, unknown>,
   options?: { seedCache?: SeedFixtureCache }
@@ -1025,6 +1015,32 @@ export async function handleTestControllerRequest(
   }
 }
 
+/**
+ * Handle a `comply_test_controller` request. Exported so custom MCP wrappers
+ * can compose it with their own middleware (AsyncLocalStorage, sandbox gating,
+ * logging) without going through {@link registerTestController}.
+ *
+ * `list_scenarios` is answered from the static capability set (store method
+ * presence for plain stores, `factory.scenarios` for factories) and never
+ * invokes `factory.createStore`. Session-backed factories can therefore load
+ * real session state unconditionally.
+ *
+ * `input.context` is echoed into every response branch so correlation IDs
+ * round-trip per the `comply-test-controller-response.json` schema.
+ */
+export async function handleTestControllerRequest(
+  storeOrFactory: TestControllerStoreOrFactory,
+  input: Record<string, unknown>,
+  options?: { seedCache?: SeedFixtureCache }
+): Promise<ComplyTestControllerResponse> {
+  const ctx = input.context;
+  const result = await handleTestControllerRequestImpl(storeOrFactory, input, options);
+  if (ctx !== undefined && typeof ctx === 'object' && ctx !== null && result.context === undefined) {
+    return { ...result, context: ctx } as ComplyTestControllerResponse;
+  }
+  return result;
+}
+
 // ────────────────────────────────────────────────────────────
 // MCP envelope helpers
 // ────────────────────────────────────────────────────────────
@@ -1162,16 +1178,7 @@ export function registerTestController(
       const response = await handleTestControllerRequest(storeOrFactory, input, {
         seedCache,
       });
-      // Echo request context back into the response envelope so callers see
-      // their correlation data round-trip (matches the auto-echo createAdcpServer
-      // does for domain tools). Only attaches when the handler didn't place a
-      // context itself — handler-supplied context wins.
-      const ctx = input.context;
-      const withContext =
-        ctx && typeof ctx === 'object' && (response as { context?: unknown }).context === undefined
-          ? { ...response, context: ctx }
-          : response;
-      return toMcpResponse(withContext as ComplyTestControllerResponse);
+      return toMcpResponse(response);
     }) as Parameters<typeof mcp.registerTool>[2]
   );
 }
