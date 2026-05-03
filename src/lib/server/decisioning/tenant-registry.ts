@@ -288,6 +288,22 @@ export interface TenantRegistry {
    * scaffolding because the right auth shape varies by deployment;
    * adopters who want a vetted shape can layer Express middleware
    * around their `registry.register(...)` route handler.
+   *
+   * **Make construction errors observable.** `register` builds the
+   * inner `createAdcpServerFromPlatform()` synchronously — config
+   * errors (`customTools` collision with framework-promoted tools,
+   * missing required handlers, invalid `signingKey` shape) fire
+   * inside this call. The cleanest path is eager registration at
+   * process boot, where those errors fail the deploy visibly. Lazy
+   * shapes are legitimate (autoscale replicas avoiding JWKS-storm,
+   * multi-tenant SaaS with mutable tenant tables, serverless
+   * warm-start) — if you defer, catch the throw at the registration
+   * site and route it through your error pipeline. Otherwise the
+   * host framework's default error handler renders the throw as
+   * HTTP 500 HTML, MCP clients (correctly) classify the body as a
+   * non-MCP response, and the failure surfaces as `discovery_failed`
+   * on every probe — looking like a transport bug instead of the
+   * config bug it is.
    */
   register<P extends DecisioningPlatform>(
     tenantId: string,

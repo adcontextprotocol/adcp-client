@@ -519,6 +519,29 @@ for DB-seeded startup, runtime register / unregister, and concurrent
 recheck is now in
 [`examples/decisioning-platform-multi-tenant-db.ts`](../examples/decisioning-platform-multi-tenant-db.ts).
 
+**Make construction errors observable.**
+`createTenantRegistry.register()` calls `createAdcpServerFromPlatform()`
+synchronously — config errors (collision throws like recipe #16,
+missing required handlers, invalid `signingKey` shape) fire inside
+`register()`. The cleanest path is to register eagerly at process
+boot: in a single-region server, that's the `app.listen` callback or
+a top-level `await` for ESM. DB-seeded tenants load the seed list at
+boot, register each row, then start serving.
+
+Lazy registration is legitimate — autoscaling replicas where eager
+register-all would JWKS-storm cold start, multi-tenant SaaS hosts
+where the tenant table mutates faster than redeploys, serverless
+warm-start where boot *is* first request — but watch what happens
+when `register()` throws inside a request handler. By default the
+host framework returns HTTP 500 with an HTML error body, MCP clients
+classify the HTML as a non-MCP response, and the failure surfaces as
+`discovery_failed` on every probe. If you defer construction, catch
+the throw at the registration site and route it through your error
+pipeline (logs, metrics, alerts) so a config bug fails loudly instead
+of as a buyer-visible 500. Runtime admin-API `register` for tenant
+onboarding is fine — just keep buyer-path requests off the
+registration call site.
+
 ### 10. **breaking** — `accounts.resolution: 'implicit'` enforces inline-`account_id` refusal
 
 The `AccountStore.resolution` docstring has long claimed the framework
@@ -938,13 +961,18 @@ createAdcpServer: customTools["update_rights"] collides with a
 framework-registered tool.
 ```
 
-The throw is server-side. In tenant-registry setups that build the
-inner server lazily on first request (the canonical multi-tenant
-pattern), every MCP request — including the discovery probe — hits
-the throw and returns an HTTP 500 with an HTML error body. Clients
-report it as `discovery_failed` because a 500 HTML page isn't a
-valid MCP response, which makes the regression look like a
-client-side transport bug. It isn't.
+The throw is server-side and fires inside `createAdcpServer()` at
+construction. `createTenantRegistry.register()` builds eagerly, so
+adopters who register every tenant at process boot will see this fail
+visibly during deploy. Adopters who wrap `createTenantRegistry()` in a
+per-request lazy-init factory defer construction until first traffic —
+the throw still fires, but inside the request handler, where the host
+framework's default error handler renders it as HTTP 500 HTML to every
+MCP probe. Clients (correctly) classify the HTML as a non-MCP response
+and report `discovery_failed`, which makes the regression look like a
+client-side transport bug. It isn't — see recipe #9 for the
+registration patterns that surface this kind of config error during
+deploy.
 
 **Audit:**
 
@@ -987,8 +1015,11 @@ createAdcpServerFromPlatform(brandPlatform, {
 
 `creative_approval` is still customTool territory in 6.7 — only
 `update_rights` was promoted. Future SDK releases may promote
-additional tools the same way; the collision-check error message
-points at the platform-handler equivalent when one exists.
+additional tools the same way. The collision-check error always names
+the framework-handler equivalent (`BrandRightsPlatform.updateRights`
+here), so when the next promotion-induced collision lands, follow the
+message: drop the customTools entry, wire the named platform handler.
+The pattern travels even if the migration recipe lags.
 
 ## Worked diff — `examples/decisioning-platform-mock-seller.ts`
 
