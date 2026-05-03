@@ -158,4 +158,42 @@ describe('discoverMCPEndpoint: SSE fallback decision logic', () => {
     assert.strictEqual(result.success, false);
     assert.strictEqual(result.status, 503);
   });
+
+  // Regression for #1438: loopback/private addresses must also attempt SSE fallback.
+  // The 6.7.0 isPrivateAddress gate skipped SSE for 127.x.x.x addresses, breaking
+  // training-agent discovery. SSE fallback must be attempted regardless of address type.
+  test('loopback address (127.0.0.1): SSE is attempted when StreamableHTTP fails', async () => {
+    let sseAttempted = false;
+
+    const result = await testEndpoint(
+      'http://127.0.0.1:8080/mcp',
+      async () => {
+        throw new Error('StreamableHTTP not supported');
+      },
+      async () => {
+        sseAttempted = true;
+        /* SSE succeeds */
+      }
+    );
+
+    assert.strictEqual(result.success, true);
+    assert.strictEqual(sseAttempted, true, 'SSE must be tried for loopback addresses too');
+  });
+
+  test('localhost: SSE is attempted when StreamableHTTP fails', async () => {
+    let sseAttempted = false;
+
+    const result = await testEndpoint(
+      'http://localhost:3000/mcp',
+      async () => {
+        throw new Error('StreamableHTTP not supported');
+      },
+      async () => {
+        sseAttempted = true;
+      }
+    );
+
+    assert.strictEqual(result.success, true);
+    assert.strictEqual(sseAttempted, true, 'SSE must be tried for localhost too');
+  });
 });

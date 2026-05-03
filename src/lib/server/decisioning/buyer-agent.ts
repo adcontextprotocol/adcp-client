@@ -224,7 +224,19 @@ export interface BuyerAgentResolveInput {
    */
   readonly credential?: AdcpCredential;
 
-  /** Adopter-provided extension data threaded from `authenticate()`. */
+  /**
+   * Adopter-provided extension data threaded from `authenticate()`. Populated
+   * from the `extra` field stamped on the `AuthPrincipal` returned by the
+   * `authenticate()` callback (e.g. `verifyApiKey({ verify: token => ({ ...,
+   * extra: { demo_token: token } }) })`). Forwarded to the second argument of
+   * {@link ResolveBuyerAgentByCredential} by `bearerOnly` and `mixed` factories.
+   *
+   * The full MCP `AuthInfo.extra` bag is forwarded here — it includes JWT
+   * claims (if `verifyBearer` was used) and the SDK-internal `credential` key
+   * alongside adopter-stamped fields. Do not use reserved key names (`credential`,
+   * `iss`, `sub`, `aud`, `exp`, `iat`, `nbf`, `jti`) in the `extra` object
+   * to avoid collisions.
+   */
   readonly extra?: Record<string, unknown>;
 }
 
@@ -278,8 +290,8 @@ export type ResolveBuyerAgentByAgentUrl = (agent_url: string) => Promise<BuyerAg
 
 /**
  * Resolver function type for the bearer/API-key/OAuth path. Receives the
- * raw credential and returns the seller's record (or `null` for
- * unrecognized credentials).
+ * raw credential and (optionally) adopter-provided extension data, and
+ * returns the seller's record (or `null` for unrecognized credentials).
  *
  * **Implementations MUST switch on `credential.kind`** and reject (return
  * `null`) on any kind they don't explicitly recognize. A naive
@@ -299,9 +311,25 @@ export type ResolveBuyerAgentByAgentUrl = (agent_url: string) => Promise<BuyerAg
  * implementations are expected to do the same (or to use prepared-statement
  * parameters that don't log).
  *
+ * **`extra` — adopter extension data.** When the `authenticate()` callback
+ * stamps an `extra` field on the returned `AuthPrincipal` (e.g.
+ * `verifyApiKey({ verify: token => ({ principal, extra: { demo_token: token } }) })`),
+ * the framework propagates that value through `ResolvedAuthInfo.extra` to
+ * this second argument. Use it to carry pre-hash data your authenticator
+ * already derived (prefix patterns, tenant IDs, test-kit flags) that you
+ * can't recover from the hashed `key_id`. Apply the same care as for
+ * `credential`: do not log raw values from `extra` or include them in
+ * thrown `Error` messages.
+ *
+ * Existing single-argument implementations `(credential) => ...` satisfy
+ * this type — the second argument is optional.
+ *
  * @public
  */
-export type ResolveBuyerAgentByCredential = (credential: AdcpCredential) => Promise<BuyerAgent | null>;
+export type ResolveBuyerAgentByCredential = (
+  credential: AdcpCredential,
+  extra?: Record<string, unknown>
+) => Promise<BuyerAgent | null>;
 
 /**
  * Belt-and-suspenders check that an `http_sig` credential carries a non-
@@ -422,8 +450,9 @@ export function bearerOnly(opts: { resolveByCredential: ResolveBuyerAgentByCrede
   return {
     async resolve(authInfo) {
       const credential = authInfo.credential;
+      const extra = authInfo.extra;
       if (credential === undefined) return null;
-      return resolveByCredential(credential);
+      return resolveByCredential(credential, extra);
     },
   };
 }
@@ -457,6 +486,7 @@ export function mixed(opts: {
   return {
     async resolve(authInfo) {
       const credential = authInfo.credential;
+      const extra = authInfo.extra;
       if (credential === undefined) return null;
       if (credential.kind === 'http_sig') {
         // Same forgery clamp as `signingOnly`: only verifier-branded
@@ -470,7 +500,7 @@ export function mixed(opts: {
         if (!isVerifiedHttpSigPayload(credential)) return null;
         return resolveByAgentUrl(credential.agent_url);
       }
-      return resolveByCredential(credential);
+      return resolveByCredential(credential, extra);
     },
   };
 }
@@ -617,6 +647,14 @@ function cacheKeyForCredential(credential: AdcpCredential | undefined): string |
  * - **Per-kind cache keys.** Keys are namespaced (`http_sig:`,
  *   `api_key:`, `oauth:`) so cross-kind collisions cannot leak an agent
  *   resolved through one credential type to a different type.
+ * - **`extra` is not part of the cache key.** The cache keys on credential
+ *   identity only. Two requests with the same credential but different
+ *   `authInfo.extra` content return the same cached result. This is the
+ *   right behaviour when `extra` carries pre-hash data derived from the
+ *   same token (the motivating use-case), but can be surprising if you
+ *   put per-request session context in `extra`. Set a short `ttlSeconds`
+ *   or skip the cache decorator if your resolution is sensitive to `extra`
+ *   variance across requests with the same credential.
  * - **Skips uncacheable inputs.** When the credential is undefined,
  *   `resolve()` falls through to the inner registry on each call —
  *   adopters wiring custom auth without `credential` synthesis (Stage 3

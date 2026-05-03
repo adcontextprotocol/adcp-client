@@ -11,12 +11,14 @@
  * different calls than the producer-side filter would — different verdict
  * on the same storyboard. One implementation, one test, no drift.
  *
- * Grammar (matches the candidate semantics filed against the spec at
- * adcontextprotocol/adcp#3845):
+ * Grammar (ratified by spec PR adcontextprotocol/adcp#3987):
  *   - `*` matches zero or more characters of any kind, including `/`.
  *   - All other characters are literal — `?`, `[`, `]`, `(`, `)` etc. are
  *     escaped to themselves so a path-component like `?cohort=1` doesn't
  *     accidentally act as a regex quantifier.
+ *   - No escape mechanism — `*` is always a wildcard. Callers needing
+ *     literal-asterisk matching omit `endpoint_pattern` and filter
+ *     response-side.
  *   - Match is anchored (full-string), not substring search.
  *
  * Defense against catastrophic-backtracking on `'**********'`-style

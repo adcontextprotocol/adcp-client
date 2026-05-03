@@ -309,6 +309,78 @@ describe('BuyerAgent shape', () => {
   });
 });
 
+describe('BuyerAgentRegistry extra forwarding', () => {
+  it('bearerOnly forwards authInfo.extra to resolveByCredential as second arg', async () => {
+    let sawExtra;
+    const registry = BuyerAgentRegistry.bearerOnly({
+      resolveByCredential: async (cred, extra) => {
+        sawExtra = extra;
+        return sampleAgent();
+      },
+    });
+    await registry.resolve({ credential: apiKeyCredential(), extra: { demo_token: 'demo-billing-passthrough-v1' } });
+    assert.deepEqual(sawExtra, { demo_token: 'demo-billing-passthrough-v1' });
+  });
+
+  it('bearerOnly passes undefined extra when authInfo.extra is absent', async () => {
+    let sawExtra = 'sentinel';
+    const registry = BuyerAgentRegistry.bearerOnly({
+      resolveByCredential: async (cred, extra) => {
+        sawExtra = extra;
+        return sampleAgent();
+      },
+    });
+    await registry.resolve({ credential: apiKeyCredential() });
+    assert.equal(sawExtra, undefined);
+  });
+
+  it('mixed forwards authInfo.extra to resolveByCredential for non-http_sig paths', async () => {
+    let sawExtra;
+    const registry = BuyerAgentRegistry.mixed({
+      resolveByAgentUrl: async () => sampleAgent(),
+      resolveByCredential: async (cred, extra) => {
+        sawExtra = extra;
+        return sampleAgent();
+      },
+    });
+    await registry.resolve({ credential: apiKeyCredential(), extra: { tenant_id: 'acme' } });
+    assert.deepEqual(sawExtra, { tenant_id: 'acme' });
+  });
+
+  it('mixed does NOT forward extra to resolveByAgentUrl (http_sig path only uses credential.agent_url)', async () => {
+    let signedInvoked = false;
+    let signedSawSecondArg = 'sentinel';
+    const registry = BuyerAgentRegistry.mixed({
+      resolveByAgentUrl: async (url, ...rest) => {
+        signedInvoked = true;
+        signedSawSecondArg = rest[0];
+        return sampleAgent({ agent_url: url });
+      },
+      resolveByCredential: async () => sampleAgent(),
+    });
+    const result = await registry.resolve({
+      credential: sigCredential(),
+      extra: { demo_token: 'should-not-reach-signed-resolver' },
+    });
+    assert.ok(result !== null);
+    // resolveByAgentUrl was invoked on the signed path.
+    assert.equal(signedInvoked, true);
+    // extra is NOT forwarded to resolveByAgentUrl — signed path uses only agent_url.
+    assert.equal(signedSawSecondArg, undefined);
+  });
+
+  it('bearerOnly resolver can still use single-arg signature (backward-compat)', async () => {
+    // Existing single-arg implementations must satisfy the widened type.
+    // JS ignores extra args, so (cred) => ... works without changes.
+    const registry = BuyerAgentRegistry.bearerOnly({
+      resolveByCredential: async cred => (cred.kind === 'api_key' ? sampleAgent() : null),
+    });
+    const result = await registry.resolve({ credential: apiKeyCredential(), extra: { x: 1 } });
+    assert.ok(result !== null);
+    assert.equal(result.agent_url, 'https://agent.scope3.com');
+  });
+});
+
 describe('BuyerAgentRegistry namespace', () => {
   it('exposes signingOnly, bearerOnly, mixed', () => {
     assert.equal(typeof BuyerAgentRegistry.signingOnly, 'function');
