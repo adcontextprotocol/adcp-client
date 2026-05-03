@@ -1,14 +1,6 @@
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
 import { randomUUID } from 'node:crypto';
-import {
-  BRANDS,
-  DEFAULT_API_KEY,
-  OFFERINGS,
-  SEED_NOW,
-  type MockBrand,
-  type MockOffering,
-  type MockProduct,
-} from './seed-data';
+import { BRANDS, DEFAULT_API_KEY, OFFERINGS, type MockBrand, type MockOffering, type MockProduct } from './seed-data';
 
 export interface BootOptions {
   port: number;
@@ -24,6 +16,25 @@ export interface BootResult {
 
 type ConversationStatus = 'active' | 'closed';
 
+/** Upstream close reason vocabulary. Deliberately distinct from AdCP's
+ * `SITerminateSessionRequest.reason` enum
+ * (`handoff_transaction|handoff_complete|user_exit|session_timeout|host_terminated`)
+ * so the adapter's translation is loud rather than identity-mapped on the
+ * `complete` value. Adapter rename:
+ *   AdCP `handoff_transaction` ↔ upstream `txn_ready`
+ *   AdCP `handoff_complete`    ↔ upstream `done`
+ *   AdCP `user_exit`           ↔ upstream `user_left`
+ *   AdCP `session_timeout`     ↔ upstream `idle_timeout`
+ *   AdCP `host_terminated`     ↔ upstream `host_closed`
+ */
+type UpstreamCloseReason = 'txn_ready' | 'done' | 'user_left' | 'idle_timeout' | 'host_closed';
+const UPSTREAM_CLOSE_REASONS: UpstreamCloseReason[] = ['txn_ready', 'done', 'user_left', 'idle_timeout', 'host_closed'];
+
+/** Brand-side close hint emitted on per-turn responses. Reuses the upstream
+ * close-reason vocabulary so the adapter's translation menu is the same
+ * regardless of which surface signals it. */
+type CloseHintType = 'txn_ready' | 'done';
+
 interface MockTurn {
   turn_id: string;
   conversation_id: string;
@@ -37,8 +48,23 @@ interface MockTurn {
   /** Brand-side hint to the adapter that the next state should be a
    * close. Adapter decides whether to surface this as AdCP
    * `session_status: 'pending_handoff'` + `handoff: {...}` to the host. */
-  close_recommended: { type: 'transaction' | 'complete'; payload?: Record<string, unknown> } | null;
+  close_recommended: { type: CloseHintType; payload?: Record<string, unknown> } | null;
   created_at: string;
+}
+
+/** Query-context record minted on `GET /offerings/{id}` and consumed on
+ * `POST /conversations`. Mirrors AdCP's `offering_token` correlation
+ * primitive (`SIGetOfferingResponse.offering_token` →
+ * `SIInitiateSessionRequest.offering_token`) so the brand can resolve
+ * "the second one" without the host replaying the full transcript. */
+interface OfferingQuery {
+  query_id: string;
+  brand_id: string;
+  offering_id: string;
+  /** Product SKUs in the order they were shown to the user. The brand's
+   * conversation engine references this to resolve positional language. */
+  shown_product_skus: string[];
+  expires_at: string;
 }
 
 interface MockConversation {
@@ -48,12 +74,18 @@ interface MockConversation {
   /** Offering context resolved at conversation start. The brand stores this
    * server-side so subsequent turns can reference 'the second one' etc. */
   offering_id: string | null;
+  /** offering_query_id this conversation was minted from, if any. Lets
+   * positional language (`the second one`) resolve against the products the
+   * user actually saw rather than the full offering catalog. */
+  offering_query_id: string | null;
+  /** Product SKUs shown to the user at conversation start, ordered. */
+  shown_product_skus: string[];
   intent: string;
   turns: MockTurn[];
   /** Set when the conversation was closed. Includes the reason and any
    * transaction handoff payload. */
   close: {
-    reason: string;
+    reason: UpstreamCloseReason;
     closed_at: string;
     transaction_handoff: Record<string, unknown> | null;
   } | null;
@@ -71,6 +103,9 @@ export async function bootSponsoredIntelligence(options: BootOptions): Promise<B
   // Keyed by `<brand_id>::<scope>::<key>` where scope = "init" or
   // "<conversation_id>".
   const idempotency = new Map<string, string>();
+  // offering_query_id → query record. Minted on GET /offerings, consumed
+  // on POST /conversations (mirrors AdCP `offering_token`).
+  const offeringQueries = new Map<string, OfferingQuery>();
 
   const traffic = new Map<string, number>();
   const bump = (routeTemplate: string): void => {
@@ -78,7 +113,16 @@ export async function bootSponsoredIntelligence(options: BootOptions): Promise<B
   };
 
   const server = createServer((req, res) => {
-    handleRequest(req, res, { apiKey, brands, offerings, conversations, idempotency, traffic, bump }).catch(err => {
+    handleRequest(req, res, {
+      apiKey,
+      brands,
+      offerings,
+      conversations,
+      idempotency,
+      offeringQueries,
+      traffic,
+      bump,
+    }).catch(err => {
       const requestId = (req.headers['x-request-id'] as string | undefined) ?? randomUUID();
       writeJson(res, 500, {
         code: 'internal_error',
@@ -115,6 +159,7 @@ interface HandlerCtx {
   offerings: MockOffering[];
   conversations: Map<string, MockConversation>;
   idempotency: Map<string, string>;
+  offeringQueries: Map<string, OfferingQuery>;
   traffic: Map<string, number>;
   bump: (routeTemplate: string) => void;
 }
@@ -226,6 +271,18 @@ function handleGetOffering(offeringId: string, url: URL, ctx: HandlerCtx, brand:
   const limitParam = url.searchParams.get('product_limit');
   const limit = limitParam ? Math.max(0, Number(limitParam)) : offering.products.length;
   const products = includeProducts ? offering.products.slice(0, limit) : [];
+  // Mint a query token so a subsequent POST /conversations can reference
+  // exactly what was shown. Adapter renames `offering_query_id` → AdCP
+  // `offering_token` in the SIGetOfferingResponse projection.
+  const queryId = `oqt_${randomUUID().replace(/-/g, '').slice(0, 16)}`;
+  const queryExpiresAt = new Date(Date.now() + 15 * 60_000).toISOString();
+  ctx.offeringQueries.set(queryId, {
+    query_id: queryId,
+    brand_id: brand.brand_id,
+    offering_id: offering.offering_id,
+    shown_product_skus: products.map(p => p.sku),
+    expires_at: queryExpiresAt,
+  });
   writeJson(res, 200, {
     offering_id: offering.offering_id,
     brand_id: offering.brand_id,
@@ -239,6 +296,9 @@ function handleGetOffering(offeringId: string, url: URL, ctx: HandlerCtx, brand:
     available: true,
     products,
     total_matching: offering.products.length,
+    offering_query_id: queryId,
+    offering_query_expires_at: queryExpiresAt,
+    offering_query_ttl_seconds: 900,
     privacy_policy: {
       url: brand.privacy_policy_url,
       version: brand.privacy_policy_version,
@@ -263,7 +323,7 @@ async function handleStartConversation(
     writeJson(res, 400, { code: 'invalid_request', message: 'Body must be an object.' });
     return;
   }
-  const { intent, offering_id, identity, client_request_id } = body as Record<string, unknown>;
+  const { intent, offering_id, offering_query_id, identity, client_request_id } = body as Record<string, unknown>;
   if (typeof intent !== 'string' || intent.length === 0) {
     writeJson(res, 400, { code: 'invalid_request', message: 'intent (string) is required.' });
     return;
@@ -272,15 +332,59 @@ async function handleStartConversation(
     writeJson(res, 400, { code: 'invalid_request', message: 'offering_id must be a string when provided.' });
     return;
   }
-  if (offering_id && !brand.visible_offering_ids.includes(offering_id)) {
-    writeJson(res, 404, {
-      code: 'offering_not_in_brand',
-      message: `Offering ${offering_id} is not owned by brand ${brand.brand_id}.`,
-    });
+  if (offering_query_id !== undefined && typeof offering_query_id !== 'string') {
+    writeJson(res, 400, { code: 'invalid_request', message: 'offering_query_id must be a string when provided.' });
     return;
   }
 
-  const fingerprint = JSON.stringify({ brand: brand.brand_id, intent, offering_id: offering_id ?? null, identity });
+  // Resolve offering context: prefer offering_query_id (carries the
+  // products-shown record from a prior GET /offerings); fall back to a
+  // bare offering_id. If both are present they must agree.
+  let resolvedQuery: OfferingQuery | null = null;
+  let resolvedOfferingId: string | null = null;
+  if (typeof offering_query_id === 'string' && offering_query_id.length > 0) {
+    const query = ctx.offeringQueries.get(offering_query_id) ?? null;
+    if (!query) {
+      writeJson(res, 404, {
+        code: 'offering_query_not_found',
+        message: `offering_query_id ${offering_query_id} not found or expired.`,
+      });
+      return;
+    }
+    if (query.brand_id !== brand.brand_id) {
+      writeJson(res, 404, {
+        code: 'offering_query_not_in_brand',
+        message: `offering_query_id ${offering_query_id} does not belong to brand ${brand.brand_id}.`,
+      });
+      return;
+    }
+    if (typeof offering_id === 'string' && offering_id !== query.offering_id) {
+      writeJson(res, 400, {
+        code: 'offering_query_mismatch',
+        message: `offering_query_id resolves to ${query.offering_id}, but offering_id=${offering_id} was sent.`,
+      });
+      return;
+    }
+    resolvedQuery = query;
+    resolvedOfferingId = query.offering_id;
+  } else if (typeof offering_id === 'string' && offering_id.length > 0) {
+    if (!brand.visible_offering_ids.includes(offering_id)) {
+      writeJson(res, 404, {
+        code: 'offering_not_in_brand',
+        message: `Offering ${offering_id} is not owned by brand ${brand.brand_id}.`,
+      });
+      return;
+    }
+    resolvedOfferingId = offering_id;
+  }
+
+  const fingerprint = JSON.stringify({
+    brand: brand.brand_id,
+    intent,
+    offering_id: resolvedOfferingId,
+    offering_query_id: typeof offering_query_id === 'string' ? offering_query_id : null,
+    identity: identity ?? null,
+  });
 
   if (typeof client_request_id === 'string' && client_request_id.length > 0) {
     const idemKey = `${brand.brand_id}::init::${client_request_id}`;
@@ -288,25 +392,45 @@ async function handleStartConversation(
     if (existing) {
       const conv = ctx.conversations.get(existing);
       if (conv) {
+        // Mirror the turns handler: same key + different body → 409.
+        // Same key + same body → idempotent replay (200 instead of 201).
+        const initialTurn = conv.turns[0];
+        if (initialTurn && initialTurn.body_fingerprint !== fingerprint) {
+          writeJson(res, 409, {
+            code: 'idempotency_conflict',
+            message: `client_request_id ${client_request_id} previously used with a different body.`,
+          });
+          return;
+        }
         writeJson(res, 200, serializeConversation(conv, brand));
         return;
       }
     }
   }
 
-  const offering = offering_id ? (ctx.offerings.find(o => o.offering_id === offering_id) ?? null) : null;
+  const offering = resolvedOfferingId ? (ctx.offerings.find(o => o.offering_id === resolvedOfferingId) ?? null) : null;
+  // If a query token resolved, prefer the products-shown record over the full
+  // catalog so "the second one" references what the user actually saw.
+  const shownProducts = offering
+    ? resolvedQuery
+      ? resolvedQuery.shown_product_skus
+          .map(sku => offering.products.find(p => p.sku === sku))
+          .filter((p): p is MockProduct => Boolean(p))
+      : offering.products
+    : [];
   const greeting = offering
     ? `Welcome — happy to help you find the right ${offering.name.toLowerCase()}.`
     : `Hi from ${brand.display_name}. What are you looking for today?`;
+  const now = new Date().toISOString();
   const initialTurn: MockTurn = {
     turn_id: `turn_${randomUUID().replace(/-/g, '').slice(0, 12)}`,
     conversation_id: '',
     body_fingerprint: fingerprint,
     user_message: null,
     assistant_message: greeting,
-    components: offering && offering.products[0] ? [productCardComponent(offering.products[0])] : [],
+    components: shownProducts[0] ? [productCardComponent(shownProducts[0])] : [],
     close_recommended: null,
-    created_at: SEED_NOW,
+    created_at: now,
   };
   const conversationId = `conv_${randomUUID().replace(/-/g, '').slice(0, 16)}`;
   initialTurn.conversation_id = conversationId;
@@ -314,12 +438,14 @@ async function handleStartConversation(
     conversation_id: conversationId,
     brand_id: brand.brand_id,
     status: 'active',
-    offering_id: offering?.offering_id ?? null,
+    offering_id: resolvedOfferingId,
+    offering_query_id: resolvedQuery?.query_id ?? null,
+    shown_product_skus: shownProducts.map(p => p.sku),
     intent,
     turns: [initialTurn],
     close: null,
-    created_at: SEED_NOW,
-    updated_at: SEED_NOW,
+    created_at: now,
+    updated_at: now,
   };
   ctx.conversations.set(conversationId, conversation);
   if (typeof client_request_id === 'string' && client_request_id.length > 0) {
@@ -396,7 +522,15 @@ async function handleSendTurn(
   const offering = conversation.offering_id
     ? (ctx.offerings.find(o => o.offering_id === conversation.offering_id) ?? null)
     : null;
-  const reply = generateReply(userMessage, action_response, offering);
+  const shownProducts = offering
+    ? conversation.shown_product_skus.length > 0
+      ? conversation.shown_product_skus
+          .map(sku => offering.products.find(p => p.sku === sku))
+          .filter((p): p is MockProduct => Boolean(p))
+      : offering.products
+    : [];
+  const reply = generateReply(userMessage, action_response, offering, shownProducts);
+  const now = new Date().toISOString();
   const turn: MockTurn = {
     turn_id: `turn_${randomUUID().replace(/-/g, '').slice(0, 12)}`,
     conversation_id: conversationId,
@@ -405,10 +539,10 @@ async function handleSendTurn(
     assistant_message: reply.assistant_message,
     components: reply.components,
     close_recommended: reply.close_recommended,
-    created_at: SEED_NOW,
+    created_at: now,
   };
   conversation.turns.push(turn);
-  conversation.updated_at = SEED_NOW;
+  conversation.updated_at = now;
   if (typeof client_request_id === 'string' && client_request_id.length > 0) {
     ctx.idempotency.set(`${brand.brand_id}::${conversationId}::${client_request_id}`, turn.turn_id);
   }
@@ -431,16 +565,27 @@ async function handleCloseConversation(
     return;
   }
 
-  let body: unknown = {};
+  let body: unknown;
   try {
     body = await readJson(req);
   } catch {
     writeJson(res, 400, { code: 'invalid_json', message: 'Request body must be valid JSON.' });
     return;
   }
-  if (!isObject(body)) body = {};
+  if (!isObject(body)) {
+    writeJson(res, 400, { code: 'invalid_request', message: 'Body must be an object.' });
+    return;
+  }
   const { reason, summary } = body as Record<string, unknown>;
-  const reasonStr = typeof reason === 'string' ? reason : 'host_terminated';
+  const reasonInput = typeof reason === 'string' ? reason : 'host_closed';
+  if (!UPSTREAM_CLOSE_REASONS.includes(reasonInput as UpstreamCloseReason)) {
+    writeJson(res, 400, {
+      code: 'invalid_close_reason',
+      message: `reason must be one of ${UPSTREAM_CLOSE_REASONS.join(', ')}; got ${reasonInput}.`,
+    });
+    return;
+  }
+  const closeReason = reasonInput as UpstreamCloseReason;
 
   // Idempotent close: a second close on an already-closed conversation
   // returns the same payload. session_id is the dedup boundary; AdCP
@@ -453,12 +598,13 @@ async function handleCloseConversation(
   const offering = conversation.offering_id
     ? (ctx.offerings.find(o => o.offering_id === conversation.offering_id) ?? null)
     : null;
+  const closedAt = new Date();
   const transactionHandoff =
-    reasonStr === 'transaction'
+    closeReason === 'txn_ready'
       ? {
           checkout_url: `${offering ? offering.landing_page_url : `https://${brand.adcp_brand}/checkout`}?conv=${conversationId}`,
           checkout_token: `acp_tok_${randomUUID().replace(/-/g, '').slice(0, 16)}`,
-          expires_at: '2026-04-15T13:00:00Z',
+          expires_at: new Date(closedAt.getTime() + 60 * 60_000).toISOString(),
           payload: {
             conversation_summary:
               typeof summary === 'string' && summary.length > 0
@@ -469,13 +615,14 @@ async function handleCloseConversation(
         }
       : null;
 
+  const closedAtIso = closedAt.toISOString();
   conversation.status = 'closed';
   conversation.close = {
-    reason: reasonStr,
-    closed_at: SEED_NOW,
+    reason: closeReason,
+    closed_at: closedAtIso,
     transaction_handoff: transactionHandoff,
   };
-  conversation.updated_at = SEED_NOW;
+  conversation.updated_at = closedAtIso;
   writeJson(res, 200, serializeConversation(conversation, brand));
 }
 
@@ -494,19 +641,21 @@ function handleGetConversation(conversationId: string, ctx: HandlerCtx, brand: M
 function generateReply(
   userMessage: string | null,
   actionResponse: unknown,
-  offering: MockOffering | null
+  offering: MockOffering | null,
+  shownProducts: MockProduct[]
 ): {
   assistant_message: string;
   components: Array<Record<string, unknown>>;
-  close_recommended: { type: 'transaction' | 'complete'; payload?: Record<string, unknown> } | null;
+  close_recommended: { type: CloseHintType; payload?: Record<string, unknown> } | null;
 } {
+  const featured = shownProducts[0] ?? offering?.products[0];
   if (isObject(actionResponse) && (actionResponse as Record<string, unknown>).action === 'checkout') {
     return {
       assistant_message: 'Got it — sending you to checkout now.',
       components: [],
       close_recommended: {
-        type: 'transaction',
-        payload: { product: offering?.products[0] ?? {}, action: 'purchase' },
+        type: 'txn_ready',
+        payload: { product: featured ?? {}, action: 'purchase' },
       },
     };
   }
@@ -516,11 +665,11 @@ function generateReply(
       assistant_message: 'Great — ready when you are. Want me to take you to checkout?',
       components: [
         { kind: 'action_button', label: 'Checkout', action: 'checkout' },
-        ...(offering?.products[0] ? [productCardComponent(offering.products[0])] : []),
+        ...(featured ? [productCardComponent(featured)] : []),
       ],
       close_recommended: {
-        type: 'transaction',
-        payload: offering?.products[0] ? { product: offering.products[0], action: 'purchase' } : { action: 'purchase' },
+        type: 'txn_ready',
+        payload: featured ? { product: featured, action: 'purchase' } : { action: 'purchase' },
       },
     };
   }
@@ -528,13 +677,13 @@ function generateReply(
     return {
       assistant_message: 'Anytime — happy shopping!',
       components: [],
-      close_recommended: { type: 'complete' },
+      close_recommended: { type: 'done' },
     };
   }
-  if (/\b(second|other one|next)\b/.test(lower) && offering && offering.products[1]) {
+  if (/\b(second|other one|next)\b/.test(lower) && shownProducts[1]) {
     return {
-      assistant_message: `Here's a closer look at ${offering.products[1].name}.`,
-      components: [productCardComponent(offering.products[1])],
+      assistant_message: `Here's a closer look at ${shownProducts[1].name}.`,
+      components: [productCardComponent(shownProducts[1])],
       close_recommended: null,
     };
   }
@@ -542,7 +691,7 @@ function generateReply(
     assistant_message: offering
       ? `Here's what I'd recommend from the ${offering.name}.`
       : 'Tell me a bit more about what you have in mind.',
-    components: offering?.products[0] ? [productCardComponent(offering.products[0])] : [],
+    components: featured ? [productCardComponent(featured)] : [],
     close_recommended: null,
   };
 }
@@ -566,6 +715,8 @@ function serializeConversation(conv: MockConversation, brand: MockBrand): Record
     brand_id: conv.brand_id,
     status: conv.status,
     offering_id: conv.offering_id,
+    offering_query_id: conv.offering_query_id,
+    shown_product_skus: conv.shown_product_skus,
     intent: conv.intent,
     turns: conv.turns.map(t => stripInternal(t)),
     close: conv.close,

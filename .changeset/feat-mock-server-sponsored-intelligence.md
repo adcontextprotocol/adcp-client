@@ -66,12 +66,41 @@ product). Cross-brand offering access returns
 `404 offering_not_in_brand`.
 
 **Upstream/AdCP rename pattern** is intentional throughout (exercises
-the adapter's projection): `conversation_id` → `session_id`,
-`assistant_message` → `response.message`, `components` (with `kind`) →
-`ui_elements` (with `type`), `sku` → `product_id`, `hero_image_url` →
-`image_url`, `landing_page_url` → `landing_url`, `pdp_url` → `url`,
-`thumbnail_url` → `image_url`, `inventory_status` →
-`availability_summary`, `transaction_handoff` → `acp_handoff`.
+the adapter's projection):
+
+| upstream field | AdCP field |
+|---|---|
+| `conversation_id` | `session_id` |
+| `assistant_message` | `response.message` |
+| `components[].kind` | `ui_elements[].type` |
+| `client_request_id` | `idempotency_key` |
+| `offering_query_id` | `offering_token` |
+| `transaction_handoff` | `acp_handoff` |
+| `close_recommended.type: txn_ready` | `session_status: 'pending_handoff'` + `handoff.type: 'transaction'` |
+| `close_recommended.type: done` | `session_status: 'pending_handoff'` + `handoff.type: 'complete'` |
+| `close.reason: txn_ready` | `SITerminateSessionRequest.reason: 'handoff_transaction'` |
+| `close.reason: done` | `'handoff_complete'` |
+| `close.reason: user_left` | `'user_exit'` |
+| `close.reason: idle_timeout` | `'session_timeout'` |
+| `close.reason: host_closed` | `'host_terminated'` |
+| `sku` | `product_id` |
+| `hero_image_url`, `thumbnail_url` | `image_url` |
+| `landing_page_url` | `landing_url` |
+| `pdp_url` | `url` |
+| `inventory_status` | `availability_summary` |
+
+The close-reason vocabulary is deliberately distinct from AdCP's enum
+(rather than identity-mapping `complete` to `complete`) so the adapter's
+translation is loud — sending an AdCP reason value to the upstream close
+endpoint returns `400 invalid_close_reason`, forcing the adapter to
+implement the projection rather than accidentally pass-through.
+
+**Offering token correlation** (`offering_query_id`): the brand mints a
+token on every `GET /offerings/{id}` and stores the products-shown
+record keyed on it. A subsequent `POST /conversations` with the same
+token resolves "the second one" against what the user actually saw,
+not the full catalog. Mirrors the AdCP `SIGetOfferingResponse.offering_token`
+→ `SIInitiateSessionRequest.offering_token` correlation primitive.
 
 Run with:
 
@@ -79,12 +108,25 @@ Run with:
 npx @adcp/sdk mock-server sponsored-intelligence --port 4500
 ```
 
-**16 new smoke tests** in
-`test/lib/mock-server/sponsored-intelligence.test.js` cover:
-auth gating, brand lookup, cross-brand offering isolation, conversation
-start with idempotent replay, turn keyword routing (transaction/complete
-hints), idempotency-conflict rejection, transaction close with handoff
-payload, idempotent re-close, post-close turn rejection, and traffic
-counter recording.
+**23 smoke tests** in
+`test/lib/mock-server/sponsored-intelligence.test.js` cover: auth
+gating, brand lookup, cross-brand offering and conversation isolation,
+conversation start with idempotent replay and idempotency-conflict
+rejection (POST /conversations and POST /turns symmetric), turn keyword
+routing (txn_ready/done close hints), close with txn_ready returning a
+transaction_handoff, AdCP-vocabulary reason rejection (400
+`invalid_close_reason`), idempotent re-close, post-close turn
+rejection, GET-after-close, offering_query_id round-trip from GET
+/offerings into POST /conversations, unknown-token rejection, cross-brand
+token rejection, and traffic counter recording.
+
+**Deferred to follow-up branches** (acknowledged limitations of this v1
+fixture): A2UI surface support (`SISendMessageResponse.response.surface`),
+streaming turns (real Agentforce / Assistants emit SSE), consent-version
+gate (a brand with `requires_identity: true`), anonymous_session_id
+assertion, multi-brand catalog overlap (one customer fronting many
+brands with shared products), ACP handoff failure mode, eager
+`pending_handoff` mid-turn path (mock currently surfaces close hints
+lazily — adapter chooses whether to project as eager handoff).
 
 Refs adcontextprotocol/adcp#3961.

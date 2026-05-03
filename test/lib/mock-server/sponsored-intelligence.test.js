@@ -160,7 +160,7 @@ describe('mock-server sponsored-intelligence', () => {
     });
     assert.equal(turn.status, 200);
     const body = await turn.json();
-    assert.equal(body.close_recommended.type, 'transaction');
+    assert.equal(body.close_recommended.type, 'txn_ready');
     assert.equal(body.conversation_status, 'active');
   });
 
@@ -190,7 +190,7 @@ describe('mock-server sponsored-intelligence', () => {
     assert.equal(body.code, 'idempotency_conflict');
   });
 
-  it('closes conversation with reason=transaction and returns transaction_handoff', async () => {
+  it('closes conversation with reason=txn_ready and returns transaction_handoff', async () => {
     const init = await fetch(`${handle.url}/v1/brands/brand_acme_outdoor/conversations`, {
       method: 'POST',
       headers: auth(),
@@ -207,16 +207,36 @@ describe('mock-server sponsored-intelligence', () => {
       {
         method: 'POST',
         headers: auth(),
-        body: JSON.stringify({ reason: 'transaction', summary: 'User chose blackgreen-10.' }),
+        body: JSON.stringify({ reason: 'txn_ready', summary: 'User chose blackgreen-10.' }),
       }
     );
     assert.equal(close.status, 200);
     const body = await close.json();
     assert.equal(body.status, 'closed');
-    assert.equal(body.close.reason, 'transaction');
+    assert.equal(body.close.reason, 'txn_ready');
     assert.ok(body.close.transaction_handoff);
     assert.equal(typeof body.close.transaction_handoff.checkout_url, 'string');
     assert.equal(typeof body.close.transaction_handoff.checkout_token, 'string');
+    assert.equal(typeof body.close.transaction_handoff.expires_at, 'string');
+  });
+
+  it('rejects close with reason outside the upstream enum (loud rename gap with AdCP)', async () => {
+    const init = await fetch(`${handle.url}/v1/brands/brand_acme_outdoor/conversations`, {
+      method: 'POST',
+      headers: auth(),
+      body: JSON.stringify({ intent: 'invalid reason test', client_request_id: 'init-invalid-reason' }),
+    });
+    const conv = await init.json();
+
+    // 'handoff_transaction' is the AdCP value — adapter must translate to 'txn_ready'.
+    const res = await fetch(`${handle.url}/v1/brands/brand_acme_outdoor/conversations/${conv.conversation_id}/close`, {
+      method: 'POST',
+      headers: auth(),
+      body: JSON.stringify({ reason: 'handoff_transaction' }),
+    });
+    assert.equal(res.status, 400);
+    const body = await res.json();
+    assert.equal(body.code, 'invalid_close_reason');
   });
 
   it('close is idempotent on repeated calls (mirrors si_terminate_session having no idempotency_key)', async () => {
@@ -229,16 +249,24 @@ describe('mock-server sponsored-intelligence', () => {
 
     const first = await fetch(
       `${handle.url}/v1/brands/brand_acme_outdoor/conversations/${conv.conversation_id}/close`,
-      { method: 'POST', headers: auth(), body: JSON.stringify({ reason: 'user_exit' }) }
+      {
+        method: 'POST',
+        headers: auth(),
+        body: JSON.stringify({ reason: 'user_left' }),
+      }
     );
     const firstBody = await first.json();
     const second = await fetch(
       `${handle.url}/v1/brands/brand_acme_outdoor/conversations/${conv.conversation_id}/close`,
-      { method: 'POST', headers: auth(), body: JSON.stringify({ reason: 'host_terminated' }) }
+      {
+        method: 'POST',
+        headers: auth(),
+        body: JSON.stringify({ reason: 'host_closed' }),
+      }
     );
     assert.equal(second.status, 200);
     const secondBody = await second.json();
-    assert.equal(secondBody.close.reason, 'user_exit');
+    assert.equal(secondBody.close.reason, 'user_left');
     assert.equal(secondBody.close.closed_at, firstBody.close.closed_at);
   });
 
@@ -252,7 +280,7 @@ describe('mock-server sponsored-intelligence', () => {
     await fetch(`${handle.url}/v1/brands/brand_acme_outdoor/conversations/${conv.conversation_id}/close`, {
       method: 'POST',
       headers: auth(),
-      body: JSON.stringify({ reason: 'user_exit' }),
+      body: JSON.stringify({ reason: 'user_left' }),
     });
     const turn = await fetch(`${handle.url}/v1/brands/brand_acme_outdoor/conversations/${conv.conversation_id}/turns`, {
       method: 'POST',
@@ -264,6 +292,129 @@ describe('mock-server sponsored-intelligence', () => {
     assert.equal(body.code, 'conversation_closed');
   });
 
+  it('rejects POST /conversations replay with mismatched body (idempotency_conflict)', async () => {
+    const first = await fetch(`${handle.url}/v1/brands/brand_acme_outdoor/conversations`, {
+      method: 'POST',
+      headers: auth(),
+      body: JSON.stringify({ intent: 'first intent', client_request_id: 'init-mismatch' }),
+    });
+    assert.equal(first.status, 201);
+
+    const conflict = await fetch(`${handle.url}/v1/brands/brand_acme_outdoor/conversations`, {
+      method: 'POST',
+      headers: auth(),
+      body: JSON.stringify({ intent: 'second intent', client_request_id: 'init-mismatch' }),
+    });
+    assert.equal(conflict.status, 409);
+    const body = await conflict.json();
+    assert.equal(body.code, 'idempotency_conflict');
+  });
+
+  it('isolates conversations across brands (cross-brand 404)', async () => {
+    const init = await fetch(`${handle.url}/v1/brands/brand_acme_outdoor/conversations`, {
+      method: 'POST',
+      headers: auth(),
+      body: JSON.stringify({ intent: 'cross-brand isolation', client_request_id: 'init-xbrand' }),
+    });
+    const conv = await init.json();
+
+    // Same conversation_id under the other brand → 404, not leaked.
+    const sneak = await fetch(`${handle.url}/v1/brands/brand_summit_books/conversations/${conv.conversation_id}`, {
+      headers: auth(),
+    });
+    assert.equal(sneak.status, 404);
+    const body = await sneak.json();
+    assert.equal(body.code, 'conversation_not_found');
+  });
+
+  it('GET conversation after close still returns the closed payload', async () => {
+    const init = await fetch(`${handle.url}/v1/brands/brand_acme_outdoor/conversations`, {
+      method: 'POST',
+      headers: auth(),
+      body: JSON.stringify({ intent: 'get-after-close', client_request_id: 'init-get-after-close' }),
+    });
+    const conv = await init.json();
+
+    await fetch(`${handle.url}/v1/brands/brand_acme_outdoor/conversations/${conv.conversation_id}/close`, {
+      method: 'POST',
+      headers: auth(),
+      body: JSON.stringify({ reason: 'done' }),
+    });
+
+    const get = await fetch(`${handle.url}/v1/brands/brand_acme_outdoor/conversations/${conv.conversation_id}`, {
+      headers: auth(),
+    });
+    assert.equal(get.status, 200);
+    const body = await get.json();
+    assert.equal(body.status, 'closed');
+    assert.equal(body.close.reason, 'done');
+    assert.equal(body.close.transaction_handoff, null);
+  });
+
+  it('round-trips offering_query_id from GET /offerings into POST /conversations (offering_token correlation)', async () => {
+    const offeringRes = await fetch(
+      `${handle.url}/v1/brands/brand_acme_outdoor/offerings/off_acme_trailrun_summer26?include_products=true`,
+      { headers: auth() }
+    );
+    const offering = await offeringRes.json();
+    assert.equal(typeof offering.offering_query_id, 'string');
+    assert.equal(offering.offering_query_id.startsWith('oqt_'), true);
+
+    const init = await fetch(`${handle.url}/v1/brands/brand_acme_outdoor/conversations`, {
+      method: 'POST',
+      headers: auth(),
+      body: JSON.stringify({
+        intent: 'follow up on shown products',
+        offering_query_id: offering.offering_query_id,
+        client_request_id: 'init-token-roundtrip',
+      }),
+    });
+    assert.equal(init.status, 201);
+    const conv = await init.json();
+    assert.equal(conv.offering_query_id, offering.offering_query_id);
+    assert.equal(conv.offering_id, 'off_acme_trailrun_summer26');
+    assert.deepEqual(
+      conv.shown_product_skus,
+      offering.products.map(p => p.sku)
+    );
+  });
+
+  it('rejects unknown offering_query_id with 404 offering_query_not_found', async () => {
+    const res = await fetch(`${handle.url}/v1/brands/brand_acme_outdoor/conversations`, {
+      method: 'POST',
+      headers: auth(),
+      body: JSON.stringify({
+        intent: 'bad token',
+        offering_query_id: 'oqt_does_not_exist',
+        client_request_id: 'init-bad-token',
+      }),
+    });
+    assert.equal(res.status, 404);
+    const body = await res.json();
+    assert.equal(body.code, 'offering_query_not_found');
+  });
+
+  it('rejects offering_query_id from a different brand', async () => {
+    const offRes = await fetch(
+      `${handle.url}/v1/brands/brand_acme_outdoor/offerings/off_acme_trailrun_summer26?include_products=true`,
+      { headers: auth() }
+    );
+    const off = await offRes.json();
+
+    const sneak = await fetch(`${handle.url}/v1/brands/brand_summit_books/conversations`, {
+      method: 'POST',
+      headers: auth(),
+      body: JSON.stringify({
+        intent: 'wrong brand for token',
+        offering_query_id: off.offering_query_id,
+        client_request_id: 'init-token-wrong-brand',
+      }),
+    });
+    assert.equal(sneak.status, 404);
+    const body = await sneak.json();
+    assert.equal(body.code, 'offering_query_not_in_brand');
+  });
+
   it('records traffic counters for façade detection', async () => {
     const res = await fetch(`${handle.url}/_debug/traffic`);
     assert.equal(res.status, 200);
@@ -271,5 +422,6 @@ describe('mock-server sponsored-intelligence', () => {
     assert.ok(body.traffic['POST /v1/brands/{brand}/conversations'] > 0);
     assert.ok(body.traffic['POST /v1/brands/{brand}/conversations/{id}/turns'] > 0);
     assert.ok(body.traffic['POST /v1/brands/{brand}/conversations/{id}/close'] > 0);
+    assert.ok(body.traffic['GET /v1/brands/{brand}/offerings/{id}'] > 0);
   });
 });

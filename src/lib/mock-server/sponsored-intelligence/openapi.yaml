@@ -73,6 +73,27 @@ components:
           description: |
             Total products matching the offering, regardless of `product_limit`
             applied to the response. Maps to AdCP `total_matching`.
+        offering_query_id:
+          type: string
+          description: |
+            Token minted on every offering lookup. The brand stores the
+            products-shown record server-side keyed on this token so a
+            subsequent `POST /conversations` can resolve positional
+            references like "the second one" without replaying the
+            transcript. Adapter renames `offering_query_id` ↔ AdCP
+            `offering_token`.
+          example: 'oqt_5f4a2b91c8d36e10'
+        offering_query_expires_at:
+          type: string
+          format: date-time
+          description: |
+            When the query token expires. Adapter projects this into AdCP
+            `SIGetOfferingResponse.ttl_seconds` (relative seconds).
+        offering_query_ttl_seconds:
+          type: integer
+          description: |
+            Convenience integer alongside `offering_query_expires_at`. Maps
+            to AdCP `ttl_seconds`.
         privacy_policy:
           type: object
           properties:
@@ -118,8 +139,17 @@ components:
         offering_id:
           type: string
           description: |
-            Pre-resolved offering context. The brand stores this server-side
-            so subsequent turns can reference products by name or position.
+            Pre-resolved offering identifier. May be sent alone for a fresh
+            conversation against the full catalog, or alongside
+            `offering_query_id` (must agree).
+        offering_query_id:
+          type: string
+          description: |
+            Token previously minted by `GET /offerings/{id}` — the brand uses
+            this to recall the products-shown record for "the second one"
+            references. Adapter renames `offering_query_id` ↔ AdCP
+            `offering_token`. If omitted, the conversation is seeded against
+            the full offering catalog.
         identity:
           type: object
           description: |
@@ -131,8 +161,9 @@ components:
           type: string
           description: |
             Idempotency key. Adapter translates AdCP `idempotency_key` to
-            this. Replaying the same key returns the same conversation
-            rather than starting a new one.
+            this. Replaying the same key with an identical body returns the
+            same conversation; replaying with a different body → 409
+            `idempotency_conflict`.
 
     Conversation:
       type: object
@@ -248,9 +279,25 @@ components:
       properties:
         reason:
           type: string
+          enum: [txn_ready, done, user_left, idle_timeout, host_closed]
           description: |
-            Maps from AdCP `SITerminateSessionRequest.reason`. Common values:
-            transaction, complete, user_exit, session_timeout, host_terminated.
+            Upstream close-reason vocabulary. Deliberately distinct from
+            AdCP's `SITerminateSessionRequest.reason` so the adapter's
+            translation is loud rather than identity-mapped on the
+            `complete` value. Mapping:
+
+            | AdCP reason          | upstream reason  |
+            |----------------------|------------------|
+            | `handoff_transaction`| `txn_ready`      |
+            | `handoff_complete`   | `done`           |
+            | `user_exit`          | `user_left`      |
+            | `session_timeout`    | `idle_timeout`   |
+            | `host_terminated`    | `host_closed`    |
+
+            Sending an AdCP value here returns
+            `400 invalid_close_reason` — adapter must translate before
+            forwarding. When `reason=txn_ready`, the response includes
+            `transaction_handoff` (adapter projects to AdCP `acp_handoff`).
         summary:
           type: string
           description: |
