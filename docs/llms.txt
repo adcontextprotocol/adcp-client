@@ -1250,6 +1250,7 @@ These docs are available locally in the repo and hosted at https://adcontextprot
 | Full type signatures | docs/TYPE-SUMMARY.md | [link](https://adcontextprotocol.github.io/adcp-client/TYPE-SUMMARY.md) |
 | Getting started / install | docs/getting-started.md | [link](https://adcontextprotocol.github.io/adcp-client/getting-started.md) |
 | Build a server-side agent | docs/guides/BUILD-AN-AGENT.md | [link](https://adcontextprotocol.github.io/adcp-client/guides/BUILD-AN-AGENT.md) |
+| Migrating 6.7 → 6.9 (skips deprecated 6.8.0; 13 additive recipes; 2 breaking) | docs/migration-6.7-to-6.9.md | [link](https://adcontextprotocol.github.io/adcp-client/migration-6.7-to-6.9.md) |
 | Migrating 6.6 → 6.7 (15 recipes; 2 breaking) | docs/migration-6.6-to-6.7.md | [link](https://adcontextprotocol.github.io/adcp-client/migration-6.6-to-6.7.md) |
 | Migrating 5.x → 6.x | docs/migration-5.x-to-6.x.md | [link](https://adcontextprotocol.github.io/adcp-client/migration-5.x-to-6.x.md) |
 | BuyerAgentRegistry adopter migration | docs/migration-buyer-agent-registry.md | [link](https://adcontextprotocol.github.io/adcp-client/migration-buyer-agent-registry.md) |
