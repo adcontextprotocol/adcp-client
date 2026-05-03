@@ -394,6 +394,9 @@ export function createComplyController(config: ComplyControllerConfig): ComplyCo
 
   async function handleRaw(input: Record<string, unknown>): Promise<ComplyTestControllerResponse> {
     const inputCtx = input.context;
+    // Echoes input.context on FORBIDDEN early-returns (sandboxGate denial/throw)
+    // that bypass handleTestControllerRequest. The delegated call at the end of
+    // this function already echoes context internally — addCtx is a no-op there.
     const addCtx = (r: ComplyTestControllerResponse): ComplyTestControllerResponse =>
       inputCtx !== undefined && typeof inputCtx === 'object' && inputCtx !== null && r.context === undefined
         ? ({ ...r, context: inputCtx } as ComplyTestControllerResponse)
