@@ -166,9 +166,10 @@ function normalizeRowErrors<TRow extends { errors?: unknown }>(row: TRow): TRow 
  * exists on the wire). Throws `AdcpError('INVALID_REQUEST', { field:
  * 'account.account_id' })` before `accounts.resolve` runs, giving all adopters
  * consistent wire enforcement without reimplementing the check per-handler.
- * The brand+operator union arm is permitted for `'implicit'` (used during the
- * initial `sync_accounts` flow); only the `account_id`-shaped reference is
- * refused in both modes.
+ * The brand+operator union arm is permitted for both `'implicit'` and
+ * `'derived'` (used during `sync_accounts` for implicit; harmlessly passed to
+ * the adopter's resolver for derived); only the `account_id`-shaped reference
+ * is refused in both modes.
  */
 function refuseInlineAccountIdWhenForbidden(
   resolution: 'explicit' | 'implicit' | 'derived' | undefined,

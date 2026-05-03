@@ -432,6 +432,33 @@ describe("#1468 — accounts.resolution: 'derived' refuses inline account_id", (
     assert.strictEqual(resolveCalled, true, 'resolve should be called on the auth-derived path');
   });
 
+  it('permits the brand+operator arm on derived platforms — only account_id is refused', async () => {
+    let sawRef;
+    const platform = buildDerivedPlatform({
+      accounts: {
+        resolution: 'derived',
+        resolve: async ref => {
+          sawRef = ref;
+          return { id: 'singleton', name: 'My Platform', status: 'active', ctx_metadata: {} };
+        },
+      },
+    });
+    const server = createAdcpServerFromPlatform(platform, SERVER_OPTS);
+    const result = await server.dispatchTestRequest({
+      method: 'tools/call',
+      params: {
+        name: 'get_products',
+        arguments: {
+          brief: 'premium',
+          promoted_offering: 'cars',
+          account: { brand: { domain: 'acme.com' }, operator: 'pinnacle.com' },
+        },
+      },
+    });
+    assert.notStrictEqual(result.isError, true, `expected success, got ${JSON.stringify(result.structuredContent)}`);
+    assert.deepStrictEqual(sawRef, { brand: { domain: 'acme.com' }, operator: 'pinnacle.com' });
+  });
+
   it("'implicit' enforcement is unchanged — error message still references sync_accounts", async () => {
     const platform = buildDerivedPlatform({
       accounts: {
