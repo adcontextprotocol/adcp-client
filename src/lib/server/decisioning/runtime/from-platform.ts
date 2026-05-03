@@ -2956,6 +2956,29 @@ function validatePushNotificationToken(token: string): UrlValidationResult {
   return { ok: true };
 }
 
+function warnMultiIdTruncation(
+  tool: string,
+  requestedIds: readonly string[] | null | undefined,
+  responseRows: readonly unknown[] | null | undefined,
+  logger: AdcpLogger
+): void {
+  const env = process.env.NODE_ENV;
+  const isDevOrTest = env === 'test' || env === 'development';
+  if (!isDevOrTest) return;
+  if (process.env.ADCP_DECISIONING_ALLOW_MULTI_ID_TRUNCATION === '1') return;
+  if (!requestedIds || requestedIds.length === 0) return;
+  if (!responseRows || responseRows.length >= requestedIds.length) return;
+  logger.warn(
+    `[adcp/sdk] ${tool}: platform returned ${responseRows.length} row${responseRows.length !== 1 ? 's' : ''} for ${requestedIds.length} requested media_buy_ids — verify your implementation returns one row per id, not only the first. See https://github.com/adcontextprotocol/adcp-client/issues/1342`,
+    {
+      tool,
+      requested: requestedIds.length,
+      returned: responseRows.length,
+      issue: 'https://github.com/adcontextprotocol/adcp-client/issues/1342',
+    }
+  );
+}
+
 function buildMediaBuyHandlers<P extends DecisioningPlatform<any, any>>(
   platform: P,
   taskRegistry: TaskRegistry,
@@ -3132,7 +3155,16 @@ function buildMediaBuyHandlers<P extends DecisioningPlatform<any, any>>(
       getMediaBuyDelivery: async (params, ctx) => {
         const reqCtx = ctxFor(ctx);
         return projectSync(
-          () => sales.getMediaBuyDelivery!(params, reqCtx),
+          async () => {
+            const result = await sales.getMediaBuyDelivery!(params, reqCtx);
+            warnMultiIdTruncation(
+              'getMediaBuyDelivery',
+              (params as { media_buy_ids?: readonly string[] }).media_buy_ids,
+              (result as { media_buy_deliveries?: readonly unknown[] }).media_buy_deliveries,
+              logger
+            );
+            return result;
+          },
           actuals => actuals
         );
       },
@@ -3163,6 +3195,12 @@ function buildMediaBuyHandlers<P extends DecisioningPlatform<any, any>>(
               'media_buy',
               (result as { media_buys?: readonly unknown[] })?.media_buys,
               'media_buy_id',
+              logger
+            );
+            warnMultiIdTruncation(
+              'getMediaBuys',
+              (params as { media_buy_ids?: readonly string[] }).media_buy_ids,
+              (result as { media_buys?: readonly unknown[] }).media_buys,
               logger
             );
             return result;
