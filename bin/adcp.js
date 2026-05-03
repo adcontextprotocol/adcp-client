@@ -1135,6 +1135,10 @@ COMMANDS:
   storyboard <subcommand>     Test agent flows (run, list, show, step)
   grade <subject> <url>       Conformance graders (e.g. request-signing)
   fuzz <url>                  Property-based conformance fuzzing against schemas
+  resolve <agent-url>         Walk the brand_json_url discovery chain
+                              (capabilities -> brand.json -> JWKS) and print
+                              the per-step trace. Triages request_signature_brand_*
+                              rejections.
   signing <subcommand>        RFC 9421 signing key tools (generate, verify)
   check-network               Validate managed publisher network deployment
   diagnose-auth <alias|url>   Diagnose OAuth handshake with ranked hypotheses
@@ -3848,6 +3852,12 @@ async function main() {
   if (args[0] === 'fuzz') {
     const { handleFuzzCommand } = require('./adcp-fuzz.js');
     await handleFuzzCommand(args.slice(1));
+    return;
+  }
+
+  if (args[0] === 'resolve') {
+    const { handleResolveCommand } = require('./adcp-resolve.js');
+    await handleResolveCommand(args.slice(1));
     return;
   }
 

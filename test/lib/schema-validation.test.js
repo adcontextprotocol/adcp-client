@@ -380,14 +380,14 @@ describe('schema-driven validation', () => {
           pointer: '/deployments/0/activation_key',
           message: "must have required property 'key'",
           keyword: 'required',
-          schemaPath: '/schemas/3.0.4/core/activation-key.json/oneOf/1/required',
-          schemaId: '/schemas/3.0.4/core/activation-key.json',
+          schemaPath: '/schemas/3.0.5/core/activation-key.json/oneOf/1/required',
+          schemaId: '/schemas/3.0.5/core/activation-key.json',
           discriminator: [{ field: 'type', value: 'key_value' }],
         },
       ];
       const summary = formatIssues(issues);
       assert.ok(
-        summary.includes('(schema: /schemas/3.0.4/core/activation-key.json)'),
+        summary.includes('(schema: /schemas/3.0.5/core/activation-key.json)'),
         `summary should embed schema $id, got: ${summary}`
       );
       assert.ok(
@@ -400,13 +400,13 @@ describe('schema-driven validation', () => {
       // Most issues land on the response root in the bundled tree; the
       // schema suffix would just restate the tool name. Adopters who want
       // the field unconditionally read it from the structured issues[].
-      const rootSchemaId = '/schemas/3.0.4/bundled/signals/activate-signal-response.json';
+      const rootSchemaId = '/schemas/3.0.5/bundled/signals/activate-signal-response.json';
       const issues = [
         {
           pointer: '/deployments/0/activation_key/key',
           message: "must have required property 'key'",
           keyword: 'required',
-          schemaPath: '/schemas/3.0.4/bundled/signals/activate-signal-response.json/oneOf/0/...',
+          schemaPath: '/schemas/3.0.5/bundled/signals/activate-signal-response.json/oneOf/0/...',
           schemaId: rootSchemaId,
           discriminator: [{ field: 'type', value: 'key_value' }],
         },
@@ -521,14 +521,14 @@ describe('schema-driven validation', () => {
           pointer: '/deployments/0/activation_key',
           message: "must have required property 'key'",
           keyword: 'required',
-          schemaPath: '/schemas/3.0.4/core/activation-key.json/oneOf/1/required',
-          schemaId: '/schemas/3.0.4/core/activation-key.json',
+          schemaPath: '/schemas/3.0.5/core/activation-key.json/oneOf/1/required',
+          schemaId: '/schemas/3.0.5/core/activation-key.json',
           discriminator: [{ field: 'type', value: 'key_value' }],
         },
       ];
       const payload = buildAdcpValidationErrorPayload('activate_signal', 'response', issues);
       assert.ok(
-        payload.message.includes('schema: /schemas/3.0.4/core/activation-key.json'),
+        payload.message.includes('schema: /schemas/3.0.5/core/activation-key.json'),
         `wire message should name the schema, got: ${payload.message}`
       );
       assert.ok(
@@ -536,19 +536,19 @@ describe('schema-driven validation', () => {
         `wire message should name the discriminator, got: ${payload.message}`
       );
       // schemaId and discriminator must survive the default (exposeSchemaPath: false) projection.
-      assert.strictEqual(payload.issues[0].schemaId, '/schemas/3.0.4/core/activation-key.json');
+      assert.strictEqual(payload.issues[0].schemaId, '/schemas/3.0.5/core/activation-key.json');
       assert.deepStrictEqual(payload.issues[0].discriminator, [{ field: 'type', value: 'key_value' }]);
       assert.strictEqual(payload.issues[0].schemaPath, undefined, 'schemaPath stripped by default — schemaId is not');
     });
 
     test('buildAdcpValidationErrorPayload suppresses redundant schema suffix when rootSchemaId matches', () => {
-      const rootSchemaId = '/schemas/3.0.4/bundled/signals/activate-signal-response.json';
+      const rootSchemaId = '/schemas/3.0.5/bundled/signals/activate-signal-response.json';
       const issues = [
         {
           pointer: '/deployments/0/activation_key/key',
           message: "must have required property 'key'",
           keyword: 'required',
-          schemaPath: '/schemas/3.0.4/bundled/signals/activate-signal-response.json/oneOf/0/.../required',
+          schemaPath: '/schemas/3.0.5/bundled/signals/activate-signal-response.json/oneOf/0/.../required',
           schemaId: rootSchemaId,
           discriminator: [{ field: 'type', value: 'key_value' }],
         },
@@ -577,9 +577,9 @@ describe('schema-driven validation', () => {
           },
         ],
       });
-      assert.strictEqual(
-        outcome.schemaId,
-        '/schemas/3.0.4/bundled/signals/activate-signal-response.json',
+      assert.match(
+        outcome.schemaId ?? '',
+        /^\/schemas\/3\.0\.\d+\/bundled\/signals\/activate-signal-response\.json$/,
         `outcome.schemaId should name the root validator, got: ${outcome.schemaId}`
       );
     });

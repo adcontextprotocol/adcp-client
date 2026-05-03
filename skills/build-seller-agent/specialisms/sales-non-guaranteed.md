@@ -4,6 +4,8 @@ Companion to [`../SKILL.md`](../SKILL.md). The SKILL.md baseline applies; this f
 
 Storyboard: `media_buy_non_guaranteed`. The specialism hinges on `bid_price` and `update_media_buy`, neither of which the baseline example shows.
 
+**Forecast surface**: `'spend'` (the default). Programmatic forward forecast — points at ascending budget levels show how impressions and clicks scale with spend. This is the planning surface every non-guaranteed buyer expects. Project your forecaster's spend curves directly onto `Product.forecast` points where each point is `{ budget: { mid }, metrics: { impressions: { low, mid, high }, clicks: { mid } } }`. See [Delivery Forecasts § Budget Curve](https://adcontextprotocol.org/docs/media-buy/product-discovery/media-products#budget-curve) for the canonical worked example.
+
 Packages on `create_media_buy` carry `bid_price`. Validate it against the product's `floor_price`:
 
 ```typescript

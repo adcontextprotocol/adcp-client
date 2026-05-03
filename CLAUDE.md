@@ -16,6 +16,8 @@ your context: `src/lib/types/*.generated.ts`, `src/lib/agents/index.generated.ts
 
 **Validating a server-side agent?** Read `docs/guides/VALIDATE-YOUR-AGENT.md` — the five-command checklist plus deep references for `adcp storyboard run`, `adcp fuzz` (T1/T2/T3), `adcp grade request-signing`, multi-instance testing, webhook conformance, schema-driven validation hooks, custom `--invariants`, the `npm run compliance:skill-matrix` dogfood harness, and how to read the runner's `context_value_rejected` diagnostics (the `💡 Hint:` lines printed on failing storyboard steps).
 
+**Putting credentials in `ctx_metadata`?** Don't. Read `docs/guides/CTX-METADATA-SAFETY.md` — the wire-strip protects buyer responses but does NOT protect server-side log lines, error envelopes, heap dumps, or adopter-generated strings. Re-derive bearers per request from `ctx.authInfo` + your token cache; embed only non-secret upstream IDs in `ctx_metadata`.
+
 **Calling an AdCP agent as a buyer?** Read and follow `skills/call-adcp-agent/SKILL.md` — covers the wire contract, minimal payload shapes, async flow, and error recovery so you don't stall on `oneOf`/discriminated-union fields that schema-free tool discovery won't explain. Significantly reduces the hop count an LLM needs to make its first successful call (3-4 attempts → 1 attempt on common tools in empirical comparison).
 
 **Building a seller agent?** Read and follow `skills/build-seller-agent/SKILL.md` — covers guaranteed vs non-guaranteed, pricing, approval workflows, creative management.

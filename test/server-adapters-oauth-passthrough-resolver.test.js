@@ -230,6 +230,14 @@ describe('createOAuthPassthroughResolver (#1363)', () => {
   describe('caching', () => {
     it('skips upstream on cache hit within TTL', async () => {
       const http = fakeHttpClient([{ id: 'acc_1', name: 'Acme' }]);
+      // `toAccount` runs on every resolve (the cache stores upstream rows,
+      // not transformed Accounts — see oauth-passthrough-resolver.ts:253).
+      // A non-deterministic mapper like `Date.now()` would make the
+      // resulting Accounts diverge between calls and turn `deepStrictEqual`
+      // into a millisecond-races-pre-emption flake. Use a fixed metadata
+      // value so the assertion stays meaningful — the test's real claim
+      // is "second call doesn't hit upstream", which `callCount()` proves
+      // unambiguously.
       const resolve = createOAuthPassthroughResolver({
         httpClient: http,
         listEndpoint: '/me',
@@ -238,7 +246,7 @@ describe('createOAuthPassthroughResolver (#1363)', () => {
           id: row.id,
           name: row.name,
           status: 'active',
-          ctx_metadata: { fetchedAt: Date.now() },
+          ctx_metadata: { source: 'cache-hit-test' },
         }),
       });
       const ctx = { authInfo: { kind: 'oauth', token: 't_a' } };

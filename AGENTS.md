@@ -21,6 +21,8 @@ This document contains essential guidelines for AI coding assistants (Claude, Co
 
 **Migration guides** — `docs/migration-6.6-to-6.7.md` (twelve adopter recipes; two breaking changes — `'implicit'` enforces inline-`account_id` refusal and `SalesPlatform` split into `SalesCorePlatform & SalesIngestionPlatform`; plus `definePlatform` helpers, `composeMethod`, `accounts.resolve` security presets, `accounts.upsert/list(ctx)`, typed errors, `issues[].hint`, `BuyerAgentRegistry`, `createTenantRegistry`, `createOAuthPassthroughResolver`, `NoAccountCtx` narrow, `refAccountId(ref)`); `docs/migration-5.x-to-6.x.md` (5 → 6 framework shape); `docs/migration-4.x-to-5.x.md` (4 → 5); `docs/migration-buyer-agent-registry.md` (registry deep-dive).
 
+**Putting credentials in `ctx_metadata`?** — Don't. Read `docs/guides/CTX-METADATA-SAFETY.md` — wire-strip protects buyer responses but not log lines / error envelopes / heap dumps / adopter strings. Re-derive bearers per request; embed only non-secret upstream IDs.
+
 ## Project Overview
 
 **@adcp/sdk** is the official TypeScript client library for the Ad Context Protocol (AdCP), documented at [docs.adcontextprotocol.org](https://docs.adcontextprotocol.org/docs/).

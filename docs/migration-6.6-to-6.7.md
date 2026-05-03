@@ -816,6 +816,7 @@ The `hello_*` adapter family is the copy-paste starting point:
 - [`examples/hello_seller_adapter_guaranteed.ts`](../examples/hello_seller_adapter_guaranteed.ts) — `sales-guaranteed` Pattern A annotation.
 - [`examples/hello_seller_adapter_social.ts`](../examples/hello_seller_adapter_social.ts) — `sales-social` (ingestion-only) + OAuth passthrough.
 - [`examples/hello_creative_adapter_template.ts`](../examples/hello_creative_adapter_template.ts) — `creative-template` + `NoAccountCtx` narrows.
+- [`examples/hello_seller_adapter_multi_tenant.ts`](../examples/hello_seller_adapter_multi_tenant.ts) — multi-specialism + multi-tenant + AdCP 3.0.5 pin.
 - [`examples/hello-cluster.ts`](../examples/hello-cluster.ts) — orchestrator that boots every per-specialism hello adapter on its declared port; emits the YAML routing manifest the storyboard runner consumes via `runStoryboard({ agents })`.
 
 ## Self-grade checklist
@@ -980,6 +981,12 @@ change" callouts so you don't go hunting:
   for `'explicit'` vs `'implicit'` vs `'derived'` mode selection,
   the `ACCOUNT_NOT_FOUND` vs `AUTH_REQUIRED` error contract, and
   durable-store patterns.
+- The [ctx_metadata safety guide](./guides/CTX-METADATA-SAFETY.md)
+  if you persist anything sensitive on `Account.ctx_metadata` —
+  the wire-strip protects buyer responses but not server-side log
+  lines, error envelopes, heap dumps, or adopter-generated strings.
+  Re-derive bearers per request from `ctx.authInfo`; embed only
+  non-secret upstream IDs in `ctx_metadata`.
 - The [5.x → 6.x migration guide](./migration-5.x-to-6.x.md) if you're
   bumping multiple minors at once.
 - The [`call-adcp-agent` SKILL](../skills/call-adcp-agent/SKILL.md)

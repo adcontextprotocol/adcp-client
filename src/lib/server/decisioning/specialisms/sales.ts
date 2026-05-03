@@ -242,6 +242,65 @@ export interface SalesPlatform<TCtxMeta = Record<string, unknown>> {
 
   // ── get_media_buy_delivery: sync only ───────────────────────────────
 
+  /**
+   * Per-media-buy delivery actuals (impressions, spend, pacing,
+   * conversions). Sync — report-running platforms with manual report
+   * cycles return the latest cached actuals and emit `delivery_report`
+   * status changes via `publishStatusChange` when fresh reports are
+   * available.
+   *
+   * **Multi-id contract.** `filter.media_buy_ids` is an array — buyers
+   * routinely request delivery for multiple buys in one call. The
+   * platform MUST iterate every id and return one element per id in
+   * `media_buy_deliveries[]`. Implementations that read only
+   * `media_buy_ids[0]` silently truncate the buyer's request — a
+   * correctness bug that has bitten multiple adopters (closes #1342).
+   *
+   * Pass-through is the framework contract: the platform owns fan-out
+   * because `aggregated_totals` requires platform-domain knowledge —
+   * `reach` (cross-buy dedup capability), `new_to_brand_rate` (weighted
+   * across buys, not a per-buy average), and `frequency` (depends on
+   * dedup) cannot be synthesized correctly by a naive framework loop.
+   * Sellers that can't compute the cross-buy fields omit them and emit
+   * the safely-summable fields (`impressions`, `spend`, `clicks`,
+   * `media_buy_count`); buyers fall back to per-buy values when needed.
+   *
+   * Recommended pattern — prefer the upstream's native multi-id query
+   * over a per-id loop. Most reporting APIs (GAM ReportService's
+   * `WHERE LINE_ITEM_ID IN (...)`, TTD, DV360, Magnite, PubMatic, retail
+   * media) take an id list in one round-trip; iterating one-id-at-a-time
+   * is an N-roundtrip pattern that triggers upstream rate limits on
+   * 50-buy reports.
+   *
+   * ```ts
+   * getMediaBuyDelivery: async (req, ctx) => {
+   *   const ids = req.media_buy_ids ?? [];
+   *   // Native multi-id: one upstream round-trip.
+   *   const rows = await this.upstream.report({
+   *     mediaBuyIds: ids,
+   *     start: req.start_date,
+   *     end: req.end_date,
+   *   });
+   *   return {
+   *     reporting_period: { start, end },
+   *     currency: 'USD',
+   *     media_buy_deliveries: rows,
+   *     aggregated_totals: this.upstream.aggregate(rows),
+   *   };
+   * }
+   * ```
+   *
+   * **Single-id fallback** — only if your upstream is genuinely single-id:
+   *
+   * ```ts
+   * const deliveries = await Promise.all(ids.map(id => fetchOne(id, ctx)));
+   * ```
+   *
+   * When `media_buy_ids` is omitted, return a paginated set of
+   * accessible media buys per the wire schema. `status_filter`
+   * defaults to `['active']` when omitted; honor the filter in your
+   * iteration.
+   */
   getMediaBuyDelivery?(filter: GetMediaBuyDeliveryRequest, ctx: Ctx<TCtxMeta>): Promise<GetMediaBuyDeliveryResponse>;
 
   // ── get_media_buys: sync only — REQUIRED ──────────────────────────────
@@ -257,7 +316,21 @@ export interface SalesPlatform<TCtxMeta = Record<string, unknown>> {
   //
   // Proposal-mode adopters (write-only via push channels) return an empty
   // `media_buys: []` array — that's a valid response.
-  /** List media buys this account owns. Filter + pagination per the wire shape. */
+  /**
+   * List media buys this account owns. Filter + pagination per the wire shape.
+   *
+   * **Multi-id contract.** `req.media_buy_ids` is an array — buyers
+   * routinely request a specific set of buys in one call. The platform
+   * MUST iterate every id and return one element per id in the response
+   * `media_buys[]` array. Reading only `media_buy_ids[0]` silently
+   * truncates the buyer's request — same correctness bug that #1342
+   * documented for `getMediaBuyDelivery`. Same recommended pattern: prefer
+   * an upstream multi-id query (one round-trip), fall back to per-id loop
+   * only when the upstream is single-id-only.
+   *
+   * When `media_buy_ids` is omitted, return a paginated set of accessible
+   * buys filtered by `status_filter` (defaults to `['active']`).
+   */
   getMediaBuys?(req: GetMediaBuysRequest, ctx: Ctx<TCtxMeta>): Promise<GetMediaBuysResponse>;
 
   // ── provide_performance_feedback: sync only ─────────────────────────
