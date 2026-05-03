@@ -36,7 +36,7 @@ export const CONTEXT_EXTRACTORS: Record<string, ContextExtractor> = {
     // ref.json: both brand AND operator are required on that arm). Omitting
     // operator causes JSON serialization to drop the key and produces a
     // spec-invalid ref that strict-validating sellers reject.
-    if (first.brand && typeof first.brand === 'object' && first.brand !== null) {
+    if (typeof first.brand === 'object' && first.brand !== null) {
       const brand = first.brand as Record<string, unknown>;
       const operator = first.operator ?? brand.domain;
       if (operator) {
