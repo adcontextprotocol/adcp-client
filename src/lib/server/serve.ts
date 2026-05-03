@@ -32,7 +32,7 @@ import {
   respondUnauthorized,
   signatureErrorCodeFromCause,
 } from './auth';
-import { ADCP_PRE_TRANSPORT, type AdcpPreTransport } from './create-adcp-server';
+import { ADCP_PRE_TRANSPORT, ADCP_INSTRUCTIONS_FN, type AdcpPreTransport } from './create-adcp-server';
 import type { AdcpServer } from './adcp-server';
 
 /**
@@ -556,6 +556,25 @@ export function serve(createAgent: (ctx: ServeContext) => AdcpServer | McpServer
         if (!res.headersSent) {
           res.writeHead(500, { 'Content-Type': 'application/json' });
           res.end(JSON.stringify({ error: 'Internal server error' }));
+        }
+        return;
+      }
+      // Refuse `reuseAgent: true` + function-form `instructions`. The function
+      // is captured at server construction and would never re-evaluate per
+      // session under server reuse — silently degrading to "instructions are
+      // a constant after all" is worse than failing loud at the first request.
+      // Adopters fix this by removing `reuseAgent: true` (default factory
+      // creates a fresh agent per request, which is what the function needs)
+      // OR by passing a static string for `instructions`.
+      if (reuseAgent && (agentServer as unknown as Record<symbol, unknown>)[ADCP_INSTRUCTIONS_FN] === true) {
+        console.error(
+          '[adcp/serve] refusing reuseAgent: true with function-form instructions. ' +
+            'The function is captured once at construction and cannot re-evaluate per session under server reuse. ' +
+            'Drop `reuseAgent: true` (a fresh agent per request fires the function each session) OR pass a static string for `instructions`.'
+        );
+        if (!res.headersSent) {
+          res.writeHead(500, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ error: 'serve(): reuseAgent is incompatible with function-form instructions' }));
         }
         return;
       }

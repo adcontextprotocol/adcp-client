@@ -13,6 +13,7 @@
 import type { DecisioningCapabilities, BrandCapabilities } from './capabilities';
 import type { Account, AccountStore } from './account';
 import type { BuyerAgentRegistry } from './buyer-agent';
+import type { SessionContext, OnInstructionsError } from '../create-adcp-server';
 import type { StatusMappers } from './status-mappers';
 import type { SalesPlatform, SalesCorePlatform, SalesIngestionPlatform } from './specialisms/sales';
 import type { CreativeBuilderPlatform } from './specialisms/creative';
@@ -77,6 +78,17 @@ export interface DecisioningPlatform<TConfig = unknown, TCtxMeta = Record<string
    * brand safety: alcohol disallowed", "carbon-aware pricing applies to
    * display impressions only", "weekly cutoff Thursday 17:00 UTC").
    *
+   * Two forms:
+   *
+   * 1. **Static string** — captured once at construction.
+   * 2. **Function** `(ctx: SessionContext) => string | undefined` — re-evaluated
+   *    each time `createAdcpServerFromPlatform` runs. Under the canonical
+   *    `serve({ reuseAgent: false })` flow that is per session, so the
+   *    closure can surface tenant-shaped prose (per-buyer brand manifests,
+   *    storefront-platform copy). `serve()` refuses `reuseAgent: true`
+   *    when this is a function — the function would only fire once for
+   *    the lifetime of the shared agent.
+   *
    * MCP-only today. The A2A `AgentCard` analog is `description` (and
    * per-skill `description`); threading platform.instructions into the
    * agent-card builder is tracked separately so MCP and A2A buyers see
@@ -86,8 +98,20 @@ export interface DecisioningPlatform<TConfig = unknown, TCtxMeta = Record<string
    * supplied via `createAdcpServerFromPlatform` opts — same precedence as
    * `agentRegistry`. Adopters with v5 escape-hatch wiring can keep using
    * `opts.instructions`; v6 callers should declare it here.
+   *
+   * @see {@link OnInstructionsError} for `onInstructionsError` (default `'skip'`).
    */
-  instructions?: string;
+  instructions?: string | ((ctx: SessionContext) => string | undefined);
+
+  /**
+   * Behavior when a function-form `instructions` callback throws.
+   * Defaults to `'skip'` — best-effort prose (brand manifests, marketing
+   * copy) should not kill the buyer's session on a registry fetch failure.
+   * Set `'fail'` for adopters whose instructions carry load-bearing policy.
+   *
+   * Threaded through to {@link createAdcpServer} unchanged.
+   */
+  onInstructionsError?: OnInstructionsError;
 
   /**
    * Buyer-agent identity registry — Phase 1 of #1269. Optional. When

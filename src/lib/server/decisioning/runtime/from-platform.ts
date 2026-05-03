@@ -1024,6 +1024,7 @@ export function createAdcpServerFromPlatform<P extends DecisioningPlatform<any, 
     // adopters can colocate platform facts / decision policy with the rest
     // of their platform declaration.
     ...(platform.instructions !== undefined && { instructions: platform.instructions }),
+    ...(platform.onInstructionsError !== undefined && { onInstructionsError: platform.onInstructionsError }),
     // Pool-derived stores override the spread above when adopters supplied
     // `pool` but no explicit per-store opt. Explicit values still win.
     ...(effectiveIdempotency !== undefined && { idempotency: effectiveIdempotency }),
