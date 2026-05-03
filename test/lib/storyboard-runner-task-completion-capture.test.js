@@ -21,20 +21,22 @@ const assert = require('node:assert/strict');
 
 const { runStoryboardStep } = require('../../dist/lib/testing/storyboard/runner');
 
-function buildHitlClient({ immediateData, pollResult, pollDelay = 0, recordPollCall }) {
+function buildHitlClient({ immediateData, pollResult, pollDelay = 0, recordPollCall, omitExecutor = false }) {
   const calls = [];
   const agent = { id: 'stub', agent_uri: 'https://stub.example/mcp' };
-  const executor = {
-    pollTaskCompletion: async (agentArg, taskId, _pollInterval) => {
-      calls.push({ kind: 'poll', taskId, agentId: agentArg?.id });
-      if (recordPollCall) recordPollCall(taskId);
-      if (pollDelay > 0) await new Promise(r => setTimeout(r, pollDelay));
-      return pollResult ?? { success: false, error: 'no poll result configured' };
-    },
-  };
+  const executor = omitExecutor
+    ? undefined
+    : {
+        pollTaskCompletion: async (agentArg, taskId, _pollInterval) => {
+          calls.push({ kind: 'poll', taskId, agentId: agentArg?.id });
+          if (recordPollCall) recordPollCall(taskId);
+          if (pollDelay > 0) await new Promise(r => setTimeout(r, pollDelay));
+          return pollResult ?? { success: false, error: 'no poll result configured' };
+        },
+      };
   const client = {
     agent,
-    executor,
+    ...(executor && { executor }),
     getAgentInfo: async () => ({ name: 'stub', tools: ['create_media_buy'] }),
     executeTask: async (name, _params) => {
       calls.push({ kind: 'execute', name });
@@ -43,6 +45,60 @@ function buildHitlClient({ immediateData, pollResult, pollDelay = 0, recordPollC
     },
   };
   return { client, calls };
+}
+
+/**
+ * Stub WebhookReceiver matching the runtime contract — only `wait` is
+ * exercised by `resolveTaskCompletionOutputs`. Resolves with the configured
+ * payload after `deliverAfterMs` (default: synchronous resolve), or
+ * `{ timed_out: true }` if `timeout_ms` elapses first.
+ */
+function buildWebhookReceiver({ payload, deliverAfterMs = 0, deliverStatus = 'completed' }) {
+  const calls = [];
+  return {
+    base_url: 'http://stub-webhook.example',
+    mode: 'loopback_mock',
+    all: () => [],
+    matching: () => [],
+    set_retry_replay: () => {},
+    wait: async (filter, timeout_ms) => {
+      calls.push({ filter, timeout_ms });
+      if (payload === undefined) {
+        // Simulate "webhook never arrives" — resolve as timed_out after timeout.
+        await new Promise(r => setTimeout(r, timeout_ms));
+        return { timed_out: true };
+      }
+      if (deliverAfterMs >= timeout_ms) {
+        await new Promise(r => setTimeout(r, timeout_ms));
+        return { timed_out: true };
+      }
+      if (deliverAfterMs > 0) {
+        await new Promise(r => setTimeout(r, deliverAfterMs));
+      }
+      // `status: deliverStatus` first lets a test override status by
+      // setting it explicitly on `payload` if needed; spreading `payload`
+      // last makes that explicit override authoritative.
+      const body = { status: deliverStatus, ...payload };
+      return {
+        webhook: {
+          id: 'wh1',
+          step_id: 'create',
+          operation_id: 'op1',
+          delivery_index: 1,
+          received_at: Date.now(),
+          method: 'POST',
+          path: '/',
+          headers: {},
+          raw_body: JSON.stringify(body),
+          body,
+          response_status: 200,
+        },
+      };
+    },
+    wait_all: async () => [],
+    close: async () => {},
+    _calls: calls,
+  };
 }
 
 const stubProfile = { name: 'stub', tools: ['create_media_buy'] };
@@ -220,6 +276,78 @@ describe('runStoryboardStep — task_completion. context_outputs', () => {
 
     assert.equal(calls.filter(c => c.kind === 'poll').length, 1, 'poll fires for working status with task_id');
     assert.equal(result.context.media_buy_id, 'mb_from_working');
+  });
+
+  test('webhook receiver wins the race when payload arrives before poll terminal', async () => {
+    const { client, calls } = buildHitlClient({
+      immediateData: { status: 'submitted', task_id: 'task_webhook_first' },
+      pollResult: { success: true, data: { media_buy_id: 'mb_from_poll' } },
+      pollDelay: 500, // poll resolves slowly
+    });
+    const webhookReceiver = buildWebhookReceiver({
+      payload: { task_id: 'task_webhook_first', result: { media_buy_id: 'mb_from_webhook' } },
+      deliverAfterMs: 10, // webhook beats the poll
+    });
+
+    const result = await runStoryboardStep('https://stub.example/mcp', baseStoryboard, 'create', {
+      protocol: 'mcp',
+      _client: client,
+      _profile: stubProfile,
+      _webhookReceiver: webhookReceiver,
+    });
+
+    assert.equal(result.context.media_buy_id, 'mb_from_webhook', 'webhook payload result.media_buy_id captured');
+    assert.equal(webhookReceiver._calls.length, 1, 'webhookReceiver.wait was called');
+    assert.deepEqual(
+      webhookReceiver._calls[0].filter,
+      { body: { task_id: 'task_webhook_first' } },
+      'wait filter targeted task_id'
+    );
+    void calls;
+  });
+
+  test('webhook fallback works when executor.pollTaskCompletion is unavailable', async () => {
+    const { client } = buildHitlClient({
+      immediateData: { status: 'submitted', task_id: 'task_webhook_only' },
+      omitExecutor: true,
+    });
+    const webhookReceiver = buildWebhookReceiver({
+      payload: { task_id: 'task_webhook_only', result: { media_buy_id: 'mb_webhook_only' } },
+      deliverAfterMs: 5,
+    });
+
+    const result = await runStoryboardStep('https://stub.example/mcp', baseStoryboard, 'create', {
+      protocol: 'mcp',
+      _client: client,
+      _profile: stubProfile,
+      _webhookReceiver: webhookReceiver,
+    });
+
+    assert.equal(result.context.media_buy_id, 'mb_webhook_only');
+  });
+
+  test('emits capture_task_failed when webhook delivers a non-completed terminal status', async () => {
+    const { client } = buildHitlClient({
+      immediateData: { status: 'submitted', task_id: 'task_webhook_failed' },
+      pollResult: { success: true, data: { media_buy_id: 'mb_should_not_be_used' } },
+      pollDelay: 500,
+    });
+    const webhookReceiver = buildWebhookReceiver({
+      payload: { task_id: 'task_webhook_failed', result: { error: { code: 'INVALID_REQUEST' } } },
+      deliverAfterMs: 5,
+      deliverStatus: 'failed',
+    });
+
+    const result = await runStoryboardStep('https://stub.example/mcp', baseStoryboard, 'create', {
+      protocol: 'mcp',
+      _client: client,
+      _profile: stubProfile,
+      _webhookReceiver: webhookReceiver,
+    });
+
+    const taskFailed = result.validations.find(v => v.check === 'capture_task_failed');
+    assert.ok(taskFailed, 'capture_task_failed when webhook payload status is non-completed');
+    assert.equal(result.context.media_buy_id, undefined);
   });
 
   test('plain path captures still work without prefix (no regression)', async () => {
