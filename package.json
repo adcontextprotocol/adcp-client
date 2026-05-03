@@ -239,8 +239,7 @@
     "generate-zod-schemas": "tsx scripts/generate-zod-from-ts.ts && tsx scripts/generate-inline-enum-arrays.ts",
     "generate-wellknown-schemas": "tsx scripts/generate-wellknown-schemas.ts",
     "generate-agent-docs": "tsx scripts/generate-agent-docs.ts",
-    "compliance:agent-skill": "tsx scripts/manual-testing/agent-skill-storyboard.ts",
-    "compliance:skill-matrix": "tsx scripts/manual-testing/run-skill-matrix.ts",
+    "compliance:fork-matrix": "node --test --test-timeout=300000 'test/examples/hello-*.test.js'",
     "typecheck:skill-examples": "tsx scripts/typecheck-skill-examples.ts",
     "check:skill-sync": "tsx scripts/check-skill-sync.ts",
     "check:adopter-types": "tsx scripts/check-adopter-types.ts",
@@ -297,6 +296,7 @@
     "email": "bugs@adcontextprotocol.org"
   },
   "dependencies": {
+    "@types/ws": "^8.18.1",
     "ajv": "^8.18.0",
     "ajv-formats": "^3.0.1",
     "fast-check": "^3.23.2",
@@ -305,6 +305,7 @@
     "structured-headers": "^2.0.2",
     "tldts": "^7.0.29",
     "undici": "^6.25.0",
+    "ws": "^8.20.0",
     "yaml": "^2.7.1"
   },
   "peerDependencies": {

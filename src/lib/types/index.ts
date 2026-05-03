@@ -290,6 +290,8 @@ export type {
   CreativeApprovalError,
   RightsTerms,
   RightsConstraint,
+  RightUse,
+  RightType,
   GenerationCredential,
 } from './core.generated';
 

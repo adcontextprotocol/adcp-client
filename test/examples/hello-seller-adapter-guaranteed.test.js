@@ -4,8 +4,7 @@
  * Three independent assertions via the shared helper. The adapter wires
  * `comply_test_controller` so cascade scenarios under `media_buy_seller/*`
  * (driven by `requires_scenarios` in the storyboard yaml) get the
- * controller-driven setup they need. Two remaining failures are filtered
- * out here — each maps to a tracked upstream-fixture follow-up:
+ * controller-driven setup they need.
  *
  * As of AdCP 3.0.6, all known gaps are closed end-to-end:
  *   - #1415 — adcp#3989 (sandbox:true on every account block in
@@ -14,10 +13,13 @@
  *     adapter's update_media_buy cancel path)
  *   - #1417 — adcp#3990 (task_completion.media_buy_id path) + SDK PR #1426
  *     (runner-side `task_completion.<path>` context_outputs prefix)
+ *   - #1505 — closed by 3.0.6 fixture sandbox-namespace alignment together
+ *     with the get_media_buys account-resolution fix (#1487/#1489); the
+ *     update→get echo round-trip now resolves correctly.
  *
- * The storyboard suite passes unfiltered. The empty allowlist is kept (rather
- * than removed) so the helper's enforcement runs as a no-op — re-introducing
- * a gap in the future is a one-line update.
+ * The storyboard suite passes unfiltered. The empty allowlist is kept
+ * (rather than removed) so the helper's enforcement runs as a no-op —
+ * re-introducing a gap is a one-line update.
  */
 
 const path = require('node:path');

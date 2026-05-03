@@ -3,10 +3,9 @@
  *
  * Three independent assertions via the shared helper. The adapter wires
  * `comply_test_controller` so cascade scenarios under `media_buy_seller/*`
- * get the controller-driven setup they need. Expected-failure entries
- * mirror the three SDK gaps still tracked from the guaranteed gate:
+ * get the controller-driven setup they need. One expected-failure entry
+ * remains:
  *
- *   - #1415 (property_list echo on get_media_buys)
  *   - #1416 (NOT_CANCELLABLE state machine export)
  *
  * Drop the corresponding entry from `EXPECTED_FAILURES` when each issue
