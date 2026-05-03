@@ -114,38 +114,21 @@ export interface RosterAccountStoreOptions<TRosterEntry, TCtxMeta = Record<strin
    * default behavior is to return `null` and let the handler narrow on
    * `ctx.account === undefined`.
    *
-   * Provide this to return a roster entry the helper will thread through
-   * `toAccount` — either a singleton "publisher tenant" row or an
-   * auth-principal lookup. Returns `undefined` to fall back to the
+   * Provide this to return a framework `Account<TCtxMeta>` directly —
+   * typically a singleton "publisher tenant" used for format-catalog
+   * reads, or an auth-principal-derived account looked up off
+   * `ctx.authInfo.credential`. Return `undefined` to fall back to the
    * default null behavior.
    *
-   * **When your synth case doesn't fit your roster shape, wrap `resolve`
-   * instead of fighting this hatch.** This option is convenient when the
-   * publisher-wide tenant is structurally a `TRosterEntry` (your
-   * storefront table happens to have a row for the publisher itself, or
-   * your in-memory roster includes a synth entry). For platforms where
-   * the synth tenant has no advertiser, no upstream IDs, no rate card —
-   * i.e., where shoving it through `TRosterEntry` + `toAccount` would
-   * mean inventing fields or branching `toAccount` on a sentinel —
-   * compose `resolve` directly:
-   *
-   * ```ts
-   * const base = createRosterAccountStore({ lookup, toAccount });
-   * const accounts: AccountStore<MyMeta> = {
-   *   ...base,
-   *   resolve: async (ref, ctx) => {
-   *     if (ref === undefined) {
-   *       return { id: '__publisher__', name: 'Publisher', status: 'active', ctx_metadata: {} };
-   *     }
-   *     return base.resolve(ref, ctx);
-   *   },
-   * };
-   * ```
-   *
-   * The wrapper bypasses `toAccount` for the synth case while keeping
-   * the helper's id-arm dispatch for everything else.
+   * **Returns `Account<TCtxMeta>`, not `TRosterEntry`.** The synth case
+   * is structurally different from a roster row (often no advertiser, no
+   * upstream IDs, no rate card) so the helper does NOT thread the result
+   * through `toAccount`. If your synth case happens to be a real roster
+   * row, call `toAccount(entry, ctx)` yourself in this callback.
    */
-  resolveWithoutRef?: (ctx: ResolveContext | undefined) => TRosterEntry | undefined | Promise<TRosterEntry | undefined>;
+  resolveWithoutRef?: (
+    ctx: ResolveContext | undefined
+  ) => Account<TCtxMeta> | undefined | Promise<Account<TCtxMeta> | undefined>;
 }
 
 /**
@@ -248,8 +231,8 @@ export function createRosterAccountStore<TRosterEntry, TCtxMeta = Record<string,
       }
 
       if (ref === undefined && options.resolveWithoutRef !== undefined) {
-        const entry = await options.resolveWithoutRef(ctx);
-        return entry === undefined ? null : options.toAccount(entry, ctx);
+        const account = await options.resolveWithoutRef(ctx);
+        return account ?? null;
       }
 
       // Brand+operator-shaped refs (no account_id) and unhandled ref-less

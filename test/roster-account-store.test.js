@@ -91,21 +91,28 @@ describe('createRosterAccountStore', () => {
       assert.equal(await store.resolve(undefined), null);
     });
 
-    it('uses resolveWithoutRef when ref is absent', async () => {
+    it('uses resolveWithoutRef when ref is absent (returns Account directly, bypasses toAccount)', async () => {
+      let toAccountCalled = false;
       const store = createRosterAccountStore({
         lookup: () => undefined,
-        toAccount: row => ({
-          id: row.id,
-          name: row.id,
+        toAccount: row => {
+          toAccountCalled = true;
+          return { id: row.id, name: row.id, status: 'active', ctx_metadata: {} };
+        },
+        resolveWithoutRef: () => ({
+          id: '__publisher__',
+          name: 'Publisher',
           status: 'active',
-          ctx_metadata: {},
+          ctx_metadata: { synthetic: true },
         }),
-        resolveWithoutRef: () => ({ id: 'singleton' }),
       });
 
       const account = await store.resolve(undefined, { authInfo: { kind: 'public' } });
       assert.ok(account);
-      assert.equal(account.id, 'singleton');
+      assert.equal(account.id, '__publisher__');
+      assert.equal(account.name, 'Publisher');
+      assert.deepEqual(account.ctx_metadata, { synthetic: true });
+      assert.equal(toAccountCalled, false, 'toAccount must not be called for resolveWithoutRef');
     });
 
     it('returns null when resolveWithoutRef returns undefined', async () => {
@@ -125,7 +132,7 @@ describe('createRosterAccountStore', () => {
         toAccount: row => ({ id: row.id, name: row.id, status: 'active', ctx_metadata: {} }),
         resolveWithoutRef: c => {
           seenCtx = c;
-          return { id: 'singleton' };
+          return { id: 'singleton', name: 'Singleton', status: 'active', ctx_metadata: {} };
         },
       });
 

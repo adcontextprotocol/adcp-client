@@ -18,10 +18,7 @@ import { createRosterAccountStore } from '@adcp/sdk/server';
 const accounts = createRosterAccountStore({
   lookup: async (id, ctx) => {
     const tenantId = deriveTenant(ctx?.authInfo);
-    return await db.oneOrNone(
-      'SELECT * FROM storefront_accounts WHERE id = $1 AND tenant = $2',
-      [id, tenantId],
-    );
+    return await db.oneOrNone('SELECT * FROM storefront_accounts WHERE id = $1 AND tenant = $2', [id, tenantId]);
   },
   toAccount: row => ({
     id: row.id,
@@ -41,4 +38,4 @@ Design choices:
 - **Point-lookup, not roster getter.** Adopters with thousands of accounts per tenant in Postgres issue `SELECT WHERE id = $1` instead of materializing the full array on every request.
 - **`list` is opt-in.** Omit it and the framework emits `UNSUPPORTED_FEATURE` for `list_accounts` calls. Provide it and the adopter pushes filter+page down to whatever index they have — the helper does NOT post-filter.
 - **No `upsert` / `reportUsage` / `getAccountFinancials` / `refreshToken`.** Buyer-driven writes don't apply to publisher-curated rosters. Adopters who need those compose with a spread: `{ ...createRosterAccountStore(...), refreshToken: async (a) => { ... } }`.
-- **`resolveWithoutRef` escape hatch** for tools that call `accounts.resolve(undefined, ctx)` (`provide_performance_feedback`, `list_creative_formats`, `preview_creative`). Adopters return a singleton or look up by auth principal.
+- **`resolveWithoutRef` escape hatch** for tools that call `accounts.resolve(undefined, ctx)` (`provide_performance_feedback`, `list_creative_formats`, `preview_creative`). Returns `Account<TCtxMeta>` directly, NOT `TRosterEntry` — the synth case is structurally different from a roster row (often no advertiser, no upstream IDs, no rate card) so the helper does not thread it through `toAccount`. Adopters whose synth case happens to be a real roster row call `toAccount` themselves inside the callback.
