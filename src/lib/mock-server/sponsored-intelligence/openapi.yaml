@@ -1,0 +1,453 @@
+openapi: 3.1.0
+info:
+  title: Sponsored Intelligence Brand Agent API
+  version: '1.0.0'
+  description: |
+    HTTP API for a fictional brand-agent platform — Salesforce Agentforce /
+    OpenAI Assistants / custom-brand-chat shaped upstream that hosts
+    conversational brand experiences. Adapter wraps this API to expose AdCP
+    `si_get_offering`, `si_initiate_session`, `si_send_message`,
+    `si_terminate_session`.
+
+    Brand-scoped via the URL path (`/v1/brands/{brand_id}/...`) — same
+    multi-tenancy flavor as the creative-template mock. Conversations are
+    stateful: the upstream owns the session transcript and offering context
+    so the brand can resolve back-references like "the second one" without
+    the host having to replay the full transcript.
+
+    This is a fixture for compliance testing; the seed brands and offerings
+    are stable across boots.
+
+servers:
+  - url: http://127.0.0.1:{port}
+    variables:
+      port:
+        default: '4500'
+        description: Port the mock-server boots on (override with --port)
+
+components:
+  securitySchemes:
+    bearerApiKey:
+      type: http
+      scheme: bearer
+      description: |
+        Customer-level credential, shared across all brands owned by that
+        customer. Brand scoping happens via the URL path.
+
+  schemas:
+    Offering:
+      type: object
+      required: [offering_id, brand_id, name, summary, hero_image_url, landing_page_url, available]
+      properties:
+        offering_id:
+          type: string
+          description: |
+            Stable upstream identifier for the offering. Maps to AdCP
+            `SIGetOfferingResponse.offering.offering_id` (rename only — direct
+            projection).
+          example: 'off_acme_trailrun_summer26'
+        brand_id: { type: string, example: 'brand_acme_outdoor' }
+        name: { type: string }
+        summary: { type: string }
+        tagline: { type: string }
+        hero_image_url:
+          type: string
+          description: |
+            Upstream uses `hero_image_url`; AdCP wants `image_url`. Direct
+            rename in the adapter.
+        landing_page_url:
+          type: string
+          description: |
+            Upstream uses `landing_page_url`; AdCP wants `landing_url`.
+        price_hint: { type: string, example: 'from $129' }
+        expires_at: { type: string, format: date-time }
+        available: { type: boolean }
+        products:
+          type: array
+          description: |
+            Present when `?include_products=true`. Each product uses upstream
+            key `sku`; AdCP wants `product_id`. Adapter projects.
+          items: { $ref: '#/components/schemas/Product' }
+        total_matching:
+          type: integer
+          description: |
+            Total products matching the offering, regardless of `product_limit`
+            applied to the response. Maps to AdCP `total_matching`.
+        privacy_policy:
+          type: object
+          properties:
+            url: { type: string }
+            version: { type: string }
+
+    Product:
+      type: object
+      required: [sku, name, display_price, thumbnail_url, pdp_url, inventory_status]
+      properties:
+        sku:
+          type: string
+          description: |
+            Upstream product identifier. Maps to AdCP `product_id` —
+            rename only.
+        name: { type: string }
+        display_price: { type: string, example: '$129' }
+        list_price: { type: string, description: 'Original price if on sale' }
+        thumbnail_url:
+          type: string
+          description: |
+            Upstream uses `thumbnail_url`; AdCP wants `image_url`. Adapter
+            renames.
+        pdp_url:
+          type: string
+          description: |
+            Upstream uses `pdp_url`; AdCP wants `url`. Adapter renames.
+        inventory_status:
+          type: string
+          description: |
+            Free-text upstream summary. Maps to AdCP
+            `availability_summary`.
+
+    StartConversationRequest:
+      type: object
+      required: [intent]
+      properties:
+        intent:
+          type: string
+          description: |
+            Natural language description of the user's need. Maps directly
+            from AdCP `SIInitiateSessionRequest.intent`.
+        offering_id:
+          type: string
+          description: |
+            Pre-resolved offering context. The brand stores this server-side
+            so subsequent turns can reference products by name or position.
+        identity:
+          type: object
+          description: |
+            Optional consented user identity. Maps from AdCP
+            `SIInitiateSessionRequest.identity`. The mock does not validate
+            consent semantics — adopters' adapters are expected to gate on
+            `consent_granted` before forwarding PII.
+        client_request_id:
+          type: string
+          description: |
+            Idempotency key. Adapter translates AdCP `idempotency_key` to
+            this. Replaying the same key returns the same conversation
+            rather than starting a new one.
+
+    Conversation:
+      type: object
+      required: [conversation_id, brand_id, status, intent, turns, created_at, updated_at]
+      properties:
+        conversation_id:
+          type: string
+          description: |
+            Maps to AdCP `session_id`. Adapter renames in the response
+            projection.
+          example: 'conv_5f4a2b91c8d36e10'
+        brand_id: { type: string }
+        status: { type: string, enum: [active, closed] }
+        offering_id: { type: string, nullable: true }
+        intent: { type: string }
+        turns:
+          type: array
+          items: { $ref: '#/components/schemas/Turn' }
+        close:
+          type: object
+          nullable: true
+          description: |
+            Set on closed conversations. Includes the close reason and any
+            transaction handoff payload (when reason='transaction').
+          properties:
+            reason: { type: string }
+            closed_at: { type: string, format: date-time }
+            transaction_handoff:
+              type: object
+              nullable: true
+              description: |
+                When present, maps to AdCP `acp_handoff` on
+                `SITerminateSessionResponse`.
+              properties:
+                checkout_url: { type: string }
+                checkout_token: { type: string }
+                expires_at: { type: string, format: date-time }
+                payload: { type: object }
+        session_ttl_seconds:
+          type: integer
+          description: |
+            Brand-configured inactivity timeout. Maps to AdCP
+            `session_ttl_seconds` on initiate response.
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+
+    SendTurnRequest:
+      type: object
+      properties:
+        message:
+          type: string
+          description: |
+            User's message. Maps from AdCP `SISendMessageRequest.message`.
+        action_response:
+          type: object
+          description: |
+            User's response to a previous action_button. Maps from AdCP
+            `SISendMessageRequest.action_response`.
+          properties:
+            action: { type: string }
+            payload: { type: object }
+        client_request_id:
+          type: string
+          description: |
+            Idempotency key. Adapter translates AdCP `idempotency_key` to
+            this. Same key replayed returns the same turn rather than
+            generating a duplicate. Mismatched body with reused key →
+            409 idempotency_conflict.
+      oneOf:
+        - required: [message]
+        - required: [action_response]
+
+    Turn:
+      type: object
+      required: [turn_id, conversation_id, assistant_message, components, created_at]
+      properties:
+        turn_id: { type: string }
+        conversation_id: { type: string }
+        user_message: { type: string, nullable: true }
+        assistant_message:
+          type: string
+          description: |
+            Brand agent's textual response. Maps to AdCP
+            `SISendMessageResponse.response.message`.
+        components:
+          type: array
+          description: |
+            Visual components to render. Each carries an upstream-shaped
+            `kind` field (`product_card`, `action_button`, `text`, `image`).
+            Adapter projects to AdCP `SIUIElement` (`type` instead of
+            `kind`, plus the AdCP component-specific data shape).
+          items: { type: object }
+        close_recommended:
+          type: object
+          nullable: true
+          description: |
+            Brand-side hint that the conversation is naturally winding down
+            (transaction or complete). Adapter decides whether to surface
+            this as AdCP `session_status: 'pending_handoff'` and populate
+            `handoff` on the response.
+          properties:
+            type: { type: string, enum: [transaction, complete] }
+            payload: { type: object }
+        created_at: { type: string, format: date-time }
+        conversation_status:
+          type: string
+          enum: [active, closed]
+          description: 'Echoed on per-turn responses for convenience.'
+        session_ttl_seconds: { type: integer }
+
+    CloseConversationRequest:
+      type: object
+      properties:
+        reason:
+          type: string
+          description: |
+            Maps from AdCP `SITerminateSessionRequest.reason`. Common values:
+            transaction, complete, user_exit, session_timeout, host_terminated.
+        summary:
+          type: string
+          description: |
+            Optional conversation summary for ACP handoff. Maps from AdCP
+            `termination_context.summary`.
+
+    Error:
+      type: object
+      required: [code, message]
+      properties:
+        code: { type: string }
+        message: { type: string }
+
+security:
+  - bearerApiKey: []
+
+paths:
+  /_lookup/brand:
+    get:
+      summary: Resolve AdCP-side brand identifier to upstream brand_id
+      description: |
+        Discovery endpoint — adapter calls this at runtime with the
+        AdCP-side brand value (e.g., `account.brand`) to look up the
+        upstream `brand_id`. No auth required.
+      security: []
+      parameters:
+        - name: adcp_brand
+          in: query
+          required: true
+          schema: { type: string }
+      responses:
+        '200':
+          description: Resolved
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  adcp_brand: { type: string }
+                  brand_id: { type: string }
+                  display_name: { type: string }
+        '400': { description: Missing query parameter }
+        '404': { description: Brand not found }
+
+  /_debug/traffic:
+    get:
+      summary: Per-route hit counters (façade-detection)
+      description: |
+        Test harness reads this after a storyboard run to verify the
+        adapter actually called the upstream. Façade adapters that skip
+        the HTTP layer produce zero counters and fail the assertion.
+      security: []
+      responses:
+        '200':
+          description: Traffic counters
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  traffic: { type: object, additionalProperties: { type: integer } }
+
+  /v1/brands/{brand_id}/offerings/{offering_id}:
+    get:
+      summary: Get offering details
+      description: Maps to AdCP `si_get_offering`.
+      parameters:
+        - name: brand_id
+          in: path
+          required: true
+          schema: { type: string }
+        - name: offering_id
+          in: path
+          required: true
+          schema: { type: string }
+        - name: include_products
+          in: query
+          schema: { type: boolean }
+        - name: product_limit
+          in: query
+          schema: { type: integer }
+      responses:
+        '200':
+          description: Offering
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Offering' }
+        '401': { description: Unauthorized }
+        '404': { description: Offering or brand not found }
+
+  /v1/brands/{brand_id}/conversations:
+    post:
+      summary: Start a conversation
+      description: |
+        Maps to AdCP `si_initiate_session`. Returns the freshly-created
+        conversation including the brand's initial assistant turn.
+      parameters:
+        - name: brand_id
+          in: path
+          required: true
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/StartConversationRequest' }
+      responses:
+        '201':
+          description: Created
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Conversation' }
+        '200':
+          description: Idempotent replay (same client_request_id)
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Conversation' }
+
+  /v1/brands/{brand_id}/conversations/{conversation_id}:
+    get:
+      summary: Read conversation state
+      parameters:
+        - name: brand_id
+          in: path
+          required: true
+          schema: { type: string }
+        - name: conversation_id
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        '200':
+          description: Conversation
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Conversation' }
+        '404': { description: Conversation not found }
+
+  /v1/brands/{brand_id}/conversations/{conversation_id}/turns:
+    post:
+      summary: Send a turn
+      description: |
+        Maps to AdCP `si_send_message`. Each turn is a mutation of the
+        session transcript — pass `client_request_id` for at-most-once
+        execution.
+      parameters:
+        - name: brand_id
+          in: path
+          required: true
+          schema: { type: string }
+        - name: conversation_id
+          in: path
+          required: true
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/SendTurnRequest' }
+      responses:
+        '200':
+          description: Brand agent's response turn
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Turn' }
+        '404': { description: Conversation not found }
+        '409':
+          description: Conversation closed, or idempotency_conflict
+        '400': { description: Invalid request }
+
+  /v1/brands/{brand_id}/conversations/{conversation_id}/close:
+    post:
+      summary: Close a conversation
+      description: |
+        Maps to AdCP `si_terminate_session`. Idempotent — re-closing an
+        already-closed conversation returns the same payload (mirrors AdCP's
+        decision to omit `idempotency_key` on terminate). When `reason` is
+        `transaction`, the response includes a `transaction_handoff` block
+        the adapter projects to AdCP `acp_handoff`.
+      parameters:
+        - name: brand_id
+          in: path
+          required: true
+          schema: { type: string }
+        - name: conversation_id
+          in: path
+          required: true
+          schema: { type: string }
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CloseConversationRequest' }
+      responses:
+        '200':
+          description: Closed conversation
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Conversation' }
+        '404': { description: Conversation not found }
