@@ -484,6 +484,11 @@ class MultiTenantAdapter implements DecisioningPlatform<Record<string, never>, T
      * agent has authority over each referenced account before persisting.
      */
     upsert: async (refs, ctx) => {
+      // Fail-CLOSED: when `homeTenantId` can't be resolved (no agent, or
+      // agent_url not in BUYER_HOME_TENANT), reject everything. The earlier
+      // pattern `if (homeTenantId && tenantId !== homeTenantId)` was fail-
+      // OPEN — an adopter who forks this file and adds a credential without
+      // a BUYER_HOME_TENANT row would silently disable tenant isolation.
       const homeTenantId = ctx?.agent ? BUYER_HOME_TENANT.get(ctx.agent.agent_url) : undefined;
       return refs.map(ref => {
         const r = ref as { operator?: string; brand?: { domain?: string } };
@@ -508,10 +513,10 @@ class MultiTenantAdapter implements DecisioningPlatform<Record<string, never>, T
             errors: [{ code: 'ACCOUNT_NOT_FOUND', message: `Unknown operator: ${operator}` }],
           };
         }
-        // Tenant-isolation gate. Operator must map to the buyer's home
-        // tenant. Without this an authenticated buyer could write to
-        // another tenant's accounts by impersonating its operator.
-        if (homeTenantId && tenantId !== homeTenantId) {
+        // Tenant-isolation gate. Fail-closed: reject when home tenant
+        // can't be resolved OR when the wire operator maps to a different
+        // tenant than the buyer's authenticated home.
+        if (!homeTenantId || tenantId !== homeTenantId) {
           return {
             brand: { domain: brandDomain },
             operator,
@@ -520,7 +525,7 @@ class MultiTenantAdapter implements DecisioningPlatform<Record<string, never>, T
             errors: [
               {
                 code: 'PERMISSION_DENIED',
-                message: `Buyer agent has no authority over operator '${operator}' (tenant mismatch).`,
+                message: `Buyer agent has no authority over operator '${operator}' (tenant mismatch or home tenant not configured).`,
               },
             ],
           };
@@ -528,6 +533,7 @@ class MultiTenantAdapter implements DecisioningPlatform<Record<string, never>, T
         const tenant = TENANTS.get(tenantId)!;
         const key = accountKey(operator, brandDomain);
         // accountKey collisions are upserts by design — same (operator, brand) = same account.
+        // SWAP: row-level write under tenant transaction.
         const action = tenant.accounts.has(key) ? ('updated' as const) : ('created' as const);
         tenant.accounts.set(key, { operator, brand_domain: brandDomain, status: 'active' });
         return {
@@ -832,25 +838,24 @@ class MultiTenantAdapter implements DecisioningPlatform<Record<string, never>, T
           field: 'campaign.end_date',
         });
       }
-      // Cross-specialism governance check.
-      //
-      // Spec model: the buyer registers a governance agent with us via
-      // `sync_governance`. We persist the binding (with the registered
-      // plan_id) and consult it on every `acquire_rights` for that
-      // account. Without an explicit binding we DO NOT enforce — that
-      // would invert the trust direction (a `sync_plans` caller silently
-      // constraining an `acquire_rights` caller). The multi-specialism
-      // value is that when the registered governance agent IS us, the
-      // call short-circuits to our own handler — no HTTP roundtrip,
-      // same in-process method invocation. When the registered URL
-      // points at a remote agent, real adopters dial out via the
-      // @adcp/sdk client; this hello adapter ships only the in-process
-      // path, gated on `binding` existing.
-      //
-      // ⚠️  DO NOT copy this short-circuit into a single-specialism
-      //    brand-rights agent — without a co-resident governance
-      //    handler, the call has nothing to dispatch to and adopters
-      //    must wire a real outbound MCP call instead.
+      // Validation seam: when an explicit governance binding exists for
+      // this brand, projecting CPM spend will need `estimated_impressions`.
+      // Hoisted from `enforceGovernance` so the request-validation MUSTs
+      // sit at the boundary rather than nested under enforcement logic.
+      // Spec wording (acquire-rights-request.json:64) MUSTs this only
+      // under intent-phase `governance_context` + CPM; the broader gate
+      // here is conservative — when this adapter holds a registered
+      // binding, projecting spend without impressions silently grants
+      // under-priced rights. Tighten if your offerings are mixed-pricing
+      // or your governance flow uses `governance_context` tokens.
+      const hasBinding = tenant.governanceBindings.has(req.buyer.domain);
+      if (hasBinding && (req.campaign.estimated_impressions == null || req.campaign.estimated_impressions <= 0)) {
+        throw new AdcpError('INVALID_REQUEST', {
+          message:
+            'campaign.estimated_impressions is required when acquiring CPM-priced rights under a registered governance plan.',
+          field: 'campaign.estimated_impressions',
+        });
+      }
       const denial = await this.enforceGovernance(tenant, ctx, offering, req);
       if (denial) return denial;
       const offered = new Set(offering.available_uses);
@@ -893,11 +898,28 @@ class MultiTenantAdapter implements DecisioningPlatform<Record<string, never>, T
   });
 
   /**
-   * Cross-specialism governance check. Called from `acquireRights`.
-   * Returns `null` when no enforcement applies (no binding registered),
-   * an `AcquireRightsRejected` envelope when the governance check
-   * denies, or `null` when it approves / conditions (rights flow
-   * proceeds).
+   * Cross-specialism governance check. Called from `acquireRights` after
+   * the validation seam has already enforced `estimated_impressions` for
+   * binding-aware paths. Returns `AcquireRightsRejected` on denial,
+   * `null` otherwise (no binding, approved, or conditions — rights flow
+   * proceeds either way).
+   *
+   * **Same-tenant invariant**: this method dispatches `checkGovernance`
+   * via `this.campaignGovernance` and forwards the same `ctx`. Both
+   * specialisms share `getTenant(ctx)` here by construction (single
+   * adapter instance, single tenant resolved per request). If a future
+   * deployment splits brand-rights and governance into different tenants
+   * — or registers a remote governance agent and dials out via the
+   * @adcp/sdk client — this in-process short-circuit no longer applies
+   * and the assumption needs revisiting.
+   *
+   * **⚠️  DO NOT copy this into a single-specialism brand-rights agent.**
+   * Without a co-resident `campaignGovernance` handler, the in-process
+   * call has nothing to dispatch to. Single-specialism adopters must
+   * dial out to the registered governance agent's URL via the
+   * @adcp/sdk client instead, supplying the credentials persisted
+   * during `sync_governance` (this adapter drops them — see
+   * `syncGovernanceHandler`).
    *
    * Uses `ctx.account` (framework-resolved tenant account) — never
    * re-parses operator/brand from the request body, since that would
@@ -914,6 +936,13 @@ class MultiTenantAdapter implements DecisioningPlatform<Record<string, never>, T
     // brand_domain inside the tenant so we look up against
     // `req.buyer.domain`. Tenant scoping is upstream: `getTenant(ctx)`
     // narrowed by auth-derived account before we got here.
+    //
+    // Limitation: keying solely on brand_domain means two buyers from
+    // different operators within the same tenant targeting the same
+    // brand will share a binding. Filed as adcontextprotocol/adcp#3918
+    // (add `account: AccountReference` to AcquireRightsRequest); until
+    // that lands, this is a hello-adapter scoping shortcut, not a
+    // production-grade resolution.
     const brandDomain = req.buyer?.domain;
     if (!brandDomain) return null;
     const binding = tenant.governanceBindings.get(brandDomain);
@@ -921,17 +950,9 @@ class MultiTenantAdapter implements DecisioningPlatform<Record<string, never>, T
     const planId = binding.active_plan_id;
     if (!tenant.plans.has(planId)) return null;
 
-    // Spec MUST: when projecting CPM spend for governance,
-    // `campaign.estimated_impressions` is required. Implementer-chosen
-    // defaults are non-conformant per acquire-rights-request.json.
-    if (req.campaign.estimated_impressions == null || req.campaign.estimated_impressions <= 0) {
-      throw new AdcpError('INVALID_REQUEST', {
-        message:
-          'campaign.estimated_impressions is required when acquiring CPM-priced rights under a registered governance plan.',
-        field: 'campaign.estimated_impressions',
-      });
-    }
-    const estimatedSpend = (offering.price * req.campaign.estimated_impressions) / 1000;
+    // `estimated_impressions` is enforced at the validation seam in
+    // `acquireRights` before we get here — this is just the projection.
+    const estimatedSpend = (offering.price * req.campaign.estimated_impressions!) / 1000;
 
     const govResp = await this.campaignGovernance.checkGovernance(
       {
@@ -1046,29 +1067,39 @@ function toDateTime(value: string, edge: 'start' | 'end'): string {
 // v5 escape-hatch `AccountHandlers` signature. The handler still gets
 // the framework-resolved `ctx.account` (auth-derived for this no-account
 // tool), so the tenant-isolation gate works the same way as
-// `accounts.upsert`.
+// `accounts.upsert`. Promotion of this surface to v6 tracked in
+// adcontextprotocol/adcp-client#1387.
 //
-// Return type is loose because the wire schema's `account` is the
-// full `AccountReference` discriminated union but we echo back exactly
-// what the buyer sent — fully spec-compliant on the wire, but TS can't
-// narrow without a cast at the boundary.
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-const syncGovernanceHandler: NonNullable<AccountHandlers['syncGovernance']> = async (params, ctx): Promise<any> => {
+// Each row is cast to AccountReference at the row site (the buyer's
+// echo can't cleanly narrow to the discriminated union without a cast),
+// keeping the handler-level return type tight.
+type SyncGovernanceRow = {
+  account: { account_id: string } | { brand: { domain: string }; operator: string; sandbox?: boolean };
+  status: 'synced' | 'failed';
+  governance_agents?: Array<{ url: string; categories?: string[] }>;
+  errors?: Array<{ code: string; message: string }>;
+};
+const syncGovernanceHandler: NonNullable<AccountHandlers['syncGovernance']> = async (
+  params,
+  ctx
+): Promise<{ accounts: SyncGovernanceRow[] }> => {
   const homeTenantId = (ctx.account as Account<TenantMeta> | undefined)?.ctx_metadata?.tenant_id;
   const accounts = (
     (params.accounts ?? []) as Array<{
       account?: { operator?: string; brand?: { domain?: string } };
       governance_agents?: Array<{ url: string }>;
     }>
-  ).map(entry => {
+  ).map((entry): SyncGovernanceRow => {
     const operator = entry.account?.operator;
     const brandDomain = entry.account?.brand?.domain;
     const govUrl = entry.governance_agents?.[0]?.url;
-    const accountEcho = entry.account ?? {};
+    // Cast at the row site: the spec's AccountReference is a strict
+    // discriminated union; the buyer's echo may not narrow without help.
+    const accountEcho = (entry.account ?? { account_id: 'unknown' }) as SyncGovernanceRow['account'];
     if (!operator || !brandDomain) {
       return {
         account: accountEcho,
-        status: 'failed' as const,
+        status: 'failed',
         errors: [{ code: 'INVALID_REQUEST', message: 'account.operator + account.brand.domain required' }],
       };
     }
@@ -1076,27 +1107,28 @@ const syncGovernanceHandler: NonNullable<AccountHandlers['syncGovernance']> = as
     if (!tenantId) {
       return {
         account: accountEcho,
-        status: 'failed' as const,
+        status: 'failed',
         errors: [{ code: 'ACCOUNT_NOT_FOUND', message: `Unknown operator: ${operator}` }],
       };
     }
-    // Tenant-isolation gate. Operator must map to the buyer's home
-    // tenant — otherwise a buyer in tenant A could plant a governance
-    // binding into tenant B's state.
-    if (homeTenantId && tenantId !== homeTenantId) {
+    // Tenant-isolation gate. Fail-closed (same shape as `accounts.upsert`):
+    // reject when home tenant can't be resolved OR when the wire operator
+    // maps to a different tenant than the buyer's authenticated home.
+    if (!homeTenantId || tenantId !== homeTenantId) {
       return {
         account: accountEcho,
-        status: 'failed' as const,
+        status: 'failed',
         errors: [
           {
             code: 'PERMISSION_DENIED',
-            message: `Buyer agent has no authority over operator '${operator}' (tenant mismatch).`,
+            message: `Buyer agent has no authority over operator '${operator}' (tenant mismatch or home tenant not configured).`,
           },
         ],
       };
     }
     const tenant = TENANTS.get(tenantId)!;
     if (govUrl) {
+      // SWAP: row-level write under tenant transaction.
       // Bind to the most-recently-synced plan in this tenant. Real
       // adopters bind plan_id to account explicitly via the buyer's
       // compliance configuration; the wire `sync_governance` payload
@@ -1124,7 +1156,7 @@ const syncGovernanceHandler: NonNullable<AccountHandlers['syncGovernance']> = as
     });
     return {
       account: accountEcho,
-      status: 'synced' as const,
+      status: 'synced',
       ...(echoedAgents.length > 0 && { governance_agents: echoedAgents }),
     };
   });
@@ -1168,7 +1200,7 @@ serve(
 console.log(`multi-tenant adapter on http://127.0.0.1:${PORT}/mcp`);
 console.log(`  tenants: ${Array.from(TENANTS.keys()).join(', ')}`);
 console.log(`  operators: ${Array.from(OPERATOR_TO_TENANT.keys()).join(', ')}`);
-console.log(`  credentials:`);
+console.log(`  credentials (3 = 1 harness pinned for storyboards + 2 demo buyers, one per tenant):`);
 console.log(`    ${PINNACLE_HARNESS_TOKEN} → tenant_pinnacle (storyboard runner)`);
 console.log(`    ${PINNACLE_DEMO_TOKEN} → tenant_pinnacle`);
 console.log(`    ${MERIDIAN_DEMO_TOKEN} → tenant_meridian`);

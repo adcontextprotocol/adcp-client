@@ -15,10 +15,10 @@ This directory contains practical examples of how to use the `@adcp/sdk` library
 
 Worked starting points for adopters wrapping a real upstream platform with the `createAdcpServerFromPlatform` surface. Fork one and replace the in-memory backend with your real catalog / ledger / generation pipeline. All use the same `BuyerAgentRegistry` pattern with Addie (the storyboard runner) seeded as a sandbox-only buyer.
 
-| Shape                                                   | File                                         | Default port |
-| ------------------------------------------------------- | -------------------------------------------- | ------------ |
-| Single specialism, single tenant — `signal-marketplace` | `hello_seller_adapter_signal_marketplace.ts` | 3001         |
-| Multi-specialism, multi-tenant (account-routed)         | `hello_seller_adapter_multi_tenant.ts`       | 3003         |
+| Shape                                                                 | File                                         | Default port |
+| --------------------------------------------------------------------- | -------------------------------------------- | ------------ |
+| Single specialism, single tenant — `signal-marketplace`               | `hello_seller_adapter_signal_marketplace.ts` | 3001         |
+| Agency / holdco hub — multi-specialism, multi-tenant (account-routed) | `hello_seller_adapter_multi_tenant.ts`       | 3003         |
 
 `hello_seller_adapter_multi_tenant.ts` demonstrates the **account-routed** multi-tenant model: one server hosts `governance-spend-authority`, `property-lists`, and `brand-rights` for two distinct tenants whose data never crosses. Two resolution paths:
 
