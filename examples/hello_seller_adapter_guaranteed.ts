@@ -56,6 +56,7 @@ import {
   memoryBackend,
   AdcpError,
   getAccountMode,
+  assertMediaBuyTransition,
   type DecisioningPlatform,
   type SalesCorePlatform,
   type SalesIngestionPlatform,
@@ -796,6 +797,9 @@ class SalesGuaranteedAdapter implements DecisioningPlatform<Record<string, never
         // but no creatives have been assigned. Buyers transition to
         // `active` after `sync_creatives` lands, which the framework
         // surfaces via `publishStatusChange` on `resource_type: 'media_buy'`.
+        // Stamp the buy's lifecycle entry so update_media_buy can enforce
+        // the spec's MediaBuyStatus state machine on subsequent patches.
+        localBuyStatus.set(order.order_id, 'pending_creatives');
         return {
           media_buy_id: order.order_id,
           status: 'pending_creatives',
@@ -858,12 +862,36 @@ class SalesGuaranteedAdapter implements DecisioningPlatform<Record<string, never
           }
         }
       }
+
+      // State-machine enforcement. Lifecycle states the upstream mock doesn't
+      // track (`canceled`, `paused`) live in the local tracker; everything else
+      // reads from the upstream order.status mapping. Production sellers swap
+      // this for a single durable lookup against their order DB.
+      //
+      // The spec's `core/state-machine.yaml` declares `canceled` as a sink and
+      // a re-cancel as illegal — `assertMediaBuyTransition` throws
+      // `NOT_CANCELLABLE` on `canceled → canceled`, which is the
+      // `media_buy_seller/invalid_transitions` storyboard's contract.
+      const localStatus = localBuyStatus.get(buyId);
+      const currentStatus: MediaBuyStatus =
+        localStatus === 'canceled' || localStatus === 'paused' ? localStatus : mapMediaBuyStatus(order.status);
+      let nextStatus: MediaBuyStatus = currentStatus;
+      if ((patch as { canceled?: boolean }).canceled === true) {
+        assertMediaBuyTransition(currentStatus, 'canceled');
+        nextStatus = 'canceled';
+        localBuyStatus.set(buyId, nextStatus);
+      } else if ((patch as { paused?: boolean }).paused === true && currentStatus === 'active') {
+        assertMediaBuyTransition(currentStatus, 'paused');
+        nextStatus = 'paused';
+        localBuyStatus.set(buyId, nextStatus);
+      }
+
       // Mock doesn't model partial updates; production wires each patch
       // field onto the upstream's OrderService update endpoint. The
-      // worked example just echoes success.
+      // worked example just echoes success with the post-transition status.
       return {
         media_buy_id: buyId,
-        status: mapMediaBuyStatus(order.status),
+        status: nextStatus,
       };
     },
 
@@ -1005,6 +1033,26 @@ const simulatedDelivery = new Map<
   { impressions: number; clicks: number; reported_spend: { amount: number; currency: string } }
 >();
 // ─── /TEST-ONLY ──────────────────────────────────────────────────────────
+
+// Local per-buy status tracker for state-machine enforcement on
+// `update_media_buy`. The mock-server doesn't model lifecycle transitions
+// (POST /v1/orders/{id} doesn't exist; cancellation is purely an adapter
+// concern in this worked example). Production sellers track buy state in
+// their order DB and check `MEDIA_BUY_TRANSITIONS` against the current
+// status before applying a patch — this Map stands in for that.
+//
+// SWAP: replace with a query against your order/lifecycle service. The
+// `media_buy_seller/invalid_transitions` storyboard exercises NOT_CANCELLABLE
+// on re-cancel (canceled → canceled is illegal per `core/state-machine.yaml`).
+type MediaBuyStatus =
+  | 'pending_creatives'
+  | 'pending_start'
+  | 'active'
+  | 'paused'
+  | 'completed'
+  | 'rejected'
+  | 'canceled';
+const localBuyStatus = new Map<string, MediaBuyStatus>();
 
 // Persist `packages[].targeting_overlay` from create_media_buy and echo it
 // on get_media_buys. The seller spec MANDATES this echo for any seller
