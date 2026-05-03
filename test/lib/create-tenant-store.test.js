@@ -1,7 +1,7 @@
 const { test, describe } = require('node:test');
 const assert = require('node:assert');
 
-const { createTenantStore } = require('../../dist/lib/server/decisioning/index.js');
+const { createTenantStore, narrowAccountRef } = require('../../dist/lib/server/decisioning/index.js');
 
 // ── Test fixtures ──────────────────────────────────────────────────────────
 
@@ -283,6 +283,32 @@ describe('createTenantStore — gate methods locked against override', () => {
     });
     assert.equal(typeof store.list, 'function');
     assert.equal(typeof store.upsert, 'function');
+  });
+});
+
+// ── narrowAccountRef helper ────────────────────────────────────────────────
+
+describe('narrowAccountRef', () => {
+  test('reads operator + brand from the (brand, operator) arm', () => {
+    const r = narrowAccountRef({ brand: { domain: 'acme.example' }, operator: 'pinnacle.example' });
+    assert.equal(r.operator, 'pinnacle.example');
+    assert.equal(r.brand.domain, 'acme.example');
+    assert.equal(r.account_id, undefined);
+  });
+
+  test('reads account_id from the {account_id} arm', () => {
+    const r = narrowAccountRef({ account_id: 'acct_123' });
+    assert.equal(r.account_id, 'acct_123');
+    assert.equal(r.operator, undefined);
+  });
+
+  test('threads sandbox flag through both arms', () => {
+    const r = narrowAccountRef({ account_id: 'acct_123', sandbox: true });
+    assert.equal(r.sandbox, true);
+  });
+
+  test('returns undefined for undefined input (no-account-tool path)', () => {
+    assert.equal(narrowAccountRef(undefined), undefined);
   });
 });
 

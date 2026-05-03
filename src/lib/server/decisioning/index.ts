@@ -97,7 +97,7 @@ export { AccountNotFoundError, refAccountId } from './account';
 // (operator-routed + auth-derived) and the per-entry tenant-isolation gate
 // that adopters historically had to hand-write — and silently fail to
 // hand-write — on `accounts.upsert` / `accounts.syncGovernance`.
-export { createTenantStore } from './tenant-store';
+export { createTenantStore, narrowAccountRef } from './tenant-store';
 export type { TenantStoreConfig } from './tenant-store';
 
 // Buyer-agent identity surface — Phase 1 of #1269. Durable commercial

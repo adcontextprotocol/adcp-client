@@ -65,6 +65,7 @@ import {
   AdcpError,
   BuyerAgentRegistry,
   createTenantStore,
+  narrowAccountRef,
   defineCampaignGovernancePlatform,
   definePropertyListsPlatform,
   defineBrandRightsPlatform,
@@ -457,9 +458,9 @@ class MultiTenantAdapter implements DecisioningPlatform<Record<string, never>, T
    */
   accounts: AccountStore<TenantMeta> = createTenantStore<TenantState, TenantMeta>({
     resolveByRef: ref => {
-      const refTyped = ref as { operator?: string };
-      if (!refTyped.operator) return null;
-      const tenantId = OPERATOR_TO_TENANT.get(refTyped.operator);
+      const r = narrowAccountRef(ref);
+      if (!r.operator) return null;
+      const tenantId = OPERATOR_TO_TENANT.get(r.operator);
       return tenantId ? (TENANTS.get(tenantId) ?? null) : null;
     },
     resolveFromAuth: ctx => {
@@ -468,43 +469,42 @@ class MultiTenantAdapter implements DecisioningPlatform<Record<string, never>, T
     },
     tenantId: tenant => tenant.id,
     tenantToAccount: (tenant, ref, ctx) => {
-      const refTyped = (ref ?? {}) as { operator?: string; brand?: { domain?: string }; sandbox?: boolean };
+      const r = narrowAccountRef(ref);
       // No-account-tool path: synthesize an operator string from the resolved
       // buyer agent's URL so account.id stays stable per-buyer-per-tenant.
-      const operator = refTyped.operator ?? ctx?.agent?.agent_url ?? 'derived';
+      const operator = r?.operator ?? ctx?.agent?.agent_url ?? 'derived';
       return {
         id: tenant.id,
-        name: refTyped.operator
+        name: r?.operator
           ? `${tenant.display_name} (${operator})`
           : `${tenant.display_name} (auth-derived for ${ctx?.agent?.display_name ?? 'unknown'})`,
         status: 'active',
         operator,
-        ...(refTyped.brand?.domain && { brand: { domain: refTyped.brand.domain } }),
+        ...(r?.brand?.domain && { brand: { domain: r.brand.domain } }),
         ctx_metadata: { tenant_id: tenant.id, display_name: tenant.display_name },
-        // SWAP: read sandbox flag from your backing store. Hello-adapter
-        // honors `ref.sandbox` when present (Path 1) and defaults true on
-        // auth-derived (no-account-tool) lookups since this whole adapter
-        // is a demo.
-        sandbox: refTyped.sandbox ?? true,
+        // SWAP: read sandbox flag from your backing store. Defaults to false
+        // — production adopters route reads/writes to a sandbox backend on
+        // this flag, so an unset wire field MUST NOT silently land in
+        // sandbox. Buyers who want sandbox set `account.sandbox = true`
+        // explicitly.
+        sandbox: r?.sandbox ?? false,
       };
     },
     upsertRow: (tenant, ref, _ctx) => {
       // Cross-tenant entries never reach this callback — the helper's
       // gate already filtered them. Adopter responsibility: the upsert
       // itself.
-      const refTyped = ref as { operator: string; brand: { domain: string } };
-      const key = accountKey(refTyped.operator, refTyped.brand.domain);
+      const r = narrowAccountRef(ref);
+      const operator = r.operator!;
+      const brandDomain = r.brand!.domain!;
+      const key = accountKey(operator, brandDomain);
       // SWAP: row-level write under tenant transaction.
       const action = tenant.accounts.has(key) ? ('updated' as const) : ('created' as const);
-      tenant.accounts.set(key, {
-        operator: refTyped.operator,
-        brand_domain: refTyped.brand.domain,
-        status: 'active',
-      });
+      tenant.accounts.set(key, { operator, brand_domain: brandDomain, status: 'active' });
       return {
         account_id: tenant.id,
-        brand: refTyped.brand,
-        operator: refTyped.operator,
+        brand: { domain: brandDomain },
+        operator,
         action,
         status: 'active' as const,
       };
@@ -517,11 +517,27 @@ class MultiTenantAdapter implements DecisioningPlatform<Record<string, never>, T
       // `entry.governance_agents[i].authentication.credentials` (the
       // framework strips them from the response — see
       // `toWireSyncGovernanceRow` — so the buyer never sees them echoed).
-      const refTyped = entry.account as { brand?: { domain?: string } };
-      const brandDomain = refTyped.brand?.domain;
+      const r = narrowAccountRef(entry.account);
+      const brandDomain = r.brand?.domain;
       const govUrl = entry.governance_agents[0]?.url;
       if (brandDomain) {
         if (govUrl) {
+          // ⚠️ Brand-keyed binding: two operators in the same tenant
+          // hitting the same brand SHARE this binding. `acquire_rights`
+          // doesn't carry an operator on the wire (only `buyer.domain` —
+          // tracked in adcp#3918), so brand is all we have to key on
+          // inside one tenant. Surface a warn when an existing binding
+          // gets overwritten so adopters notice the symptom early —
+          // production adopters either move to per-(operator, brand)
+          // bindings or accept tenant-scoped brand uniqueness as policy.
+          const prior = tenant.governanceBindings.get(brandDomain);
+          if (prior && prior.governance_agent_url !== govUrl) {
+            console.warn(
+              `[multi-tenant] tenant=${tenant.id} brand=${brandDomain} governance binding overwritten ` +
+                `(${prior.governance_agent_url} → ${govUrl}). Two operators sharing one brand within a tenant ` +
+                `share one binding — see adcontextprotocol/adcp#3918.`
+            );
+          }
           // SWAP: row-level write under tenant transaction.
           tenant.governanceBindings.set(brandDomain, {
             governance_agent_url: govUrl,
