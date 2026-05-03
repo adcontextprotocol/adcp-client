@@ -386,7 +386,10 @@ export interface AccountStore<TCtxMeta = Record<string, unknown>> {
    *   `sync_accounts` flow); only `account_id`-shaped references are rejected.
    * - `'derived'` — single-tenant agents where there is no account_id on the
    *   wire at all and the auth principal alone identifies the tenant. Most
-   *   self-hosted broadcasters and retail-media operators in proxy mode.
+   *   self-hosted broadcasters and retail-media operators in proxy mode. The
+   *   framework emits `AdcpError('INVALID_REQUEST', { field: 'account.account_id' })`
+   *   before reaching `accounts.resolve` when a buyer passes an inline
+   *   `account_id` (mirrors the `'implicit'` enforcement added in #1364).
    *
    * Defaults to `'explicit'` when omitted.
    */

@@ -62,6 +62,7 @@ else is additive and can be applied incrementally.
 | 8  | Buyer-agent identity not modeled / `ctx.authInfo.token` checked everywhere               | Wire `BuyerAgentRegistry` per [`docs/migration-buyer-agent-registry.md`](./migration-buyer-agent-registry.md).            | judgment                     |
 | 9  | One process, multi-tenant — fan out by tenant in your route layer                        | `createTenantRegistry({ ... })` from `@adcp/sdk/server` — one server per tenant, tenant-id keyed lookup.                  | judgment (architectural)     |
 | 10 | `resolution: 'implicit'` declared but inline `{account_id}` requests still working       | The framework now refuses them. Either remove the `'implicit'` declaration or stop emitting inline `account_id`.          | **breaking**                 |
+| 10b | `resolution: 'derived'` declared but inline `{account_id}` requests still working (silent-ignore) | The framework now refuses them with `INVALID_REQUEST`. Remove `account_id` from requests to derived-mode agents, or change `resolution` to `'explicit'`. See recipe **#10b** below. | **breaking** |
 | 11 | `: SalesPlatform<Meta>` annotation + claim sales-non-guaranteed / -guaranteed / etc.     | Switch to `: SalesCorePlatform<Meta> & SalesIngestionPlatform<Meta>` (or `defineSalesCorePlatform` + `defineSalesIngestionPlatform` spread). | **breaking** (TS-only)       |
 | 12 | Adapter wrapping a vendor OAuth + `/me/adaccounts` upstream — Shape B copy-pasted        | `createOAuthPassthroughResolver({ httpClient, listEndpoint, idField, toAccount })`.                                       | mechanical                   |
 | 13 | Hand-rolled `accounts.resolve` + per-entry tenant-isolation gate on `upsert` / `syncGovernance` for a multi-tenant adapter | `createTenantStore({...})` — built-in security gate, fail-closed when auth principal can't be resolved.        | mechanical (security-relevant) |
@@ -584,6 +585,21 @@ const accountStore = new InMemoryImplicitAccountStore({
   },
 });
 ```
+
+### 10b. **breaking** — `accounts.resolution: 'derived'` now enforces inline-`account_id` refusal
+
+`'derived'`-resolution platforms declare "single-tenant — auth principal alone identifies the tenant; there is no `account_id` on the wire at all." Pre-6.7, a buyer that sent `{ account_id: "foo" }` received the singleton response and no error — the field was silently discarded. 6.7 wires the refusal: derived-resolution platforms now reject inline `{account_id}` references with `AdcpError('INVALID_REQUEST', { field: 'account.account_id' })` before the request reaches `accounts.resolve`. The `{brand, operator}` arm is still permitted.
+
+**Action required.** Audit `accounts.resolution`:
+
+| Your pre-6.7 setup                                                                      | What to do                                                                                                                |
+|-----------------------------------------------------------------------------------------|---------------------------------------------------------------------------------------------------------------------------|
+| `resolution: 'derived'` declared, no buyers sent `account_id`                          | Nothing — calls flow as before.                                                                                           |
+| `resolution: 'derived'` declared and buyers sent `account_id` (silently ignored)       | **Behavior change.** Fix buyers to omit `account_id`, or change `resolution` to `'explicit'` if buyers must identify accounts by id. |
+| `resolve()` reads `ref.account_id` under `'derived'` mode (e.g. `if (ref?.account_id) ...`) | **Runtime regression.** The refusal fires before `resolve()` is called — `ref.account_id` will never reach your resolver. Remove the branch or switch `resolution` to `'explicit'`. |
+| `resolution: 'explicit'` (default) declared / not declared                             | Nothing — the refusal only applies to declared `'derived'` platforms.                                                     |
+
+---
 
 **Companion: `createRosterAccountStore` for publisher-curated rosters
 (Shape C).** Adopters who own the roster (storefront table,

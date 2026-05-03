@@ -159,26 +159,37 @@ function normalizeRowErrors<TRow extends { errors?: unknown }>(row: TRow): TRow 
 }
 
 /**
- * Enforce the documented `'implicit'`-resolution refusal. When a platform
- * declares `accounts.resolution: 'implicit'`, the framework refuses inline
- * `account_id` references on the wire — the buyer is expected to call
- * `sync_accounts` first, then the framework resolves the account from the
- * authenticated principal on subsequent calls. Documented at
- * `AccountStore.resolution` in `account.ts`.
+ * Enforce the inline `account_id` refusal for resolution modes that forbid it.
  *
- * Throws `AdcpError('INVALID_REQUEST')` before reaching the adopter's
- * `accounts.resolve`, so each adopter doesn't reimplement the same
- * `if (ref?.account_id) return null` branch and the wire response is
- * consistent across implicit-mode platforms. The brand+operator union arm
- * is permitted — the strict-reading docstring claim only refuses
- * `account_id`-shaped references.
+ * - `'implicit'` — buyers call `sync_accounts` first; the framework resolves
+ *   the account from the authenticated principal on subsequent calls. Passing
+ *   `account_id` inline is refused so adopters don't reimplement the same
+ *   `if (ref?.account_id) return null` guard in every resolver.
+ * - `'derived'` — single-tenant agents where the auth principal alone
+ *   identifies the tenant; there is no `account_id` on the wire at all.
+ *   Passing `account_id` is refused so buyers get a correctable error
+ *   instead of a confusing silent-ignore.
+ *
+ * Both modes: throws `AdcpError('INVALID_REQUEST')` before reaching the
+ * adopter's `accounts.resolve`. The `{brand, operator}` union arm is
+ * permitted in both modes — only `account_id`-shaped references are refused.
+ * `'explicit'` and omitted resolution are unaffected.
  */
-function refuseImplicitAccountId(
+function refuseInlineAccountIdWhenForbidden(
   resolution: 'explicit' | 'implicit' | 'derived' | undefined,
   ref: AccountReference | undefined
 ): void {
-  if (resolution !== 'implicit') return;
+  if (resolution !== 'implicit' && resolution !== 'derived') return;
   if (refAccountId(ref) === undefined) return;
+  if (resolution === 'derived') {
+    throw new AdcpError('INVALID_REQUEST', {
+      message:
+        'This is a single-tenant agent — the account is derived from your auth credential. Do not send account.account_id.',
+      field: 'account.account_id',
+      suggestion:
+        'Remove the account field from your request. The framework resolves the tenant from your bearer token automatically.',
+    });
+  }
   throw new AdcpError('INVALID_REQUEST', {
     message:
       'This platform resolves accounts from the authenticated principal — call sync_accounts first; do not pass account.account_id inline.',
@@ -1139,14 +1150,11 @@ export function createAdcpServerFromPlatform<P extends DecisioningPlatform<any, 
       let resolved = false;
       let resolvedAccountId: string | undefined;
       try {
-        // Enforce the JSDoc contract documented at
-        // `AccountStore.resolution`: implicit-mode platforms refuse inline
-        // `account_id` references — buyers call sync_accounts first, then
-        // the framework resolves accounts from the auth principal on
-        // subsequent calls. The brand+operator union arm is permitted
-        // (used during the initial sync_accounts onboarding flow); only
-        // the `{ account_id }` arm is refused. Closes adcp-client#1364.
-        refuseImplicitAccountId(platform.accounts.resolution, ref);
+        // Enforce the JSDoc contract documented at `AccountStore.resolution`:
+        // `'implicit'` and `'derived'` platforms refuse inline `account_id`
+        // references — see `refuseInlineAccountIdWhenForbidden` for the
+        // per-mode rationale. Closes adcp-client#1364, adcp-client#1469.
+        refuseInlineAccountIdWhenForbidden(platform.accounts.resolution, ref);
         const account = await platform.accounts.resolve(ref, toResolveCtx(ctx, ctx.toolName));
         resolved = account != null;
         resolvedAccountId = account?.id;
@@ -1673,7 +1681,7 @@ function buildTasksGetTool<P extends DecisioningPlatform<any, any>>(
       };
       let resolvedAccountId: string | undefined;
       if (ref) {
-        refuseImplicitAccountId(platform.accounts.resolution, ref as AccountReference);
+        refuseInlineAccountIdWhenForbidden(platform.accounts.resolution, ref as AccountReference);
         try {
           const resolved = await platform.accounts.resolve(ref as AccountReference, resolveCtx);
           if (resolved) resolvedAccountId = resolved.id;
@@ -4332,7 +4340,7 @@ function buildAccountHandlers<P extends DecisioningPlatform<any, any>>(
       // tokens / upstream IDs off `ctx.account.ctx_metadata` without
       // having to re-resolve from `params.account`.
       const resolveCtx = toResolveCtx(ctx, 'get_account_financials');
-      refuseImplicitAccountId(accounts.resolution, params.account);
+      refuseInlineAccountIdWhenForbidden(accounts.resolution, params.account);
       const resolved = await accounts.resolve(params.account, resolveCtx);
       if (!resolved) {
         throw new AdcpError('ACCOUNT_NOT_FOUND', {
