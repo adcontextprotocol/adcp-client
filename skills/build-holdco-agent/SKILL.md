@@ -87,32 +87,67 @@ The canonical gate shape and the fail-OPEN anti-pattern are documented in [`exam
 
 ## Cross-specialism dispatch
 
-When one specialism's handler needs another's logic, extract a private helper instead of calling sibling specialism methods directly:
+When one specialism's handler needs another's logic (canonical case: `brandRights.acquireRights` consulting `campaignGovernance.checkGovernance` before granting rights), there is no `ctx.platform.<specialism>` accessor — the framework does not thread a separate platform handle on `RequestContext`. Two idiomatic patterns; pick by authoring style:
+
+### Pattern A — class instance + `this` (canonical for holdco hubs)
+
+The reference adapter (`examples/hello_seller_adapter_multi_tenant.ts`) takes this path. Author the adapter as a class implementing `DecisioningPlatform<TConfig, TCtxMeta>`. Each specialism is a class field; cross-specialism calls go via `this`:
 
 ```ts
-brandRights = defineBrandRightsPlatform({
-  acquireRights: async (req, ctx) => {
-    /* validation seams up front */
-    const denial = await this.enforceGovernance(tenant, ctx, offering, req);
-    if (denial) return denial;
-    /* rest of acquire flow */
-  },
-});
+class HoldcoAdapter implements DecisioningPlatform<Config, TenantMeta> {
+  campaignGovernance = defineCampaignGovernancePlatform<TenantMeta>({ /* ... */ });
+  brandRights = defineBrandRightsPlatform<TenantMeta>({
+    acquireRights: async (req, ctx) => {
+      /* validation seams up front */
+      const denial = await this.enforceGovernance(tenant, ctx, offering, req);
+      if (denial) return denial;
+      /* rest of acquire flow */
+    },
+  });
 
-private async enforceGovernance(tenant, ctx, offering, req) {
-  // Reads tenant.governanceBindings (registered via sync_governance).
-  // Calls this.campaignGovernance.checkGovernance internally.
-  // Returns AcquireRightsRejected on denial, null otherwise.
+  private async enforceGovernance(tenant, ctx, offering, req) {
+    // Reads tenant.governanceBindings (registered via sync_governance).
+    // Calls this.campaignGovernance.checkGovernance internally.
+    // Returns AcquireRightsRejected on denial, null otherwise.
+  }
 }
 ```
 
-The helper:
+Extracting a `private` method (rather than inlining the 30-line block) gives you:
 
-- Makes the data flow visible at the call site (no inline 30-line block)
-- Gives single-specialism adopters a clean copy target
-- Forces a place to document the **same-tenant invariant**: `getTenant(ctx)` resolves once per request; both specialisms share it. If a future split lets brand-rights and governance live in different tenants, this in-process call no longer applies.
+- Visible data flow at the call site
+- A clean copy target for single-specialism adopters
+- A place to document the **same-tenant invariant**: `getTenant(ctx)` resolves once per request; both specialisms share it. If a future split lets brand-rights and governance live in different tenants, this in-process call no longer applies.
 
-**⚠️ Always document the "DO NOT copy this short-circuit into a single-specialism agent" warning on the helper's JSDoc.** Single-specialism adopters who don't have a co-resident governance handler need to dial out via the @adcp/sdk client to the registered governance agent's URL — supplying credentials that this hello pattern (intentionally) drops.
+### Pattern B — closure capture (functional authoring)
+
+If you'd rather build specialisms as standalone factory results (no class), capture the sibling in the closure passed to the second factory. No runnable example ships for Pattern B — Pattern A is the canonical hub shape, and the multi-tenant adapter exercises the full surface; if you go functional, this snippet is the contract:
+
+```ts
+const campaignGovernance = defineCampaignGovernancePlatform<TenantMeta>({ /* ... */ });
+
+const brandRights = defineBrandRightsPlatform<TenantMeta>({
+  acquireRights: async (req, ctx) => {
+    const govResp = await campaignGovernance.checkGovernance!(checkReq, ctx);
+    /* ... */
+  },
+});
+
+const platform: DecisioningPlatform<Config, TenantMeta> = {
+  capabilities: { /* ... */ },
+  accounts: { /* ... */ },
+  campaignGovernance,
+  brandRights,
+};
+```
+
+The `!` after `checkGovernance` is needed because the spec marks it optional on the interface; you know it's defined here because you defined it three lines up.
+
+### What both patterns share
+
+- The `ctx` you forward to the sibling is the same `RequestContext` you received. Resolved account, agent, and authInfo carry through, so tenant invariants hold transitively.
+- **In-process calls bypass wire-side validation, idempotency dedup, and the framework's mutating-tool annotations.** That's correct — you're inside the seller's code, not handling a buyer request — but it means an in-process `checkGovernance` won't be re-deduped if the originating tool is already idempotency-protected. If you _want_ buyer-side semantics for the call (e.g., the sibling specialism is hosted on a different tenant or a different process), don't reach for `this` — dial out via `@adcp/sdk`'s client to the registered agent URL.
+- **⚠️ Always document the "DO NOT copy this short-circuit into a single-specialism agent" warning** on the helper's JSDoc. Single-specialism adopters who don't have a co-resident governance handler need to dial out via the @adcp/sdk client to the registered governance agent's URL — supplying credentials that this hello pattern (intentionally) drops.
 
 ## What `sync_governance` ACTUALLY persists
 
