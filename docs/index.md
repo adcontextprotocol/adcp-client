@@ -2,6 +2,8 @@
 
 Welcome to the official documentation for `@adcp/sdk`, the TypeScript/JavaScript client library for the Ad Context Protocol.
 
+> **First-time AdCP implementer?** The protocol-level orientation — [The AdCP stack](https://docs.adcontextprotocol.org/docs/building/sdk-stack) (L0–L4 layered reference + SDK coverage matrix), [Where to start](https://docs.adcontextprotocol.org/docs/building/where-to-start), [Migrate from a hand-rolled agent](https://docs.adcontextprotocol.org/docs/building/migrate-from-hand-rolled), and [Version Adaptation](https://docs.adcontextprotocol.org/docs/building/version-adaptation) — lives on the protocol docs site (language-agnostic). The pages below are `@adcp/sdk`-specific (TypeScript/JavaScript).
+
 ## Quick Navigation
 
 ### 🤖 For AI Agents
