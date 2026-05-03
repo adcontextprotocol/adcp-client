@@ -77,3 +77,10 @@ export {
 // LOC of bearer-extract + listing-fetch + match-by-id boilerplate every
 // such adapter re-derives by hand.
 export { createOAuthPassthroughResolver, type OAuthPassthroughResolverOptions } from './oauth-passthrough-resolver';
+
+// Roster-backed AccountStore — Shape C factory for `resolution: 'explicit'`
+// publisher-curated platforms. Adopters bring their own roster source (admin-UI
+// managed DB row, in-memory map, file); the helper provides AccountStore
+// plumbing (resolve dispatch, optional list, ctx threading) with no opinion on
+// where the roster lives.
+export { createRosterAccountStore, type RosterAccountStoreOptions } from './roster-account-store';

@@ -413,3 +413,5 @@ export {
   createOAuthPassthroughResolver,
   type OAuthPassthroughResolverOptions,
 } from '../adapters/oauth-passthrough-resolver';
+
+export { createRosterAccountStore, type RosterAccountStoreOptions } from '../adapters/roster-account-store';
