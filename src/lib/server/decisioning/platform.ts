@@ -298,42 +298,61 @@ type CampaignGovernanceSpecialism = 'governance-spend-authority' | 'governance-d
 // soundness escape — adopters declare metadata inside `DecisioningPlatform<_,
 // TCtxMeta>` directly; this constraint exists only to compile-check that
 // claimed specialisms have a matching sub-interface field on the platform.
+// eslint-disable-next-line @typescript-eslint/no-empty-object-type
 export type RequiredPlatformsFor<
   S extends AdCPSpecialism,
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   TCtxMeta = any,
-> = S extends 'creative-template' | 'creative-generative'
-  ? { creative: CreativeBuilderPlatform<TCtxMeta> }
-  : S extends 'creative-ad-server'
-    ? { creative: CreativeAdServerPlatform<TCtxMeta> }
-    : S extends SalesCoreSpecialism
-      ? { sales: SalesCorePlatform<TCtxMeta> & SalesIngestionPlatform<TCtxMeta> }
-      : S extends SalesIngestionSpecialism
-        ? // Walled-garden specialisms (sales-social, today). Bidding owned upstream
-          // — only the ingestion surface is required. Adopters can voluntarily
-          // implement core methods on the same `sales` object; the SalesPlatform
-          // alias accepts both shapes.
-          { sales: SalesIngestionPlatform<TCtxMeta> }
-        : S extends SalesProposalSpecialism
-          ? // Proposal-mode adopters only need `getProducts` — the rest of the
-            // lifecycle flows through `publishStatusChange` on
-            // `resource_type: 'proposal'`. Ingestion is optional.
-            { sales: Required<Pick<SalesPlatform<TCtxMeta>, 'getProducts'>> & SalesIngestionPlatform<TCtxMeta> }
-          : S extends 'audience-sync'
-            ? { audiences: AudiencePlatform<TCtxMeta> }
-            : S extends SignalSpecialism
-              ? { signals: SignalsPlatform<TCtxMeta> }
-              : S extends CampaignGovernanceSpecialism
-                ? { campaignGovernance: CampaignGovernancePlatform<TCtxMeta> }
-                : S extends 'property-lists'
-                  ? { propertyLists: PropertyListsPlatform<TCtxMeta> }
-                  : S extends 'collection-lists'
-                    ? { collectionLists: CollectionListsPlatform<TCtxMeta> }
-                    : S extends 'content-standards'
-                      ? { contentStandards: ContentStandardsPlatform<TCtxMeta> }
-                      : S extends 'brand-rights'
-                        ? { brandRights: BrandRightsPlatform<TCtxMeta> }
-                        : Record<string, never>;
+> = [S] extends [never]
+  ? // Empty specialisms[] (legitimate when the agent's only declared
+    // surface is a *protocol* like sponsored-intelligence pre-3.1).
+    // `[S] extends [never]` short-circuits the distributive conditional —
+    // without this, a generic `S extends ...` over `never` yields `never`,
+    // collapsing `P & RequiredPlatformsFor<...>` to `never` and rejecting
+    // every platform value at the call site.
+    // eslint-disable-next-line @typescript-eslint/no-empty-object-type
+    {}
+  : S extends 'creative-template' | 'creative-generative'
+    ? { creative: CreativeBuilderPlatform<TCtxMeta> }
+    : S extends 'creative-ad-server'
+      ? { creative: CreativeAdServerPlatform<TCtxMeta> }
+      : S extends SalesCoreSpecialism
+        ? { sales: SalesCorePlatform<TCtxMeta> & SalesIngestionPlatform<TCtxMeta> }
+        : S extends SalesIngestionSpecialism
+          ? // Walled-garden specialisms (sales-social, today). Bidding owned upstream
+            // — only the ingestion surface is required. Adopters can voluntarily
+            // implement core methods on the same `sales` object; the SalesPlatform
+            // alias accepts both shapes.
+            { sales: SalesIngestionPlatform<TCtxMeta> }
+          : S extends SalesProposalSpecialism
+            ? // Proposal-mode adopters only need `getProducts` — the rest of the
+              // lifecycle flows through `publishStatusChange` on
+              // `resource_type: 'proposal'`. Ingestion is optional.
+              { sales: Required<Pick<SalesPlatform<TCtxMeta>, 'getProducts'>> & SalesIngestionPlatform<TCtxMeta> }
+            : S extends 'audience-sync'
+              ? { audiences: AudiencePlatform<TCtxMeta> }
+              : S extends SignalSpecialism
+                ? { signals: SignalsPlatform<TCtxMeta> }
+                : S extends CampaignGovernanceSpecialism
+                  ? { campaignGovernance: CampaignGovernancePlatform<TCtxMeta> }
+                  : S extends 'property-lists'
+                    ? { propertyLists: PropertyListsPlatform<TCtxMeta> }
+                    : S extends 'collection-lists'
+                      ? { collectionLists: CollectionListsPlatform<TCtxMeta> }
+                      : S extends 'content-standards'
+                        ? { contentStandards: ContentStandardsPlatform<TCtxMeta> }
+                        : S extends 'brand-rights'
+                          ? { brandRights: BrandRightsPlatform<TCtxMeta> }
+                          : // eslint-disable-next-line @typescript-eslint/no-empty-object-type
+                            {};
+// `{}` (not `Record<string, never>`) is the right "no extra requirements"
+// fallthrough — intersects to identity (`P & {} = P`) for specialisms
+// without platform constraints. Same reasoning RequiredCapabilitiesFor
+// documents at its own fall-through. `Record<string, never>` would force
+// the platform to have NO extra properties, collapsing `P & Record<string,
+// never>` to `never` for any platform with handler fields. Hits adopters
+// with empty `specialisms: []` (legitimate when the agent's only declared
+// surface is a *protocol*, like sponsored-intelligence pre-3.1).
 
 /**
  * The framework's createAdcpServer<P> signature uses this intersection to
