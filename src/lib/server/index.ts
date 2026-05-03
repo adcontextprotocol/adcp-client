@@ -232,7 +232,7 @@ export {
   ADCP_SIGNED_REQUESTS_STATE,
   ADCP_INSTRUCTIONS_FN,
 } from './create-adcp-server';
-export type { SessionContext, OnInstructionsError } from './create-adcp-server';
+export type { SessionContext, OnInstructionsError, MaybePromise } from './create-adcp-server';
 export type {
   AdcpServer,
   AdcpServerComplianceApi,
