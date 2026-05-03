@@ -32,6 +32,22 @@ describe('getAccountMode', () => {
     assert.strictEqual(getAccountMode({ mode: 'production' }), 'live'); // unknown mode → live
     assert.strictEqual(getAccountMode('not-an-object'), 'live');
   });
+
+  test('immune to Object.prototype pollution', () => {
+    // Regression: if an attacker reaches a `__proto__`-via-merge sink upstream
+    // and stamps `Object.prototype.mode = 'sandbox'` (or `sandbox = true`),
+    // every plain object would inherit those values via bare dot access.
+    // `getAccountMode` reads via `Object.hasOwn` so the gate stays closed.
+    try {
+      Object.prototype.mode = 'sandbox';
+      Object.prototype.sandbox = true;
+      assert.strictEqual(getAccountMode({}), 'live');
+      assert.strictEqual(getAccountMode({ id: 'acc' }), 'live');
+    } finally {
+      delete Object.prototype.mode;
+      delete Object.prototype.sandbox;
+    }
+  });
 });
 
 describe('isSandboxOrMockAccount', () => {

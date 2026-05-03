@@ -45,13 +45,25 @@ export type AccountMode = 'live' | 'sandbox' | 'mock';
  * Adopters that have not yet migrated to the `mode` field continue to
  * work — `account.sandbox === true` reads as sandbox mode through this
  * helper. New code should prefer `mode` directly.
+ *
+ * Prototype-pollution defense: both `mode` and `sandbox` are read via
+ * `Object.hasOwn` rather than bare property access. Bare access traverses
+ * the prototype chain, so an attacker who reaches a `__proto__`-via-merge
+ * sink upstream (reachable in MCP envelope handling and similar deep-merge
+ * sites) could stamp `Object.prototype.mode = 'sandbox'` and silently
+ * downgrade every account's gate to a no-op. The own-property check makes
+ * the gate immune to that class of attack regardless of upstream hardening.
  */
 export function getAccountMode(account: unknown): AccountMode {
   if (account == null || typeof account !== 'object') return 'live';
-  const mode = (account as { mode?: unknown }).mode;
-  if (mode === 'live' || mode === 'sandbox' || mode === 'mock') return mode;
+  if (Object.hasOwn(account, 'mode')) {
+    const mode = (account as { mode?: unknown }).mode;
+    if (mode === 'live' || mode === 'sandbox' || mode === 'mock') return mode;
+  }
   // Back-compat: legacy `sandbox: true` flag reads as `sandbox` mode.
-  if ((account as { sandbox?: unknown }).sandbox === true) return 'sandbox';
+  if (Object.hasOwn(account, 'sandbox') && (account as { sandbox?: unknown }).sandbox === true) {
+    return 'sandbox';
+  }
   return 'live';
 }
 
@@ -83,12 +95,27 @@ export function isSandboxOrMockAccount(account: unknown): boolean {
  * dashboards can distinguish gate-rejections from other permission
  * denials.
  *
+ * **Resolver discipline.** The strength of this gate depends entirely on
+ * how the adopter's `AccountStore.resolve` constructs its return value.
+ * Resolvers MUST NOT spread untrusted input (request body, headers,
+ * `ctx_metadata`, query params) into the resolved account — doing so lets
+ * a buyer self-promote to `mode: 'sandbox'` and unlock test-only surfaces
+ * on a live principal. Source `mode` (and `sandbox`) from a trusted store
+ * keyed by the authenticated principal; never from request data.
+ *
+ * **opts.message must be a static string literal.** The message is echoed
+ * on the wire inside the error envelope. Interpolating user-controlled
+ * values into it creates a reflection sink (PII leakage, log injection,
+ * downstream HTML rendering). Pick from a fixed set of messages keyed by
+ * `tool` if you need variants.
+ *
  * @param account The resolved account (typically `ctx.account` inside
  *   a tool dispatch). Pass `undefined` if no account resolved — the
  *   helper fails closed.
  * @param opts.tool Optional tool name to surface in the error details
  *   (e.g., `'comply_test_controller'`).
  * @param opts.message Optional override for the user-facing message.
+ *   MUST be a static string literal — see "opts.message" note above.
  *
  * @example
  *   import { assertSandboxAccount } from '@adcp/sdk/server';
