@@ -62,6 +62,18 @@ export { validActionsForStatus } from './media-buy-helpers';
 export type { ValidAction, CancelMediaBuyInput } from './media-buy-helpers';
 
 export {
+  MEDIA_BUY_TRANSITIONS,
+  isLegalMediaBuyTransition,
+  assertMediaBuyTransition,
+  CREATIVE_ASSET_TRANSITIONS,
+  isLegalCreativeTransition,
+  assertCreativeTransition,
+  CREATIVE_APPROVAL_TRANSITIONS,
+  isLegalCreativeApprovalTransition,
+  assertCreativeApprovalTransition,
+} from './state-machine';
+
+export {
   taskToolResponse,
   registerAdcpTaskTool,
   createTaskCapableServer,

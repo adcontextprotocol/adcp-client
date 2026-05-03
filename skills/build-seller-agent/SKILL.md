@@ -806,6 +806,7 @@ See [`examples/seller-test-controller.ts`](../../examples/seller-test-controller
 
 ```
 import { registerTestController, type TestControllerStore } from '@adcp/sdk/testing';
+import { isLegalMediaBuyTransition, isLegalCreativeTransition } from '@adcp/sdk';
 
 const store: TestControllerStore = {
   async forceAccountStatus(accountId, status) {
@@ -817,19 +818,16 @@ const store: TestControllerStore = {
   async forceMediaBuyStatus(mediaBuyId, status) {
     const prev = mediaBuys.get(mediaBuyId);
     if (!prev) throw new TestControllerError('NOT_FOUND', `Media buy ${mediaBuyId} not found`);
-    const terminal = ['completed', 'rejected', 'canceled'];
-    if (terminal.includes(prev))
-      throw new TestControllerError('INVALID_TRANSITION', `Cannot transition from ${prev}`, prev);
+    if (!isLegalMediaBuyTransition(prev, status))
+      throw new TestControllerError('INVALID_TRANSITION', `Cannot transition from ${prev} to ${status}`, prev);
     mediaBuys.set(mediaBuyId, status);
     return { success: true, previous_state: prev, current_state: status };
   },
   async forceCreativeStatus(creativeId, status, rejectionReason) {
     const prev = creatives.get(creativeId);
     if (!prev) throw new TestControllerError('NOT_FOUND', `Creative ${creativeId} not found`);
-    // archived blocks transitions to active states, but archived → rejected is valid (compliance override)
-    const activeStatuses = ['processing', 'pending_review', 'approved'];
-    if (prev === 'archived' && activeStatuses.includes(status))
-      throw new TestControllerError('INVALID_TRANSITION', `Cannot transition from archived to ${status}`, prev);
+    if (!isLegalCreativeTransition(prev, status))
+      throw new TestControllerError('INVALID_TRANSITION', `Cannot transition from ${prev} to ${status}`, prev);
     creatives.set(creativeId, status);
     return { success: true, previous_state: prev, current_state: status };
   },
@@ -845,12 +843,22 @@ const store: TestControllerStore = {
 registerTestController(server, store);
 ```
 
+For **production handlers** (`cancel_media_buy`, `update_media_buy`) use `assertMediaBuyTransition` from `@adcp/sdk/server` — it throws `AdcpError('NOT_CANCELLABLE')` for cancel-on-terminal and `AdcpError('INVALID_STATE')` for other illegal transitions, matching the error codes the storyboard runner expects:
+
+```ts
+import { assertMediaBuyTransition } from '@adcp/sdk/server';
+
+// inside cancel_media_buy handler:
+assertMediaBuyTransition(buy.status, 'canceled');
+// → throws NOT_CANCELLABLE if buy is already completed/rejected/canceled
+```
+
 `registerTestController` auto-emits the `capabilities.compliance_testing.scenarios` block per AdCP 3.0 — scenarios come from the factory's static list or are inferred from the plain store's method presence. Don't add `compliance_testing` to `supported_protocols`; per spec it's a capability block, not a protocol. Unimplemented methods are excluded from `list_scenarios` automatically.
 
 The storyboard tests state machine correctness:
 
 - `NOT_FOUND` when forcing transitions on unknown entities
-- `INVALID_TRANSITION` when transitioning from terminal states (completed, rejected, canceled for media buys; archived blocks active states like processing/pending_review/approved, but archived → rejected is valid)
+- `INVALID_TRANSITION` when the transition is illegal per the canonical SDK state machine (see `MEDIA_BUY_TRANSITIONS` / `CREATIVE_ASSET_TRANSITIONS` in `@adcp/sdk`)
 - Successful transitions between valid states
 
 Throw `TestControllerError` from store methods for typed errors. The SDK validates status enum values before calling your store.

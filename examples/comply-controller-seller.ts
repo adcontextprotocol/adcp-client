@@ -34,7 +34,7 @@
  *     --params '{"creative_id":"cr-1","status":"rejected","rejection_reason":"Brand safety"}'
  */
 
-import { createTaskCapableServer, serve, type ServeContext } from '@adcp/sdk';
+import { createTaskCapableServer, serve, isLegalCreativeTransition, type ServeContext } from '@adcp/sdk';
 import { createComplyController, TestControllerError, type CreativeStatus } from '@adcp/sdk/testing';
 
 // ---------------------------------------------------------------------------
@@ -58,23 +58,10 @@ interface CreativeRecord {
 const products = new Map<string, ProductFixture>();
 const creatives = new Map<string, CreativeRecord>();
 
-// DEMO POLICY — do not copy this table into a production state machine.
-// It is permissive enough to run the example storyboards; a real seller
-// encodes their approval workflow here (and in production the controller
-// itself is never registered). The point of this table is to show WHERE
-// transition enforcement lives — the controller routes through the same
-// guard as the production path.
-const CREATIVE_TRANSITIONS: Record<CreativeStatus, CreativeStatus[]> = {
-  processing: ['pending_review', 'approved', 'rejected'],
-  pending_review: ['approved', 'rejected'],
-  approved: ['rejected', 'archived'],
-  rejected: ['approved', 'archived'],
-  archived: [],
-};
-
+// Creative transition guard uses the canonical SDK helper so the controller
+// and production handlers share the same transition table.
 function assertCreativeTransition(from: CreativeStatus, to: CreativeStatus): void {
-  const allowed = CREATIVE_TRANSITIONS[from] ?? [];
-  if (!allowed.includes(to)) {
+  if (!isLegalCreativeTransition(from, to)) {
     throw new TestControllerError('INVALID_TRANSITION', `Creative cannot move from ${from} to ${to}`, from);
   }
 }

@@ -514,6 +514,7 @@ export type {
 } from './types/tools.generated';
 export type {
   AccountStatus,
+  CreativeApprovalStatus,
   CreativeStatus,
   DelegationAuthority,
   CatalogAction,
@@ -561,6 +562,15 @@ export {
   syncGovernanceResponse,
   reportUsageResponse,
   validActionsForStatus,
+  MEDIA_BUY_TRANSITIONS,
+  isLegalMediaBuyTransition,
+  assertMediaBuyTransition,
+  CREATIVE_ASSET_TRANSITIONS,
+  isLegalCreativeTransition,
+  assertCreativeTransition,
+  CREATIVE_APPROVAL_TRANSITIONS,
+  isLegalCreativeApprovalTransition,
+  assertCreativeApprovalTransition,
   taskToolResponse,
   registerAdcpTaskTool,
   createTaskCapableServer,
