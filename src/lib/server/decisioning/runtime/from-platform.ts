@@ -3234,6 +3234,15 @@ function buildMediaBuyHandlers<P extends DecisioningPlatform<any, any>>(
               allowPrivateWebhookUrls: pushOpts.allowPrivateWebhookUrls,
             });
             const result = await sales.updateMediaBuy!(media_buy_id, params, reqCtx);
+            // Persist optimistically: the platform method returned without
+            // throwing, so the patch was accepted at the seam. If the
+            // publisher returned an error envelope on the success path
+            // (rare but possible — `update_media_buy` can return a Failed
+            // status arm in the wire schema), the persisted overlay
+            // diverges from the seller's view of the buy. Adopters who
+            // need stricter coupling should not return error-shaped
+            // success arms; the spec's preferred shape is to throw an
+            // `AdcpError` for genuine failures.
             await persistTargetingOverlayFromUpdate(mediaBuyStore, reqCtx.account?.id, media_buy_id, params, logger);
             // F12 sync auto-emit. updateMediaBuy is sync-only on the
             // platform interface (no TaskHandoff arm — spec response

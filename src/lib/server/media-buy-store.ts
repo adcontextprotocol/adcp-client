@@ -123,15 +123,19 @@ export interface MediaBuyStore {
    * - field present with a non-null value → replace
    * - field present and `null` → clear (drop the field)
    *
-   * `new_packages` from the patch are persisted as fresh entries.
+   * `new_packages` from the patch are persisted as fresh entries when
+   * they declare `targeting_overlay`. Entries that omit it are
+   * intentionally NOT tracked — this store is overlay-only, and a
+   * later patch can still seed an overlay onto the package_id when
+   * one becomes relevant.
    */
   mergeFromUpdate(accountId: string, mediaBuyId: string, patch: UpdateMediaBuyInputForStore): Promise<void>;
 
   /**
    * Fill in missing `packages[].targeting_overlay` on the seller's
-   * `get_media_buys` response from the persisted store. Mutates and
-   * returns the response. Packages the seller already echoed are left
-   * untouched.
+   * `get_media_buys` response from the persisted store. **Mutates the
+   * response in place** (and returns it for fluent chaining). Packages
+   * the seller already echoed are left untouched.
    */
   backfill<T extends GetMediaBuysResultForStore>(accountId: string, result: T): Promise<T>;
 }
