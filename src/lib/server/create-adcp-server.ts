@@ -48,13 +48,14 @@ import {
   ADCP_CAPABILITIES,
   ADCP_STATE_STORE,
   wrapMcpServer,
+  setSdkServerInstructions,
+  wrapInitializeHandler,
   type AdcpServer,
   type AdcpServerInternal,
 } from './adcp-server';
 import { createTaskCapableServer } from './tasks';
 import type { TaskStore, TaskMessageQueue } from './tasks';
 import { adcpError } from './errors';
-import { ConfigurationError } from '../errors';
 import type { BuyerAgent, BuyerAgentRegistry } from './decisioning/buyer-agent';
 import type { ResolvedAuthInfo } from './decisioning/account';
 import { AdcpError } from './decisioning/async-outcome';
@@ -1118,19 +1119,32 @@ export interface SessionContext {
 }
 
 /**
- * Behavior when a function-form `instructions` callback throws.
+ * Behavior when a function-form `instructions` callback throws or its
+ * returned Promise rejects.
  *
  * - `'skip'` (default) — log server-side, treat as `undefined` (no
  *   instructions). Right for prose-of-flavor (brand manifests, marketing
  *   copy) where a registry fetch failure must not kill the buyer's session.
- * - `'fail'` — rethrow. The MCP `initialize` handshake then fails at the
- *   transport layer (this is NOT an `adcp_error` envelope — it kills the
- *   session). Right for adopters whose instructions carry load-bearing
- *   policy where stale/missing guidance is worse than a connection retry.
+ * - `'fail'` — rethrow (sync) / re-reject (async). The MCP `initialize`
+ *   handshake then fails at the transport layer (this is NOT an
+ *   `adcp_error` envelope — it kills the session). Right for adopters
+ *   whose instructions carry load-bearing policy where stale/missing
+ *   guidance is worse than a connection retry.
  *
  * @public
  */
 export type OnInstructionsError = 'skip' | 'fail';
+
+/**
+ * A value that is either `T` directly or a `Promise<T>`.
+ *
+ * Used in callback signatures that support both synchronous and asynchronous
+ * returns (e.g. `instructions`), so adopters can return either a plain
+ * string or an `async` function without separate overloads.
+ *
+ * @public
+ */
+export type MaybePromise<T> = T | Promise<T>;
 
 /**
  * Shape of the preTransport function attached by `createAdcpServer` when
@@ -1454,14 +1468,19 @@ export interface AdcpServerConfig<TAccount = unknown> {
    * }));
    * ```
    *
-   * **Async return is not yet supported.** Function MUST return `string |
-   * undefined` synchronously. A returned `Promise` throws `ConfigurationError`.
-   * Pre-resolve before invoking `createAdcpServer` if you need to fetch.
+   * **Async functions are supported.** The framework awaits the returned
+   * Promise during MCP `initialize` — the session does not proceed until
+   * the promise settles. A slow fetch adds session-establishment latency,
+   * not per-tool latency; add a timeout inside your function if needed
+   * (e.g. `Promise.race([fetchProse(), timeout(2000)])`). A rejected
+   * promise is governed by `onInstructionsError`: `'skip'` (default) logs
+   * and sends no instructions; `'fail'` causes the `initialize` handshake
+   * to fail, dropping the session.
    *
    * @see SessionContext
    * @see onInstructionsError
    */
-  instructions?: string | ((ctx: SessionContext) => string | undefined);
+  instructions?: string | ((ctx: SessionContext) => MaybePromise<string | undefined>);
   /**
    * Behavior when a function-form `instructions` callback throws. Defaults
    * to `'skip'` — best-effort prose (brand manifests, marketing copy)
@@ -2799,47 +2818,46 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
   // knowing about the emitter's construction or options.
   const webhookEmitter = webhooks ? createWebhookEmitter(webhooks) : undefined;
 
-  // Resolve `instructions` — function form is evaluated at construction.
+  // Resolve `instructions` — sync function form is evaluated at construction.
   // Under `serve({ reuseAgent: false })` (the default) the factory runs
   // per HTTP request, so the function fires per session. Under
   // `reuseAgent: true` the function would fire once and never again —
   // `serve()` refuses that combination via `ADCP_INSTRUCTIONS_FN`.
+  // Async function form: a Promise return is stored here; resolution is
+  // deferred to the MCP `initialize` handler via `wrapInitializeHandler`.
   const instructionsIsFn = typeof instructionsOption === 'function';
   let resolvedInstructions: string | undefined;
+  let pendingInstructions: Promise<string | undefined> | undefined;
   if (typeof instructionsOption === 'string') {
     resolvedInstructions = instructionsOption;
   } else if (instructionsIsFn) {
     try {
-      const result = (instructionsOption as (ctx: SessionContext) => string | undefined)({});
+      const result = (instructionsOption as (ctx: SessionContext) => string | undefined | Promise<string | undefined>)(
+        {}
+      );
       // Promise detection — must guard for null + non-object before reading
       // `.then`, otherwise `typeof null.then` throws TypeError and the user
       // sees a confusing framework-internal stack instead of their own bug.
       const isThenable =
         result !== null && typeof result === 'object' && typeof (result as { then?: unknown }).then === 'function';
       if (isThenable) {
-        throw new ConfigurationError(
-          'createAdcpServer: function-form `instructions` returned a Promise, but async resolution is not yet ' +
-            'supported. Pre-resolve before invoking createAdcpServer (e.g., `instructions: await fetchProse()`), ' +
-            'or wrap your async loader in a sync cache.'
-        );
+        // Async return: store the running Promise; resolution happens in the
+        // wrapInitializeHandler block below, just before the MCP response.
+        pendingInstructions = Promise.resolve(result as Promise<string | undefined>);
+      } else {
+        // Reject non-string non-undefined sync returns instead of silently coercing
+        // (`String({})` → "[object Object]" would ship as instructions otherwise).
+        // The TS signature constrains return to `string | undefined`; this catches
+        // `as any` escapees and untyped JS callers.
+        if (result !== undefined && typeof result !== 'string') {
+          throw new Error(
+            `function-form \`instructions\` must return string | undefined, got ${result === null ? 'null' : typeof result}. ` +
+              `Return a string for the prose, or undefined for "no instructions on this session."`
+          );
+        }
+        resolvedInstructions = result;
       }
-      // Reject non-string non-undefined returns instead of silently coercing
-      // (`String({})` → "[object Object]" would ship as instructions otherwise).
-      // The TS signature already constrains return to `string | undefined`;
-      // this catches `as any` escapees and untyped JS callers. Routed through
-      // the same try/catch as user-thrown errors so `onInstructionsError`
-      // governs both — a buggy callback is the same shape of problem either
-      // way (Promise return is the exception: framework can't recover, so
-      // it throws ConfigurationError unconditionally above).
-      if (result !== undefined && typeof result !== 'string') {
-        throw new Error(
-          `function-form \`instructions\` must return string | undefined, got ${result === null ? 'null' : typeof result}. ` +
-            `Return a string for the prose, or undefined for "no instructions on this session."`
-        );
-      }
-      resolvedInstructions = result;
     } catch (err) {
-      if (err instanceof ConfigurationError) throw err;
       if (onInstructionsError === 'fail') {
         throw err;
       }
@@ -2858,6 +2876,32 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
     taskMessageQueue,
     instructions: resolvedInstructions,
   });
+
+  // Wire async instructions resolution into the MCP `initialize` handler.
+  // The function returned a Promise at construction time; await it here
+  // (just before the initialize response) so the resolved string is included
+  // in the MCP handshake without making createAdcpServer itself async.
+  if (pendingInstructions !== undefined) {
+    const pending = pendingInstructions;
+    wrapInitializeHandler(server, async (origHandler, req, extra) => {
+      try {
+        const resolved = await pending;
+        if (resolved !== undefined && typeof resolved !== 'string') {
+          throw new Error(
+            `function-form \`instructions\` resolved to ${typeof resolved}, expected string | undefined. ` +
+              `Return a string for the prose, or undefined for "no instructions on this session."`
+          );
+        }
+        setSdkServerInstructions(server, resolved);
+      } catch (err) {
+        if (onInstructionsError === 'fail') throw err;
+        logger.warn('[adcp/createAdcpServer] async instructions threw; skipping (onInstructionsError: "skip")', {
+          error: err instanceof Error ? err.message : String(err),
+        });
+      }
+      return origHandler(req, extra);
+    });
+  }
 
   const registeredToolNames = new Set<string>();
 

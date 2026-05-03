@@ -575,7 +575,7 @@ export function serve(createAgent: (ctx: ServeContext) => AdcpServer | McpServer
           'Drop `reuseAgent: true` (a fresh agent per request fires the function each session) OR pass a static string for `instructions`.';
         console.error(
           '[adcp/serve] refusing reuseAgent: true with function-form instructions. ' +
-            'The function is captured once at construction and would not re-evaluate per session under server reuse. ' +
+            'The function fires once per agent instance lifetime (at MCP initialize) and would not re-evaluate on subsequent sessions under server reuse. ' +
             hint
         );
         if (!res.headersSent) {
