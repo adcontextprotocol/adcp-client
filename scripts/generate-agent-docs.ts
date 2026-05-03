@@ -552,6 +552,10 @@ function generateLlmsTxt(
     `Lower-level option: \`createAdcpServer({ signals: { getSignals: ... } })\` from \`@adcp/sdk/server/legacy/v5\` — handler-bag API. Still fully supported, the substrate the platform path calls into. Use when you need fine control over individual handlers, mid-migration from a v5 codebase, or custom-shaped tools the platform interface doesn't yet model. \`wrapEnvelope(inner, { replayed, context, operationId })\` from \`@adcp/sdk/server\` attaches protocol envelope fields with the per-error-code allowlist (IDEMPOTENCY_CONFLICT drops \`replayed\`).`
   );
   ln();
+  ln(
+    `**\`composeMethod\` cookbook.** To layer \`before\`/\`after\` hooks on a single platform method — short-circuit for caching, enrichment under \`ext.*\`, typed-error guards — use \`composeMethod(inner, { before?, after? })\` from \`@adcp/sdk/server\`. Stacking multiple guards: nest \`composeMethod\` calls (outer \`before\` runs first). Test patterns (mocking inner, asserting short-circuit, chained hooks, typed-error propagation): see [\`docs/recipes/composeMethod-testing.md\`](./recipes/composeMethod-testing.md). Pre-built \`accounts.resolve\` guards (\`requireAccountMatch\`, \`requireAdvertiserMatch\`, \`requireOrgScope\`) are in the same package.`
+  );
+  ln();
 
   // --- Quick start ---
   ln(`## Quick Start (Client)`);
@@ -992,6 +996,7 @@ function generateLlmsTxt(
     ['CLI reference', 'CLI.md'],
     ['Zod runtime validation', 'ZOD-SCHEMAS.md'],
     ['Testing strategy', 'guides/TESTING-STRATEGY.md'],
+    ['Testing `composeMethod`-wrapped handlers', 'recipes/composeMethod-testing.md'],
     ['Protocol differences (MCP vs A2A)', 'development/PROTOCOL_DIFFERENCES.md'],
     ['TypeDoc API reference', 'api/index.html'],
   ];
