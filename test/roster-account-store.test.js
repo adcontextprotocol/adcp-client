@@ -130,22 +130,38 @@ describe('createRosterAccountStore', () => {
         assert.equal(resolveWithoutRefCalled, false, 'resolveWithoutRef must not be called for brand+operator refs');
       });
 
-      it('passes undefined ref and ctx through to resolveWithoutRef', async () => {
+      it('passes undefined ref and ctx through to resolveWithoutRef and toAccount', async () => {
         let seenRef = 'NOT_SET';
-        let seenCtx;
+        let seenResolveCtx;
+        let seenToAccountCtx;
         const ctx = { authInfo: { kind: 'public' } };
         const store = createRosterAccountStore({
           lookup: () => undefined,
-          toAccount: row => ({ id: row.id, name: row.id, status: 'active', ctx_metadata: {} }),
+          toAccount: (row, c) => {
+            seenToAccountCtx = c;
+            return { id: row.id, name: row.id, status: 'active', ctx_metadata: {} };
+          },
           resolveWithoutRef: (ref, c) => {
             seenRef = ref;
-            seenCtx = c;
+            seenResolveCtx = c;
             return { id: '__pub__' };
           },
         });
         await store.resolve(undefined, ctx);
         assert.equal(seenRef, undefined);
-        assert.equal(seenCtx, ctx);
+        assert.equal(seenResolveCtx, ctx);
+        assert.equal(seenToAccountCtx, ctx);
+      });
+
+      it('propagates resolveWithoutRef throws (framework projects to SERVICE_UNAVAILABLE)', async () => {
+        const store = createRosterAccountStore({
+          lookup: () => undefined,
+          toAccount: () => ({ id: 'x', name: 'x', status: 'active', ctx_metadata: {} }),
+          resolveWithoutRef: () => {
+            throw new Error('upstream is down');
+          },
+        });
+        await assert.rejects(() => store.resolve(undefined), /upstream is down/);
       });
 
       it('supports async resolveWithoutRef', async () => {

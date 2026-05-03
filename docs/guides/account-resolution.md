@@ -215,9 +215,10 @@ accounts: {
 `upsert` is optional for explicit-mode platforms. Implement it if your buyers
 need to pre-register accounts before use (e.g., credit-check gates).
 
-For the Shape C publisher-curated pattern, prefer [`createRosterAccountStore`](#ref-less-resolution-list_creative_formats-preview_creative-provide_performance_feedback)
+For the Shape C publisher-curated pattern, prefer `createRosterAccountStore`
 over a hand-rolled store — it handles the id-arm dispatch and `list_accounts`
-plumbing, and exposes `resolveWithoutRef` for the ref-less case (see below).
+plumbing, and exposes `resolveWithoutRef` for the ref-less case (see
+[Ref-less resolution](#ref-less-resolution-list_creative_formats-preview_creative-provide_performance_feedback) below).
 
 ---
 
@@ -247,7 +248,8 @@ const accounts = createRosterAccountStore({
   resolveWithoutRef: (_ref, ctx) => ({
     id: '__publisher__',
     name: 'Publisher',
-    tenant_id: deriveTenantId(ctx?.authInfo),
+    // tenant_id is a custom TRosterEntry field — toAccount maps it to ctx_metadata
+    tenant_id: ctx?.authInfo?.credential?.client_id ?? 'default',
   }),
 });
 ```

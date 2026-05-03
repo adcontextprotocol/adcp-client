@@ -583,6 +583,16 @@ and the framework emits `UNSUPPORTED_FEATURE`); no `upsert` /
 driven writes. Compose a spread for adopters who need both:
 `{ ...createRosterAccountStore(...), refreshToken: ... }`.
 
+**Ref-less tools (`list_creative_formats`, `preview_creative`,
+`provide_performance_feedback`).** These tools send no `account`
+field on the wire. By default `createRosterAccountStore` returns
+`null` for ref-less calls (`ctx.account` is `undefined` in the
+handler). Use the `resolveWithoutRef` option to return a synthetic
+publisher-wide account instead — the returned entry flows through
+`toAccount` like any `lookup` hit. See
+[Ref-less resolution](./guides/account-resolution.md#ref-less-resolution-list_creative_formats-preview_creative-provide_performance_feedback)
+in `docs/guides/account-resolution.md`.
+
 The three-shape map adopters now reach for:
 
 | Shape  | Resolution  | Helper                              | Use when                                                                         |

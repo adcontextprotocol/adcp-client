@@ -118,8 +118,13 @@ export interface RosterAccountStoreOptions<TRosterEntry, TCtxMeta = Record<strin
    * `undefined` in the handler).
    *
    * The `ref` parameter is always `undefined` here — it is present for
-   * signature parity with `lookup` so autocomplete and code-generation tools
-   * produce consistent handler shapes.
+   * signature parity with the framework's `resolve(ref, ctx)` shape so
+   * code-generation tools produce consistent two-arg handler signatures.
+   * Ignore it (use `(_ref, ctx) => ...`).
+   *
+   * Throw to signal a transient upstream failure (DB outage, network blip).
+   * The framework projects to `SERVICE_UNAVAILABLE`. Returning `undefined`
+   * is the canonical not-found path and returns `null` to the framework.
    *
    * **Brand+operator refs are not routed here.** A `{ brand, operator }` ref
    * without an `account_id` still falls through to `null`. Adopters who need
@@ -190,6 +195,19 @@ export interface RosterAccountStoreOptions<TRosterEntry, TCtxMeta = Record<strin
  * When omitted the helper returns `null` for ref-less calls — handlers can
  * narrow on `ctx.account === undefined` and fall back to platform-level
  * config from their closure.
+ *
+ * **Ref-less calls (singleton from options):**
+ * ```ts
+ * const accounts = createRosterAccountStore({
+ *   lookup,
+ *   toAccount,
+ *   resolveWithoutRef: (_ref, ctx) => ({
+ *     id: '__publisher__',
+ *     name: 'Publisher',
+ *     tenant_id: deriveTenant(ctx?.authInfo),
+ *   }),
+ * });
+ * ```
  *
  * **Ref-less calls (auth-derived lookup).** When the singleton should be
  * derived from the caller's principal and needs to call back into `lookup`,
