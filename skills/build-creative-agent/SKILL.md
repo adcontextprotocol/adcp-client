@@ -595,6 +595,8 @@ Common failure decoder:
 
 Storyboard: `creative_ad_server`. Stateful — the library is pre-loaded; buyers do **not** push assets via `sync_creatives` at runtime. Pricing and billing round-trips are first-class.
 
+**Fork target**: [`examples/hello_creative_adapter_ad_server.ts`](../../examples/hello_creative_adapter_ad_server.ts) is the worked, passing reference adapter for this specialism. It demonstrates the stateful library wrap (`POST /v1/creatives` write, `GET /v1/creatives` read with cursor pagination + multi-id pass-through, `PATCH` mutation), tag generation via macro substitution against a stored snippet template (`{click_url}`, `{impression_pixel}`, `{cb}`, `{advertiser_id}`, `{creative_id}` …), real iframe-embeddable `previewCreative` URLs pointing at the upstream's `/serve/{id}` endpoint, the `NoAccountCtx` narrow on `previewCreative` / `listCreativeFormats`, and `getCreativeDelivery` projection (currency + reporting_period + per-creative impressions/clicks). CI gates strict tsc + storyboard pass + upstream-traffic façade — all 7 storyboard steps pass on the worked build. Replace the `// SWAP:` markers with calls to your real backend.
+
 **`list_creatives`** with `include_pricing=true` returns per-creative `pricing_options`:
 
 ```typescript

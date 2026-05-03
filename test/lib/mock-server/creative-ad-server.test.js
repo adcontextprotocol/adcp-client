@@ -4,7 +4,6 @@ const { bootMockServer } = require('../../../dist/lib/mock-server/index.js');
 const {
   DEFAULT_API_KEY,
   NETWORKS,
-  FORMATS,
   CREATIVES,
 } = require('../../../dist/lib/mock-server/creative-ad-server/seed-data.js');
 
