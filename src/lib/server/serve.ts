@@ -34,6 +34,7 @@ import {
 } from './auth';
 import { ADCP_PRE_TRANSPORT, type AdcpPreTransport } from './create-adcp-server';
 import type { AdcpServer } from './adcp-server';
+import { FUNCTION_INSTRUCTIONS } from './adcp-server';
 
 /**
  * Context passed to the agent factory on each request.
@@ -559,6 +560,24 @@ export function serve(createAgent: (ctx: ServeContext) => AdcpServer | McpServer
         }
         return;
       }
+      if (reuseAgent && (agentServer as unknown as Record<symbol, unknown>)[FUNCTION_INSTRUCTIONS]) {
+        // Misconfiguration: function instructions cannot be evaluated per-session
+        // when a single server instance is shared. Detected at first request rather
+        // than at serve() construction because the server instance isn't available
+        // until the factory runs.
+        console.error(
+          '[adcp/serve] Misconfiguration: platform.instructions cannot be a function when ' +
+            'reuseAgent: true — a shared server has no per-session context at initialize time. ' +
+            'Use instructions: string for a static value, or set reuseAgent: false.'
+        );
+        if (!res.headersSent) {
+          res.writeHead(500, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ error: 'Server misconfiguration' }));
+        }
+        await agentServer.close();
+        return;
+      }
+
       const attached = (agentServer as unknown as Record<symbol, unknown>)[ADCP_PRE_TRANSPORT];
       const autoWiredPreTransport = typeof attached === 'function' ? (attached as AdcpPreTransport) : undefined;
       const activePreTransport = explicitPreTransport ?? autoWiredPreTransport;

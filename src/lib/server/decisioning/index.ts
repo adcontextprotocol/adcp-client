@@ -130,7 +130,7 @@ export type {
 } from './context';
 
 // Top-level platform + compile-time capability enforcement
-export type { DecisioningPlatform, RequiredPlatformsFor, RequiredCapabilitiesFor } from './platform';
+export type { DecisioningPlatform, RequiredPlatformsFor, RequiredCapabilitiesFor, InstructionsContext } from './platform';
 
 // Method-level composition (closes #1314) — wrap individual platform methods
 // with `before` / `after` hooks for short-circuit + enrichment patterns.

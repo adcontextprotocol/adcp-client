@@ -336,6 +336,15 @@ export const ADCP_STATE_STORE: unique symbol = Symbol.for('@adcp/client.stateSto
  */
 export const ADCP_CAPABILITIES: unique symbol = Symbol.for('@adcp/client.capabilities');
 
+/**
+ * Marker set on `AdcpServer` instances built from a function-form
+ * `platform.instructions`. `serve()` reads this to throw early when
+ * `reuseAgent: true` is combined with function instructions.
+ *
+ * @internal
+ */
+export const FUNCTION_INSTRUCTIONS: unique symbol = Symbol.for('@adcp/client.functionInstructions');
+
 /** @internal */
 export interface AdcpServerInternal extends AdcpServer {
   readonly [ADCP_SDK_SERVER]: McpServer;
@@ -351,6 +360,47 @@ export interface AdcpServerInternal extends AdcpServer {
 export function getSdkServer(server: AdcpServer | McpServer): McpServer | undefined {
   const candidate = (server as unknown as Partial<AdcpServerInternal>)[ADCP_SDK_SERVER];
   return candidate;
+}
+
+/**
+ * Write `_instructions` on the low-level SDK server that backs `mcpServer`.
+ * Used by the function-form instructions hook to inject the resolved string
+ * into the `initialize` response at session time.
+ *
+ * @internal
+ */
+export function setSdkServerInstructions(mcpServer: McpServer, value: string | undefined): void {
+  const priv = mcpServer as unknown as McpServerPrivates;
+  if (priv.server) {
+    priv.server._instructions = value;
+  }
+}
+
+/** @internal */
+type McpRequestHandler = (request: { method: string; params?: unknown }, extra: unknown) => unknown | Promise<unknown>;
+
+/**
+ * Wrap the `initialize` request handler on `mcpServer` with `wrapper`.
+ * The wrapper receives the original handler so it can call-through after
+ * any pre-processing.
+ *
+ * @internal
+ */
+
+export function wrapInitializeHandler(
+  mcpServer: McpServer,
+  wrapper: (
+    origHandler: McpRequestHandler,
+    req: { method: string; params?: unknown },
+    extra: unknown
+  ) => unknown | Promise<unknown>
+): void {
+  const priv = mcpServer as unknown as McpServerPrivates;
+  const handlers = priv.server?._requestHandlers;
+  if (!handlers) return;
+  const orig = handlers.get('initialize');
+  if (!orig) return;
+  handlers.set('initialize', (req, extra) => wrapper(orig, req, extra));
 }
 
 /**
@@ -390,6 +440,7 @@ interface McpServerPrivates {
       string,
       (request: { method: string; params?: unknown }, extra: unknown) => unknown | Promise<unknown>
     >;
+    _instructions?: string;
   };
 }
 

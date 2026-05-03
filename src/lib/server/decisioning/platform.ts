@@ -11,8 +11,8 @@
  */
 
 import type { DecisioningCapabilities, BrandCapabilities } from './capabilities';
-import type { Account, AccountStore } from './account';
-import type { BuyerAgentRegistry } from './buyer-agent';
+import type { Account, AccountStore, ResolvedAuthInfo } from './account';
+import type { BuyerAgent, BuyerAgentRegistry } from './buyer-agent';
 import type { StatusMappers } from './status-mappers';
 import type { SalesPlatform, SalesCorePlatform, SalesIngestionPlatform } from './specialisms/sales';
 import type { CreativeBuilderPlatform } from './specialisms/creative';
@@ -24,6 +24,31 @@ import type { ContentStandardsPlatform } from './specialisms/content-standards';
 import type { BrandRightsPlatform } from './specialisms/brand-rights';
 import type { PropertyListsPlatform, CollectionListsPlatform } from './specialisms/lists';
 import type { AdCPSpecialism } from '../../types/tools.generated';
+
+/**
+ * Context available to a function-form `instructions` during MCP session
+ * initialization. Both fields are optional — the closure form `() => string`
+ * works when you don't need caller identity.
+ *
+ * Populated once per MCP `initialize` handshake; NOT available or re-evaluated
+ * on subsequent tool calls.
+ *
+ * @public
+ */
+export interface InstructionsContext {
+  /**
+   * Auth info extracted from the `initialize` request's HTTP layer, when an
+   * `authenticate` middleware is wired on `serve()`. Absent when the agent
+   * accepts unauthenticated sessions.
+   */
+  authInfo?: ResolvedAuthInfo;
+  /**
+   * Resolved buyer-agent record, populated when `platform.agentRegistry` is
+   * configured and the session's auth principal maps to a known `BuyerAgent`.
+   * Absent when the registry is not configured or resolution returns nothing.
+   */
+  agent?: BuyerAgent;
+}
 
 /**
  * Top-level platform interface. Adopters implement this; framework wires
@@ -86,8 +111,20 @@ export interface DecisioningPlatform<TConfig = unknown, TCtxMeta = Record<string
    * supplied via `createAdcpServerFromPlatform` opts — same precedence as
    * `agentRegistry`. Adopters with v5 escape-hatch wiring can keep using
    * `opts.instructions`; v6 callers should declare it here.
+   *
+   * **Function form.** May be an async function called once per MCP
+   * `initialize` handshake (once per buyer session, cached for the
+   * session lifetime). The function is NOT re-evaluated on subsequent
+   * tool calls. When the function throws or returns `undefined`, behavior
+   * is controlled by `onInstructionsError` in
+   * `CreateAdcpServerFromPlatformOptions` (default `'skip'` — session
+   * proceeds without instructions).
+   *
+   * Incompatible with `reuseAgent: true`: a shared server has no
+   * per-session context. When detected at request time, `serve()` logs
+   * an error and returns HTTP 500 for each session — do not combine.
    */
-  instructions?: string;
+  instructions?: string | ((ctx: InstructionsContext) => string | undefined | Promise<string | undefined>);
 
   /**
    * Buyer-agent identity registry — Phase 1 of #1269. Optional. When

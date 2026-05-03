@@ -52,6 +52,12 @@
 import { randomUUID } from 'node:crypto';
 import type { AdcpServer } from '../../adcp-server';
 import {
+  getSdkServer,
+  FUNCTION_INSTRUCTIONS,
+  setSdkServerInstructions,
+  wrapInitializeHandler,
+} from '../../adcp-server';
+import {
   createAdcpServer,
   type AdcpServerConfig,
   type MediaBuyHandlers,
@@ -63,7 +69,12 @@ import {
   type BrandRightsHandlers,
   type HandlerContext,
 } from '../../create-adcp-server';
-import type { DecisioningPlatform, RequiredPlatformsFor, RequiredCapabilitiesFor } from '../platform';
+import type {
+  DecisioningPlatform,
+  RequiredPlatformsFor,
+  RequiredCapabilitiesFor,
+  InstructionsContext,
+} from '../platform';
 import type { ComplianceTestingCapabilities } from '../capabilities';
 import type { Account, ResolvedAuthInfo, ResolveContext } from '../account';
 import { AccountNotFoundError, refAccountId, toWireAccount, toWireSyncAccountRow } from '../account';
@@ -539,6 +550,21 @@ export interface CreateAdcpServerFromPlatformOptions extends Omit<
    * webhook receiver path stood up.
    */
   autoEmitCompletionWebhooks?: boolean;
+
+  /**
+   * Error-handling policy for function-form `platform.instructions`.
+   * Applies only when `platform.instructions` is a function; ignored for
+   * string-form instructions.
+   *
+   * - `'skip'` *(default)*: when the function throws or returns
+   *   `undefined`, the `instructions` field is **omitted** from the MCP
+   *   `initialize` response for that session and the session proceeds
+   *   normally. A `logger.warn` is emitted so the failure is observable.
+   * - `'fail'`: the thrown error is re-thrown, causing `initialize` to
+   *   fail for this session. Use for load-bearing real-time policy where
+   *   absent or stale instructions are worse than no session.
+   */
+  onInstructionsError?: 'skip' | 'fail';
 
   // ---------------------------------------------------------------------
   // Custom-handler escape hatch (incremental migration seam)
@@ -1023,7 +1049,10 @@ export function createAdcpServerFromPlatform<P extends DecisioningPlatform<any, 
     // v5 `opts.instructions` escape hatch when both are present, so v6
     // adopters can colocate platform facts / decision policy with the rest
     // of their platform declaration.
-    ...(platform.instructions !== undefined && { instructions: platform.instructions }),
+    // String-only: function form is handled post-construction via the
+    // initialize-handler hook below. Passing a function here would set
+    // sdk.server._instructions to the function object itself.
+    ...(typeof platform.instructions === 'string' && { instructions: platform.instructions }),
     // Pool-derived stores override the spread above when adopters supplied
     // `pool` but no explicit per-store opt. Explicit values still win.
     ...(effectiveIdempotency !== undefined && { idempotency: effectiveIdempotency }),
@@ -1277,6 +1306,45 @@ export function createAdcpServerFromPlatform<P extends DecisioningPlatform<any, 
 
     const controller = createComplyController(complyConfig);
     controller.register(server);
+  }
+
+  // Function-form instructions (#1347): wrap the initialize handler to
+  // evaluate the function once per session and inject the resolved string
+  // into the initialize response. Construction stays synchronous; the async
+  // call is deferred to the per-session initialize handshake.
+  if (typeof platform.instructions === 'function') {
+    const instructionsFn = platform.instructions;
+    const onError = opts.onInstructionsError ?? 'skip';
+    const sdkServer = getSdkServer(server);
+    if (sdkServer) {
+      wrapInitializeHandler(sdkServer, async (origHandler, _req, extra) => {
+        const authInfo = (extra as { authInfo?: ResolvedAuthInfo } | undefined)?.authInfo;
+        let agent: BuyerAgent | undefined;
+        if (platform.agentRegistry && authInfo) {
+          try {
+            agent = (await platform.agentRegistry.resolve(authInfo)) ?? undefined;
+          } catch {
+            // Agent registry failure: proceed without agent in context.
+          }
+        }
+        const ctx: InstructionsContext = {
+          ...(authInfo !== undefined && { authInfo }),
+          ...(agent !== undefined && { agent }),
+        };
+        try {
+          const resolved = await instructionsFn(ctx);
+          setSdkServerInstructions(sdkServer, resolved);
+        } catch (err) {
+          if (onError === 'fail') throw err;
+          fwLogger.warn('[adcp] platform.instructions threw — session will have no instructions', {
+            error: String(err),
+          });
+        }
+        return origHandler(_req, extra);
+      });
+    }
+    // Mark server so serve() can detect the reuseAgent+function combination.
+    (server as unknown as Record<symbol, boolean>)[FUNCTION_INSTRUCTIONS] = true;
   }
 
   return Object.assign(server, {
