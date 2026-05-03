@@ -65,6 +65,8 @@ export const CONTEXT_EXTRACTORS: Record<string, ContextExtractor> = {
     const extracted: Record<string, unknown> = {};
     if (d?.media_buy_id) extracted.media_buy_id = d.media_buy_id;
     if (d?.status) extracted.media_buy_status = d.status;
+    const packages = d?.packages as Array<Record<string, unknown>> | undefined;
+    if (packages?.[0]?.package_id) extracted.package_id = packages[0].package_id;
     return extracted;
   },
 
