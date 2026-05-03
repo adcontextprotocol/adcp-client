@@ -249,6 +249,32 @@ describe('createAdcpServer', () => {
       );
     });
 
+    // 6.7.0 promoted `update_rights` from customTool territory to a
+    // framework-registered first-class tool (#1349). Adopters carrying a
+    // pre-6.7 `customTools.update_rights` registration into 6.7 hit the
+    // collision throw — which previously surfaced as HTTP 500 HTML on every
+    // MCP probe and looked like a discovery regression (adcp-client#1438).
+    // Guard the migration hint in the error message so the next adopter
+    // gets a pointer at BrandRightsPlatform.updateRights instead of the
+    // generic "rename the tool" advice.
+    it('refuses customTools["update_rights"] with migration hint', () => {
+      assert.throws(
+        () =>
+          createAdcpServer({
+            name: 'Test',
+            version: '1.0.0',
+            brandRights: { updateRights: async () => ({ ok: true }) },
+            customTools: {
+              update_rights: {
+                description: 'Pre-6.7 customTool registration — should throw.',
+                handler: async () => ({ content: [{ type: 'text', text: 'shadow' }] }),
+              },
+            },
+          }),
+        /customTools\["update_rights"\] collides with a framework-registered tool[\s\S]*BrandRightsPlatform\.updateRights/
+      );
+    });
+
     it('refuses customTools["get_adcp_capabilities"]', () => {
       assert.throws(
         () =>

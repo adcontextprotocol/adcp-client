@@ -2,7 +2,7 @@
 
 > **Status: GA in 6.7.** Most changes are additive — adopters running on
 > 6.6 today see no behavior change on `npm update @adcp/sdk` unless they
-> opt in. **Two exceptions** require attention before bumping:
+> opt in. **Three exceptions** require attention before bumping:
 >
 > - **`accounts.resolution: 'implicit'` adopters**: the framework now
 >   actually refuses inline `{account_id}` references (the docstring
@@ -15,11 +15,17 @@
 >   `SalesCorePlatform & SalesIngestionPlatform` with all methods
 >   individually optional. The widened annotation will fail
 >   `RequiredPlatformsFor<S>` enforcement. See recipe **#11**.
+> - **Adopters with `customTools["update_rights"]`**: `update_rights` is
+>   now framework-registered. `createAdcpServer` will throw at build time
+>   with `customTools["update_rights"] collides with a framework-registered
+>   tool`. The throw is server-side and surfaces as HTTP 500 on every
+>   client probe — including discovery — masquerading as a transport bug.
+>   See recipe **#16**.
 
-## Audit first — the two breaking recipes
+## Audit first — the three breaking recipes
 
-Before bumping, read recipes **#10** and **#11**. Everything else is
-additive and can be applied incrementally.
+Before bumping, read recipes **#10**, **#11**, and **#16**. Everything
+else is additive and can be applied incrementally.
 
 - **#10 — `accounts.resolution: 'implicit'` enforces inline-`account_id`
   refusal** (runtime). Inline `{account_id}` references against an
@@ -33,8 +39,16 @@ additive and can be applied incrementally.
   -broadcast-tv / -catalog-driven need to migrate the annotation.
   Walled-garden ingestion adopters (Meta CAPI, Snap CAPI, TikTok
   Events) get to drop their stub-throw boilerplate.
+- **#16 — `customTools["update_rights"]` collides with the new
+  framework-registered `update_rights`** (runtime). Brand-rights
+  adopters who previously registered `update_rights` as a customTool
+  will see `createAdcpServer` throw at server-build time. Because the
+  throw fires inside the request handler (lazy tenant build), every
+  MCP probe — including discovery — gets an HTTP 500 with an HTML
+  error body, which clients report as `discovery_failed`. Audit with
+  `grep -rn 'customTools.*update_rights'` before bumping.
 
-## tl;dr — fifteen recipes to apply
+## tl;dr — sixteen recipes to apply
 
 | #  | If you had 6.6 …                                                                         | Do this in 6.7                                                                                                            | Mechanical?                  |
 |----|------------------------------------------------------------------------------------------|---------------------------------------------------------------------------------------------------------------------------|------------------------------|
@@ -53,6 +67,7 @@ additive and can be applied incrementally.
 | 13 | Hand-rolled `accounts.resolve` + per-entry tenant-isolation gate on `upsert` / `syncGovernance` for a multi-tenant adapter | `createTenantStore({...})` — built-in security gate, fail-closed when auth principal can't be resolved.        | mechanical (security-relevant) |
 | 14 | Local copy of the media-buy / creative status-transition graph                           | Import `MEDIA_BUY_TRANSITIONS` / `assertMediaBuyTransition` (and the creative pair) from `@adcp/sdk/server`.              | mechanical                   |
 | 15 | Sellers claiming `property-lists` / `collection-lists` echoing `targeting_overlay` by hand | `mediaBuyStore: createMediaBuyStore({ store })` opt-in framework wiring.                                                | mechanical (narrow)          |
+| 16 | Brand-rights adopter with `customTools: { update_rights: ... }`                          | Drop the customTools entry and wire `BrandRightsPlatform.updateRights` instead. The framework now owns the tool name.   | **breaking**                 |
 
 `refAccountId` already shipped in 6.6 (recipe #2); it's listed because
 the eight-item list in #1344 included it as a "stop reinventing this"
@@ -912,6 +927,69 @@ paths produce a value. The store fills the gap for adopters who
 hadn't wired echo yet (the canonical silent-storyboard-failure for
 `media_buy_seller/inventory_list_targeting/get_after_create`).
 
+### 16. **breaking** — drop `customTools["update_rights"]`; wire `BrandRightsPlatform.updateRights`
+
+`update_rights` is now a framework-registered first-class tool (PR
+#1349). The `customTools` collision check at server build time will
+throw with:
+
+```
+createAdcpServer: customTools["update_rights"] collides with a
+framework-registered tool.
+```
+
+The throw is server-side. In tenant-registry setups that build the
+inner server lazily on first request (the canonical multi-tenant
+pattern), every MCP request — including the discovery probe — hits
+the throw and returns an HTTP 500 with an HTML error body. Clients
+report it as `discovery_failed` because a 500 HTML page isn't a
+valid MCP response, which makes the regression look like a
+client-side transport bug. It isn't.
+
+**Audit:**
+
+```bash
+grep -rn 'customTools.*update_rights' src/
+```
+
+**Before (6.6):**
+
+```ts
+createAdcpServerFromPlatform(brandPlatform, {
+  customTools: {
+    update_rights: customToolFor(
+      'update_rights',
+      'Update an existing rights grant — extend dates, adjust caps, pause/resume.',
+      UPDATE_RIGHTS_SCHEMA,
+      handleUpdateRights,
+    ),
+    creative_approval: customToolFor(/* ... */),
+  },
+});
+```
+
+**After (6.7):**
+
+```ts
+import { defineBrandRightsPlatform } from '@adcp/sdk/server';
+
+const brandPlatform = defineBrandRightsPlatform<MyMeta>({
+  // ... existing brand-rights handlers ...
+  updateRights: handleUpdateRights, // <- promoted from customTool
+});
+
+createAdcpServerFromPlatform(brandPlatform, {
+  customTools: {
+    creative_approval: customToolFor(/* ... */), // unchanged
+  },
+});
+```
+
+`creative_approval` is still customTool territory in 6.7 — only
+`update_rights` was promoted. Future SDK releases may promote
+additional tools the same way; the collision-check error message
+points at the platform-handler equivalent when one exists.
+
 ## Worked diff — `examples/decisioning-platform-mock-seller.ts`
 
 > **Illustrative — not a verbatim diff against the file.** The
@@ -1125,7 +1203,9 @@ These ride along in 6.7 and don't need any adopter action:
   builders.** Brand-rights adopters wire
   `BrandRightsPlatform.updateRights` instead of the v5 raw-handler
   bag. Per-arm builders for `creativeApproved` /
-  `creativeApprovalRejected` / `creativeApprovalRevoked`.
+  `creativeApprovalRejected` / `creativeApprovalRevoked`. **Breaking
+  for adopters who previously registered `update_rights` as a
+  `customTools` entry — see recipe #16.**
 - **Auto-hydration is now spec-driven.** Hydration call sites read
   `x-entity` annotations from the manifest instead of hand-rolled
   `(field_name, ResourceKind)` literals. Future spec field renames
