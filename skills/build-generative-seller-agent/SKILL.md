@@ -23,6 +23,8 @@ A generative seller that sells programmatic inventory MUST also accept standard 
 - Standalone creative agent (renders but doesn't sell) → creative agent
 - Signals/audience data → `skills/build-signals-agent/`
 
+**Often claimed alongside:** [`creative-template`](../build-creative-agent/SKILL.md) — hybrid creative platforms (Celtra, Bannerflow) claim both; template-driven and AI-driven generation share the same creative library. See [Common multi-specialism bundles](../../examples/README.md#common-multi-specialism-bundles).
+
 ## Specialisms This Skill Covers
 
 A generative seller inherits every sales specialism it supports (usually `sales-non-guaranteed`, optionally `sales-catalog-driven`) **plus** `creative-generative`. Declare all three in your `get_adcp_capabilities` response so buyers can filter correctly.
@@ -349,14 +351,14 @@ Validate with: `adcp storyboard run <agent> deterministic_testing --json`
 
 ## SDK Quick Reference
 
-| SDK piece                               | Usage                                                                   |
-| --------------------------------------- | ----------------------------------------------------------------------- |
-| `createAdcpServerFromPlatform(platform, opts)` | Create server from a typed `DecisioningPlatform` — compile-time specialism enforcement, auto-generated capabilities, ctx_metadata round-trip |
-| `createAdcpServer(config)` *(legacy)*          | v5 handler-bag entry. Mid-migration / escape-hatch only; reach via `@adcp/sdk/server/legacy/v5`                                              |
-| `serve(() => createAdcpServerFromPlatform(platform, opts))` | Start HTTP server on `:3001/mcp`                                                                       |
-| `ctx.store`                             | State persistence — `get/put/patch/delete/list` domain objects          |
-| `adcpError(code, { message })`          | Structured error                                                        |
-| `registerTestController(server, store)` | Add `comply_test_controller` for deterministic testing                  |
+| SDK piece                                                   | Usage                                                                                                                                        |
+| ----------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------- |
+| `createAdcpServerFromPlatform(platform, opts)`              | Create server from a typed `DecisioningPlatform` — compile-time specialism enforcement, auto-generated capabilities, ctx_metadata round-trip |
+| `createAdcpServer(config)` _(legacy)_                       | v5 handler-bag entry. Mid-migration / escape-hatch only; reach via `@adcp/sdk/server/legacy/v5`                                              |
+| `serve(() => createAdcpServerFromPlatform(platform, opts))` | Start HTTP server on `:3001/mcp`                                                                                                             |
+| `ctx.store`                                                 | State persistence — `get/put/patch/delete/list` domain objects                                                                               |
+| `adcpError(code, { message })`                              | Structured error                                                                                                                             |
+| `registerTestController(server, store)`                     | Add `comply_test_controller` for deterministic testing                                                                                       |
 
 Response builders (`productsResponse`, `mediaBuyResponse`, `syncCreativesResponse`, etc.) are auto-applied by the framework. Handlers return raw data objects — the framework wraps them.
 
@@ -477,7 +479,11 @@ class MyGenerativeSeller implements DecisioningPlatform {
     buildCreative: async (req, ctx) => {
       // Generative path — read brief, call your model, return assets.
       // Framework auto-stores the build for refine/lookup via ctx_metadata.
-      return { creative_manifest: { /* generated assets */ } };
+      return {
+        creative_manifest: {
+          /* generated assets */
+        },
+      };
     },
     previewCreative: async (req, ctx) => {
       return { preview_url: '...' };

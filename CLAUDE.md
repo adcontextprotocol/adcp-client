@@ -67,6 +67,8 @@ Pick the specialisms you want to claim in `get_adcp_capabilities`. Each maps to 
 | `measurement-verification`    | governance | preview | `skills/build-governance-agent/`                                                                                                                                                                                                                                                                                           |
 | `brand-rights`                | brand      | stable  | `skills/build-brand-rights-agent/`                                                                                                                                                                                                                                                                                         |
 
+**Multi-specialism bundles:** See [`examples/README.md` § Common multi-specialism bundles](./examples/README.md#common-multi-specialism-bundles) for canonical claim combinations by adopter shape (retail-media, broadcaster, identity provider, etc.).
+
 **Naming conventions:** specialism IDs are kebab-case (`sales-broadcast-tv`). Storyboard category IDs in `index.yaml` are snake_case (`media_buy_broadcast_seller`). Yaml titles are prose ("Broadcast linear TV seller agent"). Same concept, three names — don't confuse them.
 
 **`protocol:` vs `domain:`.** The specialism yaml uses `protocol:` (renamed from `domain:` in AdCP 3.0 GA). If you see older docs or issues reference `domain:`, they mean the same thing.

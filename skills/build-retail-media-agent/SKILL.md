@@ -21,6 +21,8 @@ A retail media agent sells advertising on a retailer's properties (sponsored pro
 - Generative seller (AI creative from briefs) → `skills/build-generative-seller-agent/`
 - Signals/audience data → `skills/build-signals-agent/`
 
+**Often claimed alongside:** [`audience-sync`](../build-seller-agent/SKILL.md) (first-party audience push), [`creative-template`](../build-creative-agent/SKILL.md) (dynamic-creative rendering from catalog). Together these form the canonical retail-media bundle — see [Common multi-specialism bundles](../../examples/README.md#common-multi-specialism-bundles).
+
 Despite the name, **this skill also covers non-retail catalog-driven sales** — restaurants, travel, local commerce, any platform where the ad unit is rendered from a feed of products/listings/menu items. The compliance storyboard `media_buy_catalog_creative` uses a steakhouse protagonist, not a retailer.
 
 ## Specialisms This Skill Covers
@@ -254,14 +256,14 @@ Validate with: `adcp storyboard run <agent> deterministic_testing --json`
 
 ## SDK Quick Reference
 
-| SDK piece                               | Usage                                                                   |
-| --------------------------------------- | ----------------------------------------------------------------------- |
-| `createAdcpServerFromPlatform(platform, opts)` | Create server from a typed `DecisioningPlatform` — compile-time specialism enforcement, ctx_metadata round-trip, auto-generated capabilities |
-| `createAdcpServer(config)` *(legacy)*          | v5 handler-bag entry. Mid-migration / escape-hatch only; reach via `@adcp/sdk/server/legacy/v5`                                              |
-| `serve(() => createAdcpServerFromPlatform(platform, opts))` | Start HTTP server on `:3001/mcp`                                                                       |
-| `ctx.store`                             | State persistence — `get/put/patch/delete/list` domain objects          |
-| `adcpError(code, { message })`          | Structured error                                                        |
-| `registerTestController(server, store)` | Add `comply_test_controller` for deterministic testing                  |
+| SDK piece                                                   | Usage                                                                                                                                        |
+| ----------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------- |
+| `createAdcpServerFromPlatform(platform, opts)`              | Create server from a typed `DecisioningPlatform` — compile-time specialism enforcement, ctx_metadata round-trip, auto-generated capabilities |
+| `createAdcpServer(config)` _(legacy)_                       | v5 handler-bag entry. Mid-migration / escape-hatch only; reach via `@adcp/sdk/server/legacy/v5`                                              |
+| `serve(() => createAdcpServerFromPlatform(platform, opts))` | Start HTTP server on `:3001/mcp`                                                                                                             |
+| `ctx.store`                                                 | State persistence — `get/put/patch/delete/list` domain objects                                                                               |
+| `adcpError(code, { message })`                              | Structured error                                                                                                                             |
+| `registerTestController(server, store)`                     | Add `comply_test_controller` for deterministic testing                                                                                       |
 
 Response builders (`productsResponse`, `mediaBuyResponse`, `deliveryResponse`, etc.) are auto-applied by the framework. Handlers return raw data objects — the framework wraps them.
 
