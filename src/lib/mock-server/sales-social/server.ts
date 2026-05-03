@@ -1263,14 +1263,17 @@ function goalCpm(goal: string, seed: DeterministicSeed): { min: number; median: 
   // Reach is cheaper than video (in-stream/feed video CPMs run $8-15);
   // clicks and conversions are top of the band because they buy auction
   // priority for the most contested inventory.
+  // Calibrated to 2024-2026 walled-garden benchmarks: reach is cheaper than
+  // video CPMs (Meta in-stream/Reels run $11-16; mock weighted toward feed
+  // video). Conversions tops the band as auction priority spikes.
   const base = (() => {
     switch (goal) {
       case 'reach':
       case 'awareness':
-        return 5;
+        return 7;
       case 'video_views':
       case 'thru_play':
-        return 8;
+        return 10;
       case 'engagement':
       case 'follows':
       case 'profile_visits':
@@ -1335,6 +1338,9 @@ interface LookalikeResponse {
  * (Meta caps LAL audiences at country_pop × similarity_pct/100).
  */
 function countryPopulation(country: string): number {
+  // Adult-internet population estimates (mid-2020s, rounded). Numbers don't
+  // need to be precise — they only anchor the lookalike sizing cap so the
+  // mock doesn't produce 19M LAL audiences from 1M seeds.
   const c = country.toUpperCase();
   switch (c) {
     case 'US':
@@ -1349,13 +1355,13 @@ function countryPopulation(country: string): number {
     case 'FR':
       return 55_000_000;
     case 'JP':
-      return 95_000_000;
+      return 85_000_000;
     case 'AU':
       return 22_000_000;
     case 'BR':
-      return 175_000_000;
+      return 140_000_000;
     case 'IN':
-      return 800_000_000;
+      return 625_000_000;
     case 'MX':
       return 100_000_000;
     default:
@@ -1379,11 +1385,14 @@ function synthLookalikeEstimate(input: {
     })
   );
   const pop = countryPopulation(input.country);
-  // Meta's LAL math: country_pop × (similarity_pct / 100) is the cap.
-  // A 1% LAL in the US ≈ 2.6M; a 10% LAL ≈ 26M.
+  // Meta's LAL math: country_pop × (similarity_pct / 100) is the upper cap.
+  // A 1% LAL in the US ≈ 2.6M; a 10% LAL ≈ 26M. We hold sizing well below the
+  // cap (`cap * 0.6` × `wobble ∈ [0.85, 1.15]` → max ≈ `cap * 0.69`) so the
+  // mock is conservatively realistic — real walled gardens rarely hit the
+  // theoretical cap on first generation.
   const cap = Math.floor(pop * (input.similarityPct / 100));
-  // Seed-driven contribution as a fallback: small seed → tighter LAL,
-  // large seed → broader LAL but never exceeds the country cap.
+  // Seed-driven contribution as a fallback for small seeds — never exceeds
+  // the platform cap.
   const seedContribution = Math.floor(Math.max(1000, input.seedSize) * (8 + input.similarityPct * 8));
   const wobble = 0.85 + (seed.next() % 3001) / 10_000;
   const size = Math.floor(Math.min(cap * 0.6, seedContribution) * wobble);

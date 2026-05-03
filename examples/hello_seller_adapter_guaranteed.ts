@@ -102,6 +102,35 @@ interface UpstreamProduct {
   ad_unit_ids: string[];
   pricing: { model: 'cpm' | 'cpv'; cpm: number; currency: string; min_spend?: number };
   availability?: { start_date?: string; end_date?: string; available_impressions?: number };
+  /** Per-query forecast — present when GET /v1/products is called with
+   * `targeting`/`flight_start`/`flight_end`/`budget` query params. Mirrors
+   * AdCP `DeliveryForecast` field-for-field; pass through unchanged. */
+  forecast?: UpstreamForecast;
+}
+
+interface UpstreamForecastRange {
+  low?: number;
+  mid?: number;
+  high?: number;
+  [k: string]: unknown;
+}
+interface UpstreamForecastPoint {
+  label?: string;
+  budget?: number;
+  metrics: {
+    impressions?: UpstreamForecastRange;
+    reach?: UpstreamForecastRange;
+    frequency?: UpstreamForecastRange;
+    spend?: UpstreamForecastRange;
+    [k: string]: UpstreamForecastRange | undefined;
+  };
+}
+interface UpstreamForecast {
+  points: UpstreamForecastPoint[];
+  forecast_range_unit: 'spend' | 'availability';
+  method: 'modeled' | 'guaranteed' | 'estimate';
+  currency: string;
+  generated_at?: string;
 }
 
 interface UpstreamOrder {
@@ -172,17 +201,49 @@ const upstream = {
   },
 
   // SWAP: product catalog. Mock filters by network_code via header + optional
-  // ?delivery_type. Real GAM exposes `/networks/{code}/proposals` and
-  // `/networks/{code}/products`.
-  async listProducts(networkCode: string, deliveryType?: 'guaranteed' | 'non_guaranteed'): Promise<UpstreamProduct[]> {
+  // ?delivery_type. When `flight_start`/`flight_end`/`budget` are passed, the
+  // mock returns per-product `forecast` inline — single round-trip instead of
+  // N follow-up `/v1/forecast` calls. Real GAM exposes `/networks/{code}/products`
+  // for the catalog and `forecastService.getDeliveryForecast` for forecast;
+  // adopters whose backend doesn't fold forecast into the catalog response
+  // call `getForecast` per product (or in parallel) below.
+  async listProducts(
+    networkCode: string,
+    opts?: {
+      deliveryType?: 'guaranteed' | 'non_guaranteed';
+      flightStart?: string;
+      flightEnd?: string;
+      budget?: number;
+    }
+  ): Promise<UpstreamProduct[]> {
     const params: Record<string, string> = {};
-    if (deliveryType) params['delivery_type'] = deliveryType;
+    if (opts?.deliveryType) params['delivery_type'] = opts.deliveryType;
+    if (opts?.flightStart) params['flight_start'] = opts.flightStart;
+    if (opts?.flightEnd) params['flight_end'] = opts.flightEnd;
+    if (opts?.budget !== undefined) params['budget'] = String(opts.budget);
     const { body } = await http.get<{ products: UpstreamProduct[] }>(
       '/v1/products',
       params,
       networkHeader(networkCode)
     );
     return body?.products ?? [];
+  },
+
+  // SWAP: per-product forecast. Use this when your backend separates the
+  // catalog and forecast surfaces (typical for GAM's `forecastService` vs
+  // `inventoryService`). For the worked-mock case we fold forecast into
+  // `listProducts` above; this method shows the discrete shape.
+  async getForecast(
+    networkCode: string,
+    body: {
+      product_id: string;
+      targeting?: Record<string, unknown>;
+      flight_dates?: { start?: string; end?: string };
+      budget?: number;
+    }
+  ): Promise<UpstreamForecast | null> {
+    const r = await http.post<UpstreamForecast>('/v1/forecast', body, networkHeader(networkCode));
+    return r.body;
   },
 
   // SWAP: list orders.
@@ -319,6 +380,13 @@ function projectProduct(p: UpstreamProduct, publisherDomain: string): Product {
       available_metrics: ['impressions', 'clicks', 'spend'],
       date_range_support: 'date_range',
     },
+    // Pass through per-query forecast verbatim — mock returns AdCP-shape
+    // already (`points`, `metrics.{impressions,reach,frequency,spend}` with
+    // `{low,mid,high}`, `forecast_range_unit`, `method`, `currency`). Real
+    // GAM responses need adapter-side translation; the mock skips that step
+    // intentionally so adopters can see what AdCP-shape forecast looks like
+    // without writing the projection first.
+    ...(p.forecast && { forecast: p.forecast }),
   };
 }
 
@@ -462,8 +530,21 @@ class SalesGuaranteedAdapter implements DecisioningPlatform<Record<string, never
       // production maps to a relevance ranker. The mock returns the full
       // product catalog; we pull guaranteed products to match the
       // sales-guaranteed specialism's value proposition.
-      const guaranteed = await upstream.listProducts(networkCode, 'guaranteed');
-      void req;
+      //
+      // When the buyer provides structured filters (flight dates, budget),
+      // forward them so each product comes back with a per-query
+      // DeliveryForecast — a single upstream round-trip surfaces both the
+      // catalog and the forecast curve. SWAP: production GAM splits this
+      // into `inventoryService` (catalog) + `forecastService.getDeliveryForecast`
+      // (per-product forecast). Use the discrete `getForecast` below if
+      // your backend can't fold forecast into the catalog response.
+      const briefBudget = (req.filters?.budget_range as { max?: number } | undefined)?.max;
+      const guaranteed = await upstream.listProducts(networkCode, {
+        deliveryType: 'guaranteed',
+        ...(req.filters?.start_date && { flightStart: req.filters.start_date }),
+        ...(req.filters?.end_date && { flightEnd: req.filters.end_date }),
+        ...(briefBudget !== undefined && { budget: briefBudget }),
+      });
       return { products: guaranteed.map(p => projectProduct(p, publisherDomain)) };
     },
 

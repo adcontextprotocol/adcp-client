@@ -989,9 +989,11 @@ function parsePositiveNumber(raw: string | null | undefined): number | undefined
 
 function parseDateParam(raw: string | null | undefined): string | undefined {
   if (!raw) return undefined;
-  // OpenAPI declares `format: date` (YYYY-MM-DD). Accept anything Date can
-  // parse so callers that pass full ISO strings don't fail; reject obvious
-  // garbage so a `?flight_start=lol` doesn't poison the seed.
+  // OpenAPI declares `format: date` (YYYY-MM-DD). Tighten beyond `Date.parse`
+  // so `?flight_start=2026` (which Date.parse accepts as Jan 1) doesn't hash
+  // to a different seed than `?flight_start=2026-01-01`. Storyboards that
+  // mix abbreviated and full dates would otherwise produce unstable forecasts.
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(raw)) return undefined;
   return Number.isFinite(Date.parse(raw)) ? raw : undefined;
 }
 
