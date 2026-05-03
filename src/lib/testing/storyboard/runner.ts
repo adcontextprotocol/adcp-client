@@ -3225,7 +3225,17 @@ export function applyBrandInvariant(
       const acct = existingAccount as Record<string, unknown>;
       const isNaturalKeyVariant = 'brand' in acct || 'operator' in acct;
       if (isNaturalKeyVariant) {
-        result.account = { ...acct, brand };
+        const merged: Record<string, unknown> = { ...acct, brand };
+        // The natural-key arm of AccountReference requires `operator` (per
+        // schemas/cache/{version}/core/account-ref.json). A fixture or earlier
+        // context-extraction step that produced `{brand, sandbox}` without
+        // operator would otherwise be passed through and rejected by a
+        // strict-validating seller. Default operator to brand.domain — same
+        // convention `resolveAccount` uses for synthetic refs.
+        if (typeof merged.operator !== 'string' && typeof brand.domain === 'string') {
+          merged.operator = brand.domain;
+        }
+        result.account = merged;
       }
     }
   } else if (topAccountOk) {
