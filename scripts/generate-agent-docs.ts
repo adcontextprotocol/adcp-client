@@ -503,6 +503,9 @@ function generateLlmsTxt(
   ln(`> Library: @adcp/sdk v${version}`);
   ln(`> AdCP major version: 3`);
   ln(`> Canonical URL: ${DOCS_BASE_URL}/llms.txt`);
+  ln(
+    `> Note: the \`Library\` stamp reflects the package.json version at doc-generation time. The narrative below describes the surface that lands on the next-published minor — including any 6.7 helpers documented here ahead of the release tag.`
+  );
   ln();
   ln(`## What is AdCP`);
   ln();

@@ -194,7 +194,7 @@ import express from 'express';
 import { serve } from '@adcp/sdk';
 import { createAdcpServerFromPlatform, createA2AAdapter } from '@adcp/sdk/server';
 
-const adcp = createAdcpServerFromPlatform(platform, { name: 'Acme SSP', version: '1.0.0' });
+const adcp = createAdcpServerFromPlatform(platform, { name: 'My SSP', version: '1.0.0' });
 
 // MCP (as today)
 serve(() => adcp);
@@ -203,11 +203,11 @@ serve(() => adcp);
 const a2a = createA2AAdapter({
   server: adcp,
   agentCard: {
-    name: 'Acme SSP',
+    name: 'My SSP',
     description: 'Guaranteed + non-guaranteed display inventory',
-    url: 'https://ssp.acme.com/a2a',
+    url: 'https://ssp.example.com/a2a',
     version: '1.0.0',
-    provider: { organization: 'Acme', url: 'https://acme.com' },
+    provider: { organization: 'My Org', url: 'https://my-org.example' },
     securitySchemes: { bearer: { type: 'http', scheme: 'bearer' } },
   },
   async authenticate(req) {
@@ -541,7 +541,7 @@ See [SIGNING-GUIDE.md](./SIGNING-GUIDE.md) for the full walkthrough: key generat
 
 ### createTaskCapableServer (Low-Level)
 
-For advanced cases where you need direct control over MCP tool registration, schema wiring, and response formatting. `createAdcpServer` uses this internally.
+For advanced cases where you need direct control over MCP tool registration, schema wiring, and response formatting. `createAdcpServer` (the legacy v5 substrate) uses this internally; `createAdcpServerFromPlatform` calls into `createAdcpServer`.
 
 ```typescript
 import { createTaskCapableServer, taskToolResponse, GetSignalsRequestSchema } from '@adcp/sdk';
@@ -585,10 +585,13 @@ return wrapEnvelope(
 
 ### Response Builders
 
-With `createAdcpServer`, response builders are applied automatically — return raw data and the framework wraps it. If you need manual control (e.g., with `createTaskCapableServer`), builders are available:
+With `createAdcpServerFromPlatform` (and the legacy `createAdcpServer` substrate), response builders are applied automatically — return raw data and the framework wraps it. If you need manual control (e.g., with `createTaskCapableServer`), builders are available:
 
 ```typescript
-import { productsResponse, mediaBuyResponse, deliveryResponse, adcpError, taskToolResponse } from '@adcp/sdk';
+import { productsResponse, mediaBuyResponse, deliveryResponse, taskToolResponse } from '@adcp/sdk';
+// For error envelopes, throw a typed error class (recipe #6 in the 6.6→6.7 migration doc)
+// — `AuthRequiredError`, `PermissionDeniedError`, `RateLimitedError`, etc. — instead of
+// returning the legacy `adcpError(code, ...)` envelope from the v5 substrate.
 ```
 
 ### Task Statuses (Server-Side Contract)
@@ -603,7 +606,7 @@ When your agent receives a tool call, it returns one of these statuses. The buye
 | `input_required` | Need clarification from buyer | Fires buyer's `InputHandler` callback with the question |
 | `deferred` | Requires human decision | Returns a token; human resumes later via `result.deferred.resume()` |
 
-With `createAdcpServer`, synchronous handlers return raw data and the framework sets `completed` automatically. With `createTaskCapableServer`, use `taskToolResponse()` explicitly.
+With `createAdcpServerFromPlatform` (or the legacy `createAdcpServer`), synchronous handlers return raw data and the framework sets `completed` automatically. With `createTaskCapableServer`, use `taskToolResponse()` explicitly.
 
 For async tools that need background processing, use `registerAdcpTaskTool()`:
 
@@ -775,7 +778,7 @@ See [`examples/signals-agent.ts`](../../examples/signals-agent.ts) for a complet
 See [`examples/error-compliant-server.ts`](../../examples/error-compliant-server.ts) for a media buy agent demonstrating:
 
 - Multiple tools (`get_products`, `create_media_buy`, `get_media_buy_delivery`)
-- Structured error handling with `adcpError()`
+- Structured error handling (the example uses the v5 `adcpError(...)` return-value form; v6 adopters throw the typed error classes from `@adcp/sdk/server` — `AuthRequiredError`, `RateLimitedError`, etc. — see § "Returning errors from handlers")
 - Rate limiting
 - Business logic validation
 

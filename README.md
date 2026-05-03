@@ -279,13 +279,7 @@ Building a server that receives AdCP tool calls? **v6 (recommended for new agent
 
 ```typescript
 import { serve } from '@adcp/sdk';
-import {
-  createAdcpServerFromPlatform,
-  definePlatform,
-  defineSalesCorePlatform,
-  refAccountId,
-  AuthRequiredError,
-} from '@adcp/sdk/server';
+import { createAdcpServerFromPlatform, definePlatform, defineSalesCorePlatform, refAccountId } from '@adcp/sdk/server';
 
 const platform = definePlatform({
   capabilities: {
@@ -296,7 +290,7 @@ const platform = definePlatform({
   accounts: {
     resolve: async (ref, ctx) => {
       const id = refAccountId(ref);
-      if (!id) throw new AuthRequiredError();
+      if (!id) return null; // → ACCOUNT_NOT_FOUND
       return db.findAccount(id, ctx);
     },
   },
@@ -308,10 +302,10 @@ const platform = definePlatform({
       confirmed_at: new Date().toISOString(),
       packages: [],
     }),
-    updateMediaBuy: async (id, req, ctx) => ({ media_buy_id: id, status: 'active' }),
+    updateMediaBuy: async (id, patch, ctx) => ({ media_buy_id: id, status: 'active' }),
     getMediaBuyDelivery: async (req, ctx) => ({
       currency: 'USD',
-      reporting_period: { start: '...', end: '...' },
+      reporting_period: { start: '2026-05-01T00:00:00Z', end: '2026-05-31T23:59:59Z' },
       media_buy_deliveries: [],
     }),
     getMediaBuys: async (req, ctx) => ({ media_buys: [] }),
@@ -347,7 +341,7 @@ function handleCreateMediaBuy(rawParams: unknown): CreateMediaBuyResponse {
 }
 ```
 
-Migration path from 6.6 → 6.7: see [`docs/migration-6.6-to-6.7.md`](docs/migration-6.6-to-6.7.md) (fifteen recipes, two breaking — `'implicit'` enforces inline-`account_id` refusal, `SalesPlatform` split into core + ingestion). 5.x → 6.x: [`docs/migration-5.x-to-6.x.md`](docs/migration-5.x-to-6.x.md). Note: `PackageRequest` (creation-shaped, required fields) differs from `Package` (response-shaped). See the [type catalog](docs/ZOD-SCHEMAS.md#type-catalog) for all request types and their required fields.
+Migration path from 6.6 → 6.7: see [`docs/migration-6.6-to-6.7.md`](docs/migration-6.6-to-6.7.md) (fifteen recipes, two breaking — `'implicit'`-resolution platforms now actually enforce the inline-`account_id` refusal the docstring has long claimed (pre-6.7 it was silent-pass, so audit your callers); `SalesPlatform` split into `SalesCorePlatform & SalesIngestionPlatform`). 5.x → 6.x: [`docs/migration-5.x-to-6.x.md`](docs/migration-5.x-to-6.x.md). Note: `PackageRequest` (creation-shaped, required fields) differs from `Package` (response-shaped). See the [type catalog](docs/ZOD-SCHEMAS.md#type-catalog) for all request types and their required fields.
 
 ## Multi-Agent Operations
 
