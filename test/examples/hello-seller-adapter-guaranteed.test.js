@@ -4,21 +4,13 @@
  * Three independent assertions via the shared helper. The adapter wires
  * `comply_test_controller` so cascade scenarios under `media_buy_seller/*`
  * (driven by `requires_scenarios` in the storyboard yaml) get the
- * controller-driven setup they need. Two remaining failures are filtered
- * out here — each maps to a tracked upstream-fixture follow-up:
+ * controller-driven setup they need. One remaining failure is filtered
+ * out here, mapped to a tracked upstream-fixture follow-up:
  *
- *   - #1415 (targeting_overlay echo on get_media_buys — fixture-side: every
- *     step in the storyboard needs `account.sandbox: true` so the create and
- *     get steps resolve to the same namespace in the adapter's synthesis
- *     branch. SDK-side coverage shipped via createMediaBuyStore + framework
- *     auto-echo, PR #1424.)
  *   - #1417 (HITL media_buy_id capture — fixture-side: upstream
  *     sales_guaranteed storyboard uses `path: media_buy_id` instead of the
  *     `task_completion.media_buy_id` prefix the runner now supports per
  *     PR #1426.)
- *
- * #1416 (NOT_CANCELLABLE state machine) closed in this same PR — adapter
- * now wires `assertMediaBuyTransition` against a local per-buy status tracker.
  *
  * Drop the corresponding entry from `EXPECTED_FAILURES` when each upstream
  * fixture lands. The helper enforces that every entry in the allowlist
@@ -50,18 +42,6 @@ const EXPECTED_FAILURES = [
       'HITL completion-artifact capture — SDK runner now supports `task_completion.<path>` ' +
       'context_outputs (PR #1426), but the upstream sales_guaranteed storyboard fixture in ' +
       'adcontextprotocol/adcp still uses bare `path: media_buy_id`. Fixture migration is upstream.',
-  },
-  {
-    storyboard_id: 'media_buy_seller/inventory_list_targeting',
-    step_id: 'get_after_create',
-    issue: 'adcp-client#1415',
-    reason:
-      'targeting_overlay echo on get_media_buys — SDK ships createMediaBuyStore + framework ' +
-      'auto-echo (PR #1424) and the Hello adapter wires it. Storyboard still fails because the ' +
-      "create step's account ref (synthesized by the runner with `sandbox: true`) and the get " +
-      "step's account ref (passed through from sample_request without `sandbox`) resolve to " +
-      "different sandbox-vs-prod namespaces in the adapter's synthesis-branch resolver. " +
-      "Fixture migration upstream (every step's account carries `sandbox: true`) closes it.",
   },
 ];
 
