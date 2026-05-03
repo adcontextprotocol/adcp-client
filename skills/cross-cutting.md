@@ -81,4 +81,4 @@ Async tasks (creative review, IO approval, signal activation, plan outcome repor
 
 ## Spec reference
 
-For exact response shapes, error codes, optional fields, and discriminated unions: `docs/llms.txt` (single-fetch full protocol overview) or `schemas/cache/3.0.5/bundled/<protocol>/`. Don't read the generated TypeScript types — they exist for compile-time enforcement, not for teaching you the shape.
+For exact response shapes, error codes, optional fields, and discriminated unions: `docs/llms.txt` (single-fetch full protocol overview) or `schemas/cache/3.0.6/bundled/<protocol>/`. Don't read the generated TypeScript types — they exist for compile-time enforcement, not for teaching you the shape.

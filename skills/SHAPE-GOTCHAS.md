@@ -217,7 +217,7 @@ The `examples/hello_seller_adapter_social.ts` reference adapter codifies all thr
 
 ## 7. `signal_type`: `marketplace` vs `owned` vs `custom`
 
-`signal_type` is the catalog-type discriminator on every `Signal` returned from `get_signals`. It's a closed enum (`marketplace | custom | owned` per `schemas/cache/3.0.5/enums/signal-catalog-type.json`) and adopters consistently mis-pick because the spec descriptions read like overlapping concepts.
+`signal_type` is the catalog-type discriminator on every `Signal` returned from `get_signals`. It's a closed enum (`marketplace | custom | owned` per `schemas/cache/3.0.6/enums/signal-catalog-type.json`) and adopters consistently mis-pick because the spec descriptions read like overlapping concepts.
 
 The spec definitions:
 

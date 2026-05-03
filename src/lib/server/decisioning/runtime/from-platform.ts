@@ -1451,7 +1451,7 @@ export function createAdcpServerFromPlatform<P extends DecisioningPlatform<any, 
       // supported escape hatch.
       //
       // Schema is the full canonical `AccountReference` per
-      // `schemas/cache/3.0.5/core/account-ref.json`: oneOf
+      // `schemas/cache/3.0.6/core/account-ref.json`: oneOf
       //   { account_id }                       — explicit accounts
       //   { brand, operator, sandbox? }        — implicit accounts
       // Modeled here as a single object with all four fields optional so
