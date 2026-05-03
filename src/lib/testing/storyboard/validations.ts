@@ -2498,15 +2498,26 @@ function filterByEndpointPattern(calls: RecordedCall[], pattern: string | undefi
 /**
  * Returns whether at least one matched call's payload satisfies the
  * `payload_must_contain` predicate, plus a flag indicating the assertion
- * graded `not_applicable` (every matched call was non-JSON and the spec
- * required JSONPath path-based matching). Per spec PR adcp#3816:
+ * graded `not_applicable` (every matched call was non-JSON; path-based
+ * matching has no portable semantics on non-JSON wire formats).
+ *
+ * Per spec PRs adcp#3816 (initial JSONPath restriction) and adcp#3987
+ * (closes the substring-fallback ambiguity #3845):
+ *
  *   - JSONPath path-based matching is valid ONLY when `content_type` is
- *     `application/json` or `*+json`.
- *   - Non-JSON calls + `match: present`: substring fallback. The terminal
- *     identifier segment of the path is the substring searched against the
- *     raw payload string (e.g. `users[*].hashed_email` → `hashed_email`).
- *   - Non-JSON calls + `match: equals` / `contains_any`: skipped (cannot
- *     resolve a path-based equality without a structured payload).
+ *     `application/json` or `*\/*+json` (RFC 6839 §3.1 structured-syntax
+ *     suffix).
+ *   - Non-JSON calls + ANY match mode (`present` / `equals` /
+ *     `contains_any`): grade `not_applicable`. Earlier sketches downgraded
+ *     `match: present` to a terminal-key substring search of the raw
+ *     payload — that heuristic created false positives (a payload
+ *     mentioning the key name in any context — URL fragment, comment,
+ *     unrelated metadata field — would pass), exactly the kind of
+ *     loophole the anti-façade contract exists to close. Storyboards
+ *     needing a non-JSON value-carried signal use `identifier_paths`
+ *     instead — substring-searches storyboard-supplied VALUES (not
+ *     path-derived strings), encoding-agnostic, no false-positive
+ *     surface.
  *
  * Path syntax is dotted-with-`[*]` only; RFC 9535 descendant operator
  * (`$..foo`) is explicitly NOT supported per the storyboard-schema patch.
@@ -2518,48 +2529,22 @@ function anyMatchedCallSatisfies(
   let sawApplicableCall = false;
   for (const call of calls) {
     const isJson = isJsonContentType(call.content_type);
+    // All match modes require a structured-JSON payload — non-JSON calls
+    // don't contribute regardless of mode (adcp#3987).
+    if (!isJson) continue;
+    sawApplicableCall = true;
+    const candidates = resolveJsonPathLite(call.payload, spec.path);
+    if (candidates.length === 0) continue;
     if (spec.match === 'present') {
-      // present is applicable to every call — JSON via path, non-JSON via
-      // substring fallback. Either way, the assertion can be graded.
-      sawApplicableCall = true;
-      if (isJson) {
-        const candidates = resolveJsonPathLite(call.payload, spec.path);
-        if (candidates.length > 0) return { satisfied: true, not_applicable: false };
-      } else {
-        const raw = typeof call.payload === 'string' ? call.payload : JSON.stringify(call.payload);
-        const needle = terminalPathKey(spec.path);
-        if (needle && raw.includes(needle)) return { satisfied: true, not_applicable: false };
-      }
-    } else {
-      // equals / contains_any require JSON — non-JSON calls don't contribute.
-      if (!isJson) continue;
-      sawApplicableCall = true;
-      const candidates = resolveJsonPathLite(call.payload, spec.path);
-      if (candidates.length === 0) continue;
-      if (spec.match === 'equals') {
-        if (candidates.some(v => deepEqual(v, spec.value))) return { satisfied: true, not_applicable: false };
-      } else if (spec.match === 'contains_any') {
-        const allowed = spec.allowed_values ?? [];
-        if (candidates.some(v => allowed.some(a => deepEqual(v, a)))) return { satisfied: true, not_applicable: false };
-      }
+      return { satisfied: true, not_applicable: false };
+    } else if (spec.match === 'equals') {
+      if (candidates.some(v => deepEqual(v, spec.value))) return { satisfied: true, not_applicable: false };
+    } else if (spec.match === 'contains_any') {
+      const allowed = spec.allowed_values ?? [];
+      if (candidates.some(v => allowed.some(a => deepEqual(v, a)))) return { satisfied: true, not_applicable: false };
     }
   }
   return { satisfied: false, not_applicable: !sawApplicableCall };
-}
-
-/**
- * Extract the terminal identifier-shaped segment of a dotted-with-`[*]`
- * path. Used as the substring-fallback needle when a non-JSON payload is
- * graded against `match: present`. Returns null if the path has no
- * alpha-leading terminal token.
- */
-function terminalPathKey(path: string): string | null {
-  const tokens = path.split(/[.\[\]]/).filter(Boolean);
-  for (let i = tokens.length - 1; i >= 0; i--) {
-    const t = tokens[i]!;
-    if (/^[A-Za-z_][A-Za-z0-9_]*$/.test(t)) return t;
-  }
-  return null;
 }
 
 /**
