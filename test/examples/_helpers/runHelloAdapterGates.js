@@ -3,6 +3,12 @@
  * reference adapters. Each adapter test file passes its config and the
  * helper registers the three gates (strict tsc / storyboard / façade).
  *
+ * **Contract**: `docs/guides/EXAMPLE-TEST-CONTRACT.md` documents what each
+ * gate catches, the adversarial-sabotage validation pattern (when to add
+ * a fourth gate, how to confirm gate independence), and the acceptance
+ * criteria new adapters must meet. Read it before adding a new adapter
+ * test or modifying this helper.
+ *
  * Adversarial-sabotage validated: each gate fires for a distinct
  * regression class. See PR #1274 for the original rationale.
  */

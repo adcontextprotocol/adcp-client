@@ -233,6 +233,60 @@ We love feature requests! Please:
 
 Use our [feature request template](https://github.com/adcontextprotocol/adcp-client/issues/new?template=feature_request.md).
 
+## Adding a new specialism
+
+When introducing support for a new AdCP specialism (`governance-spend-authority`, `brand-rights`, an additional `sales-*` variant, etc.), follow this order. **Worked example first; skill prose last.** Reverses the obvious order on purpose: skill prose written before a worked example tends to drift as the spec evolves; pattern-from-example doesn't, because the test gates fail.
+
+### 1. Mock-server with deterministic-seeded fixtures
+
+Add `src/lib/mock-server/<specialism>/`:
+- `server.ts` — boots an HTTP server that mirrors a real upstream's wire shape (GAM-shape for guaranteed, walled-garden CAPI-shape for social, etc.).
+- `seed-data.ts` — fixture state. Seeds must be **deterministic** so storyboard replay is stable. Brand names in seed data MUST be fictional (`acme-outdoor.example`, NOT `tiktok_test_*`).
+- Per-route traffic counters at `/_debug/traffic` for the façade gate.
+
+Wire into `src/lib/mock-server/index.ts` `bootMockServer({specialism})`.
+
+### 2. Worked reference adapter
+
+`examples/hello_<role>_adapter_<specialism>.ts` — where `<role>` is the AdCP protocol layer (`seller` for `media-buy`, `creative` for `creative`, `signals` for `signals`, `governance` for `governance`, `brand` for `brand`) and `<specialism>` is the part of the specialism name AFTER the role-implied prefix (so `creative-template` → `_template`, `sales-guaranteed` → `_guaranteed`).
+
+The adapter:
+- Wraps the mock-server upstream via `createUpstreamHttpClient`.
+- Implements the typed platform interface(s) for the specialism (per `RequiredPlatformsFor<S>`).
+- Marks every upstream call with a `// SWAP:` comment — the seam adopters replace.
+- Includes a `FORK CHECKLIST` header block before the imports listing the unmarked-but-load-bearing constants (`KNOWN_PUBLISHERS`, hardcoded thresholds, default workspace IDs, port numbers) adopters must change.
+- Demonstrates the planning surface where applicable — `Product.forecast`, `audience_match`, etc. Worked examples that only exercise CRUD are weaker fork-targets.
+
+### 3. Three-gate CI test
+
+`test/examples/hello-<role>-adapter-<specialism>.test.js` using the `runHelloAdapterGates()` helper from `test/examples/_helpers/`.
+
+Three gates per [`docs/guides/EXAMPLE-TEST-CONTRACT.md`](docs/guides/EXAMPLE-TEST-CONTRACT.md):
+1. **Strict tsc** — `--strict --noUncheckedIndexedAccess --exactOptionalPropertyTypes --noPropertyAccessFromIndexSignature` + 2 other hardening flags.
+2. **Storyboard runner** — zero failed steps against the published storyboard.
+3. **Façade gate** — every expected upstream route shows ≥1 hit at `/_debug/traffic` after the run.
+
+Each gate fires for a distinct regression class. **Adversarially validate** by sabotaging one method (e.g. `cohorts: []` instead of `await upstream.listCohorts(…)`) and confirming the right gate fails — gate 1 catches type errors, gate 2 catches AdCP wire-shape regressions, gate 3 catches "wired the surface but didn't call upstream" façade regressions.
+
+### 4. Skill update — fork-target pointer, NOT inline pattern
+
+Update the per-specialism skill file (`skills/build-<role>-agent/SKILL.md` or `skills/build-<role>-agent/specialisms/<specialism>.md`) to:
+- Open with a "**Fork target**: `examples/hello_<role>_adapter_<specialism>.ts`" pointer.
+- Cover only this-specialism deltas: what's different from the role's baseline, which `RequiredPlatformsFor<S>` slot it fills, this-specialism storyboard's specific assertions.
+- NOT teach the wire pattern inline. The example does that.
+
+### 5. Add to the fork-target map + composition guide
+
+- `examples/README.md` use-case → fork-target table gets a new row.
+- `CLAUDE.md` `Specialism → Skill Index` table gets a new row.
+- If the specialism is canonically claimed alongside others (e.g. `audience-sync` is often part of a `sales-social` bundle), update the multi-specialism composition guide.
+
+### 6. Aspirational entrypoint in hello-cluster (optional)
+
+If the specialism gets its own runnable example, add an entry to `examples/hello-cluster.ts` so the `npm run hello-cluster` orchestrator can boot it alongside other adapters.
+
+---
+
 ## API Design Principles
 
 When contributing to the library API:
