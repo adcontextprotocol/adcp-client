@@ -85,26 +85,27 @@ export function isLegalCreativeTransition(from: CreativeStatus, to: CreativeStat
  * Throws an `AdcpError` with the spec-correct error code for an illegal
  * `MediaBuyStatus` transition.
  *
- * Code selection mirrors the storyboard's expectations:
- *   - `canceled → canceled`: `NOT_CANCELLABLE`. The schema reserves this
- *     code for the cancellation idempotency path (buyer cancels twice;
- *     the second call is the duplicate). See
- *     `compliance/cache/<version>/protocols/media-buy/state-machine.yaml`
- *     and `invalid_transitions.yaml`.
- *   - Anything else: `INVALID_STATE`. This includes other terminal-state
- *     escapes (`canceled → paused`, `completed → active`, etc.) — those
- *     are illegal lifecycle moves, not idempotent cancellations, so
- *     `NOT_CANCELLABLE` is the wrong code. `INVALID_STATE` is the
- *     spec-defined catch-all for "request well-formed, current resource
- *     state forbids it."
+ * Code selection per `compliance/cache/<version>/protocols/media-buy/state-machine.yaml`:
+ * _"The cancellation-specific code takes precedence over the generic
+ * INVALID_STATE when the attempted action is cancel; non-cancel actions
+ * targeting or out of terminal states still return INVALID_STATE."_
  *
- * Both codes carry `recovery: 'terminal'` per `STANDARD_ERROR_CODES`.
+ *   - Any illegal transition where `to === 'canceled'` (i.e. the buyer was
+ *     attempting a cancel that the current state forbids — `completed →
+ *     canceled`, `rejected → canceled`, the double-cancel idempotency
+ *     `canceled → canceled`): `NOT_CANCELLABLE`.
+ *   - Any other illegal edge (terminal-state escapes like `canceled →
+ *     paused`, `completed → active`, lifecycle skips): `INVALID_STATE`.
+ *
+ * Both codes carry `recovery: 'correctable'` per the manifest in
+ * `STANDARD_ERROR_CODES` — the buyer can adjust their request (re-fetch
+ * current state, choose a different action) rather than escalating.
  */
 export function assertMediaBuyTransition(from: MediaBuyStatus, to: MediaBuyStatus): void {
   if (isLegalMediaBuyTransition(from, to)) return;
-  if (from === 'canceled' && to === 'canceled') {
+  if (to === 'canceled') {
     throw new AdcpError('NOT_CANCELLABLE', {
-      message: 'Media buy is already canceled; canceled is terminal.',
+      message: `Media buy in ${from} state cannot be canceled.`,
       field: 'status',
     });
   }

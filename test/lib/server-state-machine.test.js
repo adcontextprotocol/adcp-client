@@ -20,14 +20,18 @@ describe('server/state-machine exports', () => {
     assert.strictEqual(typeof sdk.assertCreativeTransition, 'function');
   });
 
-  test('graph is the same object the runner imports', () => {
-    // `default-invariants.ts` wraps these maps inside `TransitionGraph`.
-    // Identity check defends against accidental copy-paste regressions
-    // that would cause production sellers and the runner to drift.
+  test('terminals are correctly declared with no outbound edges', () => {
     const { MEDIA_BUY_TRANSITIONS } = sdk;
     assert.strictEqual(MEDIA_BUY_TRANSITIONS.get('canceled').size, 0, 'canceled is terminal');
     assert.strictEqual(MEDIA_BUY_TRANSITIONS.get('completed').size, 0, 'completed is terminal');
     assert.strictEqual(MEDIA_BUY_TRANSITIONS.get('rejected').size, 0, 'rejected is terminal');
+  });
+
+  test('isLegalMediaBuyTransition tolerates non-enum string inputs', () => {
+    // Confirms the `?? false` branch — predicate must not throw on
+    // unexpected upstream status strings.
+    assert.strictEqual(sdk.isLegalMediaBuyTransition('garbage', 'active'), false);
+    assert.strictEqual(sdk.isLegalMediaBuyTransition('active', 'garbage'), false);
   });
 });
 
@@ -75,7 +79,32 @@ describe('assertMediaBuyTransition', () => {
     assert.strictEqual(caught.field, 'status');
   });
 
-  test('canceled → paused (terminal escape, NOT cancel-idempotency) throws INVALID_STATE', () => {
+  test('completed → canceled throws NOT_CANCELLABLE (cancel-from-terminal)', () => {
+    // Per compliance/cache/<version>/protocols/media-buy/state-machine.yaml:
+    // "The cancellation-specific code takes precedence over INVALID_STATE
+    // when the attempted action is cancel."
+    let caught;
+    try {
+      assertMediaBuyTransition('completed', 'canceled');
+    } catch (err) {
+      caught = err;
+    }
+    assert.ok(caught, 'expected to throw');
+    assert.strictEqual(caught.code, 'NOT_CANCELLABLE');
+  });
+
+  test('rejected → canceled throws NOT_CANCELLABLE (cancel-from-terminal)', () => {
+    let caught;
+    try {
+      assertMediaBuyTransition('rejected', 'canceled');
+    } catch (err) {
+      caught = err;
+    }
+    assert.ok(caught, 'expected to throw');
+    assert.strictEqual(caught.code, 'NOT_CANCELLABLE');
+  });
+
+  test('canceled → paused (terminal escape, NOT cancel-attempt) throws INVALID_STATE', () => {
     // Storyboard prose specifically reserves NOT_CANCELLABLE for the
     // double-cancel idempotency case. Other illegal moves out of `canceled`
     // are normal terminal-state escapes — INVALID_STATE.
