@@ -71,6 +71,7 @@ export interface CreateMediaBuyResultForStore {
   packages?: Array<{
     package_id?: string;
     buyer_ref?: string;
+    targeting_overlay?: TargetingOverlay;
   }>;
 }
 
@@ -188,7 +189,7 @@ export function createMediaBuyStore(options: CreateMediaBuyStoreOptions): MediaB
 
         persistedPackages.push({
           package_id: packageId,
-          targeting_overlay: reqPkg.targeting_overlay,
+          targeting_overlay: respPkg?.targeting_overlay ?? reqPkg.targeting_overlay,
         });
       }
 
