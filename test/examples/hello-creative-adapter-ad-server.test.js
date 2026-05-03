@@ -13,6 +13,13 @@ const { runHelloAdapterGates } = require('./_helpers/runHelloAdapterGates');
 
 const REPO_ROOT = path.resolve(__dirname, '..', '..');
 
+// Enable the mock server's TEST-ONLY `creative_id` override path so the
+// storyboard's `controller_seeding: true` fixtures land under the declared
+// alias (`campaign_hero_video`, etc.). Default-off; without this env the
+// mock generates a fresh server id and the storyboard fails (loud — not
+// silent — by design).
+process.env.MOCK_ALLOW_CREATIVE_ID_OVERRIDE = '1';
+
 runHelloAdapterGates({
   suiteName: 'examples/hello_creative_adapter_ad_server',
   exampleFile: path.join(REPO_ROOT, 'examples', 'hello_creative_adapter_ad_server.ts'),

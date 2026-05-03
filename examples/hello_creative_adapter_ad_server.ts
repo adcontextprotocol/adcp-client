@@ -329,6 +329,11 @@ function projectCreative(c: UpstreamCreative): CreativeAsset {
         click_url: { asset_type: 'url', url: c.click_url },
       }),
     },
+    // CAST: schema-pickiness — `CreativeAsset` requires `assets` keys to
+    // satisfy the discriminated `AssetVariant` union. The `html` and `url`
+    // variants we emit ARE valid (asset_type: 'html' + content; asset_type:
+    // 'url' + url), but TS's structural inference can't prove it through
+    // the spread. Adopters who project richer asset graphs can drop the cast.
   } as unknown as CreativeAsset;
 }
 
@@ -368,10 +373,15 @@ class CreativeAdServerAdapter implements DecisioningPlatform<Record<string, neve
         };
       }
       if ('account_id' in ref) {
-        // Production: persist `account_id → network_code` during sync_accounts
-        // and serve account_id lookups from there. The worked example routes
-        // any account_id to the ACME sandbox network so storyboard scenarios
-        // that reference seeded ids (`acct_acme_creative`) resolve cleanly.
+        // ─── TEST-ONLY: opaque account_id → sandbox network ─────────────
+        // DELETE BEFORE DEPLOYING. The storyboard runner sends
+        // `account: { account_id: 'acct_acme_creative' }` for cascade
+        // scenarios; we route any account_id to the ACME sandbox network
+        // and stamp `mode: 'sandbox'` so the framework's comply gate
+        // admits the seeder. Production sellers replace this with a real
+        // `account_id → network_code` directory persisted from
+        // `sync_accounts`, and MUST NOT stamp `mode: 'sandbox'` — that
+        // flag exists exclusively for sandboxed test traffic.
         const network = await upstream.lookupNetwork('acmeoutdoor.example');
         if (!network) return null;
         return {
@@ -382,6 +392,7 @@ class CreativeAdServerAdapter implements DecisioningPlatform<Record<string, neve
           brand: { domain: network.adcp_publisher },
           ctx_metadata: { network_code: network.network_code, publisher_domain: network.adcp_publisher },
         };
+        // ─── /TEST-ONLY ──────────────────────────────────────────────────
       }
 
       // ─── TEST-ONLY: cascade-scenario sandbox-arm ─────────────────────
@@ -488,6 +499,8 @@ class CreativeAdServerAdapter implements DecisioningPlatform<Record<string, neve
             tag: { asset_type: 'html', content: rendered.tag_html },
           },
         },
+        // CAST: oneOf-emitter — picking variant 0 (single creative_manifest)
+        // of the BuildCreativeResponse oneOf. Adopters keep this cast.
       } as unknown as BuildCreativeSuccess;
     },
 
@@ -537,6 +550,9 @@ class CreativeAdServerAdapter implements DecisioningPlatform<Record<string, neve
           },
         ],
         expires_at: new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString(),
+        // CAST: oneOf-emitter — picking the `single` discriminator branch
+        // of the PreviewCreativeResponse 3-way union (single | batch | variant).
+        // See SHAPE-GOTCHAS §4. Adopters keep this cast.
       } as unknown as PreviewCreativeResponse;
     },
 
@@ -613,8 +629,12 @@ class CreativeAdServerAdapter implements DecisioningPlatform<Record<string, neve
         ...(cursor && { cursor }),
         ...(limit !== undefined && { limit }),
       });
-      // The platform interface uses `tools.generated.ListCreativesResponse`
-      // which carries `query_summary` + `pagination` + `creatives` keys.
+      // CAST: schema-drift — `@adcp/sdk/types`'s `ListCreativesResponse`
+      // re-export resolves to `adcp.ts`'s legacy shape (no `query_summary`),
+      // while the platform interface requires `tools.generated`'s shape
+      // (with `query_summary` + `pagination`). The Awaited<ReturnType<>>
+      // dance pulls the platform-required type so both wire shapes stay
+      // schema-valid. Drop when codegen lands on a single canonical type.
       type R = Awaited<ReturnType<NonNullable<CreativeAdServerPlatform<NetworkMeta>['listCreatives']>>>;
       const projected = result.creatives.map(projectCreative);
       const response: R = {
@@ -636,7 +656,13 @@ class CreativeAdServerAdapter implements DecisioningPlatform<Record<string, neve
       const networkCode = ctx.account.ctx_metadata.network_code;
       // Multi-id pass-through per #1342 + #1410. `filter.creative_ids` arrays
       // must fan out per id; truncating to ids[0] is a correctness bug the
-      // framework dev-mode warns on.
+      // framework dev-mode warns on. When `creative_ids` is omitted, the
+      // buyer is asking for all creatives in scope — the worked example
+      // returns an empty rows list (no fan-out target) so the storyboard
+      // sees a valid response shape; production sellers with paginated
+      // libraries iterate ALL creatives in the network (potentially
+      // expensive — most platforms require an explicit `creative_ids`
+      // filter or `media_buy_ids` filter).
       const creativeIds = (req as { filter?: { creative_ids?: string[] } }).filter?.creative_ids ?? [];
       const start = (req as { reporting_period?: { start?: string } }).reporting_period?.start;
       const end = (req as { reporting_period?: { end?: string } }).reporting_period?.end;
@@ -652,17 +678,27 @@ class CreativeAdServerAdapter implements DecisioningPlatform<Record<string, neve
         })
       );
       const present = deliveries.filter((d): d is UpstreamDelivery => d !== null);
+      // Reporting-period aggregation: take min(start) / max(end) across rows
+      // so the response window covers all returned creatives. SWAP if your
+      // backend ships heterogeneous windows per creative (some platforms do
+      // — surface the per-creative window inside `creatives[i].reporting_period`).
+      const earliest = present
+        .map(d => d.reporting_period.start)
+        .reduce((a, b) => (a < b ? a : b), present[0]?.reporting_period.start ?? new Date().toISOString());
+      const latest = present
+        .map(d => d.reporting_period.end)
+        .reduce((a, b) => (a > b ? a : b), present[0]?.reporting_period.end ?? new Date().toISOString());
       return {
         currency: 'USD',
-        reporting_period: {
-          start: present[0]?.reporting_period.start ?? new Date().toISOString(),
-          end: present[0]?.reporting_period.end ?? new Date().toISOString(),
-        },
+        reporting_period: { start: earliest, end: latest },
         creatives: present.map(d => ({
           creative_id: d.creative_id,
           impressions: d.totals.impressions,
           clicks: d.totals.clicks,
         })),
+        // CAST: schema-drift — same `tools.generated` vs `adcp.ts` mismatch
+        // as `listCreatives` above. Drop when codegen converges. The wire
+        // shape is correct (currency + reporting_period + creatives[]).
       } as unknown as GetCreativeDeliveryResponse;
     },
   };
@@ -687,6 +723,15 @@ const idempotencyStore = createIdempotencyStore({ backend: memoryBackend(), ttlS
 // mock's POST /v1/creatives so the seeded creative is real in the library.
 // Production sellers ship without this — their library state is owned by
 // their UI / API ingestion, not the comply controller.
+//
+// Belt-and-suspenders: the framework gates `comply_test_controller` on
+// `account.mode === 'sandbox'` (#1435 phase 3), so this seeder only runs
+// when the buyer's request resolved to a sandbox-stamped account. The
+// upstream mock additionally requires `MOCK_ALLOW_CREATIVE_ID_OVERRIDE=1`
+// before honoring the `creative_id` field below — without that env, the
+// mock generates a fresh server-side id and the seeder's alias is dropped
+// (storyboard fails loudly, not silently). The compliance runner sets the
+// env via this adapter's process; production deploys never set it.
 async function seedCreativeOnUpstream(creativeId: string, fixture: Record<string, unknown>): Promise<void> {
   // Pick the first known network — storyboard fixtures aren't network-scoped,
   // so we route them to the default sandbox network.
@@ -701,11 +746,12 @@ async function seedCreativeOnUpstream(creativeId: string, fixture: Record<string
         fixture['format_id'] !== null &&
         typeof (fixture['format_id'] as { id?: string }).id === 'string'
           ? (fixture['format_id'] as { id: string }).id
-          : 'display_300x250',
+          : 'display_300x250', // fallback when fixture omits format_id; sandbox-test only
       client_request_id: creativeId,
-      // Pass the storyboard-declared id through — the mock allows this
-      // override on the TEST-ONLY path so cascade fixtures can reference
-      // creatives by alias instead of resolving server-assigned ids.
+      // Pass the storyboard-declared id through — the upstream mock honors
+      // it ONLY when `MOCK_ALLOW_CREATIVE_ID_OVERRIDE=1` is set in the
+      // mock's env. Production servers reject this field outright (the
+      // platform owns the id namespace).
       creative_id: creativeId,
     });
   } catch {

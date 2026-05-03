@@ -372,7 +372,31 @@ export async function bootCreativeAdServer(options: BootOptions): Promise<BootRe
     // seeders need to write under a known id so storyboard fixtures
     // can reference them by alias. Production sellers ship without this
     // override path.
-    const explicitCreativeId = typeof body.creative_id === 'string' ? body.creative_id : null;
+    //
+    // SECURITY GATES:
+    //   1. Env allowlist — `MOCK_ALLOW_CREATIVE_ID_OVERRIDE=1` is required.
+    //      Default-off prevents an adopter who forks this mock and points it
+    //      at a public host from accepting buyer-supplied ids. The compliance
+    //      runner sets it via the seeder env; production never does.
+    //   2. Cross-tenant collision check — if the id already exists on a
+    //      DIFFERENT network, refuse with 409. Without this, tenant B can
+    //      POST `creative_id: <tenant-A-id>` and overwrite tenant A's record;
+    //      reads stay network-gated but `/serve/{id}` is auth-free, so the
+    //      overwrite would be served as canonical.
+    const overrideAllowed =
+      typeof body.creative_id === 'string' && process.env['MOCK_ALLOW_CREATIVE_ID_OVERRIDE'] === '1';
+    const explicitCreativeId = overrideAllowed ? (body.creative_id as string) : null;
+    if (explicitCreativeId) {
+      const existing = creatives.get(explicitCreativeId);
+      if (existing && existing.network_code !== network.network_code) {
+        writeJson(res, 409, {
+          code: 'creative_id_conflict',
+          message: `creative_id ${explicitCreativeId} already exists on a different network; cannot overwrite cross-tenant.`,
+          field: 'creative_id',
+        });
+        return;
+      }
+    }
     const creativeId = explicitCreativeId ?? `cr_${randomUUID().replace(/-/g, '').slice(0, 16)}`;
     const now = new Date().toISOString();
     const cr: CreativeState = {
@@ -439,7 +463,12 @@ export async function bootCreativeAdServer(options: BootOptions): Promise<BootRe
       return;
     }
     const template = cr.snippet ?? format.snippet_template;
-    const substituted = substituteMacros(template, cr, format, ctx);
+    // POST /render returns substituted HTML in the response body; the buyer
+    // is expected to apply their own context (signed clickthroughs, viewability
+    // shims) before serving. Escape values defensively because the same
+    // bytes can land in a publisher's iframe via `tag_url` if the buyer
+    // skips the secondary binding step.
+    const substituted = substituteMacros(template, cr, format, ctx, true);
     const tagUrl = `${url}/serve/${encodeURIComponent(cr.creative_id)}?ctx=${encodeURIComponent(serializeCtx(ctx))}`;
     writeJson(res, 200, {
       creative_id: cr.creative_id,
@@ -480,7 +509,7 @@ export async function bootCreativeAdServer(options: BootOptions): Promise<BootRe
       const dateIso = dayStart.toISOString().slice(0, 10);
       const seedHex = sha256(`${cr.creative_id}::${dateIso}`).slice(0, 8);
       const seed = parseInt(seedHex, 16);
-      // Deterministic pseudo-random impressions in [10_000, 100_000).
+      // Deterministic pseudo-random impressions in [10_000, 100_000].
       const impressions = 10_000 + (seed % 90_001);
       const clicks = Math.round(impressions * ctrBaseline);
       breakdown.push({ date: dateIso, impressions, clicks });
@@ -553,11 +582,23 @@ function stripFingerprint(cr: CreativeState): MockCreative {
   return rest;
 }
 
+/** Substitute `{macro}` placeholders into the template.
+ *
+ *  When `htmlEscapeValues` is true, every macro value is HTML-escaped before
+ *  substitution. The raw-substitution path (htmlEscapeValues=false) returns
+ *  values verbatim — used by `POST /v1/creatives/{id}/render` callers who
+ *  apply their own context binding (signed clickthroughs, viewability shims).
+ *  The escape path is used by `GET /serve/{id}` because that endpoint emits
+ *  the substituted HTML directly to the browser with no caller intervention,
+ *  so caller-controlled `ctx` values (e.g. `click_url`) must NOT be able to
+ *  break out of attribute context and inject `<script>`.
+ */
 function substituteMacros(
   template: string,
   cr: CreativeState,
   format: MockFormat,
-  ctx: Record<string, unknown>
+  ctx: Record<string, unknown>,
+  htmlEscapeValues: boolean
 ): string {
   const click = typeof ctx['click_url'] === 'string' ? ctx['click_url'] : (cr.click_url ?? 'https://example.com/click');
   const assetUrl =
@@ -580,7 +621,11 @@ function substituteMacros(
     height: String(format.height ?? 0),
     duration_seconds: String(format.duration_seconds ?? 0),
   };
-  return template.replace(/\{(\w+)\}/g, (m, key: string) => macros[key] ?? m);
+  return template.replace(/\{(\w+)\}/g, (m, key: string) => {
+    const value = macros[key];
+    if (value === undefined) return m;
+    return htmlEscapeValues ? escapeHtml(value) : value;
+  });
 }
 
 function serializeCtx(ctx: Record<string, unknown>): string {
@@ -601,7 +646,11 @@ function renderServeHtml(cr: CreativeState, formats: MockFormat[], baseUrl: stri
     // best-effort — treat as empty ctx
   }
   const template = cr.snippet ?? format?.snippet_template ?? '';
-  const body = format ? substituteMacros(template, cr, format, ctx) : template;
+  // Escape macro values when rendering for the auth-free /serve endpoint.
+  // Caller-controlled `ctx` (click_url, impression_pixel, etc.) flows
+  // straight into attribute context; without escaping, a value like
+  // `"><script>...</script>` breaks out and executes under this origin.
+  const body = format ? substituteMacros(template, cr, format, ctx, true) : template;
   return `<!doctype html>
 <html><head><meta charset="utf-8"><title>${escapeHtml(cr.name)} — preview</title></head>
 <body style="margin:0;padding:0">
