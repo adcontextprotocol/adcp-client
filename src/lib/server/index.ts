@@ -408,3 +408,8 @@ export {
   defaultImplicitKeyFn,
   type ImplicitAccountStoreOptions,
 } from '../adapters/implicit-account-store';
+
+export {
+  createOAuthPassthroughResolver,
+  type OAuthPassthroughResolverOptions,
+} from '../adapters/oauth-passthrough-resolver';
