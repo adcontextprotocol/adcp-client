@@ -180,13 +180,24 @@ export const TEMPLATES: MockTemplate[] = [
         slot_id: 'voice',
         asset_type: 'text',
         required: false,
-        constraints: { allowed_values: ['narrator-warm', 'narrator-energetic', 'announcer-classic'] },
+        // Mock-internal hint listing valid voice ids. Not a spec'd
+        // text-asset-requirements field (text-asset-requirements.json defines
+        // min_length/max_length/min_lines/max_lines/character_pattern/
+        // prohibited_terms only). Adopters surfacing voice pickers should
+        // either map this server-side or wait on a spec extension —
+        // tracked separately.
+        constraints: { _voice_ids_hint: ['narrator-warm', 'narrator-energetic', 'announcer-classic'] },
       },
       {
         slot_id: 'music_bed',
         asset_type: 'audio',
         required: false,
-        constraints: { mime_types: ['audio/mpeg', 'audio/wav'] },
+        // Spec uses `formats: ['mp3','aac','wav','ogg','flac']` per
+        // audio-asset-requirements.json:18-31, not MIME types. Mock-internal
+        // hint left here for the synthesizeOutput renderer; the adapter's
+        // projectSlot doesn't pass audio constraints through to the format
+        // (see hello_creative_adapter_template.ts § FormatAsset.audio).
+        constraints: { formats: ['mp3', 'wav'] },
       },
       {
         slot_id: 'click_through',

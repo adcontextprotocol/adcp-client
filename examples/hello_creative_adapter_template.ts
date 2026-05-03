@@ -268,10 +268,20 @@ function templateToFormat(t: UpstreamTemplate): Format {
 }
 
 /** Project an upstream `render.output` onto AdCP `creative_manifest.assets`.
- *  The mock returns one of three output shapes (HTML tag, JS tag, VAST);
- *  AdCP creative-manifest assets are keyed by asset_id and discriminated by
- *  asset_type. Use the `htmlAsset`/`javascriptAsset` builders to inject the
- *  discriminator — a bare `{ content }` fails the asset-union oneOf. */
+ *  The mock returns one of four output shapes (HTML tag, JS tag, VAST, audio
+ *  URL); AdCP creative-manifest assets are keyed by asset_id and discriminated
+ *  by asset_type. Use the `htmlAsset` / `javascriptAsset` / `audioAsset`
+ *  builders to inject the discriminator — a bare `{ content }` or `{ url }`
+ *  fails the asset-union oneOf.
+ *
+ *  Note on `serving_tag` as the asset_id: the key is **adopter-defined** and
+ *  named for whatever the buyer's manifest contract expects. We use
+ *  `serving_tag` consistently here across all four output kinds (HTML / JS /
+ *  VAST / audio) so adopters forking this adapter don't have to reason about
+ *  per-channel keying — pick one synthetic key and route all output asset
+ *  types through it. Production agents whose buyers expect specific asset_ids
+ *  per format should instead echo the format's declared `assets[].asset_id`
+ *  values; see SHAPE-GOTCHAS.md and adcp-client follow-up tracked at #1496. */
 function projectRenderToManifest(
   render: UpstreamRender,
   formatId: { agent_url: string; id: string }
@@ -291,12 +301,13 @@ function projectRenderToManifest(
     // rather than a specific asset_type.
     assets['serving_tag'] = htmlAsset({ content: out.vast_xml });
   } else if (out.audio_url) {
-    // Audio templates render to a hosted MP3. Real audio platforms (AudioStack,
-    // ElevenLabs, Resemble) return signed CDN URLs with TTL — the buyer
-    // must fetch within the lifetime. The `audioAsset` builder injects the
-    // `asset_type: 'audio'` discriminator that the AdCP creative-manifest
-    // oneOf requires.
-    assets['serving_audio'] = audioAsset({ url: out.audio_url });
+    // Audio templates render to a hosted MP3. Real audio platforms return
+    // signed CDN URLs with TTL — the buyer must fetch within the lifetime.
+    // The `audioAsset` builder injects the `asset_type: 'audio'` discriminator
+    // that the AdCP creative-manifest oneOf requires. Reuses the same
+    // `serving_tag` asset_id as the HTML / JS / VAST branches — the asset_type
+    // discriminator is what the buyer keys on, not the asset_id.
+    assets['serving_tag'] = audioAsset({ url: out.audio_url });
   }
   return { format_id: formatId, assets };
 }
