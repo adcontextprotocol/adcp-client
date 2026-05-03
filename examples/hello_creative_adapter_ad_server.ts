@@ -271,13 +271,16 @@ const FORMAT_AGENT_URL = PUBLIC_AGENT_URL;
  *  projects each entry. */
 function projectFormat(f: UpstreamFormat): ListCreativeFormatsResponse['formats'][number] {
   // Output slot declared on every format so build_creative's response key
-  // (`assets['tag']`) matches a declared asset_id per
+  // (`assets['serving_tag']`) matches a declared asset_id per
   // creative-manifest.json:14. `required: false` because the buyer doesn't
   // supply this — buildCreative generates and returns it. asset_type: 'html'
   // mirrors the buildCreative response (always renders to an HTML serving
   // tag in this worked example); video/CTV adapters emitting VAST should
-  // declare `FormatAsset.vast({ asset_id: 'tag', required: false })` instead.
-  const outputAssets = [FormatAsset.html({ asset_id: 'tag', required: false })];
+  // declare `FormatAsset.vast({ asset_id: 'serving_tag', required: false })` instead.
+  // Asset_id `serving_tag` is shared with hello_creative_adapter_template.ts
+  // — keeping the same id across both worked examples teaches adopters that
+  // the asset_id is contractual (declared by the format), not platform-flavored.
+  const outputAssets = [FormatAsset.html({ asset_id: 'serving_tag', required: false })];
 
   // Display fixed formats: emit dimensions on a single 'main' render.
   if (f.render_kind === 'fixed' && f.channel === 'display' && f.width !== undefined && f.height !== undefined) {
@@ -504,7 +507,7 @@ class CreativeAdServerAdapter implements DecisioningPlatform<Record<string, neve
       // and `name` from the manifest body — only `format_id`, `assets`,
       // `rights`, `industry_identifiers`, `provenance`, `ext` are allowed.
       // The `tag` asset_id matches the output slot declared in
-      // `projectFormat` (FormatAsset.html({ asset_id: 'tag', ... })),
+      // `projectFormat` (FormatAsset.html({ asset_id: 'serving_tag', ... })),
       // satisfying creative-manifest.json:14. Each `assets[key]` is a
       // discriminated AssetVariant — `asset_type` selects the matching
       // schema (html requires `content`, etc.).
@@ -512,7 +515,7 @@ class CreativeAdServerAdapter implements DecisioningPlatform<Record<string, neve
         creative_manifest: {
           format_id: { agent_url: FORMAT_AGENT_URL, id: creative.format_id },
           assets: {
-            tag: { asset_type: 'html', content: rendered.tag_html },
+            serving_tag: { asset_type: 'html', content: rendered.tag_html },
           },
         },
         // CAST: oneOf-emitter — picking variant 0 (single creative_manifest)

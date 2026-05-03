@@ -268,6 +268,14 @@ function outputSlot(t: UpstreamTemplate) {
       return FormatAsset.vast({ asset_id: 'serving_tag', required: false });
     case 'audio_url':
       return FormatAsset.audio({ asset_id: 'serving_tag', required: false });
+    default: {
+      // Exhaustiveness gate. If `output_kind` grows a fifth case (image_url,
+      // daast_xml, etc.) the unreachable assertion fires at compile time so
+      // adopters extending the upstream type can't ship a silent `undefined`
+      // entry into format.assets[].
+      const exhaustive: never = t.output_kind;
+      throw new Error(`unhandled output_kind: ${exhaustive as string}`);
+    }
   }
 }
 
