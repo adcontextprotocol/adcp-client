@@ -187,18 +187,25 @@ function refuseImplicitAccountId(
 /**
  * Dev-mode warning when a multi-id read tool returns fewer rows than
  * the buyer requested — the canonical signal that the platform is
- * silently truncating to `media_buy_ids[0]` (closes #1342, follow-up
- * #1399). Catches the bug class where adopters write the recommended
- * pattern wrong on first pass; quiet in production where legitimate
- * misses (deleted, archived, cross-account) are routine and warning
- * on every miss would be noise.
+ * silently truncating to `<id_field>[0]` (closes #1342, follow-up
+ * #1399, extended in #1410 to additional read-by-id surfaces). Catches
+ * the bug class where adopters write the recommended pattern wrong on
+ * first pass; quiet in production where legitimate misses (deleted,
+ * archived, cross-account) are routine and warning on every miss would
+ * be noise.
  *
  * Suppressible via `ADCP_SUPPRESS_MULTI_ID_WARN=1` for adopters whose
  * legitimate-miss rate is high (deleted-account-rich datasets, etc.).
+ *
+ * Sync / upsert surfaces (`syncCreatives`, `syncCatalogs`, `syncPlans`)
+ * are intentionally out of scope — those have a different shape where
+ * pass-through is the obvious pattern and "did all rows roundtrip?"
+ * isn't a clean question.
  */
 function warnIfTruncatedMultiIdResponse(
-  toolName: 'getMediaBuyDelivery' | 'getMediaBuys',
-  requestedIds: readonly string[] | undefined,
+  toolName: 'getMediaBuyDelivery' | 'getMediaBuys' | 'listCreatives' | 'getCreativeDelivery' | 'getSignals',
+  idFieldName: 'media_buy_ids' | 'creative_ids' | 'signal_ids',
+  requestedIds: readonly unknown[] | undefined,
   responseArray: readonly unknown[] | undefined,
   logger: AdcpLogger
 ): void {
@@ -207,11 +214,11 @@ function warnIfTruncatedMultiIdResponse(
   if (!requestedIds || requestedIds.length === 0) return;
   const returned = Array.isArray(responseArray) ? responseArray.length : 0;
   if (returned >= requestedIds.length) return;
-  // Empty `media_buy_ids` is filtered above as paginated-mode (no truncation
+  // Empty `<id_field>` is filtered above as paginated-mode (no truncation
   // possible without a request to compare against).
   logger.warn(
-    `[adcp/sdk] ${toolName}: platform returned ${returned} row${returned === 1 ? '' : 's'} for ${requestedIds.length} requested media_buy_ids — ` +
-      `the platform may be silently truncating to media_buy_ids[0]. ` +
+    `[adcp/sdk] ${toolName}: platform returned ${returned} row${returned === 1 ? '' : 's'} for ${requestedIds.length} requested ${idFieldName} — ` +
+      `the platform may be silently truncating to ${idFieldName}[0]. ` +
       `See https://github.com/adcontextprotocol/adcp-client/issues/1342 for the multi-id pass-through contract. ` +
       `Suppress with ADCP_SUPPRESS_MULTI_ID_WARN=1 if legitimate misses (deleted / cross-account) are routine.`
   );
@@ -3321,6 +3328,7 @@ function buildMediaBuyHandlers<P extends DecisioningPlatform<any, any>>(
             const result = await sales.getMediaBuyDelivery!(params, reqCtx);
             warnIfTruncatedMultiIdResponse(
               'getMediaBuyDelivery',
+              'media_buy_ids',
               (params as { media_buy_ids?: readonly string[] }).media_buy_ids,
               (result as { media_buy_deliveries?: readonly unknown[] })?.media_buy_deliveries,
               logger
@@ -3353,6 +3361,7 @@ function buildMediaBuyHandlers<P extends DecisioningPlatform<any, any>>(
             const result = await sales.getMediaBuys!(params, reqCtx);
             warnIfTruncatedMultiIdResponse(
               'getMediaBuys',
+              'media_buy_ids',
               (params as { media_buy_ids?: readonly string[] }).media_buy_ids,
               (result as { media_buys?: readonly unknown[] })?.media_buys,
               logger
@@ -3403,7 +3412,17 @@ function buildMediaBuyHandlers<P extends DecisioningPlatform<any, any>>(
       listCreatives: async (params, ctx) => {
         const reqCtx = ctxFor(ctx);
         return projectSync(
-          () => sales.listCreatives!(params, reqCtx),
+          async () => {
+            const result = await sales.listCreatives!(params, reqCtx);
+            warnIfTruncatedMultiIdResponse(
+              'listCreatives',
+              'creative_ids',
+              (params as { creative_ids?: readonly string[] }).creative_ids,
+              (result as { creatives?: readonly unknown[] })?.creatives,
+              logger
+            );
+            return result;
+          },
           r => r
         );
       },
@@ -3540,7 +3559,17 @@ function buildCreativeHandlers<P extends DecisioningPlatform<any, any>>(
       }
       const reqCtx = ctxFor(ctx);
       return projectSync(
-        () => (creative as CreativeAdServerPlatform).listCreatives(params, reqCtx),
+        async () => {
+          const result = await (creative as CreativeAdServerPlatform).listCreatives(params, reqCtx);
+          warnIfTruncatedMultiIdResponse(
+            'listCreatives',
+            'creative_ids',
+            (params as { creative_ids?: readonly string[] }).creative_ids,
+            (result as { creatives?: readonly unknown[] })?.creatives,
+            logger
+          );
+          return result;
+        },
         r => r
       );
     },
@@ -3553,7 +3582,17 @@ function buildCreativeHandlers<P extends DecisioningPlatform<any, any>>(
       }
       const reqCtx = ctxFor(ctx);
       return projectSync(
-        () => (creative as CreativeAdServerPlatform).getCreativeDelivery(params, reqCtx),
+        async () => {
+          const result = await (creative as CreativeAdServerPlatform).getCreativeDelivery(params, reqCtx);
+          warnIfTruncatedMultiIdResponse(
+            'getCreativeDelivery',
+            'creative_ids',
+            (params as { creative_ids?: readonly string[] }).creative_ids,
+            (result as { creative_deliveries?: readonly unknown[] })?.creative_deliveries,
+            logger
+          );
+          return result;
+        },
         r => r
       );
     },
@@ -3633,6 +3672,16 @@ function buildSignalsHandlers<P extends DecisioningPlatform<any, any>>(
       return projectSync(
         async () => {
           const result = await signals.getSignals(params, reqCtx);
+          // signal_ids is `SignalID[]` (`{source, data_provider_domain, id}`
+          // objects), not bare strings — but the helper's truncation-detection
+          // is purely length-based, so the object element type is irrelevant.
+          warnIfTruncatedMultiIdResponse(
+            'getSignals',
+            'signal_ids',
+            (params as { signal_ids?: readonly unknown[] }).signal_ids,
+            (result as { signals?: readonly unknown[] })?.signals,
+            logger
+          );
           // Auto-store signals so subsequent activate_signal can hydrate
           // `req.signal` from the publisher's prior catalog entry.
           await autoStoreResources(
