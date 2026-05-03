@@ -1074,8 +1074,9 @@ Walk this before declaring 6.6 → 6.7 done:
 - [ ] **Brand-rights adopters: no `customTools["update_rights"]`
       registration.** `grep -rn 'customTools.*update_rights' src/`
       returns zero hits — the framework registers the tool in 6.7.0; a
-      duplicate throws on the first request (not at boot) and surfaces
-      as a discovery failure rather than a startup error.
+      duplicate causes `createAdcpServer()` to throw at construction time
+      (which for lazy-init registry patterns surfaces as a discovery
+      failure on the first request rather than at startup).
 - [ ] **`Account` v3 wire fields are populated** for billing /
       lifecycle adopters. `billing_entity` (with `bank` stripped on
       emit), `setup` (`pending_approval` → `active` lifecycle),
@@ -1093,7 +1094,7 @@ are breaking and require auditing before bumping.
 
 ## What else changed (no recipe required)
 
-These ride along in 6.7 and don't need any adopter action:
+These ride along in 6.7 and don't need any adopter action unless noted inline:
 
 - **`Account.authInfo` is now optional.** Adopters who don't persist
   a principal can omit the field and pass strict typecheck. Adopters
@@ -1134,11 +1135,12 @@ These ride along in 6.7 and don't need any adopter action:
   **Breaking for `customTools` registrations:** if your
   `createAdcpServer()` call passed `update_rights` via `customTools`,
   remove that entry — the framework now registers the tool itself, and
-  a duplicate throws
-  `Error: createAdcpServer: customTools["update_rights"] collides with a framework-registered tool.`
-  on the first request (not at boot), which surfaces as a discovery
-  failure rather than a startup error. Audit with:
-  `grep -rn 'customTools.*update_rights' src/`
+  a duplicate causes `createAdcpServer()` to throw:
+  `createAdcpServer: customTools["update_rights"] collides with a framework-registered tool. Rename the custom tool or remove the handler from the conflicting domain group.`
+  For server setups that build tenants lazily (e.g., registry patterns),
+  this error surfaces on the first inbound request as an MCP discovery
+  failure rather than at startup. (See self-grade checklist item above
+  for the audit grep.)
 - **Auto-hydration is now spec-driven.** Hydration call sites read
   `x-entity` annotations from the manifest instead of hand-rolled
   `(field_name, ResourceKind)` literals. Future spec field renames
