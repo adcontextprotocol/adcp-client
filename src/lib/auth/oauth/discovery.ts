@@ -5,6 +5,8 @@
  * MCP servers expose OAuth metadata at /.well-known/oauth-authorization-server
  */
 
+import { wrapFetchWithSizeLimit } from '../../protocols/responseSizeLimit';
+
 /**
  * OAuth Authorization Server Metadata
  * @see https://datatracker.ietf.org/doc/html/rfc8414
@@ -63,7 +65,11 @@ export async function discoverOAuthMetadata(
   agentUrl: string,
   options: DiscoveryOptions = {}
 ): Promise<OAuthMetadata | null> {
-  const { timeout = 5000, fetch: customFetch = fetch } = options;
+  // Wrap with the response-size-limit guard so a hostile metadata endpoint
+  // can't buffer-bomb during discovery. Pass-through when no
+  // `withResponseSizeLimit` slot is active. (#1175)
+  const { timeout = 5000, fetch: providedFetch = fetch } = options;
+  const customFetch = wrapFetchWithSizeLimit(providedFetch);
 
   try {
     const baseUrl = new URL(agentUrl);
