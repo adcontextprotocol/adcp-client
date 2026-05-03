@@ -35,11 +35,13 @@ protocol you write yourself —
 for the full breakdown of "what you write vs. what's done for you" at
 each entry point.
 
-A from-scratch L0 → L3 build is roughly **4 person-months** before
-any L4 differentiation, and that scope grows every time the spec
-revs. Within a given language, the full-stack SDK is the default
-entry point; the layered model exists to explain what you'd be
-reimplementing if you went lower or ported to a new language.
+A from-scratch L0 → L3 build is roughly **3–4 person-months** before
+any L4 differentiation —
+[see the per-component breakdown](./architecture/adcp-stack.md#why-sdks-matter-more-in-adcp-than-in-eg-http) —
+and that scope grows every time the spec revs. Within a given
+language, the full-stack SDK is the default entry point; the layered
+model exists to explain what you'd be reimplementing if you went
+lower or ported to a new language.
 
 ## Three questions to pick your layer
 
@@ -59,12 +61,16 @@ reimplementing if you went lower or ported to a new language.
   start at L4. Your competitive surface is what you build on top of
   the protocol, not the protocol itself.
   → [Build an Agent](./guides/BUILD-AN-AGENT.md).
-- **You are an SDK author / language porter** → start at L0–L1 and
-  build up. The
+- **You are an SDK author / language porter, building a special-purpose
+  proxy, or integrating into a stack that already owns L0–L2** →
+  start lower and build up. The
   [architecture deep-dive](./architecture/adcp-stack.md) tells you
   what each layer must provide.
-- **Anything else** → start at L4. Going lower is almost always a
-  scope mistake disguised as a control preference.
+- **Anything else** → start at L4. Going lower is rarely the win it
+  looks like — see [what you give up](#what-you-give-up-by-going-lower)
+  for the concrete scope. If you can name a specific reason to go
+  lower, go ahead; otherwise default to L4 and reach down only when
+  you hit a wall you can name.
 
 **3. Do you already have a working agent built before the SDK was
 mature?**
@@ -77,9 +83,11 @@ expanded error catalog) was added with AdCP 3.0. Hand-rolled 2.5
 agents inherit the entire delta — and the
 [version-adaptation surface](./architecture/adcp-stack.md#version-adaptation)
 that lets a 3.x agent talk to a 2.5 caller without forking handler
-code. If your stack predates these, the cheapest thing to do is
-often **adopt the SDK at L2 or L3** rather than continue hand-rolling
-forward.
+code. The
+[migration guide](./guides/MIGRATE-FROM-HAND-ROLLED.md) walks the
+swap-one-layer-at-a-time path: which layer to swap first, what
+conflict modes to watch for (idempotency, account-mode, webhook
+signing), and which intermediate states still pass conformance.
 
 ## Recommended path
 
@@ -91,7 +99,9 @@ For ~95% of adopters: **start at L4 with the full-stack SDK.**
   `DecisioningPlatform`, pre-wires L0–L3) and `createAdcpServer`
   (handler-bag API for finer control or in-flight v5 migrations).
 - New caller → [Getting Started](./getting-started.md).
-- Migrating from v5 → see [the 5.x → 6.x migration](./migration-5.x-to-6.x.md);
+- **Already have a hand-rolled agent in production →
+  [Migrate from a hand-rolled agent](./guides/MIGRATE-FROM-HAND-ROLLED.md).**
+- Migrating SDK majors (v5 → v6) → see [the 5.x → 6.x migration](./migration-5.x-to-6.x.md);
   the legacy subpath lets you co-exist while you migrate.
 - Talking to peers on a different spec version →
   [Version Adaptation](./guides/VERSION-ADAPTATION.md).
