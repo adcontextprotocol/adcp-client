@@ -6,11 +6,12 @@
  * client. The AdCP-facing platform methods stay the same.
  *
  * Demo:
- *   npx @adcp/sdk@latest mock-server sales-guaranteed --port 4503
+ *   npx @adcp/sdk@latest mock-server sales-guaranteed --port 4503  # keep running
  *   UPSTREAM_URL=http://127.0.0.1:4503 \
  *     npx tsx examples/hello_seller_adapter_guaranteed.ts
  *   adcp storyboard run http://127.0.0.1:3001/mcp sales_guaranteed \
  *     --auth sk_harness_do_not_use_in_prod
+ *   curl http://127.0.0.1:4503/_debug/traffic  # verify upstream was hit
  *
  * Production:
  *   UPSTREAM_URL=https://my-gam.example/api UPSTREAM_API_KEY=… \
@@ -284,13 +285,19 @@ function toAdcpProduct(p: UpstreamProduct, publisherDomain: string): GetProducts
       expected_delay_minutes: 60,
     },
     // Map upstream forecast when present (populated by GET /v1/products?start_date=&end_date=).
-    // The upstream shape is already compatible with AdCP DeliveryForecast — field names match.
+    // Explicit field mapping: method, currency, forecast_range_unit, generated_at, points.
+    // valid_until is intentionally omitted — the mock does not emit it.
+    // SWAP: add `...(p.forecast.valid_until && { valid_until: p.forecast.valid_until })` if
+    // your upstream returns an expiry timestamp.
     ...(p.forecast && {
       forecast: {
         method: p.forecast.method as 'estimate' | 'modeled' | 'guaranteed',
         currency: p.forecast.currency,
+        // All eight ForecastRangeUnit values are valid; cast from string.
         ...(p.forecast.forecast_range_unit && {
-          forecast_range_unit: p.forecast.forecast_range_unit as 'availability' | 'spend',
+          forecast_range_unit: p.forecast.forecast_range_unit as
+            | 'spend' | 'availability' | 'reach_freq' | 'weekly'
+            | 'daily' | 'clicks' | 'conversions' | 'package',
         }),
         ...(p.forecast.generated_at && { generated_at: p.forecast.generated_at }),
         points: p.forecast.points.map(pt => ({
@@ -363,8 +370,15 @@ class GuaranteedSellerAdapter implements DecisioningPlatform<Record<string, neve
       const order = await upstream.createOrder(networkCode, {
         name: `adcp_${Date.now()}`,
         advertiser_id: ctx.account.id,
-        currency: (req as { currency?: string }).currency ?? 'USD',
-        budget: typeof req.total_budget === 'number' ? req.total_budget : 50_000,
+        // total_budget is { amount, currency } in AdCP 3.x; also accept legacy flat number.
+        budget:
+          typeof req.total_budget === 'number'
+            ? req.total_budget
+            : ((req.total_budget as { amount?: number })?.amount ?? 50_000),
+        currency:
+          typeof req.total_budget === 'object' && req.total_budget !== null
+            ? ((req.total_budget as { currency?: string }).currency ?? 'USD')
+            : 'USD',
         client_request_id: req.idempotency_key,
       });
 
@@ -411,9 +425,9 @@ class GuaranteedSellerAdapter implements DecisioningPlatform<Record<string, neve
     // a re-approval flow on the upstream (not modeled here).
     // --------------------------------------------------------------------
     updateMediaBuy: async (buyId: string, patch: UpdateMediaBuyRequest): Promise<UpdateMediaBuySuccess> => {
-      // Real implementations: PATCH /v1/orders/{orderId} and re-poll if
-      // the platform requires re-approval.
-      void patch; // SWAP: apply patch to upstream order
+      // FIXME(adopter): PATCH /v1/orders/{orderId} and re-poll if re-approval is required.
+      // Leaving this as a no-op stub means pauses and budget updates are silently ignored.
+      void patch;
       return { media_buy_id: buyId, status: 'active' };
     },
 
@@ -421,7 +435,9 @@ class GuaranteedSellerAdapter implements DecisioningPlatform<Record<string, neve
     // get_media_buys — return active orders for this account.
     // --------------------------------------------------------------------
     getMediaBuys: async (_req: GetMediaBuysRequest, ctx): Promise<GetMediaBuysResponse> => {
-      void ctx; // SWAP: GET /v1/orders?network_code=...
+      // FIXME(adopter): GET /v1/orders?network_code=... and map to AdCP MediaBuy shape.
+      // Leaving as empty stub means buyers always see zero active buys.
+      void ctx;
       return { media_buys: [] };
     },
 
