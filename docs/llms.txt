@@ -1,9 +1,10 @@
 # Ad Context Protocol (AdCP)
 
-> Generated at: 2026-05-02
+> Generated at: 2026-05-03
 > Library: @adcp/sdk v6.6.0
 > AdCP major version: 3
 > Canonical URL: https://adcontextprotocol.github.io/adcp-client/llms.txt
+> Note: the `Library` stamp reflects the package.json version at doc-generation time. The narrative below describes the surface that lands on the next-published minor — including any 6.7 helpers documented here ahead of the release tag.
 
 ## What is AdCP
 
@@ -16,22 +17,25 @@ AdCP is an open protocol for AI agents to buy, manage, and optimize advertising 
 
 ```typescript
 import { serve } from '@adcp/sdk';
-import { createAdcpServerFromPlatform } from '@adcp/sdk/server';
+import {
+  createAdcpServerFromPlatform,
+  definePlatform,
+  defineSignalsPlatform,
+} from '@adcp/sdk/server';
 
-const platform = {
+const platform = definePlatform({
   capabilities: {
     specialisms: ['signal-marketplace'] as const,
-    creative_agents: [], channels: [], pricingModels: ['cpm'] as const, config: {},
+    pricingModels: ['cpm'] as const,
   },
-  statusMappers: {},
   accounts: {
-    resolve: async () => ({ id: 'acc_1', ctx_metadata: {}, authInfo: { kind: 'api_key' } }),
+    resolve: async () => ({ id: 'acc_1', ctx_metadata: {} }),
   },
-  signals: {
+  signals: defineSignalsPlatform({
     getSignals: async (req, ctx) => ({ signals: [/* ... */], sandbox: true }),
     activateSignal: async (req, ctx) => ({ /* ... */ }),
-  },
-};
+  }),
+});
 
 serve(() => createAdcpServerFromPlatform(platform, {
   name: 'My Signals Agent',
@@ -43,7 +47,31 @@ Compile-time enforcement: `RequiredPlatformsFor<S>` catches missing specialism m
 
 Lower-level option: `createAdcpServer({ signals: { getSignals: ... } })` from `@adcp/sdk/server/legacy/v5` — handler-bag API. Still fully supported, the substrate the platform path calls into. Use when you need fine control over individual handlers, mid-migration from a v5 codebase, or custom-shaped tools the platform interface doesn't yet model. `wrapEnvelope(inner, { replayed, context, operationId })` from `@adcp/sdk/server` attaches protocol envelope fields with the per-error-code allowlist (IDEMPOTENCY_CONFLICT drops `replayed`).
 
-**`composeMethod` cookbook.** To layer `before`/`after` hooks on a single platform method — short-circuit for caching, enrichment under `ext.*`, typed-error guards — use `composeMethod(inner, { before?, after? })` from `@adcp/sdk/server`. Stacking multiple guards: nest `composeMethod` calls (outer `before` runs first). Test patterns (mocking inner, asserting short-circuit, chained hooks, typed-error propagation): see [`docs/recipes/composeMethod-testing.md`](./recipes/composeMethod-testing.md). Pre-built `accounts.resolve` guards (`requireAccountMatch`, `requireAdvertiserMatch`, `requireOrgScope`) are in the same package.
+**Identity helpers (drop `req: unknown` casts on inline platforms).** `definePlatform` / `defineSalesCorePlatform` / `defineSalesIngestionPlatform` / `defineSignalsPlatform` / `defineCreativeBuilderPlatform` / `defineCreativeAdServerPlatform` / `defineCampaignGovernancePlatform` / `defineContentStandardsPlatform` / `definePropertyListsPlatform` / `defineCollectionListsPlatform` / `defineBrandRightsPlatform` / `definePlatformWithCompliance` are pure identity helpers from `@adcp/sdk/server`. They force a concrete platform interface as the parameter type so TypeScript flows `req` / `ctx` typing into nested handler bodies. Class-pattern adopters with explicit property annotations (`sales: SalesCorePlatform<Meta> & SalesIngestionPlatform<Meta> = { ... }`) don't need them.
+
+**Typed errors instead of `new AdcpError(code, ...)`.** `AuthRequiredError`, `PermissionDeniedError(action)`, `RateLimitedError(retryAfterSeconds)`, `ServiceUnavailableError`, `UnsupportedFeatureError(feature)`, `GovernanceDeniedError`, `PolicyViolationError`, `IdempotencyConflictError`, `InvalidRequestError`, `InvalidStateError`, plus the not-found family (`AccountNotFoundError`, `MediaBuyNotFoundError`, `PackageNotFoundError`, `ProductNotFoundError`, `CreativeNotFoundError`) and the budget / state family. Each maps to its wire error code with `recovery` baked in. Throw from any platform method or `accounts.resolve`.
+
+**`composeMethod` cookbook.** To layer `before`/`after` hooks on a single platform method — short-circuit for caching, enrichment under `ext.*`, typed-error guards — use `composeMethod(inner, { before?, after? })` from `@adcp/sdk/server`. Stacking multiple guards: nest `composeMethod` calls (outer `before` runs first). Test patterns (mocking inner, asserting short-circuit, chained hooks, typed-error propagation): see [`docs/recipes/composeMethod-testing.md`](./recipes/composeMethod-testing.md). Pre-built `accounts.resolve` guards from the same package: `requireAccountMatch(predicate, opts)`, `requireAdvertiserMatch(getRoster, opts)`, `requireOrgScope(getAccountOrg, getCtxOrg, opts)`. Default deny returns `null` (indistinguishable from "not found"; guards against principal enumeration); opt in to `onDeny: 'throw'` for typed `PermissionDeniedError`.
+
+**Three reference `AccountStore` shapes.** Pick the one whose onboarding model matches yours. **Shape A — `InMemoryImplicitAccountStore`**: `resolution: 'implicit'`, buyer-driven `sync_accounts` populates the auth-principal → accounts map. **Shape B — `createOAuthPassthroughResolver`**: `resolution: 'explicit'`, returns just the `resolve` function for adapters fronting an upstream OAuth listing endpoint (Snap, Meta, TikTok, LinkedIn — `extract bearer → GET /me/adaccounts → match by id`). **Shape C — `createRosterAccountStore`**: `resolution: 'explicit'`, returns a complete `AccountStore` for adopters who own the roster (storefront table, admin-UI-managed JSON). All three live at `@adcp/sdk/server`.
+
+**Multi-tenant.** Two helpers, pick by deployment shape. **Host-routed**: `createTenantRegistry({...})` — one server per tenant, tenant-id keyed lookup with `registry.get(tenantId)`. **Account-routed**: `createTenantStore({...})` — one server, per-entry tenant-isolation gate built in (cross-tenant entries on `upsert` / `syncGovernance` rejected with `PERMISSION_DENIED` BEFORE adopter callbacks run; fail-closed when the auth principal can't be resolved). `createTenantStore` mitigates the canonical multi-tenant write-across-tenants bug class at the SDK layer rather than relying on adopter discipline.
+
+**`BuyerAgentRegistry`** — durable buyer-agent identity surface. `BuyerAgentRegistry.signingOnly({ resolveByAgentUrl })` (production target — only `http_sig` credentials route through), `bearerOnly({ resolveByCredential })` (pre-trust beta — bearer/api-key/oauth all route), `mixed(...)` (transition posture). Wrap with `BuyerAgentRegistry.cached(inner, { ttlSeconds })` for TTL + LRU + concurrent-resolve coalescing. The resolved `BuyerAgent` flows through `ctx.agent` to every `AccountStore` method (`resolve` / `upsert` / `list` / `syncGovernance` / `reportUsage` / `getAccountFinancials`) and to `tasks_get` polling. `BuyerAgent.status === 'suspended' | 'blocked'` triggers framework-level `PERMISSION_DENIED`. `BuyerAgent.sandbox_only: true` rejects requests against non-sandbox accounts. See [`docs/migration-buyer-agent-registry.md`](./migration-buyer-agent-registry.md) for the full surface.
+
+**Lifecycle helpers.** `MEDIA_BUY_TRANSITIONS` and `CREATIVE_ASSET_TRANSITIONS` (the canonical state-graph maps the storyboard runner uses), plus `isLegalMediaBuyTransition(from, to)` / `assertMediaBuyTransition(from, to)` and the creative pair. `assertMediaBuyTransition` throws `AdcpError` with the spec-correct code (`NOT_CANCELLABLE` for the cancel-idempotency path, `INVALID_STATE` everywhere else). Production sellers that enforce transitions with these helpers cannot drift from conformance enforcement. `createMediaBuyStore({ store })` opt-in framework wiring handles the `packages[].targeting_overlay` echo contract on `get_media_buys` (sellers claiming `property-lists` / `collection-lists` MUST echo the persisted list reference).
+
+**Breaking in 6.7 — audit before bumping.** (1) `accounts.resolution: 'implicit'` now actually refuses inline `{account_id}` references with `INVALID_REQUEST` (pre-6.7 the docstring claimed this but nothing checked it). Adopters whose callers passed inline `account_id` against an `'implicit'` platform must drop to `'explicit'` or fix callers to use `sync_accounts` first. (2) `SalesPlatform` is now structurally `SalesCorePlatform & SalesIngestionPlatform` with all methods individually optional. Adopters with `: SalesPlatform<Meta>` field annotations claiming `sales-non-guaranteed` / `-guaranteed` / `-broadcast-tv` / `-catalog-driven` need to switch the annotation to `: SalesCorePlatform<Meta> & SalesIngestionPlatform<Meta>` (or use `defineSalesCorePlatform` + `defineSalesIngestionPlatform` spread). Self-announcing under `tsc --noEmit`. Walled-garden CAPI specialisms (`sales-social`) drop ~40 LOC of stub-throw boilerplate. Full migration recipe at [`docs/migration-6.6-to-6.7.md`](./migration-6.6-to-6.7.md).
+
+**`Account<TCtxMeta>` v3 wire fields.** `Account` gained `billing_entity`, `rate_card`, `payment_terms`, `credit_limit`, `setup` (drives `pending_approval` → `active` lifecycle), `account_scope`, `governance_agents`, and `reporting_bucket` — all optional. `billing_entity.bank` and `governance_agents[i].authentication.credentials` are stripped on emit per spec; `Account.authInfo` is now optional. `AccountStore.upsert` / `list` / `syncGovernance` accept an optional `ResolveContext` second argument carrying `authInfo` / `toolName` / `agent` for principal-keyed gating.
+
+**`refAccountId(ref)`** narrows `AccountReference` to its `account_id` arm without casting (returns `undefined` for missing refs, `{brand, operator}` arms, sandbox arms). `narrowAccountRef(ref)` returns the typed arm or `null` for full discriminated-union narrowing. **`NoAccountCtx<TCtxMeta>`** is the request-context type for tools whose wire request doesn't carry an `account` field (`previewCreative`, `listCreativeFormats`, `providePerformanceFeedback`); `ctx.account` is `Account<TCtxMeta> | undefined` and adopters either return a singleton from `accounts.resolve(undefined)` or guard with `if (ctx.account == null) ...`.
+
+**Validation hints on every `VALIDATION_ERROR` envelope.** `ValidationIssue` carries `hint` (one-sentence curated recipe for known shape gotchas — `activation_key` discriminator nesting, `account` discriminator merging, `budget` shape, `format_id` object, VAST/DAAST `delivery_type`, missing `idempotency_key`, log_event/CAPI projection), `discriminator` (which `oneOf` branch the validator inferred), and `schemaId` (the `$id` of the rejecting schema). Buyer-side recovery order: `hint` first, then `discriminator`, then `variants`, then `pointer` + `keyword`. `oneOf` near-miss diagnostics now point at the Success-arm residuals when a Success-vs-Error envelope payload populates Success-only fields.
+
+**Other adopter-facing surfaces.** `DecisioningPlatform.instructions` accepts a function form (`(ctx: SessionContext) => string | undefined`) for per-session prose under `serve({ reuseAgent: false })`. `listCreativeFormats?` is now typed on `CreativeBuilderPlatform` and `CreativeAdServerPlatform` (drops the v5 `opts.creative.listCreativeFormats` escape hatch). `update_rights` is a first-class brand-rights tool with `creative_approval` webhook builders. `@adcp/sdk/upstream-recorder` is a sandbox-only producer-side middleware for the `query_upstream_traffic` storyboard check; `@adcp/sdk/mock-server` is a public sub-export for in-process integration tests. `runStoryboard({ agents })` routes per-specialism storyboard steps to multiple agents (matching `/sales`, `/signals`, `/governance`, `/creative`, `/brand` topology). `media_buy_ids[]` fan-out on `getMediaBuyDelivery` / `getCreativeDelivery` is platform-side pass-through (framework hands the array as-is); a dev-mode warning fires when handlers return fewer rows than requested.
+
+**Don't put credentials in `ctx_metadata`.** Wire-strip protects buyer responses but not server-side log lines, error envelopes, heap dumps, or adopter-generated strings. Re-derive bearers per request from `ctx.authInfo` + your token cache; embed only non-secret upstream IDs in `ctx_metadata`. See [`docs/guides/CTX-METADATA-SAFETY.md`](./guides/CTX-METADATA-SAFETY.md).
 
 ## Quick Start (Client)
 
@@ -1222,6 +1250,14 @@ These docs are available locally in the repo and hosted at https://adcontextprot
 | Full type signatures | docs/TYPE-SUMMARY.md | [link](https://adcontextprotocol.github.io/adcp-client/TYPE-SUMMARY.md) |
 | Getting started / install | docs/getting-started.md | [link](https://adcontextprotocol.github.io/adcp-client/getting-started.md) |
 | Build a server-side agent | docs/guides/BUILD-AN-AGENT.md | [link](https://adcontextprotocol.github.io/adcp-client/guides/BUILD-AN-AGENT.md) |
+| Migrating 6.6 → 6.7 (15 recipes; 2 breaking) | docs/migration-6.6-to-6.7.md | [link](https://adcontextprotocol.github.io/adcp-client/migration-6.6-to-6.7.md) |
+| Migrating 5.x → 6.x | docs/migration-5.x-to-6.x.md | [link](https://adcontextprotocol.github.io/adcp-client/migration-5.x-to-6.x.md) |
+| BuyerAgentRegistry adopter migration | docs/migration-buyer-agent-registry.md | [link](https://adcontextprotocol.github.io/adcp-client/migration-buyer-agent-registry.md) |
+| Account resolution: explicit / implicit / derived | docs/guides/account-resolution.md | [link](https://adcontextprotocol.github.io/adcp-client/guides/account-resolution.md) |
+| ctx_metadata credential safety | docs/guides/CTX-METADATA-SAFETY.md | [link](https://adcontextprotocol.github.io/adcp-client/guides/CTX-METADATA-SAFETY.md) |
+| Request signing (RFC 9421) + JWKS | docs/guides/SIGNING-GUIDE.md | [link](https://adcontextprotocol.github.io/adcp-client/guides/SIGNING-GUIDE.md) |
+| Conformance (property-based fuzzing) | docs/guides/CONFORMANCE.md | [link](https://adcontextprotocol.github.io/adcp-client/guides/CONFORMANCE.md) |
+| Validate your agent (5-command checklist) | docs/guides/VALIDATE-YOUR-AGENT.md | [link](https://adcontextprotocol.github.io/adcp-client/guides/VALIDATE-YOUR-AGENT.md) |
 | Async patterns (polling, webhooks, deferred) | docs/guides/ASYNC-DEVELOPER-GUIDE.md | [link](https://adcontextprotocol.github.io/adcp-client/guides/ASYNC-DEVELOPER-GUIDE.md) |
 | Async API reference | docs/guides/ASYNC-API-REFERENCE.md | [link](https://adcontextprotocol.github.io/adcp-client/guides/ASYNC-API-REFERENCE.md) |
 | Input handler patterns | docs/guides/HANDLER-PATTERNS-GUIDE.md | [link](https://adcontextprotocol.github.io/adcp-client/guides/HANDLER-PATTERNS-GUIDE.md) |
