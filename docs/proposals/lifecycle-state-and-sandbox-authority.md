@@ -8,28 +8,28 @@ architecture); this doc is the SDK-side artifact.
 
 ## Thesis
 
-There are three operationally distinct account modes, not two. The SDK
-should route requests to different backends based on the mode of the
-resolved account:
+There are three operationally distinct account modes, not two. The
+adapter code is the same in all three; the framework selects the
+upstream URL based on the mode of the resolved account:
 
 ```
-account.mode === 'live'    → adopter.DecisioningPlatform (existing path)
-account.mode === 'sandbox' → adopter.DecisioningPlatform (their test infra)
-account.mode === 'mock'    → mock-server backend (new SDK route)
+account.mode === 'live'    → adapter → production upstream (GAM, FreeWheel, Kevel, …)
+account.mode === 'sandbox' → adapter → adopter's test upstream (their test infra)
+account.mode === 'mock'    → adapter → bin/adcp.js mock-server <specialism>
 ```
 
 | Mode | What it is | Who owns truth | Use cases |
 |---|---|---|---|
 | **live** | Production traffic | Adopter's upstream (GAM, FreeWheel, Kevel, …) | Real money buyers |
 | **sandbox** | Adopter's own test account | Adopter's test infra (test DB, test GAM tenant, etc.) | Adopter's playground — internal QA, demo, integration testing of *their* code; **live-compliance storyboards** (planned) certify that the actual deployed agent behaves correctly under storyboards |
-| **mock** | SDK-routed-to-mock-server | The mock-server | **Spec compliance** — storyboards exercise the protocol against the SDK's reference path without any upstream involvement; agent development without an upstream; cross-SDK compliance |
+| **mock** | Adapter pointed at mock-server fixture | The mock-server fixture (per-specialism upstream-shaped reference) | **Spec compliance** — storyboards exercise the adapter against a reference upstream-shaped fixture; agent development without a real upstream; cross-SDK compliance |
 
 Two kinds of compliance, two modes:
 
-- **Spec compliance** — runs in mock mode. Storyboards exercise the AdCP
-  wire protocol against the SDK's reference path (mock-server backend).
-  Pure L3 protocol test; the adopter's upstream is not involved. This
-  is what certifies "your SDK implements the spec correctly."
+- **Spec compliance** — runs in mock mode. The adapter runs unchanged
+  against the mock-server's per-specialism fixture; storyboards drive
+  scenarios via fixture state. This is what certifies "your SDK +
+  adapter together implement the spec correctly."
 - **Live compliance** — runs in sandbox mode. Storyboards exercise the
   *deployed agent* (adopter's code path, against their test infra) to
   certify the full upstream-to-wire path actually works end-to-end. The
@@ -100,30 +100,45 @@ SDK does.
 
 ### Mock (compliance / agent dev)
 
-Adopter's `DecisioningPlatform` methods do **not run**. The SDK routes
-every tool call to the mock-server backend. The mock owns lifecycle
-state for these accounts. Storyboards drive state via the
-`comply_test_controller` tool, which mutates the mock's state.
+Adopter's `DecisioningPlatform` methods run identically to live and
+sandbox modes. The difference is the upstream URL: for mock-mode
+accounts, the framework points the adapter at `bin/adcp.js mock-server
+<specialism>` instead of the production upstream. The mock-server
+provides reference upstream-API behavior per specialism (Celtra-shaped,
+GAM-shaped, TikTok-shaped, etc.); the adapter doesn't know it's talking
+to a fixture.
 
 `account.mode === 'mock'`. Adopter does not write a `complyTest:`
 block, does not maintain in-memory `seededMediaBuys` Maps, does not
-gate on `process.env.ADCP_SANDBOX`.
+gate on `process.env.ADCP_SANDBOX`. Compliance scaffolding (seeded
+media buys, scenario state machines) lives in the mock-server's
+per-specialism fixtures — not in adopter code.
 
 How the SDK reaches the mock:
 
-The SDK forwards mock-mode tool calls **out-of-process** to a running
-`bin/adcp.js mock-server` over HTTP. Same shape every other AdCP SDK
-(Python, Go) will use, since they can't import our TS mock-server
-in-process. Standardizing on out-of-process means:
+The SDK arranges for the adapter's upstream HTTP client to point at the
+mock-server's specialism endpoint. Adapter code is unchanged across
+live, sandbox, and mock — only the resolved upstream URL differs per
+request, based on `account.mode`. Cross-SDK compliance is preserved:
+every SDK (JS, Python, Go) implements its own framework-side mode-aware
+URL routing, but all routes terminate at the SAME `bin/adcp.js
+mock-server <specialism>` reference fixtures. The mock-server is the
+cross-language referee at the upstream-API layer.
 
-- One reference path, one set of wire-correctness tests. No "in-process
-  shortcut works but out-of-process diverges" failure mode.
-- Cross-language SDKs are first-class. A Python adopter routes their
-  mock-mode accounts to the same `adcp mock-server` instance our TS
-  adopter uses; same fixture state, same wire behavior.
+SDK-specific implementations of "URL routing" may differ in shape
+(decorator, base-class method, middleware) but the contract is the
+same: when `account.mode === 'mock'`, the adapter's upstream URL points
+at the mock-server. Benefits of standardizing on the mock-server as the
+reference:
+
+- One reference fixture per specialism, one set of upstream-shape tests.
+  Storyboards drive scenarios via fixture state rather than adopter-side
+  test controllers.
+- Cross-language SDKs are first-class. A Python adopter and a TS
+  adopter targeting the same specialism hit the same mock-server
+  instance with the same fixture state.
 - Exercises the full network path during conformance — picks up
-  serialization edge cases, header handling, signature verification on
-  the forward leg.
+  serialization edge cases, header handling, auth on the upstream leg.
 
 Conformance harnesses already shell out to the `adcp` binary today
 (`bin/adcp.js storyboard run …`), so adopters in any language get the
@@ -143,8 +158,10 @@ These are different needs. Conflating them is what produced the
 to teach their codebase the shape of the compliance harness because
 they had no other way to satisfy it.
 
-With three modes, the wiring problem dissolves: compliance hits mock,
-which is SDK-handled, which means adopter code is untouched.
+With three modes, the wiring problem dissolves: compliance scaffolding
+lives in the mock-server's per-specialism fixtures, not in adopter
+code. The adapter runs unchanged against a fixture-shaped upstream;
+storyboards drive scenarios through fixture state.
 
 ## Cross-implementation story
 
@@ -186,17 +203,27 @@ Smallest, most-load-bearing change. Ships first.
   `ADCP_SANDBOX=1` and otherwise un-flagged accounts must mark
   conformance accounts in their `AccountStore.resolve` implementation.
 
-### Phase 2 — mock-mode routing
+### Phase 2 — mock-mode upstream URL routing
 
 The adopter-cleanup phase. Compliance becomes inherited.
 
-- SDK detects `account.mode === 'mock'` on the way into tool dispatch.
-- For mock-mode requests, the SDK forwards out-of-process to a running
-  `bin/adcp.js mock-server` over HTTP (resolved decision; cross-language
-  SDKs share this path). Adopter's `DecisioningPlatform` methods are
-  not invoked.
-- Comply controller dispatch routes to the mock-server's controller
-  surface (same logic, different backend).
+- The framework detects `account.mode === 'mock'` on the way into tool
+  dispatch. For mock-mode requests, the adapter's upstream HTTP client
+  base URL is swapped to the mock-server's specialism endpoint.
+  Adapter code runs unchanged.
+- The `comply_test_controller` tool is unaffected by mock-mode routing.
+  It's an SDK-side compliance concern; real upstream APIs don't have
+  it, mock fixtures don't either. Adopters wire `TestControllerStore`
+  (or equivalent) once for all three modes.
+- Compliance scaffolding (seeded media buys, scenario state machines)
+  lives in the mock-server fixtures, NOT in adopter code. The
+  mock-server's per-specialism shape is what makes this possible —
+  the mock IS the upstream-shaped reference, so storyboards drive
+  scenarios via fixture state rather than adopter-side test
+  controllers.
+- Cross-SDK contract: each SDK (JS, Python, Go) implements its own
+  framework-side mode-aware URL routing. The mock-server is the
+  language-neutral referee at the upstream-API layer.
 - Hello adapter cleanup: delete `seededMediaBuys` Map, delete
   `complyTest:` block, delete `process.env.ADCP_SANDBOX` checks.
   Adopter file shrinks by ~50-80 LOC. The example becomes a clean
@@ -256,12 +283,17 @@ captured here for traceability.
   boolean`. Clearer at the call site; `Account.sandbox` can stay as a
   derived/computed accessor for back-compat where it's already wired,
   or be deprecated outright in a future major.
-- **Mock-mode routing transport**: **out-of-process is the only path.**
-  All language SDKs forward mock-mode tool calls to a running
-  `bin/adcp.js mock-server` over HTTP. No in-process shortcut. One
-  reference path = one wire-correctness contract; cross-language SDKs
-  are first-class. Conformance harnesses already shell out to the
-  `adcp` binary, so adopters don't pay a new operational cost.
+- **Mock-mode routing contract**: framework-side, mode-aware **upstream
+  URL routing**. When `account.mode === 'mock'`, the resolved upstream
+  URL points at `bin/adcp.js mock-server <specialism>`. Adapter code
+  runs unchanged across live, sandbox, and mock — only the URL
+  differs. Out-of-process to the mock-server is one approach; SDKs may
+  use whatever idiomatic shape fits their language (decorator,
+  base-class method, middleware) as long as the resolved URL points at
+  the mock-server's specialism endpoint. Cross-language SDKs are
+  first-class because they all terminate at the same fixtures.
+  Conformance harnesses already shell out to the `adcp` binary, so
+  adopters don't pay a new operational cost.
 - **Mock-server packaging**: stays in `bin/adcp.js`. All SDKs already
   invoke that binary for storyboard runs, so it's a known artifact in
   the ecosystem. No need to spin off as a separate Docker image or
@@ -271,3 +303,23 @@ captured here for traceability.
   `adcontextprotocol/adcp`** so it's the cross-SDK reference. This
   proposal stays in `adcp-client/docs/proposals/` as the SDK-side
   artifact for routing and account-mode semantics.
+
+## Implementation status
+
+- **Python (`adcontextprotocol/adcp-client-python`)**: Phase 1 shipped
+  in PR #483 (`Account.mode` + comply-controller gate). Phase 2 shipped
+  in PR #487, using `DecisioningPlatform.upstream_url: ClassVar[str |
+  None]` for the production URL plus `DecisioningPlatform.upstream_for(ctx)`
+  to return a cached `UpstreamHttpClient` per request based on resolved
+  `account.mode`. Per-tenant mock URL contract:
+  `Account.metadata['mock_upstream_url']`, populated by
+  `AccountStore.resolve` for mock-mode accounts. Mix-and-match works in
+  one process: live + sandbox + multiple mock tenants on different
+  fixture URLs.
+- **JS (`adcontextprotocol/adcp-client`)**: Phase 1 shipped in PR #1453
+  (comply-controller auto-wire). Phase 2 not yet implemented; reference
+  shape is the Python implementation linked above. The contract — when
+  `account.mode === 'mock'`, the adapter's upstream URL points at the
+  mock-server's specialism endpoint — is the same; the JS-idiomatic
+  shape (decorator, base-class method, middleware) is an
+  implementation choice for that PR.
