@@ -11,6 +11,30 @@ This directory contains practical examples of how to use the `@adcp/sdk` library
 - **`env-config.ts`** - Loading agent configuration from environment variables
 - **`conversation-client.ts`** - Conversation-aware client with input handlers
 
+### Hello adapters
+
+Worked starting points for adopters wrapping a real upstream platform with the `createAdcpServerFromPlatform` surface. Fork one and replace the in-memory backend with your real catalog / ledger / generation pipeline. All use the same `BuyerAgentRegistry` pattern with Addie (the storyboard runner) seeded as a sandbox-only buyer.
+
+| Shape                                                   | File                                         | Default port |
+| ------------------------------------------------------- | -------------------------------------------- | ------------ |
+| Single specialism, single tenant — `signal-marketplace` | `hello_seller_adapter_signal_marketplace.ts` | 3001         |
+| Multi-specialism, multi-tenant (account-routed)         | `hello_seller_adapter_multi_tenant.ts`       | 3003         |
+
+`hello_seller_adapter_multi_tenant.ts` demonstrates the **account-routed** multi-tenant model: one server hosts `governance-spend-authority`, `property-lists`, and `brand-rights` for two distinct tenants whose data never crosses. Two resolution paths:
+
+- Tools that carry `account` (governance, property-lists) → `accounts.resolve(ref)` reads `ref.operator` and routes to the matching tenant. Same buyer credential can hit different tenants by varying `account.operator`.
+- Tools without `account` (`get_brand_identity`, `get_rights`) → `accounts.resolve(undefined, ctx)` reads the resolved buyer agent's home tenant from `ctx.agent`. Different credentials → different views of the catalog without any account field on the wire.
+
+This is distinct from `decisioning-platform-multi-tenant.ts` which uses **host-routed** tenancy via `TenantRegistry` (different agentUrls per tenant). Both are valid; pick by deployment shape.
+
+Boot any of them with:
+
+```bash
+NODE_ENV=development npx tsx examples/hello_seller_adapter_<name>.ts
+```
+
+`NODE_ENV=development` is required because the adapters use the in-memory task registry; production deployments wire `taskRegistry: createPostgresTaskRegistry({ pool })` (or pass `createInMemoryTaskRegistry()` explicitly to opt in).
+
 ### Agent testing (`comply_test_controller`)
 
 Start with `createComplyController` (`comply-controller-seller.ts`). Switch to `registerTestController` (`seller-test-controller.ts`) only when your domain state has internal structure that multiple production tools read from — i.e., when the adapter surface's one-method-per-scenario shape starts fighting the code you already have.
