@@ -66,10 +66,10 @@ runHelloAdapterGates({
   mockOptions: { apiKey: 'mock_sales_guaranteed_key_do_not_use_in_prod' },
   extraEnv: {
     UPSTREAM_API_KEY: 'mock_sales_guaranteed_key_do_not_use_in_prod',
-    // Opens the comply_test_controller surface for the storyboard runner.
-    // Production sellers gate on this same flag; the storyboard env sets it
-    // explicitly so non-test deployments stay closed.
-    ADCP_SANDBOX: '1',
+    // No ADCP_SANDBOX — the framework gate inside
+    // `createAdcpServerFromPlatform` admits comply_test_controller via the
+    // resolver-stamped `mode: 'sandbox'` on the synthesis branch. Phase 3 of
+    // #1435 collapsed the env-fallback admit onto the resolver-mode signal.
   },
   expectedRoutes: [
     'GET /_lookup/network',
