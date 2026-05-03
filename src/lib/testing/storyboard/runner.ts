@@ -3225,7 +3225,10 @@ export function applyBrandInvariant(
       const acct = existingAccount as Record<string, unknown>;
       const isNaturalKeyVariant = 'brand' in acct || 'operator' in acct;
       if (isNaturalKeyVariant) {
-        result.account = { ...acct, brand };
+        // Default operator to brand.domain: cascade-scenario context.account can
+        // arrive with operator: undefined (JSON strips it → spec-invalid ref). (#1419)
+        const operator = (acct.operator as string | undefined | null) ?? brand.domain;
+        result.account = { ...acct, brand, operator };
       }
     }
   } else if (topAccountOk) {

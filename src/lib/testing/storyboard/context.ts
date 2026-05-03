@@ -29,11 +29,12 @@ export const CONTEXT_EXTRACTORS: Record<string, ContextExtractor> = {
     const extracted: Record<string, unknown> = {};
     if (first.account_id) extracted.account_id = first.account_id;
     if (first.status) extracted.account_status = first.status;
-    // Build an account reference for downstream steps
-    extracted.account = {
-      brand: first.brand,
-      operator: first.operator,
-    };
+    // Build an account reference for downstream steps.
+    // Omit operator when absent — operator: undefined serialises to absent in JSON,
+    // silently producing a spec-invalid natural-key ref. (#1419)
+    const accountRef: Record<string, unknown> = { brand: first.brand };
+    if (first.operator) accountRef.operator = first.operator;
+    extracted.account = accountRef;
     return extracted;
   },
 

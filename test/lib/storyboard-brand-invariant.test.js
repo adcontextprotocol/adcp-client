@@ -193,6 +193,40 @@ describe('applyBrandInvariant', () => {
     assert.deepStrictEqual(result.account.brand, BRAND, 'natural-key brand should be overridden');
     assert.strictEqual(result.account.operator, 'pinnacle-agency.example');
   });
+
+  // ── issue #1419: operator missing from cascade-scenario synthetic refs ──
+  // cascade-scenario comply_test_controller steps can arrive with
+  // account: { brand: {...}, sandbox: true } (no operator), causing strict-
+  // validating sellers to reject the call. applyBrandInvariant must add
+  // operator (= brand.domain) so the natural-key arm is always complete.
+
+  test('adds operator fallback when natural-key account omits it (issue #1419)', () => {
+    const result = applyBrandInvariant(
+      { account: { brand: { domain: 'test.example' }, sandbox: true } },
+      { brand: BRAND }
+    );
+    assert.ok(result.account.operator, 'operator must be present on the natural-key account ref');
+    assert.strictEqual(result.account.operator, BRAND.domain, 'operator should default to brand.domain');
+    assert.deepStrictEqual(result.account.brand, BRAND);
+    assert.strictEqual(result.account.sandbox, true);
+  });
+
+  test('adds operator fallback when context.account.operator is explicitly undefined (issue #1419)', () => {
+    const result = applyBrandInvariant(
+      { account: { brand: { domain: 'test.example' }, operator: undefined, sandbox: true } },
+      { brand: BRAND }
+    );
+    assert.ok(result.account.operator, 'operator must be set even when context.account.operator was undefined');
+    assert.strictEqual(result.account.operator, BRAND.domain);
+  });
+
+  test('preserves explicit operator when it is set (no regression, issue #1419)', () => {
+    const result = applyBrandInvariant(
+      { account: { brand: { domain: 'advertiser.example' }, operator: 'media-co.example', sandbox: true } },
+      { brand: BRAND }
+    );
+    assert.strictEqual(result.account.operator, 'media-co.example', 'explicit operator must not be overwritten');
+  });
 });
 
 // ────────────────────────────────────────────────────────────
