@@ -218,6 +218,130 @@ components:
         message: { type: string }
         request_id: { type: string }
 
+    RangeMinMax:
+      type: object
+      required: [min, max]
+      properties:
+        min: { type: number, minimum: 0 }
+        max: { type: number, minimum: 0 }
+      description: Min/max bounds for a forecasted metric.
+
+    DeliveryEstimate:
+      type: object
+      description: |
+        Walled-garden delivery estimate response — upstream-shaped. Adapters
+        project `delivery_curve[].{daily_budget, estimated_daily_reach.{min,max},
+        estimated_daily_conversions.{min,max}}` onto AdCP `DeliveryForecast.points[].{budget,
+        metrics.reach.{low,mid,high}, metrics.purchase.{low,mid,high}}` —
+        rename `min/max` → `low/high` (mid = `(min+max)/2`), pick AdCP
+        event-type metric keys (`purchase` / `lead` / `app_install`) for
+        outcome metrics rather than the upstream `conversions` label.
+      required: [optimization_goal, currency, forecast_range_unit, estimated_cpm, delivery_curve]
+      properties:
+        optimization_goal: { type: string }
+        currency: { type: string }
+        forecast_range_unit:
+          type: string
+          enum: [spend, conversions, reach_freq, clicks]
+          description: |
+            Matches AdCP `DeliveryForecast.forecast_range_unit`. `spend`
+            when caller passed a budget (forward forecast); `conversions`
+            / `reach_freq` / `clicks` when caller passed `target_outcome`
+            (Meta-style "tell me your goal, I'll tell you the budget").
+        estimated_daily_reach: { $ref: '#/components/schemas/RangeMinMax' }
+        estimated_daily_impressions: { $ref: '#/components/schemas/RangeMinMax' }
+        estimated_daily_clicks: { $ref: '#/components/schemas/RangeMinMax' }
+        estimated_daily_conversions: { $ref: '#/components/schemas/RangeMinMax' }
+        estimated_cpm:
+          type: object
+          required: [min, median, max]
+          properties:
+            min: { type: number }
+            median: { type: number }
+            max: { type: number }
+          description: |
+            CPM band varies by `optimization_goal` — reach is cheaper than
+            conversions; conversions/app-install bands are highest. Mirrors
+            real walled-garden auction dynamics.
+        bid_recommendation:
+          type: object
+          required: [low, median, high]
+          properties:
+            low: { type: number }
+            median: { type: number }
+            high: { type: number }
+        daily_budget_recommendation: { $ref: '#/components/schemas/RangeMinMax' }
+        delivery_curve:
+          type: array
+          minItems: 3
+          description: |
+            5-7 sample points showing how delivery scales with daily budget.
+            Adopters project this onto AdCP `DeliveryForecast.points`.
+          items:
+            type: object
+            required: [daily_budget, estimated_daily_reach, estimated_daily_conversions]
+            properties:
+              daily_budget: { type: number }
+              estimated_daily_reach: { $ref: '#/components/schemas/RangeMinMax' }
+              estimated_daily_conversions: { $ref: '#/components/schemas/RangeMinMax' }
+        required_budget:
+          $ref: '#/components/schemas/RangeMinMax'
+          description: |
+            Present only when caller provided `target_outcome` (reverse
+            forecast). The budget range needed to hit the target.
+        min_budget_warning:
+          type: object
+          required: [floor, reason]
+          description: |
+            Present when the inferred reverse-forecast budget falls below
+            the platform's learning-phase floor for the chosen
+            `optimization_goal`. The platform clamps `required_budget` /
+            `daily_budget_recommendation` up to `floor` and surfaces this
+            warning so the buyer sees what happened. Real Meta enforces
+            $1.05/day for impressions, $5.05/day for clicks, ~$40/day for
+            conversion campaigns; TikTok floors $20/day. Adopters wire the
+            handling here before they hit it in production.
+          properties:
+            floor: { type: number, minimum: 0 }
+            reason: { type: string }
+        generated_at: { type: string, format: date-time }
+
+    AudienceReachEstimate:
+      type: object
+      required: [estimated_audience_size, matchable_size_at_platform, reach_quality]
+      properties:
+        estimated_audience_size: { $ref: '#/components/schemas/RangeMinMax' }
+        matchable_size_at_platform:
+          $ref: '#/components/schemas/RangeMinMax'
+          description: |
+            How many audience members the platform can actually reach
+            (matchable to platform identities). Always ≤ `estimated_audience_size`.
+        reach_quality:
+          type: string
+          enum: [narrow, specific, broad]
+        generated_at: { type: string, format: date-time }
+
+    LookalikeEstimate:
+      type: object
+      required: [seed_audience_id, similarity_pct, country, estimated_size, activation_eta_hours]
+      properties:
+        seed_audience_id: { type: string }
+        similarity_pct:
+          type: number
+          minimum: 1
+          maximum: 10
+          description: 1 = closest match (smallest, highest quality); 10 = broadest.
+        country:
+          type: string
+          description: ISO 3166-1 alpha-2.
+        estimated_size: { $ref: '#/components/schemas/RangeMinMax' }
+        activation_eta_hours:
+          type: integer
+          description: |
+            Hours until the lookalike model finishes building and the
+            audience becomes targetable.
+        generated_at: { type: string, format: date-time }
+
 paths:
   # ────────────────────────────────────────────────────────────
   # OAuth (no securityScheme — token endpoint is the auth root)
@@ -644,3 +768,135 @@ paths:
             application/json:
               schema: { $ref: '#/components/schemas/Error' }
         '404': { description: Pixel not found. }
+
+  # ────────────────────────────────────────────────────────────
+  # Planning surface — Meta/TikTok/Snap-style forecast + reach estimation.
+  # Adopters project these responses onto AdCP `Product.forecast`
+  # (`DeliveryForecast`). adcontextprotocol/adcp-client#1378.
+  # ────────────────────────────────────────────────────────────
+  /v1.3/advertiser/{advertiser_id}/delivery_estimate:
+    post:
+      summary: |
+        Estimate delivery for a targeting + optimization_goal pair. Forward
+        forecast (`budget` provided) returns expected reach/impressions/etc.
+        Reverse forecast (`target_outcome` provided) returns required
+        budget — the Meta-style "tell me your goal, I'll tell you the
+        budget" surface.
+      operationId: estimateDelivery
+      security: [{ bearerAccessToken: [] }]
+      parameters:
+        - in: path
+          name: advertiser_id
+          required: true
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [optimization_goal]
+              properties:
+                targeting:
+                  type: object
+                  description: |
+                    Free-form targeting object (geo, age, interests,
+                    custom audiences, lookalikes). Hashed to perturb
+                    estimates.
+                  additionalProperties: true
+                optimization_goal:
+                  type: string
+                  description: |
+                    Drives CPM band: `reach` / `awareness` (cheapest);
+                    `video_views`, `engagement`; `clicks` / `traffic`;
+                    `conversions` / `purchase` / `app_install` (most
+                    expensive).
+                budget:
+                  type: number
+                  minimum: 0
+                  description: Daily budget. Provide for forward forecast.
+                target_outcome:
+                  type: number
+                  minimum: 0
+                  description: |
+                    Daily target in units of `optimization_goal`.
+                    Provide for reverse forecast (no `budget`).
+                flight_dates:
+                  type: object
+                  properties:
+                    start: { type: string, format: date }
+                    end: { type: string, format: date }
+      responses:
+        '200':
+          content: { application/json: { schema: { $ref: '#/components/schemas/DeliveryEstimate' } } }
+        '400':
+          description: Missing optimization_goal, or neither budget nor target_outcome supplied.
+          content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } }
+
+  /v1.3/advertiser/{advertiser_id}/audience_reach_estimate:
+    post:
+      summary: |
+        Estimate the reachable audience size for a targeting spec, before
+        committing to a campaign. Returns total audience size in the world
+        and the platform-matchable subset.
+      operationId: estimateAudienceReach
+      security: [{ bearerAccessToken: [] }]
+      parameters:
+        - in: path
+          name: advertiser_id
+          required: true
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [targeting]
+              properties:
+                targeting:
+                  type: object
+                  additionalProperties: true
+      responses:
+        '200':
+          content: { application/json: { schema: { $ref: '#/components/schemas/AudienceReachEstimate' } } }
+        '400': { content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
+
+  /v1.3/advertiser/{advertiser_id}/audience/{audience_id}/lookalike:
+    post:
+      summary: |
+        Estimate the size and activation ETA of a lookalike audience built
+        from a seed audience. Every walled garden surfaces a similarly-shaped
+        endpoint (Meta `customaudiences` lookalike subtype, TikTok
+        `dmp/audience/save_lookalike`, Snap `lookalikes`).
+      operationId: estimateLookalike
+      security: [{ bearerAccessToken: [] }]
+      parameters:
+        - in: path
+          name: advertiser_id
+          required: true
+          schema: { type: string }
+        - in: path
+          name: audience_id
+          required: true
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [similarity_pct, country]
+              properties:
+                similarity_pct:
+                  type: number
+                  minimum: 1
+                  maximum: 10
+                country:
+                  type: string
+                  description: ISO 3166-1 alpha-2.
+      responses:
+        '200':
+          content: { application/json: { schema: { $ref: '#/components/schemas/LookalikeEstimate' } } }
+        '400': { content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
+        '404': { description: Seed audience not found. }

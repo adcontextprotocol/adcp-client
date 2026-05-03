@@ -35,6 +35,10 @@
 
 import { ADCP_VERSION } from '../../version';
 import { CONFLICT_ADCP_ERROR_ALLOWLIST } from '../../server/envelope-allowlist';
+import {
+  CREATIVE_ASSET_TRANSITIONS as CREATIVE_ASSET_TRANSITIONS_TYPED,
+  MEDIA_BUY_TRANSITIONS as MEDIA_BUY_TRANSITIONS_TYPED,
+} from '../../server/state-machine';
 import { registerAssertion } from './assertions';
 
 // Register only once per process. `registerAssertion` throws on duplicates —
@@ -536,46 +540,16 @@ function buildEnumSchemaUrl(enumFile: string): string {
   return `${SCHEMA_URL_BASE}/schemas/${ADCP_VERSION}/enums/${enumFile}`;
 }
 
+// Source of truth for both graphs lives in `server/state-machine.ts` so
+// production sellers and the runner enforce identical edges. Wrap the typed
+// maps in `TransitionGraph` for the runner's string-keyed extractors.
 const MEDIA_BUY_TRANSITIONS: TransitionGraph = {
-  // See `static/schemas/source/enums/media-buy-status.json`. `active ↔ paused`
-  // is reversible (buyer pauses, seller resumes). `completed | rejected |
-  // canceled` are terminal.
-  //
-  // NOTE: `pending_start → rejected` is defensible but not explicit in the
-  // schema prose — rejected is described as "declined by the seller after
-  // creation", which is ambiguous on whether post-start rejection is in
-  // scope. Kept for now; flagged for spec clarification.
-  transitions: new Map<string, ReadonlySet<string>>([
-    ['pending_creatives', new Set(['pending_start', 'active', 'paused', 'canceled', 'rejected'])],
-    ['pending_start', new Set(['active', 'paused', 'canceled', 'rejected'])],
-    ['active', new Set(['paused', 'completed', 'canceled'])],
-    ['paused', new Set(['active', 'completed', 'canceled'])],
-    ['completed', new Set()],
-    ['rejected', new Set()],
-    ['canceled', new Set()],
-  ]),
+  transitions: MEDIA_BUY_TRANSITIONS_TYPED as ReadonlyMap<string, ReadonlySet<string>>,
   enumFile: 'media-buy-status.json',
 };
 
 const CREATIVE_ASSET_TRANSITIONS: TransitionGraph = {
-  // See `static/schemas/source/enums/creative-status.json`. The schema is
-  // explicit on which edges exist:
-  //   - processing: "Automatically transitions to pending_review when
-  //     processing completes, or to rejected if processing fails." → no
-  //     direct `processing → approved` edge.
-  //   - pending_review: "Transitions to approved or rejected after review."
-  //     → no `pending_review → processing` edge.
-  //   - rejected: "Buyer can re-submit by calling sync_creatives again,
-  //     which moves the creative back to processing." → the re-sync path.
-  //   - approved ↔ archived is reversible (buyer archives / unarchives).
-  // No terminals — everything can recover via re-sync.
-  transitions: new Map<string, ReadonlySet<string>>([
-    ['processing', new Set(['pending_review', 'rejected'])],
-    ['pending_review', new Set(['approved', 'rejected'])],
-    ['approved', new Set(['archived', 'rejected'])],
-    ['archived', new Set(['approved'])],
-    ['rejected', new Set(['processing', 'pending_review'])],
-  ]),
+  transitions: CREATIVE_ASSET_TRANSITIONS_TYPED as ReadonlyMap<string, ReadonlySet<string>>,
   enumFile: 'creative-status.json',
 };
 

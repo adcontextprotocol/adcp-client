@@ -34,7 +34,7 @@
  *     --params '{"creative_id":"cr-1","status":"rejected","rejection_reason":"Brand safety"}'
  */
 
-import { createTaskCapableServer, serve, type ServeContext } from '@adcp/sdk';
+import { createTaskCapableServer, isLegalCreativeTransition, serve, type ServeContext } from '@adcp/sdk';
 import { createComplyController, TestControllerError, type CreativeStatus } from '@adcp/sdk/testing';
 
 // ---------------------------------------------------------------------------
@@ -58,23 +58,15 @@ interface CreativeRecord {
 const products = new Map<string, ProductFixture>();
 const creatives = new Map<string, CreativeRecord>();
 
-// DEMO POLICY — do not copy this table into a production state machine.
-// It is permissive enough to run the example storyboards; a real seller
-// encodes their approval workflow here (and in production the controller
-// itself is never registered). The point of this table is to show WHERE
-// transition enforcement lives — the controller routes through the same
-// guard as the production path.
-const CREATIVE_TRANSITIONS: Record<CreativeStatus, CreativeStatus[]> = {
-  processing: ['pending_review', 'approved', 'rejected'],
-  pending_review: ['approved', 'rejected'],
-  approved: ['rejected', 'archived'],
-  rejected: ['approved', 'archived'],
-  archived: [],
-};
-
+// Transition enforcement uses the SDK's canonical graph
+// (`isLegalCreativeTransition` / `CREATIVE_ASSET_TRANSITIONS`) — the same
+// edges the storyboard runner's `status.monotonic` invariant enforces.
+// Wrapping the boolean predicate in a `TestControllerError` keeps the
+// controller's force_* error shape; production wire-facing code should
+// call `assertCreativeTransition` instead and let the framework project
+// the thrown `AdcpError` onto the wire envelope.
 function assertCreativeTransition(from: CreativeStatus, to: CreativeStatus): void {
-  const allowed = CREATIVE_TRANSITIONS[from] ?? [];
-  if (!allowed.includes(to)) {
+  if (!isLegalCreativeTransition(from, to)) {
     throw new TestControllerError('INVALID_TRANSITION', `Creative cannot move from ${from} to ${to}`, from);
   }
 }

@@ -519,9 +519,15 @@ the original `<<<UNTRUSTED_ISSUE_BODY>>>`.
 4. If substantive and **unlocks a stuck Clarify**: move forward
    per outcome rules.
 5. If substantive but the issue is in a final state (PR drafted,
-   deferred with linkage, flagged): post a brief acknowledgment
-   that routes the new info to the open PR or refreshes the defer
-   reasoning.
+   deferred with linkage, flagged): **silent by default.** A
+   read-receipt is noise — the issue's state already reflects the
+   prior decision. Comment **only** when the new info would
+   materially change the disposition (invalidates the prior defer,
+   surfaces a new blocker, reopens a settled question). In that
+   case, treat the comment as a re-trigger and re-run the relevant
+   experts (rule 3) — don't post a bare "acknowledged / noted /
+   standing by for CI" ack. Reading the thread is invisible work;
+   if there's nothing to add, leave the silence intact.
 6. Never reply to your own previous comments (workflow filters
    most cases via the `Triaged by Claude Code` footer). Never
    reply to bots.

@@ -14,6 +14,15 @@
  *
  * Closes adcp-client#1363.
  *
+ * **Picking an AccountStore?** Three reference shapes by *who creates the
+ * account*:
+ * - **Buyer self-onboards via `sync_accounts`** → `InMemoryImplicitAccountStore`
+ *   (Shape A).
+ * - **Upstream OAuth API owns the roster** → `createOAuthPassthroughResolver`
+ *   (this file, Shape B, returns just `resolve`).
+ * - **Publisher ops curates the roster** → `createRosterAccountStore`
+ *   (Shape C, complete AccountStore).
+ *
  * @public
  */
 

@@ -248,6 +248,62 @@ components:
         code: { type: string }
         message: { type: string }
 
+    ForecastRange:
+      type: object
+      properties:
+        low: { type: number, minimum: 0 }
+        mid: { type: number, minimum: 0 }
+        high: { type: number, minimum: 0 }
+      description: |
+        Point estimate or low/high bounds for a forecast metric. Adapter
+        projects this onto AdCP `ForecastRange` 1:1 — keys match.
+
+    ForecastPoint:
+      type: object
+      required: [metrics]
+      properties:
+        label: { type: string }
+        budget:
+          type: number
+          minimum: 0
+          description: |
+            Spend level this point represents. Omit on availability points
+            where metrics describe total reservable inventory (not what a
+            given spend buys).
+        metrics:
+          type: object
+          properties:
+            impressions: { $ref: '#/components/schemas/ForecastRange' }
+            reach: { $ref: '#/components/schemas/ForecastRange' }
+            frequency: { $ref: '#/components/schemas/ForecastRange' }
+            spend: { $ref: '#/components/schemas/ForecastRange' }
+
+    DeliveryForecast:
+      type: object
+      required: [points, method, currency, forecast_range_unit]
+      properties:
+        points:
+          type: array
+          minItems: 1
+          items: { $ref: '#/components/schemas/ForecastPoint' }
+        forecast_range_unit:
+          type: string
+          enum: [spend, availability]
+          description: |
+            `availability` when the caller asks "what's available?" (no
+            budget) — points describe total reservable inventory.
+            `spend` when the caller passes a budget — points form a
+            spend curve.
+        method:
+          type: string
+          enum: [estimate, modeled, guaranteed]
+        currency: { type: string }
+        generated_at: { type: string, format: date-time }
+      description: |
+        Mirrors AdCP `DeliveryForecast` (`/schemas/3.0.4/core/delivery-forecast.json`)
+        so adapters can project the upstream response onto `Product.forecast`
+        with no field renaming.
+
 security:
   - bearerApiKey: []
 
@@ -273,7 +329,14 @@ paths:
 
   /v1/products:
     get:
-      summary: List productized inventory (get_products mapping)
+      summary: |
+        List productized inventory (get_products mapping). When the caller
+        passes any of `targeting`, `flight_start`, `flight_end`, or `budget`,
+        each product is decorated with a per-query `forecast` field
+        (DeliveryForecast shape) so the adapter can project to
+        `Product.forecast` without a follow-up `POST /v1/forecast`. Without
+        those query params the response is unchanged from the static
+        catalog.
       operationId: listProducts
       parameters:
         - $ref: '#/components/parameters/NetworkCode'
@@ -283,6 +346,26 @@ paths:
         - in: query
           name: channel
           schema: { type: string }
+        - in: query
+          name: targeting
+          schema: { type: string }
+          description: |
+            JSON-stringified targeting object. Hashed with product_id +
+            dates to deterministically perturb supply — narrower targeting
+            returns smaller availability.
+        - in: query
+          name: flight_start
+          schema: { type: string, format: date }
+        - in: query
+          name: flight_end
+          schema: { type: string, format: date }
+        - in: query
+          name: budget
+          schema: { type: number, minimum: 0 }
+          description: |
+            Optional. When present, per-product forecast switches from
+            `forecast_range_unit: availability` to `spend` and the curve
+            anchors at this budget.
       responses:
         '200':
           content:
@@ -292,10 +375,155 @@ paths:
                   schema:
                     {
                       type: object,
-                      properties: { products: { type: array, items: { $ref: '#/components/schemas/Product' } } },
+                      properties:
+                        {
+                          products:
+                            {
+                              type: array,
+                              items:
+                                {
+                                  allOf:
+                                    [
+                                      { $ref: '#/components/schemas/Product' },
+                                      {
+                                        type: object,
+                                        properties: { forecast: { $ref: '#/components/schemas/DeliveryForecast' } },
+                                      },
+                                    ],
+                                },
+                            },
+                        },
                     },
                 },
             }
+
+  /v1/forecast:
+    post:
+      summary: |
+        Per-query delivery forecast for a single product. Mirrors GAM's
+        `forecastService.getDeliveryForecast` and FreeWheel's availability
+        check. Deterministic-seeded on `(product_id, targeting, dates)` so
+        storyboard graders can assert exact numbers.
+      operationId: getForecast
+      parameters: [{ $ref: '#/components/parameters/NetworkCode' }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [product_id]
+              properties:
+                product_id: { type: string }
+                targeting:
+                  type: object
+                  description: |
+                    Free-form targeting object (geo, daypart, audience,
+                    inventory list refs). Hashed to perturb supply.
+                  additionalProperties: true
+                flight_dates:
+                  type: object
+                  properties:
+                    start: { type: string, format: date }
+                    end: { type: string, format: date }
+                budget:
+                  type: number
+                  minimum: 0
+                  description: |
+                    Omit for an availability check (`forecast_range_unit:
+                    availability`). Provide for a spend curve
+                    (`forecast_range_unit: spend`).
+      responses:
+        '200':
+          content: { application/json: { schema: { $ref: '#/components/schemas/DeliveryForecast' } } }
+        '404':
+          description: Unknown product_id, or product belongs to a different network.
+          content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } }
+
+  /v1/availability:
+    post:
+      summary: |
+        Multi-item availability check (dry-run). Mirrors GAM's
+        `getCompetitiveForecast` semantics — items are evaluated in order
+        and earlier reservations reduce the supply visible to later ones.
+        Reservations are not persisted; create the order via `POST /v1/orders`
+        to actually reserve.
+      operationId: checkAvailability
+      parameters: [{ $ref: '#/components/parameters/NetworkCode' }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [items]
+              properties:
+                dry_run:
+                  type: boolean
+                  default: true
+                  description: Must be true (or omitted). Non-dry-run returns 400.
+                items:
+                  type: array
+                  minItems: 1
+                  items:
+                    type: object
+                    required: [product_id]
+                    properties:
+                      product_id: { type: string }
+                      budget: { type: number, minimum: 0 }
+                      flight_dates:
+                        type: object
+                        properties:
+                          start: { type: string, format: date }
+                          end: { type: string, format: date }
+                      targeting:
+                        type: object
+                        additionalProperties: true
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [available, items]
+                properties:
+                  available:
+                    type: boolean
+                    description: True if every item fits; false if any conflict was raised.
+                  items:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        product_id: { type: string }
+                        available: { type: boolean }
+                        forecast: { $ref: '#/components/schemas/DeliveryForecast' }
+                        tier_pricing:
+                          type: array
+                          items:
+                            type: object
+                            properties:
+                              tier:
+                                type: string
+                                enum: [open, preferred, premium]
+                              cpm: { type: number }
+                              currency: { type: string }
+                          description: |
+                            Three-tier rate card so the adapter has
+                            something concrete to project onto the AdCP
+                            pricing surface. A single CPM scalar doesn't
+                            model real-world variation by daypart/geo/audience.
+                        required_impressions: { type: integer }
+                        remaining_after_prior_items: { type: integer }
+                  conflicts:
+                    type: array
+                    description: Present only when `available` is false.
+                    items:
+                      type: object
+                      properties:
+                        product_id: { type: string }
+                        reason: { type: string }
+        '400': { content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
 
   /v1/orders:
     get:

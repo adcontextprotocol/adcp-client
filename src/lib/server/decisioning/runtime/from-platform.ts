@@ -66,7 +66,13 @@ import {
 import type { DecisioningPlatform, RequiredPlatformsFor, RequiredCapabilitiesFor } from '../platform';
 import type { ComplianceTestingCapabilities } from '../capabilities';
 import type { Account, ResolvedAuthInfo, ResolveContext } from '../account';
-import { AccountNotFoundError, refAccountId, toWireAccount, toWireSyncAccountRow } from '../account';
+import {
+  AccountNotFoundError,
+  refAccountId,
+  toWireAccount,
+  toWireSyncAccountRow,
+  toWireSyncGovernanceRow,
+} from '../account';
 import type { BuyerAgent, BuyerAgentRegistry } from '../buyer-agent';
 import { AdcpError, type AdcpStructuredError } from '../async-outcome';
 import type { CreativeBuilderPlatform } from '../specialisms/creative';
@@ -79,6 +85,7 @@ import type {
   BuildCreativeSuccess,
   CreativeManifest,
   GetAdCPCapabilitiesResponse,
+  SyncGovernanceRequest,
 } from '../../../types/tools.generated';
 import { adcpError, type AdcpErrorResponse } from '../../errors';
 import { validatePlatform, PlatformConfigError } from './validate-platform';
@@ -95,6 +102,13 @@ import {
 } from '../../ctx-metadata';
 import { createIdempotencyStore, type IdempotencyStore } from '../../idempotency';
 import { pgBackend, getIdempotencyMigration } from '../../idempotency/backends/pg';
+import type {
+  MediaBuyStore,
+  CreateMediaBuyInputForStore,
+  CreateMediaBuyResultForStore,
+  UpdateMediaBuyInputForStore,
+  GetMediaBuysResultForStore,
+} from '../../media-buy-store';
 import { createPostgresTaskRegistry, getDecisioningTaskRegistryMigration } from './postgres-task-registry';
 import type { PgQueryable } from '../../postgres-task-store';
 import { isTaskHandoff, _extractTaskFn, type TaskHandoff } from '../async-outcome';
@@ -167,6 +181,39 @@ function refuseImplicitAccountId(
     suggestion:
       'Call sync_accounts to associate accounts with your principal, then omit account_id on subsequent calls.',
   });
+}
+
+/**
+ * Dev-mode warning when a multi-id read tool returns fewer rows than
+ * the buyer requested — the canonical signal that the platform is
+ * silently truncating to `media_buy_ids[0]` (closes #1342, follow-up
+ * #1399). Catches the bug class where adopters write the recommended
+ * pattern wrong on first pass; quiet in production where legitimate
+ * misses (deleted, archived, cross-account) are routine and warning
+ * on every miss would be noise.
+ *
+ * Suppressible via `ADCP_SUPPRESS_MULTI_ID_WARN=1` for adopters whose
+ * legitimate-miss rate is high (deleted-account-rich datasets, etc.).
+ */
+function warnIfTruncatedMultiIdResponse(
+  toolName: 'getMediaBuyDelivery' | 'getMediaBuys',
+  requestedIds: readonly string[] | undefined,
+  responseArray: readonly unknown[] | undefined,
+  logger: AdcpLogger
+): void {
+  if (process.env.NODE_ENV === 'production') return;
+  if (process.env.ADCP_SUPPRESS_MULTI_ID_WARN === '1') return;
+  if (!requestedIds || requestedIds.length === 0) return;
+  const returned = Array.isArray(responseArray) ? responseArray.length : 0;
+  if (returned >= requestedIds.length) return;
+  // Empty `media_buy_ids` is filtered above as paginated-mode (no truncation
+  // possible without a request to compare against).
+  logger.warn(
+    `[adcp/sdk] ${toolName}: platform returned ${returned} row${returned === 1 ? '' : 's'} for ${requestedIds.length} requested media_buy_ids — ` +
+      `the platform may be silently truncating to media_buy_ids[0]. ` +
+      `See https://github.com/adcontextprotocol/adcp-client/issues/1342 for the multi-id pass-through contract. ` +
+      `Suppress with ADCP_SUPPRESS_MULTI_ID_WARN=1 if legitimate misses (deleted / cross-account) are routine.`
+  );
 }
 
 /**
@@ -472,6 +519,40 @@ export interface CreateAdcpServerFromPlatformOptions extends Omit<
    * @see docs/proposals/decisioning-platform-v6-1-ctx-metadata.md
    */
   ctxMetadata?: CtxMetadataStore;
+
+  /**
+   * Opinionated media-buy store that satisfies the seller spec contract for
+   * `targeting_overlay` echo: persist `packages[].targeting_overlay` from
+   * `create_media_buy`, echo it on `get_media_buys`, deep-merge across
+   * `update_media_buy` without dropping prior `property_list` /
+   * `collection_list` references.
+   *
+   * Wire to honor the
+   * `schemas/cache/<v>/media-buy/get-media-buys-response.json` contract
+   * without each adapter persisting + merging by hand. Sellers claiming
+   * `property-lists` / `collection-lists` MUST echo the persisted refs;
+   * `mediaBuyStore` is the framework-side way to do it.
+   *
+   * Backed by any `AdcpStateStore` — `InMemoryStateStore` for dev,
+   * `PostgresStateStore` for production. Failures are logged and swallowed
+   * (auto-echo MUST NOT break a successful seller response).
+   *
+   * @example
+   * ```ts
+   * import {
+   *   createAdcpServerFromPlatform,
+   *   createMediaBuyStore,
+   *   InMemoryStateStore,
+   * } from '@adcp/sdk/server';
+   *
+   * const stateStore = new InMemoryStateStore();
+   *
+   * createAdcpServerFromPlatform(myPlatform, {
+   *   mediaBuyStore: createMediaBuyStore({ store: stateStore }),
+   * });
+   * ```
+   */
+  mediaBuyStore?: MediaBuyStore;
 
   /**
    * Allow `push_notification_config.url` to point at loopback / private-IP
@@ -1138,7 +1219,8 @@ export function createAdcpServerFromPlatform<P extends DecisioningPlatform<any, 
           autoEmitCompletionWebhooks: opts.autoEmitCompletionWebhooks !== false,
         },
         ctxFor,
-        effectiveCtxMetadata
+        effectiveCtxMetadata,
+        opts.mediaBuyStore
       ),
       'mediaBuy',
       mergeOpts
@@ -1952,7 +2034,7 @@ async function routeIfHandoff<TInner, TWire>(
   taskRegistry: TaskRegistry,
   opts: DispatchHitlOpts,
   result: TInner | TaskHandoff<TInner>,
-  project: (inner: TInner) => TWire
+  project: (inner: TInner) => TWire | Promise<TWire>
 ): Promise<TWire | SubmittedEnvelope> {
   if (isTaskHandoff<TInner>(result)) {
     const taskFn = _extractTaskFn(result);
@@ -1961,11 +2043,11 @@ async function routeIfHandoff<TInner, TWire>(
       // but didn't go through ctx.handoffToTask. Treat as a sync
       // success arm with an empty body (caller-supplied projection
       // shapes the result; this branch is defensive).
-      return project(result as unknown as TInner);
+      return await project(result as unknown as TInner);
     }
     return dispatchHitl(taskRegistry, opts, async taskId => {
       const inner = await taskFn(buildHandoffContext(taskRegistry, taskId));
-      return project(inner);
+      return await project(inner);
     });
   }
   // Catch the most common LLM-scaffolded mistake: hand-rolling a
@@ -1991,7 +2073,7 @@ async function routeIfHandoff<TInner, TWire>(
         `never registered.`
     );
   }
-  const projected = project(result);
+  const projected = await project(result);
   if (opts.autoEmitCompletion === true && opts.pushNotificationUrl) {
     // Auto-emit completion webhook on sync-success arm — fire-and-forget.
     // Awaiting inline would let an attacker-controlled
@@ -2432,6 +2514,85 @@ async function autoStoreResources(
         `record(s) missing required '${idField}' — buyers will not be able ` +
         `to reference these resources on a subsequent mutating call.`
     );
+  }
+}
+
+/**
+ * Persist `packages[].targeting_overlay` from a successful
+ * `create_media_buy`. Called from the createMediaBuy projection so the
+ * persistence applies to both the sync arm and the HITL completion arm
+ * (the projection runs after the handoff fn resolves).
+ *
+ * Failures are logged + swallowed: a successful seller response must
+ * never be turned into an error by the auto-echo plumbing.
+ */
+async function persistTargetingOverlayFromCreate(
+  store: MediaBuyStore | undefined,
+  accountId: string | undefined,
+  request: unknown,
+  result: unknown,
+  logger: AdcpLogger
+): Promise<void> {
+  if (!store || !accountId) return;
+  if (result == null || typeof result !== 'object') return;
+  try {
+    await store.persistFromCreate(
+      accountId,
+      request as CreateMediaBuyInputForStore,
+      result as CreateMediaBuyResultForStore
+    );
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    logger.warn(`[adcp/decisioning] mediaBuyStore.persistFromCreate failed: ${msg}`);
+  }
+}
+
+/**
+ * Apply an `update_media_buy` patch to the persisted media-buy store.
+ * Per-field merge inside `targeting_overlay`: omitted keeps prior,
+ * present-non-null replaces, present-null clears.
+ *
+ * Failures are logged + swallowed for the same reason as the create
+ * path — the seller's update succeeded; auto-merge is best-effort.
+ */
+async function persistTargetingOverlayFromUpdate(
+  store: MediaBuyStore | undefined,
+  accountId: string | undefined,
+  mediaBuyId: string,
+  patch: unknown,
+  logger: AdcpLogger
+): Promise<void> {
+  if (!store || !accountId) return;
+  try {
+    await store.mergeFromUpdate(accountId, mediaBuyId, patch as UpdateMediaBuyInputForStore);
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    logger.warn(`[adcp/decisioning] mediaBuyStore.mergeFromUpdate failed: ${msg}`);
+  }
+}
+
+/**
+ * Backfill missing `packages[].targeting_overlay` on a `get_media_buys`
+ * response from the persisted store. Mutates the response. Packages the
+ * seller already echoed are left alone.
+ *
+ * Failures are logged + swallowed: a partial-echo response is strictly
+ * better than a hard error wiping out the seller's correctly-returned
+ * media-buy data.
+ */
+async function backfillTargetingOverlay(
+  store: MediaBuyStore | undefined,
+  accountId: string | undefined,
+  result: unknown,
+  logger: AdcpLogger
+): Promise<void> {
+  if (!store || !accountId) return;
+  if (result == null || typeof result !== 'object') return;
+  try {
+    await store.backfill(accountId, result as GetMediaBuysResultForStore);
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    logger.warn(`[adcp/decisioning] mediaBuyStore.backfill failed: ${msg}`);
   }
 }
 
@@ -2964,7 +3125,8 @@ function buildMediaBuyHandlers<P extends DecisioningPlatform<any, any>>(
   logger: AdcpLogger,
   pushOpts: { allowPrivateWebhookUrls: boolean; autoEmitCompletionWebhooks: boolean },
   ctxFor: CtxForFn,
-  ctxMetadataStore: CtxMetadataStore | undefined
+  ctxMetadataStore: CtxMetadataStore | undefined,
+  mediaBuyStore: MediaBuyStore | undefined
 ): MediaBuyHandlers<Account> | undefined {
   const sales = platform.sales;
   if (!sales) return undefined;
@@ -3036,7 +3198,10 @@ function buildMediaBuyHandlers<P extends DecisioningPlatform<any, any>>(
                 logger,
               },
               result,
-              r => r // identity projection for createMediaBuy
+              async r => {
+                await persistTargetingOverlayFromCreate(mediaBuyStore, reqCtx.account?.id, params, r, logger);
+                return r;
+              }
             );
           },
           r => r
@@ -3069,6 +3234,16 @@ function buildMediaBuyHandlers<P extends DecisioningPlatform<any, any>>(
               allowPrivateWebhookUrls: pushOpts.allowPrivateWebhookUrls,
             });
             const result = await sales.updateMediaBuy!(media_buy_id, params, reqCtx);
+            // Persist optimistically: the platform method returned without
+            // throwing, so the patch was accepted at the seam. If the
+            // publisher returned an error envelope on the success path
+            // (rare but possible — `update_media_buy` can return a Failed
+            // status arm in the wire schema), the persisted overlay
+            // diverges from the seller's view of the buy. Adopters who
+            // need stricter coupling should not return error-shaped
+            // success arms; the spec's preferred shape is to throw an
+            // `AdcpError` for genuine failures.
+            await persistTargetingOverlayFromUpdate(mediaBuyStore, reqCtx.account?.id, media_buy_id, params, logger);
             // F12 sync auto-emit. updateMediaBuy is sync-only on the
             // platform interface (no TaskHandoff arm — spec response
             // doesn't include Submitted), so we don't route through
@@ -3132,7 +3307,16 @@ function buildMediaBuyHandlers<P extends DecisioningPlatform<any, any>>(
       getMediaBuyDelivery: async (params, ctx) => {
         const reqCtx = ctxFor(ctx);
         return projectSync(
-          () => sales.getMediaBuyDelivery!(params, reqCtx),
+          async () => {
+            const result = await sales.getMediaBuyDelivery!(params, reqCtx);
+            warnIfTruncatedMultiIdResponse(
+              'getMediaBuyDelivery',
+              (params as { media_buy_ids?: readonly string[] }).media_buy_ids,
+              (result as { media_buy_deliveries?: readonly unknown[] })?.media_buy_deliveries,
+              logger
+            );
+            return result;
+          },
           actuals => actuals
         );
       },
@@ -3157,6 +3341,12 @@ function buildMediaBuyHandlers<P extends DecisioningPlatform<any, any>>(
         return projectSync(
           async () => {
             const result = await sales.getMediaBuys!(params, reqCtx);
+            warnIfTruncatedMultiIdResponse(
+              'getMediaBuys',
+              (params as { media_buy_ids?: readonly string[] }).media_buy_ids,
+              (result as { media_buys?: readonly unknown[] })?.media_buys,
+              logger
+            );
             await autoStoreResources(
               ctxMetadataStore,
               reqCtx.account?.id,
@@ -3165,6 +3355,7 @@ function buildMediaBuyHandlers<P extends DecisioningPlatform<any, any>>(
               'media_buy_id',
               logger
             );
+            await backfillTargetingOverlay(mediaBuyStore, reqCtx.account?.id, result, logger);
             return result;
           },
           r => r
@@ -3752,6 +3943,17 @@ function buildAccountHandlers<P extends DecisioningPlatform<any, any>>(
       return projectSync(
         () => accounts.upsert!(refs, resolveCtx),
         rows => ({ accounts: rows.map(toWireSyncAccountRow) })
+      );
+    };
+  }
+
+  if (accounts.syncGovernance) {
+    handlers.syncGovernance = async (params, ctx) => {
+      const entries = params.accounts as SyncGovernanceRequest['accounts'];
+      const resolveCtx = toResolveCtx(ctx, 'sync_governance');
+      return projectSync(
+        () => accounts.syncGovernance!(entries, resolveCtx),
+        rows => ({ accounts: rows.map(toWireSyncGovernanceRow) })
       );
     };
   }

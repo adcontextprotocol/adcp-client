@@ -61,6 +61,25 @@ export type { McpToolResponse } from './responses';
 export { validActionsForStatus } from './media-buy-helpers';
 export type { ValidAction, CancelMediaBuyInput } from './media-buy-helpers';
 
+export { createMediaBuyStore, DEFAULT_MEDIA_BUY_STORE_COLLECTION } from './media-buy-store';
+export type {
+  MediaBuyStore,
+  CreateMediaBuyStoreOptions,
+  CreateMediaBuyInputForStore,
+  CreateMediaBuyResultForStore,
+  UpdateMediaBuyInputForStore,
+  GetMediaBuysResultForStore,
+} from './media-buy-store';
+
+export {
+  MEDIA_BUY_TRANSITIONS,
+  CREATIVE_ASSET_TRANSITIONS,
+  isLegalMediaBuyTransition,
+  isLegalCreativeTransition,
+  assertMediaBuyTransition,
+  assertCreativeTransition,
+} from './state-machine';
+
 export {
   taskToolResponse,
   registerAdcpTaskTool,
@@ -408,3 +427,10 @@ export {
   defaultImplicitKeyFn,
   type ImplicitAccountStoreOptions,
 } from '../adapters/implicit-account-store';
+
+export {
+  createOAuthPassthroughResolver,
+  type OAuthPassthroughResolverOptions,
+} from '../adapters/oauth-passthrough-resolver';
+
+export { createRosterAccountStore, type RosterAccountStoreOptions } from '../adapters/roster-account-store';

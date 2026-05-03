@@ -27,6 +27,14 @@
  *      backend; persist `(idempotency_key, lineitem_index) → upstream_lineitem_id`
  *      in your DB so a process restart can reconcile partial completion.
  *   7. Validate: `node --test test/examples/hello-seller-adapter-guaranteed.test.js`
+ *   8. **DELETE the `// TEST-ONLY` blocks** before deploying:
+ *      - sandbox-arm in `accounts.resolve` (resolves storyboard runner's
+ *        synthetic `{brand, sandbox: true}` refs to a known network)
+ *      - HITL bypass in `createMediaBuy` (the `if (isSandbox)` short-circuit)
+ *      - `complyTest:` config block on `createAdcpServerFromPlatform`
+ *      - in-memory `seededMediaBuys` / `simulatedDelivery` Maps
+ *      These exist so the conformance harness can drive cascade scenarios
+ *      deterministically. Production sellers ship without them.
  *
  * Demo:
  *   npx @adcp/sdk@latest mock-server sales-guaranteed --port 4450
@@ -39,6 +47,8 @@
 
 import {
   createAdcpServerFromPlatform,
+  createMediaBuyStore,
+  InMemoryStateStore,
   serve,
   verifyApiKey,
   createIdempotencyStore,
@@ -78,6 +88,18 @@ const PUBLIC_AGENT_URL = process.env['PUBLIC_AGENT_URL'] ?? `http://127.0.0.1:${
 
 const KNOWN_PUBLISHERS = ['acmeoutdoor.example', 'pinnacle-agency.example', 'premium-sports.example'];
 
+// SWAP: the seller's minimum committable max_variance_percent — the
+// buyer-vs-seller billing-count delta this seller will tolerate before
+// triggering resolution. 5% is industry typical for premium guaranteed
+// inventory; your IO desk owns the real number.
+const MIN_VARIANCE_TOLERANCE = 5;
+
+// TEST-ONLY: id-prefix used by the sandbox arm in `accounts.resolve` so
+// `createMediaBuy` can detect cascade-storyboard requests and bypass the
+// HITL handoff. Production sellers don't need this; remove the sandbox
+// arm + this constant before deploying. See FORK CHECKLIST item 8.
+const SANDBOX_ID_PREFIX = 'sandbox_';
+
 // ---------------------------------------------------------------------------
 // Upstream client — SWAP for production.
 // Each method maps one AdCP tool concern to one upstream call. Per-request
@@ -102,6 +124,35 @@ interface UpstreamProduct {
   ad_unit_ids: string[];
   pricing: { model: 'cpm' | 'cpv'; cpm: number; currency: string; min_spend?: number };
   availability?: { start_date?: string; end_date?: string; available_impressions?: number };
+  /** Per-query forecast — present when GET /v1/products is called with
+   * `targeting`/`flight_start`/`flight_end`/`budget` query params. Mirrors
+   * AdCP `DeliveryForecast` field-for-field; pass through unchanged. */
+  forecast?: UpstreamForecast;
+}
+
+interface UpstreamForecastRange {
+  low?: number;
+  mid?: number;
+  high?: number;
+  [k: string]: unknown;
+}
+interface UpstreamForecastPoint {
+  label?: string;
+  budget?: number;
+  metrics: {
+    impressions?: UpstreamForecastRange;
+    reach?: UpstreamForecastRange;
+    frequency?: UpstreamForecastRange;
+    spend?: UpstreamForecastRange;
+    [k: string]: UpstreamForecastRange | undefined;
+  };
+}
+interface UpstreamForecast {
+  points: UpstreamForecastPoint[];
+  forecast_range_unit: 'spend' | 'availability';
+  method: 'modeled' | 'guaranteed' | 'estimate';
+  currency: string;
+  generated_at?: string;
 }
 
 interface UpstreamOrder {
@@ -114,7 +165,10 @@ interface UpstreamOrder {
   budget?: number;
   approval_task_id?: string;
   rejection_reason?: string;
-  line_items: Array<{
+  /** Mock's GET /v1/orders/{id} omits line_items; fetch via
+   * GET /v1/orders/{id}/lineitems separately. Real GAM splits the same
+   * way (Order vs LineItem services). */
+  line_items?: Array<{
     line_item_id: string;
     order_id: string;
     product_id: string;
@@ -172,17 +226,49 @@ const upstream = {
   },
 
   // SWAP: product catalog. Mock filters by network_code via header + optional
-  // ?delivery_type. Real GAM exposes `/networks/{code}/proposals` and
-  // `/networks/{code}/products`.
-  async listProducts(networkCode: string, deliveryType?: 'guaranteed' | 'non_guaranteed'): Promise<UpstreamProduct[]> {
+  // ?delivery_type. When `flight_start`/`flight_end`/`budget` are passed, the
+  // mock returns per-product `forecast` inline — single round-trip instead of
+  // N follow-up `/v1/forecast` calls. Real GAM exposes `/networks/{code}/products`
+  // for the catalog and `forecastService.getDeliveryForecast` for forecast;
+  // adopters whose backend doesn't fold forecast into the catalog response
+  // call `getForecast` per product (or in parallel) below.
+  async listProducts(
+    networkCode: string,
+    opts?: {
+      deliveryType?: 'guaranteed' | 'non_guaranteed';
+      flightStart?: string;
+      flightEnd?: string;
+      budget?: number;
+    }
+  ): Promise<UpstreamProduct[]> {
     const params: Record<string, string> = {};
-    if (deliveryType) params['delivery_type'] = deliveryType;
+    if (opts?.deliveryType) params['delivery_type'] = opts.deliveryType;
+    if (opts?.flightStart) params['flight_start'] = opts.flightStart;
+    if (opts?.flightEnd) params['flight_end'] = opts.flightEnd;
+    if (opts?.budget !== undefined) params['budget'] = String(opts.budget);
     const { body } = await http.get<{ products: UpstreamProduct[] }>(
       '/v1/products',
       params,
       networkHeader(networkCode)
     );
     return body?.products ?? [];
+  },
+
+  // SWAP: per-product forecast. Use this when your backend separates the
+  // catalog and forecast surfaces (typical for GAM's `forecastService` vs
+  // `inventoryService`). For the worked-mock case we fold forecast into
+  // `listProducts` above; this method shows the discrete shape.
+  async getForecast(
+    networkCode: string,
+    body: {
+      product_id: string;
+      targeting?: Record<string, unknown>;
+      flight_dates?: { start?: string; end?: string };
+      budget?: number;
+    }
+  ): Promise<UpstreamForecast | null> {
+    const r = await http.post<UpstreamForecast>('/v1/forecast', body, networkHeader(networkCode));
+    return r.body;
   },
 
   // SWAP: list orders.
@@ -212,6 +298,25 @@ const upstream = {
       networkHeader(networkCode)
     );
     return body;
+  },
+
+  // SWAP: list line items under an order. Mock's GET /v1/orders/{id} strips
+  // line_items from the response — fetch them via this separate call.
+  // Real GAM mirrors this split (OrderService vs LineItemService).
+  //
+  // Note: returns `[]` on null response body. Callers MUST validate the
+  // order exists separately (via `getOrder`) before calling — a missing
+  // order returns `[]` here rather than throwing, so it would surface as
+  // "no packages match" rather than `MEDIA_BUY_NOT_FOUND`. Both
+  // `updateMediaBuy` and `getMediaBuys` below pre-validate by calling
+  // `getOrder` / `listOrders`, so the existence check has already run.
+  async listLineItems(networkCode: string, orderId: string): Promise<NonNullable<UpstreamOrder['line_items']>> {
+    const { body } = await http.get<{ line_items: NonNullable<UpstreamOrder['line_items']> }>(
+      `/v1/orders/${encodeURIComponent(orderId)}/lineitems`,
+      undefined,
+      networkHeader(networkCode)
+    );
+    return body?.line_items ?? [];
   },
 
   // SWAP: create line item under an order. Real GAM uses LineItemService.
@@ -319,6 +424,13 @@ function projectProduct(p: UpstreamProduct, publisherDomain: string): Product {
       available_metrics: ['impressions', 'clicks', 'spend'],
       date_range_support: 'date_range',
     },
+    // Pass through per-query forecast verbatim — mock returns AdCP-shape
+    // already (`points`, `metrics.{impressions,reach,frequency,spend}` with
+    // `{low,mid,high}`, `forecast_range_unit`, `method`, `currency`). Real
+    // GAM responses need adapter-side translation; the mock skips that step
+    // intentionally so adopters can see what AdCP-shape forecast looks like
+    // without writing the projection first.
+    ...(p.forecast && { forecast: p.forecast }),
   };
 }
 
@@ -354,6 +466,14 @@ class SalesGuaranteedAdapter implements DecisioningPlatform<Record<string, never
     channels: ['olv', 'ctv', 'display'] as const,
     pricingModels: ['cpm'] as const,
     config: {},
+    // Declares the comply_test_controller surface so the conformance
+    // runner picks up `controller_detected: true` and grades missing
+    // scenarios as `not_applicable` instead of `failed`. The framework
+    // auto-derives the actual `scenarios` list from the `complyTest:`
+    // adapter set wired on `createAdcpServerFromPlatform` below.
+    compliance_testing: {
+      scenarios: ['force_media_buy_status', 'simulate_delivery'] as const,
+    },
   };
 
   accounts: AccountStore<NetworkMeta> = {
@@ -370,6 +490,39 @@ class SalesGuaranteedAdapter implements DecisioningPlatform<Record<string, never
       // SWAP: persist `account_id → network_code` during sync_accounts and
       // serve account_id lookups from there.
       if ('account_id' in ref) return null;
+
+      // ─── TEST-ONLY: cascade-scenario sandbox-arm ─────────────────────
+      // DELETE THIS BLOCK BEFORE DEPLOYING. The compliance runner injects
+      // synthetic refs like `{brand: {domain: 'test.example'}, sandbox: true}`
+      // for `media_buy_seller/*` cascade scenarios that test wire shape
+      // without depending on real test-kit principals. The block routes
+      // those synthetic refs to a fixed seeded network so the rest of the
+      // adapter has something concrete to operate on. Production sellers
+      // either reject sandbox refs entirely or route them to a dedicated
+      // sandbox tenant their IO desk owns; either way, this in-example
+      // synthesis isn't appropriate for prod traffic.
+      //
+      // Gate is `ADCP_SANDBOX === '1'` exclusively — single-source so
+      // accidentally setting `ADCP_SANDBOX` in any non-sandbox environment
+      // is the only way this branch fires.
+      if (ref.sandbox === true && process.env['ADCP_SANDBOX'] === '1') {
+        const sandboxDomain = 'acmeoutdoor.example';
+        const network = await upstream.lookupNetwork(sandboxDomain);
+        if (!network) return null;
+        return {
+          id: `${SANDBOX_ID_PREFIX}${network.network_code}`,
+          name: `Sandbox: ${network.display_name}`,
+          status: 'active',
+          ...(ref.operator !== undefined && { operator: ref.operator }),
+          brand: { domain: ref.brand.domain ?? sandboxDomain },
+          ctx_metadata: {
+            network_code: network.network_code,
+            publisher_domain: network.adcp_publisher,
+          },
+        };
+      }
+      // ─── /TEST-ONLY ──────────────────────────────────────────────────
+
       const publisherDomain = ref.brand.domain;
       if (!publisherDomain) return null;
       const network = await upstream.lookupNetwork(publisherDomain);
@@ -462,8 +615,21 @@ class SalesGuaranteedAdapter implements DecisioningPlatform<Record<string, never
       // production maps to a relevance ranker. The mock returns the full
       // product catalog; we pull guaranteed products to match the
       // sales-guaranteed specialism's value proposition.
-      const guaranteed = await upstream.listProducts(networkCode, 'guaranteed');
-      void req;
+      //
+      // When the buyer provides structured filters (flight dates, budget),
+      // forward them so each product comes back with a per-query
+      // DeliveryForecast — a single upstream round-trip surfaces both the
+      // catalog and the forecast curve. SWAP: production GAM splits this
+      // into `inventoryService` (catalog) + `forecastService.getDeliveryForecast`
+      // (per-product forecast). Use the discrete `getForecast` below if
+      // your backend can't fold forecast into the catalog response.
+      const briefBudget = (req.filters?.budget_range as { max?: number } | undefined)?.max;
+      const guaranteed = await upstream.listProducts(networkCode, {
+        deliveryType: 'guaranteed',
+        ...(req.filters?.start_date && { flightStart: req.filters.start_date }),
+        ...(req.filters?.end_date && { flightEnd: req.filters.end_date }),
+        ...(briefBudget !== undefined && { budget: briefBudget }),
+      });
       return { products: guaranteed.map(p => projectProduct(p, publisherDomain)) };
     },
 
@@ -498,8 +664,15 @@ class SalesGuaranteedAdapter implements DecisioningPlatform<Record<string, never
       // Opaque "exceed seller commitments" messages get cargo-culted into
       // every adopter's constraint enforcement and produce un-actionable
       // errors at the buyer-agent boundary.
+      // The cascade `measurement_terms_rejected` storyboard sends 0% (zero
+      // tolerance), which no operator commits to. Threshold lives at module
+      // scope above for one-grep tunability.
       const packagesArr = (req.packages ?? []) as Array<{
-        measurement_terms?: { viewability_threshold?: number; completion_rate_threshold?: number };
+        measurement_terms?: {
+          viewability_threshold?: number;
+          completion_rate_threshold?: number;
+          billing_measurement?: { max_variance_percent?: number };
+        };
       }>;
       for (let i = 0; i < packagesArr.length; i++) {
         const terms = packagesArr[i]?.measurement_terms;
@@ -518,6 +691,14 @@ class SalesGuaranteedAdapter implements DecisioningPlatform<Record<string, never
           throw new AdcpError('TERMS_REJECTED', {
             message: `packages[${i}].measurement_terms.completion_rate_threshold = ${terms.completion_rate_threshold} exceeds maximum committable threshold (${MAX_COMPLETION_RATE}). Lower to ≤${MAX_COMPLETION_RATE} or remove the term to retry.`,
             field: `packages[${i}].measurement_terms.completion_rate_threshold`,
+            recovery: 'correctable',
+          });
+        }
+        const variance = terms.billing_measurement?.max_variance_percent;
+        if (typeof variance === 'number' && variance < MIN_VARIANCE_TOLERANCE) {
+          throw new AdcpError('TERMS_REJECTED', {
+            message: `packages[${i}].measurement_terms.billing_measurement.max_variance_percent = ${variance} is below the seller's minimum commitment (${MIN_VARIANCE_TOLERANCE}%). Real billing-count divergence between buyer and seller routinely exceeds zero; commit to ≥${MIN_VARIANCE_TOLERANCE}% or remove the term.`,
+            field: `packages[${i}].measurement_terms.billing_measurement.max_variance_percent`,
             recovery: 'correctable',
           });
         }
@@ -545,9 +726,10 @@ class SalesGuaranteedAdapter implements DecisioningPlatform<Record<string, never
         budget?: number;
       }>;
 
-      return ctx.handoffToTask(async (taskCtx): Promise<CreateMediaBuySuccess> => {
-        void taskCtx;
-
+      // Build the synchronous-confirmation flow as a closure so both
+      // the HITL handoff path AND the sandbox-direct path can call it.
+      // The work is identical; only the wrapper differs.
+      const completeIoAndCreateLineItems = async (): Promise<CreateMediaBuySuccess> => {
         // Poll upstream IO task to terminal state. Mock promotes
         // submitted → working → completed across two polls; production
         // platforms vary in cadence. Bound the poll loop so a stuck
@@ -613,6 +795,30 @@ class SalesGuaranteedAdapter implements DecisioningPlatform<Record<string, never
           confirmed_at: new Date().toISOString(),
           packages: packagesOut,
         };
+      };
+
+      // ─── TEST-ONLY: HITL bypass for sandbox accounts ─────────────────
+      // DELETE THIS BLOCK BEFORE DEPLOYING. The compliance runner expects
+      // synchronous `media_buy_id` for `media_buy_seller/*` cascade
+      // scenarios (pending_creatives_to_start / inventory_list_* /
+      // invalid_transitions / measurement_terms_rejected follow-up); the
+      // BASE `sales_guaranteed` storyboard tests the IO-signing async
+      // path. Production sellers route every buy through the same path —
+      // either always-HITL or always-sync, never both based on a runtime
+      // flag. Belt-and-suspenders env re-check below: if the env flag
+      // isn't set even though the id flowed in marked sandbox, fall
+      // through to the production HITL path. Defends against an
+      // upstream-resolved account that somehow carries the sandbox prefix
+      // without the env being sandbox-mode.
+      const isSandbox = ctx.account.id.startsWith(SANDBOX_ID_PREFIX) && process.env['ADCP_SANDBOX'] === '1';
+      if (isSandbox) {
+        return completeIoAndCreateLineItems();
+      }
+      // ─── /TEST-ONLY ──────────────────────────────────────────────────
+
+      return ctx.handoffToTask(async (taskCtx): Promise<CreateMediaBuySuccess> => {
+        void taskCtx;
+        return completeIoAndCreateLineItems();
       });
     },
 
@@ -630,7 +836,8 @@ class SalesGuaranteedAdapter implements DecisioningPlatform<Record<string, never
         });
       }
       if (patch.packages) {
-        const knownPackageIds = new Set(order.line_items.map(li => li.line_item_id));
+        const lineItems = await upstream.listLineItems(networkCode, buyId);
+        const knownPackageIds = new Set(lineItems.map(li => li.line_item_id));
         for (const p of patch.packages) {
           const pid = (p as { package_id?: string }).package_id;
           if (pid && !knownPackageIds.has(pid)) {
@@ -655,23 +862,33 @@ class SalesGuaranteedAdapter implements DecisioningPlatform<Record<string, never
       const networkCode = ctx.account.ctx_metadata.network_code;
       const orders = await upstream.listOrders(networkCode);
       const filtered = req.media_buy_ids ? orders.filter(o => req.media_buy_ids!.includes(o.order_id)) : orders;
-      return {
-        media_buys: filtered.map(o => ({
-          media_buy_id: o.order_id,
-          status: mapMediaBuyStatus(o.status),
-          currency: o.currency,
-          ...(o.budget !== undefined && { total_budget: o.budget }),
-          confirmed_at: o.updated_at,
-          created_at: o.created_at,
-          updated_at: o.updated_at,
-          packages: o.line_items.map(li => ({
-            package_id: li.line_item_id,
-            product_id: li.product_id,
-            budget: li.budget,
+      // Fetch line items per order — mock's GET /v1/orders strips them.
+      // Production GAM/FreeWheel similarly splits Order vs LineItem services.
+      // SWAP: this is N+1 against the upstream. Real adapters either batch
+      // (e.g. POST /v1/lineitems:batchGet with order_ids[]) or accept the
+      // round-trip cost. Some platforms expose a `?include=lineitems`
+      // query param on the list endpoint that folds them in.
+      const buys = await Promise.all(
+        filtered.map(async o => {
+          const lineItems = await upstream.listLineItems(networkCode, o.order_id);
+          return {
+            media_buy_id: o.order_id,
+            status: mapMediaBuyStatus(o.status),
             currency: o.currency,
-          })),
-        })),
-      };
+            ...(o.budget !== undefined && { total_budget: o.budget }),
+            confirmed_at: o.updated_at,
+            created_at: o.created_at,
+            updated_at: o.updated_at,
+            packages: lineItems.map(li => ({
+              package_id: li.line_item_id,
+              product_id: li.product_id,
+              budget: li.budget,
+              currency: o.currency,
+            })),
+          };
+        })
+      );
+      return { media_buys: buys };
     },
 
     syncCreatives: async (creatives, ctx): Promise<SyncCreativesRow[]> => {
@@ -765,6 +982,30 @@ class SalesGuaranteedAdapter implements DecisioningPlatform<Record<string, never
 const platform = new SalesGuaranteedAdapter();
 const idempotencyStore = createIdempotencyStore({ backend: memoryBackend(), ttlSeconds: 86_400 });
 
+// ─── TEST-ONLY: in-memory state for comply_test_controller adapters ─────
+// DELETE THESE MAPS BEFORE DEPLOYING (or scope per-tenant if you keep the
+// controller wired in a sandbox tenant). Module-scope shared maps leak
+// state across accounts — that's fine for a worked example whose only
+// caller is the conformance harness, but unacceptable in production.
+// SWAP: scope by `account.id` (or your tenant key) and persist via the
+// same data layer your production handlers read from. The controller
+// and production tools should share one source of truth for state.
+const seededMediaBuys = new Map<string, { status: string; revision: number }>();
+const simulatedDelivery = new Map<
+  string,
+  { impressions: number; clicks: number; reported_spend: { amount: number; currency: string } }
+>();
+// ─── /TEST-ONLY ──────────────────────────────────────────────────────────
+
+// Persist `packages[].targeting_overlay` from create_media_buy and echo it
+// on get_media_buys. The seller spec MANDATES this echo for any seller
+// claiming property-lists / collection-lists, and SHOULD echo any persisted
+// targeting regardless. SWAP `InMemoryStateStore` for `PostgresStateStore`
+// in production — in-memory loss after restart silently strips the echo
+// from buyers who created buys before the bounce.
+const stateStore = new InMemoryStateStore();
+const mediaBuyStore = createMediaBuyStore({ store: stateStore });
+
 serve(
   ({ taskStore }) =>
     createAdcpServerFromPlatform(platform, {
@@ -772,10 +1013,61 @@ serve(
       version: '1.0.0',
       taskStore,
       idempotency: idempotencyStore,
+      mediaBuyStore,
       resolveSessionKey: ctx => {
         const acct = ctx.account as Account<NetworkMeta> | undefined;
         return acct?.id ?? 'anonymous';
       },
+      // ─── TEST-ONLY: comply_test_controller wiring ──────────────────────
+      // DELETE THIS BLOCK BEFORE DEPLOYING. The conformance runner uses
+      // `comply_test_controller` to seed media-buy fixtures and force
+      // state transitions deterministically across cascade scenarios.
+      // Production sellers don't need this surface — and shouldn't ship
+      // it. Per `examples/comply-controller-seller.ts`, the recommended
+      // production posture is "don't register the controller at all";
+      // a seller running their own sandbox tenant gates registration on
+      // an env flag controlled by the deploy pipeline (`ADCP_SANDBOX=1`).
+      //
+      // SECURITY: gate is `ADCP_SANDBOX === '1'` exclusively — single env
+      // var. Don't add an `|| NODE_ENV === 'test'` clause — staging boxes
+      // commonly run with `NODE_ENV=test` and the controller would open
+      // there too. The gate test (`test/examples/hello-seller-adapter-
+      // guaranteed.test.js`) sets `ADCP_SANDBOX=1` in `extraEnv`.
+      complyTest: {
+        sandboxGate: () => process.env['ADCP_SANDBOX'] === '1',
+        seed: {
+          media_buy: ({ media_buy_id, fixture }) => {
+            const existing = seededMediaBuys.get(media_buy_id);
+            const status = typeof fixture['status'] === 'string' ? (fixture['status'] as string) : 'pending_creatives';
+            seededMediaBuys.set(media_buy_id, { status, revision: existing?.revision ?? 0 });
+          },
+        },
+        force: {
+          media_buy_status: ({ media_buy_id, status, rejection_reason }) => {
+            const buy = seededMediaBuys.get(media_buy_id);
+            const previous = buy?.status ?? 'pending_creatives';
+            seededMediaBuys.set(media_buy_id, { status, revision: (buy?.revision ?? 0) + 1 });
+            void rejection_reason;
+            return { success: true, previous_state: previous, current_state: status };
+          },
+        },
+        simulate: {
+          delivery: ({ media_buy_id, impressions, clicks, reported_spend }) => {
+            const prev = simulatedDelivery.get(media_buy_id) ?? {
+              impressions: 0,
+              clicks: 0,
+              reported_spend: { amount: 0, currency: 'USD' },
+            };
+            simulatedDelivery.set(media_buy_id, {
+              impressions: prev.impressions + (impressions ?? 0),
+              clicks: prev.clicks + (clicks ?? 0),
+              reported_spend: reported_spend ?? prev.reported_spend,
+            });
+            return { success: true, simulated: { media_buy_id, impressions, clicks, reported_spend } };
+          },
+        },
+      },
+      // ─── /TEST-ONLY ──────────────────────────────────────────────────
     }),
   {
     port: PORT,

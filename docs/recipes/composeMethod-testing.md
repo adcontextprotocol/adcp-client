@@ -1,0 +1,268 @@
+# Testing `composeMethod`-wrapped handlers
+
+`composeMethod` wraps a single platform method with optional `before` / `after` hooks. This
+recipe shows how to write tests for handlers built with it, covering six patterns that adopters
+reach for most often.
+
+All snippets here are running tests in
+[`test/server-decisioning-compose-recipes.test.js`](../../test/server-decisioning-compose-recipes.test.js).
+If a snippet and the test ever diverge, the test is authoritative (the test runs in CI; the
+snippet does not). To verify locally: `node --test test/server-decisioning-compose-recipes.test.js`
+from the repo root after `npm run build:lib`.
+
+**Not this guide:** `docs/guides/HANDLER-PATTERNS-GUIDE.md` covers buyer-side `InputHandler`
+patterns. This guide is for _server-side_ `composeMethod` — a different primitive on a different
+surface, with a different test runner (Node built-in `assert`, not Jest).
+
+## Import
+
+```typescript
+import { composeMethod } from '@adcp/sdk/server';
+import type { ComposeHooks, ComposeShortCircuit } from '@adcp/sdk/server';
+```
+
+---
+
+## Pattern 1 — Mock the base, assert pass-through
+
+When neither hook fires the wrapped method is a transparent proxy. Track calls on the inner
+function with a simple counter — no mocking library needed.
+
+```javascript
+const inner = async (params, ctx) => ({ count: params.limit, region: ctx.region });
+let innerCalls = 0;
+const tracked = async (params, ctx) => { innerCalls++; return inner(params, ctx); };
+
+const wrapped = composeMethod(tracked, {});
+const result = await wrapped({ limit: 5 }, { region: 'us-east-1' });
+
+assert.strictEqual(innerCalls, 1, 'inner called exactly once');
+assert.deepStrictEqual(result, { count: 5, region: 'us-east-1' });
+```
+
+---
+
+## Pattern 2 — Short-circuit from a `before` hook
+
+A `before` hook returning `{ shortCircuit: value }` prevents `inner` from running. The
+short-circuit value flows through `after` (if any) and back to the caller.
+
+```javascript
+let innerCalled = false;
+const inner = async () => { innerCalled = true; return { from: 'inner' }; };
+const cached = { from: 'cache' };
+
+const wrapped = composeMethod(inner, {
+  before: async (params) => params.cached ? { shortCircuit: cached } : undefined,
+});
+
+// Cache hit — inner must be skipped
+innerCalled = false;
+const hit = await wrapped({ cached: true }, {});
+assert.strictEqual(innerCalled, false, 'inner must not run on cache hit');
+assert.deepStrictEqual(hit, { from: 'cache' });
+
+// Cache miss — inner must run
+const miss = await wrapped({ cached: false }, {});
+assert.strictEqual(innerCalled, true);
+assert.deepStrictEqual(miss, { from: 'inner' });
+```
+
+**Gotcha — bare `undefined` is a fall-through, not a short-circuit.** Only the discriminated
+wrapper `{ shortCircuit: value }` signals early exit. A `before` hook that returns `undefined`
+(or nothing) always falls through to `inner`, even when the intended short-circuit value is
+itself `undefined`. To short-circuit with an undefined result, return `{ shortCircuit: undefined }`.
+
+```javascript
+// Wrong: this is a fall-through
+const wrong = composeMethod(inner, { before: async () => undefined });
+
+// Right: this short-circuits with undefined as the result
+const right = composeMethod(inner, { before: async () => ({ shortCircuit: undefined }) });
+```
+
+---
+
+## Pattern 3 — Layering two `composeMethod` calls
+
+`before` accepts a single function, not an array. To compose independent guards, nest
+`composeMethod` calls. The outer `before` runs first; if it falls through, the inner `before`
+runs. This is how the `requireAdvertiserMatch` / `requireOrgScope` presets are designed to be
+composed.
+
+```javascript
+const inner = async () => ({ ok: true });
+const log = [];
+
+// Guard B is closer to inner; Guard A is the outer wrapper
+const withB = composeMethod(inner, {
+  before: async (params) => {
+    log.push('B');
+    return params.blockB ? { shortCircuit: { blocked: 'B' } } : undefined;
+  },
+});
+const withAB = composeMethod(withB, {
+  before: async (params) => {
+    log.push('A');
+    return params.blockA ? { shortCircuit: { blocked: 'A' } } : undefined;
+  },
+});
+
+// A short-circuits — B never runs
+log.length = 0;
+const ra = await withAB({ blockA: true, blockB: false }, {});
+assert.deepStrictEqual(log, ['A'], 'B must not run when A short-circuits');
+assert.deepStrictEqual(ra, { blocked: 'A' });
+
+// A falls through — B short-circuits
+log.length = 0;
+const rb = await withAB({ blockA: false, blockB: true }, {});
+assert.deepStrictEqual(log, ['A', 'B']);
+assert.deepStrictEqual(rb, { blocked: 'B' });
+
+// Both fall through — inner runs
+log.length = 0;
+const rc = await withAB({ blockA: false, blockB: false }, {});
+assert.deepStrictEqual(log, ['A', 'B']);
+assert.deepStrictEqual(rc, { ok: true });
+```
+
+---
+
+## Pattern 4 — `after` hook enrichment
+
+`after` receives `(result, params, ctx)` and must return the (possibly modified) result. Assert
+both that the hook saw the right inner response and that its enrichment arrived at the caller.
+
+```javascript
+const inner = async () => ({ products: [{ id: 'p1', price_cpm: 5.0 }] });
+
+const wrapped = composeMethod(inner, {
+  after: async (result, params, ctx) => ({
+    ...result,
+    ext: { enriched_by: ctx.region, count: result.products.length },
+  }),
+});
+
+const result = await wrapped({ filter: 'active' }, { region: 'eu-west-1' });
+assert.deepStrictEqual(result.products, [{ id: 'p1', price_cpm: 5.0 }]);
+assert.deepStrictEqual(result.ext, { enriched_by: 'eu-west-1', count: 1 });
+```
+
+**Note on placement:** `after` runs before response-schema validation. Fields added outside
+`ext` may fail schema validation — keep vendor-specific enrichment under `ext.*` (the spec's
+typed extension surface).
+
+`after` also runs on short-circuit values from `before`:
+
+```javascript
+const inner2 = async () => ({ products: ['from-inner'] });
+const wrapped2 = composeMethod(inner2, {
+  before: async () => ({ shortCircuit: { products: [] } }),
+  after: async (result) => ({ ...result, ext: { from: 'after' } }),
+});
+const r = await wrapped2({}, {});
+assert.deepStrictEqual(r.ext, { from: 'after' }, 'after runs on short-circuit values too');
+```
+
+---
+
+## Pattern 5 — `composeMethod` + typed errors
+
+`composeMethod` does not catch errors — typed errors thrown from `inner`, `before`, or `after`
+propagate to the caller. This is by design: the AdCP framework translates `AdcpError` subclasses
+to structured wire errors before they reach the buyer.
+
+```javascript
+const { PermissionDeniedError } = require('@adcp/sdk/server');
+
+// Error thrown from inner propagates
+const inner = async (params) => {
+  if (!params.account_id) throw new PermissionDeniedError('accounts.resolve');
+  return { account_id: params.account_id };
+};
+const wrapped = composeMethod(inner, {});
+
+await assert.rejects(
+  () => wrapped({}, {}),
+  (err) => {
+    assert.ok(err instanceof PermissionDeniedError);
+    assert.strictEqual(err.code, 'PERMISSION_DENIED');
+    return true;
+  }
+);
+assert.deepStrictEqual(await wrapped({ account_id: 'acc_1' }, {}), { account_id: 'acc_1' });
+```
+
+A `before` hook may also throw instead of returning `{ shortCircuit: null }` when you want the
+buyer to receive a typed wire error rather than a silent null. Use `{ shortCircuit: null }` to
+look like "not found"; use `throw new PermissionDeniedError(...)` when the buyer is already
+known to be authorized to know the account exists:
+
+```javascript
+const { PermissionDeniedError } = require('@adcp/sdk/server');
+const inner2 = async () => ({ account_id: 'acc_1' });
+
+const wrapped2 = composeMethod(inner2, {
+  before: async (_params, ctx) => {
+    if (!ctx.authorized) throw new PermissionDeniedError('before-hook');
+  },
+});
+
+await assert.rejects(
+  () => wrapped2({}, { authorized: false }),
+  PermissionDeniedError
+);
+const ok = await wrapped2({}, { authorized: true });
+assert.ok(ok !== null);
+```
+
+---
+
+## Pattern 6 — `requireAdvertiserMatch` with `composeMethod`
+
+The presets shipped in `@adcp/sdk/server` (`requireAccountMatch`, `requireAdvertiserMatch`,
+`requireOrgScope`) are pre-built `ComposeHooks` objects for `accounts.resolve`. Each returns an
+`after` hook that runs _after_ the inner resolver; a null inner result propagates unconditionally
+(no predicate runs on a "not found" account). The snippet below uses `requireAdvertiserMatch`;
+`requireAccountMatch` (general predicate) and `requireOrgScope` (org equality check) follow the
+same shape — pass the result of any of them directly as the second argument to `composeMethod`.
+
+```javascript
+const { composeMethod, requireAdvertiserMatch } = require('@adcp/sdk/server');
+
+const baseResolve = async (ref, _ctx) => ({
+  account_id: ref?.account_id ?? 'acc_1',
+  advertiser: 'brand_A',
+  ctx_metadata: {},
+  authInfo: { kind: 'api_key' },
+});
+
+const guarded = composeMethod(baseResolve, requireAdvertiserMatch(
+  async (ctx) => ctx?.allowedAdvertisers ?? []
+));
+
+// Allowed advertiser — resolves
+const allowed = await guarded(
+  { account_id: 'acc_1' },
+  { allowedAdvertisers: ['brand_A'] }
+);
+assert.ok(allowed !== null);
+assert.strictEqual(allowed.advertiser, 'brand_A');
+
+// Disallowed advertiser — silent null (avoids principal enumeration)
+const denied = await guarded(
+  { account_id: 'acc_1' },
+  { allowedAdvertisers: ['brand_B'] }
+);
+assert.strictEqual(denied, null);
+
+// Inner returns null (account not found) — propagates, predicate skipped
+const baseNull = async () => null;
+const guardedNull = composeMethod(baseNull, requireAdvertiserMatch(
+  async () => ['brand_A']
+));
+assert.strictEqual(await guardedNull({}, {}), null);
+```
+
+The full preset API is documented in the JSDoc of `src/lib/server/decisioning/resolve-presets.ts`.

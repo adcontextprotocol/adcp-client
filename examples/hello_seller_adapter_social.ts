@@ -180,6 +180,28 @@ const upstream = {
     await http.post(`/v1.3/advertiser/${encodeURIComponent(advertiserId)}/custom_audience/upload`, body);
   },
 
+  // SWAP: audience reach estimate. Real Meta `/{ad-account-id}/reachestimate`,
+  // TikTok `/v1.3/tool/audience_reach_estimate/`, Snap `/forecast`. The mock
+  // returns deterministic ranges keyed on (advertiser_id, targeting), so the
+  // numbers are stable across runs but vary observably with targeting.
+  // Surface this on AdCP wire as `SyncAudiencesRow.matched_count` /
+  // `effective_match_rate` (per `/schemas/3.0.5/core/audience.json`).
+  async audienceReachEstimate(
+    advertiserId: string,
+    body: { targeting: Record<string, unknown> }
+  ): Promise<{
+    estimated_audience_size: { min: number; max: number };
+    matchable_size_at_platform: { min: number; max: number };
+    reach_quality: 'narrow' | 'specific' | 'broad';
+  } | null> {
+    const r = await http.post<{
+      estimated_audience_size: { min: number; max: number };
+      matchable_size_at_platform: { min: number; max: number };
+      reach_quality: 'narrow' | 'specific' | 'broad';
+    }>(`/v1.3/advertiser/${encodeURIComponent(advertiserId)}/audience_reach_estimate`, body);
+    return r.body;
+  },
+
   // SWAP: catalog create + items upload. Same two-step pattern as audiences.
   async createCatalog(
     advertiserId: string,
@@ -513,6 +535,22 @@ class SalesSocialAdapter implements DecisioningPlatform<Record<string, never>, A
             audience_id: created.audience_id,
             member_count: 0,
           });
+          // Pull a reach estimate so the buyer-facing row can surface
+          // `matched_count` / `effective_match_rate` per the spec. Real
+          // walled-garden APIs return reach numbers asynchronously after
+          // upload; mock returns synchronously for demo purposes. The mock
+          // endpoint hashes targeting → deterministic ranges, so we synthesize
+          // a per-audience targeting from the audience_id (production passes
+          // the actual targeting definition the buyer sent).
+          const reach = await upstream.audienceReachEstimate(advertiserId, {
+            targeting: { audience_seed: created.audience_id },
+          });
+          const matched = reach?.matchable_size_at_platform
+            ? Math.floor((reach.matchable_size_at_platform.min + reach.matchable_size_at_platform.max) / 2)
+            : undefined;
+          const total = reach?.estimated_audience_size
+            ? Math.floor((reach.estimated_audience_size.min + reach.estimated_audience_size.max) / 2)
+            : undefined;
           rows.push({
             audience_id: a.audience_id ?? created.audience_id,
             name: a.name ?? created.audience_id,
@@ -522,6 +560,8 @@ class SalesSocialAdapter implements DecisioningPlatform<Record<string, never>, A
             // 'matching' isn't a wire value. Mock returns its custom 'building'
             // status which projects to 'processing' on AdCP wire.
             status: 'processing',
+            ...(matched !== undefined && { matched_count: matched }),
+            ...(matched !== undefined && total !== undefined && total > 0 && { effective_match_rate: matched / total }),
           });
         } catch (err) {
           rows.push({

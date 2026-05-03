@@ -68,3 +68,17 @@ When the task completes, emit the final `create_media_buy` result (carrying `med
 Declare `requires_io_approval` in your `capabilities.features` for this path. For deterministic compliance testing, implement `forceTaskStatus` (not `forceMediaBuyStatus`) in your `TestControllerStore` to drive the task from `submitted → completed` without waiting for a human.
 
 **Governance denial (`GOVERNANCE_DENIED`).** Baseline `media_buy_seller/governance_denied*` scenarios exercise governance refusal. For sellers that compose with a governance agent, call `checkGovernance(...)` from `@adcp/sdk/server` at the top of `create_media_buy`. If the governance agent returns denial, surface with `governanceDeniedError(result)` so the error code is `GOVERNANCE_DENIED` and context echoes. Sellers that don't compose with governance will see these scenarios fail with `INVALID_REQUEST` — expected until upstream gates the scenarios behind a composition-claim specialism (tracked at adcontextprotocol/adcp#2521).
+
+### Forecast (`Product.forecast`)
+
+Drive `Product.forecast` from a per-query upstream call so the buyer sees deltas across targeting, dates, and budget. Static seed-data `availability` blobs are placeholder; real GAM/FreeWheel/Operative integrations spend most of their API time here. The mock-server exposes the upstream-shape used by the worked adapter — see [`../../../src/lib/mock-server/sales-guaranteed/openapi.yaml`](../../../src/lib/mock-server/sales-guaranteed/openapi.yaml):
+
+| Mock endpoint                                                              | Returns                                              | When                                                       |
+| -------------------------------------------------------------------------- | ---------------------------------------------------- | ---------------------------------------------------------- |
+| `GET /v1/products?targeting=&flight_start=&flight_end=&budget=`            | catalog + inline `forecast` per product              | single round-trip during `getProducts`                     |
+| `POST /v1/forecast` (`{product_id, targeting?, flight_dates?, budget?}`)   | `DeliveryForecast` (availability or spend)           | per-product on demand (cheaper backends)                   |
+| `POST /v1/availability` (`{items: [...], dry_run: true}`)                  | per-item forecast + tier_pricing + cross-item conflicts | pre-flight a multi-LI proposal                          |
+
+The structured fields the buyer passes live on `req.filters` (`start_date`, `end_date`, `budget_range`) — `brief` is the free-text natural-language string per `GetProductsRequest`, not a structured payload. The worked `getProducts` projection lives in [`examples/hello_seller_adapter_guaranteed.ts`](../../../examples/hello_seller_adapter_guaranteed.ts).
+
+**Cross-item supply contention is upstream-only.** `POST /v1/availability` mirrors GAM's `getCompetitiveForecast` — items are evaluated in order and earlier reservations reduce supply visible to later ones. AdCP `DeliveryForecast` is per-product, not per-package-set; adapters collapse the upstream contention model down to one `Product.forecast` per product. Multi-LI competitive math lives in the buyer's proposal logic, not the wire shape.

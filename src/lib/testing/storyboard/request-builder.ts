@@ -757,7 +757,20 @@ const REQUEST_ENRICHERS: Record<string, RequestEnricher> = {
 
   comply_test_controller(step, context, options) {
     // The test controller requires account.sandbox: true to be set.
-    const account = { ...(context.account ?? resolveAccount(options)), sandbox: true };
+    const account: Record<string, unknown> = {
+      ...(context.account ?? resolveAccount(options)),
+      sandbox: true,
+    };
+    // Natural-key arm of AccountReference requires `operator` per the spec
+    // schema. If `context.account` came from a sync_accounts response that
+    // omitted `operator` (#1419), fall back to brand.domain so the synthetic
+    // ref the controller receives is spec-valid.
+    if (typeof account.account_id !== 'string' && typeof account.operator !== 'string') {
+      const brand = account.brand as { domain?: unknown } | undefined;
+      if (brand && typeof brand.domain === 'string') {
+        account.operator = brand.domain;
+      }
+    }
     if (step.sample_request) {
       return { ...injectContext({ ...step.sample_request }, context), account };
     }

@@ -24,6 +24,8 @@ import type {
   ReportUsageRequest,
   ReportUsageResponse,
   SyncAccountsSuccess,
+  SyncGovernanceRequest,
+  SyncGovernanceSuccess,
   GetAccountFinancialsRequest,
   GetAccountFinancialsSuccess,
 } from '../../types/tools.generated';
@@ -460,6 +462,48 @@ export interface AccountStore<TCtxMeta = Record<string, unknown>> {
   upsert?(refs: AccountReference[], ctx?: ResolveContext): Promise<SyncAccountsResultRow[]>;
 
   /**
+   * sync_governance API surface. Buyers register governance agent endpoints
+   * per-account; the seller persists the binding and consults the agents
+   * during media buy lifecycle events via `check_governance`.
+   *
+   * **Optional.** Adopters that don't model buyer-supplied governance agents
+   * (most direct sellers) leave this unimplemented and the framework returns
+   * `UNSUPPORTED_FEATURE`.
+   *
+   * `entries` is the wire request's `accounts[]` — each entry pairs an
+   * `AccountReference` with its `governance_agents[]`. The framework has
+   * already deduped on `idempotency_key` and stripped wire metadata
+   * (`adcp_major_version`, `context`, `ext`) before invoking this method.
+   *
+   * **Replace semantics, per spec.** Each call REPLACES the previously
+   * synced governance agents for the referenced account. An entry whose
+   * `governance_agents` is empty clears the binding for that account.
+   *
+   * **Write-only credentials.** Each `governance_agents[i].authentication.credentials`
+   * is the bearer the seller presents to that governance agent on outbound
+   * `check_governance` calls. Persist them — silently dropping ships
+   * unauthenticated requests once cross-agent calls are wired. The framework
+   * strips `authentication` from each `governance_agents[i]` of every row
+   * before serialization (`toWireSyncGovernanceRow`), so credentials never
+   * reach the response wire OR the idempotency replay cache, even if an
+   * adopter returns a loosely-typed row that spreads the input. Do not rely
+   * on TypeScript narrowing alone — the strip is enforced at the dispatcher.
+   *
+   * `ctx.authInfo` and `ctx.agent` carry the caller's principal — same
+   * threading as `upsert`. Adopters MUST gate per-entry persistence by the
+   * caller's tenant: each entry's `account.operator` (or `account_id`) must
+   * map to the same tenant the auth principal authorizes; otherwise return a
+   * `'failed'` row carrying `errors: [{code: 'PERMISSION_DENIED', ...}]` for
+   * that entry. (Operation-level rejection — `throw new AdcpError(...)` —
+   * fails the whole batch, which is the wrong shape when a single entry
+   * fails the gate.)
+   */
+  syncGovernance?(
+    entries: SyncGovernanceRequest['accounts'],
+    ctx?: ResolveContext
+  ): Promise<SyncGovernanceSuccess['accounts']>;
+
+  /**
    * list_accounts API surface. Framework wraps with cursor envelope.
    *
    * **Optional.** Same rationale as `upsert` — stateless platforms can omit.
@@ -739,6 +783,41 @@ export function toWireSyncAccountRow(row: SyncAccountsResultRow): WireSyncAccoun
   if (row.errors !== undefined) wire.errors = row.errors;
   if (row.warnings !== undefined) wire.warnings = row.warnings;
   if (row.sandbox !== undefined) wire.sandbox = row.sandbox;
+  return wire;
+}
+
+type WireSyncGovernanceRow = SyncGovernanceSuccess['accounts'][number];
+
+/**
+ * Project a `sync_governance` response row to the wire shape, stripping
+ * any fields the buyer is NOT entitled to receive. Critically: each
+ * `governance_agents[i]` is reduced to `{url, categories?}` only — the
+ * spec marks `authentication.credentials` write-only (the buyer sends
+ * the bearer; the seller persists it for outbound `check_governance`
+ * calls but MUST NOT echo it back). The natural `{ ...entry.governance_agents[i] }`
+ * echo idiom would compile silently against the typed return shape and
+ * ship credentials over the wire AND into the idempotency replay cache,
+ * arming the buyer (and any subsequent caller hitting the same key) to
+ * impersonate the seller against the governance agent.
+ *
+ * Defense-in-depth: this dispatcher-level strip runs even if an adopter
+ * returns a loosely-typed row, and even if a future codegen change
+ * loosens the response Zod schema's `.passthrough()` for governance
+ * agents.
+ */
+export function toWireSyncGovernanceRow(row: WireSyncGovernanceRow): WireSyncGovernanceRow {
+  const wire: WireSyncGovernanceRow = {
+    account: row.account,
+    status: row.status,
+  };
+  if (row.governance_agents !== undefined) {
+    wire.governance_agents = row.governance_agents.map(a => {
+      const stripped: { url: string; categories?: string[] } = { url: a.url };
+      if (a.categories !== undefined) stripped.categories = a.categories;
+      return stripped;
+    });
+  }
+  if (row.errors !== undefined) wire.errors = row.errors;
   return wire;
 }
 

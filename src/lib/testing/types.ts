@@ -4,6 +4,7 @@
 
 import type { FormatReferenceStructuredObject as FormatID } from '../types/core.generated';
 import type { ControllerDetection } from './test-controller';
+import type { WebhookReceiver } from './storyboard/webhook-receiver';
 
 // Test scenarios that can be run
 export type TestScenario =
@@ -204,6 +205,11 @@ export interface TestOptions {
   _profile?: AgentProfile;
   /** @internal Test controller capabilities from comply() — set when comply_test_controller detected */
   _controllerCapabilities?: ControllerDetection;
+  /** @internal Pre-created webhook receiver, used for unit-test injection. When
+   *  present, the runner skips creating its own listener and does NOT close
+   *  the receiver after the run (caller-owned). Production callers pass
+   *  `webhook_receiver` instead. */
+  _webhookReceiver?: WebhookReceiver;
 }
 
 export interface TestStepResult {

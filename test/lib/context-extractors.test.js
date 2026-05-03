@@ -118,6 +118,41 @@ describe('context extractors', () => {
     });
   });
 
+  describe('sync_accounts', () => {
+    it('extracts account_id, status, and a paired brand/operator account ref', () => {
+      const data = {
+        accounts: [
+          {
+            account_id: 'acct_1',
+            status: 'active',
+            brand: { domain: 'acme.example' },
+            operator: 'pinnacle-agency.example',
+          },
+        ],
+      };
+      const result = extractContext('sync_accounts', data);
+      assert.equal(result.account_id, 'acct_1');
+      assert.equal(result.account_status, 'active');
+      assert.deepStrictEqual(result.account, {
+        brand: { domain: 'acme.example' },
+        operator: 'pinnacle-agency.example',
+      });
+    });
+
+    // Issue #1419 — extractor must not propagate `operator: undefined`. The
+    // natural-key arm of AccountReference requires `operator`; an undefined
+    // value would JSON.stringify away to a missing field and a strict-
+    // validating seller would reject the synthetic ref. The extractor leaves
+    // `operator` off the account ref entirely when the response omits it,
+    // letting downstream synthesis sites supply a fallback.
+    it('omits operator when the response leaves it undefined (no operator: undefined leak)', () => {
+      const data = { accounts: [{ brand: { domain: 'acme.example' } }] };
+      const result = extractContext('sync_accounts', data);
+      assert.deepStrictEqual(result.account, { brand: { domain: 'acme.example' } });
+      assert.strictEqual('operator' in result.account, false);
+    });
+  });
+
   describe('report_plan_outcome', () => {
     it('extracts outcome_id and outcome_status', () => {
       const data = { status: 'completed', outcome_id: 'out_456' };

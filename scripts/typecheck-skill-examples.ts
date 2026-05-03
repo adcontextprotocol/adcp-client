@@ -144,6 +144,14 @@ const FULL_MODULE_ANCHORS = [
   /\bcreateAdcpServer\s*\(/,
   /\bcreateIdempotencyStore\s*\(/,
   /\bcreateComplyController\s*\(/,
+  // Identity helpers — typed wrappers around platform handler bags. Calls
+  // like `defineSalesPlatform<Meta>({...})` are top-level expressions that
+  // compile standalone with full type inference, so they're a valid anchor
+  // for fragment-shaped doc samples that want to be typechecked.
+  /\bdefineSalesPlatform\s*[<(]/,
+  /\bdefineSalesCorePlatform\s*[<(]/,
+  /\bdefineAudiencePlatform\s*[<(]/,
+  /\bdefineSalesIngestionPlatform\s*[<(]/,
 ];
 
 function isFullModule(content: string): boolean {
