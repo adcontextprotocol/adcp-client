@@ -153,6 +153,20 @@ export interface Account<TCtxMeta = Record<string, unknown>> {
    * separate production and sandbox accounts. For explicit accounts, sandbox
    * accounts are pre-existing test accounts the seller surfaces via
    * `list_accounts`.
+   *
+   * @deprecated Use {@link Account.mode} instead. As of AdCP 6.7+ the
+   * three-mode `mode: 'live' | 'sandbox' | 'mock'` field is the canonical
+   * signal the framework gate consults — see
+   * `docs/proposals/lifecycle-state-and-sandbox-authority.md`. Adopters
+   * stamping this `sandbox` flag continue to work via
+   * `getAccountMode`'s legacy fallback (`sandbox: true` reads as
+   * `mode: 'sandbox'`); new code should set `mode` directly. This
+   * field will be removed in the next major version.
+   *
+   * The wire-side `AccountReference.sandbox` flag (per
+   * `core/account-ref.json`) stays — it's part of the spec's natural-key
+   * disambiguation for implicit accounts. The deprecation is on the
+   * SERVER-side resolved `Account.sandbox` only.
    */
   sandbox?: boolean;
 

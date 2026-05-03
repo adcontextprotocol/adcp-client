@@ -217,6 +217,77 @@ lives in the mock-server's per-specialism fixtures, not in adopter
 code. The adapter runs unchanged against a fixture-shaped upstream;
 storyboards drive scenarios through fixture state.
 
+## Trust boundary
+
+The trust boundary that makes this whole model load-bearing is **the
+resolved account's `mode`, returned from `platform.accounts.resolve` on
+the seller side**. Nothing else.
+
+In particular, the boundary is **NOT**:
+
+- The wire `AccountReference.sandbox` flag. This is buyer input. A buyer
+  can stuff `sandbox: true` into any natural-key request — the spec
+  defines the field, the schema accepts it, the framework validates it.
+  But buyer-controlled fields cannot be the basis for "is this a
+  test-only context?" because the buyer has every incentive to claim
+  sandbox status when calling test-only surfaces against a live tenant.
+- The presence of a sandbox-shaped account-id prefix (e.g.,
+  `sandbox_<id>`) the seller happens to use. Account-id shapes are
+  internal seller convention; an attacker who learned the prefix could
+  not forge a live account into one that admits the gate, but a
+  seller-side bug that branches on prefix shape can drift from the
+  resolver's actual mode answer.
+- An environment variable (historically `ADCP_SANDBOX=1`). The SDK's
+  legacy bridge accepts this for back-compat, but a process-scoped flag
+  cannot answer "is *this caller* test-only" — it answers "did the
+  operator run with the sandbox flag set?", which is the wrong scope.
+  The bridge fail-closes once any explicit `mode: 'live'` account has
+  been observed (`@adcp/sdk` 6.7+ ships this guard; see
+  `src/lib/server/decisioning/runtime/observed-modes.ts`).
+
+The framework gate inside `createAdcpServerFromPlatform` reads `mode`
+exclusively from the `Account` object the resolver returns. The
+resolver is the seller's authoritative call site for "who is this
+caller, and what tenancy do they have access to?" — answered against
+the seller's tenant store, keyed by the authenticated principal.
+
+Adopters' resolvers MUST NOT spread untrusted input into the resolved
+account. Specifically, an adopter resolver implementation like:
+
+```ts
+resolve: async (ref, ctx) => {
+  return { id: ref.account_id, sandbox: ref.sandbox, mode: 'sandbox', ... };
+  // ↑ wrong — `mode: 'sandbox'` is buyer-controllable via this shape
+}
+```
+
+…has effectively put the trust boundary on the wire. The right shape:
+
+```ts
+resolve: async (ref, ctx) => {
+  const tenantRow = await myDb.findByCredential(ctx?.authInfo?.credential);
+  if (!tenantRow) return null;
+  return {
+    id: tenantRow.id,
+    mode: tenantRow.is_sandbox ? 'sandbox' : 'live', // ← from tenant store
+    ctx_metadata: { ... },
+  };
+}
+```
+
+The `mode` field is sourced from the seller's own tenant store, which
+the buyer cannot influence. This is what makes the framework gate's
+refusal of live-mode dispatch a real security property rather than a
+soft hint.
+
+The same discipline applies to anything else the gate reads
+transitively. `assertSandboxAccount` is exposed for adopters who want
+to compose the gate inside custom dispatch paths; its `opts.message`
+field MUST be a static string literal (echoed on the wire inside the
+error envelope — interpolating user-controlled values creates a
+reflection sink). See the JSDoc on
+`src/lib/server/account-mode.ts:assertSandboxAccount`.
+
 ## Cross-implementation story
 
 This is the part that makes the model hold up across SDKs.
