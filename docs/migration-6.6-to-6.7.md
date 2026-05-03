@@ -2,7 +2,7 @@
 
 > **Status: GA in 6.7.** Most changes are additive — adopters running on
 > 6.6 today see no behavior change on `npm update @adcp/sdk` unless they
-> opt in. **Three exceptions** require attention before bumping:
+> opt in. **Four exceptions** require attention before bumping:
 >
 > - **`accounts.resolution: 'implicit'` adopters**: the framework now
 >   actually refuses inline `{account_id}` references (the docstring
@@ -21,10 +21,15 @@
 >   tool`. The throw is server-side and surfaces as HTTP 500 on every
 >   client probe — including discovery — masquerading as a transport bug.
 >   See recipe **#16**.
+> - **Adopters who switched to `resolution: 'derived'`** (including as a
+>   workaround after recipe #10): `'derived'` platforms now also refuse
+>   inline `account_id` with `INVALID_REQUEST`. If your buyers send
+>   `account_id` to a `'derived'` agent, remove that field before bumping.
+>   See recipe **[#17](#17-breaking--accountsresolution-derived-now-also-enforces-inline-account_id-refusal)**.
 
-## Audit first — the three breaking recipes
+## Audit first — the four breaking recipes
 
-Before bumping, read recipes **#10**, **#11**, and **#16**. Everything
+Before bumping, read recipes **#10**, **#11**, **#16**, and **#17**. Everything
 else is additive and can be applied incrementally.
 
 - **#10 — `accounts.resolution: 'implicit'` enforces inline-`account_id`
@@ -47,8 +52,14 @@ else is additive and can be applied incrementally.
   MCP probe — including discovery — gets an HTTP 500 with an HTML
   error body, which clients report as `discovery_failed`. Audit with
   `grep -rn 'customTools.*update_rights'` before bumping.
+- **#17 — `accounts.resolution: 'derived'` enforces inline-`account_id`
+  refusal** (runtime). The same enforcement from #10 is extended to
+  `'derived'` platforms. Buyers sending `account_id` to a single-tenant
+  derived agent now receive `INVALID_REQUEST` instead of a silent-drop
+  success. Adopters who switched to `'derived'` as a workaround after
+  recipe #10 must audit callers before bumping.
 
-## tl;dr — sixteen recipes to apply
+## tl;dr — seventeen recipes to apply
 
 | #  | If you had 6.6 …                                                                         | Do this in 6.7                                                                                                            | Mechanical?                  |
 |----|------------------------------------------------------------------------------------------|---------------------------------------------------------------------------------------------------------------------------|------------------------------|
@@ -68,6 +79,7 @@ else is additive and can be applied incrementally.
 | 14 | Local copy of the media-buy / creative status-transition graph                           | Import `MEDIA_BUY_TRANSITIONS` / `assertMediaBuyTransition` (and the creative pair) from `@adcp/sdk/server`.              | mechanical                   |
 | 15 | Sellers claiming `property-lists` / `collection-lists` echoing `targeting_overlay` by hand | `mediaBuyStore: createMediaBuyStore({ store })` opt-in framework wiring.                                                | mechanical (narrow)          |
 | 16 | Brand-rights adopter with `customTools: { update_rights: ... }`                          | Drop the customTools entry and wire `BrandRightsPlatform.updateRights` instead. The framework now owns the tool name.   | **breaking**                 |
+| 17 | `resolution: 'derived'` platform, buyer sends `account_id` inline                       | Remove `account_id` from buyer requests. The framework now refuses it with `INVALID_REQUEST` (mirrors recipe #10 for `'implicit'`). | **breaking**           |
 
 `refAccountId` already shipped in 6.6 (recipe #2); it's listed because
 the eight-item list in #1344 included it as a "stop reinventing this"
@@ -560,7 +572,7 @@ initial `sync_accounts` flow).
 |------------------------------------------------------------------------------------------|--------------------------------------------------------------------------------------------------------------------------------------------------|
 | `resolution: 'implicit'` declared, all buyers used `sync_accounts` first                 | Nothing — calls flow as before; you no longer need to reimplement the `if (ref?.account_id) return null` branch in your resolver.                |
 | `resolution: 'implicit'` declared but adopters' callers passed inline `account_id`       | **Behavior change.** Either drop to `'explicit'` (callers continue passing inline) or fix callers to use `sync_accounts` first.                  |
-| Wanted "derive account from auth principal, ignore inline ids entirely"                  | Switch to `resolution: 'derived'` — single-tenant agents that always identify the tenant from the auth principal alone. **Note:** as of the SDK version that ships recipe #17, `'derived'` platforms also refuse inline `account_id` with `INVALID_REQUEST`. Ensure callers omit the field before switching. |
+| Wanted "derive account from auth principal, ignore inline ids entirely"                  | Switch to `resolution: 'derived'` — single-tenant agents that always identify the tenant from the auth principal alone. **Note (6.7):** `'derived'` platforms also enforce this refusal. See **[recipe #17](#17-breaking--accountsresolution-derived-now-also-enforces-inline-account_id-refusal)** — ensure callers omit `account_id` before switching. |
 | `resolution: 'explicit'` (default) declared / not declared                               | Nothing — the refusal only applies to declared `'implicit'` and `'derived'` platforms.                                                           |
 | Hand-rolled implicit store                                                               | Consider switching to `InMemoryImplicitAccountStore` or the Postgres pattern in [`docs/guides/account-resolution.md`](./guides/account-resolution.md). |
 
@@ -1191,6 +1203,10 @@ Walk this before declaring 6.6 → 6.7 done:
       declaration is dropped to `'explicit'`, or callers fixed
       (recipe 10). Inline `{account_id}` on `'implicit'` platforms
       now rejects with `INVALID_REQUEST`.
+- [ ] **`accounts.resolution: 'derived'` adopters audited.** Buyers
+      do not send `account_id` on the wire, or callers have been
+      updated to omit it (recipe 17). Inline `{account_id}` on
+      `'derived'` platforms now rejects with `INVALID_REQUEST`.
 - [ ] **Sales-* adopters typecheck.** Either drop the explicit
       `: SalesPlatform<Meta>` annotation, or change it to
       `: SalesCorePlatform<Meta> & SalesIngestionPlatform<Meta>`,

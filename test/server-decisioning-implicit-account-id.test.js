@@ -358,6 +358,7 @@ describe("#1468 — accounts.resolution: 'derived' refuses inline account_id", (
     assert.strictEqual(result.structuredContent.adcp_error.code, 'INVALID_REQUEST');
     assert.strictEqual(result.structuredContent.adcp_error.field, 'account.account_id');
     assert.match(result.structuredContent.adcp_error.message, /account\.account_id is not accepted/);
+    assert.match(result.structuredContent.adcp_error.suggestion, /Remove account\.account_id/);
     assert.strictEqual(resolveCalled, false, 'resolve must not be invoked when derived-mode rejects upfront');
   });
 
