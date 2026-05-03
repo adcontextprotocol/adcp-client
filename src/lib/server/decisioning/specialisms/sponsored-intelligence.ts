@@ -14,10 +14,21 @@
  * Surface: four wire tools — `si_get_offering`, `si_initiate_session`,
  * `si_send_message`, `si_terminate_session`. Maps directly onto the v5
  * `SponsoredIntelligenceHandlers` handler-bag in
- * `../../create-adcp-server.ts`; the v6 platform shape adds auto-hydrated
- * session state via `ctx.store` (resource kind `'si_session'`) so
- * `sendMessage` / `terminateSession` see the brand's stored session
- * record without manual store calls.
+ * `../../create-adcp-server.ts`.
+ *
+ * Session state — `req.session` convenience vs. production storage. The
+ * v6 platform shape auto-hydrates a small session record onto
+ * `req.session` keyed by `session_id` (resource kind `'si_session'`) —
+ * intent, offering scoping, identity consent, negotiated capabilities,
+ * placement provenance, terminal `acp_handoff` payload. That's the
+ * minimum a fixture / mock implementation needs to resume context
+ * across turns. **Production brand engines almost always own session
+ * state in their own backend** (Postgres, Redis, vector store) — full
+ * transcripts, RAG embeddings, tool-call logs are too rich for
+ * `ctx_metadata` and easily exceed the 16KB blob cap. Treat
+ * `req.session` as a convenience for fixture / mock cases and the
+ * "what was the offering scope?" lookup; resolve full transcript state
+ * from your own session store keyed by `req.session_id`.
  *
  * Async story: all four operations are sync at the wire level —
  * `SISendMessageResponse` has no `Submitted` arm. Long-running brand-side
@@ -32,7 +43,7 @@
  * execution semantics). `terminateSession` is naturally idempotent on
  * `session_id` and intentionally lacks an `idempotency_key`.
  *
- * Status: Preview / 6.x. Behavior frozen on AdCP 3.0 SI surface.
+ * Status: 6.7 (preview). Behavior frozen on AdCP 3.0 SI surface.
  *
  * @public
  */
@@ -88,12 +99,15 @@ export interface SponsoredIntelligencePlatform<TCtxMeta = Record<string, unknown
   initiateSession(req: SIInitiateSessionRequest, ctx: Ctx<TCtxMeta>): Promise<SIInitiateSessionResponse>;
 
   /**
-   * Send a turn. The session record is auto-hydrated onto `ctx` from
-   * `ctx.store` keyed on `req.session_id` before this method runs;
-   * implementations read transcript context from there rather than
-   * replaying from the wire. Returns the brand's response turn including
-   * any `ui_elements` / `surface` and an optional `handoff` block when
-   * the conversation reaches a natural close.
+   * Send a turn. A small session record is auto-attached at
+   * `req.session` from the framework's `ctx.store` keyed on
+   * `req.session_id` before this method runs — intent, offering
+   * scoping, negotiated capabilities, identity consent. Production
+   * brand engines own full transcript state in their own backend and
+   * resolve from there using `req.session_id`; `req.session` covers
+   * the lookup-the-original-context case. Returns the brand's response
+   * turn including any `ui_elements` / `surface` and an optional
+   * `handoff` block when the conversation reaches a natural close.
    *
    * Carries `idempotency_key` — each turn is a transcript mutation, so
    * replays MUST return the same assistant response rather than emitting

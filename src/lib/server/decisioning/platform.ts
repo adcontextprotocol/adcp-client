@@ -353,17 +353,18 @@ export type RequiredPlatformsFor<
 /**
  * AdCP supported_protocols values that gate platform requirements. Sister
  * type to `RequiredPlatformsFor<S>` — that one keys off
- * `capabilities.specialisms[]`; this one keys off
- * `capabilities.supported_protocols[]`.
+ * `capabilities.specialisms[]`; this one keys off declared protocols.
  *
- * Sponsored Intelligence is the canonical reason this helper exists: SI
- * is a *protocol* in AdCP 3.0 (`'sponsored_intelligence'`) but not yet a
- * specialism. Adopters declaring the protocol must implement
- * `sponsoredIntelligence: SponsoredIntelligencePlatform`. When AdCP 3.1
- * adds `'sponsored-intelligence'` to `AdCPSpecialism`
- * (adcontextprotocol/adcp#3961), the specialism dispatch becomes
- * additive — adopters can claim either form and this helper keeps
- * working unchanged.
+ * @internal Not exported. There is no constraint site consuming this today
+ *   (no `supported_protocols` field on `DecisioningCapabilities`, no
+ *   `createAdcpServer<P>` constraint signature wired). Kept as an internal
+ *   placeholder so the type lands alongside the platform field at the same
+ *   commit; promotion to public + wiring is deferred until either AdCP 3.1
+ *   adds SI to `AdCPSpecialism` (at which point this folds into
+ *   `RequiredPlatformsFor`) or `DecisioningCapabilities` grows an explicit
+ *   `supported_protocols` declaration field. Adopters needing compile-time
+ *   gating today should constrain `platform: P & { sponsoredIntelligence:
+ *   SponsoredIntelligencePlatform }` directly at the call site.
  *
  * Note on enum form: `supported_protocols` uses underscore form on the
  * wire (`'sponsored_intelligence'`), not the kebab-case
@@ -372,11 +373,8 @@ export type RequiredPlatformsFor<
  */
 type SupportedProtocol = 'sponsored_intelligence';
 
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-export type RequiredPlatformsForProtocols<
-  P extends SupportedProtocol,
-  TCtxMeta = any,
-> = P extends 'sponsored_intelligence'
+// eslint-disable-next-line @typescript-eslint/no-explicit-any, @typescript-eslint/no-unused-vars
+type RequiredPlatformsForProtocols<P extends SupportedProtocol, TCtxMeta = any> = P extends 'sponsored_intelligence'
   ? { sponsoredIntelligence: SponsoredIntelligencePlatform<TCtxMeta> }
   : Record<string, never>;
 

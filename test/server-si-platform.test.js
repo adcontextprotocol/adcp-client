@@ -197,6 +197,95 @@ describe('SponsoredIntelligencePlatform — v6 protocol-keyed dispatch', () => {
     assert.equal(terminateObserved.session.intent, 'quick browse');
   });
 
+  it('skips auto-store when initiateSession returns without session_id (defensive: no throw, no store entry)', async () => {
+    const platform = makePlatform({
+      // Returns a malformed response missing session_id — the framework
+      // should silently skip auto-store rather than throw or write a
+      // bogus entry. Subsequent sendMessage calls referencing some
+      // session_id will simply not find a hydrated record.
+      initiateSession: async () => ({ session_status: 'active' }),
+      sendMessage: async (params, _ctx) => ({ session_id: params.session_id, session_status: 'active' }),
+    });
+    const ctxMetadata = makeStore();
+    const server = createAdcpServerFromPlatform(platform, {
+      name: 'Test SI',
+      version: '1.0.0',
+      ctxMetadata,
+      validation: { requests: 'off', responses: 'off' },
+    });
+
+    const res = await server.dispatchTestRequest({
+      method: 'tools/call',
+      params: {
+        name: 'si_initiate_session',
+        arguments: {
+          intent: 'malformed response test',
+          identity: { consent_granted: false },
+          idempotency_key: 'idem_si_init_malformed_aaaaaaaa',
+        },
+      },
+    });
+    assert.equal(res.isError, undefined, 'request did not throw despite missing session_id');
+  });
+
+  it('preserves acp_handoff on terminateSession so re-terminate replays the same payload', async () => {
+    let terminateCallCount = 0;
+    const platform = makePlatform({
+      initiateSession: async () => ({ session_id: 'sess_acp', session_status: 'active' }),
+      terminateSession: async (params, _ctx) => {
+        terminateCallCount++;
+        return {
+          session_id: params.session_id,
+          terminated: true,
+          session_status: 'terminated',
+          acp_handoff: {
+            checkout_url: 'https://example.test/checkout?conv=' + params.session_id,
+            checkout_token: 'acp_tok_xyz',
+            expires_at: '2026-05-03T15:00:00Z',
+          },
+        };
+      },
+    });
+    const ctxMetadata = makeStore();
+    const server = createAdcpServerFromPlatform(platform, {
+      name: 'Test SI',
+      version: '1.0.0',
+      ctxMetadata,
+      validation: { requests: 'off', responses: 'off' },
+    });
+
+    await server.dispatchTestRequest({
+      method: 'tools/call',
+      params: {
+        name: 'si_initiate_session',
+        arguments: {
+          intent: 'acp handoff replay test',
+          identity: { consent_granted: false },
+          idempotency_key: 'idem_si_init_acp_aaaaaaaa',
+        },
+      },
+    });
+
+    await server.dispatchTestRequest({
+      method: 'tools/call',
+      params: {
+        name: 'si_terminate_session',
+        arguments: { session_id: 'sess_acp', reason: 'handoff_transaction' },
+      },
+    });
+
+    // The stored session record should now carry the acp_handoff payload
+    // from the terminate response. A fresh hydration confirms it survived.
+    const entry = await ctxMetadata.getEntry('acct_default', 'si_session', 'sess_acp');
+    assert.ok(entry, 'session entry persists after terminate');
+    const stored = entry.resource;
+    assert.ok(stored, 'session record persists after terminate');
+    assert.ok(stored.acp_handoff, 'acp_handoff persisted on the stored session record');
+    assert.equal(stored.acp_handoff.checkout_token, 'acp_tok_xyz');
+    assert.equal(stored.session_status, 'terminated');
+    assert.equal(terminateCallCount, 1);
+  });
+
   it('does not register SI tools when sponsoredIntelligence platform field is absent', () => {
     const platform = {
       capabilities: { adcp_version: '3.0.0', specialisms: [], idempotency: { replay_ttl_seconds: 86400 } },

@@ -46,20 +46,40 @@ read transcript context from `req.session` rather than threading manual
 `req.signal` / `req.rights_grant` on the other specialisms.
 
 The stored payload preserves the bits a brand engine needs to resume
-context across turns: original `intent`, `offering_id`, `offering_token`,
-`identity` (consent state), `negotiated_capabilities`, `session_status`,
-`session_ttl_seconds`.
+context across turns: request-side scoping (`intent`, `offering_id`,
+`offering_token`, `placement`, `media_buy_id`, `identity` consent
+state, `supported_capabilities`) and response-side state
+(`negotiated_capabilities`, `session_status`, `session_ttl_seconds`).
+On `terminateSession`, the framework also persists `acp_handoff`,
+`session_status: 'terminated'`, `follow_up`, and `terminated` onto
+the same record so the spec's "re-terminating a closed session
+returns the same payload" idempotency contract is honored without
+adopters having to write through manually.
+
+**Important caveat on `req.session`.** The auto-store + hydration
+covers the small fixture / mock case and the lookup-the-original-
+context case (e.g., "what offering did this session resolve to?").
+Production brand engines almost always own full transcript state in
+their own backend (Postgres, Redis, vector store) — full transcripts,
+RAG embeddings, tool-call logs are too rich for `ctx_metadata` and
+easily exceed the 16KB blob cap. Treat `req.session` as a
+convenience, not authoritative state — resolve full transcript state
+from your own session store keyed by `req.session_id`. Documented
+explicitly in the platform interface JSDoc.
 
 **Type-level helper for forward compat.**
 `RequiredPlatformsForProtocols<P>` parallels the existing
-`RequiredPlatformsFor<S>`. Currently the only entry is
-`'sponsored_intelligence'` → `{ sponsoredIntelligence:
-SponsoredIntelligencePlatform }`. Available for adopters who want
-explicit compile-time enforcement; not yet wired into
-`createAdcpServer<P>`'s constraint signature (would require
-`supported_protocols` to be a declared field on `DecisioningCapabilities`
-rather than auto-derived — that's a separate design decision deferred
-to 3.1 alignment).
+`RequiredPlatformsFor<S>`. Currently kept `@internal` (not exported) —
+there is no constraint site consuming it today (no `supported_protocols`
+field on `DecisioningCapabilities`, no wired
+`createAdcpServer<P>` signature). Lands now so the type sits next to
+the platform field for future wiring; promotion to public happens when
+either AdCP 3.1 adds SI to `AdCPSpecialism` (at which point this folds
+into `RequiredPlatformsFor`) or `DecisioningCapabilities` grows an
+explicit `supported_protocols` declaration field. Adopters needing
+compile-time gating today can constrain `platform: P & {
+sponsoredIntelligence: SponsoredIntelligencePlatform }` directly at
+the call site.
 
 **Wire changes:**
 
@@ -95,12 +115,22 @@ end-to-end:
 5 tests, all passing. Full `test/server-*.test.js` suite remains green
 (1171 tests).
 
+**Tool-name reconciliation.** Stale tool names in
+`protocol-for-tool.ts:30-33` (`si_end_session` / `si_get_session` —
+which never matched the spec) corrected to the canonical
+`si_terminate_session` / `si_get_offering`, and `si_get_offering`
+added (it was missing from the protocol-routing map). Cosmetic for
+v6 dispatch (which keys off platform field, not this map) but
+load-bearing for any telemetry / diagnostics that look up
+protocol-by-tool-name.
+
 **Tracking.** Refs adcontextprotocol/adcp#3961 (spec — `sponsored-intelligence`
 in `AdCPSpecialism` for 3.1).
 
-**Follow-ups.** `examples/hello_si_adapter_brand.ts` driving the
-`mock-server sponsored-intelligence` fixture through this v6 platform
-lands separately. The known stale tool-name drift in
-`protocol-for-tool.ts:30-33` (`si_end_session` / `si_get_session` vs.
-canonical `si_terminate_session` / `si_get_offering`) is a pre-existing
-bug worth addressing in a focused branch.
+**Follow-up release blocker.** `examples/hello_si_adapter_brand.ts`
+driving the `mock-server sponsored-intelligence` fixture through this
+v6 platform lands separately and ships in the same release window —
+not a slip-able item. SI is the most foreign specialism in the
+catalog (host↔brand handoff, ACP checkout, surface/ui_elements,
+identity consent gating), so the surface without a worked example
+will get adopted incorrectly.

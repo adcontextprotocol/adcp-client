@@ -3704,22 +3704,33 @@ function buildSponsoredIntelligenceHandlers<P extends DecisioningPlatform<any, a
           // Auto-store the session record so subsequent `sendMessage` /
           // `terminateSession` calls hydrate `req.session` without a
           // manual lookup. Stored payload preserves the bits the brand
-          // engine needs to resume context: identity consent, offering
-          // scoping, negotiated capabilities, ttl, status. The full
+          // engine needs to resume context across turns: identity
+          // consent, offering scoping, negotiated capabilities,
+          // placement provenance, and any media-buy linkage. The full
           // request intent is stored alongside so brand handlers can
-          // re-read what the user originally asked for.
+          // re-read what the user originally asked for. Production
+          // brand engines that own transcript state in their own
+          // backend can ignore this and read from their own store —
+          // see SponsoredIntelligencePlatform JSDoc.
           if (ctxMetadataStore && reqCtx.account?.id) {
             const sessionId = (result as { session_id?: unknown })?.session_id;
             if (typeof sessionId === 'string' && sessionId.length > 0) {
+              const reqRec = params as unknown as Record<string, unknown>;
+              const resRec = result as unknown as Record<string, unknown>;
               const sessionRecord = {
                 session_id: sessionId,
-                intent: (params as { intent?: unknown }).intent,
-                offering_id: (params as { offering_id?: unknown }).offering_id,
-                offering_token: (params as { offering_token?: unknown }).offering_token,
-                identity: (params as { identity?: unknown }).identity,
-                negotiated_capabilities: (result as { negotiated_capabilities?: unknown }).negotiated_capabilities,
-                session_status: (result as { session_status?: unknown }).session_status,
-                session_ttl_seconds: (result as { session_ttl_seconds?: unknown }).session_ttl_seconds,
+                // Request-side scoping the brand engine needs across turns.
+                intent: reqRec.intent,
+                offering_id: reqRec.offering_id,
+                offering_token: reqRec.offering_token,
+                placement: reqRec.placement,
+                media_buy_id: reqRec.media_buy_id,
+                identity: reqRec.identity,
+                supported_capabilities: reqRec.supported_capabilities,
+                // Response-side state.
+                negotiated_capabilities: resRec.negotiated_capabilities,
+                session_status: resRec.session_status,
+                session_ttl_seconds: resRec.session_ttl_seconds,
               };
               try {
                 await ctxMetadataStore.setResource(reqCtx.account.id, 'si_session', sessionId, sessionRecord);
@@ -3750,7 +3761,38 @@ function buildSponsoredIntelligenceHandlers<P extends DecisioningPlatform<any, a
       const reqCtx = ctxFor(ctx);
       await hydrateForTool(ctxMetadataStore, reqCtx.account?.id, 'si_terminate_session', params, logger);
       return projectSync(
-        () => si.terminateSession(params, reqCtx),
+        async () => {
+          const result = await si.terminateSession(params, reqCtx);
+          // Persist `acp_handoff` and terminal `session_status` onto the
+          // stored session record so a re-terminate replay (which is
+          // naturally idempotent on `session_id` per the spec) hydrates
+          // the same handoff payload via `req.session` without the
+          // adopter having to remember to write through. Honors the
+          // platform interface JSDoc contract:
+          //   "Re-terminating a closed session MUST return the same
+          //    payload, including any acp_handoff block."
+          if (ctxMetadataStore && reqCtx.account?.id) {
+            const sessionId = (params as { session_id?: unknown })?.session_id;
+            if (typeof sessionId === 'string' && sessionId.length > 0) {
+              const resRec = result as unknown as Record<string, unknown>;
+              try {
+                const existing = await ctxMetadataStore.getEntry(reqCtx.account.id, 'si_session', sessionId);
+                const merged = {
+                  ...((existing?.resource as Record<string, unknown>) ?? { session_id: sessionId }),
+                  session_status: resRec.session_status,
+                  acp_handoff: resRec.acp_handoff,
+                  follow_up: resRec.follow_up,
+                  terminated: resRec.terminated,
+                };
+                await ctxMetadataStore.setResource(reqCtx.account.id, 'si_session', sessionId, merged);
+              } catch (err) {
+                const msg = err instanceof Error ? err.message : String(err);
+                logger.warn(`[adcp/decisioning] auto-store si_session ${sessionId} on terminate failed: ${msg}`);
+              }
+            }
+          }
+          return result;
+        },
         r => r
       );
     },

@@ -27,10 +27,10 @@ type AdcpProtocol = AdCPProtocol;
  */
 export const TOOL_PROTOCOL_MAP: Readonly<Record<string, AdcpProtocol>> = {
   // sponsored-intelligence
+  si_get_offering: 'sponsored-intelligence',
   si_initiate_session: 'sponsored-intelligence',
   si_send_message: 'sponsored-intelligence',
-  si_end_session: 'sponsored-intelligence',
-  si_get_session: 'sponsored-intelligence',
+  si_terminate_session: 'sponsored-intelligence',
 
   // governance
   check_governance: 'governance',
