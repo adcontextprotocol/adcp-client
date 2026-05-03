@@ -192,7 +192,9 @@ function warnIfTruncatedMultiIdResponse(
   if (!requestedIds || requestedIds.length === 0) return;
   const returned = Array.isArray(responseArray) ? responseArray.length : 0;
   if (returned >= requestedIds.length) return;
-  logger.warn?.(
+  // Empty `media_buy_ids` is filtered above as paginated-mode (no truncation
+  // possible without a request to compare against).
+  logger.warn(
     `[adcp/sdk] ${toolName}: platform returned ${returned} row${returned === 1 ? '' : 's'} for ${requestedIds.length} requested media_buy_ids — ` +
       `the platform may be silently truncating to media_buy_ids[0]. ` +
       `See https://github.com/adcontextprotocol/adcp-client/issues/1342 for the multi-id pass-through contract. ` +
