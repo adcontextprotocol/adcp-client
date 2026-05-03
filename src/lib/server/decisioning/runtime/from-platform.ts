@@ -170,6 +170,39 @@ function refuseImplicitAccountId(
 }
 
 /**
+ * Dev-mode warning when a multi-id read tool returns fewer rows than
+ * the buyer requested — the canonical signal that the platform is
+ * silently truncating to `media_buy_ids[0]` (closes #1342, follow-up
+ * #1399). Catches the bug class where adopters write the recommended
+ * pattern wrong on first pass; quiet in production where legitimate
+ * misses (deleted, archived, cross-account) are routine and warning
+ * on every miss would be noise.
+ *
+ * Suppressible via `ADCP_SUPPRESS_MULTI_ID_WARN=1` for adopters whose
+ * legitimate-miss rate is high (deleted-account-rich datasets, etc.).
+ */
+function warnIfTruncatedMultiIdResponse(
+  toolName: 'getMediaBuyDelivery' | 'getMediaBuys',
+  requestedIds: readonly string[] | undefined,
+  responseArray: readonly unknown[] | undefined,
+  logger: AdcpLogger
+): void {
+  if (process.env.NODE_ENV === 'production') return;
+  if (process.env.ADCP_SUPPRESS_MULTI_ID_WARN === '1') return;
+  if (!requestedIds || requestedIds.length === 0) return;
+  const returned = Array.isArray(responseArray) ? responseArray.length : 0;
+  if (returned >= requestedIds.length) return;
+  // Empty `media_buy_ids` is filtered above as paginated-mode (no truncation
+  // possible without a request to compare against).
+  logger.warn(
+    `[adcp/sdk] ${toolName}: platform returned ${returned} row${returned === 1 ? '' : 's'} for ${requestedIds.length} requested media_buy_ids — ` +
+      `the platform may be silently truncating to media_buy_ids[0]. ` +
+      `See https://github.com/adcontextprotocol/adcp-client/issues/1342 for the multi-id pass-through contract. ` +
+      `Suppress with ADCP_SUPPRESS_MULTI_ID_WARN=1 if legitimate misses (deleted / cross-account) are routine.`
+  );
+}
+
+/**
  * Lifecycle observability hooks the v6 runtime fires at well-known points.
  * Each callback is optional; throws are caught and logged via the framework
  * logger so adopter telemetry mistakes never break dispatch.
@@ -3132,7 +3165,16 @@ function buildMediaBuyHandlers<P extends DecisioningPlatform<any, any>>(
       getMediaBuyDelivery: async (params, ctx) => {
         const reqCtx = ctxFor(ctx);
         return projectSync(
-          () => sales.getMediaBuyDelivery!(params, reqCtx),
+          async () => {
+            const result = await sales.getMediaBuyDelivery!(params, reqCtx);
+            warnIfTruncatedMultiIdResponse(
+              'getMediaBuyDelivery',
+              (params as { media_buy_ids?: readonly string[] }).media_buy_ids,
+              (result as { media_buy_deliveries?: readonly unknown[] })?.media_buy_deliveries,
+              logger
+            );
+            return result;
+          },
           actuals => actuals
         );
       },
@@ -3157,6 +3199,12 @@ function buildMediaBuyHandlers<P extends DecisioningPlatform<any, any>>(
         return projectSync(
           async () => {
             const result = await sales.getMediaBuys!(params, reqCtx);
+            warnIfTruncatedMultiIdResponse(
+              'getMediaBuys',
+              (params as { media_buy_ids?: readonly string[] }).media_buy_ids,
+              (result as { media_buys?: readonly unknown[] })?.media_buys,
+              logger
+            );
             await autoStoreResources(
               ctxMetadataStore,
               reqCtx.account?.id,
