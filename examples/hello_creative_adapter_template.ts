@@ -1,15 +1,24 @@
 /**
- * hello_seller_adapter_creative_template — worked starting point for an
+ * hello_creative_adapter_template — worked starting point for an
  * AdCP creative agent (specialism `creative-template`) that wraps an
  * upstream creative-template platform via HTTP.
  *
  * Fork this. Replace `upstream` with calls to your real backend. The
  * AdCP-facing platform methods stay the same.
  *
+ * FORK CHECKLIST
+ *   1. Replace every `// SWAP:` marker with calls to your backend.
+ *   2. Replace `DEFAULT_LISTING_WORKSPACE` resolution with `ctx.authInfo`-
+ *      derived per-tenant binding (the env-driven default is a multi-tenant
+ *      footgun in production).
+ *   3. Replace `projectSlot` defaults with constraints your platform
+ *      actually enforces (mime types, max sizes, aspect ratios).
+ *   4. Validate: `node --test test/examples/hello-creative-adapter-template.test.js`
+ *
  * Demo:
  *   npx @adcp/sdk@latest mock-server creative-template --port 4250
  *   UPSTREAM_URL=http://127.0.0.1:4250 \
- *     npx tsx examples/hello_seller_adapter_creative_template.ts
+ *     npx tsx examples/hello_creative_adapter_template.ts
  *   adcp storyboard run http://127.0.0.1:3002/mcp creative_template \
  *     --auth sk_harness_do_not_use_in_prod
  *   curl http://127.0.0.1:4250/_debug/traffic
@@ -17,7 +26,7 @@
  * Production:
  *   UPSTREAM_URL=https://my-creative-platform.example/api UPSTREAM_API_KEY=… \
  *     PUBLIC_AGENT_URL=https://my-agent.example.com \
- *     npx tsx examples/hello_seller_adapter_creative_template.ts
+ *     npx tsx examples/hello_creative_adapter_template.ts
  */
 
 import {
@@ -296,6 +305,15 @@ class CreativeTemplateAdapter implements DecisioningPlatform<Record<string, neve
      *  every tool the platform claims. */
     resolve: async ref => {
       if (!ref) {
+        // No-account tools (list_creative_formats, preview_creative) — the
+        // wire request omits `account` and the framework calls
+        // resolve(undefined). Return the default-listing-workspace so
+        // ctx.account is non-null at runtime and the typed handlers'
+        // `Account<TCtxMeta> | undefined` narrow has a value to read.
+        // SWAP: production should derive this from `ctx.authInfo` (per-API-key
+        // tenant binding) instead of an env-driven global default — otherwise
+        // a multi-workspace deployment leaks Workspace A's templates to
+        // callers authenticated under Workspace B.
         return {
           id: DEFAULT_LISTING_WORKSPACE,
           name: DEFAULT_LISTING_WORKSPACE,
@@ -303,8 +321,21 @@ class CreativeTemplateAdapter implements DecisioningPlatform<Record<string, neve
           ctx_metadata: { workspace_id: DEFAULT_LISTING_WORKSPACE, advertiser_domain: '' },
         };
       }
-      const advertiserDomain = (ref as { brand?: { domain?: string } }).brand?.domain;
-      if (!advertiserDomain) return null;
+      // AccountReference is a discriminated union: `{ account_id }` (post-
+      // sync_accounts identifier) OR `{ brand, operator, sandbox? }` (initial
+      // discovery). Production adopters resolve the account_id arm via their
+      // own seller-side directory lookup; this worked example demonstrates
+      // only the brand+operator arm because the mock has no account_id index.
+      // SWAP: add a `lookupWorkspaceByAccountId(ref.account_id)` upstream
+      // call before this branch falls through to brand-domain lookup.
+      if ('account_id' in ref) {
+        // Mock has no account_id → workspace_id index. Real adapters look up
+        // by their own seller-assigned account_id and skip the domain
+        // resolver entirely. Until the upstream gains that index, treat as
+        // unknown rather than silently fall through.
+        return null;
+      }
+      const advertiserDomain = ref.brand.domain;
       const workspaceId = await upstream.lookupWorkspace(advertiserDomain);
       if (!workspaceId) return null;
       return {
@@ -319,7 +350,7 @@ class CreativeTemplateAdapter implements DecisioningPlatform<Record<string, neve
   creative: CreativeBuilderPlatform<CreativeMeta> = defineCreativeBuilderPlatform<CreativeMeta>({
     listCreativeFormats: async (_req, ctx): Promise<ListCreativeFormatsResponse> => {
       // `list_creative_formats` is a no-account tool — `ctx.account` is
-      // narrowed to `Account<TCtxMeta> | undefined` (#1327). The default
+      // narrowed to `Account<TCtxMeta> | undefined`. The default
       // listing workspace fallback in `accounts.resolve(undefined)` ensures
       // ctx.account is non-null at runtime; the narrow below converts the
       // framework's type-level invariant into an explicit guard.
@@ -381,7 +412,7 @@ class CreativeTemplateAdapter implements DecisioningPlatform<Record<string, neve
     previewCreative: async (req: PreviewCreativeRequest, ctx): Promise<PreviewCreativeResponse> => {
       // `preview_creative` is a no-account tool — the wire request schema
       // doesn't carry `account`, so the framework types `ctx.account` as
-      // `Account<TCtxMeta> | undefined` (#1327's NoAccountCtx narrow).
+      // `Account<TCtxMeta> | undefined` per the framework's `NoAccountCtx` narrow.
       // This adapter's `accounts.resolve(undefined)` always returns the
       // default-listing-workspace fallback so ctx.account is non-null at
       // runtime; the defensive narrow below converts the framework's
@@ -477,7 +508,7 @@ const idempotencyStore = createIdempotencyStore({ backend: memoryBackend(), ttlS
 serve(
   ({ taskStore }) =>
     createAdcpServerFromPlatform(platform, {
-      name: 'hello-seller-adapter-creative-template',
+      name: 'hello-creative-adapter-template',
       version: '1.0.0',
       taskStore,
       idempotency: idempotencyStore,

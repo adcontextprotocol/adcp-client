@@ -1,5 +1,0 @@
----
-"@adcp/sdk": patch
----
-
-Add `examples/hello_seller_adapter_sales_social.ts` — a worked, passing reference adapter for the `sales-social` specialism that wraps an upstream walled-garden social platform (Snap, Meta, TikTok shape) over OAuth2 client_credentials. Companion to `hello_seller_adapter_signal_marketplace` and `hello_seller_adapter_creative_template`. Demonstrates the typed-platform `SalesPlatform` + `AudiencePlatform` composition; OAuth token caching via `dynamic_bearer.getToken`; the buyer→upstream id translation pattern (`event_source_id` → upstream pixel_id); the no-account-tool fallback for `log_event` (single-tenant resolver fallback when the wire request omits `account`); the `audience_targeting` + `conversion_tracking` capability declarations that gate the audience and event-source phases on the storyboard runner; and walled-garden CAPI shape (hashed identifier requirement, ISO→UNIX timestamp projection). 10 storyboard steps pass with `overall_status: passing`. Shipped with the same three-gate CI test (strict tsc / storyboard / upstream-traffic) as the signal-marketplace example.

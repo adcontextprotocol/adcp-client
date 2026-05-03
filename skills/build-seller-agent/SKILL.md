@@ -1080,7 +1080,7 @@ Three checks, in order:
 
 `enabled: false` returns a no-op recorder for production builds — zero per-call overhead. See `@adcp/sdk/upstream-recorder`'s module-level docs for the full surface (`strict`, `debug()`, `onError`, `redactPattern`, `maxPayloadBytes`, `purpose` classifier, `bufferSize` / `ttlMs` tuning).
 
-**Worked reference adapter**: [`examples/hello_seller_adapter_signal_marketplace.ts`](../../examples/hello_seller_adapter_signal_marketplace.ts) wires the recorder end-to-end against the SDK's `signal-marketplace` mock. CI gates that example via `test/examples/hello-seller-adapter-signal-marketplace.test.js` — type-checks under strictest tsc, runs the storyboard with zero failed steps, asserts every expected upstream route was hit. Fork the example and replace `UpstreamClient` with your real backend.
+**Worked reference adapter**: [`examples/hello_signals_adapter_marketplace.ts`](../../examples/hello_signals_adapter_marketplace.ts) wires the recorder end-to-end against the SDK's `signal-marketplace` mock. CI gates that example via `test/examples/hello-signals-adapter-marketplace.test.js` — type-checks under strictest tsc, runs the storyboard with zero failed steps, asserts every expected upstream route was hit. Fork the example and replace `UpstreamClient` with your real backend.
 
 ## SDK Quick Reference
 

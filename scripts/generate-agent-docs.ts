@@ -916,7 +916,7 @@ function generateLlmsTxt(
   );
   ln();
   ln(
-    `\`@adcp/sdk/upstream-recorder\` is the producer-side reference middleware: a sandbox-only-by-default helper that wraps the adapter's HTTP layer with per-principal isolation, record-time secret redaction, ring-buffer + TTL eviction, and a \`query()\` method that maps onto the controller wire shape via \`toQueryUpstreamTrafficResponse()\`. Wire-up is four steps — boot recorder, wrap fetch, scope handlers in \`runWithPrincipal\`, return \`toQueryUpstreamTrafficResponse(recorder.query(...))\` from your \`comply_test_controller\`'s \`query_upstream_traffic\` scenario. Worked example at \`examples/hello_seller_adapter_signal_marketplace.ts\`. See \`skills/build-seller-agent/SKILL.md\` § "Opting into \`upstream_traffic\`" for the full pattern, including multi-tenant principal resolution.`
+    `\`@adcp/sdk/upstream-recorder\` is the producer-side reference middleware: a sandbox-only-by-default helper that wraps the adapter's HTTP layer with per-principal isolation, record-time secret redaction, ring-buffer + TTL eviction, and a \`query()\` method that maps onto the controller wire shape via \`toQueryUpstreamTrafficResponse()\`. Wire-up is four steps — boot recorder, wrap fetch, scope handlers in \`runWithPrincipal\`, return \`toQueryUpstreamTrafficResponse(recorder.query(...))\` from your \`comply_test_controller\`'s \`query_upstream_traffic\` scenario. Worked example at \`examples/hello_signals_adapter_marketplace.ts\`. See \`skills/build-seller-agent/SKILL.md\` § "Opting into \`upstream_traffic\`" for the full pattern, including multi-tenant principal resolution.`
   );
   ln();
 

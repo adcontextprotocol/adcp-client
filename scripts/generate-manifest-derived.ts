@@ -127,7 +127,7 @@ function generateFile(manifest: AdcpManifest, sourcePath: string): string {
   // marketplace seller MAY use sync_accounts), not "tool required to claim
   // specialism" (a pure signal-marketplace seller exposing only get_signals/
   // activate_signal is fully compliant). Reverse-mapping triggered false
-  // warnings on legitimate adopters like the hello_seller_adapter_signal_-
+  // warnings on legitimate adopters like the hello_signals_adapter_-
   // marketplace example, which is correctly minimal but inherits the cross-
   // protocol tools' specialisms[] memberships through no fault of its own.
   // See adcp-client#1192 / #1299 for the fuller rationale.

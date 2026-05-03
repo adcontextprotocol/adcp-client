@@ -1,17 +1,28 @@
 /**
- * hello_seller_adapter_sales_social — worked starting point for an
+ * hello_seller_adapter_social — worked starting point for an
  * AdCP sales agent (specialism `sales-social`) that wraps an upstream
- * social-platform API (Snap, Meta, TikTok shape) via OAuth2 client_credentials.
+ * walled-garden social-platform API via OAuth2 client_credentials.
  *
  * Fork this. Replace `upstream` with calls to your real backend. The
  * AdCP-facing platform methods stay the same.
  *
+ * FORK CHECKLIST
+ *   1. Replace every `// SWAP:` marker with calls to your backend.
+ *   2. Replace `KNOWN_ADVERTISERS` (line ~271) with your tenant directory.
+ *   3. Replace `audience_targeting` and `conversion_tracking` capability
+ *      declarations with the identifier types / event types your platform
+ *      actually accepts.
+ *   4. Replace the `m.uids[i]` → `external_id_sha256` projection in
+ *      `logEvent` with your CAPI's specific UID-to-field mapping.
+ *   5. Replace `eventSourceMap` with persistent storage (DB / cache).
+ *   6. Validate: `node --test test/examples/hello-seller-adapter-social.test.js`
+ *
  * Demo:
  *   npx @adcp/sdk@latest mock-server sales-social --port 4350
  *   UPSTREAM_URL=http://127.0.0.1:4350 \
- *     UPSTREAM_OAUTH_CLIENT_ID=tiktok_test_client_001 \
- *     UPSTREAM_OAUTH_CLIENT_SECRET=tiktok_test_secret_do_not_use_in_prod \
- *     npx tsx examples/hello_seller_adapter_sales_social.ts
+ *     UPSTREAM_OAUTH_CLIENT_ID=walled_garden_test_client_001 \
+ *     UPSTREAM_OAUTH_CLIENT_SECRET=walled_garden_test_secret_do_not_use_in_prod \
+ *     npx tsx examples/hello_seller_adapter_social.ts
  *   adcp storyboard run http://127.0.0.1:3003/mcp sales_social \
  *     --auth sk_harness_do_not_use_in_prod
  *   curl http://127.0.0.1:4350/_debug/traffic
@@ -37,29 +48,16 @@ import {
   type SyncAccountsResultRow,
 } from '@adcp/sdk/server';
 import type {
-  GetProductsResponse,
-  CreateMediaBuySuccess,
-  UpdateMediaBuySuccess,
-  GetMediaBuyDeliveryResponse,
-  GetMediaBuysResponse,
   SyncCatalogsSuccess,
   LogEventSuccess,
   SyncEventSourcesSuccess,
   GetAccountFinancialsSuccess,
 } from '@adcp/sdk/types';
-import { createHash } from 'node:crypto';
-
-/** SHA-256 hex digest. Used to synthesize a matchable identifier for
- *  log_event when the buyer's request omits hashed user_data — walled
- *  gardens reject events without a matchable id. Production should pass
- *  buyer-supplied hashes through unchanged. */
-function sha256Hex(input: string): string {
-  return createHash('sha256').update(input).digest('hex');
-}
 
 const UPSTREAM_URL = process.env['UPSTREAM_URL'] ?? 'http://127.0.0.1:4350';
-const UPSTREAM_CLIENT_ID = process.env['UPSTREAM_OAUTH_CLIENT_ID'] ?? 'tiktok_test_client_001';
-const UPSTREAM_CLIENT_SECRET = process.env['UPSTREAM_OAUTH_CLIENT_SECRET'] ?? 'tiktok_test_secret_do_not_use_in_prod';
+const UPSTREAM_CLIENT_ID = process.env['UPSTREAM_OAUTH_CLIENT_ID'] ?? 'walled_garden_test_client_001';
+const UPSTREAM_CLIENT_SECRET =
+  process.env['UPSTREAM_OAUTH_CLIENT_SECRET'] ?? 'walled_garden_test_secret_do_not_use_in_prod';
 const PORT = Number(process.env['PORT'] ?? 3003);
 const ADCP_AUTH_TOKEN = process.env['ADCP_AUTH_TOKEN'] ?? 'sk_harness_do_not_use_in_prod';
 
@@ -79,9 +77,9 @@ let tokenCache: TokenCache | null = null;
 
 async function fetchOauthToken(): Promise<TokenCache> {
   // SWAP: production OAuth token flow. Mock issues client_credentials grants
-  // via POST /oauth/token (form-urlencoded). Real platforms vary — TikTok
-  // uses /oauth/access_token, Meta uses /oauth/access_token with redirect_uri,
-  // Snap uses /oauth2/access_token with refresh_token rotation.
+  // via POST /oauth/token (form-urlencoded). Real walled-garden CAPIs vary
+  // in path (`/oauth/access_token`, `/oauth2/access_token`) and refresh
+  // rotation; the upstream client below abstracts that away.
   const body = new URLSearchParams({
     grant_type: 'client_credentials',
     client_id: UPSTREAM_CLIENT_ID,
@@ -160,8 +158,8 @@ const upstream = {
   },
 
   // SWAP: audience creation + member upload. Real platforms split this two
-  // ways: a metadata create, then a hashed-member upload (Meta CAPI, Snap
-  // Pixel, TikTok Custom Audiences all follow this two-step flow).
+  // ways: a metadata create, then a hashed-member upload — the standard
+  // walled-garden custom-audience two-step flow.
   async createAudience(
     advertiserId: string,
     a: { audience_id: string; name: string; description?: string }
@@ -238,7 +236,8 @@ const upstream = {
     return r.body;
   },
 
-  // SWAP: conversions API (event/track). Mock body shape mirrors Meta CAPI:
+  // SWAP: conversions API (event/track). Mock body shape mirrors the
+  // walled-garden CAPI conventions:
   // events[i] needs event_name, event_time (UNIX seconds), user_data with at
   // least one hashed identifier (email_sha256, phone_sha256, external_id_sha256).
   // Production platforms vary in field names but the matchable-id requirement
@@ -287,8 +286,8 @@ const KNOWN_ADVERTISERS = ['acmeoutdoor.example', 'summit-media.example'];
 // ignores buyer-supplied pixel_id and assigns its own (`px_<uuid>`); buyers
 // reference their own id in subsequent log_event calls. We record the
 // mapping at create time and resolve at log time. Production: replace with
-// your DB / cache. See adcontextprotocol/adcp-client#1285 for the helper
-// adopters can use to standardize this pattern.
+// your DB / cache. The SDK's `createTranslationMap` helper formalizes this
+// bidirectional pattern when you outgrow the in-memory map.
 const eventSourceMap = new Map<string, string>(); // (advertiser_id, buyer_id) → upstream_pixel_id
 function eventSourceKey(advertiserId: string, buyerEventSourceId: string): string {
   return `${advertiserId}::${buyerEventSourceId}`;
@@ -350,20 +349,31 @@ class SalesSocialAdapter implements DecisioningPlatform<Record<string, never>, A
      *  per-principal lookup). For no-account tools (`provide_performance_feedback`,
      *  `list_creative_formats`), `ref` is undefined; we don't model those. */
     resolve: async ref => {
-      // For tools that don't carry `account` on the wire (`log_event`,
-      // `provide_performance_feedback`, `list_creative_formats`), framework
-      // calls resolve(undefined). Returning null leaves `ctx.account`
-      // undefined and typed handlers throw — see adcontextprotocol/adcp-client#1327.
-      // Single-tenant fallback: resolve to the first known advertiser. Real
-      // multi-tenant platforms derive the advertiser from `ctx.authInfo`
+      // No-account tool branch (`log_event` / `provide_performance_feedback`
+      // / `list_creative_formats` — wire request omits `account`). Framework
+      // calls resolve(undefined); we fall through to the first known
+      // advertiser so ctx.account is non-null at runtime.
+      // SWAP: production should derive the advertiser from `ctx.authInfo`
       // (per-OAuth-client tenant binding) or from a request-body lookup
-      // (e.g., `event_source_id` → advertiser mapping in your DB).
-      const fallbackDomain = KNOWN_ADVERTISERS[0];
-      const advertiserDomain = (ref as { brand?: { domain?: string } } | undefined)?.brand?.domain ?? fallbackDomain;
+      // (e.g., `event_source_id` → advertiser mapping persisted at sync time).
+      // Returning the first known advertiser is a single-tenant convenience.
+      let advertiserDomain: string | undefined;
+      let operator: string | undefined;
+      if (ref === undefined) {
+        advertiserDomain = KNOWN_ADVERTISERS[0];
+      } else if ('account_id' in ref) {
+        // SWAP: production keeps an account_id → upstream-advertiser-id index
+        // populated during `sync_accounts`/`list_accounts`. The mock lacks
+        // this surface so the account_id arm is unreachable in the worked
+        // example; real adapters add a directory lookup here.
+        return null;
+      } else {
+        advertiserDomain = ref.brand.domain;
+        operator = ref.operator;
+      }
       if (!advertiserDomain) return null;
       const upstreamAdv = await upstream.lookupAdvertiser(advertiserDomain);
       if (!upstreamAdv) return null;
-      const operator = (ref as { operator?: string } | undefined)?.operator;
       return {
         id: upstreamAdv.advertiser_id,
         name: upstreamAdv.display_name,
@@ -405,8 +415,22 @@ class SalesSocialAdapter implements DecisioningPlatform<Record<string, never>, A
     upsert: async refs => {
       const out: SyncAccountsResultRow[] = [];
       for (const ref of refs) {
-        const domain = (ref as { brand?: { domain?: string } }).brand?.domain;
-        const operator = (ref as { operator?: string }).operator ?? '';
+        // sync_accounts always carries the brand+operator arm (the buyer is
+        // registering an account, not referencing an existing one). The
+        // account_id arm of AccountReference is invalid input here per the
+        // wire schema — but tolerate it defensively via the discriminator.
+        if ('account_id' in ref) {
+          out.push({
+            brand: { domain: '' },
+            operator: '',
+            action: 'failed',
+            status: 'rejected',
+            errors: [{ code: 'INVALID_REQUEST', message: 'sync_accounts requires brand+operator, not account_id' }],
+          });
+          continue;
+        }
+        const domain = ref.brand.domain;
+        const operator = ref.operator;
         if (!domain) {
           out.push({
             brand: { domain: '' },
@@ -441,15 +465,18 @@ class SalesSocialAdapter implements DecisioningPlatform<Record<string, never>, A
     },
 
     getAccountFinancials: async (req): Promise<GetAccountFinancialsSuccess> => {
-      const acct = req.account as { brand?: { domain?: string }; operator?: string } | undefined;
-      const domain = acct?.brand?.domain;
-      const operator = acct?.operator;
-      if (!domain || !operator) {
-        throw new AdcpError('INVALID_REQUEST', {
-          message: 'account.brand.domain and account.operator required',
-          field: 'account',
+      const acct = req.account;
+      // AccountReference discriminated union. account_id arm requires the
+      // production directory lookup the mock doesn't model — see SWAP note
+      // on `accounts.resolve` above.
+      if ('account_id' in acct) {
+        throw new AdcpError('ACCOUNT_NOT_FOUND', {
+          message: 'account_id lookup not modeled in this worked example — see SWAP markers on accounts.resolve',
+          field: 'account.account_id',
         });
       }
+      const domain = acct.brand.domain;
+      const operator = acct.operator;
       const adv = await upstream.lookupAdvertiser(domain);
       if (!adv) throw new AdcpError('ACCOUNT_NOT_FOUND', { message: `No advertiser for ${domain}` });
       const info = await upstream.getAdvertiserInfo(adv.advertiser_id);
@@ -519,32 +546,15 @@ class SalesSocialAdapter implements DecisioningPlatform<Record<string, never>, A
     pollAudienceStatuses: async () => new Map(),
   });
 
+  // Walled-garden platforms own bidding internally — the buyer flow is
+  // sync_audiences / sync_creatives / log_event, not create_media_buy.
+  // SalesPlatform's core methods (getProducts/createMediaBuy/updateMediaBuy/
+  // getMediaBuyDelivery/getMediaBuys) are now optional; RequiredPlatformsFor
+  // <'sales-social'> requires only SalesIngestionPlatform. Implementing just
+  // the ingestion surface keeps the example honest and lets buyers calling
+  // unsupported tools get METHOD_NOT_FOUND from the dispatcher rather than
+  // an UNSUPPORTED_FEATURE thrown from a stub.
   sales: SalesPlatform<AdvertiserMeta> = defineSalesPlatform<AdvertiserMeta>({
-    // ── REQUIRED by SalesPlatform interface, but the sales-social
-    // storyboard doesn't exercise media-buy creation. Walled-garden
-    // platforms own bidding internally; the buyer flow is sync_audiences
-    // / sync_creatives / log_event. Stubs pass type-check; real platforms
-    // implement these only if they accept inbound media buys via AdCP.
-    getProducts: async (): Promise<GetProductsResponse> => ({ products: [] }),
-    createMediaBuy: async (): Promise<CreateMediaBuySuccess> => {
-      throw new AdcpError('UNSUPPORTED_FEATURE', {
-        message: 'create_media_buy not supported — social platforms accept assets, not media buys',
-      });
-    },
-    updateMediaBuy: async (): Promise<UpdateMediaBuySuccess> => {
-      throw new AdcpError('UNSUPPORTED_FEATURE', { message: 'update_media_buy not supported' });
-    },
-    getMediaBuyDelivery: async (): Promise<GetMediaBuyDeliveryResponse> => {
-      const today = new Date().toISOString();
-      return {
-        reporting_period: { start: today, end: today },
-        currency: 'USD',
-        media_buy_deliveries: [],
-      };
-    },
-    getMediaBuys: async (): Promise<GetMediaBuysResponse> => ({ media_buys: [] }),
-
-    // ── ACTIVE — exercised by the storyboard.
     syncCreatives: async (creatives, ctx): Promise<SyncCreativesRow[]> => {
       const advertiserId = ctx.account.ctx_metadata.advertiser_id;
       const rows: SyncCreativesRow[] = [];
@@ -682,38 +692,67 @@ class SalesSocialAdapter implements DecisioningPlatform<Record<string, never>, A
 
     logEvent: async (req, ctx): Promise<LogEventSuccess> => {
       const advertiserId = ctx.account.ctx_metadata.advertiser_id;
-      // Project AdCP events onto the upstream Meta-CAPI shape. The mock (and
-      // real walled gardens) reject events without a matchable identifier;
-      // synthesize one from event_id when the request omits user_data.
+      // Project AdCP `Event` onto the upstream walled-garden CAPI shape.
+      // AdCP carries identifiers on the spec field `Event.user_match` (per
+      // /schemas/3.0.4/core/user-match.json — `hashed_email`, `hashed_phone`,
+      // `uids[]`, `click_id`, `client_ip` + `client_user_agent`). Project
+      // these faithfully onto the upstream's `user_data` shape and pass the
+      // batch unconditionally — let the upstream's identity policy decide
+      // which events match. Dropping or synthesizing identifiers in the
+      // adapter would either (a) hide buyer-fixable misconfigurations or
+      // (b) fabricate a stable user-id signal the buyer never granted.
       const events = (req.events ?? []).map(e => {
         const eventTimeIso = e.event_time ?? new Date().toISOString();
         const eventTime = Math.floor(new Date(eventTimeIso).getTime() / 1000);
-        const userIds = (e as { user_data?: Record<string, string> }).user_data ?? {};
-        const externalIdSha = userIds['external_id_sha256'] ?? sha256Hex(e.event_id ?? `${advertiserId}.${eventTime}`);
+        const m = e.user_match;
+        const userData: { external_id_sha256?: string; email_sha256?: string; phone_sha256?: string } = {};
+        if (m?.hashed_email) userData.email_sha256 = m.hashed_email;
+        if (m?.hashed_phone) userData.phone_sha256 = m.hashed_phone;
+        // Walled gardens commonly accept hashed UIDs as `external_id_sha256`.
+        // SWAP: production maps `m.uids[i].type` to your platform's specific
+        // identifier slot (e.g. `madid`, `idfa`, `aaid`) per the CAPI docs.
+        const firstUid = m?.uids?.[0]?.value;
+        if (firstUid && /^[a-f0-9]{64}$/.test(firstUid)) userData.external_id_sha256 = firstUid;
         return {
           event_name: e.event_type,
           event_time: eventTime,
-          user_data: {
-            external_id_sha256: externalIdSha,
-            ...(userIds['email_sha256'] !== undefined && { email_sha256: userIds['email_sha256'] }),
-            ...(userIds['phone_sha256'] !== undefined && { phone_sha256: userIds['phone_sha256'] }),
-          },
+          user_data: userData,
         };
       });
+
       // Translate buyer's `event_source_id` → upstream `pixel_id`. The mock
       // assigns its own pixel_id at create time and ignores buyer-supplied
       // values, so subsequent log_event calls must look up the mapping.
       const buyerEventSourceId = req.event_source_id ?? '';
       const upstreamPixelId =
         eventSourceMap.get(eventSourceKey(advertiserId, buyerEventSourceId)) ?? buyerEventSourceId;
-      const tracked = await upstream.trackEvents(advertiserId, {
-        pixel_id: upstreamPixelId,
-        events,
-      });
-      // AdCP wire requires `events_received` + `events_processed`. Mock
-      // reports `events_dropped` separately; project: processed = received.
+      // Tolerate upstream "no matchable events" (every event lacked a
+      // matchable identifier in `user_match`). Surface as
+      // `events_processed: 0` so the buyer can populate `user_match` and
+      // retry; production should also include the upstream's per-event drop
+      // reasons in `partial_failures[]` for actionable buyer errors.
+      let tracked: { events_received: number; events_dropped: number };
+      try {
+        tracked = await upstream.trackEvents(advertiserId, {
+          pixel_id: upstreamPixelId,
+          events,
+        });
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        if (message.includes('no_matchable_events') || message.includes('events were dropped')) {
+          return {
+            events_received: req.events?.length ?? 0,
+            events_processed: 0,
+          };
+        }
+        throw err;
+      }
+      // AdCP wire: `events_received` is the buyer's submitted count;
+      // `events_processed` is the count the seller will count toward
+      // optimization/billing. Drop count = (no_match drops by adapter)
+      // + (upstream drops for any reason).
       return {
-        events_received: tracked.events_received + tracked.events_dropped,
+        events_received: req.events?.length ?? 0,
         events_processed: tracked.events_received,
       };
     },
@@ -730,7 +769,7 @@ const idempotencyStore = createIdempotencyStore({ backend: memoryBackend(), ttlS
 serve(
   ({ taskStore }) =>
     createAdcpServerFromPlatform(platform, {
-      name: 'hello-seller-adapter-sales-social',
+      name: 'hello-seller-adapter-social',
       version: '1.0.0',
       taskStore,
       idempotency: idempotencyStore,

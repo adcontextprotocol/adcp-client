@@ -1,5 +1,5 @@
 /**
- * hello_seller_adapter_sales_guaranteed — worked starting point for an
+ * hello_seller_adapter_guaranteed — worked starting point for an
  * AdCP guaranteed sales agent (specialism `sales-guaranteed`) that wraps
  * an upstream GAM-style ad-server with HITL IO approval over static Bearer.
  *
@@ -9,13 +9,29 @@
  * `tasks_get` or via the push_notification webhook. This is the
  * `ctx.handoffToTask(fn)` pattern in v6 typed platforms.
  *
- * Fork this. Replace `upstream` with calls to your real backend (GAM,
- * FreeWheel, Operative, etc). The AdCP-facing platform methods stay the same.
+ * Fork this. Replace `upstream` with calls to your real backend. The
+ * AdCP-facing platform methods stay the same.
+ *
+ * FORK CHECKLIST
+ *   1. Replace every `// SWAP:` marker with calls to your backend.
+ *   2. Replace `KNOWN_PUBLISHERS` (line ~63) with your tenant directory
+ *      (or remove and use your real `/networks/list` endpoint).
+ *   3. Replace `projectProduct()` defaults — `publisher_properties` selector,
+ *      `pricing_options[]`, `reporting_capabilities` — with values your
+ *      seller actually commits to.
+ *   4. Replace `aggressiveMeasurement` thresholds with your IO-team's
+ *      committable maxima (viewability, completion-rate, etc.).
+ *   5. Replace `advertiserId = networkCode` collapse with a real lookup
+ *      (production splits network and advertiser ids).
+ *   6. Replace the in-memory poll loop (`getTask`) with your IO-task
+ *      backend; persist `(idempotency_key, lineitem_index) → upstream_lineitem_id`
+ *      in your DB so a process restart can reconcile partial completion.
+ *   7. Validate: `node --test test/examples/hello-seller-adapter-guaranteed.test.js`
  *
  * Demo:
  *   npx @adcp/sdk@latest mock-server sales-guaranteed --port 4450
  *   UPSTREAM_URL=http://127.0.0.1:4450 \
- *     npx tsx examples/hello_seller_adapter_sales_guaranteed.ts
+ *     npx tsx examples/hello_seller_adapter_guaranteed.ts
  *   adcp storyboard run http://127.0.0.1:3004/mcp sales_guaranteed \
  *     --auth sk_harness_do_not_use_in_prod
  *   curl http://127.0.0.1:4450/_debug/traffic
@@ -346,13 +362,19 @@ class SalesGuaranteedAdapter implements DecisioningPlatform<Record<string, never
      *  Production may use account.publisher or a separate auth-derived
      *  binding. */
     resolve: async ref => {
-      const publisherDomain =
-        (ref as { brand?: { domain?: string }; publisher?: string } | undefined)?.brand?.domain ??
-        (ref as { publisher?: string } | undefined)?.publisher;
+      if (!ref) return null;
+      // AccountReference discriminated union — see the worked-example notes
+      // on the same pattern in hello_seller_adapter_social. The mock has no
+      // account_id → network_code index, so the account_id arm is
+      // unreachable; production sellers add a directory lookup.
+      // SWAP: persist `account_id → network_code` during sync_accounts and
+      // serve account_id lookups from there.
+      if ('account_id' in ref) return null;
+      const publisherDomain = ref.brand.domain;
       if (!publisherDomain) return null;
       const network = await upstream.lookupNetwork(publisherDomain);
       if (!network) return null;
-      const operator = (ref as { operator?: string } | undefined)?.operator;
+      const operator = ref.operator;
       return {
         id: network.network_code,
         name: network.display_name,
@@ -371,8 +393,20 @@ class SalesGuaranteedAdapter implements DecisioningPlatform<Record<string, never
     upsert: async refs => {
       const out: SyncAccountsResultRow[] = [];
       for (const ref of refs) {
-        const domain = (ref as { brand?: { domain?: string } }).brand?.domain ?? '';
-        const operator = (ref as { operator?: string }).operator ?? '';
+        // sync_accounts always carries the brand+operator arm — buyer is
+        // registering, not referencing.
+        if ('account_id' in ref) {
+          out.push({
+            brand: { domain: '' },
+            operator: '',
+            action: 'failed',
+            status: 'rejected',
+            errors: [{ code: 'INVALID_REQUEST', message: 'sync_accounts requires brand+operator, not account_id' }],
+          });
+          continue;
+        }
+        const domain = ref.brand.domain;
+        const operator = ref.operator;
         const network = domain ? await upstream.lookupNetwork(domain) : null;
         if (!network) {
           out.push({
@@ -413,12 +447,13 @@ class SalesGuaranteedAdapter implements DecisioningPlatform<Record<string, never
     },
   };
 
-  // SalesCorePlatform<Meta> & SalesIngestionPlatform<Meta> annotation — the
-  // canonical post-#1341 shape for adopters claiming `sales-guaranteed`.
-  // `defineSalesPlatform` widens to all-optional and the per-specialism
-  // RequiredPlatformsFor<'sales-guaranteed'> check rejects it; the explicit
-  // intersection annotation flows the closed shape into the literal so all
-  // five core methods stay required at the type level. See PR #1362.
+  // Required: explicit `SalesCorePlatform<Meta> & SalesIngestionPlatform<Meta>`
+  // annotation. `defineSalesPlatform` widens to all-optional, and the
+  // per-specialism `RequiredPlatformsFor<'sales-guaranteed'>` check rejects
+  // a widened literal. The intersection annotation flows the closed shape
+  // into the literal so all five core methods stay required at the type
+  // level. See `decisioning.type-checks.ts` for the regression-locked
+  // patterns.
   sales: SalesCorePlatform<NetworkMeta> & SalesIngestionPlatform<NetworkMeta> = {
     getProducts: async (req: GetProductsRequest, ctx): Promise<GetProductsResponse> => {
       const networkCode = ctx.account.ctx_metadata.network_code;
@@ -441,27 +476,51 @@ class SalesGuaranteedAdapter implements DecisioningPlatform<Record<string, never
      */
     createMediaBuy: async (req: CreateMediaBuyRequest, ctx) => {
       const networkCode = ctx.account.ctx_metadata.network_code;
-      const advertiserId = networkCode; // mock doesn't model advertiser-as-separate-id; production splits.
+      // SWAP: production splits network_code (the publisher's tenant) and
+      // advertiser_id (the brand seat under that tenant) — they're distinct
+      // upstream identifiers. The mock doesn't model the split (every
+      // advertiser is owned by the same network), so this worked example
+      // collapses both into network_code. Real GAM/FreeWheel/Operative
+      // adapters resolve advertiser_id from `req.brand` against the
+      // publisher's advertiser directory before issuing the order.
+      const advertiserId = networkCode;
 
       // Reject aggressive measurement_terms before the buy hits upstream.
       // The storyboard exercises this path and asserts TERMS_REJECTED on
-      // the wire — production sellers branch on viewability / completion-rate
+      // the wire. Production sellers branch on viewability / completion-rate
       // / IVT thresholds the platform won't commit to.
-      const aggressiveMeasurement = (req.packages ?? []).some(p => {
-        const terms = (
-          p as { measurement_terms?: { viewability_threshold?: number; completion_rate_threshold?: number } }
-        ).measurement_terms;
-        if (!terms) return false;
-        if (typeof terms.viewability_threshold === 'number' && terms.viewability_threshold > 0.85) return true;
-        if (typeof terms.completion_rate_threshold === 'number' && terms.completion_rate_threshold > 0.9) return true;
-        return false;
-      });
-      if (aggressiveMeasurement) {
-        throw new AdcpError('TERMS_REJECTED', {
-          message: 'Proposed measurement terms exceed seller commitments',
-          field: 'packages.measurement_terms',
-          recovery: 'correctable',
-        });
+      //
+      // SWAP: replace these defaults with your IO team's committable maxima.
+      const MAX_VIEWABILITY = 0.85;
+      const MAX_COMPLETION_RATE = 0.9;
+      // Surface the offending package + threshold name + observed value +
+      // committable max so the buyer agent can fix the constraint and retry.
+      // Opaque "exceed seller commitments" messages get cargo-culted into
+      // every adopter's constraint enforcement and produce un-actionable
+      // errors at the buyer-agent boundary.
+      const packagesArr = (req.packages ?? []) as Array<{
+        measurement_terms?: { viewability_threshold?: number; completion_rate_threshold?: number };
+      }>;
+      for (let i = 0; i < packagesArr.length; i++) {
+        const terms = packagesArr[i]?.measurement_terms;
+        if (!terms) continue;
+        if (typeof terms.viewability_threshold === 'number' && terms.viewability_threshold > MAX_VIEWABILITY) {
+          throw new AdcpError('TERMS_REJECTED', {
+            message: `packages[${i}].measurement_terms.viewability_threshold = ${terms.viewability_threshold} exceeds maximum committable threshold (${MAX_VIEWABILITY}). Lower to ≤${MAX_VIEWABILITY} or remove the term to retry.`,
+            field: `packages[${i}].measurement_terms.viewability_threshold`,
+            recovery: 'correctable',
+          });
+        }
+        if (
+          typeof terms.completion_rate_threshold === 'number' &&
+          terms.completion_rate_threshold > MAX_COMPLETION_RATE
+        ) {
+          throw new AdcpError('TERMS_REJECTED', {
+            message: `packages[${i}].measurement_terms.completion_rate_threshold = ${terms.completion_rate_threshold} exceeds maximum committable threshold (${MAX_COMPLETION_RATE}). Lower to ≤${MAX_COMPLETION_RATE} or remove the term to retry.`,
+            field: `packages[${i}].measurement_terms.completion_rate_threshold`,
+            recovery: 'correctable',
+          });
+        }
       }
 
       const totalBudget =
@@ -536,9 +595,21 @@ class SalesGuaranteedAdapter implements DecisioningPlatform<Record<string, never
           });
         }
 
+        // `confirmed_at = now` per the spec (`media-buy.json:24-28` —
+        // "ISO 8601 timestamp when the seller confirmed this media buy.
+        // A successful create_media_buy response constitutes order
+        // confirmation"). The handoff fn's return IS that confirmation.
+        //
+        // Status is `pending_creatives` (not `active`) until creatives
+        // sync. The MediaBuyStatus enum is `pending_creatives | pending_start
+        // | active | paused | completed | rejected | canceled` —
+        // `pending_creatives` is the right value when the buy is approved
+        // but no creatives have been assigned. Buyers transition to
+        // `active` after `sync_creatives` lands, which the framework
+        // surfaces via `publishStatusChange` on `resource_type: 'media_buy'`.
         return {
           media_buy_id: order.order_id,
-          status: 'active',
+          status: 'pending_creatives',
           confirmed_at: new Date().toISOString(),
           packages: packagesOut,
         };
@@ -697,7 +768,7 @@ const idempotencyStore = createIdempotencyStore({ backend: memoryBackend(), ttlS
 serve(
   ({ taskStore }) =>
     createAdcpServerFromPlatform(platform, {
-      name: 'hello-seller-adapter-sales-guaranteed',
+      name: 'hello-seller-adapter-guaranteed',
       version: '1.0.0',
       taskStore,
       idempotency: idempotencyStore,

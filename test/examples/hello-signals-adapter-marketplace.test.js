@@ -1,5 +1,5 @@
 /**
- * CI gates for `examples/hello_seller_adapter_signal_marketplace.ts`.
+ * CI gates for `examples/hello_signals_adapter_marketplace.ts`.
  *
  * Three independent assertions:
  *   1. The example typechecks under the strictest realistic adopter config
@@ -27,7 +27,7 @@ const { spawn, spawnSync } = require('node:child_process');
 const { bootMockServer } = require('@adcp/sdk/mock-server');
 
 const REPO_ROOT = path.resolve(__dirname, '..', '..');
-const EXAMPLE_FILE = path.join(REPO_ROOT, 'examples', 'hello_seller_adapter_signal_marketplace.ts');
+const EXAMPLE_FILE = path.join(REPO_ROOT, 'examples', 'hello_signals_adapter_marketplace.ts');
 const CLI = path.join(REPO_ROOT, 'bin', 'adcp.js');
 
 // Use high ports that won't collide with dev defaults (3001, 4150).
@@ -56,7 +56,7 @@ function waitForPort(host, port, timeoutMs) {
   });
 }
 
-describe('examples/hello_seller_adapter_signal_marketplace', () => {
+describe('examples/hello_signals_adapter_marketplace', () => {
   // -------------------------------------------------------------------------
   // Gate 1 — strictest realistic typecheck
   // -------------------------------------------------------------------------
