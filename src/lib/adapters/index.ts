@@ -84,3 +84,8 @@ export { createOAuthPassthroughResolver, type OAuthPassthroughResolverOptions } 
 // plumbing (resolve dispatch, optional list, ctx threading) with no opinion on
 // where the roster lives.
 export { createRosterAccountStore, type RosterAccountStoreOptions } from './roster-account-store';
+
+// Derived AccountStore — Shape D factory for `resolution: 'derived'`
+// stateless single-tenant platforms where the auth principal alone identifies
+// the tenant. No roster, no sync step, no account_id concept. Closes #1462.
+export { createDerivedAccountStore, type DerivedAccountStoreOptions } from './derived-account-store';

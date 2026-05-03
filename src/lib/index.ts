@@ -1178,6 +1178,9 @@ export {
   // Roster-backed AccountStore — Shape C factory for publisher-curated explicit platforms
   createRosterAccountStore,
   type RosterAccountStoreOptions,
+  // Derived AccountStore — Shape D factory for stateless single-tenant platforms
+  createDerivedAccountStore,
+  type DerivedAccountStoreOptions,
 } from './adapters';
 
 // ====== BACKWARD COMPATIBILITY & ENVIRONMENT LOADING ======

@@ -19,6 +19,11 @@
  *   in-memory map); the SDK provides the AccountStore plumbing. Most
  *   SSPs, broadcasters, and retail-media networks where AE/CSM provisions
  *   the account in an internal admin tool before the buyer ever calls.
+ * - **Stateless single-tenant** → {@link createDerivedAccountStore}
+ *   (Shape D, `resolution: 'derived'`). No roster, no sync step. Auth
+ *   principal IS the account. Creative adapters, single-namespace retail-media
+ *   proxies, self-hosted broadcasters where the buyer's API key maps 1:1 to
+ *   the platform configuration.
  *
  * Design notes:
  * - Lookup is a point function, not a roster getter. An adopter with

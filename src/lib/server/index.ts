@@ -437,3 +437,5 @@ export {
 } from '../adapters/oauth-passthrough-resolver';
 
 export { createRosterAccountStore, type RosterAccountStoreOptions } from '../adapters/roster-account-store';
+
+export { createDerivedAccountStore, type DerivedAccountStoreOptions } from '../adapters/derived-account-store';

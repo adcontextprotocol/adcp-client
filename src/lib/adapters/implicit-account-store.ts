@@ -19,6 +19,9 @@
  *   (Shape B, returns just `resolve`).
  * - **Publisher ops curates the roster** → `createRosterAccountStore`
  *   (Shape C, complete AccountStore).
+ * - **Stateless single-tenant** → `createDerivedAccountStore`
+ *   (Shape D, `resolution: 'derived'`). No roster, no `account_id`. Auth
+ *   principal IS the account.
  *
  * @see docs/guides/account-resolution.md
  * @public
