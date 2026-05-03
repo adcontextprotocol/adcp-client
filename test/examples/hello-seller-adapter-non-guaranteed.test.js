@@ -3,10 +3,9 @@
  *
  * Three independent assertions via the shared helper. The adapter wires
  * `comply_test_controller` so cascade scenarios under `media_buy_seller/*`
- * get the controller-driven setup they need. Expected-failure entries
- * mirror the three SDK gaps still tracked from the guaranteed gate:
+ * get the controller-driven setup they need. One expected-failure entry
+ * remains:
  *
- *   - #1415 (property_list echo on get_media_buys)
  *   - #1416 (NOT_CANCELLABLE state machine export)
  *
  * Drop the corresponding entry from `EXPECTED_FAILURES` when each issue
@@ -25,16 +24,18 @@ const REPO_ROOT = path.resolve(__dirname, '..', '..');
 
 const EXPECTED_FAILURES = [
   {
-    storyboard_id: 'media_buy_seller/inventory_list_targeting',
-    step_id: 'get_after_create',
-    issue: 'adcp-client#1415',
-    reason: 'targeting_overlay.property_list echo on get_media_buys — needs SDK-side mediaBuyStore helper',
-  },
-  {
     storyboard_id: 'media_buy_seller/invalid_transitions',
     step_id: 'second_cancel',
     issue: 'adcp-client#1416',
     reason: 'NOT_CANCELLABLE on re-cancel — needs SDK-exported MEDIA_BUY_TRANSITIONS / assertMediaBuyTransition',
+  },
+  {
+    storyboard_id: 'media_buy_seller/inventory_list_targeting',
+    step_id: 'get_after_update',
+    issue: 'adcp-client#1505',
+    reason:
+      'createMediaBuyStore handles create→get echo but not update→get echo — surfaced once the ' +
+      'get_media_buys account-resolution fix in this PR made the round-trip resolve to the same namespace.',
   },
 ];
 

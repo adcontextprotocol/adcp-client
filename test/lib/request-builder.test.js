@@ -785,6 +785,35 @@ describe('Request Builder', () => {
       const result = buildRequest(step('get_media_buys'), { media_buy_id: 'buy-42' }, DEFAULT_OPTIONS);
       assert.deepStrictEqual(result.media_buy_ids, ['buy-42']);
     });
+
+    test('always includes account from harness — fixture raw account cannot override (#1487)', () => {
+      // Regression guard: fixture-authored account without sandbox:true must not win
+      // over the harness-resolved account. FIXTURE_AWARE_ENRICHERS path keeps the
+      // harness account authoritative so namespace routing matches create_media_buy.
+      const fixtureAccount = { account_id: 'prod-acct', sandbox: false };
+      const result = buildRequest(
+        step('get_media_buys', { sample_request: { account: fixtureAccount } }),
+        {},
+        DEFAULT_OPTIONS
+      );
+      assert.ok(result.account, 'account must be present');
+      assert.notDeepStrictEqual(
+        result.account,
+        fixtureAccount,
+        'harness-resolved account must win over fixture raw account'
+      );
+    });
+
+    test('uses context.account when set, ignoring fixture account (#1487)', () => {
+      const contextAccount = { account_id: 'sandbox-acct-123', sandbox: true };
+      const result = buildRequest(
+        step('get_media_buys', { sample_request: { account: { account_id: 'prod-acct' } } }),
+        { media_buy_id: 'buy-7', account: contextAccount },
+        DEFAULT_OPTIONS
+      );
+      assert.deepStrictEqual(result.account, contextAccount);
+      assert.deepStrictEqual(result.media_buy_ids, ['buy-7']);
+    });
   });
 
   describe('get_media_buy_delivery', () => {
@@ -799,6 +828,33 @@ describe('Request Builder', () => {
     test('injects media_buy_ids when context.media_buy_id is present', () => {
       const result = buildRequest(step('get_media_buy_delivery'), { media_buy_id: 'buy-99' }, DEFAULT_OPTIONS);
       assert.deepStrictEqual(result.media_buy_ids, ['buy-99']);
+    });
+
+    test('get_media_buy_delivery — harness account wins over fixture raw account (#1487)', () => {
+      // Mirror of get_media_buys regression guard — same FIXTURE_AWARE fix applies.
+      const fixtureAccount = { account_id: 'prod-acct', sandbox: false };
+      const result = buildRequest(
+        step('get_media_buy_delivery', { sample_request: { account: fixtureAccount } }),
+        {},
+        DEFAULT_OPTIONS
+      );
+      assert.ok(result.account, 'account must be present');
+      assert.notDeepStrictEqual(
+        result.account,
+        fixtureAccount,
+        'harness-resolved account must win over fixture raw account'
+      );
+    });
+
+    test('get_media_buy_delivery — uses context.account when set, ignoring fixture account (#1487)', () => {
+      const contextAccount = { account_id: 'sandbox-acct-456', sandbox: true };
+      const result = buildRequest(
+        step('get_media_buy_delivery', { sample_request: { account: { account_id: 'prod-acct' } } }),
+        { media_buy_id: 'buy-11', account: contextAccount },
+        DEFAULT_OPTIONS
+      );
+      assert.deepStrictEqual(result.account, contextAccount);
+      assert.deepStrictEqual(result.media_buy_ids, ['buy-11']);
     });
   });
 
