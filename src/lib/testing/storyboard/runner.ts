@@ -3227,7 +3227,7 @@ export function applyBrandInvariant(
       if (isNaturalKeyVariant) {
         // Default operator to brand.domain: cascade-scenario context.account can
         // arrive with operator: undefined (JSON strips it → spec-invalid ref). (#1419)
-        const operator = (acct.operator as string | undefined | null) ?? brand.domain;
+        const operator = (acct.operator as string | undefined) ?? brand.domain;
         result.account = { ...acct, brand, operator };
       }
     }

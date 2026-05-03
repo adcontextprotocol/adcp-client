@@ -205,7 +205,6 @@ describe('applyBrandInvariant', () => {
       { account: { brand: { domain: 'test.example' }, sandbox: true } },
       { brand: BRAND }
     );
-    assert.ok(result.account.operator, 'operator must be present on the natural-key account ref');
     assert.strictEqual(result.account.operator, BRAND.domain, 'operator should default to brand.domain');
     assert.deepStrictEqual(result.account.brand, BRAND);
     assert.strictEqual(result.account.sandbox, true);

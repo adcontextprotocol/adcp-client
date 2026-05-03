@@ -129,4 +129,36 @@ describe('context extractors', () => {
       assert.deepStrictEqual(extractContext('report_plan_outcome', {}), {});
     });
   });
+
+  describe('sync_accounts (issue #1419)', () => {
+    it('extracts account_id, account_status, and natural-key account ref', () => {
+      const data = {
+        accounts: [
+          {
+            account_id: 'acct_abc',
+            status: 'active',
+            brand: { domain: 'acme.example' },
+            operator: 'media-co.example',
+          },
+        ],
+      };
+      const result = extractContext('sync_accounts', data);
+      assert.equal(result.account_id, 'acct_abc');
+      assert.equal(result.account_status, 'active');
+      assert.deepStrictEqual(result.account, { brand: { domain: 'acme.example' }, operator: 'media-co.example' });
+    });
+
+    it('omits operator key when absent from response — avoids {operator: undefined} poisoning context (#1419)', () => {
+      const data = {
+        accounts: [{ account_id: 'acct_abc', brand: { domain: 'acme.example' } }],
+      };
+      const result = extractContext('sync_accounts', data);
+      assert.ok(!('operator' in result.account), 'operator key must be absent, not set to undefined');
+      assert.deepStrictEqual(result.account, { brand: { domain: 'acme.example' } });
+    });
+
+    it('returns empty object when accounts array is empty', () => {
+      assert.deepStrictEqual(extractContext('sync_accounts', { accounts: [] }), {});
+    });
+  });
 });
