@@ -75,18 +75,25 @@ export function isLegalMediaBuyTransition(from: MediaBuyStatus, to: MediaBuyStat
  * Asserts that the `from → to` MediaBuy transition is legal.
  *
  * Throws `AdcpError` on failure:
- * - `NOT_CANCELLABLE` — `to` is `'canceled'` but `from` is a terminal state
- *   (the buy is already completed, rejected, or canceled)
- * - `INVALID_STATE` — any other illegal transition
+ * - `NOT_CANCELLABLE` — re-cancel of an already-canceled buy (`from === 'canceled'`);
+ *   matches the storyboard `media_buy_seller/invalid_transitions/second_cancel`
+ * - `INVALID_STATE` — any other illegal transition (including `completed → canceled`
+ *   and `rejected → canceled`)
  *
  * For test-controller methods (which must throw `TestControllerError`), use
  * `isLegalMediaBuyTransition` + `TestControllerError` instead.
  */
 export function assertMediaBuyTransition(from: MediaBuyStatus, to: MediaBuyStatus): void {
   if (isLegalMediaBuyTransition(from, to)) return;
-  if (to === 'canceled') {
+  // Re-cancel of an already-canceled buy: the spec explicitly names this case
+  // with NOT_CANCELLABLE ("cannot be canceled in its current state"). The storyboard
+  // `media_buy_seller/invalid_transitions/second_cancel` asserts this code.
+  // All other illegal transitions — including completed → canceled and
+  // rejected → canceled — use INVALID_STATE per the manifest example
+  // ("updating a completed or canceled media buy").
+  if (from === 'canceled' && to === 'canceled') {
     throw new AdcpError('NOT_CANCELLABLE', {
-      message: `Media buy cannot be canceled; it is already in a terminal state ('${from}').`,
+      message: `Media buy is already canceled; 'canceled' is a terminal state.`,
     });
   }
   throw new AdcpError('INVALID_STATE', {

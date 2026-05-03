@@ -58,9 +58,9 @@ interface CreativeRecord {
 const products = new Map<string, ProductFixture>();
 const creatives = new Map<string, CreativeRecord>();
 
-// Creative transition guard uses the canonical SDK helper so the controller
-// and production handlers share the same transition table.
-function assertCreativeTransition(from: CreativeStatus, to: CreativeStatus): void {
+// Test controller guard wraps the SDK predicate and throws TestControllerError
+// (not AdcpError) — the correct error class for controller-layer enforcement.
+function requireLegalCreativeTransition(from: CreativeStatus, to: CreativeStatus): void {
   if (!isLegalCreativeTransition(from, to)) {
     throw new TestControllerError('INVALID_TRANSITION', `Creative cannot move from ${from} to ${to}`, from);
   }
@@ -105,7 +105,7 @@ const controller = createComplyController({
       if (!record) {
         throw new TestControllerError('NOT_FOUND', `Creative ${creative_id} not found`);
       }
-      assertCreativeTransition(record.status, status);
+      requireLegalCreativeTransition(record.status, status);
       const previous = record.status;
       record.status = status;
       if (rejection_reason) record.rejection_reason = rejection_reason;
