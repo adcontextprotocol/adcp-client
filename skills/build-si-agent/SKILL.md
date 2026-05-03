@@ -41,7 +41,13 @@ For exact response shapes, error codes, and optional fields, `docs/llms.txt` is 
 
 ## Cross-cutting rules
 
-Every SI agent hits the cross-cutting rules in [`../cross-cutting.md`](../cross-cutting.md). One SI-specific note on idempotency:
+Every SI agent hits the cross-cutting rules in [`../cross-cutting.md`](../cross-cutting.md). The high-traffic ones for SI (deep-linked to the rule):
+
+- [`idempotency_key`](../cross-cutting.md#idempotency_key-is-required-on-every-mutating-call) on `si_initiate_session` and `si_send_message`
+- [Authentication](../cross-cutting.md#authentication-is-mandatory) — `serve({ authenticate })` baseline
+- [`ctx_metadata` is not for credentials](../cross-cutting.md#ctx_metadata-is-not-for-credentials) — important for SI because session state is naturally rich; production engines own full transcripts in their own backend, not in `ctx_metadata`
+
+One SI-specific note on idempotency:
 
 `si_initiate_session` and `si_send_message` are mutating and require `idempotency_key`. `si_terminate_session` is naturally idempotent on `session_id` and intentionally lacks the key (re-terminating a closed session must return the same payload). `si_get_offering` is read-only.
 

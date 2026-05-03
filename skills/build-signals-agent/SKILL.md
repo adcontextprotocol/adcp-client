@@ -22,7 +22,7 @@ Both specialisms share the same tool surface (`get_signals`, `activate_signal`, 
 
 - Replace the multi-provider seed (the `UpstreamCohort` array seeded with multiple `data_provider_domain` / `data_provider_id` / `data_provider_name` triples) with your single-provider catalog. Every cohort gets the same `data_provider_domain` (your domain) and `data_provider_name` (your brand).
 - Strip the marketplace-discovery code paths in `getSignals` that filter `signals[]` by `(data_provider_domain, data_provider_id)` pairs — single-provider adopters either return everything or filter on signal id alone.
-- Set `signal_type: 'owned'` (not `'marketplace'`) in the `toAdcpSignal` projection. `signal_type: 'custom'` is reserved for first-party signals that don't fit the user-identity model (e.g., contextual signals derived from page content); use `'owned'` by default.
+- Set `signal_type: 'owned'` (not `'marketplace'`) in the `toAdcpSignal` projection. See [SHAPE-GOTCHAS §7](../SHAPE-GOTCHAS.md#7-signal_type-marketplace-vs-owned-vs-custom) for the `marketplace`/`owned`/`custom` decision table.
 - Drop the marketplace governance sub-scenario in your storyboard run if you don't model multi-provider consent flows — `signal_owned` storyboard is simpler.
 
 **Keep**: the `accounts` / `createTenantStore` block (single-tenant adapters pass one tenant entry), `agentRegistry`, the `signals` SignalsPlatform block (`getSignals`, `activateSignal`, `listAccounts`), platform vs agent activation polling logic, `forceDeploymentStatus` for compliance-test determinism.
@@ -42,7 +42,14 @@ For exact response shapes, error codes, and optional fields, `docs/llms.txt` is 
 
 ## Cross-cutting rules
 
-Every signals agent hits the cross-cutting rules in [`../cross-cutting.md`](../cross-cutting.md). Two signals-specific notes on top of those:
+Every signals agent hits the cross-cutting rules in [`../cross-cutting.md`](../cross-cutting.md). The high-traffic ones for signals (deep-linked to the rule):
+
+- [`idempotency_key`](../cross-cutting.md#idempotency_key-is-required-on-every-mutating-call) on `activate_signal`
+- [Authentication](../cross-cutting.md#authentication-is-mandatory) — `serve({ authenticate })` baseline
+- [Resolve-then-authorize](../cross-cutting.md#resolve-then-authorize--uniform-errors-for-not-found--not-yours) — byte-equivalent errors on `signal_agent_segment_id` lookups across tenants
+- [Webhooks](../cross-cutting.md#webhooks-stable-operation_id-across-retries) — for async platform-activation completions, use `signal_activation.${signal_agent_segment_id}.${platform}` as the stable `operation_id`
+
+Two signals-specific notes on top of those:
 
 ### Async platform activation
 
@@ -58,7 +65,7 @@ Buyers fetch `https://{domain}/adagents.json` out-of-band to verify the provider
 
 **`signal-marketplace`** — multi-provider directory (`signals[].data_provider_domain` varies), platform-activation polling pattern, marketplace governance sub-scenario in the storyboard exercises consent flows.
 
-**`signal-owned`** — single `data_provider_domain` across all signals. `value_type` drives targeting semantics: `binary` (in/out), `categorical` (with `allowed_values: [...]`), `numeric` (with `min`, `max`, optional `units`). `signal_type: 'custom'` is for first-party signals outside the `owned` user-identity model (e.g. contextual signals from page content) — use `owned` by default.
+**`signal-owned`** — single `data_provider_domain` across all signals. `value_type` drives targeting semantics: `binary` (in/out), `categorical` (with `allowed_values: [...]`), `numeric` (with `min`, `max`, optional `units`). For the `signal_type` value (`marketplace`/`owned`/`custom`) decision, see [SHAPE-GOTCHAS §7](../SHAPE-GOTCHAS.md#7-signal_type-marketplace-vs-owned-vs-custom).
 
 ## Validate locally
 
