@@ -693,6 +693,12 @@ function deterministicSeed(productId: string, startDate: string, endDate: string
   return parseInt(createHash('sha256').update(`${productId}::${startDate}::${endDate}`).digest('hex').slice(0, 8), 16);
 }
 
+/** Derive a stable ISO timestamp from the seed so responses are fully deterministic. */
+function seedToTimestamp(seed: number): string {
+  // Anchor to 2026-01-01 and offset by up to ~30 days (seed mod 2592000 seconds).
+  return new Date(1767225600000 + (seed % 2592000) * 1000).toISOString();
+}
+
 function buildAvailabilityForecast(product: MockProduct, startDate: string, endDate: string): object {
   const seed = deterministicSeed(product.product_id, startDate, endDate);
   const factor = 0.65 + (seed % 10000) / 28571; // 0.65–1.0, varies per product+dates
@@ -702,7 +708,7 @@ function buildAvailabilityForecast(product: MockProduct, startDate: string, endD
     method: 'estimate',
     currency: product.pricing.currency,
     forecast_range_unit: 'availability',
-    generated_at: new Date().toISOString(),
+    generated_at: seedToTimestamp(seed),
     points: [
       {
         metrics: {
@@ -723,7 +729,7 @@ function buildSpendCurve(product: MockProduct, budget: number, startDate: string
     method: 'estimate',
     currency: product.pricing.currency,
     forecast_range_unit: 'spend',
-    generated_at: new Date().toISOString(),
+    generated_at: seedToTimestamp(seed),
     points: steps.map(pct => {
       const b = Math.round(budget * pct);
       const impressions = Math.min(Math.floor((b / cpm) * 1000), maxImpressions);

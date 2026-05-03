@@ -112,11 +112,12 @@ components:
             end_date: { type: string, format: date }
             available_impressions: { type: integer }
         forecast:
-          $ref: '#/components/schemas/DeliveryForecast'
-          description: |
-            Populated when GET /v1/products is called with ?start_date=&end_date=.
-            Deterministic availability forecast keyed on (product_id, start_date, end_date).
-            Maps directly onto AdCP Product.forecast with forecast_range_unit: 'availability'.
+          allOf:
+            - $ref: '#/components/schemas/DeliveryForecast'
+            - description: |
+                Populated when GET /v1/products is called with ?start_date=&end_date=.
+                Deterministic availability forecast keyed on (product_id, start_date, end_date).
+                Maps directly onto AdCP Product.forecast with forecast_range_unit: 'availability'.
 
     ForecastRange:
       type: object

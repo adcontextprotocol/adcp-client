@@ -329,7 +329,7 @@ class GuaranteedSellerAdapter implements DecisioningPlatform<Record<string, neve
         status: 'active',
         operator: adcpPublisher,
         ctx_metadata: { network_code: network.network_code },
-        sandbox: true, // FIXME(adopter): replace with real sandbox flag from backing store
+        sandbox: true, // TODO(adopter): replace with real sandbox flag from your backing store
       };
     },
   };
@@ -358,7 +358,7 @@ class GuaranteedSellerAdapter implements DecisioningPlatform<Record<string, neve
     // create_media_buy — HITL path. Guaranteed inventory always requires IO
     // review before activation; ctx.handoffToTask handles the polling loop.
     // --------------------------------------------------------------------
-    createMediaBuy: async (req: CreateMediaBuyRequest, ctx): Promise<CreateMediaBuySuccess | ReturnType<typeof ctx.handoffToTask<CreateMediaBuySuccess>>> => {
+    createMediaBuy: async (req: CreateMediaBuyRequest, ctx) => {
       const networkCode = ctx.account.ctx_metadata.network_code;
       const order = await upstream.createOrder(networkCode, {
         name: `adcp_${Date.now()}`,
@@ -372,7 +372,7 @@ class GuaranteedSellerAdapter implements DecisioningPlatform<Record<string, neve
         // Order was auto-approved (possible on some platforms). Return sync.
         return {
           media_buy_id: order.order_id,
-          status: 'active',
+          status: 'active' as const,
           confirmed_at: new Date().toISOString(),
           packages: [],
         };
