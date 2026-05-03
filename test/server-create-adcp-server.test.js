@@ -249,6 +249,35 @@ describe('createAdcpServer', () => {
       );
     });
 
+    // Regression guard for #1447: the collision check fires before MCP server
+    // construction so tenant-registry factories (which call createAdcpServer
+    // per-request) surface the error immediately rather than on the first
+    // buyer MCP call as an HTTP 500.
+    it('customTools collision fires at construction time (before createTaskCapableServer)', () => {
+      // Simulate a per-request tenant factory — if the check fires late
+      // (inside the tool-registration loop) a tenant-registry adopter would
+      // see HTTP 500 HTML on every buyer request instead of a startup error.
+      let constructionCount = 0;
+      const createTenantServer = () => {
+        constructionCount++;
+        return createAdcpServer({
+          name: 'Tenant',
+          version: '1.0.0',
+          mediaBuy: { getProducts: async () => ({ products: [] }) },
+          customTools: {
+            get_products: {
+              description: 'Should throw before MCP server is constructed.',
+              handler: async () => ({ content: [{ type: 'text', text: 'shadow' }] }),
+            },
+          },
+        });
+      };
+      // First factory invocation throws synchronously.
+      assert.throws(() => createTenantServer(), /customTools\["get_products"\] collides/);
+      // Confirm the factory ran exactly once (not zero, not silently deferred).
+      assert.strictEqual(constructionCount, 1);
+    });
+
     it('refuses customTools["get_adcp_capabilities"]', () => {
       assert.throws(
         () =>

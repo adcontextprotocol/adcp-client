@@ -2853,15 +2853,9 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
     resolvedInstructions = undefined;
   }
 
-  const server = createTaskCapableServer(name, version, {
-    taskStore,
-    taskMessageQueue,
-    instructions: resolvedInstructions,
-  });
-
-  const registeredToolNames = new Set<string>();
-
-  // Collect all domain handlers into a flat toolName → handler map
+  // Collect all domain handlers into a flat toolName → handler map.
+  // Defined before server construction so the boot-time customTools check
+  // below can reuse the same groups without duplicating the config wiring.
   const domainGroups: [Record<string, Function> | undefined, HandlerEntry[]][] = [
     [config.mediaBuy as Record<string, Function> | undefined, MEDIA_BUY_ENTRIES],
     [config.signals as Record<string, Function> | undefined, SIGNALS_ENTRIES],
@@ -2872,6 +2866,46 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
     [config.sponsoredIntelligence as Record<string, Function> | undefined, SI_ENTRIES],
     [config.brandRights as Record<string, Function> | undefined, BRAND_RIGHTS_ENTRIES],
   ];
+
+  // ── Boot-time customTools validation ──────────────────────────────────────
+  // Pre-check customTools before MCP server construction so the error surfaces
+  // at createAdcpServer() call time rather than on the first buyer request.
+  // For tenant-registry patterns that call createAdcpServer per-request, this
+  // means the collision is diagnosable at the moment the tenant server is built,
+  // not after the HTTP 500 HTML body has already been returned to the buyer.
+  if (config.customTools) {
+    const willRegister = new Set<string>();
+    for (const [handlers, entries] of domainGroups) {
+      if (!handlers) continue;
+      for (const { handlerKey, toolName } of entries) {
+        if (typeof (handlers as Record<string, unknown>)[handlerKey] === 'function') {
+          willRegister.add(toolName);
+        }
+      }
+    }
+    for (const customName of Object.keys(config.customTools)) {
+      if (willRegister.has(customName)) {
+        throw new Error(
+          `createAdcpServer: customTools["${customName}"] collides with a framework-registered tool. ` +
+            `Rename the custom tool or remove the handler from the conflicting domain group.`
+        );
+      }
+      if (customName === 'get_adcp_capabilities') {
+        throw new Error(
+          `createAdcpServer: customTools["get_adcp_capabilities"] is not allowed. ` +
+            `The framework auto-generates this tool from registered handlers and capability config.`
+        );
+      }
+    }
+  }
+
+  const server = createTaskCapableServer(name, version, {
+    taskStore,
+    taskMessageQueue,
+    instructions: resolvedInstructions,
+  });
+
+  const registeredToolNames = new Set<string>();
 
   for (const [handlers, entries] of domainGroups) {
     if (!handlers) continue;
