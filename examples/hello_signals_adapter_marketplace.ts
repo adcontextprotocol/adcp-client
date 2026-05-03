@@ -28,7 +28,6 @@ import {
   AdcpError,
   BuyerAgentRegistry,
   defineSignalsPlatform,
-  registerTestController,
   type DecisioningPlatform,
   type SignalsPlatform,
   type AccountStore,
@@ -320,6 +319,13 @@ class SignalMarketplaceAdapter implements DecisioningPlatform<Record<string, nev
   capabilities = {
     specialisms: ['signal-marketplace'] as const,
     config: {},
+    // Declare `compliance_testing` so the framework projects the
+    // `comply_test_controller` capability + scenarios on
+    // `get_adcp_capabilities`. The `complyTest:` opts block on
+    // `createAdcpServerFromPlatform` (below) wires the adapters; the
+    // framework derives the `scenarios` list from which adapters are
+    // present.
+    compliance_testing: {},
   };
 
   /**
@@ -483,8 +489,8 @@ const platform = new SignalMarketplaceAdapter();
 const idempotencyStore = createIdempotencyStore({ backend: memoryBackend(), ttlSeconds: 86_400 });
 
 serve(
-  ({ taskStore }) => {
-    const adcpServer = createAdcpServerFromPlatform(platform, {
+  ({ taskStore }) =>
+    createAdcpServerFromPlatform(platform, {
       name: 'hello-signals-adapter-marketplace',
       version: '1.0.0',
       taskStore,
@@ -494,33 +500,32 @@ serve(
         const acct = ctx.account as Account<OperatorMeta> | undefined;
         return acct?.id ?? 'anonymous';
       },
-    });
-
-    // Register `comply_test_controller` with the recorder-backed
-    // `query_upstream_traffic` scenario. The runner queries this after
-    // each step that declares a `check: upstream_traffic` validation;
-    // adopters who don't advertise the scenario grade `not_applicable`.
-    //
-    // Sandbox-only — production builds 404 the controller entirely
-    // (gate via the `if (process.env.ADCP_SANDBOX === '1')` pattern from
-    // the SKILL). For this example adapter we always register since the
-    // example is itself a fixture for the matrix harness.
-    registerTestController(adcpServer, {
-      // Adapter resolves principal from auth context. The same string
-      // MUST be returned by both record-time (runWithPrincipal) and
-      // query-time — mismatch returns zero per cross-tenant isolation.
-      queryUpstreamTraffic: async params => {
-        const result = recorder.query({
-          principal: RECORDER_PRINCIPAL,
-          ...(params.since_timestamp !== undefined && { sinceTimestamp: params.since_timestamp }),
-          ...(params.endpoint_pattern !== undefined && { endpointPattern: params.endpoint_pattern }),
-          ...(params.limit !== undefined && { limit: params.limit }),
-        });
-        return toQueryUpstreamTrafficResponse(result);
+      // ─── TEST-ONLY: comply_test_controller wiring ──────────────────────
+      // DELETE THIS BLOCK BEFORE DEPLOYING. The conformance runner queries
+      // `query_upstream_traffic` after each step that declares a
+      // `check: upstream_traffic` validation; adopters who don't
+      // advertise the scenario grade `not_applicable`.
+      //
+      // No `sandboxGate` — the framework gate inside
+      // `createAdcpServerFromPlatform` resolves the calling principal
+      // through `accounts.resolve` and admits only when the resolved
+      // account's `mode` is `'sandbox'` or `'mock'` (per `Account.mode`,
+      // AdCP 6.7+). See `docs/proposals/lifecycle-state-and-sandbox-authority.md`.
+      complyTest: {
+        // Adapter resolves principal from auth context. The same string
+        // MUST be returned by both record-time (runWithPrincipal) and
+        // query-time — mismatch returns zero per cross-tenant isolation.
+        queryUpstreamTraffic: async params => {
+          const result = recorder.query({
+            principal: RECORDER_PRINCIPAL,
+            ...(params.since_timestamp !== undefined && { sinceTimestamp: params.since_timestamp }),
+            ...(params.endpoint_pattern !== undefined && { endpointPattern: params.endpoint_pattern }),
+            ...(params.limit !== undefined && { limit: params.limit }),
+          });
+          return toQueryUpstreamTrafficResponse(result);
+        },
       },
-    });
-    return adcpServer;
-  },
+    }),
   {
     port: PORT,
     authenticate: verifyApiKey({
