@@ -61,11 +61,13 @@ import {
   AdcpError,
   createMediaBuyStore,
   InMemoryStateStore,
+  assertMediaBuyTransition,
   type DecisioningPlatform,
   type SalesCorePlatform,
   type SalesIngestionPlatform,
   type AccountStore,
   type Account,
+  type AdcpMediaBuyStatus,
   type SyncCreativesRow,
   type SyncAccountsResultRow,
 } from '@adcp/sdk/server';
@@ -440,6 +442,16 @@ function mapMediaBuyStatus(
 const adapterStatusOverrides = new Map<string, 'pending_start' | 'active'>();
 const overrideKey = (networkCode: string, orderId: string): string => `${networkCode}::${orderId}`;
 
+// Local pause / cancel tracker. The mock upstream models the create →
+// pending → active progression; pause and cancel are seller-side state-machine
+// concerns the spec's `core/state-machine.yaml` declares as terminal sinks
+// (canceled) or reversible (paused). Production sellers swap this Map for
+// a single durable lookup against their order DB and check
+// `MEDIA_BUY_TRANSITIONS` against the current status before issuing the
+// upstream PATCH. The local Map here exists only because the worked-example
+// mock doesn't model these states upstream.
+const localBuyStatus = new Map<string, 'paused' | 'canceled'>();
+
 class SalesNonGuaranteedAdapter implements DecisioningPlatform<Record<string, never>, NetworkMeta> {
   capabilities = {
     specialisms: ['sales-non-guaranteed'] as const,
@@ -735,10 +747,29 @@ class SalesNonGuaranteedAdapter implements DecisioningPlatform<Record<string, ne
       // → pending_start (or active if the flight already started). Production
       // backends would also persist the assignment to the upstream line item;
       // the worked example just advances the response state.
+      //
+      // State-machine enforcement for pause / cancel. The spec's
+      // `core/state-machine.yaml` declares `canceled` as a terminal sink and
+      // a re-cancel as illegal — `assertMediaBuyTransition` throws
+      // `NOT_CANCELLABLE` on `canceled → canceled`, which is the
+      // `media_buy_seller/invalid_transitions` storyboard's contract. The
+      // local Map covers the gap between upstream (which doesn't model these)
+      // and the spec; production sellers read the canonical transitions
+      // exported by `@adcp/sdk/server` against their own status column.
+      const local = localBuyStatus.get(overrideKey(networkCode, id));
       const baseStatus = mapMediaBuyStatus(existing.status);
-      let nextStatus: ReturnType<typeof mapMediaBuyStatus> =
-        adapterStatusOverrides.get(overrideKey(networkCode, id)) ?? baseStatus;
-      if (hasCreativeAssignment && nextStatus === 'pending_creatives') {
+      const currentStatus: AdcpMediaBuyStatus =
+        local ?? adapterStatusOverrides.get(overrideKey(networkCode, id)) ?? baseStatus;
+      let nextStatus: AdcpMediaBuyStatus = currentStatus;
+      if ((patch as { canceled?: boolean }).canceled === true) {
+        assertMediaBuyTransition(currentStatus, 'canceled');
+        nextStatus = 'canceled';
+        localBuyStatus.set(overrideKey(networkCode, id), nextStatus);
+      } else if ((patch as { paused?: boolean }).paused === true && currentStatus === 'active') {
+        assertMediaBuyTransition(currentStatus, 'paused');
+        nextStatus = 'paused';
+        localBuyStatus.set(overrideKey(networkCode, id), nextStatus);
+      } else if (hasCreativeAssignment && nextStatus === 'pending_creatives') {
         const flightStarted = existing.flight_start !== undefined && Date.parse(existing.flight_start) <= Date.now();
         nextStatus = flightStarted ? 'active' : 'pending_start';
         adapterStatusOverrides.set(overrideKey(networkCode, id), nextStatus);
