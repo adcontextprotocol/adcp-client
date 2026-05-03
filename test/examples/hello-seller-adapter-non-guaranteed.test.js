@@ -29,6 +29,14 @@ const EXPECTED_FAILURES = [
     issue: 'adcp-client#1416',
     reason: 'NOT_CANCELLABLE on re-cancel — needs SDK-exported MEDIA_BUY_TRANSITIONS / assertMediaBuyTransition',
   },
+  {
+    storyboard_id: 'media_buy_seller/inventory_list_targeting',
+    step_id: 'get_after_update',
+    issue: 'adcp-client#1505',
+    reason:
+      'createMediaBuyStore handles create→get echo but not update→get echo — surfaced once the ' +
+      'get_media_buys account-resolution fix in this PR made the round-trip resolve to the same namespace.',
+  },
 ];
 
 function isExpectedFailure(f) {
