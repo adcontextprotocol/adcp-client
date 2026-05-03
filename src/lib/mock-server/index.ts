@@ -5,6 +5,11 @@ import {
   DEFAULT_API_KEY as SALES_GUARANTEED_DEFAULT_API_KEY,
   NETWORKS as SALES_GUARANTEED_NETWORKS,
 } from './sales-guaranteed/seed-data';
+import { bootSalesNonGuaranteed } from './sales-non-guaranteed/server';
+import {
+  DEFAULT_API_KEY as SALES_NON_GUARANTEED_DEFAULT_API_KEY,
+  NETWORKS as SALES_NON_GUARANTEED_NETWORKS,
+} from './sales-non-guaranteed/seed-data';
 import { bootSalesSocial } from './sales-social/server';
 import { ADVERTISERS, OAUTH_CLIENTS } from './sales-social/seed-data';
 import { bootSignalMarketplace } from './signal-marketplace/server';
@@ -185,9 +190,29 @@ export async function bootMockServer(options: MockServerOptions): Promise<MockSe
         })),
       };
     }
+    case 'sales-non-guaranteed': {
+      const { url, close } = await bootSalesNonGuaranteed({
+        port: options.port,
+        apiKey: options.apiKey,
+      });
+      const apiKey = options.apiKey ?? SALES_NON_GUARANTEED_DEFAULT_API_KEY;
+      return {
+        url,
+        auth: { kind: 'static_bearer', apiKey },
+        close,
+        summary: () => formatSalesNonGuaranteedSummary(url, apiKey),
+        principalScope: 'X-Network-Code header (required on every request)',
+        principalMapping: SALES_NON_GUARANTEED_NETWORKS.map(net => ({
+          adcpField: 'account.publisher',
+          adcpValue: net.adcp_publisher,
+          upstreamField: 'X-Network-Code',
+          upstreamValue: net.network_code,
+        })),
+      };
+    }
     default:
       throw new Error(
-        `Unknown mock-server specialism: "${options.specialism}". Supported: signal-marketplace, creative-template, sales-social, sales-guaranteed, sponsored-intelligence.`
+        `Unknown mock-server specialism: "${options.specialism}". Supported: signal-marketplace, creative-template, sales-social, sales-guaranteed, sales-non-guaranteed, sponsored-intelligence.`
       );
   }
 }
@@ -349,5 +374,41 @@ function formatSalesGuaranteedSummary(url: string, apiKey: string): string {
     `Approval is async: POST /orders returns pending_approval + approval_task_id;`,
     `poll /tasks/{id} (mock auto-promotes submitted → working → completed after 2 polls)`,
     `or poll /orders/{id} directly to detect transition.`,
+  ].join('\n');
+}
+
+function formatSalesNonGuaranteedSummary(url: string, apiKey: string): string {
+  const networkLines = SALES_NON_GUARANTEED_NETWORKS.map(
+    net => `  ${net.network_code}  →  AdCP account.publisher: "${net.adcp_publisher}"`
+  ).join('\n');
+  return [
+    `Mock non-guaranteed-sales platform (programmatic remnant) running at ${url}`,
+    ``,
+    `Auth:`,
+    `  Authorization: Bearer ${apiKey}`,
+    `  X-Network-Code: <network_code> (required on every call)`,
+    ``,
+    `Network mapping:`,
+    networkLines,
+    ``,
+    `Key routes:`,
+    `  GET    ${url}/v1/inventory                                                # ad units`,
+    `  GET    ${url}/v1/products                                                 # productized inventory (floor pricing)`,
+    `  GET    ${url}/v1/products?targeting=…&flight_start=…&budget=…             # products with per-query forecast`,
+    `  POST   ${url}/v1/forecast                                                 # spend-only forecast (auction-clearing)`,
+    `  GET    ${url}/v1/orders                                                   # list orders`,
+    `  POST   ${url}/v1/orders                                                   # create (sync confirmed — no HITL)`,
+    `  GET    ${url}/v1/orders/{order_id}                                        # read order`,
+    `  PATCH  ${url}/v1/orders/{order_id}                                        # update budget / pacing / status`,
+    `  POST   ${url}/v1/orders/{order_id}/lineitems                              # add line items`,
+    `  GET    ${url}/v1/orders/{order_id}/delivery                               # delivery (budget × pacing curve)`,
+    `  GET    ${url}/v1/creatives                                                # list creatives`,
+    `  POST   ${url}/v1/creatives                                                # upload creative`,
+    ``,
+    `Order state machine: confirmed → delivering → completed (no approval task).`,
+    `Pricing: per-product min_cpm (floor); effective_cpm scales with budget,`,
+    `saturating toward 2× floor at high budgets (auction pressure model).`,
+    `Pacing: 'even' (linear), 'asap' (3× front-load), 'front_loaded' (sqrt curve).`,
+    `Delivery synthesis: (budget × elapsed_pct × pacing_curve) → impressions / clicks.`,
   ].join('\n');
 }
