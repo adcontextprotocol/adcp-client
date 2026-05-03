@@ -177,6 +177,48 @@ conformance suite enforces.
 
 You ship after each step. Production traffic stays up.
 
+### Rollback per step
+
+Every step in the swap order should be reversible inside ~5 minutes.
+The general pattern: each swap is a **feature-flagged switch between
+your hand-rolled component and the SDK's**, not a deletion. You ship
+the swap behind a per-account flag, observe, then flip the default.
+Rollback is the same flag in the other direction.
+
+What to plan for, swap by swap:
+
+| Step | Revert mechanism | What state may have leaked | First thing to verify on rollback |
+|---|---|---|---|
+| 1. Conformance controller | Disable the SDK route on mock-mode accounts | None — mock-mode is sandbox-only by design | Mock storyboards still pass against your hand-rolled L3 |
+| 2. Error envelopes | Flip back to your error builder | Outbound envelopes from the swap window may carry SDK-shape error codes; downstream consumers that key off your old codes may have logged them | Your error-monitoring dashboard is reading the right envelope shape again |
+| 3. Idempotency cache | Flip back to your cache | **Both caches saw traffic during the swap window.** Same `idempotency_key` may now exist in both stores with different envelopes. After rollback, your cache is authoritative; flush the SDK's cache on revert | No `IDEMPOTENCY_CONFLICT` storms from the dual-cache window |
+| 4. Async-task contract | Flip back to your task store | Outstanding tasks that started under the SDK's contract may have a different terminal-artifact shape than your worker expects | Drain or abort tasks created during the swap window before the revert lands |
+| 5. State machines | Flip back to your state machine | The SDK may have rejected transitions your machine would have accepted (or vice versa). Affected resources are in a state your code may not know how to advance | Run a one-shot reconciliation query: "any resources in a state that's legal under both machines? Any in a state that's only legal under one?" |
+| 6. Webhook envelope | Flip back to your emitter | Receivers got SDK-shape webhooks during the swap window. They may have already acked. Don't re-emit on rollback | Your dedup table accepts both old and new `idempotency_key` shapes (transitional) |
+| 7. RFC 9421 signing | Flip back to your signer | Receivers got SDK-signed webhooks/responses during the window. Their key registry must still resolve your old `keyid` | Your old `keyid` is still published in your JWKS |
+| 8. Account store | Flip back to your store | Account resolution decisions made under the SDK's store may have routed traffic to different tenants than your store would have | Run a reconciliation on accounts that were resolved during the swap window before fully reverting |
+
+### The 2 a.m. production failure
+
+If swap N fails in production at 2 a.m., the on-call recipe:
+
+1. **Flip the per-account flag back** to your hand-rolled component
+   for the affected accounts (or globally if you can't isolate the
+   blast radius). This is the only step required to stop the
+   bleeding.
+2. **Confirm the leakage row** above for that step. Most steps
+   leave residual state somewhere — note what it is so the morning
+   debug doesn't start cold.
+3. **Don't rerun the conformance suite mid-incident.** It runs
+   against mock-mode; production failures are a different signal.
+4. **File the incident against the swap step**, not against the SDK
+   in general. The migration guide's swap-order is the unit of
+   investigation; the SDK's coverage matrix is downstream of that.
+
+**Don't plan for irreversible swaps.** If a step doesn't fit the
+flag-and-flip pattern (e.g., a destructive schema migration), do it
+as a separate, named project — not as part of the swap order.
+
 ## 5. What you can leave hand-rolled
 
 The SDK is opinionated where the spec is opinionated, and pluggable
@@ -210,6 +252,74 @@ Two version axes you'll be juggling:
   time on `createAdcpServerFromPlatform` while the rest stays on the
   v5 entry point. Greenfield code in the same project uses the v6
   framework directly.
+
+### Worked example: two buyers, mid-swap
+
+You're on step 3 (idempotency), buyer A is on AdCP 2.5, buyer B is
+on AdCP 3.0. You've adopted the SDK's controller, error envelopes,
+and idempotency cache for the accounts you've cut over. Buyer A is
+mid-flight to the SDK; buyer B is greenfield on the SDK.
+
+Your inbound side: identify each peer's spec version up front (from
+the agent registry, the agent card, or the `adcp_version` field if
+present), pin `adcpVersion` on the agent / per call, and let the
+SDK adapt the wire shape:
+
+```ts
+import { ADCPMultiAgentClient } from '@adcp/sdk';
+
+const buyerA = new ADCPMultiAgentClient([{
+  id: 'buyer-a',
+  agent_uri: 'https://buyer-a.example.com/mcp/',
+  protocol: 'mcp',
+  auth_token: process.env.BUYER_A_TOKEN,
+  adcpVersion: 'v2.5',  // ← per-agent pin, no fork in handlers
+}]);
+
+const buyerB = new ADCPMultiAgentClient([{
+  id: 'buyer-b',
+  agent_uri: 'https://buyer-b.example.com/a2a',
+  protocol: 'a2a',
+  auth_token: process.env.BUYER_B_TOKEN,
+  adcpVersion: '3.0.5', // ← canonical / current
+}]);
+```
+
+Your outbound (server) side, declaring what *you* accept:
+
+```ts
+import { createAdcpServer } from '@adcp/sdk/server';
+
+createAdcpServer({
+  capabilities: {
+    major_versions: [2, 3],
+    supported_versions: ['v2.5', '3.0.5'],
+  },
+  // …handlers, all on the canonical 3.0 shape;
+  // 2.5 callers are translated by adapters at the SDK boundary.
+});
+```
+
+What this looks like for one call from each buyer, mid-step-3:
+
+| | Buyer A (2.5 wire) | Buyer B (3.0 wire) |
+|---|---|---|
+| **Inbound shape** | 2.5 `create_media_buy` | 3.0 `create_media_buy` |
+| **Adapter does** | Translates 2.5 → 3.0 shape | Pass-through |
+| **Your handler sees** | 3.0 typed object | 3.0 typed object (same) |
+| **Idempotency cache** | SDK's (you're on step 3) | SDK's |
+| **Error envelope** | SDK's, translated back to 2.5 on outbound | SDK's |
+| **Outbound shape** | 2.5 (translated by adapter on the way out) | 3.0 |
+
+One handler codebase. Two wire versions. Both buyers see the
+envelope shape they expect. Adopting `adcpVersion` pinning at step 3
+is cheap — most of the version work is in the adapter folder
+(`src/lib/adapters/legacy/v2-5/`), which the SDK already ships.
+
+If you fall back (rollback step 3 to your hand-rolled cache), buyer
+A still goes through the SDK's translation adapters — the version
+machinery and the idempotency machinery are independent. You don't
+re-fork your handler code on rollback.
 
 ## 7. When to *not* migrate
 
