@@ -71,6 +71,7 @@ import {
   type SyncCreativesRow,
   type SyncAccountsResultRow,
 } from '@adcp/sdk/server';
+import { FormatAsset } from '@adcp/sdk';
 import type {
   GetProductsRequest,
   GetProductsResponse,
@@ -937,27 +938,46 @@ class SalesNonGuaranteedAdapter implements DecisioningPlatform<Record<string, ne
       // formats endpoint (formats live inline on Product); production sellers
       // typically expose `/v1/formats` separately. SWAP: replace with your
       // backend's format catalog.
+      //
+      // Each format declares the input asset slots a buyer's `sync_creatives`
+      // creative_manifest MUST key its `assets` map against — per
+      // creative-manifest.json:14 ("Each key MUST match an asset_id from the
+      // format's assets array"). `required: true` slots reject creative
+      // submissions missing them at the manifest layer; `required: false`
+      // means the buyer MAY include the asset.
+      const displaySlots = [
+        FormatAsset.image({ asset_id: 'image', required: true }),
+        FormatAsset.url({ asset_id: 'click_url', required: true }),
+      ];
+      const videoSlots = [
+        FormatAsset.video({ asset_id: 'video', required: true }),
+        FormatAsset.url({ asset_id: 'click_url', required: true }),
+      ];
       return {
         formats: [
           {
             format_id: { agent_url: FORMAT_AGENT_URL, id: 'display_300x250' },
             name: 'Display 300x250 (medrec)',
             renders: [{ role: 'main', dimensions: { width: 300, height: 250, unit: 'px' } }],
+            assets: displaySlots,
           },
           {
             format_id: { agent_url: FORMAT_AGENT_URL, id: 'display_728x90' },
             name: 'Display 728x90 (leaderboard)',
             renders: [{ role: 'main', dimensions: { width: 728, height: 90, unit: 'px' } }],
+            assets: displaySlots,
           },
           {
             format_id: { agent_url: FORMAT_AGENT_URL, id: 'video_30s' },
             name: 'Video 30s outstream / instream',
             renders: [{ role: 'main', dimensions: { width: 1920, height: 1080, unit: 'px' } }],
+            assets: videoSlots,
           },
           {
             format_id: { agent_url: FORMAT_AGENT_URL, id: 'video_15s' },
             name: 'Video 15s',
             renders: [{ role: 'main', dimensions: { width: 1920, height: 1080, unit: 'px' } }],
+            assets: videoSlots,
           },
         ],
       };
