@@ -19,6 +19,8 @@ This document contains essential guidelines for AI coding assistants (Claude, Co
 
 **Testing an agent for conformance?** — Read `docs/guides/CONFORMANCE.md` and call `runConformance(agentUrl, opts)` from `@adcp/sdk/conformance`. Property-based fuzzing against the bundled JSON schemas; stateless tier covers 11 discovery tools across every protocol.
 
+**Putting credentials in `ctx_metadata`?** — Don't. Read `docs/guides/CTX-METADATA-SAFETY.md` — wire-strip protects buyer responses but not log lines / error envelopes / heap dumps / adopter strings. Re-derive bearers per request; embed only non-secret upstream IDs.
+
 ## Project Overview
 
 **@adcp/sdk** is the official TypeScript client library for the Ad Context Protocol (AdCP), documented at [docs.adcontextprotocol.org](https://docs.adcontextprotocol.org/docs/).

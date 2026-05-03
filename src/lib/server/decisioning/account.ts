@@ -176,6 +176,18 @@ export interface Account<TCtxMeta = Record<string, unknown>> {
    * where the SDK bridges between `getProducts` and `createMediaBuy`).
    * Put adapter state in `ctx_metadata`; treat it as fresh from your
    * `accounts.resolve()` on every request.
+   *
+   * **DO NOT put credentials here.** The wire-strip protects buyer
+   * responses but does NOT protect server-side log lines, error
+   * envelopes (when `exposeErrorDetails: true`), heap dumps, or
+   * adopter-generated strings (`JSON.stringify(account)` in an error
+   * message). Bearer tokens, OAuth refresh tokens, API keys, and
+   * client secrets belong on `authInfo` (which the framework
+   * round-trips through `refreshToken`) or in your own per-principal
+   * token cache — NOT in `ctx_metadata`. See
+   * [`docs/guides/CTX-METADATA-SAFETY.md`](../../../../docs/guides/CTX-METADATA-SAFETY.md)
+   * for the full guidance and the recommended re-derive-per-request
+   * pattern.
    */
   ctx_metadata: TCtxMeta;
 
