@@ -345,8 +345,9 @@ const guarded = composeMethod(inner, authGate, synthGate, orgGate);
 const ok = await guarded({ account_id: 'acc_1', expected_org: 'org_A' }, { token: 'tok', orgId: 'org_A' });
 assert.deepStrictEqual(ok, { ok: true, org_checked: true });
 
-// authGate short-circuits — synthGate and orgGate before skipped;
-// orgGate.after and synthGate.after still run (none here), authGate.after not present
+// authGate short-circuits at the outermost wrapper — synthGate and orgGate are
+// never entered, so neither their before nor their after hooks run. authGate has
+// no after, so the short-circuit value is returned unchanged.
 const denied = await guarded({ account_id: 'acc_1', expected_org: 'org_A' }, { token: null, orgId: 'org_A' });
 assert.strictEqual(denied, null);
 ```
