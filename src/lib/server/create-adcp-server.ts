@@ -54,6 +54,7 @@ import {
 import { createTaskCapableServer } from './tasks';
 import type { TaskStore, TaskMessageQueue } from './tasks';
 import { adcpError } from './errors';
+import { ConfigurationError } from '../errors';
 import type { BuyerAgent, BuyerAgentRegistry } from './decisioning/buyer-agent';
 import type { ResolvedAuthInfo } from './decisioning/account';
 import { AdcpError } from './decisioning/async-outcome';
@@ -1068,6 +1069,70 @@ export interface AdcpSignedRequestsState {
 export const ADCP_SIGNED_REQUESTS_STATE: unique symbol = Symbol.for('@adcp/client.signedRequestsState');
 
 /**
+ * Symbol marking that a server's `instructions` was supplied as a function
+ * (lazy / per-session form) rather than a static string. `serve()` reads
+ * this to refuse `reuseAgent: true` — the function is captured once at
+ * construction and would not re-evaluate per session under server reuse.
+ *
+ * Internal contract between `createAdcpServer` and `serve()`. Adopters
+ * who instantiate `McpServer` directly (without `createAdcpServer`) and
+ * want their own marker semantics should not import this symbol.
+ */
+export const ADCP_INSTRUCTIONS_FN: unique symbol = Symbol.for('@adcp/client.instructionsFn');
+
+/**
+ * Pre-resolution session context passed to a function-form `instructions`.
+ * Slim by design — no `account` (resolution hasn't run yet at MCP `initialize`
+ * time, which is the natural eval moment for per-session instructions).
+ *
+ * Both fields are reserved: today they are always `undefined` because the
+ * framework's `serve()` does not yet plumb auth + registry state into the
+ * factory before MCP `initialize`. Adopters who need tenant identity should
+ * use closures captured in their factory's HTTP-scoped state. The shape is
+ * forward-compatible: when the framework wires authInfo/agent through, the
+ * fields will populate without breaking existing function bodies.
+ *
+ * @see AdcpServerConfig.instructions
+ * @public
+ */
+export interface SessionContext {
+  /**
+   * @reserved Always `undefined` in v6.x. The framework does not yet plumb
+   * `authInfo` into the factory before MCP `initialize` — use closures
+   * captured in your factory's HTTP-scoped state for tenant identity today.
+   * Forward-compatible: when the framework wires this through, your
+   * `ctx.authInfo?.…` reads start returning real values without breaking
+   * existing function bodies.
+   */
+  readonly authInfo?: ResolvedAuthInfo;
+
+  /**
+   * @reserved Always `undefined` in v6.x. The framework does not yet plumb
+   * the resolved `BuyerAgent` into the factory before MCP `initialize` —
+   * use closures captured in your factory's HTTP-scoped state for tenant
+   * identity today. Forward-compatible: when the framework wires this
+   * through, your `ctx.agent?.…` reads start returning real values without
+   * breaking existing function bodies.
+   */
+  readonly agent?: BuyerAgent;
+}
+
+/**
+ * Behavior when a function-form `instructions` callback throws.
+ *
+ * - `'skip'` (default) — log server-side, treat as `undefined` (no
+ *   instructions). Right for prose-of-flavor (brand manifests, marketing
+ *   copy) where a registry fetch failure must not kill the buyer's session.
+ * - `'fail'` — rethrow. The MCP `initialize` handshake then fails at the
+ *   transport layer (this is NOT an `adcp_error` envelope — it kills the
+ *   session). Right for adopters whose instructions carry load-bearing
+ *   policy where stale/missing guidance is worse than a connection retry.
+ *
+ * @public
+ */
+export type OnInstructionsError = 'skip' | 'fail';
+
+/**
  * Shape of the preTransport function attached by `createAdcpServer` when
  * `signedRequests` is configured. Returns `true` if the middleware has already
  * sent a response (e.g., 401 on verification failure), `false` to continue
@@ -1350,7 +1415,61 @@ export interface AdcpServerConfig<TAccount = unknown> {
     params: IdempotencyPrincipalParams,
     toolName: AdcpServerToolName
   ) => string | undefined;
-  instructions?: string;
+  /**
+   * Server-level prose surfaced on MCP `initialize`. Two forms:
+   *
+   * 1. **Static string** (the historical form) — captured at construction,
+   *    same value for every session.
+   * 2. **Function** `(ctx: SessionContext) => string | undefined` — re-evaluated
+   *    each time `createAdcpServer` is called. Under the canonical
+   *    `serve({ reuseAgent: false })` flow (the default) the factory
+   *    runs per HTTP request, which under streamable-HTTP MCP is per
+   *    session — so the closure can surface tenant-shaped prose (per-buyer
+   *    brand manifests, storefront copy, "premium vs standard" partner
+   *    guidance).
+   *
+   * **Eval moment.** Strictly: once per `createAdcpServer` invocation.
+   * `serve({ reuseAgent: false })` makes that "per HTTP request, which is
+   * per session for streamable-HTTP MCP." Custom transports / hand-rolled
+   * dispatch must invoke `createAdcpServer` per session themselves to
+   * preserve the per-session semantic. `reuseAgent: true` would fire the
+   * function once for the lifetime of the shared agent — which defeats
+   * the purpose, so `serve()` refuses that combination at the first
+   * request.
+   *
+   * **`SessionContext` is reserved.** `authInfo` and `agent` are typed for
+   * forward compatibility but currently always `undefined` — the framework
+   * does not yet plumb auth/registry state into the factory. **Use closures
+   * captured in your factory's HTTP-scoped state for tenant identity today;
+   * `ctx.agent`/`ctx.authInfo` reads silently return `undefined` and ship
+   * empty prose to prod.** The function body will pick up populated fields
+   * when the framework wires them through.
+   *
+   * @example Per-tenant prose via factory closure (recommended pattern):
+   * ```ts
+   * serve(({ taskStore, host }) => createAdcpServer({
+   *   // host is HTTP-scoped — captured in the closure, NOT from ctx.
+   *   instructions: () => brandManifests.get(host)?.intro ?? defaultProse,
+   *   // ... rest of config
+   * }));
+   * ```
+   *
+   * **Async return is not yet supported.** Function MUST return `string |
+   * undefined` synchronously. A returned `Promise` throws `ConfigurationError`.
+   * Pre-resolve before invoking `createAdcpServer` if you need to fetch.
+   *
+   * @see SessionContext
+   * @see onInstructionsError
+   */
+  instructions?: string | ((ctx: SessionContext) => string | undefined);
+  /**
+   * Behavior when a function-form `instructions` callback throws. Defaults
+   * to `'skip'` — best-effort prose (brand manifests, marketing copy)
+   * should not kill the buyer's session on a registry fetch failure.
+   * Set `'fail'` for adopters whose instructions carry load-bearing
+   * policy. See {@link OnInstructionsError}.
+   */
+  onInstructionsError?: OnInstructionsError;
   taskStore?: TaskStore;
   taskMessageQueue?: TaskMessageQueue;
   /**
@@ -2418,7 +2537,8 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
     capabilities: capConfig,
     idempotency: idempotencyConfig,
     resolveIdempotencyPrincipal,
-    instructions,
+    instructions: instructionsOption,
+    onInstructionsError = 'skip',
     taskStore,
     taskMessageQueue,
     webhooks,
@@ -2679,10 +2799,64 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
   // knowing about the emitter's construction or options.
   const webhookEmitter = webhooks ? createWebhookEmitter(webhooks) : undefined;
 
+  // Resolve `instructions` — function form is evaluated at construction.
+  // Under `serve({ reuseAgent: false })` (the default) the factory runs
+  // per HTTP request, so the function fires per session. Under
+  // `reuseAgent: true` the function would fire once and never again —
+  // `serve()` refuses that combination via `ADCP_INSTRUCTIONS_FN`.
+  const instructionsIsFn = typeof instructionsOption === 'function';
+  let resolvedInstructions: string | undefined;
+  if (typeof instructionsOption === 'string') {
+    resolvedInstructions = instructionsOption;
+  } else if (instructionsIsFn) {
+    try {
+      const result = (instructionsOption as (ctx: SessionContext) => string | undefined)({});
+      // Promise detection — must guard for null + non-object before reading
+      // `.then`, otherwise `typeof null.then` throws TypeError and the user
+      // sees a confusing framework-internal stack instead of their own bug.
+      const isThenable =
+        result !== null && typeof result === 'object' && typeof (result as { then?: unknown }).then === 'function';
+      if (isThenable) {
+        throw new ConfigurationError(
+          'createAdcpServer: function-form `instructions` returned a Promise, but async resolution is not yet ' +
+            'supported. Pre-resolve before invoking createAdcpServer (e.g., `instructions: await fetchProse()`), ' +
+            'or wrap your async loader in a sync cache.'
+        );
+      }
+      // Reject non-string non-undefined returns instead of silently coercing
+      // (`String({})` → "[object Object]" would ship as instructions otherwise).
+      // The TS signature already constrains return to `string | undefined`;
+      // this catches `as any` escapees and untyped JS callers. Routed through
+      // the same try/catch as user-thrown errors so `onInstructionsError`
+      // governs both — a buggy callback is the same shape of problem either
+      // way (Promise return is the exception: framework can't recover, so
+      // it throws ConfigurationError unconditionally above).
+      if (result !== undefined && typeof result !== 'string') {
+        throw new Error(
+          `function-form \`instructions\` must return string | undefined, got ${result === null ? 'null' : typeof result}. ` +
+            `Return a string for the prose, or undefined for "no instructions on this session."`
+        );
+      }
+      resolvedInstructions = result;
+    } catch (err) {
+      if (err instanceof ConfigurationError) throw err;
+      if (onInstructionsError === 'fail') {
+        throw err;
+      }
+      // 'skip' — log server-side, surface no instructions to MCP `initialize`.
+      logger.warn('[adcp/createAdcpServer] instructions() threw; skipping (onInstructionsError: "skip")', {
+        error: err instanceof Error ? err.message : String(err),
+      });
+      resolvedInstructions = undefined;
+    }
+  } else {
+    resolvedInstructions = undefined;
+  }
+
   const server = createTaskCapableServer(name, version, {
     taskStore,
     taskMessageQueue,
-    instructions,
+    instructions: resolvedInstructions,
   });
 
   const registeredToolNames = new Set<string>();
@@ -3890,6 +4064,17 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
     configurable: true,
     writable: false,
   });
+  // Mark when `instructions` was supplied as a function, so `serve()` can
+  // refuse `reuseAgent: true` — the function is captured once at construction
+  // and would not re-evaluate per session under server reuse.
+  if (instructionsIsFn) {
+    Object.defineProperty(wrapped, ADCP_INSTRUCTIONS_FN, {
+      value: true,
+      enumerable: false,
+      configurable: true,
+      writable: false,
+    });
+  }
   // Expose the capabilitiesData object so post-registration helpers
   // (registerTestController) can add spec-defined capability blocks
   // — comply_test_controller is registered AFTER createAdcpServer,
