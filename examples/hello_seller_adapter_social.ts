@@ -185,7 +185,7 @@ const upstream = {
   // returns deterministic ranges keyed on (advertiser_id, targeting), so the
   // numbers are stable across runs but vary observably with targeting.
   // Surface this on AdCP wire as `SyncAudiencesRow.matched_count` /
-  // `effective_match_rate` (per `/schemas/3.0.6/core/audience.json`).
+  // `effective_match_rate` (per `/schemas/3.0.6/media-buy/sync-audiences-response.json`).
   async audienceReachEstimate(
     advertiserId: string,
     body: { targeting: Record<string, unknown> }
