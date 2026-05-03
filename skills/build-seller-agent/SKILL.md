@@ -46,8 +46,6 @@ Every sales-* seller hits the cross-cutting rules in [`../cross-cutting.md`](../
 - [Account resolution](../cross-cutting.md#account-resolution-pick-a-security-preset) — `createTenantStore` for multi-advertiser sellers
 - [Webhooks](../cross-cutting.md#webhooks-stable-operation_id-across-retries) — stable `operation_id` for IO-approval / delivery-completion notifications
 
-Read the file once cold; deep-link from your code reviews afterward.
-
 ## Specialism deltas
 
 The fork target covers the baseline. Specialism subpages cover the deltas — what to add when you claim that specialism on top of the baseline. Each entry below is **specialism → when to read it → what's in it**.
