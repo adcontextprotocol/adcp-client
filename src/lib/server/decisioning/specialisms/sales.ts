@@ -242,6 +242,49 @@ export interface SalesPlatform<TCtxMeta = Record<string, unknown>> {
 
   // ── get_media_buy_delivery: sync only ───────────────────────────────
 
+  /**
+   * Per-media-buy delivery actuals (impressions, spend, pacing,
+   * conversions). Sync — report-running platforms with manual report
+   * cycles return the latest cached actuals and emit `delivery_report`
+   * status changes via `publishStatusChange` when fresh reports are
+   * available.
+   *
+   * **Multi-id contract.** `filter.media_buy_ids` is an array — buyers
+   * routinely request delivery for multiple buys in one call. The
+   * platform MUST iterate every id and return one element per id in
+   * `media_buy_deliveries[]`. Implementations that read only
+   * `media_buy_ids[0]` silently truncate the buyer's request — a
+   * correctness bug that has bitten multiple adopters (closes #1342).
+   *
+   * Pass-through is the framework contract: the platform owns fan-out
+   * because `aggregated_totals` requires platform-domain knowledge —
+   * `reach` (cross-buy dedup capability), `new_to_brand_rate` (weighted
+   * across buys, not a per-buy average), and `frequency` (depends on
+   * dedup) cannot be synthesized correctly by a naive framework loop.
+   * Sellers that can't compute the cross-buy fields omit them and emit
+   * the safely-summable fields (`impressions`, `spend`, `clicks`,
+   * `media_buy_count`); buyers fall back to per-buy values when needed.
+   *
+   * Recommended pattern:
+   *
+   * ```ts
+   * getMediaBuyDelivery: async (req, ctx) => {
+   *   const ids = req.media_buy_ids ?? [];
+   *   const deliveries = await Promise.all(ids.map(id => fetchOne(id, ctx)));
+   *   return {
+   *     reporting_period: { start, end },
+   *     currency: 'USD',
+   *     media_buy_deliveries: deliveries,
+   *     aggregated_totals: sumNumericFields(deliveries),
+   *   };
+   * }
+   * ```
+   *
+   * When `media_buy_ids` is omitted, return a paginated set of
+   * accessible media buys per the wire schema. `status_filter`
+   * defaults to `['active']` when omitted; honor the filter in your
+   * iteration.
+   */
   getMediaBuyDelivery?(filter: GetMediaBuyDeliveryRequest, ctx: Ctx<TCtxMeta>): Promise<GetMediaBuyDeliveryResponse>;
 
   // ── get_media_buys: sync only — REQUIRED ──────────────────────────────

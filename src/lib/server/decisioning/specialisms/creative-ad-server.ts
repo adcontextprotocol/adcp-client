@@ -121,6 +121,19 @@ export interface CreativeAdServerPlatform<TCtxMeta = Record<string, unknown>> {
    * report-running platforms with manual report cycles return the
    * latest cached actuals and emit `delivery_report` status changes
    * via `publishStatusChange` when fresh reports are available.
+   *
+   * **Multi-id contract.** `filter.media_buy_ids` and `filter.creative_ids`
+   * are arrays — buyers may scope a delivery query to multiple buys or
+   * creatives in one call. The platform MUST iterate every supplied id
+   * and return one row per matching (creative, buy) pair. Reading only
+   * `media_buy_ids[0]` / `creative_ids[0]` silently truncates the
+   * buyer's request — a correctness bug to avoid (closes #1342).
+   *
+   * Pass-through is the framework contract: cross-creative aggregation
+   * is platform-domain knowledge (variant-level deduplication, brand
+   * mapping, attribution windows), so the framework hands the array
+   * through and the platform owns fan-out. Sellers that can't compute
+   * cross-cuts omit them; buyers fall back to per-row values.
    */
   getCreativeDelivery(filter: GetCreativeDeliveryRequest, ctx: Ctx<TCtxMeta>): Promise<GetCreativeDeliveryResponse>;
 
