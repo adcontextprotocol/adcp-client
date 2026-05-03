@@ -387,6 +387,11 @@ export interface AccountStore<TCtxMeta = Record<string, unknown>> {
    * - `'derived'` — single-tenant agents where there is no account_id on the
    *   wire at all and the auth principal alone identifies the tenant. Most
    *   self-hosted broadcasters and retail-media operators in proxy mode.
+   *   Framework refuses inline `account_id` references for these platforms —
+   *   same `AdcpError('INVALID_REQUEST', { field: 'account.account_id' })`
+   *   shape as `'implicit'`, but with a single-tenant message instead of the
+   *   `sync_accounts`-first guidance (no `sync_accounts` step exists in
+   *   derived mode). The brand+operator union arm is permitted.
    *
    * Defaults to `'explicit'` when omitted.
    */

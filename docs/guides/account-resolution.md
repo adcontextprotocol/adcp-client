@@ -213,6 +213,16 @@ accounts: {
 No `upsert` needed. The framework returns `UNSUPPORTED_FEATURE` to any
 buyer that calls `sync_accounts`.
 
+**Inline `account_id` refusal.** Since adcp-client#1468, the framework
+refuses inline `{ account_id }` references for `'derived'` platforms with
+`AdcpError('INVALID_REQUEST', { field: 'account.account_id' })` *before*
+reaching `accounts.resolve` — same shape as `'implicit'`'s refusal (#1364),
+with a single-tenant message instead of the `sync_accounts`-first guidance.
+Hand-rolled `'derived'` stores get this for free; the
+`createDerivedAccountStore` factory's defensive ignore is a belt + braces
+fallback. The brand+operator union arm is still permitted (route through
+your resolver verbatim).
+
 ---
 
 ## `'explicit'` (default)
