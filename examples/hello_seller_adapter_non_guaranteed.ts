@@ -19,6 +19,10 @@
  * Fork this. Replace `upstream` with calls to your real backend. The
  * AdCP-facing platform methods stay the same.
  *
+ * Auction mode is the deletion-fork of the guaranteed sibling: `createMediaBuy`
+ * returns sync, no `ctx.handoffToTask`, no IO poll loop, no task envelope.
+ * If your backend has HITL approval, fork the guaranteed example instead.
+ *
  * FORK CHECKLIST
  *   1. Replace every `// SWAP:` marker with calls to your backend.
  *   2. Replace `KNOWN_PUBLISHERS` with your tenant directory.
@@ -76,6 +80,7 @@ import type {
   GetMediaBuysResponse,
   GetMediaBuyDeliveryRequest,
   GetMediaBuyDeliveryResponse,
+  ListCreativeFormatsResponse,
 } from '@adcp/sdk/types';
 
 // `Product` isn't re-exported from `@adcp/sdk/types`; derive from response.
@@ -87,12 +92,7 @@ const PORT = Number(process.env['PORT'] ?? 3007);
 const ADCP_AUTH_TOKEN = process.env['ADCP_AUTH_TOKEN'] ?? 'sk_harness_do_not_use_in_prod';
 const PUBLIC_AGENT_URL = process.env['PUBLIC_AGENT_URL'] ?? `http://127.0.0.1:${PORT}`;
 
-const KNOWN_PUBLISHERS = [
-  'remnant-network.example',
-  'remnant-network.eu',
-  'acmeoutdoor.example',
-  'pinnacle-agency.example',
-];
+const KNOWN_PUBLISHERS = ['remnant-network.example', 'acmeoutdoor.example', 'pinnacle-agency.example'];
 
 // TEST-ONLY: id-prefix used by the sandbox arm in `accounts.resolve` so
 // production sellers don't need this; remove the sandbox arm + this
@@ -433,7 +433,12 @@ function mapMediaBuyStatus(
 // the override here so `get_media_buys` returns the advanced status the
 // storyboard validates. SWAP: drop this map and read upstream state — your
 // backend already persists what we're tracking here.
+//
+// Keyed by `<network_code>::<order_id>` so a forking adopter who keeps the
+// map for in-flight scenarios doesn't accidentally surface tenant A's
+// override on tenant B's `media_buy_id` collision (mock IDs are 32 bits).
 const adapterStatusOverrides = new Map<string, 'pending_start' | 'active'>();
+const overrideKey = (networkCode: string, orderId: string): string => `${networkCode}::${orderId}`;
 
 class SalesNonGuaranteedAdapter implements DecisioningPlatform<Record<string, never>, NetworkMeta> {
   capabilities = {
@@ -619,11 +624,24 @@ class SalesNonGuaranteedAdapter implements DecisioningPlatform<Record<string, ne
       }
 
       // SWAP: pacing extraction — production reads from req.packages[i].pacing
-      // or req.delivery_settings, varying by your contract surface. The
-      // mock takes order-level pacing for simplicity. Default 'even' if
-      // unspecified.
-      const pacing: 'even' | 'asap' | 'front_loaded' =
-        ((req as { pacing?: string }).pacing as 'even' | 'asap' | 'front_loaded') ?? 'even';
+      // or req.delivery_settings, varying by your contract surface. AdCP 3.0.5
+      // doesn't carry an order-level `pacing` on the wire — the mock accepts
+      // it because real platforms (Meta, TTD, etc.) all expose pacing on
+      // their own non-guaranteed shape. Default 'even' if unspecified;
+      // reject typos rather than silently passing them through.
+      const PACING_VALUES = ['even', 'asap', 'front_loaded'] as const;
+      const rawPacing = (req as { pacing?: unknown }).pacing;
+      let pacing: (typeof PACING_VALUES)[number] = 'even';
+      if (typeof rawPacing === 'string') {
+        if (!(PACING_VALUES as readonly string[]).includes(rawPacing)) {
+          throw new AdcpError('INVALID_REQUEST', {
+            message: `pacing must be one of ${PACING_VALUES.join(', ')} (got: ${rawPacing})`,
+            field: 'pacing',
+            recovery: 'correctable',
+          });
+        }
+        pacing = rawPacing as (typeof PACING_VALUES)[number];
+      }
 
       let order: UpstreamOrder;
       try {
@@ -718,11 +736,12 @@ class SalesNonGuaranteedAdapter implements DecisioningPlatform<Record<string, ne
       // backends would also persist the assignment to the upstream line item;
       // the worked example just advances the response state.
       const baseStatus = mapMediaBuyStatus(existing.status);
-      let nextStatus: ReturnType<typeof mapMediaBuyStatus> = adapterStatusOverrides.get(id) ?? baseStatus;
+      let nextStatus: ReturnType<typeof mapMediaBuyStatus> =
+        adapterStatusOverrides.get(overrideKey(networkCode, id)) ?? baseStatus;
       if (hasCreativeAssignment && nextStatus === 'pending_creatives') {
         const flightStarted = existing.flight_start !== undefined && Date.parse(existing.flight_start) <= Date.now();
         nextStatus = flightStarted ? 'active' : 'pending_start';
-        adapterStatusOverrides.set(id, nextStatus);
+        adapterStatusOverrides.set(overrideKey(networkCode, id), nextStatus);
       }
       return {
         media_buy_id: existing.order_id,
@@ -758,10 +777,28 @@ class SalesNonGuaranteedAdapter implements DecisioningPlatform<Record<string, ne
         })
       );
       const filtered = deliveries.filter((d): d is NonNullable<typeof d> => d !== null);
-      // Spec response shape uses `media_buy_deliveries` per get-media-buy-delivery-response.
-      return {
+      // Surface a debugging-friendly trace when buyers ask about ids the
+      // upstream doesn't know — silently dropping rows looks like delivery
+      // simply hasn't started yet, which buries the actual error.
+      const missing = requestedIds.filter((_, i) => deliveries[i] === null);
+      if (missing.length > 0) {
+        // eslint-disable-next-line no-console
+        console.warn(
+          `[sales-non-guaranteed] get_media_buy_delivery: ${missing.length} unknown media_buy_id(s) returned no delivery rows: ${missing.join(', ')}`
+        );
+      }
+      const response: GetMediaBuyDeliveryResponse = {
         currency: filtered[0]?.currency ?? 'USD',
-        reporting_period: filtered[0]?.reporting_period ?? { start: '', end: '' },
+        reporting_period: {
+          start: filtered[0]?.reporting_period.start ?? new Date().toISOString(),
+          end: filtered[0]?.reporting_period.end ?? new Date().toISOString(),
+        },
+        aggregated_totals: {
+          impressions: filtered.reduce((s, d) => s + d.totals.impressions, 0),
+          spend: filtered.reduce((s, d) => s + d.totals.spend, 0),
+          clicks: filtered.reduce((s, d) => s + d.totals.clicks, 0),
+          media_buy_count: filtered.length,
+        },
         media_buy_deliveries: filtered.map(d => ({
           media_buy_id: d.media_buy_id,
           // Required field on media_buy_deliveries[i]. Auction inventory in
@@ -775,13 +812,8 @@ class SalesNonGuaranteedAdapter implements DecisioningPlatform<Record<string, ne
             spend: p.spend,
           })),
         })),
-        aggregated_totals: {
-          impressions: filtered.reduce((s, d) => s + d.totals.impressions, 0),
-          spend: filtered.reduce((s, d) => s + d.totals.spend, 0),
-          clicks: filtered.reduce((s, d) => s + d.totals.clicks, 0),
-          media_buy_count: filtered.length,
-        },
-      } as unknown as GetMediaBuyDeliveryResponse;
+      };
+      return response;
     },
 
     getMediaBuys: async (req: GetMediaBuysRequest, ctx): Promise<GetMediaBuysResponse> => {
@@ -802,15 +834,15 @@ class SalesNonGuaranteedAdapter implements DecisioningPlatform<Record<string, ne
         orders.map(async o => {
           const lineItems = await upstream.listLineItems(networkCode, o.order_id);
           const baseStatus = mapMediaBuyStatus(o.status);
-          const status = adapterStatusOverrides.get(o.order_id) ?? baseStatus;
+          const status = adapterStatusOverrides.get(overrideKey(networkCode, o.order_id)) ?? baseStatus;
           return {
             media_buy_id: o.order_id,
             status,
             currency: o.currency,
             ...(o.budget !== undefined && { total_budget: o.budget }),
-            confirmed_at: o.updated_at,
-            created_at: o.created_at,
-            updated_at: o.updated_at,
+            ...(o.updated_at !== undefined && { confirmed_at: o.updated_at }),
+            ...(o.created_at !== undefined && { created_at: o.created_at }),
+            ...(o.updated_at !== undefined && { updated_at: o.updated_at }),
             ...(o.flight_start && { start_time: o.flight_start }),
             ...(o.flight_end && { end_time: o.flight_end }),
             packages: lineItems.map(li => ({
@@ -822,7 +854,8 @@ class SalesNonGuaranteedAdapter implements DecisioningPlatform<Record<string, ne
           };
         })
       );
-      return { media_buys } as unknown as GetMediaBuysResponse;
+      const response: GetMediaBuysResponse = { media_buys };
+      return response;
     },
 
     syncCreatives: async (creatives, ctx) => {
@@ -868,7 +901,7 @@ class SalesNonGuaranteedAdapter implements DecisioningPlatform<Record<string, ne
       return out;
     },
 
-    listCreativeFormats: async (_req, _ctx) => {
+    listCreativeFormats: async (_req, _ctx): Promise<ListCreativeFormatsResponse> => {
       // Publisher-owned format catalog. The mock doesn't have a discrete
       // formats endpoint (formats live inline on Product); production sellers
       // typically expose `/v1/formats` separately. SWAP: replace with your
@@ -878,29 +911,25 @@ class SalesNonGuaranteedAdapter implements DecisioningPlatform<Record<string, ne
           {
             format_id: { agent_url: FORMAT_AGENT_URL, id: 'display_300x250' },
             name: 'Display 300x250 (medrec)',
-            type: 'display',
             renders: [{ role: 'main', dimensions: { width: 300, height: 250, unit: 'px' } }],
           },
           {
             format_id: { agent_url: FORMAT_AGENT_URL, id: 'display_728x90' },
             name: 'Display 728x90 (leaderboard)',
-            type: 'display',
             renders: [{ role: 'main', dimensions: { width: 728, height: 90, unit: 'px' } }],
           },
           {
             format_id: { agent_url: FORMAT_AGENT_URL, id: 'video_30s' },
             name: 'Video 30s outstream / instream',
-            type: 'video',
             renders: [{ role: 'main', dimensions: { width: 1920, height: 1080, unit: 'px' } }],
           },
           {
             format_id: { agent_url: FORMAT_AGENT_URL, id: 'video_15s' },
             name: 'Video 15s',
-            type: 'video',
             renders: [{ role: 'main', dimensions: { width: 1920, height: 1080, unit: 'px' } }],
           },
         ],
-      } as unknown as Awaited<ReturnType<NonNullable<SalesIngestionPlatform<NetworkMeta>['listCreativeFormats']>>>;
+      };
     },
   };
 }

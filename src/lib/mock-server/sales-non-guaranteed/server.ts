@@ -325,6 +325,12 @@ export async function bootSalesNonGuaranteed(options: BootOptions): Promise<Boot
       writeJson(res, 400, { code: 'invalid_request', message: 'product_id is required.' });
       return;
     }
+    // Forecast stays strict on product existence even though order/lineitem
+    // creation is permissive — `synthForecast` needs the product's pricing
+    // and channel parameters to compute a curve. Cascade scenarios that
+    // seed products via `comply_test_controller` should also forecast
+    // against seeded products; storyboards that hit forecast on a buyer-
+    // supplied unknown id are exercising the not-found path.
     const product = products.find(p => p.product_id === product_id && p.network_code === network.network_code);
     if (!product) {
       writeJson(res, 404, { code: 'product_not_found', message: `Product ${product_id} not found.` });
