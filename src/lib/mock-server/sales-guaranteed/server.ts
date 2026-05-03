@@ -1,5 +1,5 @@
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import {
   AD_UNITS,
   DEFAULT_API_KEY,
@@ -199,6 +199,14 @@ export async function bootSalesGuaranteed(options: BootOptions): Promise<BootRes
       bump('GET /v1/products');
       return handleListProducts(url, network, res);
     }
+    if (method === 'POST' && path === '/v1/forecast') {
+      bump('POST /v1/forecast');
+      return handleForecast(req, network, res);
+    }
+    if (method === 'POST' && path === '/v1/availability') {
+      bump('POST /v1/availability');
+      return handleAvailability(req, network, res);
+    }
     if (method === 'GET' && path === '/v1/creatives') {
       bump('GET /v1/creatives');
       return handleListCreatives(network, res);
@@ -276,7 +284,148 @@ export async function bootSalesGuaranteed(options: BootOptions): Promise<BootRes
     const channel = url.searchParams.get('channel');
     if (deliveryType) visible = visible.filter(p => p.delivery_type === deliveryType);
     if (channel) visible = visible.filter(p => p.channel === channel);
+
+    // Per-query forecast embedding. When the caller passes any of
+    // `targeting`, `flight_start`, `flight_end`, or `budget`, attach a
+    // deterministic-seeded forecast keyed on those inputs so a single
+    // get_products call surfaces both the catalog and the forecast curve
+    // without a follow-up POST /v1/forecast. Mirrors GAM's
+    // `forecastService.getAvailabilityForecast` returning availability inline
+    // with product metadata when a brief is supplied.
+    const targeting = url.searchParams.get('targeting');
+    const flightStart = parseDateParam(url.searchParams.get('flight_start'));
+    const flightEnd = parseDateParam(url.searchParams.get('flight_end'));
+    const budget = parsePositiveNumber(url.searchParams.get('budget'));
+    const hasQuery = Boolean(targeting || flightStart || flightEnd || budget !== undefined);
+    if (hasQuery) {
+      const dates = { start: flightStart, end: flightEnd };
+      const decorated = visible.map(p => ({
+        ...p,
+        forecast: synthForecast(p, { targeting, dates, budget }),
+      }));
+      writeJson(res, 200, { products: decorated });
+      return;
+    }
     writeJson(res, 200, { products: visible });
+  }
+
+  // ────────────────────────────────────────────────────────────
+  // Forecast + availability (GAM-style getDeliveryForecast)
+  // ────────────────────────────────────────────────────────────
+  async function handleForecast(req: IncomingMessage, network: MockNetwork, res: ServerResponse): Promise<void> {
+    const body = await readJsonObject(req, res);
+    if (!body) return;
+    const { product_id, targeting, flight_dates, budget } = body as Record<string, unknown>;
+    if (typeof product_id !== 'string') {
+      writeJson(res, 400, { code: 'invalid_request', message: 'product_id is required.' });
+      return;
+    }
+    const product = products.find(p => p.product_id === product_id && p.network_code === network.network_code);
+    if (!product) {
+      writeJson(res, 404, { code: 'product_not_found', message: `Product ${product_id} not found.` });
+      return;
+    }
+    const dates = isObject(flight_dates) ? flight_dates : {};
+    const targetingKey = serializeTargeting(targeting);
+    const forecast = synthForecast(product, {
+      targeting: targetingKey,
+      dates: {
+        start: typeof dates.start === 'string' ? dates.start : undefined,
+        end: typeof dates.end === 'string' ? dates.end : undefined,
+      },
+      budget: typeof budget === 'number' ? budget : undefined,
+    });
+    writeJson(res, 200, forecast);
+  }
+
+  async function handleAvailability(req: IncomingMessage, network: MockNetwork, res: ServerResponse): Promise<void> {
+    const body = await readJsonObject(req, res);
+    if (!body) return;
+    const { items, dry_run } = body as Record<string, unknown>;
+    if (!Array.isArray(items) || items.length === 0) {
+      writeJson(res, 400, {
+        code: 'invalid_request',
+        message: 'items must be a non-empty array of { product_id, budget?, flight_dates? }.',
+      });
+      return;
+    }
+    if (dry_run === false) {
+      writeJson(res, 400, {
+        code: 'invalid_request',
+        message: 'availability is dry-run only; reservations happen via POST /v1/orders.',
+      });
+      return;
+    }
+
+    // Track cumulative reservations across overlapping line items so the
+    // second LI sees reduced inventory when its targeting overlaps the first.
+    // Mirrors GAM's getCompetitiveForecast semantics.
+    const reservedByProduct = new Map<string, number>();
+    const conflicts: Array<{ product_id: string; reason: string }> = [];
+    const results: Array<Record<string, unknown>> = [];
+
+    for (const raw of items) {
+      if (!isObject(raw)) {
+        writeJson(res, 400, { code: 'invalid_request', message: 'each item must be an object.' });
+        return;
+      }
+      const itemProductId = typeof raw.product_id === 'string' ? raw.product_id : null;
+      if (!itemProductId) {
+        writeJson(res, 400, { code: 'invalid_request', message: 'each item requires product_id.' });
+        return;
+      }
+      const product = products.find(p => p.product_id === itemProductId && p.network_code === network.network_code);
+      if (!product) {
+        results.push({ product_id: itemProductId, available: false, reason: 'product_not_found' });
+        conflicts.push({ product_id: itemProductId, reason: 'product_not_found' });
+        continue;
+      }
+      const itemDates = isObject(raw.flight_dates) ? raw.flight_dates : {};
+      const itemBudget = typeof raw.budget === 'number' ? raw.budget : undefined;
+      const itemTargeting = serializeTargeting(raw.targeting);
+
+      const forecast = synthForecast(product, {
+        targeting: itemTargeting,
+        dates: {
+          start: typeof itemDates.start === 'string' ? itemDates.start : undefined,
+          end: typeof itemDates.end === 'string' ? itemDates.end : undefined,
+        },
+        budget: itemBudget,
+      });
+
+      const availabilityPoint = forecast.points.find((pt: ForecastPoint) => pt.budget === undefined);
+      const availableImpressions = availabilityPoint?.metrics.impressions?.mid ?? 0;
+      const alreadyReserved = reservedByProduct.get(itemProductId) ?? 0;
+      const remaining = Math.max(0, availableImpressions - alreadyReserved);
+      const cpmForCalc = product.pricing.cpm > 0 ? product.pricing.cpm : 1;
+      const requiredImpressions = itemBudget ? Math.floor((itemBudget / cpmForCalc) * 1000) : 0;
+      const fits = requiredImpressions === 0 || remaining >= requiredImpressions;
+
+      if (!fits) {
+        conflicts.push({
+          product_id: itemProductId,
+          reason: `Requested ${requiredImpressions.toLocaleString()} impressions but only ${remaining.toLocaleString()} remain after prior items in this proposal.`,
+        });
+      }
+      reservedByProduct.set(itemProductId, alreadyReserved + requiredImpressions);
+
+      results.push({
+        product_id: itemProductId,
+        available: fits,
+        forecast,
+        tier_pricing: tierPricing(product),
+        ...(itemBudget !== undefined && {
+          required_impressions: requiredImpressions,
+          remaining_after_prior_items: remaining,
+        }),
+      });
+    }
+
+    writeJson(res, 200, {
+      available: conflicts.length === 0,
+      items: results,
+      ...(conflicts.length > 0 && { conflicts }),
+    });
   }
 
   function handleListCreatives(network: MockNetwork, res: ServerResponse): void {
@@ -705,4 +854,195 @@ function writeJson(res: ServerResponse, status: number, body: unknown): void {
     'content-length': Buffer.byteLength(json),
   });
   res.end(json);
+}
+
+interface ForecastRange {
+  low: number;
+  mid: number;
+  high: number;
+}
+interface ForecastPoint {
+  label?: string;
+  budget?: number;
+  metrics: {
+    impressions?: ForecastRange;
+    reach?: ForecastRange;
+    frequency?: ForecastRange;
+    spend?: ForecastRange;
+  };
+}
+interface SyntheticForecast {
+  points: ForecastPoint[];
+  forecast_range_unit: 'spend' | 'availability';
+  /** `guaranteed` for availability checks (the GAM-style commit-to-deliver),
+   * `modeled` for spend curves where a budget is supplied. Matches the AdCP
+   * `forecast-method` enum semantics: guaranteed = "Contractually committed
+   * delivery levels backed by reserved inventory". */
+  method: 'modeled' | 'guaranteed';
+  currency: string;
+  generated_at: string;
+}
+
+/**
+ * Deterministic forecast generator. Same (product, targeting, dates, budget)
+ * inputs always yield the same numbers — storyboard graders can assert exact
+ * values without flake. Different targeting hashes produce different
+ * availability levels so adapters can demonstrate that targeting actually
+ * affects the forecast.
+ */
+function synthForecast(
+  product: MockProduct,
+  query: {
+    targeting?: string | null;
+    dates: { start?: string; end?: string };
+    budget?: number;
+  }
+): SyntheticForecast {
+  const seedKey = stableStringify({
+    product_id: product.product_id,
+    targeting: query.targeting ?? null,
+    dates: query.dates,
+  });
+  const seed = seedFromString(seedKey);
+  const baseImpressions = product.availability?.available_impressions ?? 10_000_000;
+  // Targeting tightens supply: hash → fraction in [0.35, 0.95].
+  const supplyFraction = 0.35 + (seed.next() % 6001) / 10_000;
+  const availability = Math.floor(baseImpressions * supplyFraction);
+
+  // Guard against zero-CPM seed entries — would NaN out availabilityCost
+  // and the spend-curve tiers below. Real seeds never hit zero, but a
+  // misconfigured override would.
+  const cpm = product.pricing.cpm > 0 ? product.pricing.cpm : 1;
+  const availabilityCost = (availability / 1000) * cpm;
+  const reachAvail = Math.floor(availability * 0.42);
+
+  const availabilityPoint: ForecastPoint = {
+    label: 'available inventory',
+    metrics: {
+      impressions: range(availability, 0.85, 1.1),
+      reach: range(reachAvail, 0.85, 1.1),
+      frequency: range(availability / Math.max(1, reachAvail), 0.95, 1.05),
+      spend: range(availabilityCost, 0.95, 1.05),
+    },
+  };
+
+  // Spend-curve points. If the caller passed a budget we anchor at it; else
+  // we generate three plausible budget tiers under the availability ceiling.
+  const anchorBudget = query.budget ?? availabilityCost * 0.5;
+  const tiers = [anchorBudget * 0.5, anchorBudget, anchorBudget * 1.5];
+  const spendPoints: ForecastPoint[] = tiers.map(b => {
+    const impressions = Math.min(availability, Math.floor((b / cpm) * 1000));
+    const reach = Math.floor(impressions * 0.42);
+    return {
+      budget: Math.round(b),
+      metrics: {
+        impressions: range(impressions, 0.9, 1.05),
+        reach: range(reach, 0.9, 1.05),
+        frequency: range(impressions / Math.max(1, reach), 0.97, 1.03),
+      },
+    };
+  });
+
+  return {
+    points: [availabilityPoint, ...spendPoints],
+    forecast_range_unit: query.budget !== undefined ? 'spend' : 'availability',
+    method: query.budget !== undefined ? 'modeled' : 'guaranteed',
+    currency: product.pricing.currency,
+    generated_at: '2026-04-01T00:00:00.000Z',
+  };
+}
+
+function tierPricing(product: MockProduct): Array<{ tier: string; cpm: number; currency: string }> {
+  // Plausible-feeling, deterministic per-product tiers so the adapter has
+  // something concrete to project onto a rate card. Real platforms vary
+  // tier composition (daypart, geo, audience); we expose three tiers so the
+  // adapter can demonstrate that pricing is not a single scalar.
+  const base = product.pricing.cpm;
+  return [
+    { tier: 'open', cpm: base, currency: product.pricing.currency },
+    { tier: 'preferred', cpm: roundCpm(base * 1.15), currency: product.pricing.currency },
+    { tier: 'premium', cpm: roundCpm(base * 1.4), currency: product.pricing.currency },
+  ];
+}
+
+function roundCpm(n: number): number {
+  return Math.round(n * 100) / 100;
+}
+
+function range(mid: number, lowFactor: number, highFactor: number): ForecastRange {
+  return {
+    low: Math.max(0, Math.floor(mid * lowFactor)),
+    mid: Math.max(0, Math.floor(mid)),
+    high: Math.max(0, Math.floor(mid * highFactor)),
+  };
+}
+
+function isObject(v: unknown): v is Record<string, unknown> {
+  return Boolean(v) && typeof v === 'object' && !Array.isArray(v);
+}
+
+function parsePositiveNumber(raw: string | null | undefined): number | undefined {
+  if (raw === null || raw === undefined || raw === '') return undefined;
+  const n = Number(raw);
+  return Number.isFinite(n) && n >= 0 ? n : undefined;
+}
+
+function parseDateParam(raw: string | null | undefined): string | undefined {
+  if (!raw) return undefined;
+  // OpenAPI declares `format: date` (YYYY-MM-DD). Tighten beyond `Date.parse`
+  // so `?flight_start=2026` (which Date.parse accepts as Jan 1) doesn't hash
+  // to a different seed than `?flight_start=2026-01-01`. Storyboards that
+  // mix abbreviated and full dates would otherwise produce unstable forecasts.
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(raw)) return undefined;
+  return Number.isFinite(Date.parse(raw)) ? raw : undefined;
+}
+
+function serializeTargeting(t: unknown): string | null {
+  if (t === null || t === undefined) return null;
+  if (typeof t === 'string') return t;
+  try {
+    return stableStringify(t);
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Recursive deterministic JSON stringifier — sorts object keys at every
+ * depth so two equivalent payloads with different key insertion orders
+ * hash identically. Plain `JSON.stringify(t, keys.sort())` only sorts the
+ * top level AND treats the array as a key allowlist (silently dropping
+ * nested fields).
+ */
+function stableStringify(v: unknown): string {
+  if (v === null || typeof v !== 'object') return JSON.stringify(v);
+  if (Array.isArray(v)) return `[${v.map(stableStringify).join(',')}]`;
+  const obj = v as Record<string, unknown>;
+  const keys = Object.keys(obj).sort();
+  const parts = keys.map(k => `${JSON.stringify(k)}:${stableStringify(obj[k])}`);
+  return `{${parts.join(',')}}`;
+}
+
+interface DeterministicSeed {
+  next: () => number;
+}
+
+function seedFromString(key: string): DeterministicSeed {
+  // SHA-256 → consume 4-byte windows as uint32 stream. Stable across Node
+  // versions; storyboards assert exact forecast numbers.
+  const digest = createHash('sha256').update(key).digest();
+  let offset = 0;
+  return {
+    next: () => {
+      if (offset + 4 > digest.length) {
+        // Re-hash to extend the stream if a caller exhausts it.
+        const extended = createHash('sha256').update(digest).digest();
+        digest.set(extended);
+        offset = 0;
+      }
+      const v = digest.readUInt32BE(offset);
+      offset += 4;
+      return v;
+    },
+  };
 }

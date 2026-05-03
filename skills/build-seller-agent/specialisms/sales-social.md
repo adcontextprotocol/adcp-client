@@ -62,3 +62,28 @@ createAdcpServerFromPlatform({
 **Fork target**: `examples/hello_seller_adapter_social.ts` is the worked, passing reference adapter for this specialism. It demonstrates the `SalesIngestionPlatform`-only platform shape (no `getProducts` / `createMediaBuy` stubs — bidding is owned upstream, per `RequiredPlatformsFor<'sales-social'>`), OAuth2 client_credentials, two-step audience + catalog upload, walled-garden CAPI projections, and buyer→upstream id translation. Replace the `// SWAP:` markers with calls to your real backend.
 
 **`log_event` projection onto walled-garden CAPIs.** Walled-garden conversion APIs require three projections that AdCP's wire shape doesn't carry verbatim: `event_type` → `event_name`, ISO 8601 `event_time` → UNIX seconds, and the spec field `Event.user_match` → upstream `user_data.{email_sha256,phone_sha256,external_id_sha256}` mapping. See [SHAPE-GOTCHAS.md § 6](../../SHAPE-GOTCHAS.md#6-log_event-projection-for-walled-garden-capis) for the patterns. The reference adapter codifies all three. The SDK's `createTranslationMap` helper handles buyer→upstream id mapping when the buyer carries identifiers that need translation to upstream pixel-source / pixel-event-source ids.
+
+### Planning surface
+
+Real walled-garden Marketing APIs (Meta `delivery_estimate`, TikTok `audience_estimate`, Snap `forecast`, LinkedIn `recommendation/forecast`) produce per-targeting reach/conversion curves — that's where adopters' real backend time goes. The mock-server exposes these so the worked adapter exercises the same projection an adopter will write against the real upstream:
+
+| Endpoint                                              | Returns                                      | Adapter projects onto                                                   |
+| ----------------------------------------------------- | -------------------------------------------- | ----------------------------------------------------------------------- |
+| `POST /v1.3/advertiser/{id}/delivery_estimate`        | spend curve OR `required_budget` for reverse | `Product.forecast: DeliveryForecast`                                    |
+| `POST /v1.3/advertiser/{id}/audience_reach_estimate`  | total + matchable audience size              | `Product.forecast.points[0].metrics.audience_size` (availability point) |
+| `POST /v1.3/advertiser/{id}/audience/{aud}/lookalike` | lookalike size + activation ETA              | adapter-state, surfaced in `sync_audiences` follow-up                   |
+
+OpenAPI: [`../../../src/lib/mock-server/sales-social/openapi.yaml`](../../../src/lib/mock-server/sales-social/openapi.yaml).
+
+**Upstream → AdCP field map.** The mock returns upstream-shaped `{min, max}` ranges; AdCP `ForecastRange` uses `{low, mid, high}`. Renames the worked adapter handles:
+
+| Upstream (mock)                                                        | AdCP target                                                                                   |
+| ---------------------------------------------------------------------- | --------------------------------------------------------------------------------------------- |
+| `delivery_curve[].daily_budget`                                        | `points[].budget`                                                                             |
+| `delivery_curve[].estimated_daily_reach.{min,max}`                     | `points[].metrics.reach.{low,high}` (mid = `(min+max)/2`)                                     |
+| `delivery_curve[].estimated_daily_conversions.{min,max}`               | `points[].metrics.purchase.{low,high}` (the AdCP event-type key, not `conversions`)           |
+| `currency`                                                             | `currency` (pass through)                                                                     |
+| `forecast_range_unit: 'spend' \| 'conversions' \| 'reach_freq' \| 'clicks'` | same enum — but real Meta returns `OUTCOME_CONVERSIONS` etc.; map upstream→AdCP at the boundary |
+| `min_budget_warning`                                                   | no AdCP surface today; surface as a structured error or stash on adapter state                |
+
+The `getProducts` projection is implemented in `examples/hello_seller_adapter_social.ts`; copy it as the starting point. Note: `getProducts` lives on `SalesCorePlatform`, so claim both `sales-social` and `sales-non-guaranteed` (already mandated above) — a pure ingestion-only adapter won't surface `getProducts`.

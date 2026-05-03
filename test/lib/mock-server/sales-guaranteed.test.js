@@ -306,4 +306,326 @@ describe('mock-server sales-guaranteed', () => {
       assert.ok((body.traffic['GET /v1/products'] ?? 0) >= 1);
     });
   });
+
+  describe('Forecast + availability (issue #1375)', () => {
+    function authHeadersJson() {
+      return {
+        Authorization: `Bearer ${DEFAULT_API_KEY}`,
+        'X-Network-Code': NETWORK,
+        'Content-Type': 'application/json',
+      };
+    }
+
+    it('POST /v1/forecast returns a DeliveryForecast-shaped body for a known product', async () => {
+      const res = await fetch(`${handle.url}/v1/forecast`, {
+        method: 'POST',
+        headers: authHeadersJson(),
+        body: JSON.stringify({
+          product_id: 'sports_preroll_q2_guaranteed',
+          targeting: { geo: ['US-NY', 'US-CA'], daypart: 'primetime' },
+          flight_dates: { start: '2026-04-01', end: '2026-04-30' },
+          budget: 100_000,
+        }),
+      });
+      assert.equal(res.status, 200);
+      const forecast = await res.json();
+      assert.equal(forecast.method, 'modeled');
+      assert.equal(forecast.currency, 'USD');
+      assert.equal(forecast.forecast_range_unit, 'spend');
+      assert.ok(Array.isArray(forecast.points) && forecast.points.length >= 2);
+      // First point is the availability point (no budget); subsequent are spend tiers.
+      const availability = forecast.points.find(p => p.budget === undefined);
+      assert.ok(availability, 'expected an availability point with no budget');
+      assert.ok(availability.metrics.impressions.mid > 0);
+      const spendPoints = forecast.points.filter(p => typeof p.budget === 'number');
+      assert.ok(spendPoints.length >= 2);
+      // Spend curve is monotonic in impressions.
+      for (let i = 1; i < spendPoints.length; i++) {
+        assert.ok(spendPoints[i].metrics.impressions.mid >= spendPoints[i - 1].metrics.impressions.mid);
+      }
+    });
+
+    it('POST /v1/forecast returns availability range_unit when budget is omitted', async () => {
+      const res = await fetch(`${handle.url}/v1/forecast`, {
+        method: 'POST',
+        headers: authHeadersJson(),
+        body: JSON.stringify({
+          product_id: 'sports_preroll_q2_guaranteed',
+          targeting: { geo: ['US-NY'] },
+          flight_dates: { start: '2026-04-01', end: '2026-04-30' },
+        }),
+      });
+      assert.equal(res.status, 200);
+      const forecast = await res.json();
+      assert.equal(forecast.forecast_range_unit, 'availability');
+      // GAM-style availability checks claim guaranteed delivery; spend curves are modeled.
+      assert.equal(forecast.method, 'guaranteed');
+    });
+
+    it('POST /v1/forecast is deterministic — same inputs yield identical numbers', async () => {
+      const body = {
+        product_id: 'sports_preroll_q2_guaranteed',
+        targeting: { geo: ['US-NY'], daypart: 'primetime' },
+        flight_dates: { start: '2026-04-01', end: '2026-04-30' },
+        budget: 100_000,
+      };
+      const a = await fetch(`${handle.url}/v1/forecast`, {
+        method: 'POST',
+        headers: authHeadersJson(),
+        body: JSON.stringify(body),
+      }).then(r => r.json());
+      const b = await fetch(`${handle.url}/v1/forecast`, {
+        method: 'POST',
+        headers: authHeadersJson(),
+        body: JSON.stringify(body),
+      }).then(r => r.json());
+      // Strip generated_at — compare the curve shape.
+      delete a.generated_at;
+      delete b.generated_at;
+      assert.deepStrictEqual(a, b);
+    });
+
+    it('POST /v1/forecast hashes nested targeting fields (regression: was collapsing nested objects)', async () => {
+      // Two specs that differ ONLY in nested fields. Prior implementation used
+      // JSON.stringify with Object.keys as a replacer allowlist, which dropped
+      // every nested object's contents — both specs hashed to the same string
+      // and produced identical forecasts. Guard against the regression.
+      const base = {
+        product_id: 'sports_preroll_q2_guaranteed',
+        flight_dates: { start: '2026-04-01', end: '2026-04-30' },
+      };
+      const a = await fetch(`${handle.url}/v1/forecast`, {
+        method: 'POST',
+        headers: authHeadersJson(),
+        body: JSON.stringify({ ...base, targeting: { audience: { age: { min: 25, max: 54 } } } }),
+      }).then(r => r.json());
+      const b = await fetch(`${handle.url}/v1/forecast`, {
+        method: 'POST',
+        headers: authHeadersJson(),
+        body: JSON.stringify({ ...base, targeting: { audience: { age: { min: 18, max: 34 } } } }),
+      }).then(r => r.json());
+      assert.notEqual(
+        a.points[0].metrics.impressions.mid,
+        b.points[0].metrics.impressions.mid,
+        'nested targeting differences must perturb the seed'
+      );
+    });
+
+    it('GET /v1/products?budget=garbage rejects the param silently and falls back to no-forecast (regression: was emitting NaN-poisoned JSON)', async () => {
+      const u = new URL(`${handle.url}/v1/products`);
+      u.searchParams.set('delivery_type', 'guaranteed');
+      u.searchParams.set('budget', 'not-a-number');
+      const res = await fetch(u, { headers: authHeaders() });
+      assert.equal(res.status, 200);
+      const body = await res.json();
+      // Garbage budget is dropped → no forecast embedded (no other query params).
+      for (const p of body.products) {
+        assert.equal(p.forecast, undefined);
+      }
+    });
+
+    it('GET /v1/products?flight_start=lol rejects garbage date silently', async () => {
+      const u = new URL(`${handle.url}/v1/products`);
+      u.searchParams.set('delivery_type', 'guaranteed');
+      u.searchParams.set('flight_start', 'lol');
+      const res = await fetch(u, { headers: authHeaders() });
+      assert.equal(res.status, 200);
+      const body = await res.json();
+      for (const p of body.products) {
+        assert.equal(p.forecast, undefined);
+      }
+    });
+
+    it('POST /v1/forecast varies impressions by targeting hash', async () => {
+      const base = {
+        product_id: 'sports_preroll_q2_guaranteed',
+        flight_dates: { start: '2026-04-01', end: '2026-04-30' },
+        budget: 100_000,
+      };
+      const broad = await fetch(`${handle.url}/v1/forecast`, {
+        method: 'POST',
+        headers: authHeadersJson(),
+        body: JSON.stringify({ ...base, targeting: { geo: ['US'] } }),
+      }).then(r => r.json());
+      const narrow = await fetch(`${handle.url}/v1/forecast`, {
+        method: 'POST',
+        headers: authHeadersJson(),
+        body: JSON.stringify({
+          ...base,
+          targeting: { geo: ['US-NY-MANHATTAN'], audience: 'soccer-fans-male-25-34' },
+        }),
+      }).then(r => r.json());
+      const broadMid = broad.points[0].metrics.impressions.mid;
+      const narrowMid = narrow.points[0].metrics.impressions.mid;
+      assert.notEqual(broadMid, narrowMid, 'targeting hash should perturb availability');
+    });
+
+    it('POST /v1/forecast returns 404 for an unknown product_id', async () => {
+      const res = await fetch(`${handle.url}/v1/forecast`, {
+        method: 'POST',
+        headers: authHeadersJson(),
+        body: JSON.stringify({
+          product_id: 'does_not_exist',
+          flight_dates: { start: '2026-04-01', end: '2026-04-30' },
+        }),
+      });
+      assert.equal(res.status, 404);
+    });
+
+    it('POST /v1/forecast returns 404 for a product that belongs to a different network', async () => {
+      const otherNetworkProduct = 'pinnacle_video_preroll_q2'; // belongs to net_pinnacle
+      const res = await fetch(`${handle.url}/v1/forecast`, {
+        method: 'POST',
+        headers: authHeadersJson(),
+        body: JSON.stringify({
+          product_id: otherNetworkProduct,
+          flight_dates: { start: '2026-04-01', end: '2026-04-30' },
+        }),
+      });
+      // NETWORK is net_premium_us; pinnacle product isn't visible.
+      assert.equal(res.status, 404);
+    });
+
+    it('POST /v1/availability returns per-item forecast and rate-card tiers', async () => {
+      const res = await fetch(`${handle.url}/v1/availability`, {
+        method: 'POST',
+        headers: authHeadersJson(),
+        body: JSON.stringify({
+          dry_run: true,
+          items: [
+            {
+              product_id: 'sports_preroll_q2_guaranteed',
+              budget: 100_000,
+              flight_dates: { start: '2026-04-01', end: '2026-04-30' },
+              targeting: { geo: ['US'] },
+            },
+            {
+              product_id: 'outdoor_ctv_q2_guaranteed',
+              budget: 200_000,
+              flight_dates: { start: '2026-04-01', end: '2026-04-30' },
+              targeting: { geo: ['US'] },
+            },
+          ],
+        }),
+      });
+      assert.equal(res.status, 200);
+      const body = await res.json();
+      assert.equal(body.available, true);
+      assert.equal(body.items.length, 2);
+      for (const item of body.items) {
+        assert.ok(item.forecast);
+        assert.ok(item.tier_pricing);
+        assert.equal(item.tier_pricing.length, 3);
+        assert.equal(item.tier_pricing[0].tier, 'open');
+        assert.ok(item.tier_pricing[1].cpm > item.tier_pricing[0].cpm);
+        assert.ok(item.required_impressions > 0);
+      }
+    });
+
+    it('POST /v1/availability surfaces conflicts when overlapping line items exhaust supply', async () => {
+      // Step 1: read the deterministic availability for a known targeting +
+      // date window so we can size budgets precisely. Avoids flaky tests
+      // when the supply fraction lands in a narrow band.
+      const dates = { start: '2026-04-01', end: '2026-04-30' };
+      const targeting = { geo: ['US'] };
+      const probe = await fetch(`${handle.url}/v1/forecast`, {
+        method: 'POST',
+        headers: authHeadersJson(),
+        body: JSON.stringify({
+          product_id: 'sports_preroll_q2_guaranteed',
+          targeting,
+          flight_dates: dates,
+        }),
+      }).then(r => r.json());
+      const availabilityImpressions = probe.points[0].metrics.impressions.mid;
+      // Step 2: build two items each at 75% of available — both fit alone,
+      // together they exceed supply.
+      const cpm = 35; // sports_preroll_q2_guaranteed
+      const budgetPerItem = Math.floor((availabilityImpressions * 0.75 * cpm) / 1000);
+      const res = await fetch(`${handle.url}/v1/availability`, {
+        method: 'POST',
+        headers: authHeadersJson(),
+        body: JSON.stringify({
+          dry_run: true,
+          items: [
+            {
+              product_id: 'sports_preroll_q2_guaranteed',
+              budget: budgetPerItem,
+              flight_dates: dates,
+              targeting,
+            },
+            {
+              product_id: 'sports_preroll_q2_guaranteed',
+              budget: budgetPerItem,
+              flight_dates: dates,
+              targeting,
+            },
+          ],
+        }),
+      });
+      assert.equal(res.status, 200);
+      const body = await res.json();
+      assert.equal(body.available, false);
+      assert.ok(Array.isArray(body.conflicts) && body.conflicts.length >= 1);
+      assert.equal(body.items[0].available, true);
+      assert.equal(body.items[1].available, false);
+      assert.ok(body.items[1].remaining_after_prior_items < body.items[0].remaining_after_prior_items);
+    });
+
+    it('POST /v1/availability rejects non-dry-run requests', async () => {
+      const res = await fetch(`${handle.url}/v1/availability`, {
+        method: 'POST',
+        headers: authHeadersJson(),
+        body: JSON.stringify({
+          dry_run: false,
+          items: [{ product_id: 'sports_preroll_q2_guaranteed', budget: 1000 }],
+        }),
+      });
+      assert.equal(res.status, 400);
+    });
+
+    it('POST /v1/availability rejects empty items array', async () => {
+      const res = await fetch(`${handle.url}/v1/availability`, {
+        method: 'POST',
+        headers: authHeadersJson(),
+        body: JSON.stringify({ dry_run: true, items: [] }),
+      });
+      assert.equal(res.status, 400);
+    });
+
+    it('GET /v1/products embeds per-query forecast when targeting/dates are present', async () => {
+      const u = new URL(`${handle.url}/v1/products`);
+      u.searchParams.set('delivery_type', 'guaranteed');
+      u.searchParams.set('flight_start', '2026-04-01');
+      u.searchParams.set('flight_end', '2026-04-30');
+      u.searchParams.set('budget', '100000');
+      u.searchParams.set('targeting', JSON.stringify({ geo: ['US-NY'] }));
+      const res = await fetch(u, { headers: authHeaders() });
+      assert.equal(res.status, 200);
+      const body = await res.json();
+      assert.ok(body.products.length > 0);
+      for (const p of body.products) {
+        assert.ok(p.forecast, `expected per-query forecast on ${p.product_id}`);
+        assert.equal(p.forecast.method, 'modeled');
+        assert.ok(p.forecast.points[0].metrics.impressions.mid > 0);
+      }
+    });
+
+    it('GET /v1/products without query params omits forecast (backwards compat)', async () => {
+      const res = await fetch(`${handle.url}/v1/products?delivery_type=guaranteed`, {
+        headers: authHeaders(),
+      });
+      const body = await res.json();
+      for (const p of body.products) {
+        assert.equal(p.forecast, undefined, 'forecast should only appear when caller asks for it');
+      }
+    });
+
+    it('forecast/availability routes appear in /_debug/traffic', async () => {
+      const res = await fetch(`${handle.url}/_debug/traffic`);
+      const body = await res.json();
+      assert.ok((body.traffic['POST /v1/forecast'] ?? 0) >= 1);
+      assert.ok((body.traffic['POST /v1/availability'] ?? 0) >= 1);
+    });
+  });
 });
