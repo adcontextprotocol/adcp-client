@@ -408,3 +408,4 @@ export {
   defaultImplicitKeyFn,
   type ImplicitAccountStoreOptions,
 } from '../adapters/implicit-account-store';
+export { createRosterAccountStore, type RosterAccountStoreOptions } from '../adapters/roster-account-store';

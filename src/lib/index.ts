@@ -1165,6 +1165,9 @@ export {
   // OAuth pass-through resolver — Shape B accounts.resolve factory
   createOAuthPassthroughResolver,
   type OAuthPassthroughResolverOptions,
+  // Roster-backed AccountStore — Shape C factory for publisher-curated explicit platforms
+  createRosterAccountStore,
+  type RosterAccountStoreOptions,
 } from './adapters';
 
 // ====== BACKWARD COMPATIBILITY & ENVIRONMENT LOADING ======
