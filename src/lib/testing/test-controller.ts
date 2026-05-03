@@ -22,6 +22,8 @@ export type ControllerScenario =
   | 'force_account_status'
   | 'force_media_buy_status'
   | 'force_session_status'
+  | 'force_create_media_buy_arm'
+  | 'force_task_completion'
   | 'simulate_delivery'
   | 'simulate_budget_spend'
   /**

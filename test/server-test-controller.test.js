@@ -33,11 +33,13 @@ describe('handleTestControllerRequest', () => {
         async forceAccountStatus() {},
         async forceMediaBuyStatus() {},
         async forceSessionStatus() {},
+        async forceCreateMediaBuyArm() {},
+        async forceTaskCompletion() {},
         async simulateDelivery() {},
         async simulateBudgetSpend() {},
       };
       const result = await handleTestControllerRequest(store, { scenario: 'list_scenarios' });
-      assert.strictEqual(result.scenarios.length, 6);
+      assert.strictEqual(result.scenarios.length, 8);
     });
 
     it('returns empty scenarios for empty store', async () => {
