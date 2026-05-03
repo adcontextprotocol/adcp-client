@@ -6,6 +6,8 @@ Storyboard: `social_platform` (category `sales_social`, track `audiences`).
 
 **`sales-social` is additive, not a replacement.** The storyboard's own metadata declares `interaction_model: media_buy_seller` with `capabilities: [sells_media, accepts_briefs, supports_non_guaranteed]` and lists Snap, Meta, TikTok, and Pinterest as example agents — all of which have product catalogs (ad formats, placements, audience offerings as products) AND accept media buys (campaigns with flights, budgets, ad sets). The storyboard only exercises the audience / catalog / native-creative / events / financials leg because the baseline buyer-flow is covered by `sales-non-guaranteed` (or `sales-guaranteed`). Claim BOTH specialisms and implement the full surface.
 
+**Forecast surface**: `'conversions'` or `'clicks'`. Walled-garden Marketing APIs spend most of their planning surface on goal-based forecasting — buyer specifies the outcome target, the platform returns the implied budget. The schema description on `forecast_range_unit: 'conversions'` literally calls this out: _"Used in goal-based planning (e.g., Meta-style 'tell me your goal, I'll tell you the budget')."_ Project your platform's `delivery_estimate` / `audience_reach_estimate` / `recommend_bid` endpoints onto `Product.forecast` curves where each point is `{ metrics: { purchases: { mid }, spend: { low, mid, high } } }`. See [Delivery Forecasts § Forecast Range Units](https://adcontextprotocol.org/docs/media-buy/product-discovery/media-products#forecast-range-units) for the full unit menu and worked examples.
+
 **Baseline tools still apply** — implement the full 11-tool [baseline surface](#the-baseline-what-every-sales--agent-must-implement). Highlights for social specifically:
 
 - `get_products` — return your platform's ad formats, placements, and audience-targeting products
@@ -24,13 +26,13 @@ Storyboard: `social_platform` (category `sales_social`, track `audiences`).
 
 **Method mapping in `createAdcpServerFromPlatform`:** every `sales-social` tool maps to a typed method on the platform object — no manual handler-bag grouping required:
 
-| Wire tool | Platform field | Method |
-|---|---|---|
-| `sync_audiences` | `audiences` (`AudiencePlatform<TCtxMeta>`) | `audiences.syncAudiences` |
-| `log_event` | `sales` (`SalesPlatform<TCtxMeta>`) | `sales.logEvent` |
-| `sync_event_sources` | `sales` | `sales.syncEventSources` |
-| `get_account_financials` | `accounts` (`AccountStore<TCtxMeta>`) | `accounts.getAccountFinancials` |
-| `sync_accounts` | `accounts` | `accounts.upsert` |
+| Wire tool                | Platform field                             | Method                          |
+| ------------------------ | ------------------------------------------ | ------------------------------- |
+| `sync_audiences`         | `audiences` (`AudiencePlatform<TCtxMeta>`) | `audiences.syncAudiences`       |
+| `log_event`              | `sales` (`SalesPlatform<TCtxMeta>`)        | `sales.logEvent`                |
+| `sync_event_sources`     | `sales`                                    | `sales.syncEventSources`        |
+| `get_account_financials` | `accounts` (`AccountStore<TCtxMeta>`)      | `accounts.getAccountFinancials` |
+| `sync_accounts`          | `accounts`                                 | `accounts.upsert`               |
 
 (`sync_catalogs` → `sales.syncCatalogs` is only needed if you also claim `sales-catalog-driven` / `sales-retail-media` for DPA support.)
 
