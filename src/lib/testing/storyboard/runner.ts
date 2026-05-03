@@ -46,7 +46,7 @@ import {
 import { validateTestKit } from './test-kit';
 import { validateStoryboardShape } from './loader';
 import { probeRequestSigningVector } from './request-signing/probe-dispatch';
-import { createWebhookReceiver, type WebhookReceiver } from './webhook-receiver';
+import { createWebhookReceiver, type WebhookReceiver, type WebhookWaitResult } from './webhook-receiver';
 import { WEBHOOK_ASSERTION_TASKS, armWebhookAssertions, executeWebhookAssertionStep } from './webhook-assertions';
 import { CONTROLLER_SEEDING_PHASE_ID, runControllerSeeding, type ControllerSeedingResult } from './seeding';
 
@@ -396,7 +396,8 @@ function remapTaskCompletionOutputs<T extends { path?: string | undefined }>(out
 async function resolveTaskCompletionOutputs(
   taskResult: TaskResult | undefined,
   outputs: readonly { path?: string | undefined }[],
-  client: TestClient
+  client: TestClient,
+  webhookReceiver: WebhookReceiver | undefined
 ): Promise<TaskCompletionResolution> {
   const hasTaskCompletionPath = outputs.some(
     o => typeof o.path === 'string' && o.path.startsWith(TASK_COMPLETION_PATH_PREFIX)
@@ -424,36 +425,82 @@ async function resolveTaskCompletionOutputs(
   const dynamicClient = client as any;
   const executor = dynamicClient?.executor;
   const agent = dynamicClient?.agent;
-  if (!executor?.pollTaskCompletion || !agent) {
-    return { attempted: false };
+  const canPoll = !!(executor?.pollTaskCompletion && agent);
+  const canWebhook = !!webhookReceiver;
+  if (!canPoll && !canWebhook) return { attempted: false };
+
+  type PollWin = { kind: 'poll'; result: TaskResult };
+  type WebhookWin = { kind: 'webhook'; result: WebhookWaitResult };
+  type TimeoutWin = { kind: 'timeout' };
+  type Winner = PollWin | WebhookWin | TimeoutWin;
+
+  const racers: Promise<Winner>[] = [];
+
+  // Poll path. Note: when the outer race resolves first, the SDK's
+  // `pollTaskCompletion` keeps polling internally until it observes a
+  // terminal state. The runner's outer timeout is enough to bound the
+  // *step* duration; the inner loop continuation is a known limitation
+  // pending an AbortSignal addition to the SDK.
+  if (canPoll) {
+    racers.push(
+      executor.pollTaskCompletion(agent, taskId, pollIntervalMs).then(
+        (result: TaskResult): PollWin => ({
+          kind: 'poll',
+          result,
+        })
+      )
+    );
   }
 
-  // Note: when the outer race resolves on timeout, the SDK's
-  // `pollTaskCompletion` keeps polling internally until it observes a
-  // terminal state. For a stuck task that means `tasks/get` continues
-  // hitting the agent every `pollIntervalMs` until the process exits.
-  // The runner's outer timeout is enough to bound the *step* duration;
-  // the inner loop continuation is a known limitation pending an
-  // AbortSignal addition to the SDK.
+  // Webhook path. Per `tasks-get-response.json`, sellers MAY use webhook-
+  // only HITL completion (no polling). When a `--webhook-receiver` is
+  // active, race the receiver's `wait` (filtered by `task_id`) against
+  // the poll. The webhook payload's `result` field is the artifact's
+  // `data` (per the framework's task webhook payload shape, mirroring
+  // the HITL completion shape from `from-platform.ts`).
+  if (canWebhook) {
+    racers.push(
+      webhookReceiver!
+        .wait({ body: { task_id: taskId } }, timeoutMs)
+        .then((result): WebhookWin => ({ kind: 'webhook', result }))
+    );
+  }
+
   let timer: NodeJS.Timeout | undefined;
-  const timeoutPromise = new Promise<{ timedOut: true }>(resolve => {
-    timer = setTimeout(() => resolve({ timedOut: true }), timeoutMs);
+  const timeoutRacer = new Promise<TimeoutWin>(resolve => {
+    timer = setTimeout(() => resolve({ kind: 'timeout' }), timeoutMs);
     // Don't keep the event loop alive on this handle — the runner's
     // wall-clock budget is already enforced by the storyboard runner
     // shell, and a hung task shouldn't delay process exit by `timeoutMs`.
     timer.unref?.();
   });
+  racers.push(timeoutRacer);
 
   try {
-    const polled = await Promise.race([executor.pollTaskCompletion(agent, taskId, pollIntervalMs), timeoutPromise]);
-    if (polled && typeof polled === 'object' && 'timedOut' in polled && polled.timedOut === true) {
+    const winner = await Promise.race(racers);
+    if (winner.kind === 'timeout') {
       return { attempted: true, timedOut: true, pollTimeoutMs: timeoutMs };
     }
-    const polledTaskResult = polled as TaskResult;
-    if (polledTaskResult.success === false) {
+    if (winner.kind === 'poll') {
+      const polled = winner.result;
+      if (polled.success === false) return { attempted: true, taskFailed: true };
+      return { attempted: true, data: polled.data };
+    }
+    // Webhook win.
+    const waitResult = winner.result;
+    if (waitResult.timed_out) {
+      return { attempted: true, timedOut: true, pollTimeoutMs: timeoutMs };
+    }
+    const webhookBody = waitResult.webhook.body as
+      | { status?: unknown; result?: unknown; task_status?: unknown }
+      | undefined;
+    // Treat any non-completed terminal status (failed/canceled/rejected)
+    // surfaced via webhook the same as a poll-side `success: false`.
+    const status = webhookBody?.status ?? webhookBody?.task_status;
+    if (typeof status === 'string' && status !== 'completed') {
       return { attempted: true, taskFailed: true };
     }
-    return { attempted: true, data: polledTaskResult.data };
+    return { attempted: true, data: webhookBody?.result };
   } catch {
     return { attempted: true, taskFailed: true };
   } finally {
@@ -2188,14 +2235,22 @@ export async function runStoryboardStep(
   const context: StoryboardContext = { ...options.context };
   if (options.context) forwardAliasCache(options.context, context);
 
-  const webhookReceiver = options.webhook_receiver
-    ? await createWebhookReceiver({
-        ...(options.webhook_receiver.mode && { mode: options.webhook_receiver.mode }),
-        ...(options.webhook_receiver.host !== undefined && { host: options.webhook_receiver.host }),
-        ...(options.webhook_receiver.port !== undefined && { port: options.webhook_receiver.port }),
-        ...(options.webhook_receiver.public_url !== undefined && { public_url: options.webhook_receiver.public_url }),
-      })
-    : undefined;
+  // `_webhookReceiver` is a test-only injection point; production callers
+  // pass `webhook_receiver` and the runner constructs the listener.
+  const injectedReceiver = options._webhookReceiver as WebhookReceiver | undefined;
+  const webhookReceiver: WebhookReceiver | undefined =
+    injectedReceiver ??
+    (options.webhook_receiver
+      ? await createWebhookReceiver({
+          ...(options.webhook_receiver.mode && { mode: options.webhook_receiver.mode }),
+          ...(options.webhook_receiver.host !== undefined && { host: options.webhook_receiver.host }),
+          ...(options.webhook_receiver.port !== undefined && { port: options.webhook_receiver.port }),
+          ...(options.webhook_receiver.public_url !== undefined && {
+            public_url: options.webhook_receiver.public_url,
+          }),
+        })
+      : undefined);
+  const ownsWebhookReceiver = !injectedReceiver && !!webhookReceiver;
   const runnerVars = createRunnerVariables({
     ...(webhookReceiver && { webhookBase: webhookReceiver.base_url }),
   });
@@ -2205,7 +2260,7 @@ export async function runStoryboardStep(
   const allSteps = flattenSteps(storyboard);
   const found = allSteps.find(s => s.step.id === stepId);
   if (!found) {
-    if (webhookReceiver) await webhookReceiver.close();
+    if (ownsWebhookReceiver && webhookReceiver) await webhookReceiver.close();
     throw new Error(
       `Step "${stepId}" not found in storyboard "${storyboard.id}". ` +
         `Available steps: ${allSteps.map(s => s.step.id).join(', ')}`
@@ -2233,7 +2288,7 @@ export async function runStoryboardStep(
     await closeConnections(options.protocol);
   }
 
-  if (webhookReceiver) await webhookReceiver.close();
+  if (ownsWebhookReceiver && webhookReceiver) await webhookReceiver.close();
 
   return result;
 }
@@ -2823,7 +2878,12 @@ async function executeStep(
     // `capture_poll_timeout` instead of recycling
     // `capture_path_not_resolvable` so the failure-class is distinct from
     // the original "field absent in immediate response" diagnostic.
-    const taskCompletionResolution = await resolveTaskCompletionOutputs(taskResult, step.context_outputs, client);
+    const taskCompletionResolution = await resolveTaskCompletionOutputs(
+      taskResult,
+      step.context_outputs,
+      client,
+      runState.webhookReceiver
+    );
     // `'data' in resolution` distinguishes "polled, artifact had no data"
     // (use undefined → outputs fail with capture_path_not_resolvable) from
     // "did not poll" (fall back to the immediate response data).
