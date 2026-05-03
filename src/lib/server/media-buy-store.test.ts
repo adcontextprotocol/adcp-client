@@ -69,6 +69,36 @@ describe('createMediaBuyStore — persistFromCreate + backfill', () => {
     });
   });
 
+  it('persists the seller-normalized targeting_overlay from the response when present, not the buyer-supplied request copy', async () => {
+    const { store } = setup();
+    const buyerSupplied: TargetingOverlay = {
+      property_list: { list_id: 'acme_outdoor_allowlist_v1', agent_url: 'https://buyer.example/lists' },
+    };
+    // Sellers commonly resolve `agent_url` to a canonical resolver,
+    // strip unknown fields, or rewrite list_ids to the seller's
+    // namespace before persisting. Per spec, the echoed overlay MUST
+    // reflect what the seller persisted — the buyer-supplied copy is
+    // not authoritative once the seller normalizes.
+    const sellerNormalized: TargetingOverlay = {
+      property_list: { list_id: 'acme_outdoor_allowlist_v1', agent_url: 'https://lists.canonical.example' },
+    };
+
+    await store.persistFromCreate(
+      'acct_a',
+      { packages: [{ buyer_ref: 'pkg_a', targeting_overlay: buyerSupplied }] },
+      {
+        media_buy_id: 'mb_1',
+        packages: [{ package_id: 'seller_pkg_001', buyer_ref: 'pkg_a', targeting_overlay: sellerNormalized }],
+      }
+    );
+
+    const result = await store.backfill('acct_a', {
+      media_buys: [{ media_buy_id: 'mb_1', packages: [{ package_id: 'seller_pkg_001' }] }],
+    });
+
+    expect(result.media_buys?.[0]?.packages?.[0]?.targeting_overlay).toEqual(sellerNormalized);
+  });
+
   it('does not overwrite a targeting_overlay the seller already echoed', async () => {
     const { store } = setup();
     const sellerEchoed: TargetingOverlay = { geo_countries: ['US'] };
