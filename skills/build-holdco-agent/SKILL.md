@@ -81,29 +81,9 @@ accounts.resolve = async (ref, ctx) => {
 
 ## Tenant-isolation gates (FAIL-CLOSED)
 
-Every mutating handler that takes a wire-supplied `operator` must verify the operator maps to the buyer's authenticated home tenant. Fail-closed shape:
+Every mutating handler that takes a wire-supplied `operator` must verify the operator maps to the buyer's authenticated home tenant — and **fail-closed** when the home tenant can't be resolved. Otherwise an adopter who forks the file and adds a credential without populating the home-tenant map silently disables tenant isolation.
 
-```ts
-const homeTenantId = ctx?.agent ? BUYER_HOME_TENANT.get(ctx.agent.agent_url) : undefined;
-if (!homeTenantId || tenantId !== homeTenantId) {
-  return {
-    /* PERMISSION_DENIED row */
-  };
-}
-```
-
-NOT this:
-
-```ts
-// FAIL-OPEN: if homeTenantId is undefined, the check skips and any
-// operator is accepted. Adopters who add a credential without populating
-// BUYER_HOME_TENANT silently disable tenant isolation.
-if (homeTenantId && tenantId !== homeTenantId) {
-  /* ... */
-}
-```
-
-This applies to **`accounts.upsert`** (sync_accounts) and to any v5-escape-hatch handler that takes per-entry account refs (`accounts.syncGovernance`, etc.).
+The canonical gate shape and the fail-OPEN anti-pattern are documented in [`examples/CONTRIBUTING.md`](../../examples/CONTRIBUTING.md#tenant-isolation-gates-multi-tenant-adapters) (the convention reviewers will check for). Apply that pattern in **`accounts.upsert`** (sync_accounts) and in any v5-escape-hatch handler that takes per-entry account refs (`accounts.syncGovernance`, etc.).
 
 ## Cross-specialism dispatch
 

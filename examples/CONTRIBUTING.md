@@ -165,7 +165,9 @@ Every example change that ships as part of an adapter (file rename, new adapter,
 
 ## See also
 
+- Repo-root [`CONTRIBUTING.md`](../CONTRIBUTING.md) — general dev process, IPR, commit conventions; this file scopes to `examples/` conventions only
 - `examples/README.md` — the adopter-facing matrix of "if you're claiming X, fork Y"
 - `skills/triage-storyboard-failure/SKILL.md` — when a storyboard fails on your fork
+- `skills/build-holdco-agent/SKILL.md` — multi-tenant + multi-specialism adopter pattern (cross-references the FAIL-CLOSED gate convention from this file)
 - `skills/build-seller-agent/`, `skills/build-creative-agent/`, etc. — per-specialism teaching surface adopters read alongside the example file
 - CLAUDE.md (repo root) — protocol-wide conventions and the storyboard-triage rubric this skill expands

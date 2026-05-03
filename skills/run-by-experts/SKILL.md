@@ -1,6 +1,6 @@
 ---
 name: run-by-experts
-description: Use before opening a PR (especially for protocol/safety/correctness changes). Fires multiple expert reviewers in parallel and uses convergence as the blocker signal — items flagged by 2+ reviewers are real; single-reviewer findings are usually preferences.
+description: Use before opening a SUBSTANTIVE PR (protocol changes, multi-tenant or auth surfaces, adopter-facing examples, refactors that span specialism modules). Fires multiple expert reviewers in parallel and uses convergence as the blocker signal — items flagged by 2+ reviewers are real; single-reviewer findings are usually preferences. Skip for trivial changes (single-line fixes, README typos, mechanical refactors).
 ---
 
 # Run by Experts

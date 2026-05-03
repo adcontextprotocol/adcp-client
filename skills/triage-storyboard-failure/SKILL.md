@@ -85,9 +85,9 @@ Cross-link to the adapter PR that surfaced it. The storyboard maintainers see th
 
 Real triage walks from this codebase:
 
-- **adcontextprotocol/adcp#3892**: brand-rights storyboard's `acquire_rights` step captured `rights_grant_id` via `context_outputs`. Spec field is `rights_id`. Cascading skip on next step. **Resolution**: spec → field is `rights_id`; storyboard is wrong; filed; merged in 3.0.5.
-- **adcontextprotocol/adcp#3914**: brand-rights/governance_denied storyboard's `acquire_rights_denied` step expected thrown `code: GOVERNANCE_DENIED`. Spec gives `AcquireRightsRejected` arm with `reason`. **Resolution**: storyboard is asserting a non-spec convention; filed upstream; adapter ships spec-correct shape.
-- **adcontextprotocol/adcp#3913**: `brand_rights/governance_denied` storyboard step `sync_governance` skips because `$context.governance_agent_url` is unresolved; runner has no `--context` flag for full `storyboard run` mode. **Resolution**: runner gap, not adapter or spec gap; filed upstream.
+- **adcontextprotocol/adcp#3892** (closed): brand-rights storyboard's `acquire_rights` step captured `rights_grant_id` via `context_outputs`. Spec field is `rights_id`. Cascading skip on next step. **Resolution**: spec → field is `rights_id`; storyboard is wrong; filed; closed.
+- **adcontextprotocol/adcp#3914** (open): brand-rights/governance_denied storyboard's `acquire_rights_denied` step expected thrown `code: GOVERNANCE_DENIED`. Spec gives `AcquireRightsRejected` arm with `reason`. **Resolution**: storyboard is asserting a non-spec convention; filed upstream; adapter ships spec-correct shape.
+- **adcontextprotocol/adcp#3913** (open): `brand_rights/governance_denied` storyboard step `sync_governance` skips because `$context.governance_agent_url` is unresolved; runner has no `--context` flag for full `storyboard run` mode. **Resolution**: runner gap, not adapter or spec gap; filed upstream.
 
 ## See also
 
