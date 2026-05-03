@@ -50,6 +50,7 @@ import {
   parameterizedRender,
   htmlAsset,
   javascriptAsset,
+  audioAsset,
   urlRender,
   type Format,
   type ListCreativeFormatsResponse,
@@ -82,9 +83,13 @@ interface UpstreamTemplate {
   name: string;
   description: string;
   channel: 'display' | 'video' | 'audio' | 'ctv' | 'native';
+  // SWAP: include any output_kinds your platform emits. The mock supports
+  // four (display HTML, JS, VAST, audio URL); production audio platforms
+  // (AudioStack, ElevenLabs, Resemble) typically output `audio_url` to a
+  // signed CDN endpoint.
   dimensions?: { width: number; height: number };
   duration_seconds?: { min: number; max: number };
-  output_kind: 'html_tag' | 'javascript_tag' | 'vast_xml';
+  output_kind: 'html_tag' | 'javascript_tag' | 'vast_xml' | 'audio_url';
   slots: Array<{
     slot_id: string;
     asset_type: 'image' | 'video' | 'audio' | 'text' | 'click_url';
@@ -102,6 +107,7 @@ interface UpstreamRender {
     tag_html?: string;
     tag_javascript?: string;
     vast_xml?: string;
+    audio_url?: string;
     preview_url?: string;
     assets?: Array<Record<string, unknown>>;
   };
@@ -262,10 +268,23 @@ function templateToFormat(t: UpstreamTemplate): Format {
 }
 
 /** Project an upstream `render.output` onto AdCP `creative_manifest.assets`.
- *  The mock returns one of three output shapes (HTML tag, JS tag, VAST);
- *  AdCP creative-manifest assets are keyed by asset_id and discriminated by
- *  asset_type. Use the `htmlAsset`/`javascriptAsset` builders to inject the
- *  discriminator — a bare `{ content }` fails the asset-union oneOf. */
+ *  The mock returns one of four output shapes (HTML tag, JS tag, VAST, audio
+ *  URL); AdCP creative-manifest assets are keyed by asset_id and discriminated
+ *  by asset_type. Use the `htmlAsset` / `javascriptAsset` / `audioAsset`
+ *  builders to inject the discriminator — a bare `{ content }` or `{ url }`
+ *  fails the asset-union oneOf.
+ *
+ *  ⚠️ This fixture's `serving_tag` asset_id diverges from
+ *  `creative-manifest.json:14`, which mandates: "Each key MUST match an
+ *  asset_id from the format's assets array." The format declared by
+ *  `templateToFormat` has slot ids (`image`, `headline`, `script`, etc.) —
+ *  none of which is `serving_tag`. We use `serving_tag` consistently across
+ *  all four output kinds (HTML / JS / VAST / audio) so the fixture exercises
+ *  every output branch with one key, but **production adopters MUST echo
+ *  declared `assets[].asset_id` values** — pick the slot the buyer expects
+ *  the rendered output under (e.g. `output`, `master`) and declare it in
+ *  the format. Spec-aligning this fixture is tracked at adcp-client follow-up
+ *  to #1496; until then, see SHAPE-GOTCHAS.md before adapting this pattern. */
 function projectRenderToManifest(
   render: UpstreamRender,
   formatId: { agent_url: string; id: string }
@@ -284,6 +303,14 @@ function projectRenderToManifest(
     // creative-template storyboard's build step asserts `assets` presence
     // rather than a specific asset_type.
     assets['serving_tag'] = htmlAsset({ content: out.vast_xml });
+  } else if (out.audio_url) {
+    // Audio templates render to a hosted MP3. Real audio platforms return
+    // signed CDN URLs with TTL — the buyer must fetch within the lifetime.
+    // The `audioAsset` builder injects the `asset_type: 'audio'` discriminator
+    // that the AdCP creative-manifest oneOf requires. Reuses the same
+    // `serving_tag` asset_id as the HTML / JS / VAST branches — the asset_type
+    // discriminator is what the buyer keys on, not the asset_id.
+    assets['serving_tag'] = audioAsset({ url: out.audio_url });
   }
   return { format_id: formatId, assets };
 }

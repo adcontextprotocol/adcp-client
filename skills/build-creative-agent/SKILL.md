@@ -51,7 +51,37 @@ The fork targets cover the baseline + specialism deltas. Quick reference for wha
 
 **`creative-ad-server`** — stateful library (`POST/GET/PATCH /v1/creatives`), tag generation via macro substitution against a stored snippet, per-creative pricing (`include_pricing=true` on `list_creatives`, `pricing_option_id` echoed by `build_creative`, `report_usage` closes the loop), `getCreativeDelivery` with multi-id pass-through and required top-level `currency` + `reporting_period`. Output formats from `list_creative_formats` are **serving-tag formats** (VAST 4.2, display tag HTML, native JSON), not input visual formats.
 
-**`creative-template`** — stateless: build from inline `creative_manifest` in the request, no `ctx.store` lookup. Multi-format path: `target_format_ids` (plural) returns `{ creative_manifests: [...] }` (auto-wrapped to `buildCreativeMultiResponse`); single returns `{ creative_manifest: ... }`. Formats declare `variables[]` the template substitutes. Audio templates (TTS / mix / master) use `parameterizedRender({ role: 'primary' })` — no width/height — and typically run async (return task envelope, emit `creative_review` webhook on completion). Audio inputs come in as `creative_manifest.assets.script` (a `TextAsset` with `.content`, not `.text`).
+**`creative-template`** — stateless: build from inline `creative_manifest` in the request, no `ctx.store` lookup. Multi-format path: `target_format_ids` (plural) returns `{ creative_manifests: [...] }` (auto-wrapped to `buildCreativeMultiResponse`); single returns `{ creative_manifest: ... }`. Formats declare `variables[]` the template substitutes.
+
+Audio templates (TTS / mix / master, e.g. AudioStack / ElevenLabs / Resemble) follow the same shape with two deltas: (a) format declares `parameterizedRender({ role: 'primary' })` because audio has no width/height — encode duration/codec/bitrate in `accepts_parameters`, not in render entries; (b) the upstream pipeline is naturally minutes-long (voice-over → mix → master), so the adapter returns a task envelope and emits `creative_review` webhooks on completion.
+
+**Audio adopters extend `hello_creative_adapter_template.ts` with three deltas:**
+
+1. Add `audio_url?: string` to `UpstreamRender.output` and extend `output_kind` to include `'audio_url'`
+2. Add an audio-output branch to `projectRenderToManifest`:
+   ```ts
+   } else if (out.audio_url) {
+     assets['serving_tag'] = audioAsset({ url: out.audio_url });
+   }
+   ```
+   The `audioAsset` builder injects the `asset_type: 'audio'` discriminator the creative-manifest oneOf requires.
+3. Seed an audio template in your upstream platform — see `tpl_audiostack_spot_30s_v1` in `src/lib/mock-server/creative-template/seed-data.ts` for the worked reference.
+
+**Storyboard coverage for audio is not yet upstream** — the `creative_template/build_creative` step asserts display-shaped assets, tracked at [adcontextprotocol/adcp#4015](https://github.com/adcontextprotocol/adcp/issues/4015). Until that ships, audio adopters validate via `npm run compliance:fork-matrix -- --test-name-pattern="hello-creative-adapter-template"` (display + video gate inherited) plus a manual round-trip against the seeded audio template:
+
+```bash
+npx adcp mock-server creative-template --port 4250
+# In another shell:
+curl -X POST http://127.0.0.1:4250/v3/workspaces/ws_acme_studio/renders \
+  -H 'Authorization: Bearer mock_creative_template_key_do_not_use_in_prod' \
+  -H 'Content-Type: application/json' \
+  -d '{"template_id":"tpl_audiostack_spot_30s_v1","mode":"build","inputs":[{"slot_id":"script","value":"Built for the trail."}],"client_request_id":"smoke-1"}'
+# → { "render_id": "rnd_…", "status": "queued" }
+# Poll twice (queued → running → complete):
+curl -H 'Authorization: Bearer mock_creative_template_key_do_not_use_in_prod' \
+  http://127.0.0.1:4250/v3/workspaces/ws_acme_studio/renders/rnd_…
+# Final: { ..., "status": "complete", "output": { "audio_url": "….mp3", "preview_url": "...", "assets": [{ "kind": "audio_url", "mime_type": "audio/mpeg" }] } }
+```
 
 **`creative-generative`** — generate from `message` + `brand.domain`; honor `quality: draft|production`; support refinement (re-send manifest in). Goes through `skills/build-generative-seller-agent/` because it's coupled with selling inventory.
 

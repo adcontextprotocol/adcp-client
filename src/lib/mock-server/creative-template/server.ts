@@ -26,6 +26,7 @@ interface MockRender {
     tag_html?: string;
     tag_javascript?: string;
     vast_xml?: string;
+    audio_url?: string;
     preview_url?: string;
     assets?: Array<Record<string, unknown>>;
   };
@@ -338,6 +339,18 @@ function synthesizeOutput(render: MockRender, template: MockTemplate | undefined
       tag_javascript: `(function(){var d=document;var img=d.createElement('img');img.src='${previewBase}.png';d.write(img.outerHTML);})();`,
       preview_url: previewBase,
       assets: [{ kind: 'js_tag', mime_type: 'application/javascript' }],
+    };
+  }
+  if (template.output_kind === 'audio_url') {
+    // Audio templates render to a hosted MP3. Real platforms (AudioStack,
+    // ElevenLabs, Resemble) return signed URLs against their CDN with TTL;
+    // the mock returns a stable preview-base URL. The queued → running →
+    // complete state machine already simulates the multi-minute TTS / mix /
+    // master pipeline production audio platforms run.
+    return {
+      audio_url: `${previewBase}.mp3`,
+      preview_url: previewBase,
+      assets: [{ kind: 'audio_url', mime_type: 'audio/mpeg' }],
     };
   }
   // default html_tag
