@@ -237,9 +237,15 @@ export interface RecordedCall {
 }
 
 /**
- * Per spec PR adcontextprotocol/adcp#3816: `payload_must_contain` JSONPath
- * is valid only when `content_type` is `application/json` or has a `+json`
- * suffix.
+ * Per spec PRs adcontextprotocol/adcp#3816 (initial restriction) and
+ * adcp#3987 (RFC 6839 §3.1 pin): `payload_must_contain` JSONPath is
+ * valid only when `content_type` is `application/json` or any
+ * structured-syntax-suffix `*\/*+json` (e.g., `application/vnd.api+json`,
+ * `application/scim+json`). Newline-delimited JSON formats
+ * (`application/json-seq`, `application/jsonl`) take the non-JSON path —
+ * they don't carry JSON-document semantics that path matching depends
+ * on. All other types (form-urlencoded, multipart, plain text) likewise
+ * take the non-JSON path.
  */
 export function isJsonContentType(contentType: string | undefined): boolean {
   if (!contentType) return false;

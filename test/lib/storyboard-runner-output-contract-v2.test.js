@@ -391,7 +391,18 @@ describe('upstream_traffic — controller-backed anti-façade assertion', () => 
     assert.equal(result.passed, false);
   });
 
-  test('non-JSON content_type + match: present — substring fallback against terminal path key', () => {
+  test('non-JSON content_type + match: present — grades not_applicable per adcp#3987', () => {
+    // Earlier behavior: terminal-key substring fallback. The runner
+    // extracted `hashed_email` from `users[*].hashed_email` and
+    // substring-matched it against the raw form-urlencoded body. That
+    // produced false positives — any payload mentioning `hashed_email`
+    // in any context (URL fragment, comment, unrelated metadata field)
+    // would pass, defeating the anti-façade contract. adcp#3987 closes
+    // the loophole: ALL match modes against non-JSON content types
+    // grade `not_applicable`, just like equals / contains_any below.
+    // Storyboards needing a non-JSON value-carried signal use
+    // `identifier_paths` (substring-searches storyboard-supplied VALUES,
+    // encoding-agnostic, no false-positive surface).
     const ctx = ctxWithTraffic({
       success: true,
       total_count: 1,
@@ -406,13 +417,15 @@ describe('upstream_traffic — controller-backed anti-façade assertion', () => 
       [
         {
           check: 'upstream_traffic',
-          description: 'present in form-encoded body',
+          description: 'present graded not_applicable on form-encoded body',
           payload_must_contain: [{ path: 'users[*].hashed_email', match: 'present' }],
         },
       ],
       ctx
     );
     assert.equal(result.passed, true);
+    assert.equal(result.not_applicable, true);
+    assert.match(result.note, /non-JSON content_types/);
   });
 
   test('non-JSON content_type + match: equals — grades not_applicable, validation passes overall', () => {
