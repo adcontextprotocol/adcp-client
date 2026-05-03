@@ -305,6 +305,7 @@
     "structured-headers": "^2.0.2",
     "tldts": "^7.0.29",
     "undici": "^6.25.0",
+    "ws": "^8.20.0",
     "yaml": "^2.7.1"
   },
   "peerDependencies": {
@@ -333,6 +334,7 @@
     "@types/node": "^20.19.39",
     "@types/pg": "^8.20.0",
     "@types/tar": "^6.1.13",
+    "@types/ws": "^8.18.1",
     "eslint": "^10.0.3",
     "json-schema-to-typescript": "^15.0.4",
     "json-schema-to-zod": "^2.6.1",
