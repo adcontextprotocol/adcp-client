@@ -141,13 +141,16 @@ export interface DerivedAccountStoreOptions<TCtxMeta = Record<string, unknown>> 
  * };
  * ```
  *
- * **Buyer-supplied `account_id` is ignored, not refused.** A `'derived'`
- * adapter that receives an inline `account_id` simply ignores it (the
- * resolver returns the singleton regardless). This matches the wire spec —
- * `'derived'` agents declare the field is meaningless. If you want to
- * surface a wire-shape error when a buyer sends `account_id` to a derived
- * adapter, wrap the resolver and throw `AdcpError('INVALID_REQUEST',
- * { field: 'account.account_id' })` from a `resolve` override.
+ * **Buyer-supplied `account_id` is refused at the framework boundary.**
+ * Since adcp-client#1468, the framework throws `AdcpError('INVALID_REQUEST',
+ * { field: 'account.account_id' })` BEFORE reaching this resolver when a
+ * `'derived'`-mode platform receives an inline `account_id` — same shape
+ * as `'implicit'`'s long-standing refusal (#1364), with a single-tenant
+ * message instead of the `sync_accounts`-first guidance. The factory
+ * itself ignores any `account_id` that does reach it (defensive belt +
+ * braces), but adopters can rely on the framework refusal as the
+ * canonical surface. Hand-rolled `'derived'` stores get the same
+ * enforcement automatically.
  *
  * @public
  */
