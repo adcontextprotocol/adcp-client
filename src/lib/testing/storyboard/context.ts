@@ -29,11 +29,20 @@ export const CONTEXT_EXTRACTORS: Record<string, ContextExtractor> = {
     const extracted: Record<string, unknown> = {};
     if (first.account_id) extracted.account_id = first.account_id;
     if (first.status) extracted.account_status = first.status;
-    // Build an account reference for downstream steps
-    extracted.account = {
-      brand: first.brand,
-      operator: first.operator,
-    };
+    // Build a natural-key AccountReference for downstream steps only when
+    // brand is present. operator falls back to brand.domain — sellers are
+    // not required to echo operator in every sync_accounts response, but
+    // AccountReference's natural-key arm requires it per the spec (account-
+    // ref.json: both brand AND operator are required on that arm). Omitting
+    // operator causes JSON serialization to drop the key and produces a
+    // spec-invalid ref that strict-validating sellers reject.
+    if (first.brand && typeof first.brand === 'object' && first.brand !== null) {
+      const brand = first.brand as Record<string, unknown>;
+      const operator = first.operator ?? brand.domain;
+      if (operator) {
+        extracted.account = { brand: first.brand, operator };
+      }
+    }
     return extracted;
   },
 
