@@ -446,8 +446,12 @@ export async function bootSalesNonGuaranteed(options: BootOptions): Promise<Boot
       return;
     }
 
-    // Validate line_items if supplied — each must reference a real product
-    // on this network and meet the product's `min_spend` floor.
+    // Validate line_items if supplied. Product existence isn't required —
+    // storyboard cascades seed product fixtures via comply_test_controller
+    // independent of the seller's actual catalog (mirrors the sales-guaranteed
+    // mock's looser pattern). Min_spend is enforced ONLY when the product is
+    // known on this network — gives compliance harnesses a permissive path
+    // while keeping the floor-pricing test surface available for known products.
     const lineItemsInput = Array.isArray(body.line_items) ? body.line_items : [];
     const lineItems: LineItemState[] = [];
     for (const raw of lineItemsInput) {
@@ -462,11 +466,7 @@ export async function bootSalesNonGuaranteed(options: BootOptions): Promise<Boot
         return;
       }
       const product = products.find(p => p.product_id === productId && p.network_code === network.network_code);
-      if (!product) {
-        writeJson(res, 404, { code: 'product_not_found', message: `Product ${productId} not found.` });
-        return;
-      }
-      if (product.pricing.min_spend !== undefined && liBudget < product.pricing.min_spend) {
+      if (product && product.pricing.min_spend !== undefined && liBudget < product.pricing.min_spend) {
         writeJson(res, 400, {
           code: 'budget_too_low',
           message: `line_item for ${productId}: budget ${liBudget} below product min_spend ${product.pricing.min_spend}.`,
@@ -554,12 +554,11 @@ export async function bootSalesNonGuaranteed(options: BootOptions): Promise<Boot
       writeJson(res, 400, { code: 'invalid_request', message: 'product_id is required.' });
       return;
     }
+    // Product existence isn't required at line-item creation — cascade
+    // scenarios seed product fixtures via comply_test_controller. Min_spend
+    // is enforced ONLY when the product is known on this network.
     const product = products.find(p => p.product_id === productId && p.network_code === order.network_code);
-    if (!product) {
-      writeJson(res, 404, { code: 'product_not_found', message: `Product ${productId} not found.` });
-      return;
-    }
-    if (product.pricing.min_spend !== undefined && liBudget < product.pricing.min_spend) {
+    if (product && product.pricing.min_spend !== undefined && liBudget < product.pricing.min_spend) {
       writeJson(res, 400, {
         code: 'budget_too_low',
         message: `budget ${liBudget} below product min_spend ${product.pricing.min_spend}.`,

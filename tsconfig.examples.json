@@ -27,6 +27,7 @@
     "examples/hello_creative_adapter_template.ts",
     "examples/hello_seller_adapter_social.ts",
     "examples/hello_seller_adapter_guaranteed.ts",
+    "examples/hello_seller_adapter_non_guaranteed.ts",
     "examples/hello_si_adapter_brand.ts"
   ],
   "exclude": ["node_modules", "dist"]
