@@ -265,19 +265,35 @@ export interface SalesPlatform<TCtxMeta = Record<string, unknown>> {
    * the safely-summable fields (`impressions`, `spend`, `clicks`,
    * `media_buy_count`); buyers fall back to per-buy values when needed.
    *
-   * Recommended pattern:
+   * Recommended pattern — prefer the upstream's native multi-id query
+   * over a per-id loop. Most reporting APIs (GAM ReportService's
+   * `WHERE LINE_ITEM_ID IN (...)`, TTD, DV360, Magnite, PubMatic, retail
+   * media) take an id list in one round-trip; iterating one-id-at-a-time
+   * is an N-roundtrip pattern that triggers upstream rate limits on
+   * 50-buy reports.
    *
    * ```ts
    * getMediaBuyDelivery: async (req, ctx) => {
    *   const ids = req.media_buy_ids ?? [];
-   *   const deliveries = await Promise.all(ids.map(id => fetchOne(id, ctx)));
+   *   // Native multi-id: one upstream round-trip.
+   *   const rows = await this.upstream.report({
+   *     mediaBuyIds: ids,
+   *     start: req.start_date,
+   *     end: req.end_date,
+   *   });
    *   return {
    *     reporting_period: { start, end },
    *     currency: 'USD',
-   *     media_buy_deliveries: deliveries,
-   *     aggregated_totals: sumNumericFields(deliveries),
+   *     media_buy_deliveries: rows,
+   *     aggregated_totals: this.upstream.aggregate(rows),
    *   };
    * }
+   * ```
+   *
+   * **Single-id fallback** — only if your upstream is genuinely single-id:
+   *
+   * ```ts
+   * const deliveries = await Promise.all(ids.map(id => fetchOne(id, ctx)));
    * ```
    *
    * When `media_buy_ids` is omitted, return a paginated set of
@@ -300,7 +316,21 @@ export interface SalesPlatform<TCtxMeta = Record<string, unknown>> {
   //
   // Proposal-mode adopters (write-only via push channels) return an empty
   // `media_buys: []` array — that's a valid response.
-  /** List media buys this account owns. Filter + pagination per the wire shape. */
+  /**
+   * List media buys this account owns. Filter + pagination per the wire shape.
+   *
+   * **Multi-id contract.** `req.media_buy_ids` is an array — buyers
+   * routinely request a specific set of buys in one call. The platform
+   * MUST iterate every id and return one element per id in the response
+   * `media_buys[]` array. Reading only `media_buy_ids[0]` silently
+   * truncates the buyer's request — same correctness bug that #1342
+   * documented for `getMediaBuyDelivery`. Same recommended pattern: prefer
+   * an upstream multi-id query (one round-trip), fall back to per-id loop
+   * only when the upstream is single-id-only.
+   *
+   * When `media_buy_ids` is omitted, return a paginated set of accessible
+   * buys filtered by `status_filter` (defaults to `['active']`).
+   */
   getMediaBuys?(req: GetMediaBuysRequest, ctx: Ctx<TCtxMeta>): Promise<GetMediaBuysResponse>;
 
   // ── provide_performance_feedback: sync only ─────────────────────────
