@@ -1,5 +1,94 @@
 # Changelog
 
+## 6.9.0
+
+### Minor Changes
+
+- ee63e0d: feat(server): `ConformanceClient` — outbound-WebSocket Socket Mode primitive that lets adopter dev/staging MCP servers connect to a remote AdCP runner (today, Addie at agenticadvertising.org) without public DNS or inbound exposure. Three-line integration: `new ConformanceClient({ url, token, server }).start()`. Reverse-RPC at the TCP level only — MCP semantics unchanged. Dev/staging only by design (per AdCP #3986 deployment-scoped controller rule). Exposed from `@adcp/sdk/server`.
+
+### Patch Changes
+
+- e680866: Add audio creative-template support to the mock-server and hello adapter (Path 3 from the PR #1496 follow-up).
+
+  The fork-matrix collapse claimed audio creative-template patterns but didn't ship runnable code for them. This patch fills that gap end-to-end without forking a separate adapter:
+  - `src/lib/mock-server/creative-template/seed-data.ts` — extended `output_kind` union with `'audio_url'`; seeded `tpl_audiostack_spot_30s_v1` modeling the TTS / mix / master pipeline (text script → optional voice + music_bed → 30s mastered MP3). No dimensions; the existing `queued → running → complete` state machine already simulates the multi-minute render time real audio platforms (AudioStack, ElevenLabs, Resemble) take.
+  - `src/lib/mock-server/creative-template/server.ts` — added an `audio_url` branch to `synthesizeOutput` that returns `{ audio_url: '<previewBase>.mp3', preview_url, assets: [{ kind: 'audio_url', mime_type: 'audio/mpeg' }] }`.
+  - `examples/hello_creative_adapter_template.ts` — extended `UpstreamTemplate.output_kind` and `UpstreamRender.output` to include the audio shape; added `else if (out.audio_url)` branch in `projectRenderToManifest` that wraps the URL with `audioAsset({ url })` (the framework injects the `asset_type: 'audio'` discriminator into the creative-manifest oneOf).
+  - `skills/build-creative-agent/SKILL.md` — replaced the "audio templates" paragraph with a worked-reference one citing the seeded audio template plus the `audioAsset()` projection. Notes that storyboard coverage for audio is not yet upstream (filed as adcontextprotocol/adcp#4015).
+
+  Adopters integrating an audio creative platform now have a runnable round-trip path from `npx adcp mock-server creative-template` through the adapter to a complete creative-manifest with an audio asset. Validated via:
+
+  ```ts
+  const handle = await bootMockServer({ specialism: 'creative-template', port: 0 });
+  const r = await fetch(handle.url + '/v3/workspaces/ws_acme_studio/renders', {
+    method: 'POST',
+    body: JSON.stringify({
+      template_id: 'tpl_audiostack_spot_30s_v1',
+      mode: 'build',
+      inputs: [{ slot_id: 'script', value: '...' }],
+      client_request_id: '1',
+    }),
+  });
+  // queued → running → complete with { audio_url, preview_url, assets: [{ kind: 'audio_url' }] }
+  ```
+
+  Storyboard-grader coverage for audio is tracked at adcontextprotocol/adcp#4015 — the existing `creative_template` storyboard's `build_creative` step is hardcoded to display assets (image + headline + click_url), so audio adopters can't pass it today. Until that ships, audio adopters validate via `npm run compliance:fork-matrix -- --test-name-pattern="hello-creative-adapter-template"` (display + video gate inherited) plus the manual round-trip above.
+
+  Pure additive — no breaking changes. Existing display + video templates unchanged; fork-matrix 23/23 still green.
+
+- 4f822e8: fix(testing/storyboard): symmetric account resolution on `update_media_buy` enricher (closes #1505)
+
+  The storyboard runner's `update_media_buy` enricher was not in
+  `FIXTURE_AWARE_ENRICHERS`, so the generic `{ ...enriched, ...fixture }`
+  merge let storyboard `sample_request.account` override the harness-
+  resolved account. When create_media_buy used a runner-synthesized
+  sandbox account (e.g. `{ brand: 'test.example', operator: 'test.example', sandbox: true }`)
+  and the storyboard's update step authored `account: { brand: 'real.example', operator: '...' }`,
+  the update wrote to the prod partition while create wrote to the
+  sandbox partition. A subsequent `get_media_buys` reading from the
+  sandbox partition (via `context.account`) saw stale create-time
+  targeting_overlay — exactly the failure surfaced by the
+  `media_buy_seller/inventory_list_targeting/get_after_update` cascade
+  step.
+
+  This change adds `update_media_buy` to `FIXTURE_AWARE_ENRICHERS` and
+  rewrites the enricher to spread fixture fields first then force-override
+  `account` to `context.account ?? resolveAccount(options)` — symmetric
+  with the `get_media_buys` / `get_media_buy_delivery` fix in #1487.
+
+  Legacy storyboards without a `sample_request` still fall back to the
+  keyword-based pause / resume / cancel inference; only the fixture-
+  authored path changes.
+
+- 91c1ff8: Pivot from skill-matrix to fork-matrix; collapse `build-*-agent/SKILL.md` files.
+
+  The skill-matrix harness (`scripts/manual-testing/run-skill-matrix.ts` + `agent-skill-storyboard.ts` + `skill-matrix.json`) graded "can a fresh Claude session build an AdCP server from prose in SKILL.md." That's not the workflow real adopters use now that every production specialism has a worked, CI-tested fork target in `examples/hello_*_adapter_*.ts`.
+
+  The fork-matrix is the canonical compliance gate going forward. Each `test/examples/hello-*.test.js` boots the matching reference adapter against a mock-server upstream, runs the storyboard grader, and verifies upstream traffic — the three-gate contract from `docs/guides/EXAMPLE-TEST-CONTRACT.md`. Empirical comparison: skill-matrix v18 ran 1/8 in ~50min with 6 timeouts; fork-matrix runs 23/23 in ~10s.
+
+  **Changes:**
+  - New: `npm run compliance:fork-matrix` — runs every `test/examples/hello-*.test.js` gate.
+  - New: `skills/cross-cutting.md` — shared rules every `build-*` skill points at (idempotency, resolve-then-authorize, auth, signed-requests, ctx_metadata safety, account-resolution presets, webhook operation_id stability).
+  - Collapsed all 8 `build-*-agent/SKILL.md` to fork-target pointers + cross-cutting reference. Net: 6,916 lines deleted across `seller` (1835→83), `creative` (798→80), `signals` (578→70), `governance` (1006→84), `brand-rights` (640→83), `generative-seller` (621→78), `retail-media` (515→78), `si` (410→86); `holdco` light-touched.
+  - Removed: `npm run compliance:skill-matrix`, `npm run compliance:agent-skill`, plus `scripts/manual-testing/run-skill-matrix.ts`, `agent-skill-storyboard.ts`, `skill-matrix.json`.
+  - Updated: `docs/guides/VALIDATE-YOUR-AGENT.md` and `CLAUDE.md` reference fork-matrix.
+
+  **Adopter impact:** If you were running `npm run compliance:skill-matrix`, switch to `npm run compliance:fork-matrix`. The fork-matrix is faster, deterministic, and tests the same compliance question against the workflow adopters actually use (fork → swap upstream → ship).
+
+  **Additive type exports:** `RightUse` and `RightType` are now re-exported from `@adcp/sdk/types` (previously available only via `@adcp/sdk/types/core.generated`, which was not in the package exports map). Pure additive — existing imports keep working.
+
+  **Multi-tenant adapter fixes:** `examples/hello_seller_adapter_multi_tenant.ts` had pre-existing strict-tsc drift — fixed the import path, two `exactOptionalPropertyTypes` mismatches, and added stub `updateRights` / `reviewCreativeApproval` methods to satisfy the `BrandRightsPlatform` interface that grew in #1349. Adapter now passes the strict-tsc gate (`npm run compliance:fork-matrix` 23/23). Governance and brand-rights skills repointed at it as the canonical fork target.
+
+  Tracked at adcp-client#595 (closed by this change). The original "full vs reference-linked vs rules-only" experiment was the right question for the world where Claude built from scratch; in a fork-target world it's measuring noise.
+
+- 0c8008f: fix(conformance): get_media_buys and get_media_buy_delivery enrichers now resolve account via resolveAccount(options)
+
+  Adds both enrichers to FIXTURE_AWARE_ENRICHERS and uses `context.account ?? resolveAccount(options)` for account resolution, matching the pattern already used by create_media_buy. Previously, the generic fixture-authoritative merge let the fixture's raw account block (which may lack sandbox:true) override the harness-resolved account, causing namespace mismatches on the create→get round-trip and resulting in targeting_overlay store misses.
+
+  Fixture fields other than account are preserved via an explicit spread, so storyboards that author filters, status, or pagination fields continue to work.
+
+  Fixes #1487.
+
 ## 6.8.0
 
 ### Minor Changes
