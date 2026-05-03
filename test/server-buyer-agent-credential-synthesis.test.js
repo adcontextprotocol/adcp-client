@@ -514,3 +514,83 @@ describe('Stage 3 — BuyerAgentRegistry routes on the credential', () => {
     assert.equal(observedAuthInfo.credential.agent_url, 'https://agent.scope3.com');
   });
 });
+
+describe('Stage 4 — extra forwarding: authInfo.extra surfaces to resolveByCredential (issue #1484)', () => {
+  it('bearerOnly resolver receives authInfo.extra as second argument', async () => {
+    // Simulates the output of `attachAuthInfo` when an adopter stamps
+    // `extra: { demo_token }` in their `verifyApiKey.verify` callback.
+    // `attachAuthInfo` merges principal.extra into info.extra alongside the
+    // credential; the dispatcher propagates info.extra → ctx.authInfo.extra →
+    // BuyerAgentResolveInput.extra → resolveByCredential second arg.
+    let sawExtra;
+    const platform = buildPlatform({
+      agentRegistry: BuyerAgentRegistry.bearerOnly({
+        resolveByCredential: async (cred, extra) => {
+          sawExtra = extra;
+          return sampleAgent();
+        },
+      }),
+    });
+    const server = createAdcpServerFromPlatform(platform, {
+      name: 'spike',
+      version: '0.0.1',
+      validation: { requests: 'off', responses: 'off' },
+    });
+    await dispatchWithAuthInfo(server, {
+      token: 'demo-billing-passthrough-v1',
+      clientId: 'demo-caller',
+      scopes: [],
+      extra: {
+        credential: { kind: 'api_key', key_id: 'abc123hash' },
+        demo_token: 'demo-billing-passthrough-v1',
+      },
+    });
+    assert.ok(sawExtra !== undefined, 'resolveByCredential must receive a second arg');
+    assert.equal(sawExtra.demo_token, 'demo-billing-passthrough-v1');
+  });
+
+  it('bearerOnly resolver receives undefined extra when no extra in authInfo', async () => {
+    let sawExtra = 'sentinel';
+    const platform = buildPlatform({
+      agentRegistry: BuyerAgentRegistry.bearerOnly({
+        resolveByCredential: async (cred, extra) => {
+          sawExtra = extra;
+          return sampleAgent();
+        },
+      }),
+    });
+    const server = createAdcpServerFromPlatform(platform, {
+      name: 'spike',
+      version: '0.0.1',
+      validation: { requests: 'off', responses: 'off' },
+    });
+    await dispatchWithAuthInfo(server, {
+      token: 'plain-tok',
+      clientId: 'caller',
+      scopes: [],
+      extra: { credential: { kind: 'api_key', key_id: 'abc123hash' } },
+    });
+    // extra only contains `credential`; no adopter-stamped fields
+    assert.ok(typeof sawExtra === 'object' && sawExtra !== null);
+    assert.equal('demo_token' in sawExtra, false);
+  });
+
+  it('verifyApiKey.verify returning extra preserves it on the AuthPrincipal', async () => {
+    const auth = verifyApiKey({
+      verify: async token =>
+        token === 'demo-billing-passthrough-v1'
+          ? { principal: 'static:demo:demo-billing-passthrough-v1', extra: { demo_token: token } }
+          : null,
+    });
+    const result = await auth({
+      headers: { authorization: 'Bearer demo-billing-passthrough-v1' },
+      method: 'POST',
+      url: '/mcp',
+    });
+    assert.ok(result, 'authenticator must return a principal');
+    assert.equal(result.principal, 'static:demo:demo-billing-passthrough-v1');
+    assert.deepEqual(result.extra, { demo_token: 'demo-billing-passthrough-v1' });
+    // credential is still api_key (forgery clamp preserved)
+    assert.equal(result.credential.kind, 'api_key');
+  });
+});
