@@ -1097,14 +1097,22 @@ export const ADCP_INSTRUCTIONS_FN: unique symbol = Symbol.for('@adcp/client.inst
  */
 export interface SessionContext {
   /**
-   * Authenticated principal extracted by `serve({ authenticate })`. Reserved
-   * for forward compatibility; currently always `undefined`.
+   * @reserved Always `undefined` in v6.x. The framework does not yet plumb
+   * `authInfo` into the factory before MCP `initialize` — use closures
+   * captured in your factory's HTTP-scoped state for tenant identity today.
+   * Forward-compatible: when the framework wires this through, your
+   * `ctx.authInfo?.…` reads start returning real values without breaking
+   * existing function bodies.
    */
   readonly authInfo?: ResolvedAuthInfo;
 
   /**
-   * Resolved `BuyerAgent` from `BuyerAgentRegistry`. Reserved for forward
-   * compatibility; currently always `undefined`.
+   * @reserved Always `undefined` in v6.x. The framework does not yet plumb
+   * the resolved `BuyerAgent` into the factory before MCP `initialize` —
+   * use closures captured in your factory's HTTP-scoped state for tenant
+   * identity today. Forward-compatible: when the framework wires this
+   * through, your `ctx.agent?.…` reads start returning real values without
+   * breaking existing function bodies.
    */
   readonly agent?: BuyerAgent;
 }
@@ -1414,22 +1422,37 @@ export interface AdcpServerConfig<TAccount = unknown> {
    *    same value for every session.
    * 2. **Function** `(ctx: SessionContext) => string | undefined` — re-evaluated
    *    each time `createAdcpServer` is called. Under the canonical
-   *    `serve()` flow with `reuseAgent: false` (the default) the factory
-   *    runs per HTTP request, so the function fires per session and the
-   *    closure can surface tenant-shaped prose (per-buyer brand manifests,
-   *    storefront-platform copy, "premium vs standard" partner guidance).
+   *    `serve({ reuseAgent: false })` flow (the default) the factory
+   *    runs per HTTP request, which under streamable-HTTP MCP is per
+   *    session — so the closure can surface tenant-shaped prose (per-buyer
+   *    brand manifests, storefront copy, "premium vs standard" partner
+   *    guidance).
    *
-   * **Eval moment.** Per `createAdcpServer` invocation. Under `reuseAgent: false`
-   * that is per session; under `reuseAgent: true` it would be once for the
-   * lifetime of the shared agent — which defeats the purpose, so `serve()`
-   * refuses that combination.
+   * **Eval moment.** Strictly: once per `createAdcpServer` invocation.
+   * `serve({ reuseAgent: false })` makes that "per HTTP request, which is
+   * per session for streamable-HTTP MCP." Custom transports / hand-rolled
+   * dispatch must invoke `createAdcpServer` per session themselves to
+   * preserve the per-session semantic. `reuseAgent: true` would fire the
+   * function once for the lifetime of the shared agent — which defeats
+   * the purpose, so `serve()` refuses that combination at the first
+   * request.
    *
    * **`SessionContext` is reserved.** `authInfo` and `agent` are typed for
    * forward compatibility but currently always `undefined` — the framework
-   * does not yet plumb auth/registry state into the factory. Use closures
+   * does not yet plumb auth/registry state into the factory. **Use closures
    * captured in your factory's HTTP-scoped state for tenant identity today;
-   * the function body will pick up populated fields when the framework wires
-   * them through.
+   * `ctx.agent`/`ctx.authInfo` reads silently return `undefined` and ship
+   * empty prose to prod.** The function body will pick up populated fields
+   * when the framework wires them through.
+   *
+   * @example Per-tenant prose via factory closure (recommended pattern):
+   * ```ts
+   * serve(({ taskStore, host }) => createAdcpServer({
+   *   // host is HTTP-scoped — captured in the closure, NOT from ctx.
+   *   instructions: () => brandManifests.get(host)?.intro ?? defaultProse,
+   *   // ... rest of config
+   * }));
+   * ```
    *
    * **Async return is not yet supported.** Function MUST return `string |
    * undefined` synchronously. A returned `Promise` throws `ConfigurationError`.
@@ -2788,14 +2811,33 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
   } else if (instructionsIsFn) {
     try {
       const result = (instructionsOption as (ctx: SessionContext) => string | undefined)({});
-      if (result !== undefined && typeof (result as { then?: unknown }).then === 'function') {
+      // Promise detection — must guard for null + non-object before reading
+      // `.then`, otherwise `typeof null.then` throws TypeError and the user
+      // sees a confusing framework-internal stack instead of their own bug.
+      const isThenable =
+        result !== null && typeof result === 'object' && typeof (result as { then?: unknown }).then === 'function';
+      if (isThenable) {
         throw new ConfigurationError(
           'createAdcpServer: function-form `instructions` returned a Promise, but async resolution is not yet ' +
             'supported. Pre-resolve before invoking createAdcpServer (e.g., `instructions: await fetchProse()`), ' +
             'or wrap your async loader in a sync cache.'
         );
       }
-      resolvedInstructions = result === undefined ? undefined : String(result);
+      // Reject non-string non-undefined returns instead of silently coercing
+      // (`String({})` → "[object Object]" would ship as instructions otherwise).
+      // The TS signature already constrains return to `string | undefined`;
+      // this catches `as any` escapees and untyped JS callers. Routed through
+      // the same try/catch as user-thrown errors so `onInstructionsError`
+      // governs both — a buggy callback is the same shape of problem either
+      // way (Promise return is the exception: framework can't recover, so
+      // it throws ConfigurationError unconditionally above).
+      if (result !== undefined && typeof result !== 'string') {
+        throw new Error(
+          `function-form \`instructions\` must return string | undefined, got ${result === null ? 'null' : typeof result}. ` +
+            `Return a string for the prose, or undefined for "no instructions on this session."`
+        );
+      }
+      resolvedInstructions = result;
     } catch (err) {
       if (err instanceof ConfigurationError) throw err;
       if (onInstructionsError === 'fail') {

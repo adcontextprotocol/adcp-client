@@ -170,4 +170,55 @@ describe('instructions — async not yet supported', () => {
       /async resolution is not yet supported/
     );
   });
+
+  it('a function returning null does NOT crash on the Promise probe (null safety)', () => {
+    // Regression for code-reviewer finding: the Promise detection used to read
+    // `(result as { then?: unknown }).then` which throws TypeError on null.
+    const server = makeServer(
+      buildPlatform({
+        instructions: () => null,
+      })
+    );
+    // null was a non-string non-undefined return — should be rejected at
+    // construction with a typed ConfigurationError, surfaced through the
+    // 'skip' default as undefined.
+    assert.equal(readInstructions(server), undefined);
+  });
+});
+
+describe('instructions — non-string return type', () => {
+  it('a function returning a number is rejected (with onInstructionsError: fail surfaces ConfigurationError)', () => {
+    assert.throws(
+      () =>
+        makeServer(
+          buildPlatform({
+            instructions: () => /** @type {any} */ (42),
+            onInstructionsError: 'fail',
+          })
+        ),
+      /must return string \| undefined, got number/
+    );
+  });
+
+  it('a function returning an object is rejected (no silent "[object Object]" coercion)', () => {
+    assert.throws(
+      () =>
+        makeServer(
+          buildPlatform({
+            instructions: () => /** @type {any} */ ({ prose: 'oops' }),
+            onInstructionsError: 'fail',
+          })
+        ),
+      /must return string \| undefined, got object/
+    );
+  });
+
+  it("default 'skip' catches bad-type returns and resolves to undefined", () => {
+    const server = makeServer(
+      buildPlatform({
+        instructions: () => /** @type {any} */ (42),
+      })
+    );
+    assert.equal(readInstructions(server), undefined);
+  });
 });

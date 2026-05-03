@@ -560,21 +560,32 @@ export function serve(createAgent: (ctx: ServeContext) => AdcpServer | McpServer
         return;
       }
       // Refuse `reuseAgent: true` + function-form `instructions`. The function
-      // is captured at server construction and would never re-evaluate per
+      // is captured at server construction and would not re-evaluate per
       // session under server reuse — silently degrading to "instructions are
       // a constant after all" is worse than failing loud at the first request.
       // Adopters fix this by removing `reuseAgent: true` (default factory
       // creates a fresh agent per request, which is what the function needs)
       // OR by passing a static string for `instructions`.
+      //
+      // The check fires when `reuseAgent: true` was declared, regardless of
+      // whether the adopter's factory actually caches. The flag is the
+      // adopter's stated intent to reuse; we can't introspect cache behavior.
       if (reuseAgent && (agentServer as unknown as Record<symbol, unknown>)[ADCP_INSTRUCTIONS_FN] === true) {
+        const hint =
+          'Drop `reuseAgent: true` (a fresh agent per request fires the function each session) OR pass a static string for `instructions`.';
         console.error(
           '[adcp/serve] refusing reuseAgent: true with function-form instructions. ' +
-            'The function is captured once at construction and cannot re-evaluate per session under server reuse. ' +
-            'Drop `reuseAgent: true` (a fresh agent per request fires the function each session) OR pass a static string for `instructions`.'
+            'The function is captured once at construction and would not re-evaluate per session under server reuse. ' +
+            hint
         );
         if (!res.headersSent) {
           res.writeHead(500, { 'Content-Type': 'application/json' });
-          res.end(JSON.stringify({ error: 'serve(): reuseAgent is incompatible with function-form instructions' }));
+          res.end(
+            JSON.stringify({
+              error: 'serve(): reuseAgent is incompatible with function-form instructions',
+              hint,
+            })
+          );
         }
         return;
       }
