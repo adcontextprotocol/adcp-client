@@ -3787,7 +3787,10 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
       if (registeredToolNames.has(customName)) {
         throw new Error(
           `createAdcpServer: customTools["${customName}"] collides with a framework-registered tool. ` +
-            `Rename the custom tool or remove the handler from the conflicting domain group.`
+            `If this customTool worked in an earlier SDK version, the tool was promoted to first-class — ` +
+            `remove the customTools entry and wire the corresponding platform handler instead ` +
+            `(e.g. BrandRightsPlatform.updateRights for "update_rights" as of 6.7.0). ` +
+            `If you intended a new tool, rename it to avoid the framework name.`
         );
       }
       if (customName === 'get_adcp_capabilities') {
