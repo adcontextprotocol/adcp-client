@@ -253,11 +253,11 @@ typical agent build.
 Snapshot of what each language SDK ships today. Refresh this table on
 SDK majors and on AdCP spec revs.
 
-*Last updated: 2026-05-03 — `@adcp/sdk` 6.6.x GA, 6.7 in flight; `adcp` (Python) 4.x in flight; `adcp-go` in active development.*
+*Last updated: 2026-05-03 — `@adcp/sdk` 6.7.0 GA on npm; `adcp` (Python) 4.x in flight; `adcp-go` in active development.*
 
 | SDK | Version | L0 | L1 | L2 | L3 | Adopter writes |
 |---|---|---|---|---|---|---|
-| **`@adcp/sdk`** (TypeScript) | 6.6.x GA, 6.7 in flight | ✅ | ✅ | ✅ | ✅ | L4 only |
+| **`@adcp/sdk`** (TypeScript) | 6.7.0 GA | ✅ | ✅ | ✅ | ✅ | L4 only |
 | **`adcp`** (Python) | 4.x in flight | ✅ | ⚠️ | ⚠️ | ⚠️ | Row to refresh on 4.0 GA |
 | **`adcp-go`** | dev | ⚠️ | ❌ | ❌ | ❌ | Types + transport only today; L1–L3 in scope |
 
