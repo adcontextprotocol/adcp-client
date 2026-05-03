@@ -438,9 +438,9 @@ For all `PricingOption` variants and `Product` required fields, see [`docs/TYPE-
 
 ### 4. Forecast & planning surface
 
-`Product.forecast: DeliveryForecast` is the AdCP wire path for the planning question every real buyer asks first — "what reach can I get for $X" or "what budget hits Y conversions" or "is this guaranteed inventory still available." The surface supports forward, reverse, availability, package, and reach/frequency curves via `forecast_range_unit`. **Read [`docs/guides/FORECASTING.md`](../../docs/guides/FORECASTING.md) before deciding to omit it** — most sellers should populate it for at least one unit.
+`Product.forecast: DeliveryForecast` is how sellers answer the planning question every buyer asks first — "what reach for $X," "what budget hits Y conversions," "is this guaranteed inventory still available." The protocol covers forward, reverse, availability, package, and reach/frequency curves via `forecast_range_unit`. Read the spec for the full surface, including budget-curve, availability, GRP, and outcome-forecast worked examples: [Delivery Forecasts](https://adcontextprotocol.org/docs/media-buy/product-discovery/media-products#delivery-forecasts).
 
-Per-specialism canonical units:
+Per-specialism canonical units (SDK-skill guidance — pick what fits your seller type):
 
 | Specialism             | `forecast_range_unit`         | What the curve says                           |
 | ---------------------- | ----------------------------- | --------------------------------------------- |
@@ -450,7 +450,7 @@ Per-specialism canonical units:
 | `sales-social`         | `'conversions'` / `'clicks'`  | Reverse — Meta-style goal-based planning      |
 | `sales-retail-media`   | `'conversions'`               | Outcome-based (purchase-attribution use case) |
 
-Adapters can populate this from existing upstream forecast/availability/reach-estimation endpoints (GAM `forecastService.getDeliveryForecast`, Meta `/delivery_estimate`, TikTok `/audience_reach_estimate`, etc.). The mapping is one-to-one once you pick the right unit.
+Adapters typically populate this from existing upstream forecast/availability/reach-estimation endpoints (GAM `forecastService.getDeliveryForecast`, Meta `/delivery_estimate`, walled-garden `/audience_reach_estimate`, etc.) — the mapping is one-to-one once you pick the right unit.
 
 ### 5. Approval Workflow
 
