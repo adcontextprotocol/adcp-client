@@ -302,6 +302,138 @@ function applyBranchSetGrading(
   return { skippedDelta };
 }
 
+// ────────────────────────────────────────────────────────────
+// task_completion. context_outputs path resolution
+// ────────────────────────────────────────────────────────────
+
+/** Marker prefix on `context_outputs.path` that opts a capture into the
+ *  poll-tasks-get-for-the-completion-artifact resolution flow. The remainder
+ *  of the path is resolved against the artifact's `data`, not the immediate
+ *  submitted envelope. */
+const TASK_COMPLETION_PATH_PREFIX = 'task_completion.';
+
+/** Hard cap on how long the runner blocks one step waiting for a task to
+ *  reach terminal state. Long enough to cover most HITL approval flows that
+ *  are expected to complete inline; short enough that a stuck task surfaces
+ *  the failure on the step that authored the dependency rather than the
+ *  storyboard wall-clock budget. Override with `STORYBOARD_TASK_POLL_TIMEOUT_MS`. */
+const TASK_COMPLETION_DEFAULT_TIMEOUT_MS = 30_000;
+
+/** Per-poll cadence inside `pollTaskCompletion`. Scaled tight enough that
+ *  short HITL flows complete in a couple of polls; the bound is still the
+ *  outer timeout race. Override with `STORYBOARD_TASK_POLL_INTERVAL_MS`. */
+const TASK_COMPLETION_DEFAULT_POLL_INTERVAL_MS = 1_500;
+
+/** Defensive task_id pattern. AdCP doesn't constrain `task_id` shape on the
+ *  wire, but unbounded strings are an SSRF / log-injection lever — we cap
+ *  the length and reject control characters before the value reaches the
+ *  SDK's tasks/get JSON-RPC param. */
+const TASK_ID_MAX_LEN = 256;
+// eslint-disable-next-line no-control-regex -- intentional: reject control chars in task_id
+const TASK_ID_CONTROL_CHAR_RE = /[\x00-\x1F\x7F]/;
+
+interface SubmittedEnvelopeShape {
+  status: 'submitted';
+  task_id: string;
+}
+
+function isSubmittedEnvelope(data: unknown): data is SubmittedEnvelopeShape {
+  if (data == null || typeof data !== 'object') return false;
+  const obj = data as { status?: unknown; task_id?: unknown };
+  return obj.status === 'submitted' && typeof obj.task_id === 'string' && obj.task_id.length > 0;
+}
+
+function isValidTaskId(taskId: string): boolean {
+  if (taskId.length === 0 || taskId.length > TASK_ID_MAX_LEN) return false;
+  if (TASK_ID_CONTROL_CHAR_RE.test(taskId)) return false;
+  return true;
+}
+
+interface TaskCompletionResolution {
+  /** Artifact data resolved by polling. `undefined` when the step had no
+   *  task_completion outputs, when the immediate response wasn't a submitted
+   *  envelope, or when polling failed. The runner falls back to the
+   *  immediate response's data in those cases. */
+  data?: unknown;
+  /** Set when the bounded poll exceeded `pollTimeoutMs`. The runner uses
+   *  this to flip the synthesized failure check from
+   *  `capture_path_not_resolvable` to `capture_poll_timeout`. */
+  timedOut?: boolean;
+  pollTimeoutMs?: number;
+}
+
+function remapTaskCompletionOutputs<T extends { path?: string | undefined }>(outputs: readonly T[]): T[] {
+  return outputs.map(o => {
+    if (typeof o.path === 'string' && o.path.startsWith(TASK_COMPLETION_PATH_PREFIX)) {
+      return { ...o, path: o.path.slice(TASK_COMPLETION_PATH_PREFIX.length) };
+    }
+    return o;
+  });
+}
+
+async function resolveTaskCompletionOutputs(
+  taskResult: TaskResult | undefined,
+  outputs: readonly { path?: string | undefined }[],
+  client: TestClient,
+  agentUrl: string
+): Promise<TaskCompletionResolution> {
+  const hasTaskCompletionPath = outputs.some(
+    o => typeof o.path === 'string' && o.path.startsWith(TASK_COMPLETION_PATH_PREFIX)
+  );
+  if (!hasTaskCompletionPath) return {};
+  if (!taskResult || !isSubmittedEnvelope(taskResult.data)) return {};
+  const taskId = taskResult.data.task_id;
+  if (!isValidTaskId(taskId)) return {};
+
+  const timeoutMs = readEnvIntOrDefault(
+    process.env['STORYBOARD_TASK_POLL_TIMEOUT_MS'],
+    TASK_COMPLETION_DEFAULT_TIMEOUT_MS
+  );
+  const pollIntervalMs = readEnvIntOrDefault(
+    process.env['STORYBOARD_TASK_POLL_INTERVAL_MS'],
+    TASK_COMPLETION_DEFAULT_POLL_INTERVAL_MS
+  );
+
+  // The SDK's `pollTaskCompletion` lives on the executor — accessed via the
+  // SingleAgentClient instance the storyboard runner created in
+  // `getOrCreateClient`. The runner historically uses `client: any` for
+  // dynamic dispatch (see task-map.ts:80) so this cast doesn't widen
+  // existing surface.
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any -- dynamic SDK access
+  const dynamicClient = client as any;
+  const executor = dynamicClient?.executor;
+  const agent = dynamicClient?.agent;
+  if (!executor?.pollTaskCompletion || !agent) {
+    return { timedOut: false };
+  }
+
+  void agentUrl; // tracked for log enrichment in future iterations
+
+  try {
+    const polled = await Promise.race([
+      executor.pollTaskCompletion(agent, taskId, pollIntervalMs),
+      new Promise<{ timedOut: true }>(resolve => setTimeout(() => resolve({ timedOut: true }), timeoutMs)),
+    ]);
+    if (polled && typeof polled === 'object' && 'timedOut' in polled && polled.timedOut === true) {
+      return { timedOut: true, pollTimeoutMs: timeoutMs };
+    }
+    const polledTaskResult = polled as TaskResult;
+    if (polledTaskResult.success === false) {
+      return { timedOut: false };
+    }
+    return { data: polledTaskResult.data };
+  } catch {
+    return { timedOut: false };
+  }
+}
+
+function readEnvIntOrDefault(value: string | undefined, fallback: number): number {
+  if (!value) return fallback;
+  const parsed = Number.parseInt(value, 10);
+  if (!Number.isFinite(parsed) || parsed <= 0) return fallback;
+  return parsed;
+}
+
 function extractionFromTaskResult(taskResult: TaskResult | undefined): RunnerExtractionRecord {
   if (!taskResult) return { path: 'none' };
   // Prefer the explicit provenance stamped by the response unwrapper / raw
@@ -2643,9 +2775,31 @@ async function executeStep(
   // ensures the minted value from any same-step $generate:…#<key> inline
   // substitution is visible here.
   if (step.context_outputs?.length) {
-    const explicit = applyContextOutputsWithProvenance(
-      hasData && taskResult ? taskResult.data : undefined,
+    // Resolve `task_completion.<path>` outputs against the eventual task
+    // artifact rather than the immediate response. When the immediate
+    // response is a submitted-arm envelope (HITL / async-signed-IO flows),
+    // the seller-assigned IDs only exist on the completion artifact — the
+    // sync-shape path resolves to nothing and the storyboard fails on
+    // `capture_path_not_resolvable` for a value the seller correctly
+    // produces, just on a later message. The `task_completion.` prefix is
+    // an explicit author-side opt-in: "poll tasks/get for terminal status,
+    // then resolve the rest of the path against the artifact data."
+    //
+    // Polling failures (timeout, terminal failed/canceled/rejected) emit
+    // `capture_poll_timeout` instead of recycling
+    // `capture_path_not_resolvable` so the failure-class is distinct from
+    // the original "field absent in immediate response" diagnostic.
+    const taskCompletionResolution = await resolveTaskCompletionOutputs(
+      taskResult,
       step.context_outputs,
+      client,
+      runState.agentUrl
+    );
+    const extractionData = taskCompletionResolution.data ?? (hasData && taskResult ? taskResult.data : undefined);
+    const remappedOutputs = remapTaskCompletionOutputs(step.context_outputs);
+    const explicit = applyContextOutputsWithProvenance(
+      extractionData,
+      remappedOutputs,
       step.id,
       effectiveStep.task,
       updatedContext
@@ -2665,12 +2819,20 @@ async function executeStep(
     // a failed capture is the exact case adcp#3796 set out to fix.
     if (explicit.failures && explicit.failures.length > 0) {
       for (const failure of explicit.failures) {
+        const wasTaskCompletion = step.context_outputs.some(
+          o => o.key === failure.key && typeof o.path === 'string' && o.path.startsWith(TASK_COMPLETION_PATH_PREFIX)
+        );
+        const pollTimedOut = wasTaskCompletion && taskCompletionResolution.timedOut;
+        const originalPath = wasTaskCompletion ? `${TASK_COMPLETION_PATH_PREFIX}${failure.path}` : failure.path;
+        const description = pollTimedOut
+          ? `context_outputs path "${originalPath}" (key "${failure.key}") did not resolve before tasks/get poll timed out (${taskCompletionResolution.pollTimeoutMs ?? 0}ms)`
+          : `context_outputs path "${originalPath}" (key "${failure.key}") did not resolve to a usable value`;
         const synthetic: ValidationResult = {
-          check: 'capture_path_not_resolvable',
+          check: pollTimedOut ? 'capture_poll_timeout' : 'capture_path_not_resolvable',
           passed: false,
-          description: `context_outputs path "${failure.path}" (key "${failure.key}") did not resolve to a usable value`,
+          description,
           json_pointer: toJsonPointer(failure.path),
-          expected: failure.path,
+          expected: originalPath,
           actual: failure.resolved,
           schema_id: null,
           schema_url: null,
