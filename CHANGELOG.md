@@ -1,5 +1,1504 @@
 # Changelog
 
+## 6.7.0
+
+### Minor Changes
+
+- 610b952: `Account.authInfo` is now optional. Closes #1286.
+
+  Adopters who don't authorize against the principal in resource handlers can omit `authInfo` from the returned `Account` and pass strict typecheck. The field stays for adopters who _do_ persist a principal — typically OAuth-style sellers who derive a tenant-scoped sub-principal from `ctx.authInfo` (`ResolvedAuthInfo`) and store it as `AuthPrincipal` on the Account.
+
+  Why optional rather than auto-attached: `Account.authInfo` is `AuthPrincipal` (the resolver's chosen persistence shape, with a `kind` discriminator), not `ResolvedAuthInfo` (the raw transport-level auth `serve({ authenticate })` extracts). The two types are intentionally distinct — the resolver decides which fields to keep / drop / re-shape. The framework can't cleanly auto-project one to the other. Adopters who want the principal threaded through set it explicitly:
+
+  ```ts
+  accounts: {
+    resolve: async (ref, ctx) => ({
+      id: 'acct_123',
+      name: 'Acme',
+      status: 'active',
+      ctx_metadata: { /* ... */ },
+      // Optional. Set when handlers downstream need the principal:
+      authInfo: ctx?.authInfo ? { kind: 'oauth', clientId: ctx.authInfo.clientId, ... } : undefined,
+    }),
+  }
+  ```
+
+  Backwards-compatible: existing adapters that already populate `authInfo` keep working; new/forked adapters omitting it now compile cleanly.
+
+- 461e85c: `AccountStore.syncGovernance` — typed `sync_governance` surface promoted to v6 platform. Closes one of the items tracked in #1387.
+
+  Buyers register governance agent endpoints per-account via `sync_governance`; the seller persists the binding and consults the registered agents during media buy lifecycle events via `check_governance`. Pre-this-release, adopters wired this through the v5 escape-hatch (`opts.accounts.syncGovernance`), which forced `as any` casts to satisfy the framework's merge-seam types. Now it's a typed method on `AccountStore` symmetric with `upsert` / `list`:
+
+  ```ts
+  accounts: AccountStore<TenantMeta> = {
+    resolve: async (ref, ctx) => { /* ... */ },
+    upsert: async (refs, ctx) => { /* sync_accounts */ },
+    syncGovernance: async (entries, ctx) => {
+      // Per-entry tenant-isolation gate. ctx.agent is the auth-resolved
+      // BuyerAgent — assert each entry's account.operator maps to the same
+      // tenant before persisting. Per-entry rejection (vs. operation-level
+      // throw) so a single bad entry doesn't fail the whole batch.
+      const homeTenantId = ctx?.agent ? BUYER_HOME_TENANT.get(ctx.agent.agent_url) : undefined;
+      return entries.map(entry => {
+        const tenantId = OPERATOR_TO_TENANT.get(entry.account.operator);
+        if (!homeTenantId || tenantId !== homeTenantId) {
+          return {
+            account: entry.account,
+            status: 'failed',
+            errors: [{ code: 'PERMISSION_DENIED', message: '...' }],
+          };
+        }
+        // persist binding...
+        return { account: entry.account, status: 'synced', governance_agents: [...] };
+      });
+    },
+  };
+  ```
+
+  The signature takes the wire entries (`SyncGovernanceRequest['accounts']`) directly — each entry pairs an `AccountReference` with its `governance_agents[]`. Framework strips `idempotency_key` / `adcp_major_version` / `context` / `ext` (already deduped) and wraps the returned rows in `{ accounts: rows }` for the wire response.
+
+  **Security: write-only credentials are stripped at the wire boundary.** Per spec, each `governance_agents[i].authentication.credentials` is the bearer the seller will present on outbound `check_governance` calls — the buyer sends it, the seller persists it, but it MUST NOT echo back. The framework now strips `authentication` from every `governance_agents[i]` of every row before serialization, in both `syncGovernanceResponse` (the wire-emit boundary that covers v5 escape-hatch adopters) and the v6 dispatcher (`toWireSyncGovernanceRow`). Adopters can return loosely-typed rows or spread the input agent without leaking credentials over the wire OR into the idempotency replay cache. Defense-in-depth — TypeScript narrowing alone is insufficient because excess-property checks don't fire on assigned variables and the response Zod schema uses `.passthrough()`.
+
+  Backwards-compatible: `syncGovernance` is optional on `AccountStore`. Adopters using the v5 escape-hatch (`opts.accounts.syncGovernance`) keep working unchanged — the v6 typed surface takes precedence when both are set. Adopters who haven't wired `sync_governance` at all continue to see the framework's `UNSUPPORTED_FEATURE` envelope.
+
+- c1537e1: `AccountStore.upsert` and `AccountStore.list` now receive an optional `ResolveContext` second argument. Closes #1310.
+
+  The framework forwards `authInfo`, `toolName`, and `agent` (when an `agentRegistry` is configured) — the same shape already threaded to `accounts.resolve`, `reportUsage`, and `getAccountFinancials`. Adopters can implement principal-keyed gates on `sync_accounts` / `list_accounts` (e.g. the spec's `BILLING_NOT_PERMITTED_FOR_AGENT` per-buyer-agent gate from adcontextprotocol/adcp#3851) without re-deriving identity from the request.
+
+  ```ts
+  accounts: {
+    upsert: async (refs, ctx) => {
+      if (!agentMayBillVia(ctx?.agent, refs[0].billing)) {
+        throw new AdcpError('BILLING_NOT_PERMITTED_FOR_AGENT', { recovery: 'terminal' });
+      }
+      // ...
+    },
+    list: async (filter, ctx) => {
+      // Scope the listing to the calling agent's accounts.
+      return db.accounts(filter, { agentUrl: ctx?.agent?.agent_url });
+    },
+  }
+  ```
+
+  Backwards-compatible at the type level: `ctx` is optional on the platform side, so existing implementations that don't accept the second arg keep compiling.
+
+  **Security-relevant migration note for multi-tenant adopters.** Pre-this-release, adopters had no way to scope `accounts.list` per-principal — implementations either returned all accounts (over-disclosure) or rejected the operation. Post-this-release, scoping becomes possible. **This is opt-in, not automatic.** Multi-tenant adopters should add principal scoping in the upgrade:
+
+  ```ts
+  list: async (filter, ctx) => {
+    // Scope to the calling agent's accounts. Without this, every authenticated
+    // caller sees every account.
+    return db.listAccounts(filter, { agentUrl: ctx?.agent?.agent_url });
+  },
+  ```
+
+- 37f1b2b: feat(server): Account v3 wire alignment — billing_entity, lifecycle and reporting fields
+
+  The framework's `Account<TCtxMeta>` interface and `toWireAccount` projection lagged the AdCP 3.0 wire schema. Adopters returning `Account<TCtxMeta>` from `accounts.resolve` / `accounts.list` could not populate spec-required commercial fields, and the framework silently dropped them on emit — most visibly, the `setup` payload that drives the `pending_approval` → `active` lifecycle was lost between adopter and buyer.
+
+  `Account<TCtxMeta>` now carries the wire-aligned optional fields:
+  - `billing_entity` — business entity for B2B invoicing (`legal_name`, `vat_id`, `tax_id`, `registration_number`, `address`, `contacts`, write-only `bank`)
+  - `rate_card` — applied rate-card identifier
+  - `payment_terms` — `net_15` / `net_30` / `net_45` / `net_60` / `net_90` / `prepay`
+  - `credit_limit` — `{ amount, currency }`
+  - `setup` — `{ url?, message, expires_at? }` for `pending_approval` accounts
+  - `account_scope` — `operator` / `brand` / `operator_brand` / `agent`
+  - `governance_agents` — registered governance agent endpoints
+  - `reporting_bucket` — offline reporting delivery configuration
+
+  `toWireAccount` projects each field unchanged, with one exception: `billing_entity.bank` is stripped on emit. The wire schema marks bank coordinates as MUST NOT be echoed in responses (`BusinessEntity.bank` is write-only — included in `sync_accounts` requests, omitted from any response payload). Adopters who load and return a full entity from their store no longer leak bank details to buyers.
+
+  `SyncAccountsResultRow` (returned by adopter `accounts.upsert` implementations) is extended in parallel with the same wire-aligned fields and projected through `toWireSyncAccountRow` before emit. The same `billing_entity.bank` strip applies on this path — adopters returning a row literal that spreads a DB record carrying bank coordinates (e.g., `{ ...db.findByBrand(r.brand), action: 'updated' }`) no longer leak bank details to buyers.
+
+  `Account.governance_agents` elements are projected to `{ url, categories }` only on emit. The schema notes governance auth credentials are write-only and the codegen'd type already excludes them, but TS is erased at runtime — explicit projection prevents adopters using JS or `as any` from smuggling a `credentials` field straight to the wire.
+
+  When `billing_entity` carries only `bank` (no other fields), the projection omits the entire entity rather than emitting an empty object — `BusinessEntity` requires `legal_name` per the wire schema, so the empty case would fail downstream validation.
+
+  All additions are optional — adopters who don't set the new fields see no behavior change. Closes #1256.
+
+- e2038be: Add `createTranslationMap` and `createUpstreamHttpClient` to `@adcp/sdk/server`. `createTranslationMap` provides a bidirectional, type-safe key mapping (AdCP wire values ↔ upstream platform values) with `toUpstream`, `toAdcp`, `hasAdcp`, and `hasUpstream` methods. `createUpstreamHttpClient` wraps `fetch` with auth injection (`static_bearer`, `dynamic_bearer`, `api_key`, `none`), query-string serialization, 404→null translation, and typed `get/post/put/delete` methods, replacing the per-adapter `httpJson` boilerplate. `dynamic_bearer.getToken` accepts an optional `AuthContext` forwarded from a per-call `authContext` option, so the same client supports single-key tenant fan-out, per-operator credential lookup, and pass-through of the caller's principal without per-operator client construction.
+- 66b59c7: Add `resolveAgent`, `getAgentJwks`, `createAgentJwksSet`, and the `adcp resolve` CLI — bootstrap from an agent URL to its signing keys via the 8-step `identity.brand_json_url` discovery chain defined in security.mdx (added by spec PR adcontextprotocol/adcp#3690).
+
+  ```ts
+  import { resolveAgent, createAgentJwksSet } from '@adcp/sdk/signing/server';
+
+  // Full chain + per-step trace.
+  const r = await resolveAgent('https://buyer.example.com/mcp');
+  // r.agentUrl, r.brandJsonUrl, r.agentEntry, r.jwksUri, r.jwks,
+  // r.identityPosture, r.consistency, r.freshness, r.trace
+
+  // JOSE adapter — required allowedAlgs at construction time + verify time
+  // (defense-in-depth against alg-confusion).
+  const getKey = createAgentJwksSet('https://buyer.example.com/mcp', {
+    allowedAlgs: ['EdDSA', 'ES256'],
+  });
+  await jwtVerify(jwt, getKey, { algorithms: ['EdDSA', 'ES256'] });
+  ```
+
+  CLI: `npx @adcp/sdk resolve <agent-url> [--json] [--quiet]` — prints which step rejected when triaging `request_signature_brand_*` failures.
+
+  The implementation:
+  - Steps 1 (capabilities) goes through `ProtocolClient` (`createMCPClient` / `createA2AClient`) — never a raw HTTP `GET` against the agent URL.
+  - Steps 4 / 8 (brand.json / JWKS) go through `ssrfSafeFetch` with no redirects, body caps (256 KiB / 64 KiB), and a strict-JSON parser that rejects duplicate keys + `__proto__` / `constructor` pollution.
+  - Step 3 eTLD+1 binding uses a pinned PSL via `tldts` with ICANN+PRIVATE both in scope (so `vercel.app` is treated as a suffix). Runtime PSL fetches are explicitly disabled.
+  - All wire-shape rejections surface as `AgentResolverError` with a `request_signature_*` code. The 9 spec-defined codes (`brand_json_url_missing`, `capabilities_unreachable`, `brand_json_unreachable`, `brand_json_malformed`, `brand_origin_mismatch`, `agent_not_in_brand_json`, `brand_json_ambiguous`, `key_origin_mismatch`, `key_origin_missing`) are joined by two SDK-side codes (`jwks_unreachable`, `jwks_alg_disallowed`) for distinct trust failures the spec hands to the verifier checklist post-bootstrap. Counterparty-controlled detail fields (`brand_json_url`, `jwks_uri`, `matched_entries[]`, `parse_error`) carry the `[ATTACKER_INFLUENCED]` symbol marker so admin-UI rendering downstream can detect and HTML-escape; SSRF refusals translate to a coarse `dns_error` classification rather than leaking the resolved IP.
+  - `allowPrivateIp: true` is gated by `NODE_ENV in {test, development}` plus an explicit `ADCP_RESOLVER_ALLOW_PRIVATE_IP=1` ack, matching the existing pattern around `createAdcpServer`'s in-memory state — a security-critical entry point should fail closed when the carve-out gets wired from a misconfigured env var.
+  - The field is forward-compat: 3.0-conformant operators can populate `identity.brand_json_url` today (the schema bump lands in 3.x's next minor; this SDK reads the field via a narrow accessor that codegen will catch up to on the next schema pin). No version bump required to adopt.
+
+  **Schema pin: 3.0.4 → 3.0.5.** Picks up the `identity.additionalProperties: true` relaxation (upstream changeset `a4bd513`) so a 3.0-pinned seller emitting `identity.brand_json_url` on its `get_adcp_capabilities` response passes our strict response-validation gate. Without 3.0.5, the spec's "3.0 implementers can adopt the field today" narrative would have contradicted the SDK's default validator. Test `test/agent-resolver-publisher-side.test.js` asserts the publisher-side path; would have failed on 3.0.4 and earlier.
+
+  Closes #1268.
+
+- 522015d: feat(brand-rights): wire `update_rights` as a first-class mutating tool and add `creative_approval` webhook builders. The brand-rights domain group in `createAdcpServer` and the `BrandRightsPlatform` v6 typed-platform interface both gain the deferred surfaces from #552.
+
+  `update_rights` (MCP/A2A tool):
+  - Full `AdcpToolMap` entry → request schema validates `idempotency_key` requirement, response auto-wraps via `updateRightsResponse`.
+  - `BrandRightsHandlers.updateRights?` for v5 raw-handler adopters.
+  - `BrandRightsPlatform.updateRights` for v6 typed-platform adopters.
+  - Auto-hydrates the underlying grant from `req.rights_id` (parallel to `acquire_rights`'s `req.rights` pattern); handlers read the resolved grant from `ctx.store`.
+  - Picked up by `MUTATING_TASKS` automatically (Zod-derived) and by `BRAND_RIGHTS_TOOLS` for protocol detection.
+
+  `creative_approval` (webhook-only):
+  - Type re-exports (`CreativeApprovalRequest`, `CreativeApprovalResponse`, `CreativeApproved`, `CreativeRejected`, `CreativePendingReview`, `CreativeApprovalError`) reachable via `@adcp/sdk/types`.
+  - Per-arm builders (`creativeApproved`, `creativeApprovalRejected`, `creativeApprovalPendingReview`, `creativeApprovalError`) on `@adcp/sdk/server` inject the status discriminator. Webhooks have no MCP envelope, so these return raw JSON-serializable payloads, not `McpToolResponse`.
+  - `BrandRightsPlatform.reviewCreativeApproval` types the receiver method; adopters mount their own HTTP route at the URL they returned in `acquire_rights.approval_webhook` and dispatch through it.
+  - Intentionally NOT in `BRAND_RIGHTS_TOOLS` or `MUTATING_TASKS` — webhook payloads carry their own `idempotency_key` validated by adopters at the receiver.
+
+  Skill (`skills/build-brand-rights-agent/SKILL.md`) updated with the `update_rights` response shape (success + pending + error arms) and the `creative_approval` webhook receiver pattern.
+
+  Closes #551.
+
+- 5f45c64: feat: bump AdCP spec to 3.0.4
+
+  `ADCP_VERSION` 3.0.1 → 3.0.4. Picks up three patch releases on the 3.0.x maintenance line. All changes are additive — no wire breaks for 3.0-conformant agents — but several close out items the SDK had been carrying as deferred follow-ups.
+
+  What lands wire-side (44 schema deltas, 0 potentially breaking per `npm run schema-diff`):
+  - **`core/error.json` gains optional `issues[]`** (adcp#3562 — closes adcp#3059). Standardizes the `VALIDATION_ERROR` issues-list shape that several response schemas had been re-declaring inline. Propagates through 41 response-schema sites, all additive. Existing handlers compile unchanged; new handlers can populate `issues[]` for structured field-level diagnostics.
+  - **`core/assets/asset-union.json` added** (adcp#3462). Canonical home for the asset-variant `oneOf` union that previously inlined into `creative-asset.json` and `creative-manifest.json`. The spec-side change is byte-identical to the prior inline shape. SDK codegen still emits the `VASTAsset1` / `DAASTAsset1` / `BriefAsset1` / `CatalogAsset1` numbered duplicates; converging the codegen pipeline onto the canonical `$ref` is tracked separately and not blocked by this bump.
+  - **`manifest.json` + `manifest.schema.json` published** (adcp#3738 — closes adcp#3725). New `/schemas/{version}/manifest.json` artifact carries 57 tools (with `protocol`, `mutating`, request/response schema refs, async response schemas, specialism mappings) and 45 error codes (`recovery`, `description`, `suggestion`, `default_unknown_recovery: "transient"` policy block). The `tools/list` MCP-exposed count is 51 — manifest covers tmp/protocol/compliance tools the SDK doesn't surface there. `enums/error-code.json` gains a structured `enumMetadata` block alongside the existing `enumDescriptions` prose. SDK consumption is tracked in #1192; this bump makes the artifact available for the codegen rewire to start.
+  - **`AUTH_REQUIRED` prose tightened** (3.0.4, prose-only backport of adcp#3739). The wire code stays `AUTH_REQUIRED` with `recovery: correctable` — the 3.0.x line cannot add the `AUTH_MISSING` / `AUTH_INVALID` enum split — but the description and `enumMetadata.suggestion` now spell out the two operational sub-cases (credentials missing vs. credentials presented but rejected) and the SHOULD-NOT-auto-retry rule for the rejected case. The `BuyerRetryPolicy` callout in `skills/call-adcp-agent/SKILL.md` follows. Issue #1193 stays open against the structural 3.1 split.
+  - **Storyboard `provides_state_for` field** (3.0.3 — adcp#3734). Spec-side field is now in the compliance cache (`compliance/cache/3.0.4/universal/storyboard-schema.yaml`). The SDK runner does not yet consume it — `sales-social` explicit-mode platforms continue to grade against the generic cascade-skip path until runner support lands. Tracked in #1267.
+  - **`url_type` channel-doc cleanup** (3.0.3 step 1 + 3.0.4 step 2 — adcp#2986 / adcp#3671). Replaces invalid `"url_type": "tracker"` with `"tracker_pixel"` and adds role-based fallback. Wire enum was already correct; this aligns the prose.
+  - **Compliance fixes** (3.0.4): audience-sync `discover_account` `stateful: false → true` (adcp#3710).
+
+  Generated regen via `npm run sync-schemas`, `sync-version --force`, `generate-types`, `generate-wellknown-schemas`, `generate-agent-docs`. `tools/list` still 51, error codes 45 (was 28; `enumMetadata` exposed the full set), storyboards 63, test scenarios 24.
+
+  Cosign verification: the regex in `scripts/sync-schemas.ts` now allows the `3.0.x` release branch alongside `main` and `2.6.x`, matching the upstream `release.yml` `on.push.branches` for the maintenance line.
+
+  `COMPATIBLE_ADCP_VERSIONS` extended to include `3.0.2`, `3.0.3`, `3.0.4`.
+
+- e170008: feat(server): BuyerAgentRegistry — Phase 1 Stage 1 (types + factories)
+
+  Phase 1 Stage 1 of #1269: durable buyer-agent identity surface, ships in 3.0.x with no wire-emission.
+
+  Adds `BuyerAgent`, `BuyerAgentRegistry`, `AdcpCredential`, `BuyerAgentStatus`, and `BuyerAgentBillingMode` exported from `@adcp/sdk/server`. Three factory functions encode the implementer posture at construction:
+  - `BuyerAgentRegistry.signingOnly({ resolveByAgentUrl })` — production target. Bearer/API-key/OAuth credentials resolve to `null`; only `kind: 'http_sig'` credentials route through `resolveByAgentUrl`.
+  - `BuyerAgentRegistry.bearerOnly({ resolveByCredential })` — pre-trust beta. All credentials route through the adopter's mapping; signed credentials are not pre-filtered.
+  - `BuyerAgentRegistry.mixed({ resolveByAgentUrl, resolveByCredential })` — transition posture. `kind: 'http_sig'` routes to `resolveByAgentUrl`; bearer/OAuth/api-key routes to `resolveByCredential`. Signed path is preferred when both are present.
+
+  `BuyerAgent` carries `readonly` fields for `agent_url`, `display_name`, `status`, set-valued `billing_capabilities`, optional `default_account_terms`, optional `allowed_brands`, and optional `aliases` (rotation grace-period reservation, no special framework behavior in v1).
+
+  This stage adds the types and factory functions only. Framework integration (resolve seam, `ctx.agent` threading), the `ResolvedAuthInfo` migration shim, status enforcement, multi-credential conflict resolution, credential redaction, and the caching decorator land in subsequent stages of #1269.
+
+  Phase 2 (#1292) — framework-level `billing_capability` enforcement and emission of the `BILLING_NOT_PERMITTED_FOR_AGENT` / `BILLING_NOT_SUPPORTED` codes registered in adcontextprotocol/adcp#3831 — is gated on the SDK's 3.1 cutover.
+
+- 33f2ff4: feat(server): BuyerAgentRegistry — Phase 1 Stage 2 (resolve seam + ctx threading)
+
+  Phase 1 Stage 2 of #1269 — wires the `BuyerAgentRegistry` into the dispatcher between authentication and account resolution. The resolved `BuyerAgent` is threaded through `ctx.agent` to `resolveAccount`, `resolveAccountFromAuth`, `resolveSessionKey`, the v6 `RequestContext`, and the v6 `AccountStore.resolve` ctx.
+
+  Strict opt-in: when `agentRegistry` is unset on `AdcpServerConfig` (or `DecisioningPlatform.agentRegistry` for v6 adopters), `ctx.agent` stays `undefined` and the framework's request flow is unchanged.
+
+  Behavior:
+  - Registry returns a `BuyerAgent` → framework freezes the record (and its `billing_capabilities` Set's own properties) and sets `ctx.agent`. Note: `Object.freeze` on a `Set` does NOT protect the internal `[[SetData]]` slot — `.add()` / `.delete()` / `.clear()` still mutate. `ReadonlySet` is a TypeScript-only contract; adopters MUST NOT rely on freeze preventing membership changes at runtime.
+  - Registry returns `null` → `ctx.agent` stays undefined; dispatch continues. Status enforcement (`suspended` / `blocked`) and per-agent billing rejection are Stage 4 / Phase 2 (#1292) work.
+  - Registry throws → framework returns `SERVICE_UNAVAILABLE`. Inner error logged server-side.
+
+  The resolve seam runs **before** account resolution and the idempotency-key shape gate, so:
+  - `resolveAccount(ref, { agent })` and `resolveAccountFromAuth({ agent })` see the resolved buyer agent.
+  - `accounts.resolve(ref, { agent })` on the v6 `AccountStore` receives it through `ResolveContext.agent`.
+  - `resolveSessionKey({ agent })` sees it.
+  - The v6 `RequestContext.agent` is populated for specialism handlers via `buildRequestContext`.
+
+  Stage 3 will populate `ResolvedAuthInfo.credential` (kind-discriminated variant) so the factory functions (`signingOnly` / `bearerOnly` / `mixed` from Stage 1) actually route. Until then, the seam is structurally present but factories return `null` for `credential === undefined`, so Stage 2 alone is functionally inert for adopters who haven't synthesized credentials themselves.
+
+- 0ea8127: feat(server): BuyerAgentRegistry — Phase 1 Stage 3 (credential synthesis + ResolvedAuthInfo migration)
+
+  Phase 1 Stage 3 of #1269 — wires the kind-discriminated `AdcpCredential` from Stage 1 through the auth pipeline so `BuyerAgentRegistry` factory functions actually route on real credentials.
+
+  **Authenticators stamp `credential` on `AuthPrincipal`:**
+  - `verifyApiKey` → `{ kind: 'api_key', key_id: token }` (preserves an adopter-provided credential when present)
+  - `verifyBearer` → `{ kind: 'oauth', client_id, scopes, expires_at }`
+  - `verifySignatureAsAuthenticator` → `{ kind: 'http_sig', keyid, agent_url, verified_at }` when the verifier resolved an `agent_url` from the keyid; otherwise omitted
+
+  `serve.ts:attachAuthInfo` propagates `credential` into `info.extra.credential` so it round-trips through MCP's `AuthInfo` shape. The dispatcher hoists `extra.credential` onto top-level `ctx.authInfo.credential` and passes it to `agentRegistry.resolve` — `signingOnly`, `bearerOnly`, and `mixed` factories now route on actual credentials instead of returning `null` for every request.
+
+  **`ResolvedAuthInfo` migration shim** — additive, two-minor cycle:
+  - N (this release): `credential?: AdcpCredential`, `agent_url?: string` (informational, post-resolution), `operator?: string` added alongside legacy `token` / `clientId` / `scopes`. Legacy fields tagged `@deprecated` in JSDoc; framework continues to populate them for adopter compatibility.
+  - N+1: framework warns once per process when adopter `authenticate` returns the legacy shape without `credential`.
+  - N+2: legacy fields removed.
+
+  Adopters with custom `authenticate` callbacks can stamp `credential` directly on the returned `AuthPrincipal` to opt in. Custom callbacks that don't migrate see `BuyerAgentRegistry.resolve` return `null` (no credential = no known agent) — preserving the strict-opt-in invariant from Stage 2.
+
+  When `BuyerAgentRegistry` resolves an agent, the framework also stamps the informational top-level `ctx.authInfo.agent_url` so adopters reading it see the registry's canonical view. Security-relevant decisions MUST still read from `credential.agent_url` (verified, `http_sig`-only) — the top-level field is informational per the spec semantics in adcontextprotocol/adcp#3831.
+
+  `HandlerContext.authInfo` (v5 surface) and `ResolveContext.authInfo` (v6) both extended with the new fields. v6 `RequestContext` does not expose `authInfo` directly — handlers see `ctx.account` and `ctx.agent`; per-request credential identity flows to `accounts.resolve` and registry resolution.
+
+  9 new tests cover: each authenticator's credential synthesis (verifyApiKey static + dynamic + adopter-credential preservation); dispatcher hoist; live registry routing for signingOnly / bearerOnly / mixed; legacy shape continues to work without `credential`. Full suite: 7299 pass, 0 fail.
+
+  Phase 2 (#1292) — framework-level billing-capability enforcement and AdCP-3.1 error-code emission — is still gated on the SDK's 3.1 cutover.
+
+- 3e86313: feat(server): BuyerAgentRegistry — Phase 1 Stage 4 (status enforcement + credential redaction)
+
+  Phase 1 Stage 4 of #1269. Wires the durable identity surface from Stages 1-3 into request gating + closes the credential-leak surface in error projections.
+
+  **Status enforcement.** Resolved `BuyerAgent.status === 'suspended' | 'blocked'` triggers framework-level rejection on new requests:
+  - `PERMISSION_DENIED` envelope with `error.details.scope: 'agent'` and `error.details.status: <status>`.
+  - Status check runs in the dispatcher seam right after registry resolution, BEFORE `accounts.resolve` — no tenant lookup wasted on rejected requests.
+  - `'active'` agents pass through unchanged.
+  - `null` registry returns (unrecognized agent) do NOT trigger status enforcement — Phase 2 (#1292) handles per-agent billing rejection separately.
+
+  In-flight protection: the seam runs once per synchronous request, not on `tasks_get` polls or background webhook deliveries. A task started under an `'active'` agent and continued after status flips to `'suspended'` is NOT retroactively cancelled. Sellers who need hard cutoff implement that in their platform method via `BuyerAgent.status` checks (the resolved record is on `ctx.agent`).
+
+  **Credential pattern redaction.** New `redactCredentialPatterns(message)` helper (`@adcp/sdk/server/redact`, internal) scrubs known credential shapes from any string projected to `error.details.reason` on the wire. Applied to all six dispatcher sites where `err.message → details.reason`:
+  - Buyer-agent registry resolution failures
+  - `resolveAccount` failures
+  - `resolveAccountFromAuth` failures
+  - `resolveSessionKey` failures
+  - Idempotency principal resolution failures
+  - Tool handler throws
+
+  Patterns scrubbed:
+  - `Bearer <token>` headers
+  - JSON-quoted credential fields: `"token":"..."`, `"client_secret":"..."`, etc.
+  - Unquoted credential fields: `token=...`, `client_id: ...`, `key=...`, etc.
+  - Long token-shaped strings (≥ 32 chars of base64/hex/url-safe, word-bounded)
+
+  The redactor is conservative — false positives (legitimate IDs that match a pattern) get redacted; false negatives are minimized. Adopters who need the unredacted error log it server-side; production-default `exposeErrorDetails: false` already gates the wire path.
+
+  13 new tests across status enforcement (active passes, suspended/blocked rejected with structured details, runs before accounts.resolve, null doesn't trigger), redactor unit tests (Bearer headers, labeled patterns, JSON-quoted shapes, long-token detection, prose preserved, edge cases), and registry-throw / handler-throw end-to-end redaction. Full suite: 7353 pass, 0 fail.
+
+  Phase 2 (#1292) — framework-level billing-capability enforcement and the AdCP-3.1 error-code emission — is still gated on the SDK's 3.1 cutover.
+
+- 9847387: feat(server): BuyerAgentRegistry — Phase 1 Stage 5 (caching decorator)
+
+  Phase 1 Stage 5 of #1269. Adds `BuyerAgentRegistry.cached(inner, options)` — a TTL-based caching decorator with concurrent-resolve coalescing and LRU eviction.
+
+  **Usage:**
+
+  ```ts
+  const registry = BuyerAgentRegistry.cached(
+    BuyerAgentRegistry.signingOnly({
+      resolveByAgentUrl: async url => db.findBuyerAgent(url),
+    }),
+    { ttlSeconds: 60 }
+  );
+  ```
+
+  **Properties:**
+  - **TTL-bounded.** Successful resolutions cached for `ttlSeconds` (default 60). Negative cache (null returns) is OPT-IN via `cacheNullsTtlSeconds` (default 0 — freshly onboarded agents are recognized within one request).
+  - **LRU-evicted.** Bounded to `maxSize` entries (default 10000). Map-iteration-order gives LRU-on-access for free; touch on hit re-inserts the entry as most-recent.
+  - **Concurrent-resolve coalesced.** N parallel `resolve()` calls on the same credential produce ONE upstream invocation; subsequent callers await the in-flight promise.
+  - **Per-kind cache keys.** Keys are namespaced (`http_sig:`, `api_key:`, `oauth:`) so a string colliding across credential kinds (e.g., an `agent_url` matching an `api_key.key_id` value) cannot leak an agent from one resolution path to another.
+  - **Skips uncacheable inputs.** When `credential === undefined`, `resolve()` falls through to the inner registry on each call — adopters with custom auth that hasn't migrated to credential synthesis (Stage 3) see no behavior change.
+
+  Mirrors the `AsyncCachingJwksResolver` over `JwksResolver` pattern already in `src/lib/signing/`.
+
+  16 new tests cover: TTL hit/miss, expiration, null caching opt-in, pass-through for undefined credential, per-kind key isolation, concurrent-resolve coalescing (10 parallel resolves → 1 upstream call, all see same result reference), LRU eviction with touch-on-hit, option validation. Full suite: 7412 pass, 0 fail.
+
+  This is the final stage of Phase 1's planned implementation. Phase 2 (#1292) — framework-level billing-capability enforcement and AdCP-3.1 error-code emission — remains gated on the SDK's 3.1 cutover.
+
+- 7ebc3fe: feat(server): BuyerAgent.sandbox_only — defense-in-depth for test-only agents
+
+  Phase 1.5 of #1269 (proposed during review on PR #1320). Adds a `sandbox_only?: boolean` field to `BuyerAgent` plus a framework-level gate.
+
+  When `sandbox_only === true`, the framework rejects any request whose resolved `Account.sandbox !== true` with `PERMISSION_DENIED`, `error.details.scope: 'agent'`, `error.details.reason: 'sandbox-only'`, `recovery: 'terminal'`. Composes naturally with `Account.sandbox` from #1256 — same axis at the agent level.
+
+  **When to use it.** CI runners, internal QA agents, partner pre-prod environments. If the test agent's credential leaks, blast radius is bounded to sandbox accounts. Production agents leave the field unset (or `false`).
+
+  **Gate placement.** Runs after `accounts.resolve` so the framework can compare `agent.sandbox_only` against `account.sandbox`. Runs after Stage 4's status enforcement, so a suspended sandbox-only agent fails with status (not sandbox). Account-less tools (`provide_performance_feedback`, `list_creative_formats`, etc.) pass the gate — the sandbox/production axis doesn't apply when there's no account in scope.
+
+  New tests cover: sandbox→sandbox succeeds, sandbox→prod rejected with structured envelope (and the explicit `sandbox: false` variant rejecting the same way as unset), undefined/false `sandbox_only` permissive on both account types (production-agent-on-prod-account explicit), account-less tools pass, status enforcement fires before sandbox-only enforcement, null registry result skips the gate. Full suite green.
+
+  Phase 2 (#1292) — framework-level billing-capability enforcement and AdCP-3.1 error-code emission — is still gated on the SDK's 3.1 cutover.
+
+- f951b0f: feat(server): compile-time invariant for complyTest / compliance_testing pairing
+
+  Adds two mechanisms that catch the cap/adapter mismatch earlier than runtime:
+  - `RequiredOptsFor<P>` — conditional type on `createAdcpServerFromPlatform`'s
+    `opts` parameter. When `P` carries a non-optional `compliance_testing` block
+    (e.g. from `definePlatformWithCompliance`), `complyTest` becomes required in
+    opts at compile time. Previously both directions were runtime-only
+    `PlatformConfigError` throws that were invisible to the harness.
+  - `definePlatformWithCompliance<TConfig, TCtxMeta>()` — identity helper (same
+    pattern as `defineSalesPlatform` etc.) that enforces `capabilities.compliance_testing`
+    non-optional at the platform definition site. Pairing it with
+    `createAdcpServerFromPlatform` gives full bidirectional enforcement without
+    any API changes to existing call sites.
+
+  The runtime check (`PlatformConfigError`) is preserved as defense-in-depth for
+  untyped callers.
+
+  Closes #1261
+
+- 0016696: Added `composeMethod` for wrapping individual `DecisioningPlatform` methods with `before` / `after` hooks. Closes #1314.
+
+  Use to layer short-circuit + enrichment patterns on a typed platform without re-typing every method by hand:
+
+  ```ts
+  import { composeMethod } from '@adcp/sdk/server';
+
+  const wrapped = {
+    ...basePlatform,
+    sales: {
+      ...basePlatform.sales,
+      getMediaBuyDelivery: composeMethod(basePlatform.sales.getMediaBuyDelivery, {
+        // Short-circuit: skip the inner platform call on price-optimization paths.
+        before: async params => (params.optimization === 'price' ? { shortCircuit: cachedPriceOpt } : undefined),
+        // Enrich: decorate the response before it hits response-schema validation.
+        after: async result => ({
+          ...result,
+          ext: { ...result.ext, carbon_grams_per_impression: await score(result) },
+        }),
+      }),
+      getProducts: composeMethod(basePlatform.sales.getProducts, {
+        after: async result => mergeBrandManifest(result, await brandCache.get()),
+      }),
+    },
+  };
+  createAdcpServerFromPlatform(wrapped, opts);
+  ```
+
+  Semantics:
+  - `before` returning `undefined` (or no return) falls through to the wrapped method. Returning `{ shortCircuit: value }` short-circuits.
+  - `after` runs on the result whether it came from the inner method or from a `before` short-circuit, with the original `params` and `ctx` available.
+  - `after` runs BEFORE response-schema validation. Decorations must satisfy the wire schema — vendor-specific data belongs under `ext` (the spec's typed extension surface).
+  - `composeMethod` validates `inner` at wrap time, so referencing an optional method that wasn't implemented on the platform throws at module load rather than at first traffic.
+
+  The discriminated `{ shortCircuit: T } | undefined` wrapper avoids the `undefined`-as-sentinel footgun: adopters who omit the wrapper and return a bare value get a TypeScript error rather than silent short-circuit-with-undefined behavior at runtime.
+
+  Surfaced from the storefront-platform port in `scope3data/agentic-adapters#237`, which had to defer `getMediaBuyDelivery` price-optimization early-return + carbon enrichment and `getProducts` brand-manifest cache merging on the v6 path.
+
+- cddfbf4: `createTenantStore<TTenant, TCtxMeta>` — opinionated `AccountStore` builder for multi-tenant adapters. Closes the last library-side item tracked in #1387.
+
+  Canonicalizes the two-path resolution shape every multi-tenant adapter writes by hand (operator-routed for tools that carry `account` on the wire; auth-derived for no-account tools like `get_brand_identity` / `get_rights`) AND bakes in the per-entry tenant-isolation gate that adopters historically had to write — and silently fail to write — on `accounts.upsert` / `accounts.syncGovernance`.
+
+  ```ts
+  const accounts = createTenantStore<TenantState, TenantMeta>({
+    resolveByRef(ref)                       => TenantState | null,  // wire ref → tenant
+    resolveFromAuth(ctx)                    => TenantState | null,  // auth principal → tenant
+    tenantId(tenant)                        => string,              // stable id for equality
+    tenantToAccount(tenant, ref, ctx)       => Account<TenantMeta>, // sandbox lives here
+    upsertRow?(tenant, ref, ctx)            => SyncAccountsResultRow,
+    syncGovernanceRow?(tenant, entry, ctx)  => SyncGovernanceResponseRow,
+  });
+  ```
+
+  The helper produces a regular `AccountStore<TCtxMeta>`. `accounts.list` / `accounts.reportUsage` / `accounts.getAccountFinancials` are NOT generated — those tools have shapes (cursor pagination; per-row account refs spanning multiple tenants) that don't fit the per-entry-then-row pattern. Adopters who claim those capabilities wire them on top of the returned store.
+
+  **Security: the per-entry gate is built in, not opt-in.** On `upsert` / `syncGovernance`, the helper resolves the auth principal's tenant once via `resolveFromAuth(ctx)`, then for each entry resolves the entry's tenant via `resolveByRef(ref)`. Entries whose tenant differs (or whose tenant ref is unknown) are emitted as `'failed'` rows with `code: 'PERMISSION_DENIED'` (cross-tenant) or `code: 'ACCOUNT_NOT_FOUND'` (unknown ref) BEFORE invoking the adopter's `upsertRow` / `syncGovernanceRow` callbacks. **Cross-tenant entries never reach adopter code.** Fail-closed when `resolveFromAuth` returns null: every entry fails `PERMISSION_DENIED` regardless of operator. The original B1 finding from the multi-tenant adapter's security review (where adopters routing by wire-supplied operator without cross-checking the auth principal could write across tenants) is now mitigated by the SDK, not by adopter discipline.
+
+  **Sandbox routing lives in `tenantToAccount`.** `AccountReference.sandbox?: boolean` flows through to the projector, where adopters either (a) flag the resolved Account so per-handler code routes reads/writes to a sandbox backend, or (b) resolve to a separate sandbox tenant via `resolveByRef(ref)` reading `ref.sandbox`. No new `sandbox?` parameter on the helper API — the projector subsumes both patterns.
+
+  **Gate methods are non-writable.** `accounts.upsert` and `accounts.syncGovernance` on the returned store are defined with `writable: false` so an adopter who writes `accounts.upsert = customHandler` after construction gets a `TypeError` in strict mode instead of silently bypassing the tenant gate. To extend the store with `list` / `reportUsage` / `getAccountFinancials`, use `Object.assign(createTenantStore({...}), { list: ... })` rather than direct mutation. (Adopters who genuinely need a custom `upsert` should write a plain `AccountStore` and own the security surface — the helper's invariant is "use it or don't.")
+
+  **Per-entry callbacks run sequentially**, not via `Promise.all`. Adopter `upsertRow` / `syncGovernanceRow` callbacks commonly mutate shared tenant state (`tenant.accounts.set(...)`); the helper preserves the prior code's accidental sequential semantics rather than introducing concurrent invocations against the same tenant. Adopters who want parallel writes can fan out inside their callback against an upstream that tolerates it.
+
+  **Behavioral drift vs the prior inlined adapter:** `INVALID_REQUEST` is no longer surfaced for malformed refs (operator/brand missing) — wire schema validation upstream catches this before the adopter sees the request. The helper emits `ACCOUNT_NOT_FOUND` for unknown refs that survive validation and `PERMISSION_DENIED` for cross-tenant entries.
+
+  `examples/hello_seller_adapter_multi_tenant.ts` migrated to use the helper. The 200+ lines of inlined `accounts.resolve` / `upsert` / `syncGovernance` collapsed to a single `createTenantStore({...})` call. Cross-tenant attack still rejected with `PERMISSION_DENIED`; credentials still stripped from `sync_governance` echo (5.13's `toWireSyncGovernanceRow`). `skills/build-holdco-agent/SKILL.md` updated to lead with `createTenantStore`; the prior inlined-gate documentation is superseded.
+
+- 2459665: `CreativeBuilderPlatform.listCreativeFormats?` and `CreativeAdServerPlatform.listCreativeFormats?` are now modeled on the typed v6 platform interfaces and dispatched through `buildCreativeHandlers`. Closes adcp-client#1324 — pre-fix, every `creative-template` / `creative-generative` / `creative-ad-server` adopter that owned a format catalog had to drop down to the v5 escape hatch (`opts.creative.listCreativeFormats`) because the typed-platform path didn't carry the surface.
+
+  The dispatch is no-account: the framework calls `accounts.resolve(undefined)` for the request (the wire schema doesn't carry an `account` field), so the typed signature uses `NoAccountCtx<TCtxMeta>` (see the #1327 changeset) — adopters who read `ctx.account.ctx_metadata` get a compile-time error and must narrow.
+
+  Adopters who delegate format definitions via `capabilities.creative_agents` continue to omit the method; the framework returns `UNSUPPORTED_FEATURE` to buyers, same as before.
+
+- 3efacca: feat(cli+harness): `adcp mock-server sales-guaranteed` — fourth specialism (GAM-flavored, IO approval state machine + CAPI for delivery validation)
+
+  Adds the fourth and final mock-server in the matrix v2 family. Stresses two SDK surfaces the existing mocks don't cover:
+  1. **Multi-step approval state machine.** Orders progress through `draft → pending_approval → approved → delivering → completed` via an async IO-signing task (`POST /orders` returns `pending_approval` + `approval_task_id`; buyer polls `/tasks/{id}` or `/orders/{id}` until human review completes). The mock auto-promotes `submitted → working → completed` over two polls so adapters exercise the polling pattern without dragging the matrix run. State transitions are monotonic — invalid transitions return `422 invalid_state_transition`.
+  2. **CAPI for delivery validation, not audience activation.** Distinct from sales-social's CAPI which ingests conversion events for targeting. Here CAPI ingests delivery measurements (impressions, clicks, viewable %, video completions, conversions) that the publisher uses to validate billing. Different flow, different semantics. Conversions are deduped by `dedup_key` per order.
+
+  Plus: **inventory-list targeting** (publisher-defined ad units the buyer can target by id), **delivery reporting** (synthesized totals from order state), **line-item lifecycle** (pending_creatives → ready → delivering on creative attach + order approval).
+
+  Multi-tenancy via header (`X-Network-Code`) — matches GAM's network-id pattern. Distinct from sales-social's path-based scoping.
+
+  The fixture covers most of what the `sales_guaranteed` storyboard exercises: products, orders, line items, creatives, delivery reporting, conversions, async approval tasks. Out-of-scope (handled adapter-side, not in upstream): measurement_terms_rejected, inventory_list_no_match (those are AdCP error-shape tests, not upstream API tests).
+
+  Run with:
+
+  ```bash
+  npx @adcp/sdk mock-server sales-guaranteed --port 4503
+  # or as part of the skill-matrix:
+  npm run compliance:skill-matrix -- --filter sales_guaranteed
+  ```
+
+  **12 new smoke tests** in `test/lib/mock-server/sales-guaranteed.test.js` cover Bearer + X-Network-Code gating, inventory + product listing with filtering, full order approval flow (create → poll task → state transitions), line item creation, idempotency conflict on body mismatch, delivery report synthesis, CAPI conversion ingestion + dedup_key dedup.
+
+  After this lands, matrix v2 has full coverage of the major upstream-shape patterns:
+
+  | Pattern                                | Tested by                                                  |
+  | -------------------------------------- | ---------------------------------------------------------- |
+  | API key Bearer                         | signals, creative-template, sales-guaranteed               |
+  | OAuth 2.0 client_credentials + refresh | sales-social                                               |
+  | Multi-tenant via header                | signals (X-Operator-Id), sales-guaranteed (X-Network-Code) |
+  | Multi-tenant via path                  | creative-template, sales-social                            |
+  | Sync API                               | signals                                                    |
+  | Async polling lifecycle                | creative-template (renders), sales-guaranteed (orders)     |
+  | Hashed-PII upload (sync_audiences)     | sales-social                                               |
+  | CAPI for audience activation           | sales-social                                               |
+  | CAPI for delivery validation           | sales-guaranteed                                           |
+  | Catalog sync (sync_catalogs)           | sales-social                                               |
+  | Multi-step approval state machine      | sales-guaranteed                                           |
+  | Inventory-list targeting               | sales-guaranteed                                           |
+
+  Refs adcontextprotocol/adcp-client#1155.
+
+- acc8868: feat(cli+harness): `adcp mock-server sales-social` — third specialism (TikTok-flavored, OAuth + sync_audiences + CAPI)
+
+  Adds the third mock-server in the matrix v2 family. Stresses three SDK surfaces the existing mocks (signal-marketplace, creative-template) don't touch:
+  1. **OAuth 2.0 client_credentials with refresh-token rotation.** Adapters exchange `client_id` + `client_secret` for an `access_token` at `POST /oauth/token`, attach the bearer on every API call, and refresh via the same endpoint with `grant_type=refresh_token` when the token expires. Refresh tokens rotate on use (single-use). This is the first matrix-v2 test of the SDK's OAuth code path that shipped in 5.9.0.
+  2. **Hashed-PII audience uploads.** Custom audiences accept members as SHA-256-hashed lowercase identifiers (`hashed_email_sha256`, `hashed_phone_sha256`, etc.). Uploading raw PII or wrong-cased hex is rejected with `400 invalid_hash_format`. Mirrors how Meta Custom Audiences, TikTok DMP, LinkedIn Matched Audiences all work.
+  3. **CAPI / Conversion API event ingestion.** Server-to-server conversion events arrive at `POST /event/track` with a hashed identifier (`email_sha256`, `phone_sha256`, or `external_id_sha256`) and event metadata. Events without a matchable identifier are dropped (counted in `events_dropped`); a batch of all-unmatchable events returns `400 no_matchable_events`.
+
+  Plus the supporting upstream surface required by the `sales_social` storyboard:
+  - Advertiser profile (`GET /v1.3/advertiser/{id}/info`)
+  - Catalog CRUD + bulk upload (sync_catalogs mapping)
+  - Creative portfolio CRUD (sync_creatives mapping)
+  - Pixel CRUD (sync_event_sources mapping)
+
+  **Multi-tenancy via path** (`/v1.3/advertiser/{advertiser_id}/...`). Two seeded advertisers with overlapping access. Single OAuth client authorized for both — matches the standard walled-garden model where one app credential serves multiple seats.
+
+  **Refactor**: `MockServerHandle.apiKey: string` is replaced by a polymorphic `MockServerHandle.auth: MockServerAuth` discriminated union (`{ kind: 'static_bearer', apiKey } | { kind: 'oauth_client_credentials', clientId, clientSecret, tokenPath }`). The matrix harness branches on `auth.kind` when building the adapter prompt — different flows produce different adapter wiring.
+
+  Run with:
+
+  ```bash
+  npx @adcp/sdk mock-server sales-social --port 4502
+  # or as part of the skill-matrix:
+  npm run compliance:skill-matrix -- --filter sales_social
+  ```
+
+  **21 new smoke tests** in `test/lib/mock-server/sales-social.test.js` cover OAuth handshake (success, bad client_secret, refresh-token rotation, old-token-invalidation), bearer-required API gating, audience create + hashed-PII upload + raw-PII rejection + idempotency conflict, CAPI event ingest with matchable/unmatchable identifiers + unknown pixel, catalog + creative flows, and the unified principal-mapping handle shape.
+
+  Refs adcontextprotocol/adcp-client#1155.
+
+- 6967470: feat(storyboard): `field_contains` validation check — closes adcontextprotocol/adcp#3803 item 2
+
+  Adds a wildcard-aware membership check to the storyboard validator. `path` may include `[*]` segments (resolved via the existing `resolvePathAll`), and the check passes when ANY resolved value matches `value` or any of `allowed_values`.
+
+  Lets storyboards write:
+
+  ```yaml
+  - check: field_contains
+    path: creatives[0].errors[*].code
+    value: PROVENANCE_VERIFIER_NOT_ACCEPTED
+  ```
+
+  instead of the brittle positional form `creatives[0].errors[0].code value: PROVENANCE_VERIFIER_NOT_ACCEPTED`, which breaks when a future seller emits multiple errors per creative or reorders the cascade. When the path has no wildcard segments the check reduces to scalar equality.
+
+  Symmetric to `field_value` for missing-value/missing-path errors and JSON pointer emission. 8 new test cases in `test/lib/storyboard-validations.test.js`.
+
+- a8cd3a5: feat(server): enforce documented `accounts.resolution: 'implicit'` refusal of inline `account_id` references. Previously aspirational — the docstring at `AccountStore.resolution` claimed the framework would refuse, but enforcement wasn't wired. The framework now emits `AdcpError('INVALID_REQUEST', { field: 'account.account_id' })` before reaching the adopter's `accounts.resolve` when an `'implicit'`-resolution platform receives an `{ account_id: ... }` reference. The brand+operator union arm is permitted (used during the initial `sync_accounts` flow). Adopters no longer need to reimplement the same `if (ref?.account_id) return null` branch in every Shape A platform.
+
+  Same change additionally improves the dispatcher's `resolveAccount` / `resolveAccountFromAuth` error projection: thrown `AdcpError` instances now propagate verbatim to the wire envelope (matching the existing tool-handler unwrap), instead of being coerced to `SERVICE_UNAVAILABLE`. Generic exceptions still map to `SERVICE_UNAVAILABLE` to keep upstream-leak protection intact. Closes #1364.
+
+- 6f5d616: Add `InMemoryImplicitAccountStore` reference adapter for `resolution: 'implicit'` platforms. Closes #1340 (partial — Postgres adapter and storyboard phases deferred; see issue for remaining scope).
+
+  Platforms where buyers call `sync_accounts` before any tool no longer need to hand-roll the `authPrincipal → accounts` map. `InMemoryImplicitAccountStore` implements both `upsert()` and `resolve()` with a configurable `keyFn` (defaults to `credential.client_id` / `credential.key_id` / `credential.agent_url`) and a configurable `ttlMs` (default 24h).
+
+  Also ships:
+  - `docs/guides/account-resolution.md` — key-derivation rationale, `ACCOUNT_NOT_FOUND` vs `AUTH_REQUIRED` error contract, TTL guidance for durable stores
+  - `examples/decisioning-platform-implicit-accounts.ts` — runnable wiring example
+  - Fix deprecated `authInfo.clientId` reference in `AccountStore.resolve()` JSDoc (use `credential.client_id` / `credential.key_id`)
+
+- 8737300: feat(server): `instructions` accepts a function form (lazy / per-session)
+
+  `createAdcpServer` and `DecisioningPlatform.instructions` now accept either a static `string` (the historical form) or a `(ctx: SessionContext) => string | undefined` function. Under the canonical `serve({ reuseAgent: false })` flow (the default) the factory runs per HTTP request, so the function fires per session — adopters can surface tenant-shaped prose (per-buyer brand manifests, storefront-platform copy, "premium vs standard" partner guidance) without hand-rolling a `Map` shim outside the SDK.
+
+  Closes #1347.
+
+  **Surface:**
+
+  ```ts
+  import { createAdcpServer, type SessionContext, type OnInstructionsError } from '@adcp/sdk/server';
+
+  createAdcpServer({
+    // existing string form still works
+    instructions: 'Publisher-wide brand safety: alcohol disallowed.',
+
+    // or function form — re-evaluated per createAdcpServer invocation
+    instructions: (ctx: SessionContext) => brandManifests.get(currentTenant)?.intro,
+
+    // throw semantics — default 'skip' (best-effort prose; throws resolve to no instructions)
+    onInstructionsError: 'skip', // or 'fail' (rethrow → MCP initialize transport-level failure)
+  });
+  ```
+
+  **Three guardrails:**
+  1. **`reuseAgent: true` + function-form is refused.** The function would only fire once for the lifetime of the shared agent — silently degrading to "instructions are a constant after all" is worse than failing loud. `serve()` returns 500 with a message naming the workaround (drop `reuseAgent: true` or pass a static string).
+  2. **Async return is not yet supported.** A function returning a `Promise` throws `ConfigurationError` at construction; pre-resolve before invoking `createAdcpServer` if you need to fetch.
+  3. **`SessionContext` is reserved.** `authInfo` and `agent` are typed for forward compatibility but currently always `undefined` — the framework does not yet plumb auth/registry state into the factory before MCP `initialize`. Use closures captured in your factory's HTTP-scoped state for tenant identity today; the function body picks up populated fields when the framework wires them through.
+
+  **Throw semantics:**
+  - `'skip'` (default) — log server-side, treat as `undefined` (no instructions). Right for prose-of-flavor (brand manifests, marketing copy) where a registry fetch failure must not kill the buyer's session.
+  - `'fail'` — rethrow. The MCP `initialize` handshake then fails at the transport layer (this is NOT an `adcp_error` envelope — it kills the session). Right for adopters whose instructions carry load-bearing policy where stale/missing guidance is worse than a connection retry.
+
+  **New exports** from `@adcp/sdk/server`:
+  - `SessionContext` — slim `{ authInfo?, agent? }`, both reserved for now.
+  - `OnInstructionsError` — `'skip' | 'fail'`.
+  - `ADCP_INSTRUCTIONS_FN` — symbol marker `serve()` reads to refuse the `reuseAgent: true` combination.
+
+  Plumbed through `DecisioningPlatform.instructions` (v6 surface) and `createAdcpServer.instructions` (v5 escape hatch); platform wins when both are set, same precedence pattern as `agentRegistry`.
+
+- dda2a77: `createMediaBuyStore` + `mediaBuyStore` option — opt-in framework support for the `packages[].targeting_overlay` echo contract on `get_media_buys`.
+
+  Per `schemas/cache/3.0.5/media-buy/get-media-buys-response.json`, sellers SHOULD echo persisted targeting overlays so buyers can verify what was stored without replaying their own request. Sellers claiming `property-lists` or `collection-lists` MUST include the persisted `PropertyListReference` / `CollectionListReference` inside the echoed `targeting_overlay`. Pre-this-release, satisfying the contract meant every adapter persisted + merged + echoed by hand — `examples/hello_seller_adapter_guaranteed.ts` shipped without the wiring and any fork inherited a silent storyboard failure on `media_buy_seller/inventory_list_targeting/get_after_create`.
+
+  ```ts
+  import { createAdcpServerFromPlatform, createMediaBuyStore, InMemoryStateStore } from '@adcp/sdk/server';
+
+  const stateStore = new InMemoryStateStore();
+
+  createAdcpServerFromPlatform(myPlatform, {
+    mediaBuyStore: createMediaBuyStore({ store: stateStore }),
+  });
+  ```
+
+  When wired, the framework:
+  - Persists `packages[].targeting_overlay` from `create_media_buy` requests, joined with the seller-assigned `package_id` (or `buyer_ref` when supplied). Persistence runs in the createMediaBuy projection, so it covers both the sync arm and the HITL completion arm.
+  - On `get_media_buys`, backfills missing `packages[].targeting_overlay` from the store. Packages the seller already echoed are left untouched.
+  - On `update_media_buy`, deep-merges the patched overlay against the prior persisted overlay: omitted keys keep prior, non-null values replace, explicit `null` clears. `new_packages[]` are persisted as fresh entries.
+
+  Backed by any `AdcpStateStore` — `InMemoryStateStore` for development, `PostgresStateStore` for production. Account-scoped per-tenant via `scopedStore`. Failures are logged + swallowed: a successful seller response is never turned into an error by the auto-echo plumbing.
+
+  `hello_seller_adapter_guaranteed.ts` now wires `mediaBuyStore` by default — every fork inherits the echo contract for free.
+
+  Removes four stale `UPSTREAM_SCHEMA_DRIFT` suppressors in `test/lib/storyboard-drift.test.js`. The cited `adcontextprotocol/adcp#2488` was resolved by the AdCP 3.0 GA schema update — `PackageStatus.targeting_overlay` is present on the wire response shape, so the storyboard assertions are now valid and the SDK is positioned to satisfy them.
+
+  Closes #1415.
+
+- 048716a: Add `mintEphemeralEd25519Key()` to `@adcp/sdk/signing/testing`.
+
+  Exports `mintEphemeralEd25519Key(opts?)` and `EphemeralEd25519Key` from
+  `@adcp/sdk/signing/testing`. The helper generates an ephemeral Ed25519
+  keypair and returns both halves as fully-shaped `AdcpJsonWebKey` values
+  (with `kid`, `alg: 'EdDSA'`, `use: 'sig'`, `adcp_use`, and `key_ops` set
+  correctly) — eliminating the manual Node `JsonWebKey.kty?: string` →
+  `AdcpJsonWebKey.kty: string` reshape that every dev/test agent had to write
+  by hand. Defaults to `adcp_use: 'webhook-signing'`; pass
+  `{ adcp_use: 'request-signing' }` for buyer-to-seller test keys.
+
+  Also fixes a dangling `testJwk` reference in `SIGNING-GUIDE.md` §Testing
+  that left callers without a concrete key-generation example.
+
+- 2459665: Tools whose wire request doesn't carry an `account` field — `preview_creative`, `list_creative_formats`, `provide_performance_feedback` — now use a new `NoAccountCtx<TCtxMeta>` request-context type whose `account` is `Account<TCtxMeta> | undefined`. Closes adcp-client#1327 — pre-fix, the typed handler signature claimed `ctx.account: Account<TCtxMeta>` (non-optional) while the framework dispatched these tools with `ctx.account === undefined` whenever `accounts.resolve(undefined)` returned null, producing runtime crashes (`Cannot read properties of undefined`) deep in adopter code. The narrow converts the runtime gate into a compile-time invariant — same shape as the `definePlatformWithCompliance` fix in #1262.
+
+  Affected interfaces:
+  - `CreativeBuilderPlatform.previewCreative?(req, ctx: NoAccountCtx<TCtxMeta>)`
+  - `CreativeBuilderPlatform.listCreativeFormats?(req, ctx: NoAccountCtx<TCtxMeta>)` (new in #1324)
+  - `CreativeAdServerPlatform.previewCreative(req, ctx: NoAccountCtx<TCtxMeta>)`
+  - `CreativeAdServerPlatform.listCreativeFormats?(req, ctx: NoAccountCtx<TCtxMeta>)` (new in #1324)
+  - `SalesPlatform.providePerformanceFeedback?(req, ctx: NoAccountCtx<TCtxMeta>)`
+  - `SalesPlatform.listCreativeFormats?(req, ctx: NoAccountCtx<TCtxMeta>)`
+
+  Migration for adopters: in handlers for these tools, narrow `ctx.account` before reading `ctx_metadata` / `id`. Three patterns:
+
+  ```ts
+  // 1. Singleton fallback — return a non-null Account from accounts.resolve(undefined).
+  //    `ctx.account` is always defined; no narrow needed.
+
+  // 2. Auth-derived lookup — accounts.resolve(undefined, ctx) reads ctx.authInfo.clientId.
+
+  // 3. Defensive narrow inside the handler:
+  previewCreative: async (req, ctx) => {
+    if (ctx.account == null) {
+      throw new AdcpError('ACCOUNT_NOT_FOUND', { recovery: 'correctable', message: '...' });
+    }
+    const ws = ctx.account.ctx_metadata.workspace_id;
+    // ...
+  };
+  ```
+
+  This is a TypeScript-level breaking change for adopters who were dereferencing `ctx.account` unconditionally — the runtime behavior is unchanged. Adopters of `'derived'`-resolution stores that always return a singleton are unaffected at runtime, but the compiler will now require the narrow.
+
+- 00b52f3: feat(adapters): `createOAuthPassthroughResolver` — factory for the canonical "Shape B" `accounts.resolve` pattern. Standardizes the `extract bearer → GET /me/adaccounts → match by id → return tenant with ctx_metadata` flow that every adapter wrapping a vendor OAuth + ad-account API (Snap, Meta, TikTok, LinkedIn, Reddit, Pinterest, etc.) re-derives by hand. Composes with `createUpstreamHttpClient`'s `dynamic_bearer.getToken` for per-buyer credential injection. Configurable `idField`, `rowsPath`, `getAuthContext`, and opt-in TTL cache (auth-context keyed so different buyers don't share entries). Closes #1363.
+- 69d93a3: Make `DecisioningCapabilities.creative_agents`, `channels`, and `pricingModels` optional. Signals-only platforms (`signal-marketplace`, `signal-owned`) sell audience data access, not media inventory — they don't compose with creative agents, don't sell media channels, and don't use channel-level pricing models. Forcing empty-array declarations was surprise friction for adopters building signals adapters.
+
+  `validatePlatform` (called by `createAdcpServerFromPlatform`) now throws `PlatformConfigError` when any `sales-*` specialism is claimed and `channels` or `pricingModels` is absent — platforms that previously passed without these fields will fail at construction time.
+
+- 217d43c: feat(testing): per-specialism storyboard routing — `runStoryboard({ agents })` (#1066)
+
+  Storyboards that span specialisms (e.g. `sync_governance` then `activate_signal` in a `signal_marketplace/governance_denied` flow) can now route each step to the tenant that actually owns that tool, instead of fanning every step at one URL and relying on cross-tenant comply seeds. Maps directly to the prod test-agent topology (`/sales`, `/signals`, `/governance`, `/creative`, `/creative-builder`, `/brand`) and to local Hello-cluster setups.
+
+  **API**:
+
+  ```ts
+  runStoryboard('', storyboard, {
+    auth: { type: 'bearer', token: '...' },
+    agents: {
+      sales: { url: 'https://test-agent.adcontextprotocol.org/sales/mcp' },
+      signals: { url: 'https://test-agent.adcontextprotocol.org/signals/mcp' },
+      governance: { url: 'https://test-agent.adcontextprotocol.org/governance/mcp' },
+    },
+    default_agent: 'sales',
+  });
+  ```
+
+  Per-step `agent: <key>` override for cross-domain tools (`sync_creatives`, `list_creative_formats`) when the same protocol is claimed by multiple tenants. Per-agent auth and transport overrides supported via `AgentEntry.auth` / `AgentEntry.transport`.
+
+  **Routing**: tool → `TASK_FEATURE_MAP` → first protocol → unique agent in the map that claims it via `get_adcp_capabilities`. Multi-claim conflicts fail-fast at storyboard-build time **for affected steps lacking a `step.agent` override** — the override is the per-step disambiguator and resolves the conflict cleanly. Tools with no specialism mapping fall back to `default_agent`, or fail-fast as `unroutable_task` when no default is set.
+
+  **Discovery**: parallel per-agent `get_adcp_capabilities` at storyboard start. Any tenant's discovery failure surfaces as a hard storyboard failure, not a per-step skip — a broken tenant in a multi-tenant flow is a topology bug, not a coverage gap.
+
+  **CLI**: `adcp storyboard run --agents-map ./agents.yaml <storyboard_id>`. Repeatable `--agent <key>=<url>` for inline maps. `--default-agent <key>` for fallback. URL validation matches existing `--url` (HTTPS in prod, HTTP only with `--allow-http`).
+
+  **Result shape**: new `StoryboardResult.agent_map?: Record<string, string>` echoes the resolved `key → url` so JUnit/CI consumers and bug reports show which agent served which tool. Per-step `agent_url` and `agent_index` are populated in routed mode (previously only in multi-instance replica mode).
+
+  **Mutually exclusive** with `multi_instance_strategy` (replica round-robin, different concept), `_client` (single client cannot serve multiple agents), and a positional URL alongside the map (ambiguous routing intent). All three combinations throw at `runStoryboard()` entry.
+
+  Closes #1066. Hello-cluster adapters for governance/creative/brand and a one-command cluster orchestrator are tracked separately as #1332/#1333/#1334/#1335.
+
+- 194c1c9: feat(server): add `definePlatform` / `defineSalesPlatform` / `defineAudiencePlatform` (and one per remaining specialism) identity helpers
+
+  Fixes the TypeScript contextual-typing gap that caused handler method parameters to
+  resolve as `req: unknown` when a `DecisioningPlatform` (or sub-interface) was built as
+  an object literal and passed directly to `createAdcpServerFromPlatform`.
+
+  Root cause: `createAdcpServerFromPlatform<P extends DecisioningPlatform<any,any>>(platform: P & ...)`
+  infers `P` from the argument rather than using the constraint for contextual typing, so
+  nested method parameters (`req`, `ctx`) can't be contextually typed from the interface.
+
+  The helpers are pure identity functions that force a concrete `DecisioningPlatform<TConfig, TCtxMeta>`
+  (or per-specialism sub-interface) as the declared parameter type, giving TypeScript the
+  annotation it needs:
+
+  ```ts
+  // Before — req: unknown, 16 manual casts
+  createAdcpServerFromPlatform({
+    sales: {
+      syncEventSources: async (req, ctx) => {
+        const sources = ((req as { event_sources?: unknown[] }).event_sources ?? [])...
+      }
+    }
+  }, opts);
+
+  // After — req: SyncEventSourcesRequest ✓, ctx.account.ctx_metadata: SocialMeta ✓
+  createAdcpServerFromPlatform({
+    sales: defineSalesPlatform<SocialMeta>({
+      syncEventSources: async (req, ctx) => {
+        const sources = req.event_sources ?? [];  // no cast
+      }
+    })
+  }, opts);
+  ```
+
+  The class pattern with explicit property-type annotations (`sales: SalesPlatform<Meta> = {...}`)
+  continues to work without any helper. The helpers are the object-literal escape hatch.
+
+  Also fixes a misleading note in `skills/build-seller-agent/specialisms/sales-social.md` that
+  described handler-bag grouping for the legacy `createAdcpServer` path, which steered LLM
+  adopters toward `req: unknown` handlers instead of the typed platform interface. Replaced
+  with the `createAdcpServerFromPlatform` method-mapping table.
+
+- 0016696: `createAdcpServerFromPlatform` now threads server-level `instructions` to the underlying MCP server, surfacing it on the `initialize` response. Closes #1312.
+
+  The new `DecisioningPlatform.instructions?: string` field is the v6 surface — declare platform facts, decision policy, and trends colocated with the rest of the platform definition. The pre-existing `opts.instructions` continues to work as the v5-style escape hatch; when both are set, `platform.instructions` wins (same precedence pattern as `agentRegistry`).
+
+  ```ts
+  const platform: DecisioningPlatform = {
+    capabilities: { specialisms: ['sales-non-guaranteed'] /* ... */ },
+    accounts: {
+      /* ... */
+    },
+    sales: {
+      /* ... */
+    },
+    instructions:
+      'Publisher-wide brand safety: alcohol disallowed. ' +
+      'Carbon-aware pricing applies to display impressions only. ' +
+      'Weekly cutoff: Thursday 17:00 UTC.',
+  };
+  const server = createAdcpServerFromPlatform(platform, opts);
+  ```
+
+  Surfaced from the storefront-platform port in `scope3data/agentic-adapters#237`, which had to defer publishing v5 `instructions` on the v6 path.
+
+- 353b99d: feat(runner): honor `provides_state_for` storyboard field with `peer_substituted` skip reason
+
+  AdCP 3.0.3 (adcp#3734) introduced an optional `provides_state_for: <step_id> | <step_id>[]` field on storyboard steps, declaring that a stateful step's pass establishes equivalent state for the named peer step(s) in the same phase. When the rescue fires, the spec mandates that the rescued target be graded with `skip_reason: 'peer_substituted'` and the detail string `"<target_step_id> state provided by <phase_id>.<substitute_step_id>"` per `runner-output-contract.yaml`.
+
+  The SDK already implemented the rescue mechanism in 6.4.1 (#1144) under the field name `peer_substitutes_for`. This change aligns with the spec:
+  - **Type alias**: `provides_state_for` is now the canonical field on `StoryboardStep`. `peer_substitutes_for` is retained as a `@deprecated` synonym for one minor cycle so existing storyboards keep parsing. Both fields normalize at parse time; the runner reads `provides_state_for ?? peer_substitutes_for`.
+  - **Loader validation**: works on whichever field is declared. If both are declared, the loader rejects mismatching values (the deprecation contract is "synonym for", not "additive with"). All same-phase / both-stateful / acyclic / no-self-reference rules apply identically.
+  - **Skip reason**: new `peer_substituted` value on `RunnerSkipReason`, distinct from `peer_branch_taken` (branch-set routing) and `not_applicable` (coverage gap). Detail format matches the spec contract.
+  - **Runner re-grading**: when a deferred `missing_tool` / `missing_test_controller` skip is rescued by a passing same-phase substitute, the runner re-grades the target's step result from the original hard-missing-state reason to `peer_substituted` with the spec detail string. Without this, the target kept its original `missing_tool` grade — misleading because state DID materialize via the substitute path.
+
+  Closes #1267.
+
+  Operational impact: `sales-social` explicit-mode platforms (Snap, Meta, TikTok) that pre-provision advertiser accounts out-of-band — and declare `provides_state_for: sync_accounts` on their `list_accounts` step per the 3.0.3 storyboard — graduate from `1/9/0` to `9/10` once their compliance cache refreshes against AdCP 3.0.3+.
+
+- cfaaf67: Add `@adcp/sdk/mock-server` as a public sub-export.
+
+  Adopters can now `import { bootMockServer } from '@adcp/sdk/mock-server'` for in-process integration tests, instead of spawning the published CLI as a child process or reaching into `dist/lib/mock-server/index.js`. Closes #1287.
+
+  Same shape as the existing CLI: `bootMockServer({ specialism, port, apiKey? })` returns a `MockServerHandle` with `{ url, auth, close, summary, principalScope, principalMapping }`. Boots in-process so test harnesses can iterate on adapter integration without subprocess overhead.
+
+  Examples in `docs/guides/VALIDATE-WITH-MOCK-FIXTURES.md` (when adcp#3826 lands) point at this for the test-side recipe.
+
+- a45bec6: feat(server): `accounts.resolve` security presets — `requireAccountMatch`, `requireAdvertiserMatch`, `requireOrgScope`. Standardize the post-resolve authorization pattern multi-tenant adopters reach for ("the inner resolver found the account, but is the calling principal authorized for it?") so each adopter doesn't roll their own. Compose with `composeMethod` over `accounts.resolve`; default deny is `null` (avoids principal enumeration) with opt-in `onDeny: 'throw'` for `PermissionDeniedError`. Closes #1339.
+- eda2648: Add `createRosterAccountStore` — Shape C `AccountStore` factory for `resolution: 'explicit'` publisher-curated platforms.
+
+  Pairs with the existing reference adapters:
+  - `InMemoryImplicitAccountStore` — Shape A, `resolution: 'implicit'`, buyer-driven write path via `sync_accounts`. Framework owns persistence.
+  - `createOAuthPassthroughResolver` — Shape B, `resolution: 'explicit'`, returns just the `resolve` function for adapters fronting an upstream OAuth listing API (Snap, Meta, TikTok). Adopter composes into AccountStore.
+  - `createRosterAccountStore` (new) — Shape C, `resolution: 'explicit'`, returns a complete AccountStore for adopters who own the roster (storefront table, admin-UI-managed JSON, in-memory map). The adopter keeps the persistence layer; the SDK provides the AccountStore plumbing.
+
+  Replaces ~150 LOC of boilerplate per adopter (extract id from `AccountReference`, point-lookup, build `Account<TCtxMeta>`, optional list pagination, ctx threading) with a ~50 LOC factory. No persistence opinion — the adopter brings a `lookup(id, ctx)` function backed by whatever roster source they have (Postgres SELECT, Map, JSON column, file).
+
+  ```ts
+  import { createRosterAccountStore } from '@adcp/sdk/server';
+
+  const accounts = createRosterAccountStore({
+    lookup: async (id, ctx) => {
+      const tenantId = deriveTenant(ctx?.authInfo);
+      return await db.oneOrNone('SELECT * FROM storefront_accounts WHERE id = $1 AND tenant = $2', [id, tenantId]);
+    },
+    toAccount: row => ({
+      id: row.id,
+      name: row.name,
+      status: row.status,
+      ctx_metadata: { tenant: row.tenant, upstreamRef: row.upstream_ref },
+    }),
+    list: async (filter, ctx) => {
+      const rows = await db.any(buildListQuery(filter, deriveTenant(ctx?.authInfo)));
+      return { items: rows, nextCursor: nextCursorFor(rows, filter) };
+    },
+  });
+  ```
+
+  Design choices:
+  - **Point-lookup, not roster getter.** Adopters with thousands of accounts per tenant in Postgres issue `SELECT WHERE id = $1` instead of materializing the full array on every request.
+  - **`list` is opt-in.** Omit it and the framework emits `UNSUPPORTED_FEATURE` for `list_accounts` calls. Provide it and the adopter pushes filter+page down to whatever index they have — the helper does NOT post-filter.
+  - **No `upsert` / `reportUsage` / `getAccountFinancials` / `refreshToken`.** Buyer-driven writes don't apply to publisher-curated rosters. Adopters who need those compose with a spread: `{ ...createRosterAccountStore(...), refreshToken: async (a) => { ... } }`.
+  - **No ref-less hatch.** `accounts.resolve(undefined, ctx)` (called by `provide_performance_feedback`, `list_creative_formats`, `preview_creative`) returns `null` by default. The spec lists three legitimate paths for ref-less calls — singleton fallback, auth-derived lookup, error out — with structurally different return types. Rather than ship a hatch that picks one shape, the helper does id-arm dispatch only. Adopters who want a synth tenant or auth-derived lookup wrap `resolve` (the JSDoc shows both patterns); adopters who want the error-out path keep the default null return and narrow on `ctx.account === undefined`. Same "compose, don't extend" precedent as `createOAuthPassthroughResolver`.
+
+- c446936: feat(storyboard): runner-output-contract v2.0.0 — forward-compat default, capture/substitution synthesized checks, `upstream_traffic` (adcp-client#1253, spec adcp#3816)
+
+  Implements the runner-side of the unified anti-façade + cascade-attribution contract landing in the spec. Three additive features, all backwards-compatible for storyboards that don't opt in.
+
+  **Forward-compat default for unknown check kinds.** When the runner encounters an authored `check` value it does not implement (e.g. a storyboard declares a check added in a later spec minor version), it now grades the validation as `passed: true, not_applicable: true` with a `note` describing the coverage gap, instead of failing the step with `Unknown validation check: …`. New per-run counter `validations_not_applicable` surfaces the count on `StoryboardResult`, `StoryboardPassResult`, and the compliance `summary` so dashboards can distinguish "runner is older than the storyboard" from clean passes. Independently valuable — unblocks any future additive check-type extension from breaking older runners.
+
+  **`capture_path_not_resolvable` synthesized checks.** When a step's `context_outputs.path` resolves to absent, `null`, or `""`, the runner now synthesizes a failed `validation_result` on the _capturing_ step (check: `capture_path_not_resolvable`, `expected`: declared path, `actual`: resolved value, `json_pointer`: RFC 6901 form of the path). Previously the runner silently skipped the capture and the failure surfaced — confusingly — on the downstream consumer. Fixes the cascade-attribution gap from adcp#3796. `applyContextOutputsWithProvenance` now also returns the failures on `ContextWriteResult.failures` for callers using the lower-level surface.
+
+  **`unresolved_substitution` synthesized checks.** When a downstream step is skipped because a `$context.<key>` token can't resolve, the skipped step's `validations[]` now carries an `unresolved_substitution` validation result per missing token (`expected`: the token string; `actual` / `json_pointer` / `request` / `response` all `null` because no request was sent). `skip_result.reason` remains `prerequisite_failed`. Lets dashboards attribute the cascade origin without parsing skip messages.
+
+  **`upstream_traffic` check — load-bearing anti-façade contract.** New authored check that asserts side-effects against the adopter's `comply_test_controller`'s `query_upstream_traffic` scenario. Adopters who advertise the scenario in `list_scenarios` opt in; adopters who don't grade `not_applicable`. Adopters who do but observed zero recorded calls in the assertion window grade `failed` (the façade signal). Supports:
+  - `min_count` — minimum matching calls.
+  - `endpoint_pattern` — glob over `<METHOD> <URL>`.
+  - `payload_must_contain` — array of `{path, match: present | equals | contains_any}`. JSONPath-lite (`foo.bar`, `users[*].hashed_email`) — RFC 9535 descendant operator (`$..foo`) is NOT supported per the spec's pin to `parsePathWithWildcards`. Per-call `content_type` gating: JSON payloads use path-based matching; non-JSON payloads fall back to substring-search-the-terminal-key for `match: present` and grade `not_applicable` for `match: equals` / `contains_any`. The whole assertion grades `not_applicable` only when EVERY declared path landed in the non-JSON-skip bucket.
+  - `identifier_paths: string[]` — paths into the storyboard's `sample_request`. The runner extracts every value at each path and asserts ALL resolved values appear at any depth in some matched call's payload (single-placeholder fabrication is the threat). Replaces the earlier `buyer_identifier_echo` boolean shorthand the spec PR retracted.
+  - `since: prior_step_id` — bounds the lookup window to traffic recorded since the named prior step's request start. Unknown step ids grade `failed` loudly (not silent fallback). Runner subtracts a 250 ms clock-skew tolerance before sending the bound to the controller (spec's recommended value, 50 ms minimum).
+
+  The runner pre-fetches once per unique `since_timestamp` window so the synchronous validator stays sync. Validator helpers (`walkLitePath`, `containsValueAnyDepth`) are bounded against hostile / buggy `recorded_calls[].payload` — fan-out capped at 10 000 terminal values; recursion depth capped at 256. Controller-error strings inlined into `validation_result.error` truncate at 2 000 chars to match the runner's existing posture.
+
+  **Surface details.** `ValidationResult` gains optional `not_applicable` and `note` fields. `StoryboardValidationCheck` gains `upstream_traffic`. `StoryboardValidation` gains `min_count` / `endpoint_pattern` / `payload_must_contain` / `identifier_paths` / `since` for upstream_traffic. `RecordedCall` gains required `content_type` (mirrors the spec). `ControllerScenario` gains `query_upstream_traffic`. New `isJsonContentType` helper + `RecordedCall` / `UpstreamTrafficSuccess` / `UpstreamTrafficQueryParams` types exported from `testing/test-controller`. `UpstreamTrafficPayloadMatch` exported from `testing/storyboard`. `ValidationContext` gains `upstreamTraffic` (with `unresolvedSinceRefs`) and `storyboardStep` fields populated by the runner's pre-fetch.
+
+- bd3d98d: feat(mock-server, sales-guaranteed): forecast and availability endpoints (closes #1375)
+
+  Adds `POST /v1/forecast` and `POST /v1/availability` to the sales-guaranteed mock so the worked adapter for guaranteed sellers exercises `Product.forecast` instead of returning the seed's static `availability` field. Real GAM/FreeWheel/Operative integrations spend most of their API time on forecast/availability calls; the prior mock surface was order/lineitem-only, so adopters who forked the example hit "where's the forecast call?" with no example to follow.
+
+  **New endpoints**
+  - `POST /v1/forecast` — per-query `DeliveryForecast` for one product. Returns `forecast_range_unit: 'availability'` when budget is omitted (the GAM availability check), `'spend'` when budget is supplied (a budget→outcome curve). Deterministic-seeded on `(product_id, targeting, dates)` so storyboard graders can assert exact numbers.
+  - `POST /v1/availability` — multi-item dry-run that mirrors GAM's `getCompetitiveForecast` semantics: items are evaluated in order and earlier reservations reduce the supply visible to later ones. Returns per-item `forecast`, three-tier `tier_pricing` rate cards, and a `conflicts` array when supply is exhausted.
+  - `GET /v1/products` — accepts `targeting`, `flight_start`, `flight_end`, `budget` query params and embeds a per-query `forecast` field on each returned product when any are present (back-compat: omit the params, get the static catalog).
+
+  The response shapes match `/schemas/3.0.4/core/delivery-forecast.json` field-for-field so adapters project to `Product.forecast` with no field renaming. `forecast.method` is `'guaranteed'` for availability checks (matching the AdCP enum description: "Contractually committed delivery levels backed by reserved inventory") and `'modeled'` for spend curves. The seller-skill specialism doc (`skills/build-seller-agent/specialisms/sales-guaranteed.md`) gains a worked `getProducts` snippet that compiles under `npm run typecheck:skill-examples` (CI-gated; was previously fragment-shape and skipped).
+
+  Also fixes a determinism bug in the targeting hash: `serializeTargeting` now uses a recursive deterministic stringifier instead of `JSON.stringify(t, Object.keys(t).sort())`, which was using arg 2 as a key allowlist and silently dropping every nested object's contents (two targeting specs differing only in nested fields hashed identically). Adds NaN/Infinity guards on `?budget=` / `?flight_start=` query params so garbage input falls back to the no-forecast path instead of poisoning the response with `null`s.
+
+- e7f8e22: `SalesPlatform` methods are now optional individually; per-specialism enforcement of the core media-buy lifecycle moves up to `RequiredPlatformsFor<S>`. Two new named subset types:
+  - **`SalesCorePlatform<TCtxMeta>`** — bidding + media-buy lifecycle (`getProducts`, `createMediaBuy`, `updateMediaBuy`, `getMediaBuyDelivery`, `getMediaBuys`). Required for `sales-non-guaranteed` / `sales-guaranteed` / `sales-broadcast-tv` / `sales-catalog-driven`.
+  - **`SalesIngestionPlatform<TCtxMeta>`** — asset ingestion (`syncCreatives`, `syncCatalogs`, `syncEventSources`, `logEvent`, `listCreativeFormats`, `listCreatives`, `providePerformanceFeedback`). Required for `sales-social`. Optional individually.
+
+  `SalesPlatform = SalesCorePlatform & SalesIngestionPlatform` is preserved as a structural-compatibility alias. `RequiredPlatformsFor<'sales-social'>` now requires only `SalesIngestionPlatform`, dropping ~40 lines of stub-throw boilerplate from walled-garden adopters that don't accept inbound media buys (Meta CAPI, Snap CAPI, TikTok Events, etc.). `RequiredPlatformsFor<'sales-proposal-mode'>` requires only `getProducts` plus optional ingestion. Closes #1341.
+
+  Two new helpers in `@adcp/sdk/server`: `defineSalesCorePlatform<TCtxMeta>(platform)` and `defineSalesIngestionPlatform<TCtxMeta>(platform)` — companions to the existing `defineSalesPlatform` for adopters wiring core or ingestion in isolation.
+
+  **Migration: adopters claiming a sales specialism with required core methods.** If you currently write:
+
+  ```ts
+  sales: SalesPlatform<Meta> = defineSalesPlatform<Meta>({
+    /* all 5 core methods */
+  });
+  ```
+
+  …the explicit `: SalesPlatform<Meta>` field annotation now widens the inferred shape to all-optional after the split, so `RequiredPlatformsFor<'sales-guaranteed'>` (etc.) rejects the platform with "Property 'getProducts' is optional in type 'SalesPlatform<Meta>' but required in type 'Required<Pick<SalesPlatform<any>, …>>'". Two clean migrations:
+
+  ```ts
+  // Pattern A — explicit field annotation (recommended; shortest)
+  sales: SalesCorePlatform<Meta> & SalesIngestionPlatform<Meta> = {
+    getProducts: async (req, ctx) => { … },
+    createMediaBuy: async (req, ctx) => { … },
+    updateMediaBuy: async (id, patch, ctx) => { … },
+    getMediaBuyDelivery: async (filter, ctx) => { … },
+    getMediaBuys: async (req, ctx) => { … },
+    // …optional ingestion methods (syncCreatives, etc.)…
+  };
+
+  // Pattern B — spread the new sub-helpers (when you want the methods grouped)
+  sales = {
+    ...defineSalesCorePlatform<Meta>({ getProducts, createMediaBuy, updateMediaBuy, getMediaBuyDelivery, getMediaBuys }),
+    ...defineSalesIngestionPlatform<Meta>({ syncCreatives, syncCatalogs, logEvent }),
+  };
+  ```
+
+  Both patterns are exercised as type-only regression tests in `decisioning.type-checks.ts` (`_sales_guaranteed_field_annotation_pattern`, `_sales_guaranteed_spread_helpers_pattern`) so future helper changes can't silently break the migration path. The `defineSalesPlatform` helper is preserved for source compat — it still returns `SalesPlatform<TCtxMeta>` (now all-optional) and is appropriate for `sales-social` adopters and similar specialisms whose `RequiredPlatformsFor<S>` doesn't enforce core-method presence. The `examples/hello_seller_adapter_guaranteed.ts` reference adapter demonstrates Pattern A.
+
+  Runtime: the dispatcher in `from-platform.ts` now conditionally registers core handlers based on method presence, so omitting `getProducts` from a `sales-social` platform doesn't crash; the buyer receives `METHOD_NOT_FOUND` for unsupported tools (or the merge-seam handler fills in via `opts.mediaBuy.X`). The runtime `validateSpecialismRequiredTools` check still warns / throws when a claimed specialism's required tools aren't implemented anywhere on the platform.
+
+- bd3d98d: feat(mock-server, sales-social): planning surface — delivery_estimate, audience_reach_estimate, lookalike (closes #1378)
+
+  Adds the Meta/TikTok/Snap/LinkedIn-style planning surface to the `sales-social` mock so adopters can wire `Product.forecast` from real walled-garden Marketing APIs instead of returning `forecast: undefined`. Per the issue's accepted framing, AdCP 3.0.4 already covers the surface — `forecast_range_unit: 'spend' | 'conversions' | 'reach_freq' | 'clicks'` was on the spec the whole time. The gap was that no example demonstrated the projection.
+
+  **New endpoints**
+  - `POST /v1.3/advertiser/{id}/delivery_estimate` — forward forecast (`budget` provided → reach/impressions/clicks/conversions/CPM/bid recommendation/delivery curve), or reverse forecast (`target_outcome` provided → `required_budget`, the Meta-style "tell me your goal, I'll tell you the budget" surface). CPM band varies by `optimization_goal` so the curve reflects auction realism (reach < clicks < conversions).
+  - `POST /v1.3/advertiser/{id}/audience_reach_estimate` — total audience size + platform-matchable subset for a targeting spec. Adopters use this to populate `Product.targeting_options` previews before the buyer commits.
+  - `POST /v1.3/advertiser/{id}/audience/{audience_id}/lookalike` — size + activation ETA estimate for a lookalike built from a seed audience, scaled by `similarity_pct` (1 = closest, 10 = broadest) and country. Mirrors Meta `customaudiences` lookalike subtype, TikTok `dmp/audience/save_lookalike`, Snap `lookalikes`.
+
+  All three are deterministic-seeded on the inputs (advertiser_id + targeting hash + goal/audience), so storyboards remain reproducible while different targeting hashes still produce visibly different curves.
+
+  CPM bands are calibrated to 2024-2026 walled-garden benchmarks: reach=$5, video_views=$8, engagement=$6, clicks=$11, conversions=$18 (was previously inverted — video < reach). CTR and conversion rate vary per `optimization_goal` so reach-goal reverse forecasts use saturating-curve inversion rather than back-deriving from conversion rate. The reverse-forecast budget is clamped to platform learning-phase floors ($5/day reach, $10/day clicks, $40/day conversions) and surfaces a `min_budget_warning` when the inferred budget falls below — the #1 surprise adopters hit when wiring real Meta/TikTok APIs. Lookalike sizing is now country-population-aware: `min(country_pop × similarity_pct/100, seed × multiplier)`, so a 1M-member seed in the US doesn't produce a 19M lookalike (Meta caps at country_pop × similarity_pct).
+
+  The seller-skill specialism doc (`skills/build-seller-agent/specialisms/sales-social.md`) gains a `### Planning surface` section with a field-map table (upstream `min/max` → AdCP `low/mid/high`, `daily_budget` → `points[].budget`, etc.) and a worked `getProducts` snippet that compiles under `npm run typecheck:skill-examples`.
+
+- d7439de: feat(server): runtime validation for specialism→required-tools coverage
+
+  Stage 3 of #1192 (manifest adoption). When an adopter declares a specialism in `capabilities.specialisms[]`, the AdCP spec implies the agent supports every tool in that specialism's required-tool list (`SPECIALISM_REQUIRED_TOOLS` derived from manifest). This change adds a construction-time check in `createAdcpServerFromPlatform` that walks the platform object and warns (or throws under strict mode) when a required method is missing.
+
+  What lands:
+  - `src/lib/server/decisioning/validate-specialisms.ts` — `validateSpecialismRequiredTools(platform, specialisms)` and `formatSpecialismIssue(issue)` helpers. Walks every top-level field on the platform and checks for a function-typed property matching `snakeToCamelCase(tool)`. "Method-presence-anywhere" rather than "method-on-specific-field" because required tools span platform fields (`sync_accounts` lives on `accounts`, not on the specialism's primary `sales`) and pinning ownership upfront would either need a per-tool field map or false-positive on legitimate alternative layouts.
+  - `createAdcpServerFromPlatform`: after `validatePlatform`, runs the specialism check. Default behavior is `console.warn` for each missing method (with specialism + tool + method name). New `strictSpecialismValidation: true` opt opts into `PlatformConfigError` on missing methods — recommended for production CI builds.
+  - `scripts/generate-manifest-derived.ts`: now populates `SPECIALISM_REQUIRED_TOOLS` via reverse-mapping from `manifest.tools[*].specialisms[]` (the manifest's direct `specialisms[*].required_tools` is empty in 3.0.4). Filters universal tools (`get_adcp_capabilities` and other `protocol`-protocol tools) and normalizes specialism keys to kebab-case to match the spec's `AdCPSpecialism` enum.
+
+  What's deferred (was originally option C of #1299):
+
+  The build-time type fixture asserting `RequiredPlatformsFor<S>` collectively exposes every required tool method was scoped out after implementation revealed too many false-positives from cross-cutting tools (e.g., `sync_accounts` is required by `sales-non-guaranteed` but lives on `AccountsPlatform`, not `RequiredPlatformsFor<'sales-non-guaranteed'> = { sales: SalesPlatform }`). Rescoping this to a "platform-interface family collectively covers every required-tool method" assertion (without per-specialism mapping) is tracked as a follow-up on #1299.
+
+  Closes #1299 (option B portion).
+
+- 38331d8: Export canonical `MediaBuy` / `Creative` lifecycle graphs from `@adcp/sdk/server`.
+
+  New surface:
+  - `MEDIA_BUY_TRANSITIONS: ReadonlyMap<MediaBuyStatus, ReadonlySet<MediaBuyStatus>>`
+  - `CREATIVE_ASSET_TRANSITIONS: ReadonlyMap<CreativeStatus, ReadonlySet<CreativeStatus>>`
+  - `isLegalMediaBuyTransition(from, to)` / `isLegalCreativeTransition(from, to)` — boolean predicates
+  - `assertMediaBuyTransition(from, to)` / `assertCreativeTransition(from, to)` — throw `AdcpError` with the spec-correct code (`NOT_CANCELLABLE` for the cancel-idempotency path, `INVALID_STATE` everywhere else)
+
+  These maps are the same source the storyboard runner's `status.monotonic` invariant uses — production sellers that enforce transitions with these helpers cannot drift from conformance enforcement. Previously sellers had to copy the graph into their own code (three example files were doing this); spec-version bumps to the lifecycle would silently desync them. Closes #1416.
+
+  The two test-controller examples (`examples/seller-test-controller.ts`, `examples/comply-controller-seller.ts`) now consume the SDK predicates instead of redefining the table.
+
+- 3b21a15: Storyboard runner — `task_completion.<path>` prefix on `context_outputs.path`.
+
+  When a step's immediate response is a submitted-arm task envelope (HITL / async-signed-IO flows), the seller-assigned IDs only exist on the eventual completion artifact, not the immediate response. Pre-this-release, storyboard authors who tried to capture from the artifact got `capture_path_not_resolvable` for a value the seller correctly produced — just on a later message. The workaround was to author a redundant follow-up `get_*` step purely to expose the field.
+
+  The `task_completion.<path>` prefix is an explicit author opt-in: when the runner sees this prefix, it polls `tasks/get` until terminal and resolves the rest of the path against the artifact's `data`.
+
+  ```yaml
+  context_outputs:
+    - name: media_buy_id
+      path: 'task_completion.media_buy_id'
+  ```
+
+  The prefix triggers polling on any non-terminal status that carries a `task_id` — `submitted`, `working`, and `input-required`, per the AdCP `tasks-get-response.json` enum. Storyboards with intentional non-terminal-arm assertions are unaffected because the prefix is the only opt-in (no shape inference).
+
+  Polling is bounded (default 30s, override with `STORYBOARD_TASK_POLL_TIMEOUT_MS`); per-poll cadence default 1.5s (override with `STORYBOARD_TASK_POLL_INTERVAL_MS`). `task_id` is validated (length cap + control-char rejection) before reaching the SDK's `tasks/get` call.
+
+  Failures map to three distinct validation checks so compliance reports surface the right diagnostic:
+  - `capture_poll_timeout` — task didn't reach terminal state within the timeout
+  - `capture_task_failed` — task reached terminal `failed` / `canceled` / `rejected`
+  - `capture_path_not_resolvable` — task succeeded but the artifact's data didn't carry the requested field
+
+  This applies to any HITL flow where artifact-only fields land in `context_outputs`: `create_media_buy` (the originally-reported case), `sync_creatives` async approval (`creative_id`), `acquire_rights` (`rights_grant_id`), `si_initiate_session` / `si_send_message`, and any future tool routed through async-signed-IO.
+
+  Closes #1417 (Option 1 from the issue's three options; protocol-expert and code-reviewer triage notes converged on this surface as the cleanest fix).
+
+- 2026325: Storyboard runner — `task_completion.<path>` resolution now races `tasks/get` polling against the active webhook receiver, whichever arrives first.
+
+  Per `tasks-get-response.json:75-85`, sellers MAY use webhook-only HITL completion (the spec's `submitted` enumDescription explicitly says _"Client should poll with tasks/get **or provide webhook_url at protocol level**"_). Pre-this-release, `task_completion.<path>` captures fail-closed against webhook-only sellers because the runner only polled. With this release, when `--webhook-receiver` is active, the runner waits for either (a) terminal `tasks/get` response, or (b) a webhook payload whose body's `task_id` matches the originating step. The first to resolve provides the artifact data; the runner extracts the captured field from there.
+
+  The `task_completion.` syntax is unchanged — adoption is forward-compatible. Storyboard authors don't need to declare their preferred resolution source; runner picks whatever arrives.
+
+  Failure modes preserved from the prior `task_completion.` implementation:
+  - `capture_poll_timeout` — neither poll nor webhook resolved within the bounded timeout
+  - `capture_task_failed` — poll returned a terminal failure OR webhook delivered a non-completed terminal status (`failed` / `canceled` / `rejected`)
+  - `capture_path_not_resolvable` — task succeeded but the artifact (from poll OR webhook) didn't carry the requested field
+
+  Closes #1431.
+
+- 018f9cd: Three follow-ups to `createTenantStore` (#1387 post-DX review):
+  - **Export `narrowAccountRef(ref)`** from `@adcp/sdk/server`. The framework already used this internally to read `AccountReference` fields without per-arm narrowing (the wire type is a discriminated union `{account_id} | {brand, operator}` plus optional `sandbox`); adopters writing `tenantToAccount` were cargo-culting `(ref as { operator?: string })` casts at four call sites in the worked example. Single typed accessor consolidates the pattern.
+
+    ```ts
+    tenantToAccount: (tenant, ref, ctx) => {
+      const r = narrowAccountRef(ref);
+      return {
+        id: tenant.id,
+        operator: r?.operator ?? ctx?.agent?.agent_url ?? 'derived',
+        ...(r?.brand?.domain && { brand: { domain: r.brand.domain } }),
+        sandbox: r?.sandbox ?? false,
+        // ...
+      };
+    };
+    ```
+
+    Returns `undefined` on `undefined` input (the no-account-tool path), so adopters can use the same accessor in `tenantToAccount` and in `resolveByRef` without branching.
+
+  - **Default sandbox to `false` in the multi-tenant adapter example.** The post-DX review caught an inconsistency: the adapter set `sandbox: ref?.sandbox ?? true` while the skill snippet used `?? false`. Production adopters route reads/writes to a sandbox backend on this flag — defaulting to `true` would silently land buyer requests in sandbox when they didn't ask. Aligned both to `?? false` with an explicit SWAP comment that frames it as an adopter decision.
+  - **Warn on overwritten governance bindings** in the multi-tenant adapter. The hello-adapter shortcut keys `governanceBindings` by `(tenant, brand_domain)` because `acquire_rights` doesn't carry an operator on the wire (tracked upstream as adcontextprotocol/adcp#3918). Two operators in the same tenant hitting the same brand share one binding — silently. The example now logs a `console.warn` on overwrite that names the symptom and links the upstream issue, so adopters notice the limitation before it bites in production.
+
+  Plus a SKILL cross-link in `tenant-store.ts` JSDoc so the helper's IDE hover surfaces the holdco walkthrough.
+
+- a2abcd7: feat(types): re-export all spec-defined request/response types from `@adcp/sdk/types`
+
+  `@adcp/sdk/types` previously re-exported only a curated subset of wire types, leaving
+  `GetMediaBuysRequest`, `ListCreativeFormatsRequest/Response`, and ~50 other operation
+  types accessible only via `@adcp/sdk/tools.generated` — a generated file CLAUDE.md
+  explicitly tells adopters not to reach into.
+
+  This change completes the barrel so all spec-defined operation `*Request`, `*Response`,
+  `*Success`, `*Error`, and `*Submitted` types are importable from `@adcp/sdk/types`.
+  The single large block is replaced with per-domain named sections (accounts,
+  capabilities, media buy, audiences/catalogs/events, signals, creative, governance,
+  sponsored intelligence) for maintainability.
+
+  Intentionally excluded: comply-runner internals (`ComplyTestControllerRequest/Response`,
+  `SeedSuccess`, `SimulationSuccess`, `ControllerError`), sub-shapes accessible
+  transitively (`PaginationRequest/Response`, `PackageRequest`), and types whose names
+  conflict with legacy `adcp.ts` shapes already in the public surface
+  (`SyncCreativesRequest`, `ListCreativesRequest/Response`).
+
+- c3bd4f0: feat(upstream-recorder): producer-side reference middleware for `query_upstream_traffic` adopters (closes adcp-client#1290)
+
+  New public sub-export `@adcp/sdk/upstream-recorder` — a small, sandbox-only-by-default helper adopters drop into their HTTP layer to populate the `comply_test_controller`'s `query_upstream_traffic` buffer that the runner-output-contract v2.0.0 `upstream_traffic` storyboard check (PR #1289, spec adcontextprotocol/adcp#3816) reads from.
+
+  The runner-side consumer landed in #1289. This is the producer-side companion: turns "instrument my outbound HTTP layer with a session/principal-scoped ring buffer + redaction + sandbox gating + multi-tenant isolation" — a 1-2 sprint engineering ask for a DSP/SSP-scale codebase — into "wire `recorder.wrapFetch(globalThis.fetch)` and pass the query result through your controller handler."
+
+  ```ts
+  import { createUpstreamRecorder } from '@adcp/sdk/upstream-recorder';
+
+  const recorder = createUpstreamRecorder({
+    enabled: process.env.NODE_ENV !== 'production',
+  });
+
+  // Wrap your HTTP layer
+  const fetch = recorder.wrapFetch(globalThis.fetch);
+
+  // Scope every outbound call inside a request handler to the resolving principal
+  await recorder.runWithPrincipal(account.id, async () => {
+    await syncAudienceUpstream(/* ... */);
+  });
+
+  // In your `comply_test_controller` `query_upstream_traffic` handler:
+  const { items, total, truncated, since_timestamp } = recorder.query({
+    principal: account.id,
+    sinceTimestamp: req.params.since_timestamp,
+    endpointPattern: req.params.endpoint_pattern,
+    limit: req.params.limit,
+  });
+  return { success: true, recorded_calls: items, total_count: total, truncated, since_timestamp };
+  ```
+
+  **Key behaviors** (all from the spec PR's three-expert review plus this PR's own multi-expert pass):
+  - **Per-principal isolation** (security HIGH from spec review). `query({ principal })` returns only calls bound to the same principal — multi-tenant sandboxes can't leak traffic across tenants. Adopters thread principal via `runWithPrincipal(p, fn)` (an AsyncLocalStorage scope that propagates across `await` boundaries) or pass it explicitly to `record()`. Empty / non-string principal at record-time or query-time throws `UpstreamRecorderScopeError` rather than silently matching nothing.
+  - **Record-time redaction**. The canonical secret-key pattern from `runner-output-contract.yaml`'s `payload_redaction` is applied at recording time, not query time. JSON bodies walk through `redactSecrets`; **form-urlencoded bodies are parsed + key-redacted + re-stringified** so `access_token=xxx` is caught without the adopter pre-redacting; binary bodies (Buffer / Blob / ArrayBuffer / TypedArray) are replaced with a `[binary <n> bytes]` marker so the buffer never holds raw bytes.
+  - **Sandbox-only gating**. `enabled: false` returns a no-op recorder — zero per-call overhead. When `enabled: true` and `NODE_ENV=production`, the factory emits a one-time `console.warn` so accidental ship is loud (suppress with `ADCP_RECORDER_PRODUCTION_ACK=1`).
+  - **`strict: true` debug mode**. Calls outside `runWithPrincipal` scope throw `UpstreamRecorderScopeError` instead of silently dropping. Adopters set this in integration tests so forgotten scope wrappers surface as a stack trace pointing at the unwrapped call site, not as mysterious "controller present, observed nothing" storyboard failures (a HIGH adopter-facing footgun the DX review flagged).
+  - **`recorder.debug()` introspection**. Returns `{enabled, bufferSize, bufferedEntries, principals, lastRecordedAt, activePrincipal, strict}` — log it from inside a handler to pinpoint missing scope wrappers or record-time / query-time principal mismatches.
+  - **`onError` observability hook**. Surfaces classifier-throws, URL-parse-failures, payload-build failures, and unscoped-record events. Adopters wire to their logger; previously-invisible classifier bugs become debuggable.
+  - **Buffer + TTL eviction**. Default `bufferSize: 1000`, `ttlMs: 1h`. Out-of-range option values (zero / negative / above ceiling / NaN) revert to defaults rather than silently saturating — a typo'd `bufferSize: -10` saturating to `1` would drop nearly everything.
+  - **Per-entry payload byte cap**. Default `maxPayloadBytes: 65_536` (mirrors the spec's `recorded_calls[].payload.maxLength`). JSON payloads exceeding the cap replaced with `[truncated <n> bytes]`. Bounds memory ceiling under accidental hot-loop recording.
+  - **`endpointPattern` glob filter** with ReDoS guard. `*` → `.*` (greedy, `/`-crossing); all other regex metas escape literally. Pathological `**********` patterns coalesce to a single `*` to defeat catastrophic backtracking. Implementation lives in `src/lib/utils/glob.ts` — shared with the runner's `validations.ts` so producer + consumer can't drift.
+  - **`purpose` classifier hook**. Optional callback invoked at record time with redacted-headers view. Returning a string stamps `RecordedCall.purpose` — forward-compat for adcp#3830 item 3.
+  - **Manual `record()` escape hatch** for adopters on axios / got / native `node:http`. Auto-fills timestamp, host/path, content_type, applies redaction, runs the classifier — same wire shape as `wrapFetch`. SKILL.md documents the axios + got integration patterns.
+
+  **`toQueryUpstreamTrafficResponse(queryResult)` helper**: also exported. Projects `recorder.query()`'s adopter-ergonomic shape (`{ items, total, ... }`) onto the spec wire shape (`{ recorded_calls, total_count, ... }`) so adopters return it verbatim from their `comply_test_controller` handler instead of reinventing the field renames.
+
+  **`registerTestController` extended**: `TestControllerStore.queryUpstreamTraffic?` is a new optional method. When present, the SDK auto-advertises `query_upstream_traffic` via `list_scenarios` (open-extension scenario, accepted by the dispatcher under the `TOOL_INPUT_SHAPE.scenario: z.string()` open contract). The capability block (`compliance_testing.scenarios` on `get_adcp_capabilities`) keeps the canonical typed enum — extension scenarios live in `list_scenarios` only, since the cached 3.0.4 schema's enum predates spec PR #3816 and would reject the unknown value at validation time. Once a 3.0.5+ release ships the schema, `query_upstream_traffic` gets promoted to a first-class `CONTROLLER_SCENARIOS` constant.
+
+  **End-to-end integration**: the SDK's `examples/hello_signals_adapter_marketplace.ts` reference adapter wires the recorder against the published `signal-marketplace` mock. CI gates the example via `test/examples/hello-signals-adapter-marketplace.test.js` — type-checks under strictest tsc (`--strict + noUncheckedIndexedAccess + exactOptionalPropertyTypes + noPropertyAccessFromIndexSignature`), runs the storyboard with zero failed steps, asserts every expected upstream route hit on the mock's `/_debug/traffic` (the existing façade gate). Adopters fork this example as the copy-pasteable starting point.
+
+  **Two anti-façade traffic surfaces — documented explicitly in the SKILL**: adopter-side `query_upstream_traffic` (this PR; full payloads, per-principal, JSONPath assertions) is complementary to mock-side `/_debug/traffic` (pre-existing; per-route hit counts on the mock platform itself). Mocks shouldn't wire the recorder internally — they ARE the upstream. The SKILL's new "Two traffic surfaces" diagram pins this so adopters don't conflate them.
+
+  **Refactor under the hood**: `redactSecrets` and `SECRET_KEY_PATTERN` lifted from the runner into a shared `src/lib/utils/redact-secrets.ts` so the new recorder reuses the same redaction floor as the runner consumes — adopter-emitted recorded payloads land in the runner's compliance report unchanged. `globToRegExp` similarly lifted to `src/lib/utils/glob.ts` so producer-side `endpointPattern` filtering and runner-side `endpoint_pattern` matching share one implementation and can't drift. No behavior change for the runner; `__redactSecretsForTest` still works.
+
+  **53 tests across four files** pin the integration end-to-end:
+  - `test/lib/upstream-recorder.test.js` (41 unit) — enabled-false short-circuit, cross-principal isolation (the security HIGH), record-time JSON + header + form-urlencoded redaction with custom-pattern extension, buffer FIFO eviction, TTL eviction, endpointPattern + sinceTimestamp + limit/truncated query filters, wrapFetch end-to-end (incl. status_code capture and recording on fetch error), purpose classifier including the catches-throws-MUST-NOT-crash invariant, clear() cleanup helper, query() principal validation (empty / non-string throws), runWithPrincipal validation, strict-mode throws on unscoped record / fetch, onError observability for all swallow sites, debug() introspection, Buffer / TypedArray binary handling, payload byte cap (truncation + disable), bufferSize clamping (zero / Infinity / negative reverts to default), and the ReDoS guard against pathological `**********` patterns.
+  - `test/lib/upstream-recorder-spec-shape.test.js` (5 Ajv) — validates a representative `RecordedCall` against the inline `UpstreamTrafficSuccess.recorded_calls` subschema from spec PR adcp#3816 (TODO: switch to cached schema when 3.0.5 ships). Pins `toQueryUpstreamTrafficResponse` projection — `items → recorded_calls` / `total → total_count` field renames are the load-bearing claim and asserted explicitly.
+  - `test/lib/upstream-recorder-e2e.test.js` (4 round-trip) — drives `runStoryboardStep` against a one-step `upstream_traffic` fixture storyboard with a stub MCP client whose `comply_test_controller` handler routes through the real recorder via `toQueryUpstreamTrafficResponse`. Cases: happy path, façade (zero calls), principal mismatch (cross-tenant isolation), `identifier_paths` missing vector. Test-fixture storyboard at `test/fixtures/storyboards/upstream-traffic-fixture.yaml`.
+  - `test/examples/hello-signals-adapter-marketplace.test.js` (3 example-adapter integration, pre-existing — now exercises the recorder) — strictest-tsc + storyboard zero-failed + façade gate against the `signal-marketplace` mock-server.
+
+  **Sequencing note** — adcp#3830 item 4 in the deferred-extensions tracking issue, sequencing dependency from issue #1290: "land #1253 first (runner + forward-compat default) so storyboards can declare `upstream_traffic` validations and have them grade not_applicable on adopters who haven't yet implemented." That's now landed (PR #1289 merged at `c446936c`). This middleware unblocks the long tail of adopters who want to opt in but don't want to write the recorder from scratch.
+
+  Sibling Python issue: `adcp.testing.upstream_recorder` mirrors this for the Python SDK — to be filed as a paired issue in `adcontextprotocol/adcp-client-python`.
+
+- f815d51: `ValidationIssue` now carries a curated `hint` field for known shape gotchas. Closes #1309 (follow-up to #1283).
+
+  A small table at `src/lib/validation/hints.ts` maps recognized failure patterns to one-sentence recipes. When a pattern matches, the hint rides on the structured `issues[].hint` and is mirrored into the prose `adcp_error.message` — so adopter LLMs reading the wire envelope alone resolve the gotcha one-shot.
+
+  Patterns shipped (all sourced from real adopter pain — matrix-blind-fixtures lineage, `skills/SHAPE-GOTCHAS.md`, and the `skills/call-adcp-agent/SKILL.md` "Gotchas I keep seeing" section):
+  - `activation_key.type='key_value'` missing `key` or `value` — top-level, not nested under `key_value`
+  - `activation_key.type='segment_id'` missing `segment_id` — same flatness
+  - `account` discriminator merging — pick `{account_id}` or `{brand, operator}`, not both
+  - `budget` as object — it's a number; currency comes from the referenced `pricing_option`
+  - `brand.brand_id` instead of `brand.domain` — spec uses `domain`
+  - `format_id` as string — always `{agent_url, id}` (sometimes plus dimensions)
+  - `signal_ids[]` as bare strings — array of provenance objects
+  - VAST/DAAST `delivery_type` missing — pair `inline` with `content` or `redirect` with `vast_url`/`daast_url`
+  - mutating tools missing `idempotency_key` — required UUID, reused on retries
+
+  Empirical example post-PR:
+
+  ```
+  create_media_buy request failed schema validation at /idempotency_key:
+    must have required property 'idempotency_key'
+    (hint: Mutating tools require `idempotency_key` (UUID) on every request. Generate fresh per logical operation, reuse the same value on retries.)
+  ```
+
+  The rule table is internal — adopters can't currently register custom hints. New patterns get added by PR when at least three adopters or blind-LLM matrix runs hit the same shape and lose ≥1 iteration to "what does this error actually want?". The `hint` field is absent on the long tail; structured `pointer` + `keyword` + `discriminator` + `variants` already cover those cases.
+
+  `skills/call-adcp-agent/SKILL.md` updated: recovery order now starts with `hint` when present, then `discriminator`, then `variants`, then leaf fields.
+
+- 3d894cc: Validation errors now name the rejecting schema and the discriminator the payload was inferred to be targeting. Closes #1283.
+
+  `ValidationIssue` carries two new optional fields:
+  - **`schemaId`** — `$id` of the rejecting schema, resolved by finding the longest registered AJV `$id` that prefixes the issue's `schemaPath`. For tools served from the flat schema tree (e.g. `governance/`, `brand/`) where `$ref`s are followed at runtime, this lands on the deeper sub-schema. For tools served from the pre-resolved `bundled/` tree (most of the catalog — signals, media-buy, creative), inner `$id`s are stripped at bundle time so `schemaId` resolves to the response root. Either way, the field names exactly the schema the validator looked at.
+  - **`discriminator`** — array of `{field, value}` pairs identifying the variant the payload was inferred to be targeting. Populated when `compactUnionErrors`' const-discriminator collapse picks a "best surviving variant" (the user matched the discriminator but missed required fields or other constraints inside it). Compound discriminators like `audience-selector`'s `(type, value_type)` produce multi-entry arrays. Names align with OpenAPI 3.x `discriminator.propertyName`.
+
+  Both fields ride on every `VALIDATION_ERROR` envelope by default — same precedent as `variants[]` and `allowedValues`, which already ship always-on with the rationale "PUBLIC spec data, not internal handler shape." The `exposeSchemaPath` gate stays in place for `schemaPath` itself.
+
+  The prose `adcp_error.message` mirrors the new fields so adopters debugging from a wire envelope alone don't need to walk `issues[]`. The `(schema: …)` half is suppressed when the issue's `schemaId` equals the validator's root (bundled-tree default — restating the tool name doesn't help). New `ValidationOutcome.schemaId` exposes the root for callers building their own envelopes:
+
+  ```
+  activate_signal response failed schema validation at /deployments/0/activation_key/key:
+    must have required property 'key' (discriminator: type='key_value')
+  ```
+
+  Empirically every example built during the matrix-blind-fixtures lineage took 1–3 iterations to resolve a discriminated-union error that's now one-shot once the adopter reads the `discriminator` tag.
+
+  **Known limitations** (follow-ups filed separately):
+  - Bundled tools strip inner `$id`s — `schemaId` lands on the response root, not the deeper sub-schema referenced by `$ref`. A spec companion issue covers `$id` retention during bundling.
+  - Synthetic union-root errors in nested unions can carry the outer discriminator (e.g. `type='platform'`) while leaf errors carry the inner (`type='key_value'`). The leaf is the actionable one; the root is contextual. Spec companion covers de-duplication.
+  - The optional `hint` field from issue #1283's "Proposed change" #3 (curated prose like "type='key_value' requires top-level `key` and `value`") is deferred — requires per-tool curation and ships separately.
+
+### Patch Changes
+
+- 5cb6d10: `AccountStore.reportUsage` and `AccountStore.getAccountFinancials` now receive `ctx.agent` (the registry-resolved `BuyerAgent`) in addition to `authInfo` and `toolName` — matching the threading already wired for `resolve`, `upsert`, and `list`. Closes the symmetric gap noted in PR #1315 review.
+
+  All four `AccountStore` handlers now route through a single internal `toResolveCtx` helper so future additions to `ResolveContext` land on every method automatically. Adopters implementing principal-keyed gates (e.g. `BILLING_NOT_PERMITTED_FOR_AGENT` from adcontextprotocol/adcp#3851, or per-agent financial-read authorization) get the resolved buyer-agent identity on every account-store surface, not just three of five.
+
+  No behavior change for adopters that didn't already read `ctx.agent` — the field was simply missing on `reportUsage` / `getAccountFinancials` before.
+
+- c123fb8: Pin to AdCP 3.0.5. Picks up the brand-rights storyboard fix
+  (adcontextprotocol/adcp#3892, shipped as part of 3.0.5): `acquire_rights`
+  step's `context_outputs` now reads `path: rights_id` (was the non-existent
+  `rights_grant_id`), unblocking the `rights_acquisition` and
+  `rights_enforcement` scenarios for spec-conformant brand-rights agents.
+  Also picks up the optional storyboard-level `default_agent` field
+  (adcontextprotocol/adcp#3894) for multi-agent storyboard runners — strictly
+  additive, no SDK behavior change.
+- dc58bf1: fix(server): auto-seed adapters use resolved account id (symmetric with bridge)
+
+  The catalog-backed auto-seed adapters introduced in #1100 wrote fixtures keyed by raw `input.account.account_id`, while the bridge read from `ctx.account?.id` (the resolved id set by the framework's `resolveAccount`). On a platform whose resolver maps `account_id` to a distinct internal id (e.g., a tenant-prefixed shape), the asymmetry caused silent fixture loss — `seed_product` succeeded but `get_products` couldn't find the seeded product because the namespace key on read didn't match the one on write.
+
+  Auto-seed adapters now run `platform.accounts.resolve` on the request's `account` reference and use the resolved `id` as the namespace key, matching what the bridge reads. Adopters with identity resolvers (the common case) see no behavior change.
+
+  Also: when the auto-seed adapter fires without a resolvable account (typically a misconfigured `sandboxGate` that lets account-less requests through), it now logs a warn-level diagnostic and drops the write, instead of silently returning. Misconfigurations that previously caused "seeds vanish without explanation" now surface as a single actionable log line.
+
+  Closes #1216.
+
+- 44f82c0: Fix four `@internal`-leak bugs that broke adopter `tsc --noEmit` (#1236).
+
+  `stripInternal: true` deleted these declarations from the published `.d.ts`
+  while consumers (the public `AdcpServer` interface, the main `index.d.ts`
+  re-exports) kept referencing them, producing TS2304/TS2305 errors on every
+  adopter without `skipLibCheck`:
+  - `ADCP_SERVER_BRAND` (`server/adcp-server.ts`) — also converted from
+    `declare const` to a real `Symbol(...)` const so the binding survives
+    emit. Brand is `never`-typed and never set on the runtime object.
+  - `extractAdcpErrorFromMcp`, `extractAdcpErrorFromTransport`
+    (`utils/error-extraction.ts`) — re-exported from `@adcp/sdk`, not
+    internal.
+  - `createSingleAgentClient` (`core/SingleAgentClient.ts`) — re-exported
+    from `@adcp/sdk`, not internal.
+
+  Adds `npm run check:adopter-types` (wired into CI) which packs the SDK,
+  scaffolds a minimal adopter, and runs `tsc --noEmit` against the
+  published types so this class of leak fails CI instead of shipping.
+
+- 27bd383: fix(codegen): alias 6 jsts under-resolution artifacts after AdCP 3.0.4 asset-union landing
+
+  AdCP 3.0.2 introduced `core/assets/asset-union.json` (adcp#3462) as the canonical home for the asset-variant `oneOf`. The bundler still inlines the union at both `creative-asset.json` and `creative-manifest.json` call sites, and `json-schema-to-typescript` under-resolves the second compile pass — dropping the `asset_type` discriminator that the first pass preserved. Six survivors of `removeNumberedTypeDuplicates`'s byte-identity check:
+
+  | Type                                                          | First pass (correct)                                    | Second pass (under-resolved)         |
+  | ------------------------------------------------------------- | ------------------------------------------------------- | ------------------------------------ |
+  | `VASTAsset`                                                   | `{ asset_type: 'vast'; …metadata… } & (delivery_union)` | `(delivery_union)` — lost wrapper    |
+  | `BriefAsset`                                                  | `CreativeBrief & { asset_type: 'brief' }`               | `CreativeBrief` — lost discriminator |
+  | `DAASTAsset`, `CatalogAsset`, `AssetVariant`, `CreativeAsset` | …                                                       | …                                    |
+
+  `applyKnownJstsAliases` runs after the byte-identity dedupe pass and rewrites each known artifact as `type Foo1 = Foo` with a `@deprecated` JSDoc. Type-level safe: the bundled response carries `asset_type` correctly at runtime, so the under-resolved type was strictly weaker than the wire format. The alias gives consumers the correctly-discriminated shape that matches what they receive on the wire. Zod codegen consumes the aliased types and emits matching schema aliases automatically.
+
+  Closes #1264.
+
+- 655280e: Added `docs/recipes/composeMethod-testing.md` with six test patterns for `composeMethod`-wrapped handlers: mocking the base method, short-circuit assertion (including the `{ shortCircuit: undefined }` gotcha), layering two `composeMethod` calls, `after`-hook enrichment, typed-error propagation, and `requireAdvertiserMatch` with `composeMethod`. Every pattern has a corresponding running test in `test/server-decisioning-compose-recipes.test.js`. Added a `composeMethod` cookbook entry and table row to `docs/llms.txt` so agents building decisioning platforms can discover the primitive and its test patterns. Closes #1345.
+- bc12c3c: Broaden cosign keyless verify regex in `scripts/sync-schemas.ts` to allow signatures from any release branch (not just `main` and `2.6.x`). Aligns with adcp-client-python and adcp-go, which both use a `refs/(heads|tags)/.*` wildcard.
+
+  **The bug**: v3.0.1, v3.0.2, v3.0.3 were released from `refs/heads/3.0.x` (the maintenance branch); the prior regex `^...refs/heads/(main|2\.6\.x)$` silently rejected them with `cosign verify-blob failed for v3.0.1: none of the expected identities matched what was in the certificate, got subjects [...refs/heads/3.0.x]`. SDK adopters bumping past v3.0.0 hit this on every sync.
+
+  **The fix**: switch to `^...refs/(heads|tags)/.*$`. The trust gate is upstream `release.yml`'s `on.push.branches` allowlist (currently `main`, `3.0.x`, `2.6.x`) — that's what determines which refs can produce a signature. Mirroring the list here added no defense and broke every time a new release line was added. The wildcard delegates branch-allowlist enforcement to the workflow itself, where it belongs. `refs/tags/*` is forward-compat for any future post-tag re-signing flow.
+
+  Closes the verify-failure on v3.0.1+ that adopters reported when bumping past 3.0.0.
+
+- e8fdbfd: fix(codegen): honor schema title in gap-schemas dedupe (emit CreativeRejectedDetails)
+
+  `schemas/cache/3.0.4/error-details/creative-rejected.json` has title "Creative Rejected Details" but the gap-schemas pass derived its dedupe key from the filename (`creative-rejected` → `CreativeRejected`). That collided with the brand-domain `CreativeRejected` interface (different schema, from `creative-approval-response.json`) already in the `generatedTypes` set, so the file was silently skipped before `json-schema-to-typescript` could produce its actual title-derived `CreativeRejectedDetails`.
+
+  Six other error-details files (`account-setup-required`, `audience-too-small`, `budget-too-low`, `conflict`, `policy-violation`, `rate-limited`) emit fine because their kebab-name doesn't collide. Only `creative-rejected` was affected; the gap predates 3.0.4.
+
+  Fix: peek at the schema's `title` (when present) and use the title-derived name for both the dedupe check and the `compile()` argument. `CreativeRejectedDetails` now emits as a standalone interface. Brand-domain `CreativeRejected` is unaffected.
+
+  Closes #1271.
+
+- 3c87198: Documentation: cross-specialism dispatch on `DecisioningPlatform`. JSDoc on the platform interface and an expanded `skills/build-holdco-agent/SKILL.md § Cross-specialism dispatch` section now make explicit that there is no `ctx.platform.<specialism>` accessor — the canonical patterns are class instance + `this` (used by `examples/hello_seller_adapter_multi_tenant.ts`) or closure capture (for adopters using `define<X>Platform({...})` factories standalone). Both forward the same `RequestContext` so the resolved account / agent / authInfo carry through, and both bypass wire-side validation + idempotency dedup (correct for in-process calls but worth knowing). One of the items tracked in #1387.
+- a9ddd45: fix(client): discovery error message hints at wrong-path registration
+
+  `SingleAgentClient.discoverMCPEndpoint`'s generic "Failed to discover MCP endpoint" error now includes a hint that the most common cause is `agent_uri` pointing at the host root when the MCP endpoint lives at a non-standard path. The SDK only auto-probes `/`, `/mcp`, and `/mcp/`; servers exposing MCP at `/api/mcp`, `/v1/mcp`, or similar custom paths need that exact path registered as `agent_uri`.
+
+  No behavior change — operators get a more actionable error. Helps downstream tools (dashboard probes, registration flows) surface the actual issue instead of "agent offline".
+
+  Closes #1234.
+
+- 85812c1: feat(types): add `@deprecated` aliases for error-details schemas renamed in AdCP 3.0.x
+
+  adcp#3149 (`rate-limited.json`) and adcp#3566 (five other error-details files) canonicalized SCREAMING_SNAKE titles like `RATE_LIMITED Details` and `ACCOUNT_SETUP_REQUIRED Details` into Title Case. The previous SDK release emitted `RATE_LIMITEDDetails`, `ACCOUNT_SETUP_REQUIREDDetails`, etc.; post-3.0.4 the canonical names are `RateLimitedDetails`, `AccountSetupRequiredDetails`, etc.
+
+  Hand-authored aliases in `src/lib/types/error-details.aliases.ts` preserve the old names for one minor cycle so consumers' imports keep compiling. Each alias is `@deprecated` so editor tooling surfaces the canonical replacement; slated for removal in the next major.
+
+  Aliases shipped (covers both type and Schema export pairs):
+  - `ACCOUNT_SETUP_REQUIREDDetails` / `…Schema` → `AccountSetupRequiredDetails` / `…Schema`
+  - `AUDIENCE_TOO_SMALLDetails` / `…Schema` → `AudienceTooSmallDetails` / `…Schema`
+  - `BUDGET_TOO_LOWDetails` / `…Schema` → `BudgetTooLowDetails` / `…Schema`
+  - `CONFLICTDetails` / `…Schema` → `ConflictDetails` / `…Schema`
+  - `POLICY_VIOLATIONDetails` / `…Schema` → `PolicyViolationDetails` / `…Schema`
+  - `RATE_LIMITEDDetails` / `…Schema` → `RateLimitedDetails` / `…Schema` (3.0.1 rename)
+
+  `creative-rejected.json` is intentionally absent — codegen never emitted a standalone `CreativeRejectedDetails` (or its prior SCREAMING_SNAKE form) because the brand-domain `CreativeRejected` interface lays claim to the namespace first. Tracked as #1271.
+
+  Closes #1065.
+
+- 2f69bf2: Test-infrastructure: `runHelloAdapterGates` (the shared CI test runner for `examples/hello_*_adapter_*.ts`) picks free TCP ports per-run instead of taking hardcoded numbers from each test file's config.
+
+  Closes the EADDRINUSE-on-41504 + agent-port-timeout-on-35004 flakes hit on adcp-client#1361 CI runs 25266540111 / 25266762789 / 25266848405 — concurrent `node --test` workers were racing on the same hardcoded port across reruns when the previous run left TCP sockets in TIME_WAIT after `--test-force-exit`.
+
+  Mock server gets `port: 0` directly (its boot helper surfaces the bound port via `mockHandle.url`); the spawned agent reads `PORT` from env, so the harness uses a small `pickFreePort()` helper that asks the kernel for a free number and hands it to the child process. `agentPort` and `upstreamPort` are gone from the `runHelloAdapterGates` config — every test file using the harness now opts in automatically.
+
+  No library/CLI behavior change; this is a `patch` only because the changeset gate doesn't have a "tests-only" semver level today.
+
+- d0218df: fix(client): extend v3 fallback to cover capabilities-call throws and empty-data cases
+
+  #1201 tightened the v2-fallback heuristic in `SingleAgentClient.getCapabilities()` so that v3 agents with wire-shape bugs (returning `success: false` with v3-shaped `result.data`) are no longer mis-classified as v2. But the fix only covered one failure mode. Two residual paths still fell back to v2 synthetic capabilities, cascading into "AdCP schema data for version v2.5 not found" errors:
+  - `executeTask` throws (transport error, parse error, OAuth flow failure)
+  - `success: false` AND `result.data` is empty / not v3-shaped (so the `looksLikeV3Capabilities` heuristic doesn't catch it)
+
+  In both cases the agent still has the v3-only `get_adcp_capabilities` tool in its `tools/list` — affirmative evidence that it's v3 even though we couldn't read details. Falling back to v2 synthetic causes `parseAdcpVersion` to ask for v2.5 schemas (not bundled, by design — they're optional) and every subsequent step fails.
+
+  This patch:
+  - Adds `buildSyntheticV3Capabilities(tools)` to `@adcp/sdk/utils/capabilities` (mirrors `buildSyntheticCapabilities` but emits `version: 'v3'`, `majorVersions: [3]`, `_synthetic: true`).
+  - `SingleAgentClient.getCapabilities` returns synthetic v3 caps when `get_adcp_capabilities` is in the tool list but the call fails (any reason).
+  - `requireSupportedMajor` skips the version + idempotency-TTL detail checks for synthetic v3 (we know the agent is v3 but couldn't confirm specifics until the caps endpoint is fixed).
+
+  Closes #1217.
+
+- ea18eb1: fix(testing): matrix harness `runGrader` accepts `overall_status: partial` when zero steps/tracks failed
+
+  Closes adcontextprotocol/adcp-client#1209.
+
+  Pre-fix, `scripts/manual-testing/agent-skill-storyboard.ts` `runGrader` treated `overall_status === 'partial'` as failure, even when the storyboard runner reported `steps_failed: 0` and `tracks_failed: 0`. This produced false negatives when the runner classified a track as "silent" (no specialism-level criteria definitively scored) — every assertion passed but the harness flagged the pair as failed.
+
+  Surfaced empirically by the matrix v2 run on adcontextprotocol/adcp-client#1207. Both creative-template pairs (`build-creative-agent × creative_template`, `build-decisioning-creative-template × creative_template`) ran cleanly: Claude built valid agents, all 6 storyboard steps passed, mocks worked correctly. Harness reported 0/3 because `overall_status` wasn't literally `"passing"`.
+
+  Fix: pass when `overall_status === 'passing'` OR when `overall_status === 'partial'` AND `steps_failed === 0` AND `tracks_failed === 0`. Logs a one-line note when the partial-but-clean path triggers so the rationale isn't silent.
+
+  This is a dev/test surface fix only — no impact on published runtime code. The matrix harness lives in `scripts/manual-testing/` and is invoked via `npm run compliance:skill-matrix`; adopters' storyboard pipelines use `bin/adcp.js storyboard run` directly and aren't affected.
+
+- 3efacca: fix(matrix): blind-fixture testing + façade detection in matrix v2 harness
+
+  Closes adcontextprotocol/adcp-client#1225.
+
+  The matrix v2 harness was leaking the answer key to Claude — the prompt inlined specific principal-mapping values (e.g., `account.advertiser: "acmeoutdoor.example" → upstream advertiser_id: adv_acme_us`), letting Claude hardcode the entire round-trip without ever calling the upstream. Surfaced empirically on PR #1220's sales-social run: Claude's generated `server.ts` defined an OAuth client but never invoked it from any handler, with this comment:
+
+  ```ts
+  // Touch the upstream client at boot so the import isn't tree-shaken in dev,
+  // and so the OAuth path is exercised even when handlers don't call it.
+  void fetchUpstreamToken;
+  ```
+
+  Storyboard graded `passing` because it only validates AdCP response shape, not whether the agent actually wrapped the upstream.
+
+  Two changes to make the test honest:
+  1. **Strip specific values from the harness prompt.** Adapters now receive the _names_ of AdCP fields they'll see (`account.advertiser`, `account.operator`, etc.) but not the _values_. The harness uses values Claude's prompt does not contain. Hardcoding a mapping table won't work.
+  2. **Discovery + traffic counters on the mock-server.** Each mock exposes:
+     - `GET /_lookup/<resource>?<adcp_field>=<value>` — runtime resolution from AdCP-side identifiers to upstream IDs. Replaces the hardcoded mapping table the prompt used to inline.
+     - `GET /_debug/traffic` — per-endpoint hit counters. The harness queries this after the storyboard run and asserts headline endpoints (`POST /event/track`, `POST /custom_audience/upload`, etc.) were called ≥ 1 time. Façade adapters that return shape-valid AdCP responses without calling these endpoints fail this check regardless of storyboard pass.
+
+  All four specialisms (sales-social, signal-marketplace, creative-template, sales-guaranteed) ship with `/_lookup/<resource>` discovery, `/_debug/traffic` counters, and `bump()` calls on every routed handler. Each carries a per-specialism `expectedHitsForSpecialism()` list in the harness — empty list means no traffic assertion (back-compat for un-instrumented mocks).
+
+  Boot summaries also stripped of specific advertiser/operator values so adapters can't read them from the CLI banner.
+
+  Refs:
+  - PR #1220 (sales-social) — the matrix run that surfaced the façade pattern
+  - Issue #1225 — full design rationale and follow-up scope across all 4 mocks
+
+- 9fed989: fix(skill): build-creative-agent SKILL.md surfaces strict-mode `Format.renders[]` + `Format.assets[]` shapes prominently
+
+  Closes adcontextprotocol/adcp-client#1210.
+
+  Pre-fix, the skill mentioned the strict-shape requirement only in a table-cell gotcha (`renders[]` MUST have `role` + `dimensions`) and showed a worked example deep in the implementation section. The matrix v2 run on PR #1207 confirmed this isn't enough — Claude built creative-template agents that emitted `renders: [{ width, height }]` (the exact shorthand the gotcha warns against) and `assets: [{ asset_id, asset_role, required }]` missing the `asset_type` discriminator. Lenient validation passed; strict validation flagged both.
+
+  Empirical evidence (from `.context/matrix-mock-run-3.log`, the ✗ run):
+
+  ```
+  strict JSON-schema missing required at /formats/0/renders/0/dimensions: dimensions
+  strict JSON-schema missing required at /formats/0/renders/0/role: role
+  strict JSON-schema missing required at /formats/0/assets/0/asset_type: asset_type
+  strict JSON-schema rejected /formats/0/renders/0: must match exactly one schema in oneOf
+  ```
+
+  Fix: promote the strict-shape requirement into the **cross-cutting pitfalls callout** at the top of the "Tools and Required Response Shapes" section, with explicit ✗-WRONG / ✓-RIGHT side-by-side. Also tightens the table-cell gotcha to mention the asset discriminator quartet (`item_type` + `asset_id` + `asset_type` + `required`).
+
+  Skills are bundled with the npm package (`files: ["skills/**/*"]`), so this is a publishable change.
+
+  Verification path: re-run `npm run compliance:skill-matrix -- --filter creative_template` against the new skill; strict-mode warnings should disappear.
+
+- 8a970ae: docs(forecasting): surface `Product.forecast` / `forecast_range_unit` across the seller skill — adds `docs/guides/FORECASTING.md` plus per-specialism deltas (sales-non-guaranteed, sales-guaranteed, sales-broadcast-tv, sales-social). Documentation-only, no library or CLI behavior changes.
+- 2459665: `Format.renders[]` codegen now extracts each `oneOf` branch as a closed shape — `{ role; dimensions; ... }` and `{ role; parameters_from_format_id: true }` — instead of collapsing the first branch to `{ [k: string]: unknown }`. Closes adcp-client#1325. The SDK's typed render factories (`displayRender`, `parameterizedRender`, `templateRender`) now compose cleanly with `Format['renders']` under `--strict --noUncheckedIndexedAccess --exactOptionalPropertyTypes`.
+
+  Implementation: a new `flattenMutualExclusiveOneOf` preprocess in `scripts/generate-types.ts` detects the JSON Schema "X xor Y" idiom (`oneOf` branches with `{ required: [X], not: { required: [Y] } }` and no other keys) and inlines the parent's `properties` into each branch with the excluded fields removed. The mutual-exclusivity constraint stays enforced at runtime by Ajv against the unstripped schema; the codegen pass only widens what TypeScript can express. Same fix applied to `sync_plans` plan budget (`reallocation_threshold` xor `reallocation_unlimited`), which had the identical loose-arm shape.
+
+  `RenderDimensions.unit` is now `DimensionUnit` (the schema enum: `'px' | 'dp' | 'inches' | 'cm' | 'mm' | 'pt'`) instead of an open `string` — adopters who passed `unit: 'feet'` or other off-spec strings will now see a TS error. Closes adcp-client#1325.
+
+- 956ac97: fix(harness): convert matrix harness `runGrader` from `spawnSync` to async `spawn`
+
+  The matrix harness (`scripts/manual-testing/agent-skill-storyboard.ts`) is dev-only and not shipped in the npm package. Tagging this `patch` to satisfy the changeset gate; no published code changes.
+
+  Background: the harness boots the mock upstream HTTP server in the same Node process. `spawnSync` blocked the event loop while the grader child waited on agent responses → in-process upstream couldn't tick → agent's upstream calls hung → 120s timeout. Same-process deadlock that #1241 didn't catch (its stdin-close fix was correct but only addressed half the failure path).
+
+  Fix: async `spawn` + Promise on whichever of `'error'` or `'close'` fires first. Event loop stays live, upstream serves alongside the grader. Verified: signal_marketplace verify-mode log went from 22 lines (timeout) to 632 lines (full grader JSON) at 1.5s wall.
+
+  Resolves the residual hang from #1237.
+
+- c626f75: Rename `examples/hello_*_adapter_*.ts` reference adapters by AdCP role and strip redundant family prefixes. Two motivations: (1) signal-marketplace agents are signals/data agents (not sellers — they don't sell media), and creative-template agents are stateless transforms (no inventory); the inherited `hello_seller_adapter_` prefix was wrong for both. (2) The specialism portion was redundant when the role already implies the family — `hello_creative_adapter_creative_template.ts` repeats `creative` twice; same for the sales variants.
+
+  New convention: `hello_<role>_adapter_<specialism>.ts` where `<specialism>` is the part of the specialism name AFTER the family-implied prefix is stripped. Concretely:
+
+  | Before                                       | After                                  |
+  | -------------------------------------------- | -------------------------------------- |
+  | `hello_seller_adapter_signal_marketplace.ts` | `hello_signals_adapter_marketplace.ts` |
+  | `hello_seller_adapter_creative_template.ts`  | `hello_creative_adapter_template.ts`   |
+  | `hello_seller_adapter_sales_social.ts`       | `hello_seller_adapter_social.ts`       |
+  | `hello_seller_adapter_sales_guaranteed.ts`   | `hello_seller_adapter_guaranteed.ts`   |
+
+  Roles map to AdCP protocol layers: `seller` for `media-buy`, `creative` for `creative`, `signals` for `signals`, with `governance` / `brand` reserved for the corresponding agent kinds. Test files, changesets, and cross-references in `docs/`, `skills/`, `examples/hello-cluster.ts`, and `scripts/` rewritten correspondingly. Aspirational `hello-cluster.ts` entrypoints for adapters not yet shipped (governance, brand, additional creative variants, sales-non-guaranteed) updated to follow the same convention so future PRs land at the right path. No behavioral change.
+
+- f7741e5: feat(example): hello-cluster orchestrator boots all hello-\* adapters with one command
+
+  `examples/hello-cluster.ts` (and `npm run hello-cluster`) spawns each per-specialism hello adapter on its declared port (signals 3001, sales 3002, governance 3003, creative 3004, brand 3005, retail-media 3006), preflights each adapter's upstream backend, health-checks each via MCP `tools/list`, and emits a YAML routing manifest the storyboard runner (#1066, landing as #1355) can consume via `--agents-map`. Manifest shape locked against `parseAgentsMapArgs` in PR #1355: top-level `default_agent` (omitted when `sales` is pending so storyboards expecting it fail loud), `agents.<key>.{ url, auth }` matching `TestOptions['auth']`'s bearer variant, plus a top-level `pending: [{ name, specialism, entrypoint, tracking }]` sibling that the runner ignores but tooling can surface.
+
+  Closes the local test loop for #1066 — adopters can stand up a multi-agent topology with one command instead of opening six terminals.
+
+  Pending hello adapters (#1332 governance, #1333 creative, #1334 brand, plus sales / retail-media) are listed in a `# pending:` block at the top of the manifest and skipped silently. Drop a file in at the documented path and the cluster picks it up next run — no edits to the orchestrator. Today only the signals adapter exists, so the cluster boots one agent and notes the rest as pending.
+
+  Behavior:
+  - Boots every present adapter in parallel; ready in ~2s for the current single-adapter set, well under the 5s budget.
+  - SIGINT/SIGTERM reap children cleanly (SIGTERM with 3s grace, then SIGKILL). A `tearingDown` guard prevents N concurrent reap cycles when a sibling crash fires every other child's exit handler.
+  - A child crash tears down the rest of the cluster and exits non-zero, surfacing the last 10 lines of the dying adapter's stderr in the cluster's error message — adopters see WHY the child died (e.g. EADDRINUSE), not just "fetch failed".
+  - `HELLO_CLUSTER_PORT_BASE=40000` shifts the whole range when 3001–3006 are busy or when running side-by-side clusters.
+  - Defaults `NODE_ENV=development` for spawned children so the in-memory task registry boots without the production-safety refusal. The cluster itself refuses to boot under a production parent unless `HELLO_CLUSTER_I_KNOW_NOT_PROD=1` is set — defense in depth so an LLM scaffolding from this file or an adopter copy-pasting into staging can't accidentally rewrite NODE_ENV on a real deployment.
+  - Manifest leads with a routing-key comment so first-time readers don't have to chase #1066 to understand what `agents.<name>` means. `default_agent` is omitted when its target (`sales`) is in the pending list — storyboards expecting `sales` fail loud rather than silently retargeting to whichever adapter sorted first.
+
+  Upstream preflight: each `AdapterConfig` declares the env var (e.g. `UPSTREAM_URL`), default URL, and probe path of the backend it proxies. Before spawning, the cluster fetches every distinct upstream URL once with a 1.5s timeout. Network refusal or 5xx → exit 1 with a copy-pasteable command (`run 'npx @adcp/sdk@latest mock-server <specialism> --port <inferred>' first`). The port in the hint is parsed from the supplied URL, so a user pointing `UPSTREAM_URL` at `:55555` gets a hint matching their port. Any 2xx/3xx/4xx is treated as "listener up" since the failure mode we care about is "process not running," not "request rejected."
+
+  Deferred:
+  - `HELLO_CLUSTER_HOST` for binding `0.0.0.0` so peer containers can reach the cluster (product expert's QA-env feedback).
+  - `HELLO_CLUSTER_STRICT=1` so CI fails when the expected adapter set isn't fully present (post-#1334 concern).
+
+  Out of scope: TLS termination, production-style supervision, upstream mock-server boot. Adopters wanting the full stack run docker-compose / foreman; this is the minimal one-command demo.
+
+- c626f75: Add `examples/hello_creative_adapter_template.ts` — a worked, passing reference adapter for the `creative-template` specialism that wraps an upstream creative-template platform via HTTP. Companion to `hello_signals_adapter_marketplace`. Demonstrates the typed-platform `CreativeBuilderPlatform` shape (`buildCreative` + `previewCreative`), the v5 escape hatch for `list_creative_formats` (still pending on the v6 typed surface), the `accounts.resolve(undefined)` fallback for no-account tools, and the discriminated-union shape gotchas (`PreviewCreativeResponse` single-mode `previews[].renders[]` array, `Format.renders[]` `dimensions` object, `BuildCreativeReturn` 4-arm dispatch). Shipped with the same three-gate CI test (strict tsc / storyboard / upstream-traffic) as the signal-marketplace example.
+- c626f75: Add `examples/hello_seller_adapter_guaranteed.ts` — a worked, passing reference adapter for the `sales-guaranteed` specialism that wraps an upstream GAM-style ad-server with HITL IO approval over static Bearer auth. Completes the `hello_seller_adapter_*` family alongside `signal_marketplace`, `creative_template`, and `sales_social`. Demonstrates the headline `ctx.handoffToTask(fn)` pattern for guaranteed buys: `create_media_buy` returns an A2A task envelope (`status: 'submitted'`) immediately, the handoff function polls the upstream IO-review task to terminal state, then returns the final `CreateMediaBuySuccess` with `media_buy_id` as the task's terminal artifact. Also covers per-request `X-Network-Code` header injection (the buyer→tenant translation pattern for header-scoped APIs), publisher_properties projection (required minItems: 1 — the example uses the `selection_type: 'all'` catch-all selector), and structured error code surfacing for `MEDIA_BUY_NOT_FOUND` / `PACKAGE_NOT_FOUND` / `TERMS_REJECTED`. The main `sales_guaranteed` storyboard passes 9/9 main steps; the cascade scenarios under `media_buy_seller/*` (driven by the storyboard's `requires_scenarios` block) require a `comply_test_controller` wiring that this worked example intentionally omits to keep focus on the HITL pattern — adopters who need full scenario coverage wire `createComplyController` separately. Shipped with the same three-gate CI test (strict tsc / main-storyboard pass / upstream-traffic) plus a documented allowance for cascade-scenario failures.
+- c626f75: Add `examples/hello_seller_adapter_social.ts` — a worked, passing reference adapter for the `sales-social` specialism that wraps an upstream walled-garden social platform (Snap, Meta, TikTok shape) over OAuth2 client_credentials. Companion to `hello_signals_adapter_marketplace` and `hello_creative_adapter_template`. Demonstrates the typed-platform `SalesPlatform` + `AudiencePlatform` composition; OAuth token caching via `dynamic_bearer.getToken`; the buyer→upstream id translation pattern (`event_source_id` → upstream pixel_id); the no-account-tool fallback for `log_event` (single-tenant resolver fallback when the wire request omits `account`); the `audience_targeting` + `conversion_tracking` capability declarations that gate the audience and event-source phases on the storyboard runner; and walled-garden CAPI shape (hashed identifier requirement, ISO→UNIX timestamp projection). 10 storyboard steps pass with `overall_status: passing`. Shipped with the same three-gate CI test (strict tsc / storyboard / upstream-traffic) as the signal-marketplace example.
+- cb6a942: docs(example): wire BuyerAgentRegistry into hello_signals_adapter_marketplace
+
+  Every seller needs a buyer-agent registry. Updated the worked reference adapter at `examples/hello_signals_adapter_marketplace.ts` to demonstrate the Phase 1 surface (#1269) end-to-end so adopters cloning the example get the full identity story by default rather than a partial scaffold.
+
+  Added:
+  - An in-memory `ONBOARDING_LEDGER` (replaces with a Postgres-backed query in production) keyed by `credential.key_id` (the sha256 hash prefix `verifyApiKey` stamps).
+  - `BuyerAgentRegistry.cached(BuyerAgentRegistry.bearerOnly({...}))` wired to the platform's `agentRegistry` field — framework runs `resolve()` once per request, status enforcement (`suspended` / `blocked` → 403) fires before any handler.
+  - Demonstration site in `accounts.resolve` showing where adopters route tenant resolution against `ctx.agent` (operator-vs-agent gating, allowed_brands cross-checks).
+
+  Test additions to `test/examples/hello-signals-adapter-marketplace.test.js`:
+  - Gate 4 asserts unknown api-key tokens are rejected at the auth layer before the registry runs (locks the auth-before-registry order).
+
+  The existing three gates (strict typecheck, storyboard pass, façade traffic) still pass — the registry wiring is implicitly exercised by every storyboard step that authenticates.
+
+- cdfab62: fix(server): auto-seed adapter no longer calls platform.accounts.resolve without authInfo
+
+  PR #1219 had the auto-seed adapter call `platform.accounts.resolve` to derive the namespace key, intending to keep it symmetric with the bridge's `ctx.account?.id` read. Triage flagged the security gap: the comply-controller's `ComplyControllerContext` doesn't expose `authInfo`, so the adapter calls `resolve(ref, { toolName })` with attacker-supplied `account_id` and no auth context. A resolver that maps `account_id` to an internal id without validating `authInfo` would let a caller spoof `account.account_id: 'victim'` and have seeds written into the victim's resolved namespace. That namespace is then visible to the victim's `get_products` (which reads through the framework-authenticated `ctx.account.id`).
+
+  This patch reverts to writing under raw `account.account_id`. The architectural fix — widening `ComplyControllerContext` to expose the framework-resolved account so the adapter can match the bridge's read namespace — remains tracked at #1216.
+
+  **Trade-off**: adopters whose resolver maps `account_id` to a distinct internal id (e.g., `acc_1` → `tenant_a:acc_1`) hit a documented limitation: the adapter writes to `acc_1` but the bridge reads from `tenant_a:acc_1`, so seeded fixtures don't appear in `get_products`. Silent test loss, not cross-tenant pollution. Mapping-resolver adopters can wire explicit seed adapters today (escape hatch unchanged).
+
+  Multi-tenant correctness for identity resolvers (the common case) is preserved — same behavior as before #1219.
+
+- cf631bc: fix(codegen): dedupe inline-enum exports with byte-identical literal sets to a single canonical export, with `@deprecated` aliases for the parent-prefixed variants. Keeps adopters from having to know which parent's copy to import when the spec emits the same enum under multiple object schemas (e.g. `GetBrandIdentityRequest_FieldsValues` ≡ `GetBrandIdentitySuccess_AvailableFieldsValues`). Aliases re-export the canonical's array reference so identity holds; a new test asserts no two distinct array references share a literal set. Closes #941.
+- 9f43f5d: feat(codegen): derive `STANDARD_ERROR_CODES` from `manifest.json`
+
+  AdCP 3.0.4 ships `/schemas/{version}/manifest.json` (adcp#3738, closes adcp#3725) — a single canonical artifact carrying 51+ tools with `protocol`/`mutating`/specialism mappings, 45 error codes with structured `recovery`/`description`/`suggestion`, and an `error_code_policy.default_unknown_recovery` block.
+
+  This is the first stage of #1192 (manifest adoption). Replaces the hand-curated `STANDARD_ERROR_CODES` table in `src/lib/types/error-codes.ts` (45 entries, condensed from prose) with one derived directly from the manifest. Drift between SDK and spec is now impossible by construction — re-running `npm run generate-manifest-derived` regenerates the table from the cache.
+
+  What landed:
+  - New `scripts/generate-manifest-derived.ts` reads `schemas/cache/{version}/manifest.json` and emits `src/lib/types/manifest.generated.ts` with `STANDARD_ERROR_CODES_FROM_MANIFEST`, per-protocol `*_TOOLS_FROM_MANIFEST` arrays, `SPECIALISM_REQUIRED_TOOLS`, and `DEFAULT_UNKNOWN_RECOVERY`. Wired into `npm run generate-types`.
+  - `src/lib/types/error-codes.ts` now imports from the generated file. Public API unchanged: `STANDARD_ERROR_CODES`, `StandardErrorCode`, `ErrorRecovery`, `ErrorCodeInfo`, `isStandardErrorCode`, `getErrorRecovery` all retain their previous shape. New export: `DEFAULT_UNKNOWN_ERROR_RECOVERY`.
+  - The `satisfies Record<StandardErrorCode, ErrorCodeInfo>` assertion is preserved; CI catches any drift at typecheck.
+  - Pre-existing drift test (`test/lib/standard-error-codes-drift.test.js`) continues to pass.
+
+  Cross-checked: the manifest's 45 codes match the previous hand-curated 45 exactly (no missing codes, no recovery mismatches). Every entry now also exposes `suggestion` where the spec provides one — surfaced through `STANDARD_ERROR_CODES[code].suggestion`.
+
+  What's NOT in this stage (tracked in #1192):
+  - Migrating `*_TOOLS` arrays in `src/lib/utils/capabilities.ts` to manifest-derived. The hand-curated arrays cross-list multi-protocol tools (e.g., `list_creative_formats` in both `MEDIA_BUY_TOOLS` and `CREATIVE_TOOLS`); the manifest assigns each tool a single primary `protocol`. Stage 2 needs a design pass on whether to derive cross-listing from `specialisms` or keep manual.
+  - Compile-time `RequiredPlatformsFor<S>` extension for specialism→required-tools enforcement.
+
+- e58609a: feat(server): dev-mode warning when `getMediaBuyDelivery` / `getMediaBuys` returns fewer rows than the buyer requested. Catches the canonical `media_buy_ids[0]`-truncation bug class at adapter-development time. Quiet in production (where legitimate misses are routine) and suppressible via `ADCP_SUPPRESS_MULTI_ID_WARN=1` for adopters whose legitimate-miss rate is high. Closes #1399.
+- 4a68482: feat(cli): `adcp storyboard run --no-sandbox` now signals adopters to bypass internal sandbox routing
+
+  Closes #841. The existing `--no-sandbox` flag set `account.sandbox: false` (a value), but agents that branch on env vars, brand-domain heuristics, or fixture substitutes still routed sandbox-shaped responses despite the production flag. Compliance passes against the sandbox path; buyer agents break against prod. (Surfaced empirically by `scope3data/agentic-adapters#100`.)
+
+  `--no-sandbox` now ALSO stamps `ext.adcp.disable_sandbox: true` on every outgoing request. Adopters that read this field bypass internal sandbox routing and exercise their real adapter path. Agents that don't recognize the field ignore it (`ext` is accepted-without-error per AdCP 3.0 spec).
+
+  Programmatic callers of `runStoryboard` can pass `disable_sandbox: true` in `StoryboardRunOptions` to get the same behavior without the flag. The pair (`sandbox: false` + `disable_sandbox: true`) is the strongest "production path only" signal the SDK can send.
+
+  The agent-side disclosure piece (surfacing "sandbox-masked: test did not exercise real handler" in reports when the agent's own heuristic still fires) is intentionally scoped out — a separate design discussion.
+
+- ff9ff8d: chore(server): re-export `createOAuthPassthroughResolver` from `@adcp/sdk/server`. Aligns with the other decisioning-platform adopter helpers (`composeMethod`, `definePlatform*`, `resolve` presets, `InMemoryImplicitAccountStore`) so adopters writing a Shape B `accounts.resolve` don't have to remember the split between root and `/server`. Root export from `@adcp/sdk` remains for backwards compatibility.
+- 6ce1bd6: fix(security): extend `transport.maxResponseBytes` cap to OAuth token endpoint and authorization-server metadata discovery. `exchangeClientCredentials` and `discoverOAuthMetadata` now wrap their `fetch` with the same size-limit guard that protects MCP/A2A response paths, closing a buffer-bomb surface where a hostile token endpoint or `.well-known` metadata response could exceed the configured cap. Pass-through when no `withResponseSizeLimit` slot is active. Closes #1175.
+- e7f8e22: `compactUnionErrors` now excludes `oneOf` variants that emitted a `not` keyword failure when picking the "best surviving variant." A variant that failed via `not: { required: [...] }` rejected the payload by design — the adopter's actionable lever is the OTHER variant's residuals (missing required they need to add), not the path the `not` clause closed. Closes #1337.
+
+  Concretely: for `get_account_financials` Success-vs-Error oneOf where the payload populates the Success-only fields but is missing `currency` / `timezone`, the validator now surfaces "missing required property `currency`" pointing at the Success variant (`#/oneOf/0/required`) instead of the unactionable "must NOT be valid" (`#/oneOf/1/not`) plus "must have required property `errors`" from the Error variant. Same diagnostic shape applies to every Success/Error response oneOf in AdCP 3.x (which is most of them).
+
+  If every variant has a `not` failure (contrived schema), the picker falls back to the existing fewest-residuals heuristic so degenerate cases still produce a diagnostic.
+
+- 53bc98a: fix(server): per-account SeedFixtureCache scoping for multi-tenant servers
+
+  The comply-controller's `SeedFixtureCache` previously keyed by `seed_<scenario>:${id}` (process-wide). Two sandbox accounts on one server (e.g., a single-tenant server with multiple sandbox accounts, or a multi-tenant host that doesn't shard servers per tenant) couldn't seed the same `id` with divergent fixtures — the second seed returned `INVALID_PARAMS` ("Seed replays must carry an equivalent fixture") even though each account's fixture was internally consistent.
+
+  `handleTestControllerRequest` now extracts `account.account_id` from the input envelope and prefixes the cache key with it. Same-account replays still hit the equivalent-fixture path (returns `Fixture re-seeded (equivalent)`); cross-account same-id divergent fixtures now succeed cleanly.
+
+  Backward-compatible: requests without `account.account_id` still use unscoped keys, preserving existing behavior for adopters who don't pass account refs into seed calls.
+
+  Closes #1215.
+
+- b5e62a4: fix(seller skill + sales-guaranteed mock seed): align with `sales_guaranteed` storyboard fixtures.
+
+  **Mock seed** (`src/lib/mock-server/sales-guaranteed/seed-data.ts`) — adds `acmeoutdoor.example` and `pinnacle-agency.example` networks (with ad units + products). The `sales_guaranteed` storyboard sends fixtures with these publisher domains; the prior seed only had `premium-sports.example`, so blind agents saw 404 on every `_lookup/network` and were forced into a fallback that contradicted the skill's "fail closed on 404" advice. Adapter authors who fork the published mock now resolve cleanly.
+
+  **Seller skill row** (`skills/build-seller-agent/SKILL.md`) — collapses the `sales-guaranteed` specialism row to a one-sentence summary that points at the companion file. The prior wording said "Do NOT return media_buy_id or packages yet" without the qualifier "for the IO-approval path"; blind agents read this as universal advice and returned task envelopes for every `create_media_buy`, failing 5 storyboard steps on the synchronous branches. The companion file (`specialisms/sales-guaranteed.md`) already had the correct three-path table; this just stops the SKILL.md row from contradicting it.
+
+  Tracked at adcontextprotocol/adcp#3821 (skill ↔ storyboard contradiction) and adcontextprotocol/adcp#3822 (fixture seed misalignment).
+
+- a983d83: docs(skills): add `skills/SHAPE-GOTCHAS.md` covering the five discriminated-union and embedded-shape patterns adopters consistently get wrong on first pass (ActivationKey, SignalID, VASTAsset, PreviewCreativeResponse, BuildCreativeReturn). Linked from `build-seller-agent`, `build-creative-agent`, `build-signals-agent` SKILL.md preambles. No code change; documentation lives under `skills/**/*` which ships in the npm package, hence the patch bump.
+- 866cb63: fix(server): specialism validator uses authoritative manifest data only (no reverse-mapping)
+
+  Follow-up to #1306. The original `generate-manifest-derived.ts` reverse-mapped from `manifest.tools[*].specialisms[]` when the spec's direct `manifest.specialisms[id].required_tools` was empty. That triggered false warnings on legitimate adopters: the `hello_signals_adapter_marketplace` example (a pure signal-marketplace seller exposing only `get_signals` / `activate_signal`) emitted three "missing method" warnings for `sync_accounts` / `sync_governance` / `sync_plans` — tools associated with the `signal_marketplace` specialism in the manifest's tool→specialism mapping but not actually required to claim the specialism.
+
+  The semantic distinction matters: `manifest.tools[*].specialisms[]` captures "tool associated with specialism" (e.g., the spec mentions sync_accounts in signal-marketplace context), while `manifest.specialisms[*].required_tools` captures "tool required to claim specialism." Reverse-mapping conflated the two.
+
+  Changes:
+  - `scripts/generate-manifest-derived.ts`: drop reverse-mapping. `SPECIALISM_REQUIRED_TOOLS` is now sourced ONLY from `manifest.specialisms[*].required_tools` (authoritative spec field). 3.0.4 ships every specialism with `required_tools: []`, so the table is empty — the validator becomes a no-op until the spec authors populate authoritative lists in a future release.
+  - `src/lib/server/decisioning/validate-specialisms.ts`: add an optional `requiredToolsLookup` parameter to `validateSpecialismRequiredTools` so tests can inject synthetic data without depending on manifest state. Production callers omit it and get the manifest-derived (currently empty) lookup.
+  - `test/lib/validate-specialisms.test.js`: tests now use a `SYNTHETIC_REQUIREMENTS` map injected via the new parameter, so coverage isn't tied to whether the manifest happens to have populated `required_tools` for any specialism. Added a sanity test asserting the default lookup is no-op in 3.0.4 — when the spec populates the field, that test will fail and prompt a refresh.
+  - `CLAUDE.md`: add the `governance-aware-seller` specialism row that was missing from the table (flagged in #1306 review).
+
+  This finalizes #1192's stage 3 infrastructure. The runtime check is wired through `createAdcpServerFromPlatform`; the data source is conservative (only fires on what the spec authoritatively says is required); the activation path is automatic on next manifest sync after the spec populates `required_tools`. Closes the manifest-adoption umbrella issue #1192.
+
+- 03a2bdb: Storyboard runner: ensure synthetic `AccountReference` natural-key refs always carry `operator` so a strict-validating seller can't reject them. Closes #1419.
+
+  The natural-key arm of `AccountReference` requires `operator` per `core/account-ref.json`. Three runner-side synthesis sites could previously produce `{brand, sandbox}` without `operator` — the SDK's loose runtime decoder hid the gap, but a spec-conformant seller running schema-strict validation would reject the ref:
+  - `applyBrandInvariant` (`runner.ts`) — when merging brand into a fixture's natural-key account, default `operator` to `brand.domain` if absent.
+  - `comply_test_controller` enricher (`request-builder.ts`) — when `context.account` was a natural-key ref missing `operator`, default to `brand.domain` before forcing `sandbox: true`.
+  - `sync_accounts` context extractor (`context.ts`) — drop `operator` from the propagated account ref when the response leaves it undefined, instead of writing `operator: undefined` (which `JSON.stringify` silently strips on the wire). The `{account_id}` arm and adopter-supplied operators are unaffected.
+
+- 797cdae: `tasks_get` now resolves the calling `BuyerAgent` (when an `agentRegistry` is configured) and threads it to `accounts.resolve` as `ctx.agent` — same contract as every other AccountStore call site after #1315 + #1321.
+
+  The custom-tool path historically bypassed `BuyerAgentRegistry.resolve` because it sits outside the dispatcher's main handler-dispatch flow, leaving adopters' resolve impls to see `ctx.agent: undefined` on `tasks_get` calls but populated on every other tool. That asymmetry quietly broke the "use `ctx.agent` for principal-keyed gates" guidance the JSDoc on `upsert?` / `reportUsage?` / `getAccountFinancials?` adopted in the prior two releases.
+
+  **Status enforcement is deliberately NOT replicated.** A buyer agent suspended _after_ kicking off an HITL task must still be able to poll for terminal state — refusing the poll would strand work with no visibility. Sellers who need hard cutoff implement that policy inside their own `accounts.resolve` (read `ctx.agent.status`, throw `AdcpError`). The dispatcher's main path enforces status at request entry; the polling path does not. Tests pin both behaviors.
+
+  Registry failures during a poll fall through to `agent: undefined` rather than breaking the poll — same defensive shape as the dispatcher.
+
+  No behavior change for adopters who don't read `ctx.agent` from inside their resolver.
+
+- d292fe5: Add DB-driven multi-tenant registry worked example with CI tests for concurrent recheck and unregister semantics; fix stale `MULTI-TENANT.md` skill doc constructor API.
+
+  New exports in `examples/decisioning-platform-multi-tenant-db.ts`:
+  - `buildDbMultiTenantRegistry()` — seeds from a DB-shaped async loader; compatible with pg, Prisma, or any async source
+  - `adminRegisterTenant()` — register without restart
+  - `adminRecheckTenant()` — zero-traffic-gap JWKS recheck after key rotation
+  - `adminUpdateTenant()` — unregister + re-register for platform-config updates (brief 503 window documented)
+  - `adminUnregisterTenant()` — immediate tenant removal
+
+  `test/examples/decisioning-platform-multi-tenant-db.test.js` CI test covers: strict typecheck gate, startup seeding, concurrent-recheck deduplication, unregister null-return, re-register restore, and the update-gap contract.
+
+  `skills/build-decisioning-platform/advanced/MULTI-TENANT.md` corrected: the previous version showed a non-existent `resolveTenant`/`buildPlatform` callback constructor that never matched the real `createTenantRegistry` API; updated to show `register()` call pattern and health state table.
+
+- 2cb70d6: fix(server): apply credential redactor to tenant-registry wire-projected reasons (closes #1330)
+
+  Stage 4 of #1269 introduced `redactCredentialPatterns` and applied it to the dispatcher's `err.message → details.reason` projections. Code-reviewer flagged additional sites in `tenant-registry.ts` that bypass the redactor — the `TenantStatus.reason` field flows to the wire via the admin router (`GET /tenants/:id`, `POST /tenants/:id/recheck`), and three sites projected upstream `err.message` into the reason without scrubbing.
+
+  Fixes four sites:
+  - `src/lib/server/decisioning/tenant-registry.ts:399` — JWKS fetch failure (network errors can echo basic-auth-bearing URLs).
+  - `src/lib/server/decisioning/tenant-registry.ts:416` — JSON parse failure on JWKS body.
+  - `src/lib/server/decisioning/tenant-registry.ts:834` — adopter validator throw (custom validators may include credential bytes in their error messages).
+  - `src/lib/server/decisioning/admin-router.ts:94` — `recheck` route's catch-all 500 handler.
+
+  The redactor scrubs Bearer tokens, JSON-quoted credential properties, unquoted credential properties, URL-embedded basic-auth, and long token-shaped strings. Already-redacted strings pass through unchanged (idempotent), so propagation paths that concatenate upstream reasons (`tenant-registry.ts:850, 856`) are safe automatically.
+
+  4 new tests at `test/server-decisioning-tenant-registry-redaction.test.js` cover Bearer-token redaction, labeled-credential redaction, URL-embedded credential redaction, and benign-error pass-through.
+
+  No behavior change for adopters whose validators don't carry credentials in error messages.
+
+- bd3d98d: chore(typecheck-skill-examples): treat `defineSalesPlatform` / `defineSalesCorePlatform` / `defineAudiencePlatform` / `defineSalesIngestionPlatform` calls as full-module anchors
+
+  Skill snippets that demonstrate platform handler shapes (e.g. `defineSalesPlatform<Meta>({ getProducts: async (req, ctx) => {...} })`) compile standalone with full type inference, but the typecheck harness's `FULL_MODULE_ANCHORS` regex didn't recognize them. Result: those blocks were classified as fragments and skipped — exactly the drift class the harness exists to catch.
+
+  Adding the four `define*Platform` regexes lifts ~2 blocks today (sales-guaranteed and sales-social Forecast / Planning-surface sections) into the compiled set, and gives future doc authors a way to write fragment-shaped snippets that still get typechecked. No baseline churn.
+
+- 4d389a5: fix(client): widen connectMCPWithFallback retry predicate to cover generic transient errors
+
+  Previously the single-retry gate was gated on `instanceof StreamableHTTPError`, which only matched the canonical "Session not found" 400. Network blips, JSON parse errors on half-buffered responses, and mid-handshake proxy disconnects (Cloudflare, Fastly) all surface as generic `Error` or `McpError` and were silently skipped. The predicate is now `!is401Error(error)` — retry on any first-connect failure except auth, where a second attempt is pointless.
+
+- e6e308d: fix(server): drive auto-hydration off spec `x-entity` annotations instead of hardcoded field names. The framework's five hand-rolled per-tool hydration call sites in `from-platform.ts` (`update_media_buy`, `provide_performance_feedback`, `activate_signal`, `acquire_rights`, `update_rights`) collapsed onto a single `hydrateForTool(toolName, params)` helper that walks a codegen-derived `TOOL_ENTITY_FIELDS` map plus a hand-curated `x-entity → ResourceKind` table.
+
+  The annotation acts as a renaming-firewall: if a future spec rename moves `media_buy_id` → `mediabuy_id`, the `x-entity: "media_buy"` tag travels with the field; the codegen step picks up the new field name automatically. The hardcoded `(field_name, ResourceKind)` literals at each call site previously made this scenario silent breakage, flagged by protocol-expert review of #1086.
+
+  `provide_performance_feedback` now also hydrates `req.package` when the buyer scoped feedback to a package (additive — silent no-op until publishers seed `package` records). Other destination field names (`req.media_buy`, `req.creative`, `req.signal`, `req.rights`, `req.rights_grant`) preserved via an explicit override table.
+
+  `creative_approval` (webhook-only payload from #551) is filtered out of the codegen — it's not a dispatchable tool. A regression test asserts every `x-entity` value in `TOOL_ENTITY_FIELDS` is either mapped to a `ResourceKind` or in the documented `INTENTIONALLY_UNHYDRATED_ENTITIES` allowlist, so a future spec entity tag can't silently bypass hydration.
+
+  Closes #1109.
+
 ## 6.6.0
 
 ### Minor Changes
