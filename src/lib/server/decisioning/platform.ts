@@ -58,6 +58,63 @@ import type { AdCPSpecialism } from '../../types/tools.generated';
  * **What the platform owns**: the business decisions in each `SalesPlatform` /
  * `CreativeBuilderPlatform` / `AudiencePlatform` method. Nothing else.
  *
+ * ### Cross-specialism dispatch
+ *
+ * When one specialism handler needs to consult another (canonical case:
+ * `brandRights.acquireRights` calling `campaignGovernance.checkGovernance`
+ * before granting rights, against a buyer-registered governance binding),
+ * the framework does NOT thread a separate `ctx.platform.<specialism>`
+ * accessor on `RequestContext`. Two idiomatic patterns; pick by authoring
+ * style:
+ *
+ * **Pattern A — class instance + `this`** (canonical for holdco hubs;
+ * `examples/hello_seller_adapter_multi_tenant.ts` is the reference):
+ *
+ * ```ts
+ * class HoldcoAdapter implements DecisioningPlatform<Config, TenantMeta> {
+ *   campaignGovernance = defineCampaignGovernancePlatform<TenantMeta>({  });
+ *   brandRights = defineBrandRightsPlatform<TenantMeta>({
+ *     acquireRights: async (req, ctx) => {
+ *       const denial = await this.enforceGovernance(tenant, ctx, offering, req);
+ *       if (denial) return denial;
+ *
+ *     },
+ *   });
+ *   private async enforceGovernance(...) {
+ *     // calls this.campaignGovernance.checkGovernance(...)
+ *   }
+ * }
+ * ```
+ *
+ * **Pattern B — closure capture** (for adopters using `define<X>Platform({...})`
+ * factories standalone):
+ *
+ * ```ts
+ * const campaignGovernance = defineCampaignGovernancePlatform<TenantMeta>({ ... });
+ * const brandRights = defineBrandRightsPlatform<TenantMeta>({
+ *   acquireRights: async (req, ctx) => {
+ *     const govResp = await campaignGovernance.checkGovernance!(checkReq, ctx);
+ *
+ *   },
+ * });
+ * const platform: DecisioningPlatform<Config, TenantMeta> = {
+ *   capabilities: {  }, accounts: {  }, campaignGovernance, brandRights,
+ * };
+ * ```
+ *
+ * Both patterns forward the same `RequestContext` (resolved account, agent,
+ * authInfo), so tenant invariants hold transitively. Both bypass wire-side
+ * validation, idempotency dedup, and mutating-tool annotations — that's
+ * correct because you're inside the seller's code, not handling a buyer
+ * request, but it means an in-process `checkGovernance` won't be
+ * re-deduped if the originating tool is already idempotency-protected.
+ * Single-specialism adopters MUST NOT copy this short-circuit: without a
+ * co-resident sibling handler, dial out to the registered governance
+ * agent URL via the `@adcp/sdk` client instead.
+ *
+ * Full walkthrough with same-tenant invariant + production caveats:
+ * `skills/build-holdco-agent/SKILL.md` § Cross-specialism dispatch.
+ *
  * @template TConfig Platform-specific config typed at the call site.
  *                   Example: `class GAM implements DecisioningPlatform<{ networkId: string }>`.
  * @template TCtxMeta Shape of the platform's opaque ctx_metadata blob — typed
@@ -164,10 +221,12 @@ export interface DecisioningPlatform<TConfig = unknown, TCtxMeta = Record<string
   creative?: CreativeBuilderPlatform<TCtxMeta> | CreativeAdServerPlatform<TCtxMeta>;
   audiences?: AudiencePlatform<TCtxMeta>;
   signals?: SignalsPlatform<TCtxMeta>;
+  /** @see DecisioningPlatform — § Cross-specialism dispatch (used as the canonical example: `brandRights.acquireRights` consulting `checkGovernance` before granting rights). */
   campaignGovernance?: CampaignGovernancePlatform<TCtxMeta>;
   contentStandards?: ContentStandardsPlatform<TCtxMeta>;
   propertyLists?: PropertyListsPlatform<TCtxMeta>;
   collectionLists?: CollectionListsPlatform<TCtxMeta>;
+  /** @see DecisioningPlatform — § Cross-specialism dispatch (`acquireRights` is the canonical caller into `campaignGovernance.checkGovernance`). */
   brandRights?: BrandRightsPlatform<TCtxMeta>;
 
   // v1.1+ specialisms add: creative-review.
