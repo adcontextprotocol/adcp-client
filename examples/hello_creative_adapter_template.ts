@@ -274,14 +274,17 @@ function templateToFormat(t: UpstreamTemplate): Format {
  *  builders to inject the discriminator — a bare `{ content }` or `{ url }`
  *  fails the asset-union oneOf.
  *
- *  Note on `serving_tag` as the asset_id: the key is **adopter-defined** and
- *  named for whatever the buyer's manifest contract expects. We use
- *  `serving_tag` consistently here across all four output kinds (HTML / JS /
- *  VAST / audio) so adopters forking this adapter don't have to reason about
- *  per-channel keying — pick one synthetic key and route all output asset
- *  types through it. Production agents whose buyers expect specific asset_ids
- *  per format should instead echo the format's declared `assets[].asset_id`
- *  values; see SHAPE-GOTCHAS.md and adcp-client follow-up tracked at #1496. */
+ *  ⚠️ This fixture's `serving_tag` asset_id diverges from
+ *  `creative-manifest.json:14`, which mandates: "Each key MUST match an
+ *  asset_id from the format's assets array." The format declared by
+ *  `templateToFormat` has slot ids (`image`, `headline`, `script`, etc.) —
+ *  none of which is `serving_tag`. We use `serving_tag` consistently across
+ *  all four output kinds (HTML / JS / VAST / audio) so the fixture exercises
+ *  every output branch with one key, but **production adopters MUST echo
+ *  declared `assets[].asset_id` values** — pick the slot the buyer expects
+ *  the rendered output under (e.g. `output`, `master`) and declare it in
+ *  the format. Spec-aligning this fixture is tracked at adcp-client follow-up
+ *  to #1496; until then, see SHAPE-GOTCHAS.md before adapting this pattern. */
 function projectRenderToManifest(
   render: UpstreamRender,
   formatId: { agent_url: string; id: string }
