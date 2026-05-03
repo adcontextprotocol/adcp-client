@@ -851,21 +851,6 @@
   },
   {
     "source": "skills/build-si-agent/SKILL.md",
-    "errorCode": "TS18004",
-    "messagePrefix": "No value exists in scope for the shorthand property 'issuer'. Either declare one"
-  },
-  {
-    "source": "skills/build-si-agent/SKILL.md",
-    "errorCode": "TS18004",
-    "messagePrefix": "No value exists in scope for the shorthand property 'jwksUri'. Either declare on"
-  },
-  {
-    "source": "skills/build-si-agent/SKILL.md",
-    "errorCode": "TS2304",
-    "messagePrefix": "Cannot find name 'createAgent'."
-  },
-  {
-    "source": "skills/build-si-agent/SKILL.md",
     "errorCode": "TS2304",
     "messagePrefix": "Cannot find name 'createAgent'."
   },
@@ -878,26 +863,6 @@
     "source": "skills/build-si-agent/SKILL.md",
     "errorCode": "TS2304",
     "messagePrefix": "Cannot find name 'db'."
-  },
-  {
-    "source": "skills/build-si-agent/SKILL.md",
-    "errorCode": "TS2304",
-    "messagePrefix": "Cannot find name 'issuer'."
-  },
-  {
-    "source": "skills/build-si-agent/SKILL.md",
-    "errorCode": "TS2304",
-    "messagePrefix": "Cannot find name 'lookupKey'."
-  },
-  {
-    "source": "skills/build-si-agent/SKILL.md",
-    "errorCode": "TS2322",
-    "messagePrefix": "Type '(req: { [x: string]: unknown; idempotency_key: string; session_id: string;"
-  },
-  {
-    "source": "skills/build-si-agent/SKILL.md",
-    "errorCode": "TS2353",
-    "messagePrefix": "Object literal may only specify known properties, and 'supported_protocols' does"
   },
   {
     "source": "skills/build-signals-agent/SKILL.md",

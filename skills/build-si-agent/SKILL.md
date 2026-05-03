@@ -287,12 +287,9 @@ serve(
       idempotency,
     }),
   {
-    authenticate: verifyApiKey({
-      verify: async token => {
-        const row = await db.api_keys.findUnique({ where: { token } });
-        return row ? { principal: row.account_id } : null;
-      },
-    }),
+    // SWAP: wire authentication here — see § Protecting your agent below.
+    // An unauthenticated agent fails the universal `security_baseline`
+    // storyboard.
   }
 );
 ```
