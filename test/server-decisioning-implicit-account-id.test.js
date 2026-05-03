@@ -493,5 +493,34 @@ describe("#1469 — accounts.resolution: 'derived' refuses inline account_id", (
       !dResult.structuredContent.adcp_error.suggestion.includes('sync_accounts'),
       'derived suggestion must not reference sync_accounts'
     );
+    assert.ok(
+      dResult.structuredContent.adcp_error.suggestion.includes('account.account_id'),
+      'derived suggestion must name the specific field to remove, not the entire account object'
+    );
+  });
+
+  it('get_account_financials rejects { account_id } with INVALID_REQUEST on derived platforms', async () => {
+    const platform = buildDerivedPlatform({
+      accounts: {
+        resolution: 'derived',
+        resolve: async () => null,
+        getAccountFinancials: async () => ({
+          financials: { spend: { amount: 0, currency: 'USD' } },
+        }),
+      },
+    });
+    const server = createAdcpServerFromPlatform(platform, SERVER_OPTS);
+    const result = await server.dispatchTestRequest({
+      method: 'tools/call',
+      params: {
+        name: 'get_account_financials',
+        arguments: {
+          account: { account_id: 'acc_foo' },
+        },
+      },
+    });
+    assert.strictEqual(result.isError, true);
+    assert.strictEqual(result.structuredContent.adcp_error.code, 'INVALID_REQUEST');
+    assert.strictEqual(result.structuredContent.adcp_error.field, 'account.account_id');
   });
 });

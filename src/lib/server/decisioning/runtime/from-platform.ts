@@ -187,7 +187,7 @@ function refuseInlineAccountIdWhenForbidden(
         'This is a single-tenant agent — the account is derived from your auth credential. Do not send account.account_id.',
       field: 'account.account_id',
       suggestion:
-        'Remove the account field from your request. The framework resolves the tenant from your bearer token automatically.',
+        'Remove account.account_id from your request — or send account as { brand, operator } if you need brand context. The framework derives the tenant from your bearer token automatically.',
     });
   }
   throw new AdcpError('INVALID_REQUEST', {

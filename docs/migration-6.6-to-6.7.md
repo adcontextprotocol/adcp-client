@@ -2,13 +2,17 @@
 
 > **Status: GA in 6.7.** Most changes are additive — adopters running on
 > 6.6 today see no behavior change on `npm update @adcp/sdk` unless they
-> opt in. **Three exceptions** require attention before bumping:
+> opt in. **Four exceptions** require attention before bumping:
 >
 > - **`accounts.resolution: 'implicit'` adopters**: the framework now
 >   actually refuses inline `{account_id}` references (the docstring
 >   was aspirational pre-6.7). If your platform declared `'implicit'`
 >   but accepted inline ids, those calls now reject with
 >   `INVALID_REQUEST`. See recipe **#10** below.
+> - **`accounts.resolution: 'derived'` adopters**: the same inline
+>   `{account_id}` refusal now applies to single-tenant derived-resolution
+>   platforms. Previously the field was silently ignored; it now rejects
+>   with `INVALID_REQUEST`. See recipe **#10b** below.
 > - **Adopters with `: SalesPlatform<Meta>` field annotations claiming
 >   `sales-guaranteed` / `sales-non-guaranteed` / `sales-broadcast-tv` /
 >   `sales-catalog-driven`**: `SalesPlatform` is now structurally
@@ -22,9 +26,9 @@
 >   client probe — including discovery — masquerading as a transport bug.
 >   See recipe **#16**.
 
-## Audit first — the three breaking recipes
+## Audit first — the four breaking recipes
 
-Before bumping, read recipes **#10**, **#11**, and **#16**. Everything
+Before bumping, read recipes **#10**, **#10b**, **#11**, and **#16**. Everything
 else is additive and can be applied incrementally.
 
 - **#10 — `accounts.resolution: 'implicit'` enforces inline-`account_id`
@@ -32,6 +36,9 @@ else is additive and can be applied incrementally.
   `'implicit'`-resolution platform now reject with `INVALID_REQUEST`.
   Pre-6.7 this was aspirational — the docstring claimed the framework
   would refuse, but nothing checked it.
+- **#10b — `accounts.resolution: 'derived'` enforces inline-`account_id`
+  refusal** (runtime). Same enforcement extended to single-tenant derived
+  platforms. Inline `{account_id}` previously silently dropped; now rejects.
 - **#11 — `SalesPlatform` split into `SalesCorePlatform &
   SalesIngestionPlatform`** (TS-only, self-announcing under
   `tsc --noEmit`). Adopters with `: SalesPlatform<Meta>` field
