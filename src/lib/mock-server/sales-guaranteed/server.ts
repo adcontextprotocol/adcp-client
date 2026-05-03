@@ -1,5 +1,5 @@
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
-import { randomUUID } from 'node:crypto';
+import { randomUUID, createHash } from 'node:crypto';
 import {
   AD_UNITS,
   DEFAULT_API_KEY,
@@ -199,6 +199,10 @@ export async function bootSalesGuaranteed(options: BootOptions): Promise<BootRes
       bump('GET /v1/products');
       return handleListProducts(url, network, res);
     }
+    if (method === 'POST' && path === '/v1/forecast') {
+      bump('POST /v1/forecast');
+      return handleGetForecast(req, network, res);
+    }
     if (method === 'GET' && path === '/v1/creatives') {
       bump('GET /v1/creatives');
       return handleListCreatives(network, res);
@@ -274,9 +278,36 @@ export async function bootSalesGuaranteed(options: BootOptions): Promise<BootRes
     let visible = products.filter(p => p.network_code === network.network_code);
     const deliveryType = url.searchParams.get('delivery_type');
     const channel = url.searchParams.get('channel');
+    const startDate = url.searchParams.get('start_date');
+    const endDate = url.searchParams.get('end_date');
     if (deliveryType) visible = visible.filter(p => p.delivery_type === deliveryType);
     if (channel) visible = visible.filter(p => p.channel === channel);
-    writeJson(res, 200, { products: visible });
+    const productList = visible.map(p =>
+      startDate && endDate ? { ...p, forecast: buildAvailabilityForecast(p, startDate, endDate) } : p
+    );
+    writeJson(res, 200, { products: productList });
+  }
+
+  async function handleGetForecast(req: IncomingMessage, network: MockNetwork, res: ServerResponse): Promise<void> {
+    const body = await readJsonObject(req, res);
+    if (!body) return;
+    const { product_id, flight_dates, budget } = body as Record<string, unknown>;
+    if (typeof product_id !== 'string') {
+      writeJson(res, 400, { code: 'invalid_request', message: 'product_id is required.' });
+      return;
+    }
+    const product = products.find(p => p.product_id === product_id && p.network_code === network.network_code);
+    if (!product) {
+      writeJson(res, 404, { code: 'product_not_found', message: `Product ${product_id} not found.` });
+      return;
+    }
+    const dates = (flight_dates as Record<string, string> | undefined) ?? {};
+    const startDate = typeof dates['start_date'] === 'string' ? dates['start_date'] : new Date().toISOString().slice(0, 10);
+    const endDate = typeof dates['end_date'] === 'string' ? dates['end_date'] : new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
+    const forecast = typeof budget === 'number'
+      ? buildSpendCurve(product, budget, startDate, endDate)
+      : buildAvailabilityForecast(product, startDate, endDate);
+    writeJson(res, 200, forecast);
   }
 
   function handleListCreatives(network: MockNetwork, res: ServerResponse): void {
@@ -656,6 +687,49 @@ export async function bootSalesGuaranteed(options: BootOptions): Promise<BootRes
     const { body_fingerprint, line_items, conversions, ...rest } = order;
     return rest;
   }
+}
+
+function deterministicSeed(productId: string, startDate: string, endDate: string): number {
+  return parseInt(createHash('sha256').update(`${productId}::${startDate}::${endDate}`).digest('hex').slice(0, 8), 16);
+}
+
+function buildAvailabilityForecast(product: MockProduct, startDate: string, endDate: string): object {
+  const seed = deterministicSeed(product.product_id, startDate, endDate);
+  const factor = 0.65 + (seed % 10000) / 28571; // 0.65–1.0, varies per product+dates
+  const available = product.availability?.available_impressions ?? 10_000_000;
+  const mid = Math.floor(available * factor);
+  return {
+    method: 'estimate',
+    currency: product.pricing.currency,
+    forecast_range_unit: 'availability',
+    generated_at: new Date().toISOString(),
+    points: [
+      {
+        metrics: {
+          impressions: { low: Math.floor(mid * 0.85), mid, high: Math.floor(mid * 1.12) },
+        },
+      },
+    ],
+  };
+}
+
+function buildSpendCurve(product: MockProduct, budget: number, startDate: string, endDate: string): object {
+  const seed = deterministicSeed(product.product_id, startDate, endDate);
+  const factor = 0.65 + (seed % 10000) / 28571;
+  const maxImpressions = Math.floor((product.availability?.available_impressions ?? 10_000_000) * factor);
+  const cpm = product.pricing.cpm;
+  const steps = [0.25, 0.5, 0.75, 1.0] as const;
+  return {
+    method: 'estimate',
+    currency: product.pricing.currency,
+    forecast_range_unit: 'spend',
+    generated_at: new Date().toISOString(),
+    points: steps.map(pct => {
+      const b = Math.round(budget * pct);
+      const impressions = Math.min(Math.floor((b / cpm) * 1000), maxImpressions);
+      return { budget: b, metrics: { impressions: { mid: impressions }, spend: { mid: b } } };
+    }),
+  };
 }
 
 function stripBodyFingerprint<T extends { body_fingerprint?: string }>(record: T): Omit<T, 'body_fingerprint'> {

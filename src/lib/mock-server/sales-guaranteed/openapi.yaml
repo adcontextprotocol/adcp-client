@@ -111,6 +111,55 @@ components:
             start_date: { type: string, format: date }
             end_date: { type: string, format: date }
             available_impressions: { type: integer }
+        forecast:
+          $ref: '#/components/schemas/DeliveryForecast'
+          description: |
+            Populated when GET /v1/products is called with ?start_date=&end_date=.
+            Deterministic availability forecast keyed on (product_id, start_date, end_date).
+            Maps directly onto AdCP Product.forecast with forecast_range_unit: 'availability'.
+
+    ForecastRange:
+      type: object
+      description: Low/mid/high estimate for a single metric.
+      properties:
+        low: { type: number }
+        mid: { type: number }
+        high: { type: number }
+
+    ForecastPoint:
+      type: object
+      required: [metrics]
+      properties:
+        budget:
+          type: number
+          description: |
+            Present on spend-curve points only. Omit for availability forecasts —
+            in that case, metrics.impressions expresses total available inventory.
+        metrics:
+          type: object
+          properties:
+            impressions: { $ref: '#/components/schemas/ForecastRange' }
+            spend: { $ref: '#/components/schemas/ForecastRange' }
+
+    DeliveryForecast:
+      type: object
+      required: [method, currency, points]
+      properties:
+        method:
+          type: string
+          enum: [estimate, modeled, guaranteed]
+        currency: { type: string }
+        forecast_range_unit:
+          type: string
+          enum: [spend, availability, reach_freq, weekly, daily, clicks, conversions, package]
+          description: |
+            'availability': points represent total available inventory, budget omitted.
+            'spend': points at ascending budget levels form a delivery curve.
+        generated_at: { type: string, format: date-time }
+        valid_until: { type: string, format: date-time }
+        points:
+          type: array
+          items: { $ref: '#/components/schemas/ForecastPoint' }
 
     Order:
       type: object
@@ -283,6 +332,18 @@ paths:
         - in: query
           name: channel
           schema: { type: string }
+        - in: query
+          name: start_date
+          schema: { type: string, format: date }
+          description: |
+            Campaign start date (YYYY-MM-DD). When provided together with end_date,
+            each product in the response includes a `forecast` field with
+            forecast_range_unit: 'availability' — total available impressions for
+            that flight window. Maps to AdCP ProductFilters.start_date.
+        - in: query
+          name: end_date
+          schema: { type: string, format: date }
+          description: Campaign end date (YYYY-MM-DD). See start_date.
       responses:
         '200':
           content:
@@ -296,6 +357,48 @@ paths:
                     },
                 },
             }
+
+  /v1/forecast:
+    post:
+      summary: Get delivery forecast for a product
+      operationId: getForecast
+      description: |
+        Returns a deterministic DeliveryForecast for the given product and flight window.
+        When `budget` is present, returns a spend-curve forecast (forecast_range_unit: 'spend')
+        with four points at 25/50/75/100% of the requested budget. When `budget` is absent,
+        returns an availability forecast (forecast_range_unit: 'availability') expressing
+        total available impressions for the flight window independent of budget.
+        Responses are deterministic given the same (product_id, flight_dates) — storyboard
+        runners get reproducible numbers across runs.
+      parameters: [{ $ref: '#/components/parameters/NetworkCode' }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [product_id]
+              properties:
+                product_id: { type: string }
+                flight_dates:
+                  type: object
+                  properties:
+                    start_date: { type: string, format: date }
+                    end_date: { type: string, format: date }
+                budget:
+                  type: number
+                  description: When present, returns a spend→impressions curve. When absent, returns an availability forecast.
+                targeting:
+                  type: object
+                  description: Targeting overlay (reserved for future use; currently ignored by the mock).
+      responses:
+        '200':
+          description: DeliveryForecast
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/DeliveryForecast' }
+        '400': { description: Missing product_id }
+        '404': { description: Product not found }
 
   /v1/orders:
     get:
