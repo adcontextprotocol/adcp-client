@@ -2,10 +2,11 @@
 
 // `createRosterAccountStore` reference adapter — Shape C for `resolution:
 // 'explicit'` publisher-curated platforms. Covers point-lookup dispatch,
-// the brand-arm and ref-less fallthrough behaviors, optional list
-// pagination, the resolveWithoutRef escape hatch, and the auto-attach
-// of authInfo by the framework (left to the framework, not asserted here —
-// `Account.authInfo` is omittable from the toAccount return).
+// the brand-arm and ref-less null fallthrough, optional list pagination,
+// and the wrap-resolve composition patterns (singleton fallback +
+// auth-derived lookup) for ref-less calls. The auto-attach of authInfo
+// is the framework's job, not asserted here — `Account.authInfo` is
+// omittable from the toAccount return.
 
 const { describe, it } = require('node:test');
 const assert = require('node:assert/strict');

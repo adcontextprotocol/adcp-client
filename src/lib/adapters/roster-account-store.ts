@@ -247,7 +247,8 @@ export function createRosterAccountStore<TRosterEntry, TCtxMeta = Record<string,
       // through to null. Publisher-curated platforms expect explicit ids;
       // adopters who want a synth tenant for `list_creative_formats` /
       // `provide_performance_feedback` / `preview_creative`, or brand-arm
-      // resolution, wrap `resolve` (see the file header for patterns).
+      // resolution, wrap `resolve` — see the JSDoc on
+      // `createRosterAccountStore` for both patterns.
       return null;
     },
   };
