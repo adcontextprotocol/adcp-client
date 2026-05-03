@@ -43,6 +43,8 @@ Compile-time enforcement: `RequiredPlatformsFor<S>` catches missing specialism m
 
 Lower-level option: `createAdcpServer({ signals: { getSignals: ... } })` from `@adcp/sdk/server/legacy/v5` — handler-bag API. Still fully supported, the substrate the platform path calls into. Use when you need fine control over individual handlers, mid-migration from a v5 codebase, or custom-shaped tools the platform interface doesn't yet model. `wrapEnvelope(inner, { replayed, context, operationId })` from `@adcp/sdk/server` attaches protocol envelope fields with the per-error-code allowlist (IDEMPOTENCY_CONFLICT drops `replayed`).
 
+**`composeMethod` cookbook.** To layer `before`/`after` hooks on a single platform method — short-circuit for caching, enrichment under `ext.*`, typed-error guards — use `composeMethod(inner, { before?, after? })` from `@adcp/sdk/server`. Stacking multiple guards: nest `composeMethod` calls (outer `before` runs first). Test patterns (mocking inner, asserting short-circuit, chained hooks, typed-error propagation): see [`docs/recipes/composeMethod-testing.md`](./recipes/composeMethod-testing.md). Pre-built `accounts.resolve` guards (`requireAccountMatch`, `requireAdvertiserMatch`, `requireOrgScope`) are in the same package.
+
 ## Quick Start (Client)
 
 ```typescript
@@ -1228,6 +1230,7 @@ These docs are available locally in the repo and hosted at https://adcontextprot
 | CLI reference | docs/CLI.md | [link](https://adcontextprotocol.github.io/adcp-client/CLI.md) |
 | Zod runtime validation | docs/ZOD-SCHEMAS.md | [link](https://adcontextprotocol.github.io/adcp-client/ZOD-SCHEMAS.md) |
 | Testing strategy | docs/guides/TESTING-STRATEGY.md | [link](https://adcontextprotocol.github.io/adcp-client/guides/TESTING-STRATEGY.md) |
+| Testing `composeMethod`-wrapped handlers | docs/recipes/composeMethod-testing.md | [link](https://adcontextprotocol.github.io/adcp-client/recipes/composeMethod-testing.md) |
 | Protocol differences (MCP vs A2A) | docs/development/PROTOCOL_DIFFERENCES.md | [link](https://adcontextprotocol.github.io/adcp-client/development/PROTOCOL_DIFFERENCES.md) |
 | TypeDoc API reference | docs/api/index.html | [link](https://adcontextprotocol.github.io/adcp-client/api/index.html) |
 
