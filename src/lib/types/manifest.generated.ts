@@ -1,16 +1,16 @@
-// AUTO-GENERATED FROM schemas/cache/3.0.5/manifest.json — DO NOT EDIT.
+// AUTO-GENERATED FROM schemas/cache/3.0.6/manifest.json — DO NOT EDIT.
 // Run `npm run generate-manifest-derived` to regenerate.
 
 /**
- * Manifest-derived constants for AdCP 3.0.5.
+ * Manifest-derived constants for AdCP 3.0.6.
  *
  * Single source of truth for tool↔protocol grouping, error-code metadata
  * (description + recovery + suggestion), and specialism→required-tools
  * mapping. Replaces the hand-curated tables that previously lived in
  * `src/lib/utils/capabilities.ts` and `src/lib/types/error-codes.ts`.
  *
- * Source: `schemas/cache/3.0.5/manifest.json` (adcp_version: 3.0.5, generated_at:
- * 2026-05-02T21:51:30.257Z). Re-run `npm run sync-schemas` then
+ * Source: `schemas/cache/3.0.6/manifest.json` (adcp_version: 3.0.6, generated_at:
+ * 2026-05-03T17:47:30.187Z). Re-run `npm run sync-schemas` then
  * `npm run generate-manifest-derived` to refresh after a spec bump.
  */
 
@@ -121,12 +121,12 @@ export const STANDARD_ERROR_CODES_FROM_MANIFEST = {
     suggestion: "revise the creative per the seller's advertising_policies"
   },
   GOVERNANCE_DENIED: {
-    description: "A registered governance agent denied the transaction. The buyer may restructure the buy (e.g., reduce budget, split into smaller transactions), escalate to human spending authority, or contact the governance agent for details.",
+    description: "A registered governance agent denied the transaction. Sellers MUST place the denial in the task's structured rejection arm when one exists (e.g., `acquire_rights` → `AcquireRightsRejected`, `creative_approval` → `CreativeRejected`); otherwise in `errors[]` + `adcp_error`. Buyers MUST dispatch on the response's discriminated `status` first and fall back to `errors[].code` / `adcp_error.code` only when no rejection arm exists for that task. The buyer may restructure the buy (e.g., reduce budget, split into smaller transactions), escalate to human spending authority, or contact the governance agent for details. Wire placement (full guidance). Governance denial is a structured business outcome, not a system error — the governance call SUCCEEDED and the agent returned a denial verdict. Two cases: 1. Task response defines a structured rejection arm. The arm IS the canonical denial shape. The seller populates `reason` (human-readable, propagating governance findings) and `suggestions` (optional) and does NOT additionally emit `GOVERNANCE_DENIED` in `errors[]` or `adcp_error`. The rejection arms enforce this at the schema layer: e.g., `AcquireRightsRejected` and `CreativeRejected` both declare `not: { required: [errors] }`, so dual-emission is already a schema violation. The code does not appear on the wire when the rejection arm is used. Transport-level success markers MUST NOT be flipped (HTTP 200, MCP `isError: false`, A2A `succeeded`) — the task ran successfully and produced a structured response. 2. Task response has no rejection arm (e.g., `create_media_buy` returns Success / Error / Submitted arms only). The seller populates `errors[].code: GOVERNANCE_DENIED` in the payload AND `adcp_error.code: GOVERNANCE_DENIED` on the envelope per the two-layer model in `error-handling.mdx#envelope-vs-payload-errors-the-two-layer-model`. Transport-level failure markers DO flip in this case (HTTP 4xx, MCP `isError: true`, A2A `failed`) — the task could not produce a success artifact. The rule generalizes to any current or future task whose response defines a discriminated rejection arm. In either placement, sellers SHOULD propagate governance findings verbatim — buyers' recovery decisions depend on what specifically was rejected. `GOVERNANCE_DENIED` is reserved for verdicts received from a reachable governance agent; if the governance call itself failed (timeout, network, config error), use `GOVERNANCE_UNAVAILABLE` instead.",
     recovery: "correctable",
     suggestion: "restructure the buy, escalate to human spending authority, or contact the governance agent for details"
   },
   GOVERNANCE_UNAVAILABLE: {
-    description: "A registered governance agent is unreachable (timeout, network error, or repeated failure) and the seller cannot obtain a governance decision for the spend-commit. Distinct from `GOVERNANCE_DENIED` (agent reachable and explicitly denied).",
+    description: "A registered governance agent is unreachable. Sellers MUST place this code in `errors[]` + `adcp_error` (never a structured rejection arm) and flip transport-level failure markers (HTTP 5xx, MCP `isError: true`, A2A `failed`). Distinct from `GOVERNANCE_DENIED` (agent reachable and explicitly denied — see that code's wire-placement guidance). Wire placement (full guidance). Governance unavailability is a system error — the governance call FAILED (timeout, network, config error) and the seller could not get a verdict at all. Always populate both layers per the two-layer model in `error-handling.mdx#envelope-vs-payload-errors-the-two-layer-model`. Do NOT use a structured rejection arm for unavailability even when the task offers one — the buyer's recovery semantics differ (retry-with-backoff for unavailability vs. restructure-or-escalate for denial), and conflating them masks the system-error signal.",
     recovery: "transient",
     suggestion: "retry with backoff; if the agent remains unreachable, the buyer MUST contact the plan's governance operator"
   },

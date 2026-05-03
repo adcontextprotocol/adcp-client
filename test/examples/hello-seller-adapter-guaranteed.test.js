@@ -4,19 +4,22 @@
  * Three independent assertions via the shared helper. The adapter wires
  * `comply_test_controller` so cascade scenarios under `media_buy_seller/*`
  * (driven by `requires_scenarios` in the storyboard yaml) get the
- * controller-driven setup they need. One remaining failure is filtered
- * out here, mapped to a tracked upstream-fixture follow-up:
+ * controller-driven setup they need.
  *
- *   - #1417 (HITL media_buy_id capture — fixture-side: upstream
- *     sales_guaranteed storyboard uses `path: media_buy_id` instead of the
- *     `task_completion.media_buy_id` prefix the runner now supports per
- *     PR #1426.)
+ * As of AdCP 3.0.6, all known gaps are closed end-to-end:
+ *   - #1415 — adcp#3989 (sandbox:true on every account block in
+ *     inventory_list_targeting) + SDK PR #1424 (createMediaBuyStore auto-echo)
+ *   - #1416 — adcp-client#1480 (assertMediaBuyTransition wired into the
+ *     adapter's update_media_buy cancel path)
+ *   - #1417 — adcp#3990 (task_completion.media_buy_id path) + SDK PR #1426
+ *     (runner-side `task_completion.<path>` context_outputs prefix)
+ *   - #1505 — closed by 3.0.6 fixture sandbox-namespace alignment together
+ *     with the get_media_buys account-resolution fix (#1487/#1489); the
+ *     update→get echo round-trip now resolves correctly.
  *
- * Drop the corresponding entry from `EXPECTED_FAILURES` when each upstream
- * fixture lands. The helper enforces that every entry in the allowlist
- * actually appears in the pre-filter failure set — a spec rename or fixture
- * migration that silently eliminates the gap-failure flips the gate to red
- * so the allowlist stays in sync with reality.
+ * The storyboard suite passes unfiltered. The empty allowlist is kept
+ * (rather than removed) so the helper's enforcement runs as a no-op —
+ * re-introducing a gap is a one-line update.
  */
 
 const path = require('node:path');
@@ -33,17 +36,7 @@ const REPO_ROOT = path.resolve(__dirname, '..', '..');
  * in the pre-filter set (so a future spec rename or runner fix is loud,
  * not silent).
  */
-const EXPECTED_FAILURES = [
-  {
-    storyboard_id: 'sales_guaranteed',
-    step_id: 'create_media_buy',
-    issue: 'adcp-client#1417',
-    reason:
-      'HITL completion-artifact capture — SDK runner now supports `task_completion.<path>` ' +
-      'context_outputs (PR #1426), but the upstream sales_guaranteed storyboard fixture in ' +
-      'adcontextprotocol/adcp still uses bare `path: media_buy_id`. Fixture migration is upstream.',
-  },
-];
+const EXPECTED_FAILURES = [];
 
 function isExpectedFailure(f) {
   return EXPECTED_FAILURES.some(e => e.storyboard_id === (f.storyboard_id || '') && e.step_id === (f.step_id || ''));

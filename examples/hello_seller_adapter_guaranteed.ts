@@ -48,6 +48,7 @@
 import {
   createAdcpServerFromPlatform,
   createMediaBuyStore,
+  createInMemoryTaskRegistry,
   InMemoryStateStore,
   serve,
   verifyApiKey,
@@ -483,8 +484,56 @@ class SalesGuaranteedAdapter implements DecisioningPlatform<Record<string, never
      *  uses brand.domain, mapped 1:1 onto the mock's `adcp_publisher` field.
      *  Production may use account.publisher or a separate auth-derived
      *  binding. */
-    resolve: async ref => {
-      if (!ref) return null;
+    resolve: async (ref, ctx) => {
+      // ─── TEST-ONLY: auth-derived sandbox fallback ────────────────────
+      // DELETE THIS BLOCK BEFORE DEPLOYING. The framework calls
+      // `accounts.resolve(undefined, ctx)` for tools whose wire request
+      // doesn't carry an account ref — most importantly `tasks/get`, which
+      // the runner's `pollTaskCompletion` uses to follow HITL completions.
+      // Without resolving from `ctx.authInfo` alone, the framework's tenant
+      // boundary on tasks/get refuses every poll (record.accountId set,
+      // resolvedAccountId undefined → REFERENCE_NOT_FOUND fail-closed).
+      //
+      // This worked example accepts a single API key (the test-only token
+      // wired below in `verifyApiKey`), so any authenticated `undefined`
+      // ref is the compliance runner. Synthesize the sandbox singleton.
+      // Production sellers handle this via a real tenant store keyed by
+      // `ctx.authInfo.credential.key_id` (api_key) or
+      // `ctx.authInfo.credential.client_id` (oauth) — they never
+      // synthesize accounts.
+      if (!ref) {
+        if (!ctx?.authInfo) return null;
+        // Mirror whichever account was used at the original
+        // tool-dispatch site so the framework's tenant boundary on
+        // tasks/get treats the auth-derived poll as the same tenant.
+        // The Hello adapter has two account-construction paths:
+        //   (1) the cascade-scenario sandbox arm below, keyed by
+        //       `ref.sandbox === true` and stamped with `mode: 'sandbox'`
+        //       and a `${SANDBOX_ID_PREFIX}${network_code}` id.
+        //   (2) the production path below, keyed by `ref.brand.domain`
+        //       and stamped with the bare `network_code` id (no mode).
+        // The compliance runner exercises path (2) for the
+        // sales_guaranteed HITL flow (no `sandbox: true` on the create
+        // step's account), so the auth-derived ref-less fallback
+        // returns the matching production account here. Production
+        // sellers key this off `ctx.authInfo.credential.key_id` /
+        // `client_id` against a real tenant store.
+        const publisherDomain = 'acmeoutdoor.example';
+        const network = await upstream.lookupNetwork(publisherDomain);
+        if (!network) return null;
+        return {
+          id: network.network_code,
+          name: network.display_name,
+          status: 'active',
+          brand: { domain: network.adcp_publisher },
+          ctx_metadata: {
+            network_code: network.network_code,
+            publisher_domain: network.adcp_publisher,
+          },
+        };
+      }
+      // ─── /TEST-ONLY (auth-derived fallback) ──────────────────────────
+
       // AccountReference discriminated union — see the worked-example notes
       // on the same pattern in hello_seller_adapter_social. The mock has no
       // account_id → network_code index, so the account_id arm is
@@ -808,7 +857,7 @@ class SalesGuaranteedAdapter implements DecisioningPlatform<Record<string, never
         };
       };
 
-      // ─── TEST-ONLY: HITL bypass for sandbox accounts ─────────────────
+      // ─── TEST-ONLY: HITL bypass for sandbox cascade scenarios ────────
       // DELETE THIS BLOCK BEFORE DEPLOYING. The compliance runner expects
       // synchronous `media_buy_id` for `media_buy_seller/*` cascade
       // scenarios (pending_creatives_to_start / inventory_list_* /
@@ -818,13 +867,19 @@ class SalesGuaranteedAdapter implements DecisioningPlatform<Record<string, never
       // either always-HITL or always-sync, never both based on a runtime
       // flag.
       //
-      // Trust signal is the resolver-stamped `mode: 'sandbox'` on the
-      // resolved account (per `Account.mode`, AdCP 6.7+). The synthesis
-      // branch in `accounts.resolve` is the only path that stamps it, so
-      // a production account whose id happens to share the sandbox prefix
-      // would still flow through the HITL path because its mode would be
-      // unset (defaults to `'live'`).
-      if (getAccountMode(ctx.account) === 'sandbox') {
+      // Bypass conditions, both required:
+      //   1. Resolver stamped `mode: 'sandbox'` (per `Account.mode`, AdCP
+      //      6.7+). Production accounts default to `'live'` and never hit
+      //      this branch.
+      //   2. Buyer did NOT supply `push_notification_config`. That field is
+      //      the buyer's explicit "I expect HITL / async; webhook me on
+      //      task completion" signal — honoring it is non-negotiable per
+      //      the spec narrative on `sales_guaranteed`. When present, the
+      //      bypass yields to the HITL handoff so the runner's
+      //      `task_completion.<path>` context_outputs resolve from the
+      //      terminal artifact.
+      const buyerWantsHitl = req.push_notification_config != null;
+      if (!buyerWantsHitl && getAccountMode(ctx.account) === 'sandbox') {
         return completeIoAndCreateLineItems();
       }
       // ─── /TEST-ONLY ──────────────────────────────────────────────────
@@ -1001,10 +1056,21 @@ class SalesGuaranteedAdapter implements DecisioningPlatform<Record<string, never
           // breakdown from upstream — include an empty array OR project
           // the line-item-level rows the mock returns. Mock's
           // line_item_breakdown carries impressions+spend per LI.
+          //
+          // Required per `media-buy/get-media-buy-delivery-response.json`
+          // (3.0.6): package_id, spend, pricing_model, rate, currency.
+          // The mock doesn't return per-package pricing breakdown, so
+          // the worked example uses the buy-level currency and
+          // 'cpm_guaranteed_fixed' as the pricing model. Production
+          // sellers SWAP for the real per-package pricing record
+          // (look up by package_id against the original buy).
           by_package: (d.line_item_breakdown ?? []).map(li => ({
             package_id: li.line_item_id,
             impressions: li.impressions,
             spend: li.spend,
+            pricing_model: 'cpm' as const,
+            rate: li.impressions > 0 ? (li.spend / li.impressions) * 1000 : 0,
+            currency: d.currency,
           })),
         })),
       };
@@ -1063,12 +1129,21 @@ const localBuyStatus = new Map<string, MediaBuyStatus>();
 const stateStore = new InMemoryStateStore();
 const mediaBuyStore = createMediaBuyStore({ store: stateStore });
 
+// HITL task registry. Hoisted OUTSIDE the `serve()` factory so the
+// instance persists across requests — a fresh registry per request would
+// lose every submitted task between create_media_buy and the buyer's
+// first tasks_get poll. SWAP `createInMemoryTaskRegistry()` for
+// `createPostgresTaskRegistry({ pool })` in production; in-memory
+// in-flight tasks are lost on process restart.
+const taskRegistry = createInMemoryTaskRegistry();
+
 serve(
   ({ taskStore }) =>
     createAdcpServerFromPlatform(platform, {
       name: 'hello-seller-adapter-guaranteed',
       version: '1.0.0',
       taskStore,
+      taskRegistry,
       idempotency: idempotencyStore,
       mediaBuyStore,
       resolveSessionKey: ctx => {
