@@ -101,6 +101,43 @@ export const OFFERINGS: MockOffering[] = [
       },
     ],
   },
+  {
+    // Nova Motors offering matching the canonical compliance test-kit
+    // (`compliance/cache/latest/test-kits/nova-motors.yaml`). The
+    // `si_baseline` storyboard at
+    // `compliance/cache/latest/protocols/sponsored-intelligence/index.yaml`
+    // requests this `offering_id` directly. Seeding it here lets the SI
+    // mock be the canonical fixture for SI compliance runs.
+    offering_id: 'novamotors_conversational_v1',
+    brand_id: 'brand_nova_motors',
+    name: 'Nova Motors Volta EV — Conversational Concierge',
+    summary:
+      'Talk to the Nova Motors product team about the Volta EV. Range, charging network, lease vs. buy, dealer locator — answered in plain language by an AI concierge backed by real specs.',
+    tagline: 'Engineering meets sustainability.',
+    hero_image_url: 'https://test-assets.adcontextprotocol.org/nova-motors/volta-hero.jpg',
+    landing_page_url: 'https://novamotors.example/volta',
+    price_hint: 'from $42,500',
+    expires_at: OFFERING_EXPIRES,
+    products: [
+      {
+        sku: 'nova_volta_long_range_awd',
+        name: 'Volta EV Long Range AWD',
+        display_price: '$48,900',
+        list_price: '$52,400',
+        thumbnail_url: 'https://test-assets.adcontextprotocol.org/nova-motors/volta-long-range.jpg',
+        pdp_url: 'https://novamotors.example/volta/long-range-awd',
+        inventory_status: 'Available now — 2 in stock at nearest dealer',
+      },
+      {
+        sku: 'nova_volta_standard_rwd',
+        name: 'Volta EV Standard RWD',
+        display_price: '$42,500',
+        thumbnail_url: 'https://test-assets.adcontextprotocol.org/nova-motors/volta-standard.jpg',
+        pdp_url: 'https://novamotors.example/volta/standard-rwd',
+        inventory_status: 'Build-to-order — 6 week delivery',
+      },
+    ],
+  },
 ];
 
 export const BRANDS: MockBrand[] = [
@@ -121,6 +158,18 @@ export const BRANDS: MockBrand[] = [
     privacy_policy_version: '2025-09-15',
     visible_offering_ids: ['off_summit_books_summer26'],
     session_ttl_seconds: 900,
+  },
+  {
+    // Nova Motors — canonical compliance fixture. Brand identity matches
+    // `compliance/cache/latest/test-kits/nova-motors.yaml` so the
+    // `si_baseline` storyboard runs cleanly against the mock.
+    brand_id: 'brand_nova_motors',
+    display_name: 'Nova Motors',
+    adcp_brand: 'novamotors.example',
+    privacy_policy_url: 'https://novamotors.example/privacy',
+    privacy_policy_version: '2026-02-01',
+    visible_offering_ids: ['novamotors_conversational_v1'],
+    session_ttl_seconds: 1200,
   },
 ];
 

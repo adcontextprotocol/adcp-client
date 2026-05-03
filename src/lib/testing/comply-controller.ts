@@ -59,6 +59,7 @@ import { getSdkServer, type AdcpServer } from '../server/adcp-server';
 import type {
   ComplyTestControllerResponse,
   ControllerError,
+  ForcedDirectiveSuccess,
   SimulationSuccess,
   StateTransitionSuccess,
 } from '../types/tools.generated';
@@ -133,6 +134,17 @@ export interface ForceSessionStatusParams {
   termination_reason?: string;
 }
 
+export interface ForceCreateMediaBuyArmParams {
+  arm: 'submitted' | 'input-required';
+  task_id?: string;
+  message?: string;
+}
+
+export interface ForceTaskCompletionParams {
+  task_id: string;
+  result: Record<string, unknown>;
+}
+
 export interface SimulateDeliveryParams {
   media_buy_id: string;
   impressions?: number;
@@ -165,6 +177,15 @@ export type ForceAdapter<P> = (
   params: P,
   ctx: ComplyControllerContext
 ) => Promise<StateTransitionSuccess> | StateTransitionSuccess;
+
+/** Directive adapters return a {@link ForcedDirectiveSuccess} (pre-registration
+ * of a pending directive, not a state-machine transition). Used for
+ * `create_media_buy_arm` which acknowledges the registered arm rather than
+ * recording a `previous_state` / `current_state` transition. */
+export type DirectiveAdapter<P> = (
+  params: P,
+  ctx: ComplyControllerContext
+) => Promise<ForcedDirectiveSuccess> | ForcedDirectiveSuccess;
 
 /** Simulate adapters return a {@link SimulationSuccess}. */
 export type SimulateAdapter<P> = (
@@ -206,12 +227,19 @@ export interface ComplyControllerConfig {
     creative_format?: SeedAdapter<SeedCreativeFormatParams>;
   };
 
-  /** Force adapters (state transitions). */
+  /** Force adapters (state transitions and directives). */
   force?: {
     creative_status?: ForceAdapter<ForceCreativeStatusParams>;
     account_status?: ForceAdapter<ForceAccountStatusParams>;
     media_buy_status?: ForceAdapter<ForceMediaBuyStatusParams>;
     session_status?: ForceAdapter<ForceSessionStatusParams>;
+    /** Register a directive shaping the next `create_media_buy` arm. Consumed
+     * on the next call. `arm: 'submitted'` requires `task_id`. */
+    create_media_buy_arm?: DirectiveAdapter<ForceCreateMediaBuyArmParams>;
+    /** Transition an in-flight task to `completed` with the given result
+     * payload. The seller delivers `result` to the buyer's push-notification
+     * URL per the AdCP 3.0 async completion path. */
+    task_completion?: ForceAdapter<ForceTaskCompletionParams>;
   };
 
   /** Simulation adapters (synthetic delivery/budget data). */
@@ -359,6 +387,13 @@ function buildStore(config: ComplyControllerConfig, ctx: ComplyControllerContext
     store.forceSessionStatus = (sessionId, status, termination_reason) =>
       Promise.resolve(force.session_status!({ session_id: sessionId, status, termination_reason }, ctx));
   }
+  if (force?.create_media_buy_arm) {
+    store.forceCreateMediaBuyArm = params => Promise.resolve(force.create_media_buy_arm!(params, ctx));
+  }
+  if (force?.task_completion) {
+    store.forceTaskCompletion = (taskId, result) =>
+      Promise.resolve(force.task_completion!({ task_id: taskId, result }, ctx));
+  }
 
   if (simulate?.delivery) {
     store.simulateDelivery = (mediaBuyId, params) =>
@@ -379,6 +414,8 @@ function advertisedScenarios(config: ComplyControllerConfig): ControllerScenario
   if (config.force?.account_status) out.push(CONTROLLER_SCENARIOS.FORCE_ACCOUNT_STATUS);
   if (config.force?.media_buy_status) out.push(CONTROLLER_SCENARIOS.FORCE_MEDIA_BUY_STATUS);
   if (config.force?.session_status) out.push(CONTROLLER_SCENARIOS.FORCE_SESSION_STATUS);
+  if (config.force?.create_media_buy_arm) out.push(CONTROLLER_SCENARIOS.FORCE_CREATE_MEDIA_BUY_ARM);
+  if (config.force?.task_completion) out.push(CONTROLLER_SCENARIOS.FORCE_TASK_COMPLETION);
   if (config.simulate?.delivery) out.push(CONTROLLER_SCENARIOS.SIMULATE_DELIVERY);
   if (config.simulate?.budget_spend) out.push(CONTROLLER_SCENARIOS.SIMULATE_BUDGET_SPEND);
   return out;

@@ -650,6 +650,9 @@ export type {
   ControllerScenario,
   SeedScenario,
   SeedFixtureCache,
+  SessionContext,
+  OnInstructionsError,
+  MaybePromise,
   AdcpServerConfig,
   AdcpToolMap,
   AdcpServerToolName,
@@ -1178,6 +1181,9 @@ export {
   // Roster-backed AccountStore — Shape C factory for publisher-curated explicit platforms
   createRosterAccountStore,
   type RosterAccountStoreOptions,
+  // Derived AccountStore — Shape D factory for single-tenant `resolution: 'derived'` agents
+  createDerivedAccountStore,
+  type DerivedAccountStoreOptions,
 } from './adapters';
 
 // ====== BACKWARD COMPATIBILITY & ENVIRONMENT LOADING ======

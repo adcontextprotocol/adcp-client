@@ -4,18 +4,27 @@
  * Three independent assertions via the shared helper. The adapter wires
  * `comply_test_controller` so cascade scenarios under `media_buy_seller/*`
  * (driven by `requires_scenarios` in the storyboard yaml) get the
- * controller-driven setup they need. Three remaining failures are
- * filtered out here — each maps to a tracked SDK follow-up issue:
+ * controller-driven setup they need. Two remaining failures are filtered
+ * out here — each maps to a tracked upstream-fixture follow-up:
  *
- *   - #1415 (property_list echo on get_media_buys)
- *   - #1416 (NOT_CANCELLABLE state machine export)
- *   - #1417 (HITL media_buy_id capture in storyboard runner)
+ *   - #1415 (targeting_overlay echo on get_media_buys — fixture-side: every
+ *     step in the storyboard needs `account.sandbox: true` so the create and
+ *     get steps resolve to the same namespace in the adapter's synthesis
+ *     branch. SDK-side coverage shipped via createMediaBuyStore + framework
+ *     auto-echo, PR #1424.)
+ *   - #1417 (HITL media_buy_id capture — fixture-side: upstream
+ *     sales_guaranteed storyboard uses `path: media_buy_id` instead of the
+ *     `task_completion.media_buy_id` prefix the runner now supports per
+ *     PR #1426.)
  *
- * Drop the corresponding entry from `EXPECTED_FAILURES` when each issue
- * lands. The helper enforces that every entry in the allowlist actually
- * appears in the pre-filter failure set — a spec rename that silently
- * eliminates the gap-failure flips the gate to red so the allowlist
- * stays in sync with reality.
+ * #1416 (NOT_CANCELLABLE state machine) closed in this same PR — adapter
+ * now wires `assertMediaBuyTransition` against a local per-buy status tracker.
+ *
+ * Drop the corresponding entry from `EXPECTED_FAILURES` when each upstream
+ * fixture lands. The helper enforces that every entry in the allowlist
+ * actually appears in the pre-filter failure set — a spec rename or fixture
+ * migration that silently eliminates the gap-failure flips the gate to red
+ * so the allowlist stays in sync with reality.
  */
 
 const path = require('node:path');
@@ -37,19 +46,22 @@ const EXPECTED_FAILURES = [
     storyboard_id: 'sales_guaranteed',
     step_id: 'create_media_buy',
     issue: 'adcp-client#1417',
-    reason: 'HITL flow returns task envelope; runner does not poll task completion to capture media_buy_id',
+    reason:
+      'HITL completion-artifact capture — SDK runner now supports `task_completion.<path>` ' +
+      'context_outputs (PR #1426), but the upstream sales_guaranteed storyboard fixture in ' +
+      'adcontextprotocol/adcp still uses bare `path: media_buy_id`. Fixture migration is upstream.',
   },
   {
     storyboard_id: 'media_buy_seller/inventory_list_targeting',
     step_id: 'get_after_create',
     issue: 'adcp-client#1415',
-    reason: 'targeting_overlay.property_list echo on get_media_buys — needs SDK-side mediaBuyStore helper',
-  },
-  {
-    storyboard_id: 'media_buy_seller/invalid_transitions',
-    step_id: 'second_cancel',
-    issue: 'adcp-client#1416',
-    reason: 'NOT_CANCELLABLE on re-cancel — needs SDK-exported MEDIA_BUY_TRANSITIONS / assertMediaBuyTransition',
+    reason:
+      'targeting_overlay echo on get_media_buys — SDK ships createMediaBuyStore + framework ' +
+      'auto-echo (PR #1424) and the Hello adapter wires it. Storyboard still fails because the ' +
+      "create step's account ref (synthesized by the runner with `sandbox: true`) and the get " +
+      "step's account ref (passed through from sample_request without `sandbox`) resolve to " +
+      "different sandbox-vs-prod namespaces in the adapter's synthesis-branch resolver. " +
+      "Fixture migration upstream (every step's account carries `sandbox: true`) closes it.",
   },
 ];
 
@@ -66,10 +78,10 @@ runHelloAdapterGates({
   mockOptions: { apiKey: 'mock_sales_guaranteed_key_do_not_use_in_prod' },
   extraEnv: {
     UPSTREAM_API_KEY: 'mock_sales_guaranteed_key_do_not_use_in_prod',
-    // Opens the comply_test_controller surface for the storyboard runner.
-    // Production sellers gate on this same flag; the storyboard env sets it
-    // explicitly so non-test deployments stay closed.
-    ADCP_SANDBOX: '1',
+    // No ADCP_SANDBOX — the framework gate inside
+    // `createAdcpServerFromPlatform` admits comply_test_controller via the
+    // resolver-stamped `mode: 'sandbox'` on the synthesis branch. Phase 3 of
+    // #1435 collapsed the env-fallback admit onto the resolver-mode signal.
   },
   expectedRoutes: [
     'GET /_lookup/network',

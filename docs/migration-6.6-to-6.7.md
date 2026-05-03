@@ -48,7 +48,7 @@ else is additive and can be applied incrementally.
   error body, which clients report as `discovery_failed`. Audit with
   `grep -rn 'customTools.*update_rights'` before bumping.
 
-## tl;dr — sixteen recipes to apply
+## tl;dr — seventeen recipes to apply
 
 | #  | If you had 6.6 …                                                                         | Do this in 6.7                                                                                                            | Mechanical?                  |
 |----|------------------------------------------------------------------------------------------|---------------------------------------------------------------------------------------------------------------------------|------------------------------|
@@ -68,6 +68,7 @@ else is additive and can be applied incrementally.
 | 14 | Local copy of the media-buy / creative status-transition graph                           | Import `MEDIA_BUY_TRANSITIONS` / `assertMediaBuyTransition` (and the creative pair) from `@adcp/sdk/server`.              | mechanical                   |
 | 15 | Sellers claiming `property-lists` / `collection-lists` echoing `targeting_overlay` by hand | `mediaBuyStore: createMediaBuyStore({ store })` opt-in framework wiring.                                                | mechanical (narrow)          |
 | 16 | Brand-rights adopter with `customTools: { update_rights: ... }`                          | Drop the customTools entry and wire `BrandRightsPlatform.updateRights` instead. The framework now owns the tool name.   | **breaking**                 |
+| 17 | Single-tenant adapter (audiostack, flashtalking, single-namespace retail-media) hand-rolling `AccountStore` with `'explicit'` (wrong) resolution | `createDerivedAccountStore({ toAccount })` — Shape D factory; sets `'derived'`, gates on `AUTH_REQUIRED`, ignores buyer-supplied `account_id`. While here, move any bearer tokens out of `ctx_metadata` — see [CTX-METADATA-SAFETY](./guides/CTX-METADATA-SAFETY.md). | mechanical (security-relevant) |
 
 `refAccountId` already shipped in 6.6 (recipe #2); it's listed because
 the eight-item list in #1344 included it as a "stop reinventing this"
@@ -631,13 +632,56 @@ publisher-wide account instead — the returned entry flows through
 [Ref-less resolution](./guides/account-resolution.md#ref-less-resolution-list_creative_formats-preview_creative-provide_performance_feedback)
 in `docs/guides/account-resolution.md`.
 
-The three-shape map adopters now reach for:
+**Companion: `createDerivedAccountStore` for single-tenant agents
+(Shape D).** Adopters whose tenant is the auth principal alone — no
+`account_id` on the wire (audiostack, flashtalking, single-namespace
+retail-media) — get a complete `AccountStore` from one `toAccount(ctx)`
+callback. Replaces ~25–30 LOC of bearer-extract +
+throw-`AUTH_REQUIRED` + return-singleton boilerplate, and standardizes
+the correct `'derived'` resolution declaration (many Shape D adapters
+declare `'explicit'` today even though they ignore the wire field).
 
-| Shape  | Resolution  | Helper                              | Use when                                                                         |
-|--------|-------------|-------------------------------------|----------------------------------------------------------------------------------|
+```ts
+import { createDerivedAccountStore } from '@adcp/sdk/server';
+
+const accounts = createDerivedAccountStore<AudioStackAccountMeta>({
+  toAccount: ctx => ({
+    id: 'audiostack',
+    name: 'AudioStack',
+    status: 'active',
+    ctx_metadata: {},                       // bearer stays on ctx.authInfo, not here
+  }),
+});
+```
+
+Closes adcp-client#1462. The factory throws `AUTH_REQUIRED` when
+`ctx.authInfo.credential` is absent — set `skipAuthCheck: true` for
+unauthenticated single-tenant agents (rare; public format catalogs).
+Buyer-supplied `account_id` is ignored (single-tenant by definition);
+adopters who want a wire-shape error for that case wrap `resolve` and
+throw `INVALID_REQUEST`. Framework-side refusal (matching `'implicit'`'s
+`refuseImplicitAccountId`) is tracked at adcp-client#1468.
+
+**Security-posture upgrade — drop bearers out of `ctx_metadata`.** The
+real value of swapping to Shape D is the credential-discipline shift,
+not the LOC drop. Hand-rolled `'derived'` stores commonly stash the
+bearer in `ctx_metadata: { accessToken: ctx.authInfo?.token }`; the
+factory's example deliberately keeps `ctx_metadata: {}` and tells you
+to re-derive the bearer per request from `ctx.account.authInfo` (auto-
+attached by the framework) inside specialism methods. While you're in
+there for the mechanical swap, do the credential migration too — see
+[`CTX-METADATA-SAFETY`](./guides/CTX-METADATA-SAFETY.md) for the
+rationale (wire-strip protects buyer responses but does NOT protect
+log lines, error envelopes, or `JSON.stringify(account)` strings).
+
+The four-shape map adopters now reach for:
+
+| Shape  | Resolution    | Helper                              | Use when                                                                         |
+|--------|---------------|-------------------------------------|----------------------------------------------------------------------------------|
 | **A**  | `'implicit'`  | `InMemoryImplicitAccountStore`        | Buyer drives onboarding via `sync_accounts`; framework owns the linkage map.    |
 | **B**  | `'explicit'`  | `createOAuthPassthroughResolver`      | Adapter fronts a vendor OAuth + `/me/adaccounts` listing endpoint (Snap, Meta). |
 | **C**  | `'explicit'`  | `createRosterAccountStore`            | Publisher owns the roster (storefront table, admin UI). Adopter brings `lookup`. |
+| **D**  | `'derived'`   | `createDerivedAccountStore`           | Single-tenant agent — auth principal IS the tenant; no `account_id` on the wire (audiostack, flashtalking, single-namespace retail-media). |
 
 ### 11. **breaking** (TS-only) — `SalesPlatform` split into core + ingestion
 

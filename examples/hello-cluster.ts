@@ -74,55 +74,94 @@ const HEALTH_TIMEOUT_MS = 5_000;
 const SHUTDOWN_GRACE_MS = 3_000;
 const REPO_ROOT = resolvePath(__dirname, '..');
 
+/** Every mock-server exposes auth-free `GET /_debug/traffic` returning a
+ *  JSON object — used as the universal liveness probe across the cluster.
+ *  Matches what the mock-servers ship today; if a future mock drops this
+ *  surface, swap to a specialism-specific lookup path here. */
+const UNIVERSAL_PROBE_PATH = '/_debug/traffic';
+
 const ADAPTERS: AdapterConfig[] = [
   {
     name: 'signals',
     specialism: 'signal-marketplace',
     port: 3001,
     entrypoint: 'examples/hello_signals_adapter_marketplace.ts',
-    upstream: {
-      envVar: 'UPSTREAM_URL',
-      defaultUrl: 'http://127.0.0.1:4150',
-      // /_lookup/operator answers 200 with `{}` when the operator is unknown,
-      // so any HTTP response means the mock-server's listener is up.
-      probePath: '/_lookup/operator?adcp_operator=preflight',
-    },
+    upstream: { envVar: 'UPSTREAM_URL', defaultUrl: 'http://127.0.0.1:4150', probePath: UNIVERSAL_PROBE_PATH },
   },
   {
-    name: 'sales',
-    specialism: 'sales-non-guaranteed',
+    name: 'creative-template',
+    specialism: 'creative-template',
     port: 3002,
-    entrypoint: 'examples/hello_seller_adapter_non_guaranteed.ts',
+    entrypoint: 'examples/hello_creative_adapter_template.ts',
+    upstream: { envVar: 'UPSTREAM_URL', defaultUrl: 'http://127.0.0.1:4250', probePath: UNIVERSAL_PROBE_PATH },
   },
+  {
+    name: 'sales-social',
+    specialism: 'sales-social',
+    port: 3003,
+    entrypoint: 'examples/hello_seller_adapter_social.ts',
+    upstream: { envVar: 'UPSTREAM_URL', defaultUrl: 'http://127.0.0.1:4350', probePath: UNIVERSAL_PROBE_PATH },
+  },
+  {
+    name: 'sales-guaranteed',
+    specialism: 'sales-guaranteed',
+    port: 3004,
+    entrypoint: 'examples/hello_seller_adapter_guaranteed.ts',
+    upstream: { envVar: 'UPSTREAM_URL', defaultUrl: 'http://127.0.0.1:4450', probePath: UNIVERSAL_PROBE_PATH },
+  },
+  {
+    name: 'sales-non-guaranteed',
+    specialism: 'sales-non-guaranteed',
+    port: 3005,
+    entrypoint: 'examples/hello_seller_adapter_non_guaranteed.ts',
+    upstream: { envVar: 'UPSTREAM_URL', defaultUrl: 'http://127.0.0.1:4451', probePath: UNIVERSAL_PROBE_PATH },
+  },
+  {
+    name: 'creative-ad-server',
+    specialism: 'creative-ad-server',
+    port: 3006,
+    entrypoint: 'examples/hello_creative_adapter_ad_server.ts',
+    upstream: { envVar: 'UPSTREAM_URL', defaultUrl: 'http://127.0.0.1:4452', probePath: UNIVERSAL_PROBE_PATH },
+  },
+  {
+    name: 'sponsored-intelligence',
+    specialism: 'sponsored-intelligence',
+    port: 3007,
+    entrypoint: 'examples/hello_si_adapter_brand.ts',
+    upstream: { envVar: 'UPSTREAM_URL', defaultUrl: 'http://127.0.0.1:4504', probePath: UNIVERSAL_PROBE_PATH },
+  },
+  {
+    // The multi-tenant adapter claims governance-spend-authority +
+    // property-lists + brand-rights against in-memory state — no upstream
+    // mock to probe. Useful as the agency / holdco worked example.
+    name: 'multi-tenant',
+    specialism: 'governance-spend-authority+property-lists+brand-rights',
+    port: 3008,
+    entrypoint: 'examples/hello_seller_adapter_multi_tenant.ts',
+  },
+  // ─── Pending-tracking entries — auto-skip until the example file lands.
+  // The `pending:` block in the manifest surfaces them so adopters know
+  // what's coming.
   {
     name: 'governance',
     specialism: 'governance-spend-authority',
-    port: 3003,
+    port: 3010,
     entrypoint: 'examples/hello_governance_adapter_spend_authority.ts',
     tracking: '#1332',
   },
   {
-    name: 'creative',
-    specialism: 'creative-ad-server',
-    port: 3004,
-    entrypoint: 'examples/hello_creative_adapter_ad_server.ts',
-    tracking: '#1333',
-  },
-  {
-    name: 'brand',
+    name: 'brand-rights',
     specialism: 'brand-rights',
-    port: 3005,
+    port: 3011,
     entrypoint: 'examples/hello_brand_adapter_rights.ts',
     tracking: '#1334',
   },
   {
     // `sales-retail-media` is a preview specialism in 3.0 — claiming it
-    // advertises intent; no storyboard backs it yet. A real retail-media
-    // adapter would also claim `sales-catalog-driven`; the manifest's
-    // single-specialism slot is a forced fit at the hello tier.
+    // advertises intent; no storyboard backs it yet.
     name: 'retail-media',
     specialism: 'sales-retail-media',
-    port: 3006,
+    port: 3012,
     entrypoint: 'examples/hello_seller_adapter_retail_media.ts',
   },
 ];

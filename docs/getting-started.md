@@ -1,10 +1,5 @@
 # Getting Started with @adcp/sdk
 
-> **Building a server (an agent), not just calling one?** This page
-> covers the client side. Start with
-> [Where to start](./where-to-start.md) to pick the right entry
-> point for your role and intended layer of integration.
-
 ## Installation
 
 ```bash

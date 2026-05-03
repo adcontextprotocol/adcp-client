@@ -169,3 +169,81 @@ describe('schema-validator — oneOf cascade compaction (#1111)', () => {
     );
   });
 });
+
+// ---------------------------------------------------------------------------
+// #1383 — apply oneOf-not-failure-exclusion across every Success/Error
+// response union. The fix in `compactUnionErrors` (#1337) is general; this
+// sweep locks the spec-correctness contract for every response schema in
+// the AdCP 3.0.x cache.
+// ---------------------------------------------------------------------------
+
+// Tool names whose response schemas carry a `not` clause (Success/Error
+// oneOf where the Error variant forbids Success-only fields). Found by
+// `find schemas/cache/<v> -name '*-response.json' -exec grep -l '"not"'`
+// against AdCP 3.0.4. Update this list when new response unions land
+// upstream.
+//
+// `get_signals` is intentionally absent — its response shape is not a
+// Success/Error oneOf with a `not` clause (it returns `{signals: [...]}`
+// directly, with sandbox/error variants that don't use the not-clause
+// pattern). Same for `tasks_get`.
+const RESPONSES_WITH_NOT_CLAUSE = [
+  'acquire_rights',
+  'activate_signal',
+  'build_creative',
+  'comply_test_controller',
+  'create_media_buy',
+  'creative_approval',
+  'get_account_financials',
+  'get_adcp_capabilities',
+  'get_brand_identity',
+  'get_creative_delivery',
+  'get_media_buys',
+  'get_rights',
+  'list_creative_formats',
+  'list_creatives',
+  'log_event',
+  'preview_creative',
+  'provide_performance_feedback',
+  'sync_accounts',
+  'sync_audiences',
+  'sync_catalogs',
+  'sync_creatives',
+  'sync_event_sources',
+  'sync_governance',
+  'update_media_buy',
+  'update_rights',
+];
+
+describe('#1383 — `not`-keyword exclusion sweep across all Success/Error response unions', () => {
+  for (const toolName of RESPONSES_WITH_NOT_CLAUSE) {
+    it(`${toolName}: empty payload surfaces no \`not\`-keyword issue`, () => {
+      // Empty payload is a near-miss for both arms — it satisfies the
+      // Error variant's `not.required` clause vacuously (has none of
+      // the Success-only fields) and fails the Error variant's
+      // `required: [errors]` (no errors[]). Pre-#1337 the validator
+      // would surface the `not`-keyword failure as one of the issues
+      // ("must NOT be valid"); post-#1337 `compactUnionErrors` filters
+      // it out so the issues that remain point at actionable
+      // required-field misses on whichever variant the picker chose.
+      //
+      // The universal invariant: NO response schema's empty-payload
+      // diagnostic should ever leak a `not`-keyword issue to adopters.
+      // Some schemas (e.g. `comply_test_controller`) accept `{}` as valid
+      // because every field is optional or one variant is empty — that's
+      // fine. The invariant we're locking is about issue *content*, not
+      // validity: when the validator does report issues, none of them
+      // should be `not`-keyword failures.
+      const out = validateResponse(toolName, {});
+      const notIssues = out.issues.filter(i => i.keyword === 'not');
+      assert.deepStrictEqual(
+        notIssues,
+        [],
+        `${toolName}: \`not\`-keyword issue leaked through compactUnionErrors. ` +
+          `Adopters cannot act on "must NOT be valid" diagnostics — the variant-selection ` +
+          `priority must filter these. See compactUnionErrors in src/lib/validation/schema-validator.ts. ` +
+          `Issues: ${JSON.stringify(out.issues, null, 2)}`
+      );
+    });
+  }
+});

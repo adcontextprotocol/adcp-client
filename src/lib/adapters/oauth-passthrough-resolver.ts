@@ -14,7 +14,7 @@
  *
  * Closes adcp-client#1363.
  *
- * **Picking an AccountStore?** Three reference shapes by *who creates the
+ * **Picking an AccountStore?** Four reference shapes by *who creates the
  * account*:
  * - **Buyer self-onboards via `sync_accounts`** → `InMemoryImplicitAccountStore`
  *   (Shape A).
@@ -22,6 +22,8 @@
  *   (this file, Shape B, returns just `resolve`).
  * - **Publisher ops curates the roster** → `createRosterAccountStore`
  *   (Shape C, complete AccountStore).
+ * - **No account concept — auth principal IS the tenant** → `createDerivedAccountStore`
+ *   (Shape D, `resolution: 'derived'`).
  *
  * @public
  */

@@ -59,6 +59,7 @@ import {
   type EventTrackingHandlers,
   type AccountHandlers,
   type SignalsHandlers,
+  type SponsoredIntelligenceHandlers,
   type GovernanceHandlers,
   type BrandRightsHandlers,
   type HandlerContext,
@@ -136,6 +137,10 @@ import { createInMemoryStatusChangeBus, type StatusChangeBus, type PublishStatus
 import { createComplyController, type ComplyControllerConfig } from '../../../testing/comply-controller';
 import type { TestControllerBridge } from '../../test-controller-bridge';
 import { mergeSeedProduct } from '../../../testing/seed-merge';
+import { getSdkServer } from '../../adcp-server';
+import { isSandboxOrMockAccount } from '../../account-mode';
+import { toMcpResponse } from '../../test-controller';
+import { recordResolvedAccountMode, hasObservedLiveMode } from './observed-modes';
 import type { Product } from '../../../types/tools.generated';
 import { normalizeErrors } from '../../normalize-errors';
 
@@ -154,50 +159,71 @@ function normalizeRowErrors<TRow extends { errors?: unknown }>(row: TRow): TRow 
 }
 
 /**
- * Enforce the documented `'implicit'`-resolution refusal. When a platform
- * declares `accounts.resolution: 'implicit'`, the framework refuses inline
- * `account_id` references on the wire — the buyer is expected to call
- * `sync_accounts` first, then the framework resolves the account from the
- * authenticated principal on subsequent calls. Documented at
- * `AccountStore.resolution` in `account.ts`.
+ * Enforce the documented inline-`account_id` refusal for resolution modes
+ * that declare the field meaningless on the wire — `'implicit'` (since
+ * #1364) and `'derived'` (since adcp-client#1468). Both modes share the
+ * same wire contract: the buyer does not pass `account_id` inline; the
+ * framework derives the tenant from the authenticated principal (after a
+ * `sync_accounts` step for `'implicit'`; directly for `'derived'`).
  *
  * Throws `AdcpError('INVALID_REQUEST')` before reaching the adopter's
  * `accounts.resolve`, so each adopter doesn't reimplement the same
  * `if (ref?.account_id) return null` branch and the wire response is
- * consistent across implicit-mode platforms. The brand+operator union arm
- * is permitted — the strict-reading docstring claim only refuses
- * `account_id`-shaped references.
+ * consistent across both modes. The brand+operator union arm is
+ * permitted — only `account_id`-shaped references are refused.
+ *
+ * Mode-specific message and suggestion: `'implicit'` adopters get the
+ * `sync_accounts`-first guidance; `'derived'` adopters get the single-
+ * tenant explanation (no `sync_accounts` step exists in derived mode —
+ * the auth principal alone identifies the tenant).
+ *
+ * Documented at `AccountStore.resolution` in `account.ts`.
  */
-function refuseImplicitAccountId(
+function refuseInlineAccountIdWhenForbidden(
   resolution: 'explicit' | 'implicit' | 'derived' | undefined,
   ref: AccountReference | undefined
 ): void {
-  if (resolution !== 'implicit') return;
+  if (resolution !== 'implicit' && resolution !== 'derived') return;
   if (refAccountId(ref) === undefined) return;
+  if (resolution === 'implicit') {
+    throw new AdcpError('INVALID_REQUEST', {
+      message:
+        'This platform resolves accounts from the authenticated principal — call sync_accounts first; do not pass account.account_id inline.',
+      field: 'account.account_id',
+      suggestion:
+        'Call sync_accounts to associate accounts with your principal, then omit account_id on subsequent calls.',
+    });
+  }
   throw new AdcpError('INVALID_REQUEST', {
     message:
-      'This platform resolves accounts from the authenticated principal — call sync_accounts first; do not pass account.account_id inline.',
+      'This single-tenant agent identifies the tenant from the authenticated principal alone — do not pass account.account_id inline; the field is meaningless on the wire for derived-resolution agents.',
     field: 'account.account_id',
-    suggestion:
-      'Call sync_accounts to associate accounts with your principal, then omit account_id on subsequent calls.',
+    suggestion: 'Omit the account field; the framework derives the tenant from your authenticated credential.',
   });
 }
 
 /**
  * Dev-mode warning when a multi-id read tool returns fewer rows than
  * the buyer requested — the canonical signal that the platform is
- * silently truncating to `media_buy_ids[0]` (closes #1342, follow-up
- * #1399). Catches the bug class where adopters write the recommended
- * pattern wrong on first pass; quiet in production where legitimate
- * misses (deleted, archived, cross-account) are routine and warning
- * on every miss would be noise.
+ * silently truncating to `<id_field>[0]` (closes #1342, follow-up
+ * #1399, extended in #1410 to additional read-by-id surfaces). Catches
+ * the bug class where adopters write the recommended pattern wrong on
+ * first pass; quiet in production where legitimate misses (deleted,
+ * archived, cross-account) are routine and warning on every miss would
+ * be noise.
  *
  * Suppressible via `ADCP_SUPPRESS_MULTI_ID_WARN=1` for adopters whose
  * legitimate-miss rate is high (deleted-account-rich datasets, etc.).
+ *
+ * Sync / upsert surfaces (`syncCreatives`, `syncCatalogs`, `syncPlans`)
+ * are intentionally out of scope — those have a different shape where
+ * pass-through is the obvious pattern and "did all rows roundtrip?"
+ * isn't a clean question.
  */
 function warnIfTruncatedMultiIdResponse(
-  toolName: 'getMediaBuyDelivery' | 'getMediaBuys',
-  requestedIds: readonly string[] | undefined,
+  toolName: 'getMediaBuyDelivery' | 'getMediaBuys' | 'listCreatives' | 'getCreativeDelivery' | 'getSignals',
+  idFieldName: 'media_buy_ids' | 'creative_ids' | 'signal_ids',
+  requestedIds: readonly unknown[] | undefined,
   responseArray: readonly unknown[] | undefined,
   logger: AdcpLogger
 ): void {
@@ -206,11 +232,11 @@ function warnIfTruncatedMultiIdResponse(
   if (!requestedIds || requestedIds.length === 0) return;
   const returned = Array.isArray(responseArray) ? responseArray.length : 0;
   if (returned >= requestedIds.length) return;
-  // Empty `media_buy_ids` is filtered above as paginated-mode (no truncation
+  // Empty `<id_field>` is filtered above as paginated-mode (no truncation
   // possible without a request to compare against).
   logger.warn(
-    `[adcp/sdk] ${toolName}: platform returned ${returned} row${returned === 1 ? '' : 's'} for ${requestedIds.length} requested media_buy_ids — ` +
-      `the platform may be silently truncating to media_buy_ids[0]. ` +
+    `[adcp/sdk] ${toolName}: platform returned ${returned} row${returned === 1 ? '' : 's'} for ${requestedIds.length} requested ${idFieldName} — ` +
+      `the platform may be silently truncating to ${idFieldName}[0]. ` +
       `See https://github.com/adcontextprotocol/adcp-client/issues/1342 for the multi-id pass-through contract. ` +
       `Suppress with ADCP_SUPPRESS_MULTI_ID_WARN=1 if legitimate misses (deleted / cross-account) are routine.`
   );
@@ -1127,14 +1153,15 @@ export function createAdcpServerFromPlatform<P extends DecisioningPlatform<any, 
       let resolved = false;
       let resolvedAccountId: string | undefined;
       try {
-        // Enforce the JSDoc contract documented at
-        // `AccountStore.resolution`: implicit-mode platforms refuse inline
-        // `account_id` references — buyers call sync_accounts first, then
-        // the framework resolves accounts from the auth principal on
-        // subsequent calls. The brand+operator union arm is permitted
-        // (used during the initial sync_accounts onboarding flow); only
-        // the `{ account_id }` arm is refused. Closes adcp-client#1364.
-        refuseImplicitAccountId(platform.accounts.resolution, ref);
+        // Enforce the JSDoc contract documented at `AccountStore.resolution`:
+        // implicit-mode and derived-mode platforms refuse inline `account_id`
+        // references. Implicit: buyers call sync_accounts first, then the
+        // framework resolves from the auth principal. Derived: single-tenant;
+        // the principal alone identifies the tenant. The brand+operator union
+        // arm is permitted (implicit's sync_accounts onboarding flow); only
+        // the `{ account_id }` arm is refused. Closes adcp-client#1364
+        // (implicit) and adcp-client#1468 (derived).
+        refuseInlineAccountIdWhenForbidden(platform.accounts.resolution, ref);
         const account = await platform.accounts.resolve(ref, toResolveCtx(ctx, ctx.toolName));
         resolved = account != null;
         resolvedAccountId = account?.id;
@@ -1254,6 +1281,12 @@ export function createAdcpServerFromPlatform<P extends DecisioningPlatform<any, 
       'signals',
       mergeOpts
     ),
+    sponsoredIntelligence: mergeHandlers(
+      opts.sponsoredIntelligence,
+      buildSponsoredIntelligenceHandlers(platform, ctxFor, effectiveCtxMetadata, fwLogger),
+      'sponsoredIntelligence',
+      mergeOpts
+    ),
     governance: mergeHandlers(opts.governance, buildGovernanceHandlers(platform, ctxFor), 'governance', mergeOpts),
     accounts: mergeHandlers(opts.accounts, buildAccountHandlers(platform, ctxFor), 'accounts', mergeOpts),
     brandRights: mergeHandlers(
@@ -1272,10 +1305,13 @@ export function createAdcpServerFromPlatform<P extends DecisioningPlatform<any, 
 
   // Wire `comply_test_controller` if the adopter supplied adapters.
   // `createComplyController` builds the tool definition + handler + raw
-  // dispatch; `register(server)` calls server.registerTool. Sandbox
-  // gating is the adopter's job (per-request via complyTest.sandboxGate
-  // or environment-level by guarding the createAdcpServerFromPlatform
-  // call site itself).
+  // dispatch. The framework registers the tool itself (bypassing
+  // `controller.register(server)`) so the sandbox-authority gate can
+  // resolve the calling account through `platform.accounts.resolve`
+  // BEFORE dispatching — under no circumstances should the controller
+  // operate on a `live`-mode account, regardless of what the caller
+  // claims on the wire. See `docs/proposals/lifecycle-state-and-sandbox-authority.md`
+  // for the full three-mode design and #1435 phase 2.
   if (opts.complyTest != null) {
     let complyConfig = opts.complyTest;
 
@@ -1359,7 +1395,147 @@ export function createAdcpServerFromPlatform<P extends DecisioningPlatform<any, 
     }
 
     const controller = createComplyController(complyConfig);
-    controller.register(server);
+
+    // Manual registration with framework-side sandbox-authority gate. See
+    // top-of-block rationale and `docs/proposals/lifecycle-state-and-sandbox-authority.md`.
+    //
+    // Trust boundary: the gate consults the *resolved* account from
+    // `platform.accounts.resolve`, NOT a buyer-supplied claim like
+    // `account.sandbox === true` on the wire. The resolver is the only
+    // thing that names the account's mode; the gate refuses dispatch when
+    // mode is `live` (or the resolver fails to produce an account, modulo
+    // the env / context fallbacks below).
+    //
+    // Fallback paths (deprecated):
+    //   - `context.sandbox === true` admits when no account resolved. Useful
+    //     during the migration window for adopters whose wire shape carries
+    //     sandbox routing in `context` but whose resolver isn't yet returning
+    //     `mode: 'sandbox'`.
+    //   - `process.env.ADCP_SANDBOX === '1'` admits unconditionally — the
+    //     historical pattern. KEPT for back-compat so existing test platforms
+    //     don't break on upgrade. Fails closed if the same process has ever
+    //     resolved an explicit `mode: 'live'` account from the resolver: that
+    //     pairing is a misconfiguration (env var should be unset on prod) and
+    //     leaving it open re-exposes the live principal we just gated against.
+    //
+    // `list_scenarios` is exempt — it's the discovery probe used by buyer
+    // tooling to distinguish "controller wired but locked" from "controller
+    // missing entirely". Read-only and reveals nothing beyond which scenarios
+    // the adopter advertised in capabilities.
+    const mcp = getSdkServer(server);
+    if (mcp == null) {
+      // Non-MCP server — fall back to the controller's own registration so
+      // adopters wiring a custom transport keep the v5 behavior. The gate is
+      // an MCP-side concern; A2A and other transports are wired separately.
+      controller.register(server);
+    } else {
+      // Permit a top-level `account` field on the wire so the gate can read
+      // the buyer's account ref. The canonical AdCP shape strips it (account
+      // routes through `context.account`), but adopters' storyboard fixtures
+      // commonly send it at the top level — `TOOL_INPUT_SHAPE`'s JSDoc in
+      // `src/lib/server/test-controller.ts` documents this extension as the
+      // supported escape hatch.
+      //
+      // Schema is the full canonical `AccountReference` per
+      // `schemas/cache/3.0.5/core/account-ref.json`: oneOf
+      //   { account_id }                       — explicit accounts
+      //   { brand, operator, sandbox? }        — implicit accounts
+      // Modeled here as a single object with all four fields optional so
+      // either arm passes; resolvers narrow on the shape at dispatch.
+      // `brand` content is `unknown()` because the inner `brand-ref.json`
+      // shape is itself a oneOf and resolvers (not the gate) validate it.
+      // Top-level `.strict()` still blocks unknown keys at the framework
+      // boundary so a buyer can't stuff `__proto__` / arbitrary payloads
+      // into adopters' resolvers.
+      const gatedInputSchema = {
+        ...controller.toolDefinition.inputSchema,
+        account: z
+          .object({
+            account_id: z.string().min(1).optional(),
+            brand: z.unknown().optional(),
+            operator: z.string().optional(),
+            sandbox: z.boolean().optional(),
+          })
+          .strict()
+          .optional(),
+      };
+
+      mcp.registerTool(
+        controller.toolDefinition.name,
+        {
+          description: controller.toolDefinition.description,
+          inputSchema: gatedInputSchema,
+        },
+        (async (input: Record<string, unknown>, extra: { authInfo?: ResolvedAuthInfo } | undefined) => {
+          // Probe exempt — capability discovery, no state mutation.
+          if (input.scenario === 'list_scenarios') {
+            return controller.handle(input);
+          }
+
+          // Read account ref from top-level (extended shape) or from
+          // `context.account` (canonical AdCP routing). First non-null wins.
+          const refFromTop = input.account as AccountReference | undefined;
+          const refFromContext = (input.context as { account?: AccountReference } | undefined)?.account;
+          const accountRef = refFromTop ?? refFromContext;
+
+          let resolvedAccount: Account | null = null;
+          try {
+            resolvedAccount = await platform.accounts.resolve(accountRef, {
+              ...(extra?.authInfo !== undefined && { authInfo: extra.authInfo }),
+              toolName: 'comply_test_controller',
+            });
+          } catch {
+            // Resolver failures fall through to the wire-ref / env fallbacks.
+            // Treat as "no account resolved" — fail-closed by default unless a
+            // fallback admits.
+          }
+
+          // Record the resolved account's explicit mode (if any). Used by the
+          // env-fallback fail-closed guard below.
+          recordResolvedAccountMode(resolvedAccount);
+
+          const accountIsSandbox = resolvedAccount != null && isSandboxOrMockAccount(resolvedAccount);
+          // Spec-defined fallback for the unresolved-account path: read
+          // `sandbox: true` off the wire `AccountReference` (per
+          // `core/account-ref.json`). Only consulted when the resolver
+          // returned `null` — if the resolver names the account, the
+          // resolver wins. The buyer's wire claim never overrides a
+          // resolved live account.
+          const refSandbox = (accountRef as { sandbox?: unknown } | undefined)?.sandbox === true;
+          const envSandbox = process.env.ADCP_SANDBOX === '1';
+
+          const wouldAdmitOnlyViaEnv = envSandbox && !accountIsSandbox && !(resolvedAccount == null && refSandbox);
+
+          // Fail-closed guard on the env fallback. If the env var is the only
+          // signal that would admit AND this process has ever resolved an
+          // explicit `mode: 'live'` account from the resolver, the env is
+          // misconfigured. Refuse loudly so operators notice, instead of
+          // silently downgrading the gate for live principals.
+          if (wouldAdmitOnlyViaEnv && hasObservedLiveMode()) {
+            throw new Error(
+              'comply_test_controller: ADCP_SANDBOX=1 is set but this process has resolved at least one ' +
+                'live-mode account from platform.accounts.resolve. Remove ADCP_SANDBOX from your prod ' +
+                'environment; gate the controller via mode: "sandbox" on resolved sandbox accounts instead. ' +
+                'See docs/proposals/lifecycle-state-and-sandbox-authority.md.'
+            );
+          }
+
+          const allowed = accountIsSandbox || (resolvedAccount == null && refSandbox) || envSandbox;
+
+          if (!allowed) {
+            return toMcpResponse({
+              success: false,
+              error: 'FORBIDDEN',
+              error_detail:
+                'comply_test_controller requires a sandbox or mock account; ' +
+                'resolved account is in live mode (or no account resolved).',
+            });
+          }
+
+          return controller.handle(input);
+        }) as Parameters<typeof mcp.registerTool>[2]
+      );
+    }
   }
 
   return Object.assign(server, {
@@ -1512,7 +1688,7 @@ function buildTasksGetTool<P extends DecisioningPlatform<any, any>>(
       };
       let resolvedAccountId: string | undefined;
       if (ref) {
-        refuseImplicitAccountId(platform.accounts.resolution, ref as AccountReference);
+        refuseInlineAccountIdWhenForbidden(platform.accounts.resolution, ref as AccountReference);
         try {
           const resolved = await platform.accounts.resolve(ref as AccountReference, resolveCtx);
           if (resolved) resolvedAccountId = resolved.id;
@@ -2795,6 +2971,10 @@ export const ENTITY_TO_RESOURCE_KIND: Readonly<Record<string, ResourceKind>> = {
   collection_list: 'collection_list',
   account: 'account',
   product: 'product',
+  // SI session lifecycle, hydrated on `si_send_message` /
+  // `si_terminate_session` from the entry the framework auto-stores after
+  // `si_initiate_session`. See `buildSponsoredIntelligenceHandlers`.
+  si_session: 'si_session',
 };
 
 /**
@@ -2817,8 +2997,7 @@ export const INTENTIONALLY_UNHYDRATED_ENTITIES: ReadonlySet<string> = new Set([
   'governance_plan', // No SDK ResourceKind yet; campaign-governance follow-up.
   'governance_check', // Transient request envelope; not stored.
   'event_source', // No SDK ResourceKind yet.
-  'si_session', // Session lifecycle owned by `SponsoredIntelligencePlatform`.
-  'offering', // SI offering catalog; not stored as ctx-metadata.
+  'offering', // SI offering catalog; correlation handled by brand-side `offering_token`, not framework hydration.
   'rights_holder_brand', // Read-through `get_brand_identity`; not separately stored.
   'advertiser_brand', // Same as above.
 ]);
@@ -3311,6 +3490,7 @@ function buildMediaBuyHandlers<P extends DecisioningPlatform<any, any>>(
             const result = await sales.getMediaBuyDelivery!(params, reqCtx);
             warnIfTruncatedMultiIdResponse(
               'getMediaBuyDelivery',
+              'media_buy_ids',
               (params as { media_buy_ids?: readonly string[] }).media_buy_ids,
               (result as { media_buy_deliveries?: readonly unknown[] })?.media_buy_deliveries,
               logger
@@ -3343,6 +3523,7 @@ function buildMediaBuyHandlers<P extends DecisioningPlatform<any, any>>(
             const result = await sales.getMediaBuys!(params, reqCtx);
             warnIfTruncatedMultiIdResponse(
               'getMediaBuys',
+              'media_buy_ids',
               (params as { media_buy_ids?: readonly string[] }).media_buy_ids,
               (result as { media_buys?: readonly unknown[] })?.media_buys,
               logger
@@ -3393,7 +3574,17 @@ function buildMediaBuyHandlers<P extends DecisioningPlatform<any, any>>(
       listCreatives: async (params, ctx) => {
         const reqCtx = ctxFor(ctx);
         return projectSync(
-          () => sales.listCreatives!(params, reqCtx),
+          async () => {
+            const result = await sales.listCreatives!(params, reqCtx);
+            warnIfTruncatedMultiIdResponse(
+              'listCreatives',
+              'creative_ids',
+              (params as { creative_ids?: readonly string[] }).creative_ids,
+              (result as { creatives?: readonly unknown[] })?.creatives,
+              logger
+            );
+            return result;
+          },
           r => r
         );
       },
@@ -3530,7 +3721,17 @@ function buildCreativeHandlers<P extends DecisioningPlatform<any, any>>(
       }
       const reqCtx = ctxFor(ctx);
       return projectSync(
-        () => (creative as CreativeAdServerPlatform).listCreatives(params, reqCtx),
+        async () => {
+          const result = await (creative as CreativeAdServerPlatform).listCreatives(params, reqCtx);
+          warnIfTruncatedMultiIdResponse(
+            'listCreatives',
+            'creative_ids',
+            (params as { creative_ids?: readonly string[] }).creative_ids,
+            (result as { creatives?: readonly unknown[] })?.creatives,
+            logger
+          );
+          return result;
+        },
         r => r
       );
     },
@@ -3543,7 +3744,17 @@ function buildCreativeHandlers<P extends DecisioningPlatform<any, any>>(
       }
       const reqCtx = ctxFor(ctx);
       return projectSync(
-        () => (creative as CreativeAdServerPlatform).getCreativeDelivery(params, reqCtx),
+        async () => {
+          const result = await (creative as CreativeAdServerPlatform).getCreativeDelivery(params, reqCtx);
+          warnIfTruncatedMultiIdResponse(
+            'getCreativeDelivery',
+            'creative_ids',
+            (params as { creative_ids?: readonly string[] }).creative_ids,
+            (result as { creative_deliveries?: readonly unknown[] })?.creative_deliveries,
+            logger
+          );
+          return result;
+        },
         r => r
       );
     },
@@ -3623,6 +3834,16 @@ function buildSignalsHandlers<P extends DecisioningPlatform<any, any>>(
       return projectSync(
         async () => {
           const result = await signals.getSignals(params, reqCtx);
+          // signal_ids is `SignalID[]` (`{source, data_provider_domain, id}`
+          // objects), not bare strings — but the helper's truncation-detection
+          // is purely length-based, so the object element type is irrelevant.
+          warnIfTruncatedMultiIdResponse(
+            'getSignals',
+            'signal_ids',
+            (params as { signal_ids?: readonly unknown[] }).signal_ids,
+            (result as { signals?: readonly unknown[] })?.signals,
+            logger
+          );
           // Auto-store signals so subsequent activate_signal can hydrate
           // `req.signal` from the publisher's prior catalog entry.
           await autoStoreResources(
@@ -3649,6 +3870,140 @@ function buildSignalsHandlers<P extends DecisioningPlatform<any, any>>(
       await hydrateForTool(ctxMetadataStore, reqCtx.account?.id, 'activate_signal', params, logger);
       return projectSync(
         () => signals.activateSignal(params, reqCtx),
+        r => r
+      );
+    },
+  };
+}
+
+/**
+ * Adapt `SponsoredIntelligencePlatform` (v6 protocol-keyed shape) onto the v5
+ * `SponsoredIntelligenceHandlers` handler-bag the dispatcher consumes.
+ *
+ * Auto-store on `initiateSession`: stash a session record keyed by
+ * `session_id` under `ResourceKind: 'si_session'`. The framework's
+ * schema-driven hydrator (TOOL_ENTITY_FIELDS for `si_send_message` /
+ * `si_terminate_session`) attaches that record at `params.session` on
+ * subsequent calls so the platform reads transcript context from
+ * `req.session` without manual `ctx.store.get`.
+ *
+ * Hydrate on `sendMessage` / `terminateSession`: schema-driven
+ * `hydrateForTool` reads `params.session_id`, looks up the stored
+ * session, and attaches at `params.session`.
+ */
+function buildSponsoredIntelligenceHandlers<P extends DecisioningPlatform<any, any>>(
+  platform: P,
+  ctxFor: CtxForFn,
+  ctxMetadataStore: CtxMetadataStore | undefined,
+  logger: AdcpLogger
+): SponsoredIntelligenceHandlers<Account> | undefined {
+  const si = platform.sponsoredIntelligence;
+  if (!si) return undefined;
+  return {
+    getOffering: async (params, ctx) => {
+      const reqCtx = ctxFor(ctx);
+      return projectSync(
+        () => si.getOffering(params, reqCtx),
+        r => r
+      );
+    },
+    initiateSession: async (params, ctx) => {
+      const reqCtx = ctxFor(ctx);
+      return projectSync(
+        async () => {
+          const result = await si.initiateSession(params, reqCtx);
+          // Auto-store the session record so subsequent `sendMessage` /
+          // `terminateSession` calls hydrate `req.session` without a
+          // manual lookup. Stored payload preserves the bits the brand
+          // engine needs to resume context across turns: identity
+          // consent, offering scoping, negotiated capabilities,
+          // placement provenance, and any media-buy linkage. The full
+          // request intent is stored alongside so brand handlers can
+          // re-read what the user originally asked for. Production
+          // brand engines that own transcript state in their own
+          // backend can ignore this and read from their own store —
+          // see SponsoredIntelligencePlatform JSDoc.
+          if (ctxMetadataStore && reqCtx.account?.id) {
+            const sessionId = (result as { session_id?: unknown })?.session_id;
+            if (typeof sessionId === 'string' && sessionId.length > 0) {
+              const reqRec = params as unknown as Record<string, unknown>;
+              const resRec = result as unknown as Record<string, unknown>;
+              const sessionRecord = {
+                session_id: sessionId,
+                // Request-side scoping the brand engine needs across turns.
+                intent: reqRec.intent,
+                offering_id: reqRec.offering_id,
+                offering_token: reqRec.offering_token,
+                placement: reqRec.placement,
+                media_buy_id: reqRec.media_buy_id,
+                identity: reqRec.identity,
+                supported_capabilities: reqRec.supported_capabilities,
+                // Response-side state.
+                negotiated_capabilities: resRec.negotiated_capabilities,
+                session_status: resRec.session_status,
+                session_ttl_seconds: resRec.session_ttl_seconds,
+              };
+              try {
+                await ctxMetadataStore.setResource(reqCtx.account.id, 'si_session', sessionId, sessionRecord);
+              } catch (err) {
+                const msg = err instanceof Error ? err.message : String(err);
+                logger.warn(`[adcp/decisioning] auto-store si_session ${sessionId} failed: ${msg}`);
+              }
+            }
+          }
+          return result;
+        },
+        r => r
+      );
+    },
+    sendMessage: async (params, ctx) => {
+      const reqCtx = ctxFor(ctx);
+      // Auto-hydrate `req.session` from the stored si_session record. The
+      // schema-driven hydrator reads `params.session_id` and attaches the
+      // stored session at `params.session` (via the `_id` → strip
+      // convention; `session_id` → `session`).
+      await hydrateForTool(ctxMetadataStore, reqCtx.account?.id, 'si_send_message', params, logger);
+      return projectSync(
+        () => si.sendMessage(params, reqCtx),
+        r => r
+      );
+    },
+    terminateSession: async (params, ctx) => {
+      const reqCtx = ctxFor(ctx);
+      await hydrateForTool(ctxMetadataStore, reqCtx.account?.id, 'si_terminate_session', params, logger);
+      return projectSync(
+        async () => {
+          const result = await si.terminateSession(params, reqCtx);
+          // Persist `acp_handoff` and terminal `session_status` onto the
+          // stored session record so a re-terminate replay (which is
+          // naturally idempotent on `session_id` per the spec) hydrates
+          // the same handoff payload via `req.session` without the
+          // adopter having to remember to write through. Honors the
+          // platform interface JSDoc contract:
+          //   "Re-terminating a closed session MUST return the same
+          //    payload, including any acp_handoff block."
+          if (ctxMetadataStore && reqCtx.account?.id) {
+            const sessionId = (params as { session_id?: unknown })?.session_id;
+            if (typeof sessionId === 'string' && sessionId.length > 0) {
+              const resRec = result as unknown as Record<string, unknown>;
+              try {
+                const existing = await ctxMetadataStore.getEntry(reqCtx.account.id, 'si_session', sessionId);
+                const merged = {
+                  ...((existing?.resource as Record<string, unknown>) ?? { session_id: sessionId }),
+                  session_status: resRec.session_status,
+                  acp_handoff: resRec.acp_handoff,
+                  follow_up: resRec.follow_up,
+                  terminated: resRec.terminated,
+                };
+                await ctxMetadataStore.setResource(reqCtx.account.id, 'si_session', sessionId, merged);
+              } catch (err) {
+                const msg = err instanceof Error ? err.message : String(err);
+                logger.warn(`[adcp/decisioning] auto-store si_session ${sessionId} on terminate failed: ${msg}`);
+              }
+            }
+          }
+          return result;
+        },
         r => r
       );
     },
@@ -3992,7 +4347,7 @@ function buildAccountHandlers<P extends DecisioningPlatform<any, any>>(
       // tokens / upstream IDs off `ctx.account.ctx_metadata` without
       // having to re-resolve from `params.account`.
       const resolveCtx = toResolveCtx(ctx, 'get_account_financials');
-      refuseImplicitAccountId(accounts.resolution, params.account);
+      refuseInlineAccountIdWhenForbidden(accounts.resolution, params.account);
       const resolved = await accounts.resolve(params.account, resolveCtx);
       if (!resolved) {
         throw new AdcpError('ACCOUNT_NOT_FOUND', {

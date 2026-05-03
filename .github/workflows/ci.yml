@@ -58,6 +58,9 @@ jobs:
 
           echo "✅ Generated files are in sync with schemas"
 
+      - name: Codegen strictness — no loose oneOf arms
+        run: npm run ci:codegen-strict
+
       - name: Check protocol-managed skills present and paths resolve
         run: npm run check:skill-sync
 

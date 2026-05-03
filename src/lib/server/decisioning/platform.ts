@@ -13,13 +13,14 @@
 import type { DecisioningCapabilities, BrandCapabilities } from './capabilities';
 import type { Account, AccountStore } from './account';
 import type { BuyerAgentRegistry } from './buyer-agent';
-import type { SessionContext, OnInstructionsError } from '../create-adcp-server';
+import type { SessionContext, OnInstructionsError, MaybePromise } from '../create-adcp-server';
 import type { StatusMappers } from './status-mappers';
 import type { SalesPlatform, SalesCorePlatform, SalesIngestionPlatform } from './specialisms/sales';
 import type { CreativeBuilderPlatform } from './specialisms/creative';
 import type { CreativeAdServerPlatform } from './specialisms/creative-ad-server';
 import type { AudiencePlatform } from './specialisms/audiences';
 import type { SignalsPlatform } from './specialisms/signals';
+import type { SponsoredIntelligencePlatform } from './specialisms/sponsored-intelligence';
 import type { CampaignGovernancePlatform } from './specialisms/campaign-governance';
 import type { ContentStandardsPlatform } from './specialisms/content-standards';
 import type { BrandRightsPlatform } from './specialisms/brand-rights';
@@ -138,13 +139,17 @@ export interface DecisioningPlatform<TConfig = unknown, TCtxMeta = Record<string
    * Two forms:
    *
    * 1. **Static string** — captured once at construction.
-   * 2. **Function** `(ctx: SessionContext) => string | undefined` — re-evaluated
-   *    each time `createAdcpServerFromPlatform` runs. Under the canonical
-   *    `serve({ reuseAgent: false })` flow that is per session, so the
+   * 2. **Function** `(ctx: SessionContext) => MaybePromise<string | undefined>` —
+   *    re-evaluated each time `createAdcpServerFromPlatform` runs. Under the
+   *    canonical `serve({ reuseAgent: false })` flow that is per session, so the
    *    closure can surface tenant-shaped prose (per-buyer brand manifests,
    *    storefront-platform copy). `serve()` refuses `reuseAgent: true`
    *    when this is a function — the function would only fire once for
    *    the lifetime of the shared agent.
+   *
+   *    Async functions are supported: the framework calls the function at
+   *    construction and awaits the returned Promise during MCP `initialize`.
+   *    A rejected Promise is governed by `onInstructionsError`.
    *
    * MCP-only today. The A2A `AgentCard` analog is `description` (and
    * per-skill `description`); threading platform.instructions into the
@@ -158,7 +163,7 @@ export interface DecisioningPlatform<TConfig = unknown, TCtxMeta = Record<string
    *
    * @see {@link OnInstructionsError} for `onInstructionsError` (default `'skip'`).
    */
-  instructions?: string | ((ctx: SessionContext) => string | undefined);
+  instructions?: string | ((ctx: SessionContext) => MaybePromise<string | undefined>);
 
   /**
    * Behavior when a function-form `instructions` callback throws.
@@ -221,6 +226,13 @@ export interface DecisioningPlatform<TConfig = unknown, TCtxMeta = Record<string
   creative?: CreativeBuilderPlatform<TCtxMeta> | CreativeAdServerPlatform<TCtxMeta>;
   audiences?: AudiencePlatform<TCtxMeta>;
   signals?: SignalsPlatform<TCtxMeta>;
+  /** Sponsored Intelligence is currently a *protocol* in AdCP 3.0
+   * (`supported_protocols: ['sponsored_intelligence']`), not a specialism.
+   * Required IFF the agent declares the protocol — see
+   * `RequiredPlatformsForProtocols`. When AdCP 3.1 promotes SI to a
+   * specialism (adcontextprotocol/adcp#3961), specialism-keyed dispatch
+   * becomes additive without breaking this field. */
+  sponsoredIntelligence?: SponsoredIntelligencePlatform<TCtxMeta>;
   /** @see DecisioningPlatform — § Cross-specialism dispatch (used as the canonical example: `brandRights.acquireRights` consulting `checkGovernance` before granting rights). */
   campaignGovernance?: CampaignGovernancePlatform<TCtxMeta>;
   contentStandards?: ContentStandardsPlatform<TCtxMeta>;
@@ -290,42 +302,61 @@ type CampaignGovernanceSpecialism = 'governance-spend-authority' | 'governance-d
 // soundness escape — adopters declare metadata inside `DecisioningPlatform<_,
 // TCtxMeta>` directly; this constraint exists only to compile-check that
 // claimed specialisms have a matching sub-interface field on the platform.
+// eslint-disable-next-line @typescript-eslint/no-empty-object-type
 export type RequiredPlatformsFor<
   S extends AdCPSpecialism,
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   TCtxMeta = any,
-> = S extends 'creative-template' | 'creative-generative'
-  ? { creative: CreativeBuilderPlatform<TCtxMeta> }
-  : S extends 'creative-ad-server'
-    ? { creative: CreativeAdServerPlatform<TCtxMeta> }
-    : S extends SalesCoreSpecialism
-      ? { sales: SalesCorePlatform<TCtxMeta> & SalesIngestionPlatform<TCtxMeta> }
-      : S extends SalesIngestionSpecialism
-        ? // Walled-garden specialisms (sales-social, today). Bidding owned upstream
-          // — only the ingestion surface is required. Adopters can voluntarily
-          // implement core methods on the same `sales` object; the SalesPlatform
-          // alias accepts both shapes.
-          { sales: SalesIngestionPlatform<TCtxMeta> }
-        : S extends SalesProposalSpecialism
-          ? // Proposal-mode adopters only need `getProducts` — the rest of the
-            // lifecycle flows through `publishStatusChange` on
-            // `resource_type: 'proposal'`. Ingestion is optional.
-            { sales: Required<Pick<SalesPlatform<TCtxMeta>, 'getProducts'>> & SalesIngestionPlatform<TCtxMeta> }
-          : S extends 'audience-sync'
-            ? { audiences: AudiencePlatform<TCtxMeta> }
-            : S extends SignalSpecialism
-              ? { signals: SignalsPlatform<TCtxMeta> }
-              : S extends CampaignGovernanceSpecialism
-                ? { campaignGovernance: CampaignGovernancePlatform<TCtxMeta> }
-                : S extends 'property-lists'
-                  ? { propertyLists: PropertyListsPlatform<TCtxMeta> }
-                  : S extends 'collection-lists'
-                    ? { collectionLists: CollectionListsPlatform<TCtxMeta> }
-                    : S extends 'content-standards'
-                      ? { contentStandards: ContentStandardsPlatform<TCtxMeta> }
-                      : S extends 'brand-rights'
-                        ? { brandRights: BrandRightsPlatform<TCtxMeta> }
-                        : Record<string, never>;
+> = [S] extends [never]
+  ? // Empty specialisms[] (legitimate when the agent's only declared
+    // surface is a *protocol* like sponsored-intelligence pre-3.1).
+    // `[S] extends [never]` short-circuits the distributive conditional —
+    // without this, a generic `S extends ...` over `never` yields `never`,
+    // collapsing `P & RequiredPlatformsFor<...>` to `never` and rejecting
+    // every platform value at the call site.
+    // eslint-disable-next-line @typescript-eslint/no-empty-object-type
+    {}
+  : S extends 'creative-template' | 'creative-generative'
+    ? { creative: CreativeBuilderPlatform<TCtxMeta> }
+    : S extends 'creative-ad-server'
+      ? { creative: CreativeAdServerPlatform<TCtxMeta> }
+      : S extends SalesCoreSpecialism
+        ? { sales: SalesCorePlatform<TCtxMeta> & SalesIngestionPlatform<TCtxMeta> }
+        : S extends SalesIngestionSpecialism
+          ? // Walled-garden specialisms (sales-social, today). Bidding owned upstream
+            // — only the ingestion surface is required. Adopters can voluntarily
+            // implement core methods on the same `sales` object; the SalesPlatform
+            // alias accepts both shapes.
+            { sales: SalesIngestionPlatform<TCtxMeta> }
+          : S extends SalesProposalSpecialism
+            ? // Proposal-mode adopters only need `getProducts` — the rest of the
+              // lifecycle flows through `publishStatusChange` on
+              // `resource_type: 'proposal'`. Ingestion is optional.
+              { sales: Required<Pick<SalesPlatform<TCtxMeta>, 'getProducts'>> & SalesIngestionPlatform<TCtxMeta> }
+            : S extends 'audience-sync'
+              ? { audiences: AudiencePlatform<TCtxMeta> }
+              : S extends SignalSpecialism
+                ? { signals: SignalsPlatform<TCtxMeta> }
+                : S extends CampaignGovernanceSpecialism
+                  ? { campaignGovernance: CampaignGovernancePlatform<TCtxMeta> }
+                  : S extends 'property-lists'
+                    ? { propertyLists: PropertyListsPlatform<TCtxMeta> }
+                    : S extends 'collection-lists'
+                      ? { collectionLists: CollectionListsPlatform<TCtxMeta> }
+                      : S extends 'content-standards'
+                        ? { contentStandards: ContentStandardsPlatform<TCtxMeta> }
+                        : S extends 'brand-rights'
+                          ? { brandRights: BrandRightsPlatform<TCtxMeta> }
+                          : // eslint-disable-next-line @typescript-eslint/no-empty-object-type
+                            {};
+// `{}` (not `Record<string, never>`) is the right "no extra requirements"
+// fallthrough — intersects to identity (`P & {} = P`) for specialisms
+// without platform constraints. Same reasoning RequiredCapabilitiesFor
+// documents at its own fall-through. `Record<string, never>` would force
+// the platform to have NO extra properties, collapsing `P & Record<string,
+// never>` to `never` for any platform with handler fields. Hits adopters
+// with empty `specialisms: []` (legitimate when the agent's only declared
+// surface is a *protocol*, like sponsored-intelligence pre-3.1).
 
 /**
  * The framework's createAdcpServer<P> signature uses this intersection to
@@ -341,6 +372,34 @@ export type RequiredPlatformsFor<
  * doesn't yet enforce this. Wiring lands in a follow-up PR with the
  * framework refactor.
  */
+
+/**
+ * AdCP supported_protocols values that gate platform requirements. Sister
+ * type to `RequiredPlatformsFor<S>` — that one keys off
+ * `capabilities.specialisms[]`; this one keys off declared protocols.
+ *
+ * @internal Not exported. There is no constraint site consuming this today
+ *   (no `supported_protocols` field on `DecisioningCapabilities`, no
+ *   `createAdcpServer<P>` constraint signature wired). Kept as an internal
+ *   placeholder so the type lands alongside the platform field at the same
+ *   commit; promotion to public + wiring is deferred until either AdCP 3.1
+ *   adds SI to `AdCPSpecialism` (at which point this folds into
+ *   `RequiredPlatformsFor`) or `DecisioningCapabilities` grows an explicit
+ *   `supported_protocols` declaration field. Adopters needing compile-time
+ *   gating today should constrain `platform: P & { sponsoredIntelligence:
+ *   SponsoredIntelligencePlatform }` directly at the call site.
+ *
+ * Note on enum form: `supported_protocols` uses underscore form on the
+ * wire (`'sponsored_intelligence'`), not the kebab-case
+ * `'sponsored-intelligence'` used by `AdCPSpecialism`. The two enums
+ * diverge intentionally — see `core.generated.ts:12520`.
+ */
+type SupportedProtocol = 'sponsored_intelligence';
+
+// eslint-disable-next-line @typescript-eslint/no-explicit-any, @typescript-eslint/no-unused-vars
+type RequiredPlatformsForProtocols<P extends SupportedProtocol, TCtxMeta = any> = P extends 'sponsored_intelligence'
+  ? { sponsoredIntelligence: SponsoredIntelligencePlatform<TCtxMeta> }
+  : Record<string, never>;
 
 /**
  * Compile-time mapping from a claimed specialism to the capability

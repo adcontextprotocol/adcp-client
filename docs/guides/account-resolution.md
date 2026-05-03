@@ -175,7 +175,28 @@ accountStore.size;                              // number of stored linkages
 
 ## `'derived'` (single-tenant)
 
-Return a fixed singleton regardless of `ref`:
+Return a fixed singleton regardless of `ref`. For the canonical Shape D
+pattern (auth principal IS the tenant — audiostack, flashtalking,
+single-namespace retail-media), use `createDerivedAccountStore`:
+
+```ts
+import { createDerivedAccountStore } from '@adcp/sdk/server';
+
+const accounts = createDerivedAccountStore<MyMeta>({
+  toAccount: ctx => ({
+    id: 'tenant_singleton',
+    name: 'My Platform',
+    status: 'active',
+    ctx_metadata: {},
+  }),
+});
+```
+
+The factory sets `resolution: 'derived'`, throws
+`AdcpError('AUTH_REQUIRED')` when `ctx.authInfo.credential` is absent
+(skip with `skipAuthCheck: true` for genuinely unauthenticated agents),
+and ignores any buyer-supplied `account_id` (single-tenant by
+definition). Hand-rolled equivalent:
 
 ```ts
 accounts: {
@@ -191,6 +212,16 @@ accounts: {
 
 No `upsert` needed. The framework returns `UNSUPPORTED_FEATURE` to any
 buyer that calls `sync_accounts`.
+
+**Inline `account_id` refusal.** Since adcp-client#1468, the framework
+refuses inline `{ account_id }` references for `'derived'` platforms with
+`AdcpError('INVALID_REQUEST', { field: 'account.account_id' })` *before*
+reaching `accounts.resolve` — same shape as `'implicit'`'s refusal (#1364),
+with a single-tenant message instead of the `sync_accounts`-first guidance.
+Hand-rolled `'derived'` stores get this for free; the
+`createDerivedAccountStore` factory's defensive ignore is a belt + braces
+fallback. The brand+operator union arm is still permitted (route through
+your resolver verbatim).
 
 ---
 

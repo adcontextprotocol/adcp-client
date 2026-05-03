@@ -23,6 +23,8 @@ A signals agent serves audience segments to buyers for campaign targeting. Two t
 - Rendering creatives from briefs → that's a creative agent
 - Building a client that _calls_ a signals agent → see `docs/getting-started.md`
 
+**Often claimed alongside:** [`sales-social`](../build-seller-agent/SKILL.md) (walled-garden audience push), [`sales-non-guaranteed`](../build-seller-agent/SKILL.md) (DSP data marketplace as a side surface), [`audience-sync`](../build-seller-agent/SKILL.md) (identity-provider owned-graph activation). See [Common multi-specialism bundles](../../examples/README.md#common-multi-specialism-bundles).
+
 ## Specialisms This Skill Covers
 
 | Specialism           | Status | Delta                                                                                                                                                               | See                                                    |

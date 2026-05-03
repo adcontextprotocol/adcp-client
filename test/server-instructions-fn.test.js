@@ -1,8 +1,9 @@
 'use strict';
 
-// Issue #1347 — `instructions` accepts a function form (lazy / per-session).
-// Covers static/string regression, function evaluation, throw semantics
-// (skip/fail), the async-not-yet-supported guard, and the
+// Issue #1347 / #1393 — `instructions` accepts a function form (lazy / per-session),
+// including async functions whose Promise is awaited at MCP `initialize` time.
+// Covers static/string regression, sync function evaluation, throw semantics
+// (skip/fail), async happy-path, async rejection, and the
 // reuseAgent + function refusal in serve().
 
 process.env.NODE_ENV = 'test';
@@ -10,9 +11,42 @@ process.env.NODE_ENV = 'test';
 const { describe, it } = require('node:test');
 const assert = require('node:assert/strict');
 
+const { createAdcpServer } = require('../dist/lib/server/create-adcp-server');
 const { createAdcpServerFromPlatform } = require('../dist/lib/server/decisioning/runtime/from-platform');
 const { getSdkServer } = require('../dist/lib/server/adcp-server');
 const { ADCP_INSTRUCTIONS_FN } = require('../dist/lib/server/create-adcp-server');
+
+/**
+ * Build a minimal AdcpServer directly (no platform layer). Used for testing
+ * createAdcpServer's instructions handling without the platform intermediary.
+ */
+function makeDirectServer(opts = {}) {
+  return createAdcpServer({
+    name: 'test',
+    version: '0.0.1',
+    validation: { requests: 'off', responses: 'off' },
+    ...opts,
+  });
+}
+
+/**
+ * Simulate an MCP `initialize` handshake in-process by invoking the
+ * registered handler directly. Required for async instructions tests —
+ * async resolution happens inside the initialize handler, not at construction.
+ */
+async function simulateInitialize(server, extra = {}) {
+  const sdk = getSdkServer(server);
+  if (!sdk) throw new Error('simulateInitialize: value is not an AdcpServer');
+  const handler = sdk.server._requestHandlers?.get('initialize');
+  if (!handler) throw new Error('simulateInitialize: no initialize handler registered');
+  return handler(
+    {
+      method: 'initialize',
+      params: { protocolVersion: '2025-03-26', capabilities: {}, clientInfo: { name: 'test', version: '0.0.1' } },
+    },
+    extra
+  );
+}
 
 function buildPlatform(overrides = {}) {
   return {
@@ -157,31 +191,17 @@ describe('instructions — onInstructionsError', () => {
   });
 });
 
-describe('instructions — async not yet supported', () => {
-  it('a function returning a Promise throws ConfigurationError (regardless of onInstructionsError)', () => {
-    assert.throws(
-      () =>
-        makeServer(
-          buildPlatform({
-            instructions: () => Promise.resolve('async prose'),
-            onInstructionsError: 'skip', // even with skip, async is a config error
-          })
-        ),
-      /async resolution is not yet supported/
-    );
-  });
-
-  it('a function returning null does NOT crash on the Promise probe (null safety)', () => {
-    // Regression for code-reviewer finding: the Promise detection used to read
+describe('instructions — null safety (Promise probe)', () => {
+  it('a function returning null does NOT crash on the Promise probe', () => {
+    // Regression: the Promise detection used to read
     // `(result as { then?: unknown }).then` which throws TypeError on null.
     const server = makeServer(
       buildPlatform({
         instructions: () => null,
       })
     );
-    // null was a non-string non-undefined return — should be rejected at
-    // construction with a typed ConfigurationError, surfaced through the
-    // 'skip' default as undefined.
+    // null is a non-string non-undefined sync return — rejected at construction
+    // and surfaced through the 'skip' default as undefined.
     assert.equal(readInstructions(server), undefined);
   });
 });
@@ -220,5 +240,92 @@ describe('instructions — non-string return type', () => {
       })
     );
     assert.equal(readInstructions(server), undefined);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Async instructions (#1393) — createAdcpServer direct tests
+// ---------------------------------------------------------------------------
+
+describe('instructions — async function form (createAdcpServer)', () => {
+  it('happy path: async function resolves and sets instructions at initialize', async () => {
+    const server = makeDirectServer({
+      instructions: async () => {
+        await new Promise(resolve => setImmediate(resolve));
+        return 'async-prose';
+      },
+    });
+    // Before initialize: _instructions is undefined (async not yet resolved).
+    assert.equal(readInstructions(server), undefined);
+    const result = await simulateInitialize(server);
+    // Resolved value appears both on the internal field and in the wire response.
+    assert.equal(readInstructions(server), 'async-prose');
+    assert.equal(result?.instructions, 'async-prose');
+  });
+
+  it('async function returning undefined → no instructions after initialize', async () => {
+    const server = makeDirectServer({ instructions: async () => undefined });
+    await simulateInitialize(server);
+    assert.equal(readInstructions(server), undefined);
+    // ADCP_INSTRUCTIONS_FN marker must still be set — adopter chose the function form.
+    assert.equal(server[ADCP_INSTRUCTIONS_FN], true);
+  });
+
+  it("onInstructionsError 'skip' (default) swallows async rejection", async () => {
+    const server = makeDirectServer({
+      instructions: async () => {
+        throw new Error('registry down');
+      },
+    });
+    await assert.doesNotReject(() => simulateInitialize(server));
+    assert.equal(readInstructions(server), undefined);
+  });
+
+  it("onInstructionsError 'fail' propagates async rejection to initialize", async () => {
+    const server = makeDirectServer({
+      instructions: async () => {
+        throw new Error('load-bearing policy unreachable');
+      },
+      onInstructionsError: 'fail',
+    });
+    await assert.rejects(() => simulateInitialize(server), /load-bearing policy unreachable/);
+  });
+
+  it("onInstructionsError 'skip' swallows async non-string resolution", async () => {
+    const server = makeDirectServer({
+      instructions: async () => /** @type {any} */ (42),
+    });
+    await assert.doesNotReject(() => simulateInitialize(server));
+    assert.equal(readInstructions(server), undefined);
+  });
+
+  it("onInstructionsError 'fail' propagates async non-string resolution as error", async () => {
+    const server = makeDirectServer({
+      instructions: async () => /** @type {any} */ (42),
+      onInstructionsError: 'fail',
+    });
+    await assert.rejects(() => simulateInitialize(server), /resolved to number/);
+  });
+
+  it('ADCP_INSTRUCTIONS_FN marker is set for async function form', () => {
+    const server = makeDirectServer({
+      instructions: async () => 'marker-test',
+    });
+    assert.equal(server[ADCP_INSTRUCTIONS_FN], true);
+  });
+
+  it('each createAdcpServer call starts a fresh async fetch (per-session semantic)', async () => {
+    let calls = 0;
+    const fn = async () => {
+      calls++;
+      return `prose-${calls}`;
+    };
+    const a = makeDirectServer({ instructions: fn });
+    const b = makeDirectServer({ instructions: fn });
+    await simulateInitialize(a);
+    await simulateInitialize(b);
+    assert.equal(readInstructions(a), 'prose-1');
+    assert.equal(readInstructions(b), 'prose-2');
+    assert.equal(calls, 2);
   });
 });
