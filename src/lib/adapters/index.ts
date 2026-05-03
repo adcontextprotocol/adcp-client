@@ -84,3 +84,9 @@ export { createOAuthPassthroughResolver, type OAuthPassthroughResolverOptions } 
 // plumbing (resolve dispatch, optional list, ctx threading) with no opinion on
 // where the roster lives.
 export { createRosterAccountStore, type RosterAccountStoreOptions } from './roster-account-store';
+
+// Derived AccountStore — Shape D factory for `resolution: 'derived'` single-
+// tenant agents (no account_id on the wire; auth principal alone identifies
+// the tenant). Closes adcp-client#1462. Replaces ~25–30 LOC of bearer-extract +
+// throw-AUTH_REQUIRED + return-singleton boilerplate Shape D adopters write today.
+export { createDerivedAccountStore, type DerivedAccountStoreOptions } from './derived-account-store';

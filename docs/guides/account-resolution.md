@@ -175,7 +175,28 @@ accountStore.size;                              // number of stored linkages
 
 ## `'derived'` (single-tenant)
 
-Return a fixed singleton regardless of `ref`:
+Return a fixed singleton regardless of `ref`. For the canonical Shape D
+pattern (auth principal IS the tenant — audiostack, flashtalking,
+single-namespace retail-media), use `createDerivedAccountStore`:
+
+```ts
+import { createDerivedAccountStore } from '@adcp/sdk/server';
+
+const accounts = createDerivedAccountStore<MyMeta>({
+  toAccount: ctx => ({
+    id: 'tenant_singleton',
+    name: 'My Platform',
+    status: 'active',
+    ctx_metadata: {},
+  }),
+});
+```
+
+The factory sets `resolution: 'derived'`, throws
+`AdcpError('AUTH_REQUIRED')` when `ctx.authInfo.credential` is absent
+(skip with `skipAuthCheck: true` for genuinely unauthenticated agents),
+and ignores any buyer-supplied `account_id` (single-tenant by
+definition). Hand-rolled equivalent:
 
 ```ts
 accounts: {
