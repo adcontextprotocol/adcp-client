@@ -248,6 +248,29 @@ function projectSlot(s: UpstreamTemplate['slots'][number]) {
   }
 }
 
+/** Output asset slot. The format's `assets[]` mixes input slots (image,
+ *  headline, script — what the buyer provides) with the build_creative
+ *  output slot (`serving_tag` — what the adapter returns). Per
+ *  creative-manifest.json:14 every key in `creative_manifest.assets` MUST
+ *  match a declared `assets[].asset_id`; without the output slot here, our
+ *  build_creative response's `serving_tag` would key against an undeclared
+ *  slot. `required: false` because the buyer doesn't supply this — the
+ *  adapter generates it. asset_type is driven by upstream `output_kind` so
+ *  the discriminator in the response (html / javascript / vast / audio)
+ *  matches the slot the buyer can resolve from `get_format`. */
+function outputSlot(t: UpstreamTemplate) {
+  switch (t.output_kind) {
+    case 'html_tag':
+      return FormatAsset.html({ asset_id: 'serving_tag', required: false });
+    case 'javascript_tag':
+      return FormatAsset.javascript({ asset_id: 'serving_tag', required: false });
+    case 'vast_xml':
+      return FormatAsset.vast({ asset_id: 'serving_tag', required: false });
+    case 'audio_url':
+      return FormatAsset.audio({ asset_id: 'serving_tag', required: false });
+  }
+}
+
 function templateToFormat(t: UpstreamTemplate): Format {
   // Each `renders[]` entry MUST be `{ role, dimensions: { width, height } }`
   // OR `{ role, parameters_from_format_id: true }`. A bare `{ role, width,
@@ -263,7 +286,9 @@ function templateToFormat(t: UpstreamTemplate): Format {
     name: t.name,
     description: t.description,
     renders,
-    assets: t.slots.map(projectSlot),
+    // Input slots (what the buyer provides) + the output slot (what the
+    // adapter generates and returns via build_creative).
+    assets: [...t.slots.map(projectSlot), outputSlot(t)],
   };
 }
 
@@ -274,17 +299,12 @@ function templateToFormat(t: UpstreamTemplate): Format {
  *  builders to inject the discriminator — a bare `{ content }` or `{ url }`
  *  fails the asset-union oneOf.
  *
- *  ⚠️ This fixture's `serving_tag` asset_id diverges from
- *  `creative-manifest.json:14`, which mandates: "Each key MUST match an
- *  asset_id from the format's assets array." The format declared by
- *  `templateToFormat` has slot ids (`image`, `headline`, `script`, etc.) —
- *  none of which is `serving_tag`. We use `serving_tag` consistently across
- *  all four output kinds (HTML / JS / VAST / audio) so the fixture exercises
- *  every output branch with one key, but **production adopters MUST echo
- *  declared `assets[].asset_id` values** — pick the slot the buyer expects
- *  the rendered output under (e.g. `output`, `master`) and declare it in
- *  the format. Spec-aligning this fixture is tracked at adcp-client follow-up
- *  to #1496; until then, see SHAPE-GOTCHAS.md before adapting this pattern. */
+ *  The `serving_tag` asset_id matches the output slot declared by
+ *  `outputSlot(t)` in `templateToFormat`, satisfying creative-manifest.json:14
+ *  ("each key MUST match an asset_id from the format's assets array"). All
+ *  four output kinds (HTML / JS / VAST / audio) key under the same id; the
+ *  asset_type discriminator on the value picks the matching slot's typed
+ *  branch. */
 function projectRenderToManifest(
   render: UpstreamRender,
   formatId: { agent_url: string; id: string }
