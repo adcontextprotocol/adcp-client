@@ -692,6 +692,8 @@ Output formats returned by `list_creative_formats` for ad servers are **serving-
 
 Storyboard: `creative_template`. Stateless — build from the inline `creative_manifest` in the request, do not call `ctx.store`.
 
+**Fork target**: `examples/hello_creative_adapter_template.ts` is the worked, passing reference adapter for this specialism. CI gates strict tsc + storyboard pass + upstream-traffic façade. Replace the `// SWAP:` markers with calls to your real backend.
+
 Formats declare `variables` the template will substitute:
 
 ```typescript

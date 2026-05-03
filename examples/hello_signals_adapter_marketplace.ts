@@ -1,5 +1,5 @@
 /**
- * hello_seller_adapter_signal_marketplace — worked starting point for an
+ * hello_signals_adapter_marketplace — worked starting point for an
  * AdCP signals adapter that wraps an upstream signal-marketplace platform.
  *
  * Fork this. Replace `UpstreamClient` with your real backend's HTTP/SDK
@@ -8,14 +8,14 @@
  * Demo:
  *   npx @adcp/sdk@latest mock-server signal-marketplace --port 4150
  *   UPSTREAM_URL=http://127.0.0.1:4150 \
- *     npx tsx examples/hello_seller_adapter_signal_marketplace.ts
+ *     npx tsx examples/hello_signals_adapter_marketplace.ts
  *   adcp storyboard run http://127.0.0.1:3001/mcp signal_marketplace \
  *     --auth sk_harness_do_not_use_in_prod
  *   curl http://127.0.0.1:4150/_debug/traffic
  *
  * Production:
  *   UPSTREAM_URL=https://my-platform.example/api UPSTREAM_API_KEY=… \
- *     npx tsx examples/hello_seller_adapter_signal_marketplace.ts
+ *     npx tsx examples/hello_signals_adapter_marketplace.ts
  */
 
 import {
@@ -246,8 +246,8 @@ const ONBOARDING_LEDGER = new Map<string, BuyerAgent>([
       status: 'active',
       // Set-valued: this agent is allowed to request operator-billed
       // accounts only. A real holdco might be `new Set(['operator',
-      // 'agent', 'advertiser'])`. Phase 2 (#1292) wires framework-level
-      // enforcement; today the field documents commercial intent.
+      // 'agent', 'advertiser'])`. The framework will gain enforcement of
+      // these capabilities; today the field documents commercial intent.
       billing_capabilities: new Set(['operator']),
       // Test-agent default. Framework rejects any request from this
       // agent whose resolved Account.sandbox !== true. Production
@@ -339,7 +339,13 @@ class SignalMarketplaceAdapter implements DecisioningPlatform<Record<string, nev
      *  tenant resolution against the durable buyer-agent identity here
      *  rather than re-deriving from the credential. */
     resolve: async (ref, ctx) => {
-      const adcpOperator = (ref as { operator?: string })?.operator;
+      if (!ref) return null;
+      // AccountReference discriminated union: `{ account_id }` post-sync,
+      // or `{ brand, operator, sandbox? }` on initial discovery. Mock has
+      // no account_id index; SWAP: production keeps an account_id →
+      // operator_id index populated during list_accounts.
+      if ('account_id' in ref) return null;
+      const adcpOperator = ref.operator;
       if (!adcpOperator) return null;
       // Optional: gate the operator on the buyer agent's allowed_brands /
       // billing_capabilities. Sellers who don't cross-check operator vs.
@@ -479,7 +485,7 @@ const idempotencyStore = createIdempotencyStore({ backend: memoryBackend(), ttlS
 serve(
   ({ taskStore }) => {
     const adcpServer = createAdcpServerFromPlatform(platform, {
-      name: 'hello-seller-adapter-signal-marketplace',
+      name: 'hello-signals-adapter-marketplace',
       version: '1.0.0',
       taskStore,
       idempotency: idempotencyStore,

@@ -4,7 +4,7 @@
 
 fix(server): specialism validator uses authoritative manifest data only (no reverse-mapping)
 
-Follow-up to #1306. The original `generate-manifest-derived.ts` reverse-mapped from `manifest.tools[*].specialisms[]` when the spec's direct `manifest.specialisms[id].required_tools` was empty. That triggered false warnings on legitimate adopters: the `hello_seller_adapter_signal_marketplace` example (a pure signal-marketplace seller exposing only `get_signals` / `activate_signal`) emitted three "missing method" warnings for `sync_accounts` / `sync_governance` / `sync_plans` — tools associated with the `signal_marketplace` specialism in the manifest's tool→specialism mapping but not actually required to claim the specialism.
+Follow-up to #1306. The original `generate-manifest-derived.ts` reverse-mapped from `manifest.tools[*].specialisms[]` when the spec's direct `manifest.specialisms[id].required_tools` was empty. That triggered false warnings on legitimate adopters: the `hello_signals_adapter_marketplace` example (a pure signal-marketplace seller exposing only `get_signals` / `activate_signal`) emitted three "missing method" warnings for `sync_accounts` / `sync_governance` / `sync_plans` — tools associated with the `signal_marketplace` specialism in the manifest's tool→specialism mapping but not actually required to claim the specialism.
 
 The semantic distinction matters: `manifest.tools[*].specialisms[]` captures "tool associated with specialism" (e.g., the spec mentions sync_accounts in signal-marketplace context), while `manifest.specialisms[*].required_tools` captures "tool required to claim specialism." Reverse-mapping conflated the two.
 

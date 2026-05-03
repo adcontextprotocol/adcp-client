@@ -22,7 +22,11 @@
     "examples/decisioning-platform-multi-tenant.ts",
     "examples/decisioning-platform-multi-tenant-db.ts",
     "examples/decisioning-platform-programmatic.ts",
-    "examples/hello-cluster.ts"
+    "examples/hello-cluster.ts",
+    "examples/hello_signals_adapter_marketplace.ts",
+    "examples/hello_creative_adapter_template.ts",
+    "examples/hello_seller_adapter_social.ts",
+    "examples/hello_seller_adapter_guaranteed.ts"
   ],
   "exclude": ["node_modules", "dist"]
 }

@@ -2,6 +2,28 @@
 
 This directory contains practical examples of how to use the `@adcp/sdk` library.
 
+## Building an AdCP agent — fork-target reference adapters
+
+Pick the example whose AdCP role and specialism most closely match what you're building, fork the file, replace the `// SWAP:` markers, and follow the `FORK CHECKLIST` block at the top of each adapter for the unmarked but load-bearing constants. Each adapter is paired with a three-gate CI test (strict tsc / storyboard / upstream-traffic) so a regression in your fork fails CI before it ships.
+
+| If you're claiming…                | Fork                                              | Then…                                                                                                                                          |
+| ---------------------------------- | ------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------- |
+| `signal-marketplace` / `signal-owned` | `hello_signals_adapter_marketplace.ts`         | as-is for marketplace; `signal-owned` adopters drop the marketplace-specific tax/rev-share fields                                              |
+| `creative-template`                | `hello_creative_adapter_template.ts`              | as-is — single-tenant; production adopters add per-tenant workspace binding (see SWAP markers)                                                 |
+| `creative-generative`              | `hello_creative_adapter_template.ts`              | replace template-driven `buildCreative` with brief-driven generation; keep the `previewCreative` shape                                         |
+| `creative-ad-server`               | `hello_creative_adapter_template.ts`              | promote to `CreativeAdServerPlatform`, add `syncCreatives` library + `listCreatives` query + tag-rendering on `buildCreative`                  |
+| `sales-non-guaranteed`             | `hello_seller_adapter_social.ts`                  | drop OAuth (use static Bearer or your auth), add `getProducts` + `createMediaBuy` + `updateMediaBuy` + `getMediaBuyDelivery` + `getMediaBuys`  |
+| `sales-guaranteed`                 | `hello_seller_adapter_guaranteed.ts`              | as-is — covers the HITL flow                                                                                                                   |
+| `sales-broadcast-tv`               | `hello_seller_adapter_guaranteed.ts`              | replace `audience_targeting` with broadcast-DMA targeting; replace `Product.channels` with `linear_tv`                                         |
+| `sales-streaming-tv`               | `hello_seller_adapter_guaranteed.ts`              | adjust `Product.channels` to `ctv`                                                                                                             |
+| `sales-social`                     | `hello_seller_adapter_social.ts`                  | as-is                                                                                                                                          |
+| `sales-catalog-driven`             | `hello_seller_adapter_social.ts`                  | promote `syncCatalogs` to a real catalog ingestion + `getProducts` reads from the catalog                                                      |
+| `audience-sync`                    | `hello_seller_adapter_social.ts`                  | strip everything except `syncAudiences` + `pollAudienceStatuses`; this is the standalone audience-sync seller pattern                          |
+| `governance-*`                     | _no example yet_                                  | track at adcp-client#1332 (governance-spend-authority); mock-server seed exists at `src/lib/mock-server/governance/`                           |
+| `brand-rights`                     | _no example yet_                                  | track at adcp-client#1334                                                                                                                      |
+
+Naming convention: `hello_<role>_adapter_<specialism>.ts` where `<role>` is the AdCP protocol layer (`seller` for `media-buy`, `creative` for `creative`, `signals` for `signals`, `governance` for `governance`, `brand` for `brand`). `<specialism>` strips the role-implied prefix (so `creative-template` → `_template`, `sales-guaranteed` → `_guaranteed`).
+
 ## Examples
 
 ### Basic Usage

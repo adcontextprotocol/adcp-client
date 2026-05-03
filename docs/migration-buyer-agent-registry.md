@@ -17,7 +17,7 @@ If you want the durable identity surface — opt in via three additions:
 2. Wrap a `BuyerAgentRegistry.signingOnly` / `bearerOnly` / `mixed` factory in `BuyerAgentRegistry.cached(...)`.
 3. Set `agentRegistry` on your `DecisioningPlatform`.
 
-The framework picks up the registry, runs `resolve()` once per request, threads the resolved record through `ctx.agent`, and gates `suspended`/`blocked` agents at 403. See [the worked reference adapter](../examples/hello_seller_adapter_signal_marketplace.ts) for the full wiring.
+The framework picks up the registry, runs `resolve()` once per request, threads the resolved record through `ctx.agent`, and gates `suspended`/`blocked` agents at 403. See [the worked reference adapter](../examples/hello_signals_adapter_marketplace.ts) for the full wiring.
 
 ## What's new in Phase 1
 
@@ -244,7 +244,7 @@ return {
 };
 ```
 
-The worked example at [`examples/hello_seller_adapter_signal_marketplace.ts`](../examples/hello_seller_adapter_signal_marketplace.ts) demonstrates this end-to-end with Addie (the storyboard runner) marked `sandbox_only: true`.
+The worked example at [`examples/hello_signals_adapter_marketplace.ts`](../examples/hello_signals_adapter_marketplace.ts) demonstrates this end-to-end with Addie (the storyboard runner) marked `sandbox_only: true`.
 
 ## Custom `authenticate()` callbacks
 
@@ -334,7 +334,7 @@ The cache is serving the stale `status: 'suspended'` for up to `ttlSeconds`. Cal
 
 ## Reference
 
-- **Worked example**: [`examples/hello_seller_adapter_signal_marketplace.ts`](../examples/hello_seller_adapter_signal_marketplace.ts) — full adapter wiring with Addie + sandbox_only + caching.
+- **Worked example**: [`examples/hello_signals_adapter_marketplace.ts`](../examples/hello_signals_adapter_marketplace.ts) — full adapter wiring with Addie + sandbox_only + caching.
 - **Framework gate behavior**: [`test/server-buyer-agent-status-and-redaction.test.js`](../test/server-buyer-agent-status-and-redaction.test.js), [`test/server-buyer-agent-sandbox-only.test.js`](../test/server-buyer-agent-sandbox-only.test.js).
 - **Cache decorator behavior**: [`test/lib/buyer-agent-cache.test.js`](../test/lib/buyer-agent-cache.test.js).
 - **Phase 1 design issue**: [#1269](https://github.com/adcontextprotocol/adcp-client/issues/1269).
