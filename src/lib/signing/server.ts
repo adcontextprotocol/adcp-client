@@ -76,3 +76,28 @@ export {
   type VerifyWebhookResult,
 } from './webhook-verifier';
 export { createExpressVerifier, type ExpressLike, type ExpressMiddlewareOptions } from './middleware';
+export {
+  resolveAgent,
+  getAgentJwks,
+  createAgentJwksSet,
+  AgentResolverError,
+  attackerInfluencedFields,
+  ATTACKER_INFLUENCED,
+  readBrandJsonUrl,
+  readIdentityPosture,
+  type AgentResolution,
+  type AgentProtocol,
+  type AgentResolverErrorCode,
+  type AgentResolverErrorDetail,
+  type AgentEntry,
+  type AgentJwksResult,
+  type CapabilitiesWithBrandJsonUrl,
+  type CreateAgentJwksSetOptions,
+  type FetchCapabilitiesFn,
+  type GetAgentJwksOptions,
+  type IdentityKeyOriginPurpose,
+  type IdentityKeyOrigins,
+  type IdentityPosture,
+  type ResolveAgentOptions,
+  type TraceStep,
+} from './agent-resolver';

@@ -1,6 +1,7 @@
 import type { AgentConfig } from '../types/adcp';
 import type { AgentSigningContext } from './agent-context';
 import type { CachedCapability } from './capability-cache';
+import { unwrapProtocolResponse } from './protocol-response';
 import type { VerifierCapability } from './types';
 
 /**
@@ -25,7 +26,7 @@ function extractCapability(response: unknown): {
   requestSigning: VerifierCapability | undefined;
   adcpVersion: number | undefined;
 } {
-  const payload = unwrapResponse(response);
+  const payload = unwrapProtocolResponse(response);
   if (!payload || typeof payload !== 'object') return { requestSigning: undefined, adcpVersion: undefined };
 
   const body = payload as Record<string, unknown>;
@@ -36,59 +37,6 @@ function extractCapability(response: unknown): {
     versions && versions.length > 0 && typeof versions[0] === 'number' ? (versions[0] as number) : undefined;
 
   return { requestSigning, adcpVersion };
-}
-
-function unwrapResponse(response: unknown): unknown {
-  if (!response || typeof response !== 'object') return response;
-  const r = response as Record<string, unknown>;
-
-  // MCP CallToolResult — structuredContent wins when present.
-  if (r.structuredContent && typeof r.structuredContent === 'object') return r.structuredContent;
-
-  // MCP CallToolResult — content[].text parsed as JSON.
-  const content = r.content;
-  if (Array.isArray(content)) {
-    for (const chunk of content) {
-      if (chunk && typeof chunk === 'object' && typeof (chunk as any).text === 'string') {
-        try {
-          return JSON.parse((chunk as any).text);
-        } catch {
-          // non-JSON text chunk — keep looking
-        }
-      }
-    }
-  }
-
-  // A2A JSON-RPC response — .result is the Task or Message.
-  const result = r.result;
-  if (result && typeof result === 'object') {
-    // A2A Task: artifacts[0].parts[0].data carries the AdCP payload.
-    const artifacts = (result as Record<string, unknown>).artifacts;
-    if (Array.isArray(artifacts)) {
-      for (const artifact of artifacts) {
-        const parts = (artifact as { parts?: unknown }).parts;
-        const data = findFirstDataPart(parts);
-        if (data) return data;
-      }
-    }
-    // A2A Message: parts[0].data directly on the result.
-    const parts = (result as { parts?: unknown }).parts;
-    const data = findFirstDataPart(parts);
-    if (data) return data;
-  }
-
-  return response;
-}
-
-function findFirstDataPart(parts: unknown): unknown {
-  if (!Array.isArray(parts)) return undefined;
-  for (const part of parts) {
-    if (part && typeof part === 'object') {
-      const p = part as { kind?: unknown; data?: unknown };
-      if (p.kind === 'data' && p.data && typeof p.data === 'object') return p.data;
-    }
-  }
-  return undefined;
 }
 
 /**
