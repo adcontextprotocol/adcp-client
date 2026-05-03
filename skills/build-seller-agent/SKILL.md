@@ -42,15 +42,15 @@ Every sales-* seller hits the cross-cutting rules in [`../cross-cutting.md`](../
 
 ## Specialism deltas
 
-The fork target covers the baseline. Specialism subpages cover the deltas — what to add when you claim that specialism on top of the baseline.
+The fork target covers the baseline. Specialism subpages cover the deltas — what to add when you claim that specialism on top of the baseline. Each entry below is **specialism → when to read it → what's in it**.
 
-- [`specialisms/sales-guaranteed.md`](specialisms/sales-guaranteed.md) — IO-task envelope, three `create_media_buy` return shapes (task envelope / `pending_creatives` / `active`), `TERMS_REJECTED` on aggressive `measurement_terms`. **Read before coding** — applying only the task-envelope path fails 5 storyboard `create_media_buy` steps.
-- [`specialisms/sales-non-guaranteed.md`](specialisms/sales-non-guaranteed.md) — sync confirmation, `bid_price`, `update_media_buy` for in-flight changes
-- [`specialisms/sales-broadcast-tv.md`](specialisms/sales-broadcast-tv.md) — `agency_estimate_number`, Ad-ID `industry_identifiers`, `measurement_windows` (Live/C3/C7)
-- [`specialisms/sales-social.md`](specialisms/sales-social.md) — additive: claim alongside `sales-non-guaranteed`. Adds `sync_audiences`, `sync_catalogs` (DPA), `log_event` (conversions), `get_account_financials`
-- [`specialisms/sales-proposal-mode.md`](specialisms/sales-proposal-mode.md) — `proposals[]` with `budget_allocations`, `buying_mode: 'refine'`
-- [`specialisms/audience-sync.md`](specialisms/audience-sync.md) — `sync_audiences` track. Hashed identifiers, match-rate telemetry
-- [`specialisms/signed-requests.md`](specialisms/signed-requests.md) — RFC 9421 verification on mutating requests; `WWW-Authenticate: Signature error="<code>"` on rejection
+- [`specialisms/sales-guaranteed.md`](specialisms/sales-guaranteed.md) — **read before coding if you claim `sales-guaranteed`**: IO-task envelope, three `create_media_buy` return shapes (task envelope / `pending_creatives` / `active`), `TERMS_REJECTED` on aggressive `measurement_terms`. Applying only the task-envelope path fails 5 storyboard `create_media_buy` steps.
+- [`specialisms/sales-non-guaranteed.md`](specialisms/sales-non-guaranteed.md) — **read if your inventory clears at request time** (programmatic auction, no HITL approval): sync confirmation, `bid_price`, `update_media_buy` for in-flight changes.
+- [`specialisms/sales-broadcast-tv.md`](specialisms/sales-broadcast-tv.md) — **read if you sell linear / broadcast TV**: `agency_estimate_number`, Ad-ID `industry_identifiers`, `measurement_windows` (Live/C3/C7).
+- [`specialisms/sales-social.md`](specialisms/sales-social.md) — **read if you're a social platform** (Snap, Meta, TikTok, etc.): additive — claim alongside `sales-non-guaranteed`. Adds `sync_audiences`, `sync_catalogs` (DPA), `log_event` (conversions), `get_account_financials`.
+- [`specialisms/sales-proposal-mode.md`](specialisms/sales-proposal-mode.md) — **read if you negotiate via proposals before line-itemizing**: `proposals[]` with `budget_allocations`, `buying_mode: 'refine'`.
+- [`specialisms/audience-sync.md`](specialisms/audience-sync.md) — **read if buyers push audiences to you** (walled-garden + identity-provider patterns): `sync_audiences` track. Hashed identifiers, match-rate telemetry.
+- [`specialisms/signed-requests.md`](specialisms/signed-requests.md) — **read if you accept buyer-signed requests on mutating tools**: RFC 9421 verification, `WWW-Authenticate: Signature error="<code>"` on rejection.
 
 `sales-catalog-driven` and `sales-retail-media` live in `skills/build-retail-media-agent/` because catalog-driven applies beyond retail (restaurants, travel, local commerce).
 

@@ -16,6 +16,17 @@ A signals agent serves audience and contextual targeting segments to buyer agent
 
 Both specialisms share the same tool surface (`get_signals`, `activate_signal`, `list_accounts`); the difference is whether you serve segments from multiple `data_provider_domain` values or one. A `signal-owned` adapter is the marketplace adapter with the multi-provider directory simplified to a single seed.
 
+### What to delete if you're single-specialism `signal-owned`
+
+**Forking the marketplace adapter for a `signal-owned` agent? Replace these seams** — leaning on stable symbol names rather than line numbers (the adapter evolves; greppable identifiers don't):
+
+- Replace the multi-provider seed (the `UpstreamCohort` array seeded with multiple `data_provider_domain` / `data_provider_id` / `data_provider_name` triples) with your single-provider catalog. Every cohort gets the same `data_provider_domain` (your domain) and `data_provider_name` (your brand).
+- Strip the marketplace-discovery code paths in `getSignals` that filter `signals[]` by `(data_provider_domain, data_provider_id)` pairs — single-provider adopters either return everything or filter on signal id alone.
+- Set `signal_type: 'owned'` (not `'marketplace'`) in the `toAdcpSignal` projection. `signal_type: 'custom'` is reserved for first-party signals that don't fit the user-identity model (e.g., contextual signals derived from page content); use `'owned'` by default.
+- Drop the marketplace governance sub-scenario in your storyboard run if you don't model multi-provider consent flows — `signal_owned` storyboard is simpler.
+
+**Keep**: the `accounts` / `createTenantStore` block (single-tenant adapters pass one tenant entry), `agentRegistry`, the `signals` SignalsPlatform block (`getSignals`, `activateSignal`, `listAccounts`), platform vs agent activation polling logic, `forceDeploymentStatus` for compliance-test determinism.
+
 For exact response shapes, error codes, and optional fields, `docs/llms.txt` is the canonical reference. The fork target stays in sync with the spec because PR #1394's three-gate contract fails CI when it drifts.
 
 ## When to use this skill
