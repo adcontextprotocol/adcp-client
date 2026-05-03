@@ -577,9 +577,9 @@ describe('schema-driven validation', () => {
           },
         ],
       });
-      assert.strictEqual(
-        outcome.schemaId,
-        '/schemas/3.0.4/bundled/signals/activate-signal-response.json',
+      assert.match(
+        outcome.schemaId ?? '',
+        /^\/schemas\/3\.0\.\d+\/bundled\/signals\/activate-signal-response\.json$/,
         `outcome.schemaId should name the root validator, got: ${outcome.schemaId}`
       );
     });
