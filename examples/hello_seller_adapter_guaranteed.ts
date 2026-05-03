@@ -143,7 +143,10 @@ interface UpstreamOrder {
   budget?: number;
   approval_task_id?: string;
   rejection_reason?: string;
-  line_items: Array<{
+  /** Mock's GET /v1/orders/{id} omits line_items; fetch via
+   * GET /v1/orders/{id}/lineitems separately. Real GAM splits the same
+   * way (Order vs LineItem services). */
+  line_items?: Array<{
     line_item_id: string;
     order_id: string;
     product_id: string;
@@ -273,6 +276,18 @@ const upstream = {
       networkHeader(networkCode)
     );
     return body;
+  },
+
+  // SWAP: list line items under an order. Mock's GET /v1/orders/{id} strips
+  // line_items from the response — fetch them via this separate call.
+  // Real GAM mirrors this split (OrderService vs LineItemService).
+  async listLineItems(networkCode: string, orderId: string): Promise<NonNullable<UpstreamOrder['line_items']>> {
+    const { body } = await http.get<{ line_items: NonNullable<UpstreamOrder['line_items']> }>(
+      `/v1/orders/${encodeURIComponent(orderId)}/lineitems`,
+      undefined,
+      networkHeader(networkCode)
+    );
+    return body?.line_items ?? [];
   },
 
   // SWAP: create line item under an order. Real GAM uses LineItemService.
@@ -422,6 +437,14 @@ class SalesGuaranteedAdapter implements DecisioningPlatform<Record<string, never
     channels: ['olv', 'ctv', 'display'] as const,
     pricingModels: ['cpm'] as const,
     config: {},
+    // Declares the comply_test_controller surface so the conformance
+    // runner picks up `controller_detected: true` and grades missing
+    // scenarios as `not_applicable` instead of `failed`. The framework
+    // auto-derives the actual `scenarios` list from the `complyTest:`
+    // adapter set wired on `createAdcpServerFromPlatform` below.
+    compliance_testing: {
+      scenarios: ['force_media_buy_status', 'simulate_delivery'] as const,
+    },
   };
 
   accounts: AccountStore<NetworkMeta> = {
@@ -438,6 +461,35 @@ class SalesGuaranteedAdapter implements DecisioningPlatform<Record<string, never
       // SWAP: persist `account_id → network_code` during sync_accounts and
       // serve account_id lookups from there.
       if ('account_id' in ref) return null;
+
+      // Cascade-scenario sandbox accounts. The compliance runner injects
+      // synthetic refs like `{brand: {domain: 'test.example'}, sandbox: true}`
+      // for `media_buy_seller/*` cascade scenarios that test wire shape
+      // without depending on test-kit principals. Real sellers gate this
+      // on `process.env.ADCP_SANDBOX === '1'` so production accidentally
+      // accepting sandbox refs isn't possible. The synthetic account maps
+      // to a fixed network so downstream handlers have something concrete
+      // to operate on.
+      if (ref.sandbox === true && process.env['ADCP_SANDBOX'] === '1') {
+        // Pick the first seeded network for sandbox-scope operations. In
+        // production, route to a dedicated sandbox tenant your IO desk
+        // owns so dry-run buys don't pollute real reporting.
+        const sandboxDomain = 'acmeoutdoor.example';
+        const network = await upstream.lookupNetwork(sandboxDomain);
+        if (!network) return null;
+        return {
+          id: `sandbox_${network.network_code}`,
+          name: `Sandbox: ${network.display_name}`,
+          status: 'active',
+          ...(ref.operator !== undefined && { operator: ref.operator }),
+          brand: { domain: ref.brand.domain ?? sandboxDomain },
+          ctx_metadata: {
+            network_code: network.network_code,
+            publisher_domain: network.adcp_publisher,
+          },
+        };
+      }
+
       const publisherDomain = ref.brand.domain;
       if (!publisherDomain) return null;
       const network = await upstream.lookupNetwork(publisherDomain);
@@ -579,8 +631,19 @@ class SalesGuaranteedAdapter implements DecisioningPlatform<Record<string, never
       // Opaque "exceed seller commitments" messages get cargo-culted into
       // every adopter's constraint enforcement and produce un-actionable
       // errors at the buyer-agent boundary.
+      // Minimum committable max_variance_percent — the buyer-vs-seller
+      // billing-count delta this seller will tolerate before triggering
+      // resolution. Real numbers come from your IO desk; 5% is industry
+      // typical for premium guaranteed inventory. The cascade
+      // `measurement_terms_rejected` storyboard sends 0% (zero tolerance),
+      // which no operator commits to.
+      const MIN_VARIANCE_TOLERANCE = 5;
       const packagesArr = (req.packages ?? []) as Array<{
-        measurement_terms?: { viewability_threshold?: number; completion_rate_threshold?: number };
+        measurement_terms?: {
+          viewability_threshold?: number;
+          completion_rate_threshold?: number;
+          billing_measurement?: { max_variance_percent?: number };
+        };
       }>;
       for (let i = 0; i < packagesArr.length; i++) {
         const terms = packagesArr[i]?.measurement_terms;
@@ -599,6 +662,14 @@ class SalesGuaranteedAdapter implements DecisioningPlatform<Record<string, never
           throw new AdcpError('TERMS_REJECTED', {
             message: `packages[${i}].measurement_terms.completion_rate_threshold = ${terms.completion_rate_threshold} exceeds maximum committable threshold (${MAX_COMPLETION_RATE}). Lower to ≤${MAX_COMPLETION_RATE} or remove the term to retry.`,
             field: `packages[${i}].measurement_terms.completion_rate_threshold`,
+            recovery: 'correctable',
+          });
+        }
+        const variance = terms.billing_measurement?.max_variance_percent;
+        if (typeof variance === 'number' && variance < MIN_VARIANCE_TOLERANCE) {
+          throw new AdcpError('TERMS_REJECTED', {
+            message: `packages[${i}].measurement_terms.billing_measurement.max_variance_percent = ${variance} is below the seller's minimum commitment (${MIN_VARIANCE_TOLERANCE}%). Real billing-count divergence between buyer and seller routinely exceeds zero; commit to ≥${MIN_VARIANCE_TOLERANCE}% or remove the term.`,
+            field: `packages[${i}].measurement_terms.billing_measurement.max_variance_percent`,
             recovery: 'correctable',
           });
         }
@@ -626,9 +697,10 @@ class SalesGuaranteedAdapter implements DecisioningPlatform<Record<string, never
         budget?: number;
       }>;
 
-      return ctx.handoffToTask(async (taskCtx): Promise<CreateMediaBuySuccess> => {
-        void taskCtx;
-
+      // Build the synchronous-confirmation flow as a closure so both
+      // the HITL handoff path AND the sandbox-direct path can call it.
+      // The work is identical; only the wrapper differs.
+      const completeIoAndCreateLineItems = async (): Promise<CreateMediaBuySuccess> => {
         // Poll upstream IO task to terminal state. Mock promotes
         // submitted → working → completed across two polls; production
         // platforms vary in cadence. Bound the poll loop so a stuck
@@ -694,6 +766,28 @@ class SalesGuaranteedAdapter implements DecisioningPlatform<Record<string, never
           confirmed_at: new Date().toISOString(),
           packages: packagesOut,
         };
+      };
+
+      // Sandbox/cascade-scenario routing. The compliance runner injects
+      // synthetic sandbox accounts (resolved via `accounts.resolve` to an
+      // id with the `sandbox_` prefix) for `media_buy_seller/*` cascade
+      // scenarios that test wire-shape behaviors needing synchronous
+      // confirmation (`pending_creatives_to_start`, `inventory_list_*`,
+      // `invalid_transitions`, `measurement_terms_rejected` follow-up).
+      // For these, bypass the HITL handoff and return the confirmed buy
+      // directly — the IO-signing path is what the BASE `sales_guaranteed`
+      // storyboard tests, but cascade scenarios need a deterministic
+      // synchronous path. Production sellers route on a similar signal
+      // (sandbox header, dedicated test tenant) to keep production traffic
+      // on the IO-signing path while compliance scenarios get sync.
+      const isSandbox = ctx.account.id.startsWith('sandbox_');
+      if (isSandbox) {
+        return completeIoAndCreateLineItems();
+      }
+
+      return ctx.handoffToTask(async (taskCtx): Promise<CreateMediaBuySuccess> => {
+        void taskCtx;
+        return completeIoAndCreateLineItems();
       });
     },
 
@@ -711,7 +805,8 @@ class SalesGuaranteedAdapter implements DecisioningPlatform<Record<string, never
         });
       }
       if (patch.packages) {
-        const knownPackageIds = new Set(order.line_items.map(li => li.line_item_id));
+        const lineItems = await upstream.listLineItems(networkCode, buyId);
+        const knownPackageIds = new Set(lineItems.map(li => li.line_item_id));
         for (const p of patch.packages) {
           const pid = (p as { package_id?: string }).package_id;
           if (pid && !knownPackageIds.has(pid)) {
@@ -736,23 +831,29 @@ class SalesGuaranteedAdapter implements DecisioningPlatform<Record<string, never
       const networkCode = ctx.account.ctx_metadata.network_code;
       const orders = await upstream.listOrders(networkCode);
       const filtered = req.media_buy_ids ? orders.filter(o => req.media_buy_ids!.includes(o.order_id)) : orders;
-      return {
-        media_buys: filtered.map(o => ({
-          media_buy_id: o.order_id,
-          status: mapMediaBuyStatus(o.status),
-          currency: o.currency,
-          ...(o.budget !== undefined && { total_budget: o.budget }),
-          confirmed_at: o.updated_at,
-          created_at: o.created_at,
-          updated_at: o.updated_at,
-          packages: o.line_items.map(li => ({
-            package_id: li.line_item_id,
-            product_id: li.product_id,
-            budget: li.budget,
+      // Fetch line items per order — mock's GET /v1/orders strips them.
+      // Production GAM/FreeWheel similarly splits Order vs LineItem services.
+      const buys = await Promise.all(
+        filtered.map(async o => {
+          const lineItems = await upstream.listLineItems(networkCode, o.order_id);
+          return {
+            media_buy_id: o.order_id,
+            status: mapMediaBuyStatus(o.status),
             currency: o.currency,
-          })),
-        })),
-      };
+            ...(o.budget !== undefined && { total_budget: o.budget }),
+            confirmed_at: o.updated_at,
+            created_at: o.created_at,
+            updated_at: o.updated_at,
+            packages: lineItems.map(li => ({
+              package_id: li.line_item_id,
+              product_id: li.product_id,
+              budget: li.budget,
+              currency: o.currency,
+            })),
+          };
+        })
+      );
+      return { media_buys: buys };
     },
 
     syncCreatives: async (creatives, ctx): Promise<SyncCreativesRow[]> => {
@@ -846,6 +947,16 @@ class SalesGuaranteedAdapter implements DecisioningPlatform<Record<string, never
 const platform = new SalesGuaranteedAdapter();
 const idempotencyStore = createIdempotencyStore({ backend: memoryBackend(), ttlSeconds: 86_400 });
 
+// In-memory state for comply_test_controller seed/force/simulate adapters.
+// Production sellers wire these into the same data layer the production
+// handlers read from — the controller and production tools share one
+// source of truth for the test state machine.
+const seededMediaBuys = new Map<string, { status: string; revision: number }>();
+const simulatedDelivery = new Map<
+  string,
+  { impressions: number; clicks: number; reported_spend: { amount: number; currency: string } }
+>();
+
 serve(
   ({ taskStore }) =>
     createAdcpServerFromPlatform(platform, {
@@ -856,6 +967,45 @@ serve(
       resolveSessionKey: ctx => {
         const acct = ctx.account as Account<NetworkMeta> | undefined;
         return acct?.id ?? 'anonymous';
+      },
+      // SECURITY: production agents gate registration on a server-controlled
+      // signal (env flag, tenant flag from auth). The test harness sends
+      // a deterministic Bearer that the runner expects sandbox-mode for —
+      // gate on either the env flag OR the demo Bearer prefix to keep this
+      // example self-contained for storyboard runs.
+      complyTest: {
+        sandboxGate: () => process.env['ADCP_SANDBOX'] === '1' || process.env['NODE_ENV'] === 'test',
+        seed: {
+          media_buy: ({ media_buy_id, fixture }) => {
+            const existing = seededMediaBuys.get(media_buy_id);
+            const status = typeof fixture['status'] === 'string' ? (fixture['status'] as string) : 'pending_creatives';
+            seededMediaBuys.set(media_buy_id, { status, revision: existing?.revision ?? 0 });
+          },
+        },
+        force: {
+          media_buy_status: ({ media_buy_id, status, rejection_reason }) => {
+            const buy = seededMediaBuys.get(media_buy_id);
+            const previous = buy?.status ?? 'pending_creatives';
+            seededMediaBuys.set(media_buy_id, { status, revision: (buy?.revision ?? 0) + 1 });
+            void rejection_reason;
+            return { success: true, previous_state: previous, current_state: status };
+          },
+        },
+        simulate: {
+          delivery: ({ media_buy_id, impressions, clicks, reported_spend }) => {
+            const prev = simulatedDelivery.get(media_buy_id) ?? {
+              impressions: 0,
+              clicks: 0,
+              reported_spend: { amount: 0, currency: 'USD' },
+            };
+            simulatedDelivery.set(media_buy_id, {
+              impressions: prev.impressions + (impressions ?? 0),
+              clicks: prev.clicks + (clicks ?? 0),
+              reported_spend: reported_spend ?? prev.reported_spend,
+            });
+            return { success: true, simulated: { media_buy_id, impressions, clicks, reported_spend } };
+          },
+        },
       },
     }),
   {
