@@ -106,6 +106,48 @@ export interface RosterAccountStoreOptions<TRosterEntry, TCtxMeta = Record<strin
     filter: AccountFilter & CursorRequest,
     ctx: ResolveContext | undefined
   ) => CursorPage<TRosterEntry> | Promise<CursorPage<TRosterEntry>>;
+
+  /**
+   * Handle ref-less `accounts.resolve(undefined, ctx)` calls — invoked by
+   * `list_creative_formats`, `provide_performance_feedback`, `preview_creative`,
+   * and any discovery-phase tool that does not require a buyer-selected account.
+   *
+   * Return a synthetic publisher-wide roster entry; `toAccount` is applied to
+   * it before the result is returned to the framework. Return `undefined` to
+   * fall back to `null` (same as omitting this option — `ctx.account` is
+   * `undefined` in the handler).
+   *
+   * The `ref` parameter is always `undefined` here — it is present for
+   * signature parity with `lookup` so autocomplete and code-generation tools
+   * produce consistent handler shapes.
+   *
+   * **Brand+operator refs are not routed here.** A `{ brand, operator }` ref
+   * without an `account_id` still falls through to `null`. Adopters who need
+   * to handle brand-arm refs must override `resolve` on the returned store via
+   * a spread.
+   *
+   * **`toAccount` is called on your return value** with the same `ctx`,
+   * identical to the `lookup` path. Ensure your synthesized entry satisfies
+   * all required fields of `TRosterEntry`.
+   *
+   * **Auth-derived lookup.** If your singleton should be derived from
+   * `ctx.authInfo` (e.g. a per-tenant publisher account keyed on the OAuth
+   * client), and that derivation needs to re-invoke `lookup`, use the
+   * spread-override pattern on the returned store instead — a `resolveWithoutRef`
+   * that calls back into `lookup` is more naturally expressed as a `resolve`
+   * override so the call graph stays flat.
+   *
+   * **If you also override `resolve` on the spread**, `resolveWithoutRef` is
+   * not called — the spread override takes precedence.
+   *
+   * Omit when `ctx.account === undefined` is acceptable for ref-less tools
+   * (handlers can narrow on it and fall back to platform-level config from
+   * their closure).
+   */
+  resolveWithoutRef?: (
+    ref: undefined,
+    ctx: ResolveContext | undefined
+  ) => TRosterEntry | undefined | Promise<TRosterEntry | undefined>;
 }
 
 /**
@@ -120,11 +162,9 @@ export interface RosterAccountStoreOptions<TRosterEntry, TCtxMeta = Record<strin
  * - `null` return for `{ brand, operator }`-shaped refs and ref-less
  *   calls (publisher-curated platforms expect explicit ids)
  *
- * Adopters who need to handle ref-less calls (`provide_performance_feedback`,
- * `list_creative_formats`, `preview_creative`), special account shapes,
- * `upsert` (buyer-driven write paths via `sync_accounts`), `refreshToken`,
- * `reportUsage`, or `getAccountFinancials` compose on top of the returned
- * store with a spread:
+ * Adopters who need `upsert` (buyer-driven write paths via `sync_accounts`),
+ * `refreshToken`, `reportUsage`, or `getAccountFinancials` compose on top
+ * of the returned store with a spread:
  *
  * ```ts
  * const accounts: AccountStore<MyMeta> = {
@@ -135,9 +175,25 @@ export interface RosterAccountStoreOptions<TRosterEntry, TCtxMeta = Record<strin
  *
  * **Ref-less calls (singleton fallback).** `list_creative_formats`,
  * `preview_creative`, and `provide_performance_feedback` call
- * `accounts.resolve(undefined, ctx)`. The helper returns `null` for these
- * by default — handlers narrow on `ctx.account === undefined`. If your
- * platform needs a synth "publisher tenant" instead, wrap `resolve`:
+ * `accounts.resolve(undefined, ctx)`. Use `resolveWithoutRef` when your
+ * platform needs a synthetic publisher-wide account for these tools:
+ *
+ * ```ts
+ * const accounts = createRosterAccountStore({
+ *   lookup,
+ *   toAccount,
+ *   resolveWithoutRef: () => ({ id: '__publisher__', label: 'Publisher', tenantId: myPlatformId }),
+ * });
+ * ```
+ *
+ * The returned entry flows through `toAccount` just like a `lookup` hit.
+ * When omitted the helper returns `null` for ref-less calls — handlers can
+ * narrow on `ctx.account === undefined` and fall back to platform-level
+ * config from their closure.
+ *
+ * **Ref-less calls (auth-derived lookup).** When the singleton should be
+ * derived from the caller's principal and needs to call back into `lookup`,
+ * use the spread-override pattern instead:
  *
  * ```ts
  * const base = createRosterAccountStore({ lookup, toAccount });
@@ -145,26 +201,12 @@ export interface RosterAccountStoreOptions<TRosterEntry, TCtxMeta = Record<strin
  *   ...base,
  *   resolve: async (ref, ctx) => {
  *     if (ref === undefined) {
- *       return { id: '__publisher__', name: 'Publisher', status: 'active', ctx_metadata: {} };
+ *       const id = deriveAccountIdFromAuth(ctx?.authInfo);
+ *       return id ? base.resolve({ account_id: id }, ctx) : null;
  *     }
  *     return base.resolve(ref, ctx);
  *   },
  * };
- * ```
- *
- * **Ref-less calls (auth-principal lookup).** Same wrap pattern when the
- * synth tenant should be derived from the caller's principal — useful for
- * `provide_performance_feedback` where the buyer giving feedback identifies
- * the tenant:
- *
- * ```ts
- * resolve: async (ref, ctx) => {
- *   if (ref === undefined) {
- *     const id = deriveAccountIdFromAuth(ctx?.authInfo);
- *     return id ? base.resolve({ account_id: id }, ctx) : null;
- *   }
- *   return base.resolve(ref, ctx);
- * },
  * ```
  *
  * **Hybrid roster + buyer-updatable fields.** Some publisher-curated
@@ -243,12 +285,17 @@ export function createRosterAccountStore<TRosterEntry, TCtxMeta = Record<string,
         return entry === undefined ? null : options.toAccount(entry, ctx);
       }
 
-      // Brand+operator-shaped refs (no account_id) and ref-less calls fall
-      // through to null. Publisher-curated platforms expect explicit ids;
-      // adopters who want a synth tenant for `list_creative_formats` /
-      // `provide_performance_feedback` / `preview_creative`, or brand-arm
-      // resolution, wrap `resolve` — see the JSDoc on
-      // `createRosterAccountStore` for both patterns.
+      // ref is undefined (no account field on wire) — delegate to resolveWithoutRef if provided.
+      // Brand+operator refs (ref !== undefined but no account_id) fall through to null below;
+      // resolveWithoutRef is intentionally not called for them.
+      if (ref === undefined && options.resolveWithoutRef !== undefined) {
+        const entry = await options.resolveWithoutRef(undefined, ctx);
+        return entry === undefined ? null : options.toAccount(entry, ctx);
+      }
+
+      // brand+operator-shaped refs (no account_id) and unhandled ref-less calls → null.
+      // Adopters who need brand-arm resolution or auth-derived ref-less lookup wrap
+      // `resolve` via spread — see the JSDoc on `createRosterAccountStore`.
       return null;
     },
   };
