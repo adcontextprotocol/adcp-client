@@ -1042,6 +1042,7 @@ function generateLlmsTxt(
     ['Full type signatures', 'TYPE-SUMMARY.md'],
     ['Getting started / install', 'getting-started.md'],
     ['Build a server-side agent', 'guides/BUILD-AN-AGENT.md'],
+    ['Migrating 6.7 → 6.9 (skips deprecated 6.8.0; 13 additive recipes; 2 breaking)', 'migration-6.7-to-6.9.md'],
     ['Migrating 6.6 → 6.7 (15 recipes; 2 breaking)', 'migration-6.6-to-6.7.md'],
     ['Migrating 5.x → 6.x', 'migration-5.x-to-6.x.md'],
     ['BuyerAgentRegistry adopter migration', 'migration-buyer-agent-registry.md'],
