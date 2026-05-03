@@ -251,6 +251,9 @@ function formatSalesSocialSummary(url: string, client: { client_id: string; clie
     `  POST   ${url}/v1.3/advertiser/{advertiser_id}/creative/create`,
     `  POST   ${url}/v1.3/advertiser/{advertiser_id}/pixel/create`,
     `  POST   ${url}/v1.3/advertiser/{advertiser_id}/event/track                  (CAPI)`,
+    `  POST   ${url}/v1.3/advertiser/{advertiser_id}/delivery_estimate            (forward + reverse forecast)`,
+    `  POST   ${url}/v1.3/advertiser/{advertiser_id}/audience_reach_estimate`,
+    `  POST   ${url}/v1.3/advertiser/{advertiser_id}/audience/{aud}/lookalike`,
   ].join('\n');
 }
 
@@ -272,6 +275,9 @@ function formatSalesGuaranteedSummary(url: string, apiKey: string): string {
     `Key routes:`,
     `  GET    ${url}/v1/inventory                                                # ad units`,
     `  GET    ${url}/v1/products                                                 # productized inventory`,
+    `  GET    ${url}/v1/products?targeting=…&flight_start=…&budget=…             # products with per-query forecast`,
+    `  POST   ${url}/v1/forecast                                                 # GAM-style getDeliveryForecast`,
+    `  POST   ${url}/v1/availability                                             # multi-item availability dry-run`,
     `  GET    ${url}/v1/orders                                                   # list orders`,
     `  POST   ${url}/v1/orders                                                   # create (returns pending_approval + task_id)`,
     `  GET    ${url}/v1/orders/{order_id}                                        # poll order status`,
