@@ -68,9 +68,19 @@ const UPSTREAM_API_KEY = process.env['UPSTREAM_API_KEY'] ?? 'mock_si_brand_key_d
 const PORT = Number(process.env['PORT'] ?? 3004);
 const ADCP_AUTH_TOKEN = process.env['ADCP_AUTH_TOKEN'] ?? 'sk_harness_do_not_use_in_prod';
 // Default brand used when a tool call lacks `account` resolution context.
-// SWAP: production should derive this from `ctx.authInfo` (per-API-key
-// tenant binding). Env-driven default is a multi-brand footgun.
-const DEFAULT_LISTING_BRAND = process.env['DEFAULT_LISTING_BRAND'] ?? 'brand_acme_outdoor';
+// SI tool requests don't carry `account` on the wire (the schema omits
+// it — session continuity flows through `session_id` instead), so this
+// default is what `accounts.resolve(undefined)` falls back to.
+//
+// Defaults to `brand_nova_motors` because that's the canonical compliance
+// fixture — the `si_baseline` storyboard at
+// `compliance/cache/latest/protocols/sponsored-intelligence/index.yaml`
+// requests `novamotors_conversational_v1`, which lives under that brand.
+//
+// SWAP: production agents are typically deployed per-brand (one agent per
+// tenant), so a hardcoded default is fine. Multi-brand deployments derive
+// from `ctx.authInfo` per-API-key binding instead.
+const DEFAULT_LISTING_BRAND = process.env['DEFAULT_LISTING_BRAND'] ?? 'brand_nova_motors';
 
 // ---------------------------------------------------------------------------
 // Upstream client — SWAP for production.
@@ -417,7 +427,7 @@ const sponsoredIntelligence = defineSponsoredIntelligencePlatform<SiBrandMeta>({
           url: p.pdp_url,
         }))
       : undefined;
-    return {
+    const response: SIGetOfferingResponse = {
       available: offering.available,
       ...(offering.offering_query_id !== undefined ? { offering_token: offering.offering_query_id } : {}),
       ...(offering.offering_query_ttl_seconds !== undefined
@@ -437,6 +447,14 @@ const sponsoredIntelligence = defineSponsoredIntelligencePlatform<SiBrandMeta>({
       ...(matching ? { matching_products: matching } : {}),
       total_matching: offering.total_matching,
     };
+    // Top-level `offering_id` mirror. The canonical AdCP wire location is
+    // `offering.offering_id` (above), but the `si_baseline` compliance
+    // storyboard captures with `path: 'offering_id'` (top-level). The
+    // schema allows `additionalProperties: true` at the response root so
+    // the mirror is permitted at the wire layer; the generated TS type
+    // doesn't model extra properties, so widen via cast. Drop once the
+    // storyboard path is corrected to `offering.offering_id` upstream.
+    return Object.assign({}, response, { offering_id: offering.offering_id }) as SIGetOfferingResponse;
   },
 
   initiateSession: async (req: SIInitiateSessionRequest, ctx): Promise<SIInitiateSessionResponse> => {
