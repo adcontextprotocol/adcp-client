@@ -145,6 +145,36 @@ Conformance harnesses already shell out to the `adcp` binary today
 mock-server invocation as part of running storyboards — no new
 operational overhead.
 
+### What's negotiable vs. non-negotiable
+
+The implementation shape (decorator / base-class method / middleware /
+constructor injection) is **negotiable** — each SDK picks what fits its
+idiom. The wire contract is **non-negotiable**:
+
+1. **Real out-of-process HTTP.** The adapter must make a real network
+   request to the mock-server process. No in-process shortcut, even
+   when the adapter and the mock-server happen to share a runtime
+   (e.g., both running inside the same Node process during storyboard
+   runs). This preserves the original "one wire-correctness contract"
+   intent — serialization, headers, auth, and signatures all traverse
+   the network during conformance.
+2. **All requests for a mock-mode account, across the entire request
+   lifecycle, hit the mock-server.** No partial routing where some
+   methods go to mock and others to a real upstream. `account.mode`
+   resolves once per request and applies to every adapter call that
+   request makes.
+3. **Same mock-server binary, same specialism endpoints, across SDKs.**
+   `bin/adcp.js mock-server <specialism>` is the cross-language
+   reference. SDKs do not ship language-private mock implementations
+   that diverge from the JS reference. If a fixture behavior is
+   wrong, the fix lands in the mock-server, not in any SDK's adapter
+   layer.
+
+If an SDK's "idiomatic shape" can't satisfy points 1–3, it's the wrong
+shape. The point of softening the implementation contract is to let
+each language pick how it expresses the routing — not to weaken what
+the routing guarantees.
+
 ## Why "mock" is its own mode (not just "sandbox")
 
 The user-facing distinction:
@@ -227,7 +257,56 @@ The adopter-cleanup phase. Compliance becomes inherited.
 - Hello adapter cleanup: delete `seededMediaBuys` Map, delete
   `complyTest:` block, delete `process.env.ADCP_SANDBOX` checks.
   Adopter file shrinks by ~50-80 LOC. The example becomes a clean
-  L4-only file.
+  L4-only file. **Prerequisite**: the per-specialism mock-server
+  fixtures must actually carry the scaffolding the adapter is
+  delegating to (see § Mock-server fixture scaffolding below).
+
+#### Adapter shape requirements (contract change)
+
+Mock-mode URL routing presumes the adapter exposes its upstream base
+URL as a per-request resolvable value, not a constant baked in at
+construction time. Concretely, an adapter that satisfies Phase 2 looks
+like one of:
+
+- **Resolver method** (Python's shape): adapter exposes
+  `upstream_for(ctx) -> UpstreamHttpClient`, returning a cached client
+  per resolved upstream URL. Production URL declared via class
+  attribute (`upstream_url: ClassVar[str | None]`); mock-mode URL
+  pulled from `account.metadata['mock_upstream_url']`.
+- **Constructor injection per request** (a JS-idiomatic shape):
+  adapter receives its upstream client from the framework on each
+  invocation, framework selects the URL by `account.mode`.
+- **Middleware-rewrite** (heavier): adapter holds a single client whose
+  base URL is rewritten by SDK middleware before each request.
+
+Adapters that bake the upstream URL into a constructed SDK client at
+adapter init time (a common pattern with vendor SDKs that take the URL
+in the constructor) **cannot support mock mode without restructuring**.
+This is a real contract change for adopters and should be called out
+in the v6→v7 migration guide when Phase 2 lands. Adopters who don't
+need mock mode (live + sandbox only) are unaffected.
+
+#### Mock-server fixture scaffolding (open work)
+
+Phase 2's "compliance scaffolding lives in fixtures, not adopter code"
+claim presumes the mock-server actually carries that scaffolding for
+each specialism. Status as of this writing:
+
+- **Exists today**: `bin/adcp.js mock-server` runs per-specialism
+  upstream-API REST fixtures (Celtra-shaped, GAM-shaped, TikTok-shaped,
+  default port 4500). Static request/response shapes are in place.
+- **Open work**: per-specialism scenario state machines (seeded media
+  buys, lifecycle transitions driven by storyboard steps, scriptable
+  responses for fault-injection tests). Today these live in adopter
+  code (e.g., hello-adapter's `seededMediaBuys` Map and `complyTest:`
+  block); Phase 2 cleanup deletes them from the adopter — which only
+  works if the mock-server picks them up. That migration is its own
+  workstream; not blocked by this proposal but a prerequisite for the
+  hello-adapter cleanup section above to be safe to land.
+
+Owners of new specialisms adding mock-server fixtures should plan for
+the scenario-driving surface area, not just the static request/response
+shapes.
 
 ### Phase 3 — composition for adopters with bespoke needs
 
