@@ -659,7 +659,20 @@ Closes adcp-client#1462. The factory throws `AUTH_REQUIRED` when
 unauthenticated single-tenant agents (rare; public format catalogs).
 Buyer-supplied `account_id` is ignored (single-tenant by definition);
 adopters who want a wire-shape error for that case wrap `resolve` and
-throw `INVALID_REQUEST`.
+throw `INVALID_REQUEST`. Framework-side refusal (matching `'implicit'`'s
+`refuseImplicitAccountId`) is tracked at adcp-client#1468.
+
+**Security-posture upgrade — drop bearers out of `ctx_metadata`.** The
+real value of swapping to Shape D is the credential-discipline shift,
+not the LOC drop. Hand-rolled `'derived'` stores commonly stash the
+bearer in `ctx_metadata: { accessToken: ctx.authInfo?.token }`; the
+factory's example deliberately keeps `ctx_metadata: {}` and tells you
+to re-derive the bearer per request from `ctx.account.authInfo` (auto-
+attached by the framework) inside specialism methods. While you're in
+there for the mechanical swap, do the credential migration too — see
+[`CTX-METADATA-SAFETY`](./guides/CTX-METADATA-SAFETY.md) for the
+rationale (wire-strip protects buyer responses but does NOT protect
+log lines, error envelopes, or `JSON.stringify(account)` strings).
 
 The four-shape map adopters now reach for:
 
