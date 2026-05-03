@@ -31,7 +31,15 @@ import {
   type TestControllerStore,
   type TestControllerStoreFactory,
 } from '@adcp/sdk/testing';
-import { createTaskCapableServer, serve, type ServeContext } from '@adcp/sdk';
+import {
+  CREATIVE_ASSET_TRANSITIONS,
+  createTaskCapableServer,
+  isLegalCreativeTransition,
+  isLegalMediaBuyTransition,
+  MEDIA_BUY_TRANSITIONS,
+  serve,
+  type ServeContext,
+} from '@adcp/sdk';
 
 // ---------------------------------------------------------------------------
 // Typed domain state.
@@ -127,39 +135,25 @@ function resolveSessionId(input: Record<string, unknown>): string {
 }
 
 // ---------------------------------------------------------------------------
-// State-machine guards live HERE, in the same module your production tools
-// import. The controller routes through the same guards — one source of
-// truth for what transitions are legal. The tables cover every state in
-// the AdCP 3.0.0 status enums; TypeScript will catch a missing state if
-// you swap the `Partial<Record<...>>` signature for `Record<...>`.
+// State-machine guards. The transition graphs come straight from the SDK —
+// `MEDIA_BUY_TRANSITIONS` / `CREATIVE_ASSET_TRANSITIONS` are the same maps
+// the storyboard runner's `status.monotonic` invariant uses, so production
+// tools and the controller cannot drift from conformance enforcement.
+// We wrap the boolean predicates in `TestControllerError('INVALID_TRANSITION')`
+// here because this is the controller's force_* path, not a buyer-facing
+// wire response — production seller code should call `assertMediaBuyTransition`
+// / `assertCreativeTransition` instead and let the framework project the
+// thrown `AdcpError` onto the wire `adcp_error` envelope.
 // ---------------------------------------------------------------------------
 
-const MEDIA_BUY_TRANSITIONS: Record<MediaBuyStatus, MediaBuyStatus[]> = {
-  pending_creatives: ['pending_start', 'active', 'paused', 'rejected', 'canceled'],
-  pending_start: ['active', 'paused', 'canceled'],
-  active: ['paused', 'completed', 'canceled'],
-  paused: ['active', 'completed', 'canceled'],
-  completed: [],
-  rejected: [],
-  canceled: [],
-};
-
-const CREATIVE_TRANSITIONS: Record<CreativeStatus, CreativeStatus[]> = {
-  processing: ['pending_review', 'approved', 'rejected', 'archived'],
-  pending_review: ['approved', 'rejected', 'archived'],
-  approved: ['rejected', 'archived'],
-  rejected: ['approved', 'archived'],
-  archived: [],
-};
-
 function assertMediaBuyTransition(from: MediaBuyStatus, to: MediaBuyStatus): void {
-  if (!MEDIA_BUY_TRANSITIONS[from].includes(to)) {
+  if (!isLegalMediaBuyTransition(from, to)) {
     throw new TestControllerError('INVALID_TRANSITION', `media buy cannot move from ${from} to ${to}`, from);
   }
 }
 
 function assertCreativeTransition(from: CreativeStatus, to: CreativeStatus): void {
-  if (!CREATIVE_TRANSITIONS[from].includes(to)) {
+  if (!isLegalCreativeTransition(from, to)) {
     throw new TestControllerError('INVALID_TRANSITION', `creative cannot move from ${from} to ${to}`, from);
   }
 }
@@ -270,11 +264,11 @@ const storeFactory: TestControllerStoreFactory = {
 };
 
 function isMediaBuyStatus(value: unknown): value is MediaBuyStatus {
-  return typeof value === 'string' && value in MEDIA_BUY_TRANSITIONS;
+  return typeof value === 'string' && MEDIA_BUY_TRANSITIONS.has(value as MediaBuyStatus);
 }
 
 function isCreativeStatus(value: unknown): value is CreativeStatus {
-  return typeof value === 'string' && value in CREATIVE_TRANSITIONS;
+  return typeof value === 'string' && CREATIVE_ASSET_TRANSITIONS.has(value as CreativeStatus);
 }
 
 // ---------------------------------------------------------------------------
