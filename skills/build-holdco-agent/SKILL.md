@@ -32,6 +32,10 @@ The reference adapter is `examples/hello_seller_adapter_multi_tenant.ts` — for
 - Multiple specialisms but no tenant partitioning (single-tenant SaaS) → drop the tenant routing and follow the per-specialism skill for each interface
 - One agent acting on behalf of multiple brands without specialism overlap → that's a multi-account single-specialism agent; use the per-specialism skill
 
+## Cross-cutting rules
+
+Every holdco hub hits the cross-cutting rules in [`../cross-cutting.md`](../cross-cutting.md). The most relevant for a holdco is **account resolution: pick a security preset** — `createTenantStore` (covered in detail below) is the right answer for any multi-tenant adopter.
+
 ## The shape: one DecisioningPlatform, three specialism interfaces
 
 ```ts

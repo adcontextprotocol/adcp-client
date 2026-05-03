@@ -313,21 +313,19 @@ Unencoded substitution is a common XSS / scheme-injection vector. `CATALOG_MACRO
 
 ---
 
-## The dogfood test: skill → built agent → compliance
+## The fork-matrix: canonical adapter → compliance
 
-`scripts/manual-testing/agent-skill-storyboard.ts` is the capstone test. It spawns a fresh Claude Code instance, hands it one of the `skills/build-*-agent/SKILL.md` files plus a target storyboard, lets Claude build an agent, then runs the compliance grader against what Claude produced. Catches skill regressions — if the skill drifts from the SDK surface, a freshly-built agent will fail conformance.
+`test/examples/hello-*.test.js` is the canonical compliance gate. Each test boots the matching `examples/hello_*_adapter_*.ts` reference adapter against a mock-server upstream, runs the storyboard grader, and verifies upstream traffic — the three-gate contract documented in [`docs/guides/EXAMPLE-TEST-CONTRACT.md`](EXAMPLE-TEST-CONTRACT.md): tsc strict / storyboard zero-failures / upstream façade. Adopters inherit the gate by extending the test file with their own adapter path and `expectedRoutes`.
 
 ```bash
-# Single skill × storyboard pair
-npm run compliance:agent-skill -- \
-  --skill skills/build-seller-agent/SKILL.md \
-  --storyboard idempotency
+# Run every fork-target gate (~9s parallel, 7/7 currently green)
+npm run compliance:fork-matrix
 
-# Full matrix (every skill × its canonical storyboards)
-npm run compliance:skill-matrix
+# Or one specialism
+npm run compliance:fork-matrix -- --test-name-pattern="hello-seller-adapter-guaranteed"
 ```
 
-Use before merging skill changes. ~60s per pair; matrix runs fan out.
+Use before merging adapter or skill changes. Deterministic — no LLM variance, no minutes-long Claude spin-up.
 
 > **Note:** storyboards with webhook steps (e.g. `webhook_emission`) hold the grader subprocess open until the agent emits a webhook. If your agent doesn't emit one, the harness kills the subprocess after 120s and logs `grader: subprocess timed out` — this is a harness-level timeout, not a conformance failure from your agent's response.
 
