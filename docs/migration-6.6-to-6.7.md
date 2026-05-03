@@ -1071,6 +1071,11 @@ Walk this before declaring 6.6 → 6.7 done:
       persisted list reference inside the overlay. Storyboard step
       `media_buy_seller/inventory_list_targeting/get_after_create`
       passes.
+- [ ] **Brand-rights adopters: no `customTools["update_rights"]`
+      registration.** `grep -rn 'customTools.*update_rights' src/`
+      returns zero hits — the framework registers the tool in 6.7.0; a
+      duplicate throws on the first request (not at boot) and surfaces
+      as a discovery failure rather than a startup error.
 - [ ] **`Account` v3 wire fields are populated** for billing /
       lifecycle adopters. `billing_entity` (with `bank` stripped on
       emit), `setup` (`pending_approval` → `active` lifecycle),
@@ -1126,6 +1131,14 @@ These ride along in 6.7 and don't need any adopter action:
   `BrandRightsPlatform.updateRights` instead of the v5 raw-handler
   bag. Per-arm builders for `creativeApproved` /
   `creativeApprovalRejected` / `creativeApprovalRevoked`.
+  **Breaking for `customTools` registrations:** if your
+  `createAdcpServer()` call passed `update_rights` via `customTools`,
+  remove that entry — the framework now registers the tool itself, and
+  a duplicate throws
+  `Error: createAdcpServer: customTools["update_rights"] collides with a framework-registered tool.`
+  on the first request (not at boot), which surfaces as a discovery
+  failure rather than a startup error. Audit with:
+  `grep -rn 'customTools.*update_rights' src/`
 - **Auto-hydration is now spec-driven.** Hydration call sites read
   `x-entity` annotations from the manifest instead of hand-rolled
   `(field_name, ResourceKind)` literals. Future spec field renames
