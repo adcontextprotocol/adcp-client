@@ -24,6 +24,21 @@ describe('createComplyController — list_scenarios', () => {
     assert.strictEqual(result.success, true);
     assert.deepStrictEqual(result.scenarios, []);
   });
+
+  it('advertises force_create_media_buy_arm and force_task_completion when registered', async () => {
+    const controller = createComplyController({
+      force: {
+        create_media_buy_arm: params => ({ success: true, forced: { arm: params.arm } }),
+        task_completion: () => ({ success: true, previous_state: 'running', current_state: 'completed' }),
+      },
+    });
+    const result = await controller.handleRaw({ scenario: 'list_scenarios' });
+    assert.strictEqual(result.success, true);
+    assert.deepStrictEqual([...result.scenarios].sort(), [
+      'force_create_media_buy_arm',
+      'force_task_completion',
+    ]);
+  });
 });
 
 describe('createComplyController — dispatch', () => {
@@ -113,6 +128,64 @@ describe('createComplyController — dispatch', () => {
     };
     await controller.handleRaw(input);
     assert.strictEqual(capturedCtx.input.context.session_id, 'sess-7');
+  });
+
+  it('routes force.create_media_buy_arm to the adapter with typed params', async () => {
+    let captured;
+    const controller = createComplyController({
+      force: {
+        create_media_buy_arm: params => {
+          captured = params;
+          return { success: true, forced: { arm: params.arm, task_id: params.task_id } };
+        },
+      },
+    });
+    const result = await controller.handleRaw({
+      scenario: 'force_create_media_buy_arm',
+      params: { arm: 'submitted', task_id: 'task-99' },
+    });
+    assert.strictEqual(result.success, true);
+    assert.strictEqual(result.forced.arm, 'submitted');
+    assert.deepStrictEqual(captured, { arm: 'submitted', task_id: 'task-99', message: undefined });
+  });
+
+  it('returns UNKNOWN_SCENARIO for force_create_media_buy_arm when adapter not registered', async () => {
+    const controller = createComplyController({});
+    const result = await controller.handleRaw({
+      scenario: 'force_create_media_buy_arm',
+      params: { arm: 'submitted', task_id: 'task-1' },
+    });
+    assert.strictEqual(result.success, false);
+    assert.strictEqual(result.error, 'UNKNOWN_SCENARIO');
+  });
+
+  it('routes force.task_completion to the adapter with typed params', async () => {
+    let captured;
+    const controller = createComplyController({
+      force: {
+        task_completion: params => {
+          captured = params;
+          return { success: true, previous_state: 'running', current_state: 'completed' };
+        },
+      },
+    });
+    const result = await controller.handleRaw({
+      scenario: 'force_task_completion',
+      params: { task_id: 'task-42', result: { output: 'done' } },
+    });
+    assert.strictEqual(result.success, true);
+    assert.strictEqual(result.current_state, 'completed');
+    assert.deepStrictEqual(captured, { task_id: 'task-42', result: { output: 'done' } });
+  });
+
+  it('returns UNKNOWN_SCENARIO for force_task_completion when adapter not registered', async () => {
+    const controller = createComplyController({});
+    const result = await controller.handleRaw({
+      scenario: 'force_task_completion',
+      params: { task_id: 'task-1', result: { done: true } },
+    });
+    assert.strictEqual(result.success, false);
+    assert.strictEqual(result.error, 'UNKNOWN_SCENARIO');
   });
 });
 
