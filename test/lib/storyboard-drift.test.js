@@ -288,16 +288,7 @@ describe('storyboard schema drift', () => {
   // actually define. Each entry MUST cite an open upstream issue — if the
   // citation closes without the field landing, the entry is stale and
   // should be removed or re-evaluated.
-  const UPSTREAM_SCHEMA_DRIFT = new Set([
-    // adcontextprotocol/adcp#2488 — PackageStatus lacks `targeting_overlay`,
-    // so get_media_buys can't echo the property_list / collection_list the
-    // seller persisted. Storyboard media_buy_seller/inventory_list_targeting
-    // asserts both read paths post-create and post-update (4 entries total).
-    'media_buy_seller/inventory_list_targeting/get_after_create:media_buys[0].packages[0].targeting_overlay.property_list.list_id',
-    'media_buy_seller/inventory_list_targeting/get_after_create:media_buys[0].packages[0].targeting_overlay.collection_list.list_id',
-    'media_buy_seller/inventory_list_targeting/get_after_update:media_buys[0].packages[0].targeting_overlay.property_list.list_id',
-    'media_buy_seller/inventory_list_targeting/get_after_update:media_buys[0].packages[0].targeting_overlay.collection_list.list_id',
-  ]);
+  const UPSTREAM_SCHEMA_DRIFT = new Set([]);
 
   function skipReason(key) {
     if (KNOWN_FORWARD_DRIFT.has(key)) return 'known forward-drift pending schema regen';
