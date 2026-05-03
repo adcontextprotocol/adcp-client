@@ -367,7 +367,13 @@ export async function bootCreativeAdServer(options: BootOptions): Promise<BootRe
       }
     }
 
-    const creativeId = `cr_${randomUUID().replace(/-/g, '').slice(0, 16)}`;
+    // Allow caller-supplied `creative_id` override — real ad servers
+    // reject this (the platform owns the namespace), but cascade-test
+    // seeders need to write under a known id so storyboard fixtures
+    // can reference them by alias. Production sellers ship without this
+    // override path.
+    const explicitCreativeId = typeof body.creative_id === 'string' ? body.creative_id : null;
+    const creativeId = explicitCreativeId ?? `cr_${randomUUID().replace(/-/g, '').slice(0, 16)}`;
     const now = new Date().toISOString();
     const cr: CreativeState = {
       creative_id: creativeId,

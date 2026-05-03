@@ -25,6 +25,7 @@
     "examples/hello-cluster.ts",
     "examples/hello_signals_adapter_marketplace.ts",
     "examples/hello_creative_adapter_template.ts",
+    "examples/hello_creative_adapter_ad_server.ts",
     "examples/hello_seller_adapter_social.ts",
     "examples/hello_seller_adapter_guaranteed.ts",
     "examples/hello_seller_adapter_non_guaranteed.ts",

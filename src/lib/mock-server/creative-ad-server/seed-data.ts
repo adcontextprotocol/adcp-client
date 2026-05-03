@@ -146,6 +146,16 @@ const BASE_FORMATS: Omit<MockFormat, 'network_code'>[] = [
       '<VAST version="4.2"><Ad id="{creative_id}"><InLine><Creatives><Creative><Linear><Duration>00:00:{duration_seconds}</Duration><MediaFiles><MediaFile delivery="progressive" type="video/mp4" width="1920" height="1080">{asset_url}</MediaFile></MediaFiles></Linear></Creative></Creatives><Impression>{impression_pixel}</Impression></InLine></Ad></VAST>',
   },
   {
+    format_id: 'vast_30s',
+    name: 'VAST 30s (storyboard alias)',
+    channel: 'video',
+    render_kind: 'fixed',
+    duration_seconds: 30,
+    accepted_mimes: ['video/mp4', 'application/xml'],
+    snippet_template:
+      '<VAST version="4.2"><Ad id="{creative_id}"><InLine><Creatives><Creative><Linear><Duration>00:00:{duration_seconds}</Duration><MediaFiles><MediaFile delivery="progressive" type="video/mp4">{asset_url}</MediaFile></MediaFiles><VideoClicks><ClickThrough>{click_url}</ClickThrough></VideoClicks></Linear></Creative></Creatives><Impression>{impression_pixel}</Impression></InLine></Ad></VAST>',
+  },
+  {
     format_id: 'display_responsive',
     name: 'Display responsive (parameterized)',
     channel: 'display',
