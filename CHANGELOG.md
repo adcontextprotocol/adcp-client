@@ -1,5 +1,273 @@
 # Changelog
 
+## 6.9.0
+
+### Minor Changes
+
+- dfa503b: Add `queryUpstreamTraffic` adapter to `ComplyControllerConfig` so adopters using the high-level `complyTest:` opts surface on `createAdcpServerFromPlatform` can wire `query_upstream_traffic` (spec PR adcontextprotocol/adcp#3816) without dropping to the lower-level `registerTestController` API.
+
+  ```ts
+  complyTest: {
+    queryUpstreamTraffic: (params, _ctx) => {
+      const result = recorder.query({
+        principal: RECORDER_PRINCIPAL,
+        ...(params.since_timestamp !== undefined && { sinceTimestamp: params.since_timestamp }),
+        ...(params.endpoint_pattern !== undefined && { endpointPattern: params.endpoint_pattern }),
+        ...(params.limit !== undefined && { limit: params.limit }),
+      });
+      return toQueryUpstreamTrafficResponse(result);
+    },
+  }
+  ```
+
+  The adapter forwards through to the existing `TestControllerStore.queryUpstreamTraffic` slot — no wire-shape change, no scenario-projection change. `advertisedScenarios()` includes `'query_upstream_traffic'` when the adapter is set, so `list_scenarios` reports it.
+
+  `hello_signals_adapter_marketplace.ts` migrated to use this surface — drops the manual `registerTestController` call after `createAdcpServerFromPlatform`. Closes the Phase 3 follow-up that punted this migration as "non-mechanical because the recorder integration would need a comply-adapter shape upstream." It does now.
+
+  The framework gate inside `createAdcpServerFromPlatform` (Phase 2 of #1435) covers `comply_test_controller` end-to-end here too — admits on resolver-stamped `mode: 'sandbox' | 'mock'`, refuses live-mode dispatch.
+
+- ee63e0d: feat(server): `ConformanceClient` — outbound-WebSocket Socket Mode primitive that lets adopter dev/staging MCP servers connect to a remote AdCP runner (today, Addie at agenticadvertising.org) without public DNS or inbound exposure. Three-line integration: `new ConformanceClient({ url, token, server }).start()`. Reverse-RPC at the TCP level only — MCP semantics unchanged. Dev/staging only by design (per AdCP #3986 deployment-scoped controller rule). Exposed from `@adcp/sdk/server`.
+
+### Patch Changes
+
+- e680866: Add audio creative-template support to the mock-server and hello adapter (Path 3 from the PR #1496 follow-up).
+
+  The fork-matrix collapse claimed audio creative-template patterns but didn't ship runnable code for them. This patch fills that gap end-to-end without forking a separate adapter:
+  - `src/lib/mock-server/creative-template/seed-data.ts` — extended `output_kind` union with `'audio_url'`; seeded `tpl_audiostack_spot_30s_v1` modeling the TTS / mix / master pipeline (text script → optional voice + music_bed → 30s mastered MP3). No dimensions; the existing `queued → running → complete` state machine already simulates the multi-minute render time real audio platforms (AudioStack, ElevenLabs, Resemble) take.
+  - `src/lib/mock-server/creative-template/server.ts` — added an `audio_url` branch to `synthesizeOutput` that returns `{ audio_url: '<previewBase>.mp3', preview_url, assets: [{ kind: 'audio_url', mime_type: 'audio/mpeg' }] }`.
+  - `examples/hello_creative_adapter_template.ts` — extended `UpstreamTemplate.output_kind` and `UpstreamRender.output` to include the audio shape; added `else if (out.audio_url)` branch in `projectRenderToManifest` that wraps the URL with `audioAsset({ url })` (the framework injects the `asset_type: 'audio'` discriminator into the creative-manifest oneOf).
+  - `skills/build-creative-agent/SKILL.md` — replaced the "audio templates" paragraph with a worked-reference one citing the seeded audio template plus the `audioAsset()` projection. Notes that storyboard coverage for audio is not yet upstream (filed as adcontextprotocol/adcp#4015).
+
+  Adopters integrating an audio creative platform now have a runnable round-trip path from `npx adcp mock-server creative-template` through the adapter to a complete creative-manifest with an audio asset. Validated via:
+
+  ```ts
+  const handle = await bootMockServer({ specialism: 'creative-template', port: 0 });
+  const r = await fetch(handle.url + '/v3/workspaces/ws_acme_studio/renders', {
+    method: 'POST',
+    body: JSON.stringify({
+      template_id: 'tpl_audiostack_spot_30s_v1',
+      mode: 'build',
+      inputs: [{ slot_id: 'script', value: '...' }],
+      client_request_id: '1',
+    }),
+  });
+  // queued → running → complete with { audio_url, preview_url, assets: [{ kind: 'audio_url' }] }
+  ```
+
+  Storyboard-grader coverage for audio is tracked at adcontextprotocol/adcp#4015 — the existing `creative_template` storyboard's `build_creative` step is hardcoded to display assets (image + headline + click_url), so audio adopters can't pass it today. Until that ships, audio adopters validate via `npm run compliance:fork-matrix -- --test-name-pattern="hello-creative-adapter-template"` (display + video gate inherited) plus the manual round-trip above.
+
+  Pure additive — no breaking changes. Existing display + video templates unchanged; fork-matrix 23/23 still green.
+
+- 8361c7e: Add `3.0.6` to `COMPATIBLE_ADCP_VERSIONS` and bump 3.0.5 → 3.0.6 schema citations across user-facing surfaces.
+
+  PR #1510 bumped `ADCP_VERSION` to 3.0.6 but didn't add 3.0.6 to the `COMPATIBLE_ADCP_VERSIONS` literal union in `scripts/sync-version.ts`. Callers passing `{ adcpVersion: '3.0.6' }` to constructor options fell through the literal-union autocomplete to the `(string & {})` escape hatch — still accepted at runtime, but no editor completion or compile-time signal. Closes the gap by appending `'3.0.6'` to the list and regenerating `src/lib/version.ts` via `sync-version`.
+
+  Bumped citations elsewhere so the docs / examples / source comments line up with the pinned version:
+  - `skills/cross-cutting.md` § Spec reference — `schemas/cache/3.0.5/bundled/<protocol>/` → `3.0.6`
+  - `skills/SHAPE-GOTCHAS.md` §7 — `schemas/cache/3.0.5/enums/signal-catalog-type.json` → `3.0.6`
+  - `examples/hello_seller_adapter_social.ts` — `/schemas/3.0.5/core/audience.json` → `3.0.6`
+  - `src/lib/server/decisioning/runtime/from-platform.ts` — `schemas/cache/3.0.5/core/account-ref.json` → `3.0.6`
+
+  `docs/migration-6.6-to-6.7.md` 3.0.5 references are historical (the migration target was 3.0.5) and stay unchanged.
+
+  Tracked at adcp-client #1523 (waiting on adcp#4015 — audio variant phase for `creative_template` storyboard) and #1525 (waiting on adcp#4021 — `output_only` flag on `format.assets[]`). Both upstream issues remain OPEN.
+
+  Validated: fork-matrix 23/23, typecheck + format clean.
+
+  Pure additive at the wire and at the type level — `COMPATIBLE_ADCP_VERSIONS` extends backward compatibility, no existing strings change.
+
+- dd6cd4f: Bump pinned AdCP version from 3.0.5 to 3.0.6, drain the worked-example storyboard allowlist, and close three round-trip gaps surfaced while running end-to-end against the new fixtures.
+
+  **Spec sync.** AdCP 3.0.6 ships two upstream fixture fixes that close the last storyboard gaps for the worked guaranteed example:
+  - `adcontextprotocol/adcp#3989` — `media_buy_seller/inventory_list_targeting` adds `sandbox: true` to all 5 account blocks. SDK side: `createMediaBuyStore` auto-echo (PR #1424).
+  - `adcontextprotocol/adcp#3990` — `sales_guaranteed/create_media_buy` uses `task_completion.media_buy_id` for `context_outputs.path`. SDK side: runner's `task_completion.<path>` prefix (PR #1426).
+
+  `#1416` (NOT_CANCELLABLE) closed in Phase 4 (`assertMediaBuyTransition` wired into the guaranteed adapter's update path).
+
+  **SDK fixes for the round-trip.** Surfacing 3.0.6's new wire shape against `hello_seller_adapter_guaranteed` exposed three latent SDK gaps:
+  1. `tasks_get` registered only under the underscore name. The buyer-side `TaskExecutor.getTaskStatus` calls the spec's slash form `tasks/get` via `ProtocolClient.callTool`. The framework now registers the tool under both `tasks/get` (spec) and `tasks_get` (legacy snake_case alias) so MCP buyers using the spec name reach the handler. Fixes the `tasks/get poll timed out` failure on every guaranteed HITL flow.
+  2. `tasks_get` input schema accepted only `{account_id}` and rejected the natural-key `{brand, operator, sandbox}` arm — same shape gap that bit `comply_test_controller` in Phase 2. Schema is now the full canonical `AccountReference` (either arm passes; resolvers narrow at dispatch). Top-level `.strict()` preserved.
+  3. `AgentClient` (the public client returned by `multiClient.agent(id)`) didn't expose its underlying `TaskExecutor`. The storyboard runner's `pollTaskCompletion` accesses `client.executor`, which silently returned `undefined` on `AgentClient`, so `canPoll` was always false and the runner fell back to webhook-only racing — which times out for fixtures whose `push_notification_config.url` doesn't address a runner-controlled webhook. Added an `@internal` `executor` getter on `AgentClient` that proxies to the wrapped `SingleAgentClient.executor`.
+
+  **Hello seller-guaranteed adapter** (worked example, end-to-end against 3.0.6 fixtures):
+  - `accounts.resolve(undefined, ctx)` — auth-derived fallback. The framework calls this for tools without an explicit account ref (most notably `tasks/get`); without it, the framework's tenant boundary on tasks/get refuses every poll. The example returns the production singleton account so HITL polling resolves to the same account the original create stamped on the task.
+  - `taskRegistry` hoisted out of the `serve()` factory. A fresh per-request registry would lose every submitted task between create and the buyer's first tasks/get poll.
+  - `createMediaBuy` HITL bypass yields to the buyer's `push_notification_config` — the spec-aligned "I expect HITL" signal. Sandbox-mode + no-push-config still bypasses for the cascade scenarios; sandbox-mode + push-config goes through HITL.
+  - `getMediaBuyDelivery.by_package[]` now includes `pricing_model`, `rate`, `currency` per AdCP 3.0.6's tightened required fields.
+
+  **Allowlists.**
+  - `hello-seller-adapter-guaranteed.test.js` — `EXPECTED_FAILURES = []`. Storyboard suite passes unfiltered against 3.0.6.
+  - `hello-seller-adapter-non-guaranteed.test.js` — `#1415` entry dropped (3.0.6 closes it). `#1416` entry retained with a follow-up note: the SDK helper exists but the non-guaranteed worked example hasn't been migrated to `assertMediaBuyTransition` yet.
+
+- 9800c60: fix(codegen): preserve `asset_type` discriminator on `IndividualImageAsset` / `IndividualVideoAsset` / etc. (closes #1498)
+
+  The format-side asset slot types (`IndividualImageAsset`,
+  `IndividualVideoAsset`, `IndividualAudioAsset`, ...) were collapsing
+  to bare `BaseIndividualAsset` aliases because
+  `json-schema-to-typescript` flattened the schema's
+  `allOf: [{$ref: baseIndividualAsset}]` plus extra
+  `properties.asset_type.const` discriminator. Adopters writing
+  TS-clean code constructing one of these literals without `asset_type`
+  got a runtime `VALIDATION_ERROR` against the wire schema despite the
+  TS compiler being happy.
+
+  This change adds a codegen post-processor
+  (`applyIndividualAssetDiscriminators`) that rewrites the 14
+  `Individual*Asset = BaseIndividualAsset` aliases into discriminated
+  intersections:
+
+  ```ts
+  export type IndividualImageAsset = BaseIndividualAsset & {
+    asset_type: 'image';
+    requirements?: ImageAssetRequirements;
+  };
+  ```
+
+  Now TS catches the missing `asset_type` at compile time, matching
+  the wire-schema requirement.
+
+  Same treatment for `IndividualVideoAsset`, `IndividualAudioAsset`,
+  `IndividualTextAsset`, `IndividualMarkdownAsset`, `IndividualHtmlAsset`,
+  `IndividualCssAsset`, `IndividualJavaScriptAsset`, `IndividualVastAsset`,
+  `IndividualDaastAsset`, `IndividualUrlAsset`, `IndividualWebhookAsset`,
+  `IndividualBriefAsset`, `IndividualCatalogAsset`. The `requirements`
+  field is omitted on `tools.generated.ts` where the per-type
+  `*AssetRequirements` interface isn't redeclared.
+
+  **Compat:** Adopters who previously constructed these literals
+  without `asset_type` will now see a TS error. The wire validator
+  already rejected these at runtime, so the new TS error catches a
+  strictly pre-existing bug at build time. No runtime behavior change.
+
+- ee12ec4: fix(examples): wire `assertMediaBuyTransition` into `hello_seller_adapter_non_guaranteed` (closes #1499)
+
+  The non-guaranteed worked-reference adapter previously had no
+  state-machine enforcement on `update_media_buy` — the cascade
+  scenario `media_buy_seller/invalid_transitions/second_cancel`
+  failed because the adapter accepted a re-cancel instead of
+  rejecting with `NOT_CANCELLABLE`. SDK-side helpers shipped in 6.7
+  (`MEDIA_BUY_TRANSITIONS` + `assertMediaBuyTransition`, closes #1416)
+  but the example didn't wire them.
+
+  This change adds a per-buy `localBuyStatus` Map for paused / canceled
+  states (the mock upstream models pending → active progression but
+  not these terminal/reversible states) and calls
+  `assertMediaBuyTransition` on every cancel/pause path. Matches the
+  pattern already in `hello_seller_adapter_guaranteed`.
+
+  Drops the `adcp-client#1416` mask from the non-guaranteed gate test;
+  the gate now passes the storyboard unfiltered against the full
+  cascade.
+
+  No SDK behavior change — example-only fix.
+
+- 4f822e8: fix(testing/storyboard): symmetric account resolution on `update_media_buy` enricher (closes #1505)
+
+  The storyboard runner's `update_media_buy` enricher was not in
+  `FIXTURE_AWARE_ENRICHERS`, so the generic `{ ...enriched, ...fixture }`
+  merge let storyboard `sample_request.account` override the harness-
+  resolved account. When create_media_buy used a runner-synthesized
+  sandbox account (e.g. `{ brand: 'test.example', operator: 'test.example', sandbox: true }`)
+  and the storyboard's update step authored `account: { brand: 'real.example', operator: '...' }`,
+  the update wrote to the prod partition while create wrote to the
+  sandbox partition. A subsequent `get_media_buys` reading from the
+  sandbox partition (via `context.account`) saw stale create-time
+  targeting_overlay — exactly the failure surfaced by the
+  `media_buy_seller/inventory_list_targeting/get_after_update` cascade
+  step.
+
+  This change adds `update_media_buy` to `FIXTURE_AWARE_ENRICHERS` and
+  rewrites the enricher to spread fixture fields first then force-override
+  `account` to `context.account ?? resolveAccount(options)` — symmetric
+  with the `get_media_buys` / `get_media_buy_delivery` fix in #1487.
+
+  Legacy storyboards without a `sample_request` still fall back to the
+  keyword-based pause / resume / cancel inference; only the fixture-
+  authored path changes.
+
+- 91c1ff8: Pivot from skill-matrix to fork-matrix; collapse `build-*-agent/SKILL.md` files.
+
+  The skill-matrix harness (`scripts/manual-testing/run-skill-matrix.ts` + `agent-skill-storyboard.ts` + `skill-matrix.json`) graded "can a fresh Claude session build an AdCP server from prose in SKILL.md." That's not the workflow real adopters use now that every production specialism has a worked, CI-tested fork target in `examples/hello_*_adapter_*.ts`.
+
+  The fork-matrix is the canonical compliance gate going forward. Each `test/examples/hello-*.test.js` boots the matching reference adapter against a mock-server upstream, runs the storyboard grader, and verifies upstream traffic — the three-gate contract from `docs/guides/EXAMPLE-TEST-CONTRACT.md`. Empirical comparison: skill-matrix v18 ran 1/8 in ~50min with 6 timeouts; fork-matrix runs 23/23 in ~10s.
+
+  **Changes:**
+  - New: `npm run compliance:fork-matrix` — runs every `test/examples/hello-*.test.js` gate.
+  - New: `skills/cross-cutting.md` — shared rules every `build-*` skill points at (idempotency, resolve-then-authorize, auth, signed-requests, ctx_metadata safety, account-resolution presets, webhook operation_id stability).
+  - Collapsed all 8 `build-*-agent/SKILL.md` to fork-target pointers + cross-cutting reference. Net: 6,916 lines deleted across `seller` (1835→83), `creative` (798→80), `signals` (578→70), `governance` (1006→84), `brand-rights` (640→83), `generative-seller` (621→78), `retail-media` (515→78), `si` (410→86); `holdco` light-touched.
+  - Removed: `npm run compliance:skill-matrix`, `npm run compliance:agent-skill`, plus `scripts/manual-testing/run-skill-matrix.ts`, `agent-skill-storyboard.ts`, `skill-matrix.json`.
+  - Updated: `docs/guides/VALIDATE-YOUR-AGENT.md` and `CLAUDE.md` reference fork-matrix.
+
+  **Adopter impact:** If you were running `npm run compliance:skill-matrix`, switch to `npm run compliance:fork-matrix`. The fork-matrix is faster, deterministic, and tests the same compliance question against the workflow adopters actually use (fork → swap upstream → ship).
+
+  **Additive type exports:** `RightUse` and `RightType` are now re-exported from `@adcp/sdk/types` (previously available only via `@adcp/sdk/types/core.generated`, which was not in the package exports map). Pure additive — existing imports keep working.
+
+  **Multi-tenant adapter fixes:** `examples/hello_seller_adapter_multi_tenant.ts` had pre-existing strict-tsc drift — fixed the import path, two `exactOptionalPropertyTypes` mismatches, and added stub `updateRights` / `reviewCreativeApproval` methods to satisfy the `BrandRightsPlatform` interface that grew in #1349. Adapter now passes the strict-tsc gate (`npm run compliance:fork-matrix` 23/23). Governance and brand-rights skills repointed at it as the canonical fork target.
+
+  Tracked at adcp-client#595 (closed by this change). The original "full vs reference-linked vs rules-only" experiment was the right question for the world where Claude built from scratch; in a fork-target world it's measuring noise.
+
+- 0c8008f: fix(conformance): get_media_buys and get_media_buy_delivery enrichers now resolve account via resolveAccount(options)
+
+  Adds both enrichers to FIXTURE_AWARE_ENRICHERS and uses `context.account ?? resolveAccount(options)` for account resolution, matching the pattern already used by create_media_buy. Previously, the generic fixture-authoritative merge let the fixture's raw account block (which may lack sandbox:true) override the harness-resolved account, causing namespace mismatches on the create→get round-trip and resulting in targeting_overlay store misses.
+
+  Fixture fields other than account are preserved via an explicit spread, so storyboards that author filters, status, or pagination fields continue to work.
+
+  Fixes #1487.
+
+- 24dc2a2: Declare output slots in `hello_creative_adapter_*` formats so `build_creative` response keys match declared asset_ids per spec.
+
+  Per `schemas/cache/3.0.5/core/creative-manifest.json:14`: "Each key MUST match an asset_id from the format's assets array." Both worked creative adapters were keying their build_creative output (`assets['serving_tag']` and `assets['tag']` respectively) against asset_ids that **weren't declared** in the format — only input slots were declared (image, headline, script, click_url for the template adapter; nothing at all for the ad-server adapter).
+
+  PE caught this in two rounds of expert review on PR #1508 ("the doc-comment slightly oversells `adopter-defined` relative to creative-manifest.json:14"). This patch closes the drift across both creative adapters:
+  - `examples/hello_creative_adapter_template.ts` — added `outputSlot(t)` helper that returns the right `FormatAsset.{html,javascript,vast,audio}({ asset_id: 'serving_tag', required: false })` based on `template.output_kind`. `templateToFormat` now appends it to the format's `assets[]` alongside the input slots. Tightened the `projectRenderToManifest` doc-comment to reflect that `serving_tag` IS now declared (no longer "adopter-defined diverges from spec").
+  - `examples/hello_creative_adapter_ad_server.ts` — `projectFormat` now declares a single `FormatAsset.html({ asset_id: 'serving_tag', required: false })` output slot on every format (the ad-server adapter always renders to HTML serving tags in this worked example). Adopters whose video formats emit VAST should swap in `FormatAsset.vast(...)` instead. Asset_id aligned with `hello_creative_adapter_template.ts` so adopters across both worked examples see the same contract — the asset_id is declared by the format, not platform-flavored.
+  - `skills/build-creative-agent/SKILL.md` — audio-adopter checklist now includes the `outputSlot` extension as step 2 (was 3 steps; now 4). Each step references the spec source so adopters understand WHY each delta is required.
+
+  Adopters forking either adapter inherit a spec-aligned format declaration. fork-matrix 23/23 still green; typecheck + format clean.
+
+  Pure additive at the wire — formats grow by one asset slot, no existing fields change shape. Adopters whose buyers already work against these formats see one extra entry in `format.assets[]`; the extra entry is `required: false` so input requests don't change.
+
+  **Spec gap filed upstream**: `format.assets[]` doesn't currently distinguish input slots (buyer-provided) from output-only slots (build_creative-produced) — `required: false` is the closest legal expression but understates the constraint. Tracked at [adcontextprotocol/adcp#4021](https://github.com/adcontextprotocol/adcp/issues/4021); when the upstream lands an `output_only` flag or `produced_by` enum, both adapters will adopt it.
+
+- 6dd6e53: Doc + deprecation tidy from PR #1453's expert reviews.
+
+  Three changes, no behavior change:
+  - `docs/proposals/lifecycle-state-and-sandbox-authority.md` — adds an explicit "Trust boundary" section at the top of the cross-implementation story. Names what the boundary IS (resolver-stamped `Account.mode`) and what it is NOT (wire `AccountReference.sandbox`, account-id prefix shape, env vars). Calls out the resolver-discipline gotcha: spreading buyer input into the resolved account effectively moves the trust boundary onto the wire, defeating the framework gate.
+  - `Account.sandbox` (server-side resolved-account interface in `src/lib/server/decisioning/account.ts`) is now `@deprecated` in favor of `Account.mode`. Existing adopters stamping `sandbox: true` continue to work via `getAccountMode`'s legacy fallback. The field will be removed in a future major. Wire-side `AccountReference.sandbox` is unchanged — it's part of AdCP's natural-key disambiguation per the spec's `core/account-ref.json`.
+  - This changeset itself documents the deprecation queue so the next major bump knows what to drop.
+
+  Filed upstream separately: `adcontextprotocol/adcp#4028` (storyboard coverage gap — no scenario exercises comply_test_controller denial against live-mode accounts) and the open question on the protocol-docs `adcp-stack` page about mock-server normative status.
+
+- 0874aa0: Close three single-reviewer prose-polish items deferred from PR #1496 expert review, plus a related sweep on seller adapter format declarations.
+
+  **Cross-cutting anchor links** (`skills/cross-cutting.md`)
+  docs-expert deferred: build-\* skills had no way to deep-link into specific cross-cutting rules, so adopters fetching the file pulled the whole thing for context they didn't need. Added a "Quick reference" TOC at the top mapping each rule to its anchor — skill prose can now link to `../cross-cutting.md#idempotency_key-is-required-on-every-mutating-call` etc. and adopters land on a 5-line block instead of the 73-line file.
+
+  **Specialism subpages "when to read" framing** (`skills/build-seller-agent/SKILL.md`)
+  docs-expert deferred: the seven `specialisms/sales-*.md` bullets in the seller skill said _what's in the subpage_ but not _when an adopter needs to read it_ — so adopters skipped the bullets when triaging a fresh build. Reframed each bullet as `specialism → when to read → what's in it`. Audience: a publisher engineer cold-reading the skill now lands on the right subpage in one pass.
+
+  **`signal-owned` deletion-fork seam list** (`skills/build-signals-agent/SKILL.md`)
+  dx-expert deferred: the `signal-owned` row in the fork-target table told adopters to "Fork the marketplace adapter; collapse the multi-provider seed" with zero recipe for what "collapse" meant. A 1P data team at a retailer reading this cold couldn't act. Added a "What to delete if you're single-specialism `signal-owned`" block naming concrete symbols: replace the multi-provider `UpstreamCohort` seed, strip the `(data_provider_domain, data_provider_id)` filter paths, set `signal_type: 'owned'`, drop the marketplace-discovery sub-scenario. Plus a "Keep" list so adopters don't accidentally delete tenant isolation. Mirrors the convergent fix from PR #1496 for governance + brand-rights skills.
+
+  **Seller adapter format slot declaration** (`examples/hello_seller_adapter_non_guaranteed.ts`)
+  Spotted while sweeping for related drift: the seller's `listCreativeFormats` returned formats with no `assets[]` declarations at all, so buyers calling `sync_creatives` had no spec-aligned signal for what asset_id slots to key their `creative_manifest.assets` map against (per `creative-manifest.json:14`). Added input slots — `image` + `click_url` for display formats, `video` + `click_url` for video formats — using the same `FormatAsset.{image,video,url}` builder pattern as the creative adapters from PR #1511. Pure additive; existing buyer flows don't change.
+
+  Validated: fork-matrix 23/23, typecheck + format clean.
+
+- 5118d4a: Two follow-ups from the PR #1515 expert review:
+
+  **SHAPE-GOTCHAS §7 — `signal_type: marketplace` vs `owned` vs `custom`** (`skills/SHAPE-GOTCHAS.md`)
+
+  dx-expert + docs-expert both flagged that the `signal_type` discrimination clarification appeared twice in `skills/build-signals-agent/SKILL.md` (~30 lines apart) and was a known footgun better captured as a SHAPE-GOTCHAS entry than skill-prose repetition. Added entry §7 with a decision table covering the three values, the spec definitions (per `schemas/cache/3.0.5/enums/signal-catalog-type.json`), and the most common adopter mistake — first-party data agents mis-classifying their segments as `custom` when they have a standing data asset behind them (it's `owned`). Replaced both inline clarifications in the signals SKILL with pointers to §7.
+
+  **Build-\* skills deep-link cross-cutting.md anchors** (`skills/build-*-agent/SKILL.md`)
+
+  docs-expert deferred from #1515: build-_ skills had bare `[../cross-cutting.md](../cross-cutting.md)` references with no per-rule deep-links, so adopters fetching the file pulled the whole 73-line file even when only one rule was relevant. Each build-_ skill's "Cross-cutting rules" section now lists the high-traffic rules for that skill domain with anchor links to the specific rule (e.g., the seller skill links `[idempotency_key](../cross-cutting.md#idempotency_key-is-required-on-every-mutating-call)` directly). Adopters can land on a 5-line block instead of the full file.
+
+  Eight skills updated: seller, creative, signals, governance, brand-rights, generative-seller, retail-media, si, holdco. Each surfaces the 3-5 rules most relevant to that adopter persona; the bare cross-cutting.md link is preserved as the "read it once cold" pointer.
+
+  Validated: fork-matrix 23/23, typecheck + format clean.
+
 ## 6.8.0
 
 ### Minor Changes
