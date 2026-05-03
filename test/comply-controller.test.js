@@ -34,10 +34,7 @@ describe('createComplyController — list_scenarios', () => {
     });
     const result = await controller.handleRaw({ scenario: 'list_scenarios' });
     assert.strictEqual(result.success, true);
-    assert.deepStrictEqual([...result.scenarios].sort(), [
-      'force_create_media_buy_arm',
-      'force_task_completion',
-    ]);
+    assert.deepStrictEqual([...result.scenarios].sort(), ['force_create_media_buy_arm', 'force_task_completion']);
   });
 });
 
