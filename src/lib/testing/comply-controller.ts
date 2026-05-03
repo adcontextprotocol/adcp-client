@@ -54,6 +54,7 @@ import {
   type ControllerScenario,
   type SeedFixtureCache,
   type TestControllerStore,
+  type UpstreamTrafficSuccessResponse,
 } from '../server/test-controller';
 import { getSdkServer, type AdcpServer } from '../server/adcp-server';
 import type {
@@ -193,6 +194,43 @@ export type SimulateAdapter<P> = (
   ctx: ComplyControllerContext
 ) => Promise<SimulationSuccess> | SimulationSuccess;
 
+/** Params for the `query_upstream_traffic` extension scenario (spec PR
+ * adcontextprotocol/adcp#3816). All fields optional; the recorder
+ * filters by these. */
+export interface QueryUpstreamTrafficParams {
+  since_timestamp?: string;
+  endpoint_pattern?: string;
+  limit?: number;
+}
+
+/** Adapter for the `query_upstream_traffic` extension scenario. Returns
+ * the recorded upstream HTTP calls produced during the current
+ * storyboard step — the runner consults this for `check: upstream_traffic`
+ * validations. Adopters typically delegate to the reference recorder
+ * middleware shipped at `@adcp/sdk/upstream-recorder`:
+ *
+ * ```ts
+ * complyTest: {
+ *   queryUpstreamTraffic: (params, _ctx) => {
+ *     const result = recorder.query({
+ *       principal: RECORDER_PRINCIPAL,
+ *       ...(params.since_timestamp !== undefined && { sinceTimestamp: params.since_timestamp }),
+ *       ...(params.endpoint_pattern !== undefined && { endpointPattern: params.endpoint_pattern }),
+ *       ...(params.limit !== undefined && { limit: params.limit }),
+ *     });
+ *     return toQueryUpstreamTrafficResponse(result);
+ *   },
+ * }
+ * ```
+ *
+ * The principal MUST match between record-time (`runWithPrincipal`) and
+ * query-time, or the recorder returns zero rows per cross-tenant
+ * isolation. */
+export type QueryUpstreamTrafficAdapter = (
+  params: QueryUpstreamTrafficParams,
+  ctx: ComplyControllerContext
+) => Promise<UpstreamTrafficSuccessResponse> | UpstreamTrafficSuccessResponse;
+
 // ────────────────────────────────────────────────────────────
 // Controller config
 // ────────────────────────────────────────────────────────────
@@ -247,6 +285,16 @@ export interface ComplyControllerConfig {
     delivery?: SimulateAdapter<SimulateDeliveryParams>;
     budget_spend?: SimulateAdapter<SimulateBudgetSpendParams>;
   };
+
+  /**
+   * `query_upstream_traffic` adapter (spec PR adcontextprotocol/adcp#3816).
+   * Returns the recorded upstream HTTP calls produced during the current
+   * storyboard step so the runner can grade `check: upstream_traffic`
+   * validations. Adopters typically wire the reference recorder from
+   * `@adcp/sdk/upstream-recorder`. When omitted, the scenario reports as
+   * `not_applicable` per the runner's normal capability discovery.
+   */
+  queryUpstreamTraffic?: QueryUpstreamTrafficAdapter;
 
   /** Override the seed idempotency cache (e.g., to scope by tenant or
    * persist across restarts). Defaults to an unbounded in-memory cache. */
@@ -335,7 +383,7 @@ function controllerError(code: ControllerError['error'], detail: string): Contro
  * `handleTestControllerRequest` returns `UNKNOWN_SCENARIO` for the rest. */
 function buildStore(config: ComplyControllerConfig, ctx: ComplyControllerContext): TestControllerStore {
   const store: TestControllerStore = {};
-  const { seed, force, simulate } = config;
+  const { seed, force, simulate, queryUpstreamTraffic } = config;
 
   if (seed?.product) {
     store.seedProduct = async (productId, fixture) => {
@@ -403,6 +451,10 @@ function buildStore(config: ComplyControllerConfig, ctx: ComplyControllerContext
     store.simulateBudgetSpend = params => Promise.resolve(simulate.budget_spend!(params, ctx));
   }
 
+  if (queryUpstreamTraffic) {
+    store.queryUpstreamTraffic = params => Promise.resolve(queryUpstreamTraffic(params, ctx));
+  }
+
   return store;
 }
 
@@ -418,6 +470,14 @@ function advertisedScenarios(config: ComplyControllerConfig): ControllerScenario
   if (config.force?.task_completion) out.push(CONTROLLER_SCENARIOS.FORCE_TASK_COMPLETION);
   if (config.simulate?.delivery) out.push(CONTROLLER_SCENARIOS.SIMULATE_DELIVERY);
   if (config.simulate?.budget_spend) out.push(CONTROLLER_SCENARIOS.SIMULATE_BUDGET_SPEND);
+  // `query_upstream_traffic` is an extension scenario (spec PR
+  // adcontextprotocol/adcp#3816) — not yet in the schema cache's
+  // `ControllerScenario` enum, but the dispatcher accepts it under
+  // `TOOL_INPUT_SHAPE.scenario: z.string()`'s open-extension pattern.
+  // Cast through unknown until the schema lands, then this becomes a
+  // `CONTROLLER_SCENARIOS.QUERY_UPSTREAM_TRAFFIC` reference like the
+  // others above.
+  if (config.queryUpstreamTraffic) out.push('query_upstream_traffic' as unknown as ControllerScenario);
   return out;
 }
 
