@@ -173,22 +173,25 @@ describe('createAdcpServerFromPlatform — sandbox-authority gate (resolver path
   });
 });
 
-describe('createAdcpServerFromPlatform — sandbox-authority gate (context.sandbox path)', () => {
+describe('createAdcpServerFromPlatform — sandbox-authority gate (accountRef.sandbox path)', () => {
+  // Spec-defined fallback at the AdCP wire layer: AccountReference.sandbox
+  // (per schemas/cache/3.0.5/core/account-ref.json). Only honored when the
+  // resolver returns `null` — never overrides a resolved live account.
   beforeEach(() => {
     delete process.env.ADCP_SANDBOX;
     __resetObservedAccountModes();
   });
 
-  it('admits when no account resolves and context.sandbox === true', async () => {
+  it('admits when no account resolves and accountRef.sandbox === true', async () => {
     const server = buildServer(async () => null);
 
-    const result = await callForceCreative(server, { context: { sandbox: true } });
+    const result = await callForceCreative(server, { account: { sandbox: true } });
 
     assert.notStrictEqual(result.isError, true);
     assert.strictEqual(result.structuredContent.success, true);
   });
 
-  it('denies when no account resolves and context.sandbox is absent', async () => {
+  it('denies when no account resolves and accountRef.sandbox is absent', async () => {
     const server = buildServer(async () => null);
 
     const result = await callForceCreative(server);
@@ -197,9 +200,10 @@ describe('createAdcpServerFromPlatform — sandbox-authority gate (context.sandb
     assert.strictEqual(result.structuredContent.error, 'FORBIDDEN');
   });
 
-  it('does NOT admit on context.sandbox when an account resolved as live', async () => {
-    // context.sandbox is a fallback for the *unresolved* path. Once the
-    // resolver names the account, the resolver wins.
+  it('does NOT admit on accountRef.sandbox when the resolver names a live account', async () => {
+    // The wire flag is a fallback for the *unresolved* path. Once the
+    // resolver names the account, the resolver wins and the buyer's wire
+    // claim is ignored.
     const server = buildServer(async ref => ({
       id: ref?.account_id ?? 'live_acc',
       mode: 'live',
@@ -208,8 +212,7 @@ describe('createAdcpServerFromPlatform — sandbox-authority gate (context.sandb
     }));
 
     const result = await callForceCreative(server, {
-      account: { account_id: 'live_acc' },
-      context: { sandbox: true },
+      account: { account_id: 'live_acc', sandbox: true },
     });
 
     assert.strictEqual(result.isError, true);
@@ -257,6 +260,28 @@ describe('createAdcpServerFromPlatform — sandbox-authority gate (env fallback)
 
     await assert.rejects(
       () => callForceCreative(server, { account: { account_id: 'live_1' } }),
+      err => /ADCP_SANDBOX=1 is set but this process has resolved at least one live-mode account/.test(err.message)
+    );
+  });
+
+  it('FAILS CLOSED even when the buyer also sets accountRef.sandbox=true alongside ADCP_SANDBOX=1 (no bypass)', async () => {
+    // Regression for the code-reviewer-flagged bypass: with env=1, resolver
+    // returning mode='live', and the buyer adding `account.sandbox: true` on
+    // the wire, an earlier guard predicate that checked `!contextSandbox` (or
+    // any wire-claim suppression) would have admitted the live account via
+    // the env-only signal. The fixed predicate (`wouldAdmitOnlyViaEnv`)
+    // ignores the wire claim because the resolver's live answer pins
+    // `resolvedAccount != null`, so the unresolved-path admit is impossible.
+    process.env.ADCP_SANDBOX = '1';
+    const server = buildServer(async ref => ({
+      id: ref?.account_id ?? 'live_1',
+      mode: 'live',
+      ctx_metadata: {},
+      authInfo: { kind: 'api_key' },
+    }));
+
+    await assert.rejects(
+      () => callForceCreative(server, { account: { account_id: 'live_1', sandbox: true } }),
       err => /ADCP_SANDBOX=1 is set but this process has resolved at least one live-mode account/.test(err.message)
     );
   });

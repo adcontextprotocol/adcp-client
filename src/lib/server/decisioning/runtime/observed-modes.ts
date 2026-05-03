@@ -56,11 +56,25 @@ export function hasObservedLiveMode(): boolean {
  * so a test that intentionally resolves a live account doesn't leak
  * the observation into subsequent tests in the same process.
  *
- * Not part of the public API. Adopter code MUST NOT call this — the
- * production semantics are explicitly process-scoped.
+ * Refuses to clear when `NODE_ENV` is anything other than `test` or
+ * `development`. The observed-modes set is intentionally process-scoped
+ * — clearing it in production would re-arm the env-fallback admit path
+ * for live principals already seen, defeating the whole point of the
+ * fail-closed guard. The allowlist (rather than `!= 'production'`)
+ * matches the project's broader `feedback_node_env_allowlist.md` policy.
+ *
+ * Not part of the public API. Adopter code MUST NOT call this.
  *
  * @internal
  */
 export function __resetObservedAccountModes(): void {
+  const env = process.env.NODE_ENV;
+  if (env !== 'test' && env !== 'development') {
+    throw new Error(
+      `__resetObservedAccountModes is a test seam; refusing to clear observed account modes ` +
+        `in NODE_ENV=${env ?? '<unset>'}. The set is process-scoped to keep the comply ` +
+        `controller's env-fallback fail-closed guard armed once a live account has been seen.`
+    );
+  }
   observed.clear();
 }

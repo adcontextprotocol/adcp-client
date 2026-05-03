@@ -1403,12 +1403,21 @@ export function createAdcpServerFromPlatform<P extends DecisioningPlatform<any, 
       // Permit a top-level `account` field on the wire so the gate can read
       // the buyer's account ref. The canonical AdCP shape strips it (account
       // routes through `context.account`), but adopters' storyboard fixtures
-      // commonly send it at the top level — accept either.
+      // commonly send it at the top level — `TOOL_INPUT_SHAPE`'s JSDoc in
+      // `src/lib/server/test-controller.ts` documents this extension as the
+      // supported escape hatch. `.strict()` so unknown keys fail validation
+      // rather than `passthrough`-ing into adopter resolvers (a buyer could
+      // otherwise stuff arbitrary payloads into the account ref). `sandbox`
+      // is the spec-defined fallback signal on `AccountReference` per
+      // `schemas/cache/3.0.5/core/account-ref.json`.
       const gatedInputSchema = {
         ...controller.toolDefinition.inputSchema,
         account: z
-          .object({ account_id: z.string().min(1).optional() })
-          .passthrough()
+          .object({
+            account_id: z.string().min(1).optional(),
+            sandbox: z.boolean().optional(),
+          })
+          .strict()
           .optional(),
       };
 
@@ -1437,7 +1446,7 @@ export function createAdcpServerFromPlatform<P extends DecisioningPlatform<any, 
               toolName: 'comply_test_controller',
             });
           } catch {
-            // Resolver failures fall through to the context / env fallbacks.
+            // Resolver failures fall through to the wire-ref / env fallbacks.
             // Treat as "no account resolved" — fail-closed by default unless a
             // fallback admits.
           }
@@ -1447,16 +1456,23 @@ export function createAdcpServerFromPlatform<P extends DecisioningPlatform<any, 
           recordResolvedAccountMode(resolvedAccount);
 
           const accountIsSandbox = resolvedAccount != null && isSandboxOrMockAccount(resolvedAccount);
-          const contextSandbox = (input.context as { sandbox?: unknown } | undefined)?.sandbox === true;
+          // Spec-defined fallback for the unresolved-account path: read
+          // `sandbox: true` off the wire `AccountReference` (per
+          // `core/account-ref.json`). Only consulted when the resolver
+          // returned `null` — if the resolver names the account, the
+          // resolver wins. The buyer's wire claim never overrides a
+          // resolved live account.
+          const refSandbox = (accountRef as { sandbox?: unknown } | undefined)?.sandbox === true;
           const envSandbox = process.env.ADCP_SANDBOX === '1';
 
-          // Fail-closed guard on the env fallback. If we'd admit purely on
-          // ADCP_SANDBOX=1 (no sandbox/mock account, no context.sandbox), AND
-          // this process has resolved an explicit `mode: 'live'` account from
-          // the resolver at any point, the env var is misconfigured. Refuse
-          // loudly so operators notice, instead of silently downgrading the
-          // gate for live principals.
-          if (envSandbox && !accountIsSandbox && !contextSandbox && hasObservedLiveMode()) {
+          const wouldAdmitOnlyViaEnv = envSandbox && !accountIsSandbox && !(resolvedAccount == null && refSandbox);
+
+          // Fail-closed guard on the env fallback. If the env var is the only
+          // signal that would admit AND this process has ever resolved an
+          // explicit `mode: 'live'` account from the resolver, the env is
+          // misconfigured. Refuse loudly so operators notice, instead of
+          // silently downgrading the gate for live principals.
+          if (wouldAdmitOnlyViaEnv && hasObservedLiveMode()) {
             throw new Error(
               'comply_test_controller: ADCP_SANDBOX=1 is set but this process has resolved at least one ' +
                 'live-mode account from platform.accounts.resolve. Remove ADCP_SANDBOX from your prod ' +
@@ -1465,7 +1481,7 @@ export function createAdcpServerFromPlatform<P extends DecisioningPlatform<any, 
             );
           }
 
-          const allowed = accountIsSandbox || (resolvedAccount == null && contextSandbox) || envSandbox;
+          const allowed = accountIsSandbox || (resolvedAccount == null && refSandbox) || envSandbox;
 
           if (!allowed) {
             return toMcpResponse({
