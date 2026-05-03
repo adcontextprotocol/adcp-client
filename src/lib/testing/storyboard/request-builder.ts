@@ -73,6 +73,8 @@ const FALLBACK_CALLER_AGENT_URL = 'https://e2e-orchestrator.adcontextprotocol.or
 const FIXTURE_AWARE_ENRICHERS = new Set<string>([
   'create_media_buy', // merges discovery-derived product_id / pricing_option_id INTO fixture packages[0]
   'comply_test_controller', // forces account.sandbox: true regardless of fixture
+  'get_media_buys', // resolves account via resolveAccount(options) so sandbox routing matches create_media_buy
+  'get_media_buy_delivery', // resolves account via resolveAccount(options) so sandbox routing matches create_media_buy
 ]);
 
 /**
@@ -317,20 +319,33 @@ const REQUEST_ENRICHERS: Record<string, RequestEnricher> = {
     return request;
   },
 
-  get_media_buys(_step, context, _options) {
-    // media_buy_ids is optional per the request schema; omitting it returns
-    // the broad/paginated set. Inject only when context carries a real ID
-    // so storyboards exercising the list path don't reach the agent with a
-    // synthesized lookup that filters out every result.
-    if (context.media_buy_id == null) return {};
-    return { media_buy_ids: [context.media_buy_id] };
+  get_media_buys(step, context, options) {
+    // Spread fixture fields so storyboards can author filters, status, pagination, etc.
+    // account is always overridden by the harness-resolved value so sandbox routing
+    // matches create_media_buy's namespace on every round-trip.
+    const fixtureFields = step.sample_request
+      ? (injectContext({ ...(step.sample_request as Record<string, unknown>) }, context) as Record<string, unknown>)
+      : {};
+    const result: Record<string, unknown> = { ...fixtureFields };
+    result.account = context.account ?? resolveAccount(options);
+    if (context.media_buy_id != null && result.media_buy_ids === undefined) {
+      result.media_buy_ids = [context.media_buy_id];
+    }
+    return result;
   },
 
-  get_media_buy_delivery(_step, context, _options) {
-    // Same omission rule as get_media_buys — media_buy_ids is optional on
-    // get_media_buy_delivery's request schema.
-    if (context.media_buy_id == null) return {};
-    return { media_buy_ids: [context.media_buy_id] };
+  get_media_buy_delivery(step, context, options) {
+    // Same account-resolution rule as get_media_buys — fixture fields preserved,
+    // account overridden by harness so sandbox routing matches create_media_buy.
+    const fixtureFields = step.sample_request
+      ? (injectContext({ ...(step.sample_request as Record<string, unknown>) }, context) as Record<string, unknown>)
+      : {};
+    const result: Record<string, unknown> = { ...fixtureFields };
+    result.account = context.account ?? resolveAccount(options);
+    if (context.media_buy_id != null && result.media_buy_ids === undefined) {
+      result.media_buy_ids = [context.media_buy_id];
+    }
+    return result;
   },
 
   // provide_performance_feedback intentionally has no builder — storyboard
