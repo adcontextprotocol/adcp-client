@@ -1449,6 +1449,63 @@ export function applyKnownJstsAliases(typeDefinitions: string): string {
 }
 
 /**
+ * Format-side asset slot types (`IndividualImageAsset`, `IndividualVideoAsset`,
+ * etc.) collapse to bare `BaseIndividualAsset` aliases under
+ * `json-schema-to-typescript`. The schema spec uses
+ * `allOf: [{$ref: baseIndividualAsset}]` plus extra `properties` (notably
+ * `asset_type: { const: "<type>" }` and `requirements: {$ref: ...}`); jsts's
+ * union resolver flattens to the base shape and drops the discriminator.
+ *
+ * The wire schema requires `asset_type` on every individual asset entry —
+ * adopters writing TS-clean code that constructs an `IndividualImageAsset`
+ * literal without `asset_type` get a runtime `VALIDATION_ERROR` against the
+ * spec. We post-process the generated aliases into discriminated intersections
+ * so TS catches the missing field at compile time.
+ *
+ * Tracked: adcp-client#1498.
+ */
+const INDIVIDUAL_ASSET_DISCRIMINATORS: Array<{ name: string; assetType: string; requirementsType?: string }> = [
+  { name: 'IndividualImageAsset', assetType: 'image', requirementsType: 'ImageAssetRequirements' },
+  { name: 'IndividualVideoAsset', assetType: 'video', requirementsType: 'VideoAssetRequirements' },
+  { name: 'IndividualAudioAsset', assetType: 'audio', requirementsType: 'AudioAssetRequirements' },
+  { name: 'IndividualTextAsset', assetType: 'text', requirementsType: 'TextAssetRequirements' },
+  { name: 'IndividualMarkdownAsset', assetType: 'markdown', requirementsType: 'MarkdownAssetRequirements' },
+  { name: 'IndividualHtmlAsset', assetType: 'html', requirementsType: 'HTMLAssetRequirements' },
+  { name: 'IndividualCssAsset', assetType: 'css', requirementsType: 'CSSAssetRequirements' },
+  { name: 'IndividualJavaScriptAsset', assetType: 'javascript', requirementsType: 'JavaScriptAssetRequirements' },
+  { name: 'IndividualVastAsset', assetType: 'vast', requirementsType: 'VASTAssetRequirements' },
+  { name: 'IndividualDaastAsset', assetType: 'daast', requirementsType: 'DAASTAssetRequirements' },
+  { name: 'IndividualUrlAsset', assetType: 'url', requirementsType: 'URLAssetRequirements' },
+  { name: 'IndividualWebhookAsset', assetType: 'webhook', requirementsType: 'WebhookAssetRequirements' },
+  { name: 'IndividualBriefAsset', assetType: 'brief' },
+  { name: 'IndividualCatalogAsset', assetType: 'catalog' },
+];
+
+export function applyIndividualAssetDiscriminators(typeDefinitions: string): string {
+  let result = typeDefinitions;
+  let rewritten = 0;
+  for (const entry of INDIVIDUAL_ASSET_DISCRIMINATORS) {
+    const aliasPattern = new RegExp(`^export type ${entry.name} = BaseIndividualAsset;$`, 'm');
+    if (!aliasPattern.test(result)) continue;
+    // Only emit `requirements?:` if the requirements type is declared in this
+    // same file — the tools.generated.ts artifact reuses BaseIndividualAsset
+    // but does not redeclare the *AssetRequirements interfaces, so referencing
+    // them there triggers TS2304.
+    const reqsAvailable =
+      entry.requirementsType !== undefined &&
+      new RegExp(`^export interface ${entry.requirementsType}\\b`, 'm').test(result);
+    const reqsField = reqsAvailable ? `\n  requirements?: ${entry.requirementsType};` : '';
+    const replacement = `export type ${entry.name} = BaseIndividualAsset & {\n  asset_type: '${entry.assetType}';${reqsField}\n};`;
+    result = result.replace(aliasPattern, replacement);
+    rewritten++;
+  }
+  if (rewritten > 0) {
+    console.log(`🔀 Restored asset_type discriminator on ${rewritten} Individual*Asset alias(es)`);
+  }
+  return result;
+}
+
+/**
  * Convert method name to proper type name, preserving acronyms.
  * Examples:
  *   siGetOffering -> SIGetOffering
@@ -1962,14 +2019,16 @@ async function generateTypes() {
   // clean bodies (without the { [k: string]: unknown } intersection arms that only appear
   // on some compile passes of the same schema). After byte-identity dedupe, alias the
   // residual jsts under-resolution artifacts (*Asset1, AssetVariant1, CreativeAsset1) —
-  // see applyKnownJstsAliases for the rationale.
-  const processedCoreTypes = fixTypedIndexSignatures(
-    applyKnownJstsAliases(removeNumberedTypeDuplicates(removeIndexSignatureTypes(coreTypes)))
+  // see applyKnownJstsAliases for the rationale. Finally, restore the asset_type
+  // discriminator on Individual*Asset slot aliases that jsts collapses (#1498).
+  const processedCoreTypes = applyIndividualAssetDiscriminators(
+    fixTypedIndexSignatures(applyKnownJstsAliases(removeNumberedTypeDuplicates(removeIndexSignatureTypes(coreTypes))))
   );
   const coreChanged = writeFileIfChanged(coreTypesPath, processedCoreTypes);
 
   const toolTypesPath = path.join(libOutputDir, 'tools.generated.ts');
-  const toolsChanged = writeFileIfChanged(toolTypesPath, toolTypes);
+  const processedToolTypes = applyIndividualAssetDiscriminators(toolTypes);
+  const toolsChanged = writeFileIfChanged(toolTypesPath, processedToolTypes);
 
   const agentClassesPath = path.join(agentsOutputDir, 'index.generated.ts');
   const agentsChanged = writeFileIfChanged(agentClassesPath, agentClasses);
