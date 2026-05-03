@@ -83,61 +83,12 @@ describe('createRosterAccountStore', () => {
       assert.equal(lookupCalled, false, 'lookup should not be called for brand-arm refs');
     });
 
-    it('returns null when ref is absent and no resolveWithoutRef is configured', async () => {
+    it('returns null when ref is absent', async () => {
       const store = createRosterAccountStore({
         lookup: () => undefined,
         toAccount: () => ({ id: 'x', name: 'x', status: 'active', ctx_metadata: {} }),
       });
       assert.equal(await store.resolve(undefined), null);
-    });
-
-    it('uses resolveWithoutRef when ref is absent (returns Account directly, bypasses toAccount)', async () => {
-      let toAccountCalled = false;
-      const store = createRosterAccountStore({
-        lookup: () => undefined,
-        toAccount: row => {
-          toAccountCalled = true;
-          return { id: row.id, name: row.id, status: 'active', ctx_metadata: {} };
-        },
-        resolveWithoutRef: () => ({
-          id: '__publisher__',
-          name: 'Publisher',
-          status: 'active',
-          ctx_metadata: { synthetic: true },
-        }),
-      });
-
-      const account = await store.resolve(undefined, { authInfo: { kind: 'public' } });
-      assert.ok(account);
-      assert.equal(account.id, '__publisher__');
-      assert.equal(account.name, 'Publisher');
-      assert.deepEqual(account.ctx_metadata, { synthetic: true });
-      assert.equal(toAccountCalled, false, 'toAccount must not be called for resolveWithoutRef');
-    });
-
-    it('returns null when resolveWithoutRef returns undefined', async () => {
-      const store = createRosterAccountStore({
-        lookup: () => undefined,
-        toAccount: () => ({ id: 'x', name: 'x', status: 'active', ctx_metadata: {} }),
-        resolveWithoutRef: () => undefined,
-      });
-      assert.equal(await store.resolve(undefined), null);
-    });
-
-    it('passes ctx through to resolveWithoutRef', async () => {
-      let seenCtx;
-      const ctx = { authInfo: { kind: 'public' }, toolName: 'list_creative_formats' };
-      const store = createRosterAccountStore({
-        lookup: () => undefined,
-        toAccount: row => ({ id: row.id, name: row.id, status: 'active', ctx_metadata: {} }),
-        resolveWithoutRef: c => {
-          seenCtx = c;
-          return { id: 'singleton', name: 'Singleton', status: 'active', ctx_metadata: {} };
-        },
-      });
-
-      await store.resolve(undefined, ctx);
-      assert.equal(seenCtx, ctx);
     });
 
     it('passes ctx through to lookup and toAccount', async () => {
@@ -301,6 +252,56 @@ describe('createRosterAccountStore', () => {
       const refreshed = await accounts.refreshToken(account, 'auth_required');
       assert.equal(refreshed.token, 'fresh');
       assert.deepEqual(refreshCalls, ['a1']);
+    });
+
+    it('singleton fallback for ref-less calls — wrap resolve', async () => {
+      const base = createRosterAccountStore({
+        lookup: id => ({ id, label: id.toUpperCase() }),
+        toAccount: row => ({ id: row.id, name: row.label, status: 'active', ctx_metadata: { real: true } }),
+      });
+
+      const synth = { id: '__publisher__', name: 'Publisher', status: 'active', ctx_metadata: { synthetic: true } };
+      const accounts = {
+        ...base,
+        resolve: async (ref, ctx) => {
+          if (ref === undefined) return synth;
+          return base.resolve(ref, ctx);
+        },
+      };
+
+      const refLess = await accounts.resolve(undefined);
+      assert.equal(refLess.id, '__publisher__');
+      assert.deepEqual(refLess.ctx_metadata, { synthetic: true });
+
+      const real = await accounts.resolve({ account_id: 'a1' });
+      assert.equal(real.id, 'a1');
+      assert.equal(real.name, 'A1');
+      assert.deepEqual(real.ctx_metadata, { real: true });
+    });
+
+    it('auth-derived fallback for ref-less calls — wrap resolve and reuse base.resolve', async () => {
+      const base = createRosterAccountStore({
+        lookup: id => (id === 'tenant-of-buyer-7' ? { id, label: 'Buyer 7' } : undefined),
+        toAccount: row => ({ id: row.id, name: row.label, status: 'active', ctx_metadata: {} }),
+      });
+
+      const accounts = {
+        ...base,
+        resolve: async (ref, ctx) => {
+          if (ref === undefined) {
+            const cred = ctx?.authInfo?.credential;
+            const derivedId = cred?.kind === 'oauth' ? `tenant-of-${cred.client_id}` : undefined;
+            return derivedId ? base.resolve({ account_id: derivedId }, ctx) : null;
+          }
+          return base.resolve(ref, ctx);
+        },
+      };
+
+      const ctx = { authInfo: { kind: 'oauth', credential: { kind: 'oauth', client_id: 'buyer-7', scopes: [] } } };
+      const account = await accounts.resolve(undefined, ctx);
+      assert.ok(account);
+      assert.equal(account.id, 'tenant-of-buyer-7');
+      assert.equal(account.name, 'Buyer 7');
     });
   });
 });
