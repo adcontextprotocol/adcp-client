@@ -67,9 +67,12 @@ The framework calls `accounts.resolve(ref, ctx)` once per request, and hub adapt
 All three live in `createTenantStore<TTenant, TCtxMeta>` (`@adcp/sdk/server`). Callbacks the adopter provides; gating logic the SDK owns:
 
 ```ts
+import { createTenantStore, narrowAccountRef } from '@adcp/sdk/server';
+
 accounts: AccountStore<TenantMeta> = createTenantStore<TenantState, TenantMeta>({
   resolveByRef: ref => {  // Path 1 — operator (or account_id) on the wire
-    const tenantId = OPERATOR_TO_TENANT.get((ref as { operator?: string }).operator ?? '');
+    const r = narrowAccountRef(ref);
+    const tenantId = OPERATOR_TO_TENANT.get(r.operator ?? '');
     return tenantId ? TENANTS.get(tenantId) ?? null : null;
   },
   resolveFromAuth: ctx => {  // Path 2 — derive from authenticated buyer agent
@@ -77,14 +80,17 @@ accounts: AccountStore<TenantMeta> = createTenantStore<TenantState, TenantMeta>(
     return tenantId ? TENANTS.get(tenantId) ?? null : null;
   },
   tenantId: tenant => tenant.id,  // stable equality for the gate (NOT reference)
-  tenantToAccount: (tenant, ref, ctx) => ({  // project tenant + ref → Account
-    id: tenant.id,
-    name: `${tenant.display_name} (${(ref as any)?.operator ?? ctx?.agent?.agent_url})`,
-    status: 'active',
-    operator: (ref as any)?.operator ?? ctx?.agent?.agent_url ?? 'derived',
-    ctx_metadata: { tenant_id: tenant.id, display_name: tenant.display_name },
-    sandbox: (ref as any)?.sandbox ?? false,  // SWAP: route to your sandbox backend
-  }),
+  tenantToAccount: (tenant, ref, ctx) => {  // project tenant + ref → Account
+    const r = narrowAccountRef(ref);
+    return {
+      id: tenant.id,
+      name: `${tenant.display_name} (${r?.operator ?? ctx?.agent?.agent_url})`,
+      status: 'active',
+      operator: r?.operator ?? ctx?.agent?.agent_url ?? 'derived',
+      ctx_metadata: { tenant_id: tenant.id, display_name: tenant.display_name },
+      sandbox: r?.sandbox ?? false,  // SWAP: route to your sandbox backend on this flag
+    };
+  },
   upsertRow: (tenant, ref, ctx) => {  // sync_accounts — only in-tenant entries reach here
     /* row-level upsert under tenant transaction; gate already filtered */
     return { /* SyncAccountsResultRow */ };

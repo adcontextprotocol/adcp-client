@@ -5,6 +5,10 @@
  * don't) and bakes in the tenant-isolation gate that adopters historically
  * had to write — and silently fail to write — by hand.
  *
+ * Full walkthrough with same-tenant invariant + production caveats:
+ * `skills/build-holdco-agent/SKILL.md`. Worked example:
+ * `examples/hello_seller_adapter_multi_tenant.ts`.
+ *
  * Status: Preview / 6.x.
  *
  * @public
@@ -247,17 +251,51 @@ export function createTenantStore<TTenant, TCtxMeta = Record<string, unknown>>(
 }
 
 /**
- * `AccountReference` is a discriminated union (`{account_id} | {brand, operator}`).
- * The helper's failure-row builders read fields across both arms — schema
- * validation upstream guarantees one arm is populated, so widening to
- * "all-optional" here is safe and avoids per-arm casts at four call sites.
+ * Read fields from an `AccountReference` without per-arm narrowing. The wire
+ * type is a discriminated union (`{account_id} | {brand, operator}`) — schema
+ * validation upstream guarantees one arm is populated, so widening to an
+ * all-optional record is safe and saves a `'in' ref ? ref.x : fallback` dance
+ * inside `tenantToAccount` / `resolveByRef` / failed-row builders.
+ *
+ * Use inside adopter `createTenantStore({...})` callbacks to read
+ * `ref.operator`, `ref.brand?.domain`, or `ref.account_id` without inline
+ * casts. This is the same helper the framework uses internally for its
+ * `PERMISSION_DENIED` / `ACCOUNT_NOT_FOUND` row construction.
+ *
+ * ```ts
+ * tenantToAccount: (tenant, ref, ctx) => {
+ *   const r = narrowAccountRef(ref);
+ *   return {
+ *     id: tenant.id,
+ *     operator: r?.operator ?? ctx?.agent?.agent_url ?? 'derived',
+ *     ...(r?.brand?.domain && { brand: { domain: r.brand.domain } }),
+ *
+ *   };
+ * }
+ * ```
+ *
+ * Returns `undefined` on `undefined` input — the no-account-tool path.
  */
-function narrowAccountRef(ref: AccountReference): {
+export function narrowAccountRef(ref: AccountReference): {
   account_id?: string;
   operator?: string;
   brand?: { domain?: string };
-} {
-  return ref as { account_id?: string; operator?: string; brand?: { domain?: string } };
+  sandbox?: boolean;
+};
+export function narrowAccountRef(ref: undefined): undefined;
+export function narrowAccountRef(ref: AccountReference | undefined):
+  | {
+      account_id?: string;
+      operator?: string;
+      brand?: { domain?: string };
+      sandbox?: boolean;
+    }
+  | undefined;
+export function narrowAccountRef(
+  ref: AccountReference | undefined
+): { account_id?: string; operator?: string; brand?: { domain?: string }; sandbox?: boolean } | undefined {
+  if (ref === undefined) return undefined;
+  return ref as { account_id?: string; operator?: string; brand?: { domain?: string }; sandbox?: boolean };
 }
 
 /**
