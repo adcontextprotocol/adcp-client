@@ -1,5 +1,5 @@
 ---
-"@adcp/sdk": minor
+'@adcp/sdk': minor
 ---
 
 Storyboard runner — `task_completion.<path>` prefix on `context_outputs.path`.
@@ -11,13 +11,19 @@ The `task_completion.<path>` prefix is an explicit author opt-in: when the runne
 ```yaml
 context_outputs:
   - name: media_buy_id
-    path: "task_completion.media_buy_id"
+    path: 'task_completion.media_buy_id'
 ```
 
-Polling is bounded (default 30s, override with `STORYBOARD_TASK_POLL_TIMEOUT_MS`); per-poll cadence default 1.5s (override with `STORYBOARD_TASK_POLL_INTERVAL_MS`). The runner never auto-polls based on response shape — the prefix is the only opt-in, so existing storyboards with intentional submitted-arm responses don't change behavior.
+The prefix triggers polling on any non-terminal status that carries a `task_id` — `submitted`, `working`, and `input-required`, per the AdCP `tasks-get-response.json` enum. Storyboards with intentional non-terminal-arm assertions are unaffected because the prefix is the only opt-in (no shape inference).
 
-`task_id` is validated (length cap + control-char rejection) before reaching the SDK's `tasks/get` call.
+Polling is bounded (default 30s, override with `STORYBOARD_TASK_POLL_TIMEOUT_MS`); per-poll cadence default 1.5s (override with `STORYBOARD_TASK_POLL_INTERVAL_MS`). `task_id` is validated (length cap + control-char rejection) before reaching the SDK's `tasks/get` call.
 
-Failures emit a distinct `capture_poll_timeout` validation result (not the recycled `capture_path_not_resolvable`) so the failure-class is unambiguous.
+Failures map to three distinct validation checks so compliance reports surface the right diagnostic:
 
-Closes #1417 (Option 1 from the issue's three options; the protocol-expert and code-reviewer triage notes converged on this surface as the cleanest fix).
+- `capture_poll_timeout` — task didn't reach terminal state within the timeout
+- `capture_task_failed` — task reached terminal `failed` / `canceled` / `rejected`
+- `capture_path_not_resolvable` — task succeeded but the artifact's data didn't carry the requested field
+
+This applies to any HITL flow where artifact-only fields land in `context_outputs`: `create_media_buy` (the originally-reported case), `sync_creatives` async approval (`creative_id`), `acquire_rights` (`rights_grant_id`), `si_initiate_session` / `si_send_message`, and any future tool routed through async-signed-IO.
+
+Closes #1417 (Option 1 from the issue's three options; protocol-expert and code-reviewer triage notes converged on this surface as the cleanest fix).

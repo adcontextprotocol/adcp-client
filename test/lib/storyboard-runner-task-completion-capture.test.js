@@ -177,6 +177,51 @@ describe('runStoryboardStep — task_completion. context_outputs', () => {
     assert.ok(captureFailure, 'capture_path_not_resolvable when poll path is unreachable');
   });
 
+  test('emits capture_task_failed when polled task reaches terminal failed/canceled/rejected', async () => {
+    const { client } = buildHitlClient({
+      immediateData: { status: 'submitted', task_id: 'task_will_fail' },
+      pollResult: {
+        success: false,
+        status: 'failed',
+        error: 'IO review rejected the buy',
+        data: { error: { code: 'INVALID_REQUEST', message: 'rejected' } },
+      },
+    });
+
+    const result = await runStoryboardStep('https://stub.example/mcp', baseStoryboard, 'create', {
+      protocol: 'mcp',
+      _client: client,
+      _profile: stubProfile,
+    });
+
+    const taskFailed = result.validations.find(v => v.check === 'capture_task_failed');
+    assert.ok(taskFailed, 'capture_task_failed validation synthesized');
+    assert.equal(taskFailed.passed, false);
+    assert.match(taskFailed.description, /terminal failed\/canceled\/rejected state/);
+    assert.equal(
+      result.validations.filter(v => v.check === 'capture_path_not_resolvable').length,
+      0,
+      'capture_path_not_resolvable not used when the task itself terminally failed'
+    );
+    assert.equal(result.context.media_buy_id, undefined);
+  });
+
+  test('also polls when immediate response is `working` (non-terminal status with task_id)', async () => {
+    const { client, calls } = buildHitlClient({
+      immediateData: { status: 'working', task_id: 'task_running', message: 'in flight' },
+      pollResult: { success: true, data: { media_buy_id: 'mb_from_working' } },
+    });
+
+    const result = await runStoryboardStep('https://stub.example/mcp', baseStoryboard, 'create', {
+      protocol: 'mcp',
+      _client: client,
+      _profile: stubProfile,
+    });
+
+    assert.equal(calls.filter(c => c.kind === 'poll').length, 1, 'poll fires for working status with task_id');
+    assert.equal(result.context.media_buy_id, 'mb_from_working');
+  });
+
   test('plain path captures still work without prefix (no regression)', async () => {
     const plainStoryboard = {
       ...baseStoryboard,
