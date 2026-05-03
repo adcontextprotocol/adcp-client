@@ -858,6 +858,88 @@ describe('Request Builder', () => {
     });
   });
 
+  describe('update_media_buy', () => {
+    test('preserves storyboard sample_request fields when fixture-aware path runs (#1505)', () => {
+      // Regression: update_media_buy must spread fixture fields (packages,
+      // targeting_overlay, idempotency_key) so hand-authored intent flows through.
+      const fixturePackages = [
+        {
+          package_id: 'pkg_1',
+          targeting_overlay: {
+            property_list: { agent_url: 'https://gov.example', list_id: 'no_match_v1' },
+          },
+        },
+      ];
+      const result = buildRequest(
+        step('update_media_buy', {
+          sample_request: {
+            account: { account_id: 'prod-acct' },
+            media_buy_id: 'buy-7',
+            packages: fixturePackages,
+            idempotency_key: 'fixture-key',
+          },
+        }),
+        {},
+        DEFAULT_OPTIONS
+      );
+      assert.deepStrictEqual(result.packages, fixturePackages);
+      assert.strictEqual(result.media_buy_id, 'buy-7');
+      assert.strictEqual(result.idempotency_key, 'fixture-key');
+    });
+
+    test('harness account wins over fixture account so update writes match create namespace (#1505)', () => {
+      // Regression: before this fix, update_media_buy was NOT in
+      // FIXTURE_AWARE_ENRICHERS, so the generic merge let the storyboard's
+      // raw account override the harness-resolved one. That routed update
+      // writes to a different partition than create, which surfaced as
+      // stale targeting_overlay on the subsequent get_media_buys.
+      const fixtureAccount = { account_id: 'prod-acct', sandbox: false };
+      const result = buildRequest(
+        step('update_media_buy', {
+          sample_request: { account: fixtureAccount, media_buy_id: 'buy-7' },
+        }),
+        {},
+        DEFAULT_OPTIONS
+      );
+      assert.ok(result.account, 'account must be present');
+      assert.notDeepStrictEqual(
+        result.account,
+        fixtureAccount,
+        'harness-resolved account must win over fixture raw account'
+      );
+    });
+
+    test('uses context.account when set so create→update→get all share namespace (#1505)', () => {
+      const contextAccount = { account_id: 'sandbox-acct-1', sandbox: true };
+      const result = buildRequest(
+        step('update_media_buy', {
+          sample_request: { account: { account_id: 'prod-acct' }, media_buy_id: 'buy-7' },
+        }),
+        { account: contextAccount, media_buy_id: 'buy-7' },
+        DEFAULT_OPTIONS
+      );
+      assert.deepStrictEqual(result.account, contextAccount);
+    });
+
+    test('legacy keyword inference still applies when no sample_request provided', () => {
+      // pause / resume / cancel inference is the fallback for storyboards
+      // without an authored sample_request — must continue to work.
+      const pauseResult = buildRequest(
+        step('update_media_buy', { id: 'pause_buy' }),
+        { media_buy_id: 'b' },
+        DEFAULT_OPTIONS
+      );
+      assert.strictEqual(pauseResult.paused, true);
+
+      const cancelResult = buildRequest(
+        step('update_media_buy', { id: 'cancel_buy' }),
+        { media_buy_id: 'b' },
+        DEFAULT_OPTIONS
+      );
+      assert.strictEqual(cancelResult.canceled, true);
+    });
+  });
+
   describe('calibrate_content (#989)', () => {
     test("artifact.artifact_id is 'unknown' when context lacks creative_id", () => {
       // Regression guard: was 'test-creative', which could be silently accepted

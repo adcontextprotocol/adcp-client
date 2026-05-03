@@ -43,15 +43,6 @@ const EXPECTED_FAILURES = [
       'context_outputs (PR #1426), but the upstream sales_guaranteed storyboard fixture in ' +
       'adcontextprotocol/adcp still uses bare `path: media_buy_id`. Fixture migration is upstream.',
   },
-  {
-    storyboard_id: 'media_buy_seller/inventory_list_targeting',
-    step_id: 'get_after_update',
-    issue: 'adcp-client#1505',
-    reason:
-      'createMediaBuyStore handles create→get echo for targeting_overlay (PR #1424) but does not ' +
-      'capture mutations from update_media_buy. Surfaced once the get_media_buys account-resolution ' +
-      'fix in this PR made the create→get round-trip resolve to the same namespace; tracked separately.',
-  },
 ];
 
 function isExpectedFailure(f) {
