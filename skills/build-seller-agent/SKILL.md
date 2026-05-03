@@ -668,7 +668,7 @@ const controller = createComplyController({
 controller.register(server);
 ```
 
-Omit adapters you don't support — they auto-return `UNKNOWN_SCENARIO` (not schema errors). Throw `TestControllerError('INVALID_TRANSITION', msg, currentState)` from an adapter when the state machine disallows the transition; the helper emits the typed error envelope.
+Omit adapters you don't support — they auto-return `UNKNOWN_SCENARIO` (not schema errors). Use `assertMediaBuyTransition(from, to, mediaBuyId?)` from `@adcp/sdk/server` in both your production `update_media_buy` handler and your test-controller adapter — it throws the spec-mandated error codes (`NOT_CANCELLABLE` for re-cancel of a canceled buy, `INVALID_STATE` for other illegal edges). The canonical graph is shared with the conformance runner, so your transition enforcement and the runner's `status.monotonic` invariant can never drift.
 
 Registration auto-emits the `capabilities.compliance_testing.scenarios` block per AdCP 3.0 — `controller.register(server)` wires the tool AND declares capability. Don't add `compliance_testing` to `supported_protocols`; per spec it's a capability block, not a protocol.
 

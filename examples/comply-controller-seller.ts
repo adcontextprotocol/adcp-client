@@ -36,6 +36,7 @@
 
 import { createTaskCapableServer, serve, type ServeContext } from '@adcp/sdk';
 import { createComplyController, TestControllerError, type CreativeStatus } from '@adcp/sdk/testing';
+import { assertCreativeTransition } from '@adcp/sdk/server';
 
 // ---------------------------------------------------------------------------
 // In-memory state. In a real seller this would be Postgres / Firestore /
@@ -58,26 +59,8 @@ interface CreativeRecord {
 const products = new Map<string, ProductFixture>();
 const creatives = new Map<string, CreativeRecord>();
 
-// DEMO POLICY — do not copy this table into a production state machine.
-// It is permissive enough to run the example storyboards; a real seller
-// encodes their approval workflow here (and in production the controller
-// itself is never registered). The point of this table is to show WHERE
-// transition enforcement lives — the controller routes through the same
-// guard as the production path.
-const CREATIVE_TRANSITIONS: Record<CreativeStatus, CreativeStatus[]> = {
-  processing: ['pending_review', 'approved', 'rejected'],
-  pending_review: ['approved', 'rejected'],
-  approved: ['rejected', 'archived'],
-  rejected: ['approved', 'archived'],
-  archived: [],
-};
-
-function assertCreativeTransition(from: CreativeStatus, to: CreativeStatus): void {
-  const allowed = CREATIVE_TRANSITIONS[from] ?? [];
-  if (!allowed.includes(to)) {
-    throw new TestControllerError('INVALID_TRANSITION', `Creative cannot move from ${from} to ${to}`, from);
-  }
-}
+// assertCreativeTransition imported from @adcp/sdk/server — canonical graph
+// shared with the conformance runner, enforcing the spec-defined edges.
 
 // ---------------------------------------------------------------------------
 // Controller wiring

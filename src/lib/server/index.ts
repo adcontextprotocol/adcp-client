@@ -1,6 +1,15 @@
 export { adcpError } from './errors';
 export type { AdcpErrorOptions, AdcpErrorPayload, AdcpErrorResponse } from './errors';
 
+export {
+  MEDIA_BUY_TRANSITIONS,
+  CREATIVE_ASSET_TRANSITIONS,
+  isLegalMediaBuyTransition,
+  assertMediaBuyTransition,
+  isLegalCreativeTransition,
+  assertCreativeTransition,
+} from './state-machine';
+
 export { wrapEnvelope } from './wrap-envelope';
 export type { WrapEnvelopeOptions } from './wrap-envelope';
 

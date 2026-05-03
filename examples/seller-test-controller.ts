@@ -32,6 +32,10 @@ import {
   type TestControllerStoreFactory,
 } from '@adcp/sdk/testing';
 import { createTaskCapableServer, serve, type ServeContext } from '@adcp/sdk';
+import {
+  assertMediaBuyTransition,
+  assertCreativeTransition,
+} from '@adcp/sdk/server';
 
 // ---------------------------------------------------------------------------
 // Typed domain state.
@@ -126,43 +130,8 @@ function resolveSessionId(input: Record<string, unknown>): string {
   return context?.session_id ?? 'example-default';
 }
 
-// ---------------------------------------------------------------------------
-// State-machine guards live HERE, in the same module your production tools
-// import. The controller routes through the same guards — one source of
-// truth for what transitions are legal. The tables cover every state in
-// the AdCP 3.0.0 status enums; TypeScript will catch a missing state if
-// you swap the `Partial<Record<...>>` signature for `Record<...>`.
-// ---------------------------------------------------------------------------
-
-const MEDIA_BUY_TRANSITIONS: Record<MediaBuyStatus, MediaBuyStatus[]> = {
-  pending_creatives: ['pending_start', 'active', 'paused', 'rejected', 'canceled'],
-  pending_start: ['active', 'paused', 'canceled'],
-  active: ['paused', 'completed', 'canceled'],
-  paused: ['active', 'completed', 'canceled'],
-  completed: [],
-  rejected: [],
-  canceled: [],
-};
-
-const CREATIVE_TRANSITIONS: Record<CreativeStatus, CreativeStatus[]> = {
-  processing: ['pending_review', 'approved', 'rejected', 'archived'],
-  pending_review: ['approved', 'rejected', 'archived'],
-  approved: ['rejected', 'archived'],
-  rejected: ['approved', 'archived'],
-  archived: [],
-};
-
-function assertMediaBuyTransition(from: MediaBuyStatus, to: MediaBuyStatus): void {
-  if (!MEDIA_BUY_TRANSITIONS[from].includes(to)) {
-    throw new TestControllerError('INVALID_TRANSITION', `media buy cannot move from ${from} to ${to}`, from);
-  }
-}
-
-function assertCreativeTransition(from: CreativeStatus, to: CreativeStatus): void {
-  if (!CREATIVE_TRANSITIONS[from].includes(to)) {
-    throw new TestControllerError('INVALID_TRANSITION', `creative cannot move from ${from} to ${to}`, from);
-  }
-}
+// State-machine guards from the SDK — one source of truth for what
+// transitions are legal, shared with the conformance runner.
 
 // ---------------------------------------------------------------------------
 // Per-request store factory.
