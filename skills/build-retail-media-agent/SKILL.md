@@ -5,7 +5,7 @@ description: Use when building an AdCP retail media network agent — a platform
 
 # Build a Retail Media Agent
 
-A retail media agent is a seller agent that adds catalog ingestion, conversion tracking, and performance feedback. The fastest path is to **fork a seller adapter** and add the catalog-driven surface on top.
+A retail media agent sells on-site placements driven by a product catalog and reports conversion outcomes back to buyers. The fastest path is to **fork a seller adapter** and add the catalog-driven surface (`syncCatalogs`, `syncEventSources`, `logEvent`, `providePerformanceFeedback`) on top.
 
 ## Pick your fork target
 

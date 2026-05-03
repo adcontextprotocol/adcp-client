@@ -13,7 +13,19 @@ A brand rights agent represents a brand's identity and licensing. Buyers discove
 | --- | --- | --- | --- |
 | `brand-rights` | stable | [`hello_seller_adapter_multi_tenant.ts`](../../examples/hello_seller_adapter_multi_tenant.ts) — `brandRights` block | `brand_rights` |
 
-The multi-tenant adapter is the canonical fork target. Its `brandRights` block implements all five operations (`getBrandIdentity`, `getRights`, `acquireRights`, `updateRights`, `reviewCreativeApproval`) plus the cross-specialism governance check (`enforceGovernance`) called from `acquireRights`. Single-specialism adopters delete `campaignGovernance` / `propertyLists` and the cross-specialism dispatch helper; the brand-rights surface stays. Tenant isolation via `createTenantStore` translates to single-tenant by passing one entry to the registry.
+The multi-tenant adapter is the canonical fork target. Its `brandRights` block implements all five operations (`getBrandIdentity`, `getRights`, `acquireRights`, `updateRights`, `reviewCreativeApproval`) plus the cross-specialism governance check (`enforceGovernance`) called from `acquireRights`.
+
+### What to delete if you're single-specialism brand-rights
+
+The multi-tenant adapter shows three specialisms working together. A single-specialism brand-rights adopter (e.g. a Warner Bros Discovery rights team) deletes:
+
+- The `campaignGovernance = defineCampaignGovernancePlatform({ ... })` block (lines ~470-700 — the entire `sync_plans` / `check_governance` / `report_plan_outcome` / `get_plan_audit_logs` surface)
+- The `propertyLists = definePropertyListsPlatform({ ... })` block (lines ~700-780 — the property-lists CRUD surface)
+- The `private async enforceGovernance(...)` helper method and its **call site inside `acquireRights`** — the two lines `const denial = await this.enforceGovernance(tenant, ctx, offering, req); if (denial) return denial;`. Without `campaignGovernance` co-resident, the in-process dispatch has nothing to call. Single-specialism adopters who need governance dial out to a registered governance agent's URL via the `@adcp/sdk` client.
+- The `governanceBindings: Map<string, GovernanceBinding>` field on `TenantState`, the `interface GovernanceBinding`, and the `syncGovernanceRow` callback on `createTenantStore` (governance bindings have nothing to register against).
+- The hard-coded `validation seam` block in `acquireRights` that requires `campaign.estimated_impressions` when a governance binding exists — without bindings this constraint never fires.
+
+Keep the rest as-is: `accounts` (`createTenantStore` translates to single-tenant by passing one tenant entry), `agentRegistry`, the `brandRights` block, `getTenant(ctx)` resolution.
 
 The storyboard tests identity discovery → rights search → acquisition → enforcement (including expired-campaign denial).
 

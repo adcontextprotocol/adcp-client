@@ -5,7 +5,7 @@ description: Use when building an AdCP seller agent — a publisher, SSP, or ret
 
 # Build a Seller Agent
 
-A seller agent receives briefs from buyers, returns products, accepts media buys, manages creatives, and reports delivery. The fastest path to a passing agent is to **fork a worked adapter** and replace its `// SWAP:` markers with calls to your backend. This skill tells you which adapter to fork and what cross-cutting rules apply across all of them.
+A seller agent receives briefs from buyers, returns products, accepts media buys, manages creatives, and reports delivery. The fastest path to a passing agent is to **fork a worked adapter** and replace its `// SWAP:` markers with calls to your backend. Each `// SWAP:` comment marks one line you change to your platform's backend call — change only those lines, run the gate, ship. ([`examples/CONTRIBUTING.md`](../../examples/CONTRIBUTING.md) covers the SWAP-marker convention in detail.) This skill tells you which adapter to fork and what cross-cutting rules apply across all of them.
 
 ## Pick your fork target
 
@@ -67,6 +67,8 @@ adcp storyboard run http://127.0.0.1:3004/mcp sales_guaranteed \
 
 The fork-matrix gate is the three-gate contract from [`docs/guides/EXAMPLE-TEST-CONTRACT.md`](../../docs/guides/EXAMPLE-TEST-CONTRACT.md): tsc strict / storyboard zero-failures / upstream façade. Adopters who fork a hello adapter inherit the gate by extending the test file with their own adapter path and `expectedRoutes`.
 
+If the gate fails on a storyboard step (not on tsc), re-run the `adcp storyboard run ... --json` command above for the human-readable `💡 Hint:` lines — node:test's assertion formatting compresses them.
+
 For deeper validation (fuzz, request-signing grading, multi-instance, custom invariants): [`docs/guides/VALIDATE-YOUR-AGENT.md`](../../docs/guides/VALIDATE-YOUR-AGENT.md).
 
 ## Deployment
@@ -79,5 +81,5 @@ Single-host HTTP from `serve(...)` is the default. Multi-host, Express, or stdio
 
 ## Migration notes
 
-- 6.6 → 6.7: [`docs/migration-6.6-to-6.7.md`](../../docs/migration-6.6-to-6.7.md). Two breaking changes — `accounts.resolution: 'implicit'` now refuses inline refs (#10), and `SalesPlatform` split into `SalesCorePlatform & SalesIngestionPlatform` (#11). Plus 15 additive recipes around `definePlatform`, `composeMethod`, typed errors, `BuyerAgentRegistry`, etc.
+- 6.6 → 6.7: **Two seller-affecting breaking changes — audit before bumping**: `accounts.resolution: 'implicit'` now refuses inline `{account_id}` references (#10), and `SalesPlatform` split into `SalesCorePlatform & SalesIngestionPlatform` (#11) — all methods individually optional, self-announcing under `tsc --noEmit`. See [`docs/migration-6.6-to-6.7.md`](../../docs/migration-6.6-to-6.7.md) for the worked diff plus 15 additive recipes around `definePlatform`, `composeMethod`, typed errors, `BuyerAgentRegistry`.
 - 4.x → 5.x: [`docs/migration-4.x-to-5.x.md`](../../docs/migration-4.x-to-5.x.md). Full v5 path including `createAdcpServer`, `serve({ authenticate })`, and the 5.13 pin to AdCP 3.0.0 GA.

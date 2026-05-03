@@ -18,7 +18,20 @@ A governance agent enforces policy on the buy side. It evaluates spending author
 | `content-standards` | stable | Add `contentStandards` domain group via `defineContentStandardsPlatform` | placeholder |
 | `measurement-verification` | preview | v3.1 placeholder. Baseline only. | placeholder |
 
-The multi-tenant adapter is the canonical fork target — it implements `campaignGovernance` (sync_plans, check_governance, report_plan_outcome, get_plan_audit_logs), `propertyLists` (CRUD + `validate_property_delivery`), and `brandRights` against a per-tenant in-memory store with full tenant isolation via `createTenantStore`. Single-specialism adopters delete the cross-specialism dispatch helper (`enforceGovernance`) and the unused domain groups; everything else stays.
+The multi-tenant adapter is the canonical fork target — it implements `campaignGovernance` (sync_plans, check_governance, report_plan_outcome, get_plan_audit_logs), `propertyLists` (CRUD + `validate_property_delivery`), and `brandRights` against a per-tenant in-memory store with full tenant isolation via `createTenantStore`.
+
+### What to delete if you're single-specialism
+
+A single-specialism `governance-spend-authority` adopter (an in-house policy engine, IAS, DoubleVerify) deletes:
+
+- The `brandRights = defineBrandRightsPlatform({ ... })` block (lines ~780-940 — the entire brand-rights surface)
+- The `propertyLists = definePropertyListsPlatform({ ... })` block if you don't claim `property-lists` (lines ~700-780)
+- The `private async enforceGovernance(...)` helper and the `interface GovernanceBinding` — these belong to `brandRights` cross-specialism dispatch, not to standalone governance
+- Per-tenant `brands` / `rights` Maps on `TenantState` (no brand-rights catalog to seed)
+
+A single-specialism `property-lists` adopter mirrors this: keep the `propertyLists` block; delete `campaignGovernance`, `brandRights`, `enforceGovernance`, the brand/rights Maps, and the `governanceBindings` map.
+
+Keep the rest as-is: `accounts` (`createTenantStore` translates to single-tenant by passing one tenant entry), `agentRegistry`, the specialism block(s) you claim, `getTenant(ctx)` resolution. **Don't keep `enforceGovernance` if you also delete `brandRights`** — the helper has no caller and wires a non-existent governance binding.
 
 For `content-standards` and `collection-lists`, no worked fork target ships yet — wire `defineContentStandardsPlatform` / `defineCollectionListsPlatform` from `@adcp/sdk/server` against the multi-tenant scaffolding.
 

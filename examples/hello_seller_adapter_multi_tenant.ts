@@ -916,11 +916,13 @@ class MultiTenantAdapter implements DecisioningPlatform<Record<string, never>, T
       // Hello adapter doesn't persist a grant ledger; production adopters
       // hydrate by `req.rights_id`, apply the patch (extend dates, adjust
       // impression cap, change pricing, pause/resume), and re-issue
-      // `generation_credentials` + `rights_constraint`.
-      throw new AdcpError('INVALID_REQUEST', {
+      // `generation_credentials` + `rights_constraint`. UNSUPPORTED_FEATURE
+      // is the spec-canonical code (manifest.json:702) for "operation supported
+      // by the protocol but not by this implementation" — buyers consult
+      // get_adcp_capabilities to discover supported operations.
+      throw new AdcpError('UNSUPPORTED_FEATURE', {
         message:
           'update_rights is not supported by the hello multi-tenant adapter — fork and persist a grant ledger to enable.',
-        field: 'rights_id',
         details: { rights_id: req.rights_id },
       });
     },

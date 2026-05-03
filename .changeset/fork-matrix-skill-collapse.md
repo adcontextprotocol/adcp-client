@@ -6,7 +6,7 @@ Pivot from skill-matrix to fork-matrix; collapse `build-*-agent/SKILL.md` files.
 
 The skill-matrix harness (`scripts/manual-testing/run-skill-matrix.ts` + `agent-skill-storyboard.ts` + `skill-matrix.json`) graded "can a fresh Claude session build an AdCP server from prose in SKILL.md." That's not the workflow real adopters use now that every production specialism has a worked, CI-tested fork target in `examples/hello_*_adapter_*.ts`.
 
-The fork-matrix is the canonical compliance gate going forward. Each `test/examples/hello-*.test.js` boots the matching reference adapter against a mock-server upstream, runs the storyboard grader, and verifies upstream traffic — the three-gate contract from `docs/guides/EXAMPLE-TEST-CONTRACT.md`. Empirical comparison: skill-matrix v18 ran 1/8 in ~50min with 6 timeouts; fork-matrix runs 22/22 in ~12s.
+The fork-matrix is the canonical compliance gate going forward. Each `test/examples/hello-*.test.js` boots the matching reference adapter against a mock-server upstream, runs the storyboard grader, and verifies upstream traffic — the three-gate contract from `docs/guides/EXAMPLE-TEST-CONTRACT.md`. Empirical comparison: skill-matrix v18 ran 1/8 in ~50min with 6 timeouts; fork-matrix runs 23/23 in ~10s.
 
 **Changes:**
 

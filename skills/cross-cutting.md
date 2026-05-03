@@ -4,9 +4,16 @@ Every `build-*-agent` skill points here. These rules apply regardless of which s
 
 ## `idempotency_key` is required on every mutating call
 
-Every mutating tool requires a client-supplied `idempotency_key`. The full list (authoritative — taken from `MUTATING_TASKS` in the SDK):
+Every mutating tool requires a client-supplied `idempotency_key`. The full list (authoritative — derived at runtime from `MUTATING_TASKS` in `src/lib/utils/idempotency.ts`, 28 tools across the protocols):
 
-`create_media_buy`, `update_media_buy`, `sync_accounts`, `sync_creatives`, `sync_audiences`, `sync_catalogs`, `sync_event_sources`, `sync_plans`, `sync_governance`, `provide_performance_feedback`, `acquire_rights`, `activate_signal`, `log_event`, `report_usage`, `report_plan_outcome`, `create_property_list`, `update_property_list`, `delete_property_list`, `create_collection_list`, `update_collection_list`, `delete_collection_list`, `create_content_standards`, `update_content_standards`, `calibrate_content`, `si_initiate_session`, `si_send_message`.
+| Protocol | Mutating tools |
+| --- | --- |
+| media-buy (sales) | `create_media_buy`, `update_media_buy`, `sync_accounts`, `sync_audiences`, `sync_catalogs`, `sync_event_sources`, `log_event`, `provide_performance_feedback` |
+| creative | `sync_creatives`, `build_creative`, `report_usage` |
+| signals | `activate_signal` |
+| governance | `sync_plans`, `sync_governance`, `report_plan_outcome`, `create_property_list`, `update_property_list`, `delete_property_list`, `create_collection_list`, `update_collection_list`, `delete_collection_list`, `create_content_standards`, `update_content_standards`, `calibrate_content` |
+| brand-rights | `acquire_rights`, `update_rights` |
+| sponsored-intelligence | `si_initiate_session`, `si_send_message` |
 
 Wire `createIdempotencyStore({ ... })` once and pass it to `createAdcpServerFromPlatform(platform, { idempotency })`. The framework handles replay detection, payload-hash conflict (`IDEMPOTENCY_CONFLICT`), expiry (`IDEMPOTENCY_EXPIRED`), and in-flight parallelism. Don't reimplement in handlers.
 

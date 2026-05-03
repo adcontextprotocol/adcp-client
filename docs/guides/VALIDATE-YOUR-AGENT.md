@@ -318,7 +318,7 @@ Unencoded substitution is a common XSS / scheme-injection vector. `CATALOG_MACRO
 `test/examples/hello-*.test.js` is the canonical compliance gate. Each test boots the matching `examples/hello_*_adapter_*.ts` reference adapter against a mock-server upstream, runs the storyboard grader, and verifies upstream traffic — the three-gate contract documented in [`docs/guides/EXAMPLE-TEST-CONTRACT.md`](EXAMPLE-TEST-CONTRACT.md): tsc strict / storyboard zero-failures / upstream façade. Adopters inherit the gate by extending the test file with their own adapter path and `expectedRoutes`.
 
 ```bash
-# Run every fork-target gate (~9s parallel, 7/7 currently green)
+# Run every fork-target gate (deterministic, ~10s parallel)
 npm run compliance:fork-matrix
 
 # Or one specialism
