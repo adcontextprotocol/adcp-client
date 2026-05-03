@@ -954,6 +954,16 @@ These ride along in 6.7 and don't need any adopter action:
 - **Manifest-derived error codes.** `STANDARD_ERROR_CODES` is now
   generated from `schemas/cache/<v>/manifest.json` rather than
   hand-curated. Public API unchanged; drift is now impossible.
+- **`media_buy_ids[]` fan-out semantics — pass-through.** When buyers
+  call `get_media_buy_delivery` / `get_creative_delivery` with
+  multiple `media_buy_ids`, the framework hands the array to your
+  platform method as-is rather than synthesizing a per-buy fan-out.
+  `aggregated_totals` (cross-buy `reach`, `new_to_brand_rate`,
+  `frequency`) depends on dedup capability that's platform-domain
+  knowledge — populate the cross-buy fields when you can compute
+  them, omit them otherwise. JSDoc on `SalesPlatform.getMediaBuyDelivery`
+  and `CreativeAdServerPlatform.getCreativeDelivery` documents the
+  contract.
 
 ## What didn't change in 6.7
 
