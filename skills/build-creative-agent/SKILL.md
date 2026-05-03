@@ -595,103 +595,18 @@ Common failure decoder:
 
 Storyboard: `creative_ad_server`. Stateful — the library is pre-loaded; buyers do **not** push assets via `sync_creatives` at runtime. Pricing and billing round-trips are first-class.
 
-**Fork target**: [`examples/hello_creative_adapter_ad_server.ts`](../../examples/hello_creative_adapter_ad_server.ts) is the worked, passing reference adapter for this specialism. It demonstrates the stateful library wrap (`POST /v1/creatives` write, `GET /v1/creatives` read with cursor pagination + multi-id pass-through, `PATCH` mutation), tag generation via macro substitution against a stored snippet template (`{click_url}`, `{impression_pixel}`, `{cb}`, `{advertiser_id}`, `{creative_id}` …), real iframe-embeddable `previewCreative` URLs pointing at the upstream's `/serve/{id}` endpoint, the `NoAccountCtx` narrow on `previewCreative` / `listCreativeFormats`, and `getCreativeDelivery` projection (currency + reporting_period + per-creative impressions/clicks). CI gates strict tsc + storyboard pass + upstream-traffic façade — all 7 storyboard steps pass on the worked build. Replace the `// SWAP:` markers with calls to your real backend.
+**Fork target**: [`examples/hello_creative_adapter_ad_server.ts`](../../examples/hello_creative_adapter_ad_server.ts) is the worked, passing reference adapter for this specialism. CI gates strict tsc + storyboard pass + upstream-traffic façade — all 7 storyboard steps pass on the worked build.
 
-**`list_creatives`** with `include_pricing=true` returns per-creative `pricing_options`:
+The adapter demonstrates the stateful-library deltas vs `creative-template`:
 
-```typescript
-listCreatives: async (params, ctx) => {
-  const { items } = await ctx.store.list('creatives');
-  const creatives = items.map((c) => ({
-    creative_id: c.creative_id,
-    name: c.name,
-    format_id: c.format_id,
-    status: 'approved' as const,
-    created_date: c.created_date,
-    updated_date: c.updated_date,
-    ...(params.include_pricing && {
-      pricing_options: [{
-        pricing_option_id: 'standard_cpm',
-        model: 'cpm' as const,
-        cpm: 2.5,
-        currency: 'USD',
-      }],
-    }),
-  }));
-  return {
-    query_summary: { total_matching: creatives.length, returned: creatives.length, filters_applied: [] },
-    creatives,
-    pagination: { has_more: false },
-  };
-},
-```
+- **Library shape** — `POST /v1/creatives` writes, `GET /v1/creatives` reads (cursor pagination + multi-id pass-through), `PATCH` mutates. Maps directly onto `CreativeAdServerPlatform.{syncCreatives, listCreatives}`. Library state is owned by the adopter's UI / API ingestion; the comply controller's `seed.creative` is the only test path that writes via the adapter.
+- **Tag generation** — `buildCreative` looks up the creative by id, calls upstream `POST /v1/creatives/{id}/render` for macro substitution against a stored snippet template (`{click_url}`, `{impression_pixel}`, `{cb}`, `{advertiser_id}`, `{creative_id}`, `{asset_url}` …), and returns `BuildCreativeSuccess` with `creative_manifest.assets` carrying the rendered tag (HTML / VAST / native). The mock's `tag_url` points at a real iframe-embeddable `/serve/{id}` endpoint adopters can iframe in storyboards.
+- **`previewCreative`** — `NoAccountCtx<TCtxMeta>` no-account tool; returns the same iframe URL as a `preview_url`. The resolver synthesizes a default-listing network so `ctx.account` resolves cleanly inside the no-account handler. See migration recipe #11.
+- **`listCreativeFormats`** — also `NoAccountCtx`. Project upstream catalog to closed-shape `Format.renders[]` (display fixed dims, video/CTV at 1080p baseline, parameterized with `accepts_parameters[]`) per the typed builders from `@adcp/sdk` (#1325).
+- **Per-creative pricing** — when the adopter bills through AdCP, `listCreatives` with `include_pricing=true` surfaces `pricing_options`, `buildCreative` echoes the applied `pricing_option_id`, and `reportUsage` closes the loop. Adopters that bill out of band (CM360-style flat license / SaaS contract) omit these fields and surface `report_usage` records as `not_accepted` rather than fake-accepting.
+- **`getCreativeDelivery`** — multi-id pass-through per #1342 + #1410; required top-level `currency` + `reporting_period` per the response schema.
 
-**`build_creative`** receives `media_buy_id`, `package_id`, `target_format_id`, and `pricing_option_id`. Return a VAST tag with macro placeholders, plus `vendor_cost` at CPM = 0 (billing happens via `report_usage`):
-
-```typescript
-buildCreative: async (params, ctx) => {
-  const creative = await lookupCreativeForFormat(params.target_format_id, ctx);
-  const vast = `<?xml version="1.0"?>
-<VAST version="4.2">
-  <Ad id="${creative.creative_id}"><InLine>
-    <Impression><![CDATA[https://adserver.example/imp?cb=[CACHEBUSTER]&mb=${params.media_buy_id}]]></Impression>
-    <Creatives><Creative>
-      <Linear><Duration>00:00:30</Duration>
-        <MediaFiles><MediaFile type="video/mp4"><![CDATA[${creative.video_url}]]></MediaFile></MediaFiles>
-        <VideoClicks><ClickThrough><![CDATA[[CLICK_URL]https://landing.example]]></ClickThrough></VideoClicks>
-      </Linear>
-    </Creative></Creatives>
-  </InLine></Ad>
-</VAST>`;
-
-  return {
-    creative_manifest: {
-      format_id: params.target_format_id,
-      assets: { serving_tag: { content: vast } },     // HTML asset shape: { content: string }
-    },
-    pricing_option_id: params.pricing_option_id,      // echo
-    vendor_cost: { amount: 0, currency: 'USD' },      // CPM at build time — billing is separate
-    sandbox: true,
-  };
-},
-```
-
-**`report_usage`** is the billing reconciliation tool. Validate `idempotency_key` (return the same response for the same key) and echo `pricing_option_id` + `reporting_period`:
-
-```typescript
-reportUsage: async (params, ctx) => {
-  const existing = await ctx.store.get('usage_reports', params.idempotency_key);
-  if (existing) return existing;    // idempotent
-  const report = {
-    idempotency_key: params.idempotency_key,
-    creative_id: params.creative_id,
-    pricing_option_id: params.pricing_option_id,
-    reporting_period: params.reporting_period,
-    billable_amount: { amount: params.impressions * 2.5 / 1000, currency: 'USD' },
-    status: 'accepted' as const,
-  };
-  await ctx.store.put('usage_reports', params.idempotency_key, report);
-  return report;
-},
-```
-
-**`get_creative_delivery`** returns impressions/spend, optionally broken down by variant and filtered by `media_buy_ids`:
-
-```typescript
-getCreativeDelivery: async (params, ctx) => ({
-  reporting_period: params.reporting_period,
-  currency: 'USD',                                 // required top-level per get-creative-delivery-response.json
-  creatives: (params.creative_ids ?? []).map((id) => ({
-    creative_id: id,
-    impressions: 12500,
-    spend: { amount: 31.25, currency: 'USD' },
-    by_variant: [],
-  })),
-  sandbox: true,
-}),
-```
-
-Output formats returned by `list_creative_formats` for ad servers are **serving-tag formats** (VAST 4.2, display tag HTML, native JSON payload), not input visual formats.
+Output formats returned by `list_creative_formats` for ad servers are **serving-tag formats** (VAST 4.2, display tag HTML, native JSON payload), not input visual formats. Replace the `// SWAP:` markers with calls to your real backend.
 
 ### <a name="specialism-creative-template"></a>creative-template
 
