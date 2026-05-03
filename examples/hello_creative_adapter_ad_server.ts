@@ -66,6 +66,7 @@ import {
   type DecisioningPlatform,
   type SyncCreativesRow,
 } from '@adcp/sdk/server';
+import { FormatAsset } from '@adcp/sdk';
 import type {
   BuildCreativeRequest,
   BuildCreativeSuccess,
@@ -269,6 +270,18 @@ const FORMAT_AGENT_URL = PUBLIC_AGENT_URL;
  *  `renders[]` per #1325. Adapter consumes `GET /v1/formats` then
  *  projects each entry. */
 function projectFormat(f: UpstreamFormat): ListCreativeFormatsResponse['formats'][number] {
+  // Output slot declared on every format so build_creative's response key
+  // (`assets['serving_tag']`) matches a declared asset_id per
+  // creative-manifest.json:14. `required: false` because the buyer doesn't
+  // supply this — buildCreative generates and returns it. asset_type: 'html'
+  // mirrors the buildCreative response (always renders to an HTML serving
+  // tag in this worked example); video/CTV adapters emitting VAST should
+  // declare `FormatAsset.vast({ asset_id: 'serving_tag', required: false })` instead.
+  // Asset_id `serving_tag` is shared with hello_creative_adapter_template.ts
+  // — keeping the same id across both worked examples teaches adopters that
+  // the asset_id is contractual (declared by the format), not platform-flavored.
+  const outputAssets = [FormatAsset.html({ asset_id: 'serving_tag', required: false })];
+
   // Display fixed formats: emit dimensions on a single 'main' render.
   if (f.render_kind === 'fixed' && f.channel === 'display' && f.width !== undefined && f.height !== undefined) {
     return {
@@ -280,6 +293,7 @@ function projectFormat(f: UpstreamFormat): ListCreativeFormatsResponse['formats'
           dimensions: { width: f.width, height: f.height, unit: 'px' as const },
         },
       ],
+      assets: outputAssets,
     };
   }
   // Video / CTV: project at 1080p baseline.
@@ -293,6 +307,7 @@ function projectFormat(f: UpstreamFormat): ListCreativeFormatsResponse['formats'
           dimensions: { width: 1920, height: 1080, unit: 'px' as const },
         },
       ],
+      assets: outputAssets,
     };
   }
   // Parameterized — placeholder dimensions for the worked example. Real
@@ -304,6 +319,7 @@ function projectFormat(f: UpstreamFormat): ListCreativeFormatsResponse['formats'
     format_id: { agent_url: FORMAT_AGENT_URL, id: f.format_id },
     name: f.name,
     renders: [{ role: 'main', dimensions: { width: 1, height: 1, unit: 'px' as const } }],
+    assets: outputAssets,
   };
 }
 
@@ -490,13 +506,16 @@ class CreativeAdServerAdapter implements DecisioningPlatform<Record<string, neve
       // `additionalProperties: false` constraint excludes `creative_id`
       // and `name` from the manifest body — only `format_id`, `assets`,
       // `rights`, `industry_identifiers`, `provenance`, `ext` are allowed.
-      // Each `assets[key]` is a discriminated AssetVariant — `asset_type`
-      // selects the matching schema (html requires `content`, etc.).
+      // The `tag` asset_id matches the output slot declared in
+      // `projectFormat` (FormatAsset.html({ asset_id: 'serving_tag', ... })),
+      // satisfying creative-manifest.json:14. Each `assets[key]` is a
+      // discriminated AssetVariant — `asset_type` selects the matching
+      // schema (html requires `content`, etc.).
       return {
         creative_manifest: {
           format_id: { agent_url: FORMAT_AGENT_URL, id: creative.format_id },
           assets: {
-            tag: { asset_type: 'html', content: rendered.tag_html },
+            serving_tag: { asset_type: 'html', content: rendered.tag_html },
           },
         },
         // CAST: oneOf-emitter — picking variant 0 (single creative_manifest)

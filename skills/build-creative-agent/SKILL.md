@@ -55,17 +55,18 @@ The fork targets cover the baseline + specialism deltas. Quick reference for wha
 
 Audio templates (TTS / mix / master, e.g. AudioStack / ElevenLabs / Resemble) follow the same shape with two deltas: (a) format declares `parameterizedRender({ role: 'primary' })` because audio has no width/height — encode duration/codec/bitrate in `accepts_parameters`, not in render entries; (b) the upstream pipeline is naturally minutes-long (voice-over → mix → master), so the adapter returns a task envelope and emits `creative_review` webhooks on completion.
 
-**Audio adopters extend `hello_creative_adapter_template.ts` with three deltas:**
+**Audio adopters extend `hello_creative_adapter_template.ts` with four deltas:**
 
 1. Add `audio_url?: string` to `UpstreamRender.output` and extend `output_kind` to include `'audio_url'`
-2. Add an audio-output branch to `projectRenderToManifest`:
+2. Add an `audio_url` arm to `outputSlot(t)` returning `FormatAsset.audio({ asset_id: 'serving_tag', required: false })` — declares the output slot in the format so build_creative's response key matches a declared asset_id per `creative-manifest.json:14`.
+3. Add an audio-output branch to `projectRenderToManifest`:
    ```ts
    } else if (out.audio_url) {
      assets['serving_tag'] = audioAsset({ url: out.audio_url });
    }
    ```
    The `audioAsset` builder injects the `asset_type: 'audio'` discriminator the creative-manifest oneOf requires.
-3. Seed an audio template in your upstream platform — see `tpl_audiostack_spot_30s_v1` in `src/lib/mock-server/creative-template/seed-data.ts` for the worked reference.
+4. Seed an audio template in your upstream platform — see `tpl_audiostack_spot_30s_v1` in `src/lib/mock-server/creative-template/seed-data.ts` for the worked reference.
 
 **Storyboard coverage for audio is not yet upstream** — the `creative_template/build_creative` step asserts display-shaped assets, tracked at [adcontextprotocol/adcp#4015](https://github.com/adcontextprotocol/adcp/issues/4015). Until that ships, audio adopters validate via `npm run compliance:fork-matrix -- --test-name-pattern="hello-creative-adapter-template"` (display + video gate inherited) plus a manual round-trip against the seeded audio template:
 
