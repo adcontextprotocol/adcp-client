@@ -46,7 +46,7 @@ import {
 import { validateTestKit } from './test-kit';
 import { validateStoryboardShape } from './loader';
 import { probeRequestSigningVector } from './request-signing/probe-dispatch';
-import { createWebhookReceiver, type WebhookReceiver } from './webhook-receiver';
+import { createWebhookReceiver, type WebhookReceiver, type WebhookWaitResult } from './webhook-receiver';
 import { WEBHOOK_ASSERTION_TASKS, armWebhookAssertions, executeWebhookAssertionStep } from './webhook-assertions';
 import { CONTROLLER_SEEDING_PHASE_ID, runControllerSeeding, type ControllerSeedingResult } from './seeding';
 
@@ -300,6 +300,226 @@ function applyBranchSetGrading(
     }
   }
   return { skippedDelta };
+}
+
+// ────────────────────────────────────────────────────────────
+// task_completion. context_outputs path resolution
+// ────────────────────────────────────────────────────────────
+
+/** Marker prefix on `context_outputs.path` that opts a capture into the
+ *  poll-tasks-get-for-the-completion-artifact resolution flow. The remainder
+ *  of the path is resolved against the artifact's `data`, not the immediate
+ *  submitted envelope. */
+const TASK_COMPLETION_PATH_PREFIX = 'task_completion.';
+
+/** Hard cap on how long the runner blocks one step waiting for a task to
+ *  reach terminal state. Long enough to cover most HITL approval flows that
+ *  are expected to complete inline; short enough that a stuck task surfaces
+ *  the failure on the step that authored the dependency rather than the
+ *  storyboard wall-clock budget. Override with `STORYBOARD_TASK_POLL_TIMEOUT_MS`. */
+const TASK_COMPLETION_DEFAULT_TIMEOUT_MS = 30_000;
+
+/** Per-poll cadence inside `pollTaskCompletion`. Scaled tight enough that
+ *  short HITL flows complete in a couple of polls; the bound is still the
+ *  outer timeout race. Override with `STORYBOARD_TASK_POLL_INTERVAL_MS`. */
+const TASK_COMPLETION_DEFAULT_POLL_INTERVAL_MS = 1_500;
+
+/** Defensive task_id pattern. AdCP doesn't constrain `task_id` shape on the
+ *  wire, but unbounded strings are an SSRF / log-injection lever — we cap
+ *  the length and reject control characters before the value reaches the
+ *  SDK's tasks/get JSON-RPC param. */
+const TASK_ID_MAX_LEN = 256;
+// eslint-disable-next-line no-control-regex -- intentional: reject control chars in task_id
+const TASK_ID_CONTROL_CHAR_RE = /[\x00-\x1F\x7F]/;
+
+/** Non-terminal task statuses that carry a `task_id` and warrant polling
+ *  the artifact for `task_completion.<inner>` captures. Per the AdCP
+ *  `tasks-get-response.json` enum, all three are explicitly non-terminal:
+ *  `submitted` (HITL or async-signed-IO), `working` ("expect completion
+ *  within 120 seconds"), and `input-required` (waiting on the buyer to
+ *  supply additional info — relevant when the storyboard test harness
+ *  satisfies the input requirement). The 30s default poll timeout still
+ *  bounds the worst case for storyboards that test these arms directly. */
+const POLL_ELIGIBLE_STATUSES = new Set(['submitted', 'working', 'input-required']);
+
+interface PollEligibleEnvelopeShape {
+  status: 'submitted' | 'working' | 'input-required';
+  task_id: string;
+}
+
+function isPollEligibleEnvelope(data: unknown): data is PollEligibleEnvelopeShape {
+  if (data == null || typeof data !== 'object') return false;
+  const obj = data as { status?: unknown; task_id?: unknown };
+  return (
+    typeof obj.status === 'string' &&
+    POLL_ELIGIBLE_STATUSES.has(obj.status) &&
+    typeof obj.task_id === 'string' &&
+    obj.task_id.length > 0
+  );
+}
+
+function isValidTaskId(taskId: string): boolean {
+  if (taskId.length === 0 || taskId.length > TASK_ID_MAX_LEN) return false;
+  if (TASK_ID_CONTROL_CHAR_RE.test(taskId)) return false;
+  return true;
+}
+
+interface TaskCompletionResolution {
+  /** Discriminator: was the resolution attempted? `false` short-circuits
+   *  the runner back to plain extraction against the immediate response. */
+  attempted: boolean;
+  /** Artifact data resolved by polling. Present (including `undefined`)
+   *  ONLY when polling succeeded — caller uses `'data' in resolution` to
+   *  distinguish "polled and got undefined" from "did not poll." */
+  data?: unknown;
+  /** Set when the bounded poll exceeded `pollTimeoutMs`. The runner uses
+   *  this to flip the synthesized failure check from
+   *  `capture_path_not_resolvable` to `capture_poll_timeout`. */
+  timedOut?: boolean;
+  pollTimeoutMs?: number;
+  /** Set when polling reached terminal state with `success: false`
+   *  (failed / canceled / rejected). The runner flips the synthesized
+   *  failure check to `capture_task_failed` so reports distinguish
+   *  "field absent on artifact" from "task itself terminally failed." */
+  taskFailed?: boolean;
+}
+
+function remapTaskCompletionOutputs<T extends { path?: string | undefined }>(outputs: readonly T[]): T[] {
+  return outputs.map(o => {
+    if (typeof o.path === 'string' && o.path.startsWith(TASK_COMPLETION_PATH_PREFIX)) {
+      return { ...o, path: o.path.slice(TASK_COMPLETION_PATH_PREFIX.length) };
+    }
+    return o;
+  });
+}
+
+async function resolveTaskCompletionOutputs(
+  taskResult: TaskResult | undefined,
+  outputs: readonly { path?: string | undefined }[],
+  client: TestClient,
+  webhookReceiver: WebhookReceiver | undefined
+): Promise<TaskCompletionResolution> {
+  const hasTaskCompletionPath = outputs.some(
+    o => typeof o.path === 'string' && o.path.startsWith(TASK_COMPLETION_PATH_PREFIX)
+  );
+  if (!hasTaskCompletionPath) return { attempted: false };
+  if (!taskResult || !isPollEligibleEnvelope(taskResult.data)) return { attempted: false };
+  const taskId = taskResult.data.task_id;
+  if (!isValidTaskId(taskId)) return { attempted: false };
+
+  const timeoutMs = readEnvIntOrDefault(
+    process.env['STORYBOARD_TASK_POLL_TIMEOUT_MS'],
+    TASK_COMPLETION_DEFAULT_TIMEOUT_MS
+  );
+  const pollIntervalMs = readEnvIntOrDefault(
+    process.env['STORYBOARD_TASK_POLL_INTERVAL_MS'],
+    TASK_COMPLETION_DEFAULT_POLL_INTERVAL_MS
+  );
+
+  // The SDK's `pollTaskCompletion` lives on the executor — accessed via the
+  // SingleAgentClient instance the storyboard runner created in
+  // `getOrCreateClient`. The runner historically uses `client: any` for
+  // dynamic dispatch (see task-map.ts:80) so this cast doesn't widen
+  // existing surface.
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any -- dynamic SDK access
+  const dynamicClient = client as any;
+  const executor = dynamicClient?.executor;
+  const agent = dynamicClient?.agent;
+  const canPoll = !!(executor?.pollTaskCompletion && agent);
+  const canWebhook = !!webhookReceiver;
+  if (!canPoll && !canWebhook) return { attempted: false };
+
+  type PollWin = { kind: 'poll'; result: TaskResult };
+  type WebhookWin = { kind: 'webhook'; result: WebhookWaitResult };
+  type TimeoutWin = { kind: 'timeout' };
+  type Winner = PollWin | WebhookWin | TimeoutWin;
+
+  const racers: Promise<Winner>[] = [];
+
+  // Poll path. Note: when the outer race resolves first, the SDK's
+  // `pollTaskCompletion` keeps polling internally until it observes a
+  // terminal state. The runner's outer timeout is enough to bound the
+  // *step* duration; the inner loop continuation is a known limitation
+  // pending an AbortSignal addition to the SDK.
+  if (canPoll) {
+    racers.push(
+      executor.pollTaskCompletion(agent, taskId, pollIntervalMs).then(
+        (result: TaskResult): PollWin => ({
+          kind: 'poll',
+          result,
+        })
+      )
+    );
+  }
+
+  // Webhook path. Per `tasks-get-response.json`, sellers MAY use webhook-
+  // only HITL completion (no polling). When a `--webhook-receiver` is
+  // active, race the receiver's `wait` (filtered by `task_id`) against
+  // the poll. The webhook payload's `result` field is the artifact's
+  // `data` (per the framework's task webhook payload shape, mirroring
+  // the HITL completion shape from `from-platform.ts`).
+  //
+  // Note: `webhook.wait` keeps an internal `setTimeout(timeout_ms)` that
+  // we can't cancel from here. When the poll wins or the outer timeout
+  // fires first, that internal timer continues until `timeout_ms`
+  // elapses. Acceptable because the receiver is process-scoped (closed
+  // on storyboard exit) and runner-owned receivers aren't injected.
+  if (webhookReceiver) {
+    racers.push(
+      webhookReceiver
+        .wait({ body: { task_id: taskId } }, timeoutMs)
+        .then((result): WebhookWin => ({ kind: 'webhook', result }))
+    );
+  }
+
+  let timer: NodeJS.Timeout | undefined;
+  const timeoutRacer = new Promise<TimeoutWin>(resolve => {
+    timer = setTimeout(() => resolve({ kind: 'timeout' }), timeoutMs);
+    // Don't keep the event loop alive on this handle — the runner's
+    // wall-clock budget is already enforced by the storyboard runner
+    // shell, and a hung task shouldn't delay process exit by `timeoutMs`.
+    timer.unref?.();
+  });
+  racers.push(timeoutRacer);
+
+  try {
+    const winner = await Promise.race(racers);
+    if (winner.kind === 'timeout') {
+      return { attempted: true, timedOut: true, pollTimeoutMs: timeoutMs };
+    }
+    if (winner.kind === 'poll') {
+      const polled = winner.result;
+      if (polled.success === false) return { attempted: true, taskFailed: true };
+      return { attempted: true, data: polled.data };
+    }
+    // Webhook win.
+    const waitResult = winner.result;
+    if (waitResult.timed_out) {
+      return { attempted: true, timedOut: true, pollTimeoutMs: timeoutMs };
+    }
+    const webhookBody = waitResult.webhook.body as { status?: unknown; result?: unknown } | undefined;
+    // Fail-closed on the success path: require `status === 'completed'`.
+    // The framework's `buildTaskWebhookPayload` always emits `status`, so a
+    // missing or non-completed value means either a malformed webhook or a
+    // genuine terminal-failed/canceled/rejected outcome — both should
+    // attribute to `capture_task_failed`, not silently fall through to a
+    // capture against an undefined `result`.
+    if (webhookBody?.status === 'completed') {
+      return { attempted: true, data: webhookBody.result };
+    }
+    return { attempted: true, taskFailed: true };
+  } catch {
+    return { attempted: true, taskFailed: true };
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
+}
+
+function readEnvIntOrDefault(value: string | undefined, fallback: number): number {
+  if (!value) return fallback;
+  const parsed = Number.parseInt(value, 10);
+  if (!Number.isFinite(parsed) || parsed <= 0) return fallback;
+  return parsed;
 }
 
 function extractionFromTaskResult(taskResult: TaskResult | undefined): RunnerExtractionRecord {
@@ -2022,14 +2242,22 @@ export async function runStoryboardStep(
   const context: StoryboardContext = { ...options.context };
   if (options.context) forwardAliasCache(options.context, context);
 
-  const webhookReceiver = options.webhook_receiver
-    ? await createWebhookReceiver({
-        ...(options.webhook_receiver.mode && { mode: options.webhook_receiver.mode }),
-        ...(options.webhook_receiver.host !== undefined && { host: options.webhook_receiver.host }),
-        ...(options.webhook_receiver.port !== undefined && { port: options.webhook_receiver.port }),
-        ...(options.webhook_receiver.public_url !== undefined && { public_url: options.webhook_receiver.public_url }),
-      })
-    : undefined;
+  // `_webhookReceiver` is a test-only injection point; production callers
+  // pass `webhook_receiver` and the runner constructs the listener.
+  const injectedReceiver = options._webhookReceiver;
+  const webhookReceiver: WebhookReceiver | undefined =
+    injectedReceiver ??
+    (options.webhook_receiver
+      ? await createWebhookReceiver({
+          ...(options.webhook_receiver.mode && { mode: options.webhook_receiver.mode }),
+          ...(options.webhook_receiver.host !== undefined && { host: options.webhook_receiver.host }),
+          ...(options.webhook_receiver.port !== undefined && { port: options.webhook_receiver.port }),
+          ...(options.webhook_receiver.public_url !== undefined && {
+            public_url: options.webhook_receiver.public_url,
+          }),
+        })
+      : undefined);
+  const ownsWebhookReceiver = !injectedReceiver && !!webhookReceiver;
   const runnerVars = createRunnerVariables({
     ...(webhookReceiver && { webhookBase: webhookReceiver.base_url }),
   });
@@ -2039,7 +2267,7 @@ export async function runStoryboardStep(
   const allSteps = flattenSteps(storyboard);
   const found = allSteps.find(s => s.step.id === stepId);
   if (!found) {
-    if (webhookReceiver) await webhookReceiver.close();
+    if (ownsWebhookReceiver && webhookReceiver) await webhookReceiver.close();
     throw new Error(
       `Step "${stepId}" not found in storyboard "${storyboard.id}". ` +
         `Available steps: ${allSteps.map(s => s.step.id).join(', ')}`
@@ -2067,7 +2295,7 @@ export async function runStoryboardStep(
     await closeConnections(options.protocol);
   }
 
-  if (webhookReceiver) await webhookReceiver.close();
+  if (ownsWebhookReceiver && webhookReceiver) await webhookReceiver.close();
 
   return result;
 }
@@ -2643,9 +2871,39 @@ async function executeStep(
   // ensures the minted value from any same-step $generate:…#<key> inline
   // substitution is visible here.
   if (step.context_outputs?.length) {
-    const explicit = applyContextOutputsWithProvenance(
-      hasData && taskResult ? taskResult.data : undefined,
+    // Resolve `task_completion.<path>` outputs against the eventual task
+    // artifact rather than the immediate response. When the immediate
+    // response is a submitted-arm envelope (HITL / async-signed-IO flows),
+    // the seller-assigned IDs only exist on the completion artifact — the
+    // sync-shape path resolves to nothing and the storyboard fails on
+    // `capture_path_not_resolvable` for a value the seller correctly
+    // produces, just on a later message. The `task_completion.` prefix is
+    // an explicit author-side opt-in: "poll tasks/get for terminal status,
+    // then resolve the rest of the path against the artifact data."
+    //
+    // Polling failures (timeout, terminal failed/canceled/rejected) emit
+    // `capture_poll_timeout` instead of recycling
+    // `capture_path_not_resolvable` so the failure-class is distinct from
+    // the original "field absent in immediate response" diagnostic.
+    const taskCompletionResolution = await resolveTaskCompletionOutputs(
+      taskResult,
       step.context_outputs,
+      client,
+      runState.webhookReceiver
+    );
+    // `'data' in resolution` distinguishes "polled, artifact had no data"
+    // (use undefined → outputs fail with capture_path_not_resolvable) from
+    // "did not poll" (fall back to the immediate response data).
+    const extractionData =
+      'data' in taskCompletionResolution
+        ? taskCompletionResolution.data
+        : hasData && taskResult
+          ? taskResult.data
+          : undefined;
+    const remappedOutputs = remapTaskCompletionOutputs(step.context_outputs);
+    const explicit = applyContextOutputsWithProvenance(
+      extractionData,
+      remappedOutputs,
       step.id,
       effectiveStep.task,
       updatedContext
@@ -2665,12 +2923,30 @@ async function executeStep(
     // a failed capture is the exact case adcp#3796 set out to fix.
     if (explicit.failures && explicit.failures.length > 0) {
       for (const failure of explicit.failures) {
+        const wasTaskCompletion = step.context_outputs.some(
+          o => o.key === failure.key && typeof o.path === 'string' && o.path.startsWith(TASK_COMPLETION_PATH_PREFIX)
+        );
+        const pollTimedOut = wasTaskCompletion && taskCompletionResolution.timedOut === true;
+        const taskFailed = wasTaskCompletion && taskCompletionResolution.taskFailed === true;
+        const originalPath = wasTaskCompletion ? `${TASK_COMPLETION_PATH_PREFIX}${failure.path}` : failure.path;
+        let check: string;
+        let description: string;
+        if (pollTimedOut) {
+          check = 'capture_poll_timeout';
+          description = `context_outputs path "${originalPath}" (key "${failure.key}") did not resolve before tasks/get poll timed out (${taskCompletionResolution.pollTimeoutMs}ms)`;
+        } else if (taskFailed) {
+          check = 'capture_task_failed';
+          description = `context_outputs path "${originalPath}" (key "${failure.key}") did not resolve because the task reached a terminal failed/canceled/rejected state`;
+        } else {
+          check = 'capture_path_not_resolvable';
+          description = `context_outputs path "${originalPath}" (key "${failure.key}") did not resolve to a usable value`;
+        }
         const synthetic: ValidationResult = {
-          check: 'capture_path_not_resolvable',
+          check,
           passed: false,
-          description: `context_outputs path "${failure.path}" (key "${failure.key}") did not resolve to a usable value`,
+          description,
           json_pointer: toJsonPointer(failure.path),
-          expected: failure.path,
+          expected: originalPath,
           actual: failure.resolved,
           schema_id: null,
           schema_url: null,

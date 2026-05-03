@@ -241,12 +241,59 @@ function extractFromAllSchemas(): ExtractedInlineEnum[] {
   return result;
 }
 
+interface InlineEnumAlias {
+  aliasName: string;
+  aliasParent: string;
+  aliasProperty: string;
+  canonicalName: string;
+}
+
+function partitionDuplicates(items: ExtractedInlineEnum[]): {
+  canonical: ExtractedInlineEnum[];
+  aliases: InlineEnumAlias[];
+} {
+  // Group by literal-set fingerprint. When two inline unions have
+  // byte-identical sorted literal lists, they encode the same enum
+  // under different parent-prefixed names — adopters shouldn't have
+  // to know which parent's copy to import. Pick the alphabetically
+  // first parent-prefixed name as canonical and emit the rest as
+  // deprecated re-exports pointing at it. Closes adcp-client#941.
+  const groups = new Map<string, ExtractedInlineEnum[]>();
+  for (const e of items) {
+    const fp = fingerprintLiterals(e.values);
+    if (!groups.has(fp)) groups.set(fp, []);
+    groups.get(fp)!.push(e);
+  }
+
+  const canonical: ExtractedInlineEnum[] = [];
+  const aliases: InlineEnumAlias[] = [];
+  for (const group of groups.values()) {
+    group.sort((a, b) => a.name.localeCompare(b.name));
+    canonical.push(group[0]);
+    for (let i = 1; i < group.length; i++) {
+      aliases.push({
+        aliasName: group[i].name,
+        aliasParent: group[i].parentSchema,
+        aliasProperty: group[i].property,
+        canonicalName: group[0].name,
+      });
+    }
+  }
+  return { canonical, aliases };
+}
+
 function renderOutput(items: ExtractedInlineEnum[]): string {
+  const { canonical, aliases } = partitionDuplicates(items);
+
   // Stable sort: parent schema name, then property name. Keeps diff
   // noise minimal when the spec adds/removes single fields.
-  const ordered = [...items].sort((a, b) => {
+  const ordered = [...canonical].sort((a, b) => {
     if (a.parentSchema !== b.parentSchema) return a.parentSchema.localeCompare(b.parentSchema);
     return a.property.localeCompare(b.property);
+  });
+  const aliasOrdered = [...aliases].sort((a, b) => {
+    if (a.aliasParent !== b.aliasParent) return a.aliasParent.localeCompare(b.aliasParent);
+    return a.aliasProperty.localeCompare(b.aliasProperty);
   });
 
   const header = `// Generated inline-union value arrays for AdCP anonymous string-literal unions
@@ -280,6 +327,23 @@ function renderOutput(items: ExtractedInlineEnum[]): string {
     const shapeNote = e.isArray ? 'array of' : 'single';
     body += `/** ${shapeNote} | ${e.parentSchema}.${e.property} */\n`;
     body += `export const ${e.name} = [${literals}] as const;\n`;
+  }
+
+  if (aliasOrdered.length > 0) {
+    body += `\n// ====== Deprecated aliases — duplicate literal sets ======\n`;
+    body += `// Re-exported under their original parent-prefixed names; resolve\n`;
+    body += `// to the same array reference as the canonical export. Migrate\n`;
+    body += `// imports to the canonical name; aliases remain for one minor\n`;
+    body += `// version. (adcp-client#941)\n\n`;
+    let lastAliasParent: string | null = null;
+    for (const a of aliasOrdered) {
+      if (a.aliasParent !== lastAliasParent) {
+        body += `// --- ${a.aliasParent} ---\n`;
+        lastAliasParent = a.aliasParent;
+      }
+      body += `/** @deprecated use \`${a.canonicalName}\` — same literal set, ${a.aliasParent}.${a.aliasProperty} duplicates the canonical export. */\n`;
+      body += `export const ${a.aliasName} = ${a.canonicalName};\n`;
+    }
   }
 
   return header + body;
