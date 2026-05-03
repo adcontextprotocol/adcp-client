@@ -64,6 +64,7 @@ import {
   memoryBackend,
   AdcpError,
   BuyerAgentRegistry,
+  createTenantStore,
   defineCampaignGovernancePlatform,
   definePropertyListsPlatform,
   defineBrandRightsPlatform,
@@ -75,7 +76,6 @@ import {
   type Account,
   type BuyerAgent,
   type CachedBuyerAgentRegistry,
-  type ResolveContext,
   type RequestContext,
 } from '@adcp/sdk/server';
 import type {
@@ -185,6 +185,7 @@ interface GovernanceBinding {
 }
 
 interface TenantState {
+  id: string;
   display_name: string;
   brands: Map<string, BrandRecord>;
   rights: Map<string, RightsRecord>;
@@ -206,8 +207,9 @@ interface TenantState {
   active_plan_id?: string;
 }
 
-function makeTenant(displayName: string): TenantState {
+function makeTenant(id: string, displayName: string): TenantState {
   return {
+    id,
     display_name: displayName,
     brands: new Map(),
     rights: new Map(),
@@ -223,8 +225,8 @@ function accountKey(operator: string, brandDomain: string): string {
 }
 
 const TENANTS = new Map<string, TenantState>([
-  ['tenant_pinnacle', makeTenant('Pinnacle Agency (rights + governance)')],
-  ['tenant_meridian', makeTenant('Meridian Media (rights + governance)')],
+  ['tenant_pinnacle', makeTenant('tenant_pinnacle', 'Pinnacle Agency (rights + governance)')],
+  ['tenant_meridian', makeTenant('tenant_meridian', 'Meridian Media (rights + governance)')],
 ]);
 
 // Tenant 1 (Pinnacle) — talent likeness + AI generation rights for the
@@ -439,171 +441,88 @@ class MultiTenantAdapter implements DecisioningPlatform<Record<string, never>, T
 
   agentRegistry = agentRegistry;
 
-  accounts: AccountStore<TenantMeta> = {
-    /**
-     * Two resolution paths:
-     *   1. `ref.operator` is set (governance, property-lists, every tool
-     *      with an `account` field) → look up tenant by operator.
-     *   2. `ref` is undefined (no-account tools: `get_brand_identity`,
-     *      `get_rights`) → derive tenant from the resolved buyer agent's
-     *      home tenant. The framework calls this path via
-     *      `resolveAccountFromAuth` so the platform doesn't reimplement
-     *      auth-derived tenancy.
-     */
-    resolve: async (ref, ctx) => {
-      // Path 2: no account on the wire. Derive from buyer agent.
-      if (ref == null) {
-        return resolveFromBuyer(ctx);
-      }
-      // Path 1: account-with-operator on the wire. Read both operator AND
-      // brand off ref — downstream handlers (notably `enforceGovernance`)
-      // index per-account state by `(operator, brand.domain)`, so dropping
-      // brand on the floor here strands those handlers.
-      const refTyped = ref as { operator?: string; brand?: { domain?: string } };
-      const operator = refTyped.operator;
-      if (!operator) return null;
-      const tenantId = OPERATOR_TO_TENANT.get(operator);
-      if (!tenantId) return null;
-      const tenant = TENANTS.get(tenantId);
-      if (!tenant) return null;
-      return makeAccount(tenantId, tenant, operator, refTyped.brand?.domain);
+  /**
+   * Multi-tenant `AccountStore`, built via `createTenantStore`. The helper
+   * canonicalizes the two-path resolution (operator-routed for tools that
+   * carry `account` on the wire; auth-derived for no-account tools) AND
+   * bakes in the per-entry tenant-isolation gate on `sync_accounts` /
+   * `sync_governance` — adopter callbacks (`upsertRow`, `syncGovernanceRow`)
+   * never see a cross-tenant entry.
+   *
+   * Fail-closed: when the auth principal can't be mapped to a tenant
+   * (`resolveFromAuth` returns null), every per-entry call fails
+   * `PERMISSION_DENIED`. Don't fork this around — the prior fail-OPEN
+   * shape (`if (homeTenantId && entryTenant !== homeTenantId)`) silently
+   * disabled isolation for credentials lacking a home tenant.
+   */
+  accounts: AccountStore<TenantMeta> = createTenantStore<TenantState, TenantMeta>({
+    resolveByRef: ref => {
+      const refTyped = ref as { operator?: string };
+      if (!refTyped.operator) return null;
+      const tenantId = OPERATOR_TO_TENANT.get(refTyped.operator);
+      return tenantId ? (TENANTS.get(tenantId) ?? null) : null;
     },
-
-    /**
-     * `sync_accounts` — buyers register accounts with us so subsequent
-     * `sync_governance` calls have something to bind to.
-     *
-     * Tenant-isolation gate: derive the buyer's home tenant from
-     * `ctx.agent.agent_url` (registered at onboarding, not buyer-spoofable
-     * here because the bearer-keyed registry stamps the URL) and reject
-     * any per-entry whose operator maps to a DIFFERENT tenant. Without
-     * this check, a Meridian credential could submit
-     * `operator: 'pinnacle-agency.example'` and write into Pinnacle's
-     * tenant state. The spec requires sellers verify the authenticated
-     * agent has authority over each referenced account before persisting.
-     */
-    upsert: async (refs, ctx) => {
-      // Fail-CLOSED: when `homeTenantId` can't be resolved (no agent, or
-      // agent_url not in BUYER_HOME_TENANT), reject everything. The earlier
-      // pattern `if (homeTenantId && tenantId !== homeTenantId)` was fail-
-      // OPEN — an adopter who forks this file and adds a credential without
-      // a BUYER_HOME_TENANT row would silently disable tenant isolation.
-      const homeTenantId = ctx?.agent ? BUYER_HOME_TENANT.get(ctx.agent.agent_url) : undefined;
-      return refs.map(ref => {
-        const r = ref as { operator?: string; brand?: { domain?: string } };
-        const operator = r.operator;
-        const brandDomain = r.brand?.domain;
-        if (!operator || !brandDomain) {
-          return {
-            brand: { domain: brandDomain ?? 'unknown.example' },
-            operator: operator ?? 'unknown',
-            action: 'failed' as const,
-            status: 'rejected' as const,
-            errors: [{ code: 'INVALID_REQUEST', message: 'operator + brand.domain required' }],
-          };
-        }
-        const tenantId = OPERATOR_TO_TENANT.get(operator);
-        if (!tenantId) {
-          return {
-            brand: { domain: brandDomain },
-            operator,
-            action: 'failed' as const,
-            status: 'rejected' as const,
-            errors: [{ code: 'ACCOUNT_NOT_FOUND', message: `Unknown operator: ${operator}` }],
-          };
-        }
-        // Tenant-isolation gate. Fail-closed: reject when home tenant
-        // can't be resolved OR when the wire operator maps to a different
-        // tenant than the buyer's authenticated home.
-        if (!homeTenantId || tenantId !== homeTenantId) {
-          return {
-            brand: { domain: brandDomain },
-            operator,
-            action: 'failed' as const,
-            status: 'rejected' as const,
-            errors: [
-              {
-                code: 'PERMISSION_DENIED',
-                message: `Buyer agent has no authority over operator '${operator}' (tenant mismatch or home tenant not configured).`,
-              },
-            ],
-          };
-        }
-        const tenant = TENANTS.get(tenantId)!;
-        const key = accountKey(operator, brandDomain);
-        // accountKey collisions are upserts by design — same (operator, brand) = same account.
-        // SWAP: row-level write under tenant transaction.
-        const action = tenant.accounts.has(key) ? ('updated' as const) : ('created' as const);
-        tenant.accounts.set(key, { operator, brand_domain: brandDomain, status: 'active' });
-        return {
-          account_id: tenantId,
-          brand: { domain: brandDomain },
-          operator,
-          action,
-          status: 'active' as const,
-        };
+    resolveFromAuth: ctx => {
+      const tenantId = ctx?.agent ? BUYER_HOME_TENANT.get(ctx.agent.agent_url) : undefined;
+      return tenantId ? (TENANTS.get(tenantId) ?? null) : null;
+    },
+    tenantId: tenant => tenant.id,
+    tenantToAccount: (tenant, ref, ctx) => {
+      const refTyped = (ref ?? {}) as { operator?: string; brand?: { domain?: string }; sandbox?: boolean };
+      // No-account-tool path: synthesize an operator string from the resolved
+      // buyer agent's URL so account.id stays stable per-buyer-per-tenant.
+      const operator = refTyped.operator ?? ctx?.agent?.agent_url ?? 'derived';
+      return {
+        id: tenant.id,
+        name: refTyped.operator
+          ? `${tenant.display_name} (${operator})`
+          : `${tenant.display_name} (auth-derived for ${ctx?.agent?.display_name ?? 'unknown'})`,
+        status: 'active',
+        operator,
+        ...(refTyped.brand?.domain && { brand: { domain: refTyped.brand.domain } }),
+        ctx_metadata: { tenant_id: tenant.id, display_name: tenant.display_name },
+        // SWAP: read sandbox flag from your backing store. Hello-adapter
+        // honors `ref.sandbox` when present (Path 1) and defaults true on
+        // auth-derived (no-account-tool) lookups since this whole adapter
+        // is a demo.
+        sandbox: refTyped.sandbox ?? true,
+      };
+    },
+    upsertRow: (tenant, ref, _ctx) => {
+      // Cross-tenant entries never reach this callback — the helper's
+      // gate already filtered them. Adopter responsibility: the upsert
+      // itself.
+      const refTyped = ref as { operator: string; brand: { domain: string } };
+      const key = accountKey(refTyped.operator, refTyped.brand.domain);
+      // SWAP: row-level write under tenant transaction.
+      const action = tenant.accounts.has(key) ? ('updated' as const) : ('created' as const);
+      tenant.accounts.set(key, {
+        operator: refTyped.operator,
+        brand_domain: refTyped.brand.domain,
+        status: 'active',
       });
+      return {
+        account_id: tenant.id,
+        brand: refTyped.brand,
+        operator: refTyped.operator,
+        action,
+        status: 'active' as const,
+      };
     },
-
-    /**
-     * `sync_governance` — buyers register governance agent endpoints with
-     * us, scoped per-account. We persist the binding so `acquire_rights`
-     * can later consult the registered agent before granting rights.
-     *
-     * Tenant-isolation gate: each entry's `account.operator` must map to
-     * the same tenant the buyer is authenticated against (auth-derived via
-     * `ctx.agent.agent_url` → BUYER_HOME_TENANT). Per-entry rejection on
-     * mismatch — operation-level throw would fail the whole batch when one
-     * entry crosses tenants.
-     *
-     * Hello-adapter shortcut: we record the first agent's URL and one
-     * plan binding. The wire payload supports up to 10 governance agents
-     * with category scoping and write-only credentials. Production adopters
-     * MUST persist `entry.governance_agents[i].authentication.credentials`
-     * and present them on outbound `check_governance` calls — silently
-     * dropping them ships unauthenticated requests if you wire real cross-
-     * agent calls.
-     */
-    syncGovernance: async (entries, ctx) => {
-      const homeTenantId = ctx?.agent ? BUYER_HOME_TENANT.get(ctx.agent.agent_url) : undefined;
-      return entries.map(entry => {
-        const operator = entry.account.operator;
-        const brandDomain = entry.account.brand?.domain;
-        const govUrl = entry.governance_agents[0]?.url;
-        if (!operator || !brandDomain) {
-          return {
-            account: entry.account,
-            status: 'failed' as const,
-            errors: [{ code: 'INVALID_REQUEST', message: 'account.operator + account.brand.domain required' }],
-          };
-        }
-        const tenantId = OPERATOR_TO_TENANT.get(operator);
-        if (!tenantId) {
-          return {
-            account: entry.account,
-            status: 'failed' as const,
-            errors: [{ code: 'ACCOUNT_NOT_FOUND', message: `Unknown operator: ${operator}` }],
-          };
-        }
-        if (!homeTenantId || tenantId !== homeTenantId) {
-          return {
-            account: entry.account,
-            status: 'failed' as const,
-            errors: [
-              {
-                code: 'PERMISSION_DENIED',
-                message: `Buyer agent has no authority over operator '${operator}' (tenant mismatch or home tenant not configured).`,
-              },
-            ],
-          };
-        }
-        const tenant = TENANTS.get(tenantId)!;
+    syncGovernanceRow: (tenant, entry, _ctx) => {
+      // Cross-tenant entries never reach this callback. Hello-adapter
+      // shortcut: bind on the brand_domain key, record the first agent's
+      // URL + the most-recently-synced plan as the active binding.
+      // Production adopters MUST persist
+      // `entry.governance_agents[i].authentication.credentials` (the
+      // framework strips them from the response — see
+      // `toWireSyncGovernanceRow` — so the buyer never sees them echoed).
+      const refTyped = entry.account as { brand?: { domain?: string } };
+      const brandDomain = refTyped.brand?.domain;
+      const govUrl = entry.governance_agents[0]?.url;
+      if (brandDomain) {
         if (govUrl) {
-          // SWAP: row-level write under tenant transaction. Real adopters
-          // persist `governance_agents[i].authentication.credentials` —
-          // they're write-only on the wire (NOT echoed back; the response
-          // shape is strictly `{url, categories?}`) but required for
-          // outbound `check_governance` calls.
+          // SWAP: row-level write under tenant transaction.
           tenant.governanceBindings.set(brandDomain, {
             governance_agent_url: govUrl,
             active_plan_id: tenant.active_plan_id,
@@ -611,18 +530,18 @@ class MultiTenantAdapter implements DecisioningPlatform<Record<string, never>, T
         } else {
           tenant.governanceBindings.delete(brandDomain);
         }
-        const echoedAgents = entry.governance_agents.map(a => ({
-          url: a.url,
-          ...(a.categories && { categories: a.categories }),
-        }));
-        return {
-          account: entry.account,
-          status: 'synced' as const,
-          ...(echoedAgents.length > 0 && { governance_agents: echoedAgents }),
-        };
-      });
+      }
+      const echoedAgents = entry.governance_agents.map(a => ({
+        url: a.url,
+        ...(a.categories && { categories: a.categories }),
+      }));
+      return {
+        account: entry.account,
+        status: 'synced' as const,
+        ...(echoedAgents.length > 0 && { governance_agents: echoedAgents }),
+      };
     },
-  };
+  });
 
   campaignGovernance: CampaignGovernancePlatform<TenantMeta> = defineCampaignGovernancePlatform<TenantMeta>({
     syncPlans: async (req: SyncPlansRequest, ctx): Promise<SyncPlansResponse> => {
@@ -1065,45 +984,6 @@ class MultiTenantAdapter implements DecisioningPlatform<Record<string, never>, T
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
-
-function makeAccount(
-  tenantId: string,
-  tenant: TenantState,
-  operator: string,
-  brandDomain?: string
-): Account<TenantMeta> {
-  return {
-    id: tenantId,
-    name: `${tenant.display_name} (${operator})`,
-    status: 'active',
-    operator,
-    ...(brandDomain && { brand: { domain: brandDomain } }),
-    ctx_metadata: { tenant_id: tenantId, display_name: tenant.display_name },
-    // NOTE(adopter): replace with your real sandbox flag from backing store.
-    sandbox: true,
-  };
-}
-
-function resolveFromBuyer(ctx: ResolveContext | undefined): Account<TenantMeta> | null {
-  const buyer = ctx?.agent;
-  if (!buyer) return null;
-  const tenantId = BUYER_HOME_TENANT.get(buyer.agent_url);
-  if (!tenantId) return null;
-  const tenant = TENANTS.get(tenantId);
-  if (!tenant) return null;
-  // Synthetic operator string — this account is auth-derived, no
-  // operator domain on the wire. Using `buyer.agent_url` as the
-  // pseudo-operator keeps account.id stable across requests from the
-  // same buyer agent.
-  return {
-    id: tenantId,
-    name: `${tenant.display_name} (auth-derived for ${buyer.display_name})`,
-    status: 'active',
-    operator: buyer.agent_url,
-    ctx_metadata: { tenant_id: tenantId, display_name: tenant.display_name },
-    sandbox: true,
-  };
-}
 
 function toDateTime(value: string, edge: 'start' | 'end'): string {
   if (/T/.test(value)) return value;

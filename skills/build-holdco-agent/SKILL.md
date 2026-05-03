@@ -43,7 +43,7 @@ class HoldcoAdapter implements DecisioningPlatform<Config, TenantMeta> {
   };
 
   agentRegistry = /* BuyerAgentRegistry */;
-  accounts: AccountStore<TenantMeta> = { resolve, upsert };
+  accounts: AccountStore<TenantMeta> = createTenantStore({ /* see below */ });
   campaignGovernance = defineCampaignGovernancePlatform({ /* ... */ });
   propertyLists = definePropertyListsPlatform({ /* ... */ });
   brandRights = defineBrandRightsPlatform({ /* ... */ });
@@ -56,34 +56,62 @@ class HoldcoAdapter implements DecisioningPlatform<Config, TenantMeta> {
 
 Each specialism interface is the same shape it would have in a single-specialism agent (reuse `skills/build-governance-agent/`, `skills/build-brand-rights-agent/` for per-handler details). The hub-specific work is everything around them: tenancy, isolation, cross-specialism dispatch.
 
-## The two account-resolution paths
+## Account resolution + tenant-isolation gate (use `createTenantStore`)
 
-The framework calls `accounts.resolve(ref, ctx)` once per request. Hub adapters need both branches:
+The framework calls `accounts.resolve(ref, ctx)` once per request, and hub adapters historically had to hand-write three pieces:
+
+1. **Path 1** — operator-routed resolution for tools that carry `account` on the wire (`sync_accounts`, `sync_governance`, governance, property-lists)
+2. **Path 2** — auth-derived resolution for no-account tools (`get_brand_identity`, `get_rights`)
+3. **Per-entry tenant-isolation gate** on `sync_accounts` / `sync_governance` — verify each entry's `operator` maps to the buyer's authenticated home tenant before persisting, fail-closed when the auth principal isn't registered
+
+All three live in `createTenantStore<TTenant, TCtxMeta>` (`@adcp/sdk/server`). Callbacks the adopter provides; gating logic the SDK owns:
 
 ```ts
-accounts.resolve = async (ref, ctx) => {
-  // Path 2: no account on the wire (`get_brand_identity`, `get_rights`).
-  // Derive tenant from the resolved buyer agent's home tenant.
-  if (ref == null) return resolveFromBuyer(ctx);
-
-  // Path 1: account-with-operator on the wire (governance, property-lists,
-  // sync_accounts, sync_governance). Look up tenant by operator.
-  const operator = (ref as { operator?: string }).operator;
-  const brandDomain = (ref as { brand?: { domain?: string } }).brand?.domain;
-  if (!operator) return null;
-  const tenantId = OPERATOR_TO_TENANT.get(operator);
-  if (!tenantId) return null;
-  return makeAccount(tenantId, TENANTS.get(tenantId)!, operator, brandDomain);
-};
+accounts: AccountStore<TenantMeta> = createTenantStore<TenantState, TenantMeta>({
+  resolveByRef: ref => {  // Path 1 — operator (or account_id) on the wire
+    const tenantId = OPERATOR_TO_TENANT.get((ref as { operator?: string }).operator ?? '');
+    return tenantId ? TENANTS.get(tenantId) ?? null : null;
+  },
+  resolveFromAuth: ctx => {  // Path 2 — derive from authenticated buyer agent
+    const tenantId = ctx?.agent ? BUYER_HOME_TENANT.get(ctx.agent.agent_url) : undefined;
+    return tenantId ? TENANTS.get(tenantId) ?? null : null;
+  },
+  tenantId: tenant => tenant.id,  // stable equality for the gate (NOT reference)
+  tenantToAccount: (tenant, ref, ctx) => ({  // project tenant + ref → Account
+    id: tenant.id,
+    name: `${tenant.display_name} (${(ref as any)?.operator ?? ctx?.agent?.agent_url})`,
+    status: 'active',
+    operator: (ref as any)?.operator ?? ctx?.agent?.agent_url ?? 'derived',
+    ctx_metadata: { tenant_id: tenant.id, display_name: tenant.display_name },
+    sandbox: (ref as any)?.sandbox ?? false,  // SWAP: route to your sandbox backend
+  }),
+  upsertRow: (tenant, ref, ctx) => {  // sync_accounts — only in-tenant entries reach here
+    /* row-level upsert under tenant transaction; gate already filtered */
+    return { /* SyncAccountsResultRow */ };
+  },
+  syncGovernanceRow: (tenant, entry, ctx) => {  // sync_governance — same gating
+    /* persist entry.governance_agents on tenant; helper strips credentials on echo */
+    return { /* SyncGovernanceResponseRow */ };
+  },
+});
 ```
 
-`resolveFromBuyer` reads `ctx.agent.agent_url` and looks up the buyer's home tenant via a side map. Without this seam, no-account tools would fall through to a global view and leak data across tenants.
+**What the helper guarantees:**
 
-## Tenant-isolation gates (FAIL-CLOSED)
+- **Cross-tenant entries never reach `upsertRow` / `syncGovernanceRow`.** The helper resolves `authTenant = resolveFromAuth(ctx)` once per request, then for each entry resolves `entryTenant = resolveByRef(ref)` and emits a `'failed'` row with `code: 'PERMISSION_DENIED'` when `tenantId(authTenant) !== tenantId(entryTenant)`. Adopter callbacks see only in-tenant entries.
+- **Fail-closed when `resolveFromAuth` returns null** (unknown principal, no `agentRegistry`, agent_url not in your home-tenant map): every entry fails `PERMISSION_DENIED`. Don't fork around this — the prior fail-OPEN shape (`if (homeTenantId && entryTenant !== homeTenantId)`) silently disabled isolation for credentials lacking a home-tenant binding.
+- **`accounts.upsert` and `accounts.syncGovernance` are non-writable** on the returned store. An adopter who writes `accounts.upsert = customHandler` after construction gets a `TypeError` (in strict mode) instead of silently bypassing the gate. To extend with `list` / `reportUsage` / `getAccountFinancials`, use `Object.assign`:
 
-Every mutating handler that takes a wire-supplied `operator` must verify the operator maps to the buyer's authenticated home tenant — and **fail-closed** when the home tenant can't be resolved. Otherwise an adopter who forks the file and adds a credential without populating the home-tenant map silently disables tenant isolation.
+  ```ts
+  accounts = Object.assign(
+    createTenantStore<TenantState, TenantMeta>({...}),
+    { list: async (filter, ctx) => ... }
+  );
+  ```
 
-The canonical gate shape and the fail-OPEN anti-pattern are documented in [`examples/CONTRIBUTING.md`](../../examples/CONTRIBUTING.md#tenant-isolation-gates-multi-tenant-adapters) (the convention reviewers will check for). Apply that pattern in **`accounts.upsert`** (sync_accounts) and in any v5-escape-hatch handler that takes per-entry account refs (`accounts.syncGovernance`, etc.).
+**Sandbox lives in `tenantToAccount`.** `AccountReference.sandbox?: boolean` flows through the projector. Two patterns: (1) flag the resolved Account so per-handler code routes reads/writes to a sandbox backend; (2) resolve to a separate sandbox tenant via `resolveByRef` reading `ref.sandbox`. Both are adopter-side decisions — the helper API doesn't take a `sandbox` parameter.
+
+The pre-helper version of this skill documented the inlined gate pattern (with the fail-OPEN anti-pattern flagged in `examples/CONTRIBUTING.md`). That pattern is now superseded — adopters who genuinely need a custom gate write a plain `AccountStore` and own the security surface; everyone else uses `createTenantStore`.
 
 ## Cross-specialism dispatch
 
