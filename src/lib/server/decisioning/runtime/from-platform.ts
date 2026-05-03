@@ -1405,16 +1405,26 @@ export function createAdcpServerFromPlatform<P extends DecisioningPlatform<any, 
       // routes through `context.account`), but adopters' storyboard fixtures
       // commonly send it at the top level — `TOOL_INPUT_SHAPE`'s JSDoc in
       // `src/lib/server/test-controller.ts` documents this extension as the
-      // supported escape hatch. `.strict()` so unknown keys fail validation
-      // rather than `passthrough`-ing into adopter resolvers (a buyer could
-      // otherwise stuff arbitrary payloads into the account ref). `sandbox`
-      // is the spec-defined fallback signal on `AccountReference` per
-      // `schemas/cache/3.0.5/core/account-ref.json`.
+      // supported escape hatch.
+      //
+      // Schema is the full canonical `AccountReference` per
+      // `schemas/cache/3.0.5/core/account-ref.json`: oneOf
+      //   { account_id }                       — explicit accounts
+      //   { brand, operator, sandbox? }        — implicit accounts
+      // Modeled here as a single object with all four fields optional so
+      // either arm passes; resolvers narrow on the shape at dispatch.
+      // `brand` content is `unknown()` because the inner `brand-ref.json`
+      // shape is itself a oneOf and resolvers (not the gate) validate it.
+      // Top-level `.strict()` still blocks unknown keys at the framework
+      // boundary so a buyer can't stuff `__proto__` / arbitrary payloads
+      // into adopters' resolvers.
       const gatedInputSchema = {
         ...controller.toolDefinition.inputSchema,
         account: z
           .object({
             account_id: z.string().min(1).optional(),
+            brand: z.unknown().optional(),
+            operator: z.string().optional(),
             sandbox: z.boolean().optional(),
           })
           .strict()
