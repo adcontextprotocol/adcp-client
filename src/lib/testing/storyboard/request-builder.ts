@@ -73,6 +73,7 @@ const FALLBACK_CALLER_AGENT_URL = 'https://e2e-orchestrator.adcontextprotocol.or
 const FIXTURE_AWARE_ENRICHERS = new Set<string>([
   'create_media_buy', // merges discovery-derived product_id / pricing_option_id INTO fixture packages[0]
   'comply_test_controller', // forces account.sandbox: true regardless of fixture
+  'update_media_buy', // resolves account via resolveAccount(options) so sandbox routing matches create_media_buy
   'get_media_buys', // resolves account via resolveAccount(options) so sandbox routing matches create_media_buy
   'get_media_buy_delivery', // resolves account via resolveAccount(options) so sandbox routing matches create_media_buy
 ]);
@@ -289,31 +290,39 @@ const REQUEST_ENRICHERS: Record<string, RequestEnricher> = {
   },
 
   update_media_buy(step, context, options) {
-    // If the storyboard provides a sample_request, honor it — these requests
-    // are hand-authored to exercise specific seller behaviors (creative
-    // assignment, targeting overlay swaps, pause/resume/cancel, etc.) and the
-    // builder should not override the intent.
+    // Fixture-aware: spread the storyboard's sample_request first so hand-authored
+    // intent (targeting_overlay swaps, creative assignments, pause/resume/cancel)
+    // is preserved verbatim, then force `account` to the harness-resolved value so
+    // sandbox routing matches create_media_buy's namespace on every round-trip
+    // (otherwise the fixture's account silently routes update writes to a different
+    // partition than the create wrote to, and a subsequent get_media_buys reading
+    // from the create-time partition surfaces stale data — see adcp-client#1505).
+    const fixtureFields = step.sample_request
+      ? (injectContext({ ...(step.sample_request as Record<string, unknown>) }, context) as Record<string, unknown>)
+      : {};
+    const request: Record<string, unknown> = { ...fixtureFields };
+    request.account = context.account ?? resolveAccount(options);
+    if (request.media_buy_id === undefined) {
+      request.media_buy_id = context.media_buy_id ?? 'unknown';
+    }
 
-    // `account` is required per bundled/media-buy/update-media-buy-request.json —
-    // sellers enforce governance and account resolution against it.
-    const request: Record<string, unknown> = {
-      account: context.account ?? resolveAccount(options),
-      media_buy_id: context.media_buy_id ?? 'unknown',
-    };
-
-    if (step.id.includes('pause')) {
-      request.paused = true;
-    } else if (step.id.includes('resume')) {
-      request.paused = false;
-    } else if (step.id.includes('cancel')) {
-      request.canceled = true;
-    } else {
-      request.packages = [
-        {
-          package_id: (context.package_id as string | undefined) ?? 'unknown',
-          budget: 2000,
-        },
-      ];
+    // No sample_request: fall back to step-id keyword inference so legacy
+    // storyboards without an authored fixture still exercise sensible flows.
+    if (!step.sample_request) {
+      if (step.id.includes('pause')) {
+        request.paused = true;
+      } else if (step.id.includes('resume')) {
+        request.paused = false;
+      } else if (step.id.includes('cancel')) {
+        request.canceled = true;
+      } else {
+        request.packages = [
+          {
+            package_id: (context.package_id as string | undefined) ?? 'unknown',
+            budget: 2000,
+          },
+        ];
+      }
     }
 
     return request;
