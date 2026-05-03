@@ -279,22 +279,29 @@ Building a server that receives AdCP tool calls? **v6 (recommended for new agent
 
 ```typescript
 import { serve } from '@adcp/sdk';
-import { createAdcpServerFromPlatform, type DecisioningPlatform } from '@adcp/sdk/server/decisioning';
+import {
+  createAdcpServerFromPlatform,
+  definePlatform,
+  defineSalesCorePlatform,
+  refAccountId,
+  AuthRequiredError,
+} from '@adcp/sdk/server';
 
-const platform = {
+const platform = definePlatform({
   capabilities: {
     specialisms: ['sales-non-guaranteed'] as const,
-    creative_agents: [],
     channels: ['display'] as const,
     pricingModels: ['cpm'] as const,
-    config: {},
   },
-  statusMappers: {},
   accounts: {
-    resolve: async (ref, ctx) => db.findAccount(ref, ctx),
+    resolve: async (ref, ctx) => {
+      const id = refAccountId(ref);
+      if (!id) throw new AuthRequiredError();
+      return db.findAccount(id, ctx);
+    },
   },
-  sales: {
-    getProducts: async (req, ctx) => ({ products: catalog.search(req) }),
+  sales: defineSalesCorePlatform({
+    getProducts: async (req, ctx) => ({ products: catalog.search(req) }), // req typed ✓
     createMediaBuy: async (req, ctx) => ({
       media_buy_id: 'mb_1',
       status: 'pending_creatives',
@@ -302,20 +309,32 @@ const platform = {
       packages: [],
     }),
     updateMediaBuy: async (id, req, ctx) => ({ media_buy_id: id, status: 'active' }),
-    syncCreatives: async (creatives, ctx) =>
-      creatives.map(c => ({ creative_id: c.creative_id, action: 'created' as const, status: 'approved' })),
     getMediaBuyDelivery: async (req, ctx) => ({
       currency: 'USD',
       reporting_period: { start: '...', end: '...' },
       media_buy_deliveries: [],
     }),
-  },
-} satisfies DecisioningPlatform;
+    getMediaBuys: async (req, ctx) => ({ media_buys: [] }),
+  }),
+});
 
 serve(() => createAdcpServerFromPlatform(platform, { name: 'My Publisher', version: '1.0.0' }));
 ```
 
-`RequiredPlatformsFor<S>` enforces specialism claims at compile time — claim `'sales-non-guaranteed'` and the typechecker requires `sales: SalesPlatform`. `creative-template` and `creative-generative` claims both map to `CreativeBuilderPlatform`; `creative-ad-server` is its own archetype with `listCreatives` + `getCreativeDelivery`.
+`RequiredPlatformsFor<S>` enforces specialism claims at compile time — claim `'sales-non-guaranteed'` and the typechecker requires `SalesCorePlatform & SalesIngestionPlatform` on `sales`. `creative-template` and `creative-generative` claims both map to `CreativeBuilderPlatform`; `creative-ad-server` is its own archetype with `listCreatives` + `getCreativeDelivery`.
+
+**6.7 helpers worth knowing about:**
+
+- `definePlatform` / `defineSalesCorePlatform` / `defineSalesIngestionPlatform` / sibling `define<X>Platform` factories — drop `req: unknown` casts on inline platform objects.
+- `composeMethod(inner, { before, after })` — typed before/after wrappers around any platform method (caching, enrichment under `ext.*`, typed-error guards). Pre-built `accounts.resolve` guards: `requireAccountMatch`, `requireAdvertiserMatch`, `requireOrgScope`.
+- Typed errors: `AuthRequiredError`, `PermissionDeniedError`, `RateLimitedError`, `ServiceUnavailableError`, `GovernanceDeniedError`, `IdempotencyConflictError`, plus the not-found family. Throw these instead of `new AdcpError(code, ...)`.
+- `BuyerAgentRegistry` — durable buyer-agent identity surface threaded through `ctx.agent` to every `AccountStore` method. See [`docs/migration-buyer-agent-registry.md`](docs/migration-buyer-agent-registry.md).
+- Three reference `AccountStore` shapes: `InMemoryImplicitAccountStore` (Shape A — buyer-driven `sync_accounts`), `createOAuthPassthroughResolver` (Shape B — vendor OAuth + `/me/adaccounts`), `createRosterAccountStore` (Shape C — publisher-curated roster).
+- Multi-tenant: `createTenantRegistry({...})` for host-routed (one server per tenant) or `createTenantStore({...})` for account-routed (one server, per-entry tenant gate built in, fail-closed when auth principal can't be resolved).
+- `createMediaBuyStore` — opt-in `targeting_overlay` echo on `get_media_buys` for sellers claiming `property-lists` / `collection-lists`.
+- `MEDIA_BUY_TRANSITIONS` / `assertMediaBuyTransition` (and the creative pair) — canonical lifecycle graphs.
+
+Worked reference adapters live in `examples/hello_*` — pick the one whose specialism matches yours and fork.
 
 **v5 lower-level API** (still fully supported as the substrate the v6 path calls into):
 
@@ -328,7 +347,7 @@ function handleCreateMediaBuy(rawParams: unknown): CreateMediaBuyResponse {
 }
 ```
 
-Migration path from 5.x → 6.x: see [`docs/migration-5.x-to-6.x.md`](docs/migration-5.x-to-6.x.md). Note: `PackageRequest` (creation-shaped, required fields) differs from `Package` (response-shaped). See the [type catalog](docs/ZOD-SCHEMAS.md#type-catalog) for all request types and their required fields.
+Migration path from 6.6 → 6.7: see [`docs/migration-6.6-to-6.7.md`](docs/migration-6.6-to-6.7.md) (fifteen recipes, two breaking — `'implicit'` enforces inline-`account_id` refusal, `SalesPlatform` split into core + ingestion). 5.x → 6.x: [`docs/migration-5.x-to-6.x.md`](docs/migration-5.x-to-6.x.md). Note: `PackageRequest` (creation-shaped, required fields) differs from `Package` (response-shaped). See the [type catalog](docs/ZOD-SCHEMAS.md#type-catalog) for all request types and their required fields.
 
 ## Multi-Agent Operations
 
