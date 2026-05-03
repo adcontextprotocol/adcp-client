@@ -66,7 +66,13 @@ import {
 import type { DecisioningPlatform, RequiredPlatformsFor, RequiredCapabilitiesFor } from '../platform';
 import type { ComplianceTestingCapabilities } from '../capabilities';
 import type { Account, ResolvedAuthInfo, ResolveContext } from '../account';
-import { AccountNotFoundError, refAccountId, toWireAccount, toWireSyncAccountRow } from '../account';
+import {
+  AccountNotFoundError,
+  refAccountId,
+  toWireAccount,
+  toWireSyncAccountRow,
+  toWireSyncGovernanceRow,
+} from '../account';
 import type { BuyerAgent, BuyerAgentRegistry } from '../buyer-agent';
 import { AdcpError, type AdcpStructuredError } from '../async-outcome';
 import type { CreativeBuilderPlatform } from '../specialisms/creative';
@@ -79,6 +85,7 @@ import type {
   BuildCreativeSuccess,
   CreativeManifest,
   GetAdCPCapabilitiesResponse,
+  SyncGovernanceRequest,
 } from '../../../types/tools.generated';
 import { adcpError, type AdcpErrorResponse } from '../../errors';
 import { validatePlatform, PlatformConfigError } from './validate-platform';
@@ -3800,6 +3807,17 @@ function buildAccountHandlers<P extends DecisioningPlatform<any, any>>(
       return projectSync(
         () => accounts.upsert!(refs, resolveCtx),
         rows => ({ accounts: rows.map(toWireSyncAccountRow) })
+      );
+    };
+  }
+
+  if (accounts.syncGovernance) {
+    handlers.syncGovernance = async (params, ctx) => {
+      const entries = params.accounts as SyncGovernanceRequest['accounts'];
+      const resolveCtx = toResolveCtx(ctx, 'sync_governance');
+      return projectSync(
+        () => accounts.syncGovernance!(entries, resolveCtx),
+        rows => ({ accounts: rows.map(toWireSyncGovernanceRow) })
       );
     };
   }
