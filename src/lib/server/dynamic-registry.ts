@@ -102,6 +102,13 @@ export interface DynamicRegistryRegisterOptions {
    * Use for built-in tenants registered at startup. Dynamic tenants
    * loaded from config should NOT be pinned — they live in `pending`
    * and rebuild on every refresh.
+   *
+   * **Pinned values are immutable until `unregister`.** Refresh-source
+   * updates do not propagate to pinned entries. Adopters who rotate
+   * credentials for a pinned tenant must explicitly call
+   * `unregister(id)` and `register()` again with the new value — a
+   * `refresh()` cycle alone will not pick up the rotation. If you want
+   * refresh-driven updates, do not pin.
    */
   pinned?: boolean;
 
@@ -177,7 +184,9 @@ export interface DynamicRegistry<TRegistries extends RegistryShape> {
    * the bundle from scratch; pinned entries carry forward. Concurrent
    * calls coalesce onto the same Promise.
    *
-   * Throws if no `refresh` callback was supplied at construction.
+   * Returns a rejected Promise if no `refresh` callback was supplied
+   * at construction (does not throw synchronously — callers can `await`
+   * uniformly).
    */
   refresh(): Promise<void>;
 }
@@ -222,6 +231,21 @@ export function createDynamicRegistry<TRegistries extends RegistryShape>(
 ): DynamicRegistry<TRegistries> {
   const names = [...config.registries];
 
+  // Validate construction: empty registries are useless; duplicate names
+  // would shadow each other in the bundle Maps and produce confusing
+  // "unknown registry" errors at lookup time. Surface both at
+  // construction with specific messages.
+  if (names.length === 0) {
+    throw new Error('createDynamicRegistry: `registries` must contain at least one name.');
+  }
+  const dedupedNames = new Set(names);
+  if (dedupedNames.size !== names.length) {
+    const dupes = names.filter((n, i) => names.indexOf(n) !== i);
+    throw new Error(
+      `createDynamicRegistry: duplicate registry name(s): ${dupes.map(n => JSON.stringify(n)).join(', ')}.`
+    );
+  }
+
   function emptyBundle(): InternalBundle<TRegistries> {
     const maps = {} as InternalBundle<TRegistries>['maps'];
     const pinned = {} as InternalBundle<TRegistries>['pinned'];
@@ -243,7 +267,7 @@ export function createDynamicRegistry<TRegistries extends RegistryShape>(
   let inflight: Promise<void> | null = null;
 
   function assertKnownRegistry(name: string): void {
-    if (!names.includes(name as keyof TRegistries & string)) {
+    if (!dedupedNames.has(name)) {
       throw new Error(
         `createDynamicRegistry: unknown registry name ${JSON.stringify(name)}. ` +
           `Known names: ${names.map(n => JSON.stringify(n)).join(', ')}.`
@@ -264,6 +288,14 @@ export function createDynamicRegistry<TRegistries extends RegistryShape>(
             `Pass { overwrite: true } if the duplicate is intentional.`
         );
       }
+      // Non-pinned register during in-flight refresh writes to the
+      // LIVE bundle. The live bundle becomes `liveBundle` in the
+      // refresh closure; at swap, the new bundle is built from
+      // `pending` ∪ `liveBundle.pinned` — so a non-pinned mid-refresh
+      // register is silently dropped at swap time. This is documented
+      // semantics; callers who race `register` against `refresh`
+      // either pin the entry (so it survives the swap) or serialize
+      // the operations.
       map.set(id, value);
       if (options?.pinned === true) {
         bundle.pinned[name].add(id);
@@ -287,13 +319,14 @@ export function createDynamicRegistry<TRegistries extends RegistryShape>(
       return [...bundle.maps[name].keys()];
     },
 
+    // CRITICAL: do not mark `async`. The non-async signature is
+    // load-bearing for the coalesce contract — `async refresh()` would
+    // wrap the returned Promise, so two parallel callers each get a
+    // NEW wrapper around the shared `inflight`, not `inflight` itself.
+    // Adopters who `Promise.all([a, b])` rely on reference equality
+    // so a single completion settles all waiters at once. Pinned by
+    // the test "concurrent refresh() calls coalesce".
     refresh(): Promise<void> {
-      // Non-async deliberately — `async refresh()` would wrap the
-      // returned Promise, so two parallel callers each get a NEW
-      // wrapper around the shared `inflight`, not `inflight` itself.
-      // The coalesce contract requires reference-equal Promises so
-      // adopters can `Promise.all([a, b])` without double-await
-      // semantics.
       if (!config.refresh) {
         return Promise.reject(
           new Error('createDynamicRegistry: refresh() called but no `refresh` callback was supplied at construction.')

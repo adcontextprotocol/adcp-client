@@ -159,21 +159,31 @@ describe('createDynamicRegistry — pinned-carry-forward', () => {
 });
 
 describe('createDynamicRegistry — atomic swap across await', () => {
+  // Tests in this block use a `started` sentinel promise the refresh
+  // callback resolves as its first synchronous statement, instead of
+  // `await new Promise(setImmediate)`. The sentinel is deterministic
+  // — the test resumes only after the callback has reached its
+  // pause point, regardless of how many microtask hops the runtime
+  // schedules between `refresh()` and the callback body.
+
   it('concurrent reader during refresh sees old bundle until swap', async () => {
-    let resolveBlock;
+    let resolveBlock, resolveStarted;
     const block = new Promise(r => {
       resolveBlock = r;
     });
+    const started = new Promise(r => {
+      resolveStarted = r;
+    });
     const r = buildRegistry(async pending => {
       pending.adapters.set('new', { kind: 'fresh' });
+      resolveStarted();
       await block; // refresh is paused mid-callback
       pending.adapters.set('new2', { kind: 'fresher' });
     });
 
-    // Start a refresh and pause it
+    // Start a refresh and wait for the callback to reach its pause
     const refreshPromise = r.refresh();
-    // Yield to let the refresh callback start
-    await new Promise(setImmediate);
+    await started;
 
     // Concurrent reader during the paused refresh sees the OLD bundle
     assert.strictEqual(r.get('adapters', 'new'), undefined, 'reader must not see new entries until refresh completes');
@@ -189,19 +199,23 @@ describe('createDynamicRegistry — atomic swap across await', () => {
   });
 
   it('swap is all-or-nothing across multiple registries', async () => {
-    let resolveBlock;
+    let resolveBlock, resolveStarted;
     const block = new Promise(r => {
       resolveBlock = r;
     });
+    const started = new Promise(r => {
+      resolveStarted = r;
+    });
     const r = buildRegistry(async pending => {
       pending.adapters.set('multi', 'a-value');
+      resolveStarted();
       await block;
       pending.v6.set('multi', 'v6-value');
       pending.operational.set('multi', 'op-value');
     });
 
     const refreshPromise = r.refresh();
-    await new Promise(setImmediate);
+    await started;
 
     // No registry sees `multi` until the swap completes — reader
     // can't observe a half-bundle where `adapters` has `multi` but
@@ -280,7 +294,7 @@ describe('createDynamicRegistry — in-flight refresh guard', () => {
 });
 
 describe('createDynamicRegistry — refresh callback absent', () => {
-  it('throws if refresh() is called with no callback configured', async () => {
+  it('rejects if refresh() is called with no callback configured', async () => {
     const r = createDynamicRegistry({ registries: NAMES });
     await assert.rejects(() => r.refresh(), /no `refresh` callback was supplied/);
   });
@@ -289,5 +303,109 @@ describe('createDynamicRegistry — refresh callback absent', () => {
     const r = createDynamicRegistry({ registries: NAMES });
     r.register('adapters', 'snap', { kind: 'adapter' }, { pinned: true });
     assert.deepStrictEqual(r.get('adapters', 'snap'), { kind: 'adapter' });
+  });
+});
+
+describe('createDynamicRegistry — race semantics during refresh', () => {
+  // These tests pin documented behavior for register/unregister calls
+  // that land between refresh-start and the swap. The semantics are
+  // load-bearing: the JSDoc on `register` calls them out and adopters
+  // serialize when the dropped-write behavior would surprise them.
+
+  it('non-pinned register() during in-flight refresh is dropped at swap', async () => {
+    let resolveBlock, resolveStarted;
+    const block = new Promise(r => {
+      resolveBlock = r;
+    });
+    const started = new Promise(r => {
+      resolveStarted = r;
+    });
+    const r = buildRegistry(async () => {
+      resolveStarted();
+      await block;
+    });
+
+    const refreshPromise = r.refresh();
+    await started;
+
+    // Register a non-pinned tenant while refresh is paused
+    r.register('adapters', 'race', { kind: 'unpinned' });
+    // Visible on the live bundle until swap
+    assert.deepStrictEqual(r.get('adapters', 'race'), { kind: 'unpinned' });
+
+    resolveBlock();
+    await refreshPromise;
+
+    // After swap: the non-pinned register is gone — it wasn't in
+    // `pending` and wasn't pinned, so the swap's new bundle didn't
+    // include it.
+    assert.strictEqual(r.get('adapters', 'race'), undefined);
+  });
+
+  it('pinned register() during in-flight refresh survives the swap', async () => {
+    let resolveBlock, resolveStarted;
+    const block = new Promise(r => {
+      resolveBlock = r;
+    });
+    const started = new Promise(r => {
+      resolveStarted = r;
+    });
+    const r = buildRegistry(async () => {
+      resolveStarted();
+      await block;
+    });
+
+    const refreshPromise = r.refresh();
+    await started;
+
+    // Register a pinned tenant while refresh is paused — pin is added
+    // to the live bundle, which is also the snapshot the swap reads.
+    r.register('adapters', 'race-pinned', { kind: 'pinned' }, { pinned: true });
+
+    resolveBlock();
+    await refreshPromise;
+
+    assert.deepStrictEqual(r.get('adapters', 'race-pinned'), { kind: 'pinned' });
+  });
+
+  it('unregister() during in-flight refresh removes the entry post-swap', async () => {
+    let resolveBlock, resolveStarted;
+    const block = new Promise(r => {
+      resolveBlock = r;
+    });
+    const started = new Promise(r => {
+      resolveStarted = r;
+    });
+    const r = buildRegistry(async () => {
+      resolveStarted();
+      await block;
+    });
+    r.register('adapters', 'doomed', { kind: 'pinned' }, { pinned: true });
+    r.register('v6', 'doomed', { kind: 'platform' }, { pinned: true });
+
+    const refreshPromise = r.refresh();
+    await started;
+
+    // Unregister mutates the live bundle (and its pinned set).
+    // The refresh closure reads from the same live bundle — the
+    // unregister IS visible at swap time.
+    r.unregister('doomed');
+
+    resolveBlock();
+    await refreshPromise;
+
+    assert.strictEqual(r.get('adapters', 'doomed'), undefined);
+    assert.strictEqual(r.get('v6', 'doomed'), undefined);
+  });
+});
+
+describe('createDynamicRegistry — construction-time validation', () => {
+  it('throws on empty registries array', () => {
+    assert.throws(() => createDynamicRegistry({ registries: [] }), /must contain at least one name/);
+  });
+
+  it('throws on duplicate registry names', () => {
+    assert.throws(() => createDynamicRegistry({ registries: ['adapters', 'adapters'] }), /duplicate registry name/);
+    assert.throws(() => createDynamicRegistry({ registries: ['a', 'b', 'a', 'c'] }), /duplicate registry name/);
   });
 });
