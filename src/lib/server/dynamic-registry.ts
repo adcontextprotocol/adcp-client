@@ -78,9 +78,8 @@
  * (single-turn deletion, synchronous). Returns `true` if `id` was present
  * in at least one Map. Also adds `id` to an internal denylist so future
  * `refresh()` cycles do not carry it forward via `staticIds`. The denylist
- * is permanent for the registry's lifetime — there is no "re-register a
- * formerly unregistered id" path; if you need that, `refresh()` to a fresh
- * bundle that includes the id.
+ * only suppresses carry-forward via `staticIds` — a future `refresh()` that
+ * explicitly populates the id in `pending` will make it available again.
  *
  * **Memory note.** The denylist grows by one entry per `unregister()` call
  * and is never pruned. In long-lived processes with high tenant churn,
@@ -202,7 +201,7 @@ export function createDynamicRegistry<TRegistries extends RegistryTypeMap>(
 
   return {
     get<K extends keyof TRegistries>(name: K, id: string): TRegistries[K] | undefined {
-      return bundle[name].get(id);
+      return bundle[name]?.get(id);
     },
 
     refresh(): Promise<void> {
