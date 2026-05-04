@@ -53,7 +53,7 @@ export const VERSION_INFO = {
   library: '6.9.0',
   adcp: '3.0.6',
   compatibleVersions: COMPATIBLE_ADCP_VERSIONS,
-  generatedAt: '2026-05-04T01:49:58.038Z',
+  generatedAt: '2026-05-04T02:02:29.858Z',
 } as const;
 
 /**

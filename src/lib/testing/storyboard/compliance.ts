@@ -356,6 +356,87 @@ export function findBundleById(id: string, options: ResolveOptions = {}): Bundle
 }
 
 /**
+ * Resolved view of a specialism for the `adcp specialism show` CLI: the
+ * specialism's own storyboard plus every protocol scenario it pulls in via
+ * `requires_scenarios`. Useful as a pre-flight "what will CI actually run
+ * against my server?" answer.
+ */
+export interface SpecialismDetail {
+  slug: string;
+  protocol: string;
+  status: string;
+  /** Title from index.json (kept separate from storyboard.title for fallback). */
+  index_title: string | null;
+  /** The specialism's own index.yaml parsed as a Storyboard. */
+  storyboard: Storyboard;
+  /**
+   * Required scenarios pulled in from protocol bundles via the index.yaml's
+   * `requires_scenarios` field. Each entry is a fully-resolved Storyboard;
+   * `unresolved` lists references that did not match a storyboard in the cache.
+   */
+  required_scenarios: Storyboard[];
+  unresolved_scenarios: string[];
+  /** Required tools declared by the specialism (from the index entry). */
+  required_tools: string[];
+}
+
+export function loadSpecialismDetail(slug: string, options: ResolveOptions = {}): SpecialismDetail {
+  const index = loadComplianceIndex(options);
+  const entry = index.specialisms.find(s => s.id === slug);
+  if (!entry) {
+    const known = index.specialisms.map(s => s.id).join(', ');
+    throw new Error(`Unknown specialism "${slug}". Known specialisms: ${known}`);
+  }
+
+  const bundleStoryboards = loadBundleStoryboards({
+    kind: 'specialism',
+    id: slug,
+    path: join(getComplianceCacheDir(options), 'specialisms', slug),
+  });
+  const storyboard = bundleStoryboards.find(sb => sb.category === entry.id.replace(/-/g, '_')) ?? bundleStoryboards[0];
+  if (!storyboard) {
+    throw new Error(
+      `Specialism "${slug}" loaded no storyboards from ${join(getComplianceCacheDir(options), 'specialisms', slug)}`
+    );
+  }
+
+  const required: Storyboard[] = [];
+  const unresolved: string[] = [];
+  for (const ref of storyboard.requires_scenarios ?? []) {
+    // Scenario YAMLs declare `id: <category>/<scenario_id>` — the slash
+    // form is the storyboard's own id and the only safe lookup. Bare-id
+    // fallbacks would silently match across categories once future caches
+    // ship scenarios with colliding tail segments — better to surface drift
+    // through `unresolved_scenarios` than mask it with a wrong-category hit.
+    const sb = getComplianceStoryboardById(ref, options);
+    if (sb) required.push(sb);
+    else unresolved.push(ref);
+  }
+
+  // index.json carries the canonical required_tools list — fall back to the
+  // storyboard's own field if the index entry is missing it.
+  const requiredTools =
+    (entry as ComplianceIndexSpecialism & { required_tools?: string[] }).required_tools ??
+    storyboard.required_tools ??
+    [];
+
+  return {
+    slug,
+    protocol: entry.protocol,
+    status: entry.status,
+    index_title: entry.title,
+    storyboard,
+    required_scenarios: required,
+    unresolved_scenarios: unresolved,
+    required_tools: requiredTools,
+  };
+}
+
+export function listSpecialisms(options: ResolveOptions = {}): ComplianceIndexSpecialism[] {
+  return loadComplianceIndex(options).specialisms;
+}
+
+/**
  * Resolve either a bundle id or a storyboard id to a storyboard set.
  * Bundle ids expand to every storyboard in the bundle (index + scenarios).
  * Storyboard ids resolve to that single storyboard.
