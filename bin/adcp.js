@@ -1597,6 +1597,8 @@ OPTIONS:
                       are visible without blocking CI. Replaces the
                       continue-on-error: true pattern. Exit 1 (runner
                       crash) and 2 (usage error) are not suppressed.
+                      In --json mode the stderr block is suppressed;
+                      failures are present in the JSON output.
   --summary-file [PATH]
                       Write a Markdown run summary to PATH after the run.
                       If PATH is omitted, defaults to
@@ -1930,7 +1932,11 @@ async function handleStoryboardShow(args) {
   }
 
   // Exclude --specialism value from positional args to avoid treating it as a storyboard ID.
-  const positionalArgs = args.filter((a, i) => !a.startsWith('--') && i !== specialismIdx + 1);
+  // Guard: only exclude index specialismIdx+1 when --specialism was actually present (specialismIdx !== -1),
+  // otherwise -1+1=0 would silently drop the first positional (the storyboard ID) on plain `show <id>` calls.
+  const positionalArgs = args.filter(
+    (a, i) => !a.startsWith('--') && (specialismSlug === null || i !== specialismIdx + 1)
+  );
   const storyboardId = positionalArgs[0];
 
   if (specialismSlug) {
@@ -1983,7 +1989,7 @@ async function handleStoryboardShow(args) {
           console.log(`  ⏭️  ${na.storyboard_id} — ${na.reason}`);
         }
       }
-      console.log(`\nNote: also includes universal storyboards and ${snakeCaseProtocol} protocol baseline.`);
+      console.log(`\nNote: also includes universal storyboards and ${entry.protocol} protocol baseline.`);
     }
     return;
   }
@@ -3516,6 +3522,9 @@ async function handleMultiInstanceStoryboardRun(args, opts, urls) {
     );
   }
 
+  if (opts.summaryFile) {
+    console.error(`WARNING: --summary-file is not supported for multi-instance runs; skipping.`);
+  }
   if (opts.softFail && hadFailure) {
     printSoftFailBlock(
       results.filter(r => !r.overall_passed).map(r => r.storyboard_id),
@@ -3790,6 +3799,9 @@ async function handleAgentsRoutedStoryboardRun(args, opts, routing) {
     );
   }
 
+  if (opts.summaryFile) {
+    console.error(`WARNING: --summary-file is not supported for agents-map runs; skipping.`);
+  }
   if (opts.softFail && hadFailure) {
     printSoftFailBlock(
       results.filter(r => !r.overall_passed).map(r => r.storyboard_id),
