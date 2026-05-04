@@ -799,7 +799,9 @@ function parseAgentOptions(args) {
   const summaryFileIdx = args.indexOf('--summary-file');
   let summaryFileFlagValue = null;
   let summaryFile = null;
+  let summaryFileExplicit = false;
   if (summaryFileIdx !== -1) {
+    summaryFileExplicit = true;
     if (summaryFileIdx + 1 < args.length && !args[summaryFileIdx + 1].startsWith('--')) {
       summaryFileFlagValue = args[summaryFileIdx + 1];
       summaryFile = summaryFileFlagValue;
@@ -853,6 +855,7 @@ function parseAgentOptions(args) {
     localAgent: localAgentValue,
     format: formatValue,
     summaryFile,
+    summaryFileExplicit,
     softFail,
   };
 }
@@ -3181,13 +3184,13 @@ async function handleMultiInstanceStoryboardRun(args, opts, urls) {
     );
   }
 
-  if (opts.summaryFile) {
+  if (opts.summaryFile && opts.summaryFileExplicit) {
     console.error(`WARNING: --summary-file is not supported for multi-instance runs; skipping.`);
   }
   if (opts.softFail && hadFailure) {
     printSoftFailBlock(
       results.filter(r => !r.overall_passed).map(r => r.storyboard_id),
-      opts.jsonOutput
+      jsonOutput
     );
   }
   process.exit(opts.softFail ? 0 : hadFailure ? 3 : 0);
@@ -3458,13 +3461,13 @@ async function handleAgentsRoutedStoryboardRun(args, opts, routing) {
     );
   }
 
-  if (opts.summaryFile) {
+  if (opts.summaryFile && opts.summaryFileExplicit) {
     console.error(`WARNING: --summary-file is not supported for agents-map runs; skipping.`);
   }
   if (opts.softFail && hadFailure) {
     printSoftFailBlock(
       results.filter(r => !r.overall_passed).map(r => r.storyboard_id),
-      opts.jsonOutput
+      jsonOutput
     );
   }
   process.exit(opts.softFail ? 0 : hadFailure ? 3 : 0);
