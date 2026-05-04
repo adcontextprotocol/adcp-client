@@ -4,7 +4,8 @@
 // PR scope3data/agentic-adapters#248: top-level `<platform>_access_token`,
 // nested `context.<platform>_access_token`, nested `ext.<platform>_access_token`.
 // Default mode `'lax'` preserves existing behavior; `'authInfo-only'`
-// rejects with INVALID_REQUEST listing offending paths (not values).
+// rejects with PERMISSION_DENIED (`details.scope: 'credentials'`)
+// listing offending paths (not values).
 
 process.env.NODE_ENV = 'test';
 
@@ -161,6 +162,79 @@ describe('scanArgsForCredentials', () => {
     assert.deepStrictEqual(hits.sort(), ['BEARER', 'bearer'].sort());
   });
 
+  it('flags bare authorization / cookie fields (HTTP-header smuggling)', () => {
+    const hits = scanArgsForCredentials({
+      authorization: 'Bearer xxx',
+      Authorization: 'Bearer yyy',
+      cookie: 'session=abc',
+      COOKIE: 'session=def',
+    });
+    assert.deepStrictEqual(hits.sort(), ['Authorization', 'COOKIE', 'authorization', 'cookie'].sort());
+  });
+
+  it('flags private_key / privateKey / private-key (JWT/HTTPSig flows)', () => {
+    const hits = scanArgsForCredentials({
+      private_key: 'a',
+      privateKey: 'b',
+      'private-key': 'c',
+      tenant_private_key: 'd',
+    });
+    assert.deepStrictEqual(hits.sort(), ['private-key', 'privateKey', 'private_key', 'tenant_private_key'].sort());
+  });
+
+  it('does not invoke property getters (defense against throw / side effect)', () => {
+    let getterCalls = 0;
+    const obj = {};
+    Object.defineProperty(obj, 'snap_access_token', {
+      enumerable: true,
+      get() {
+        getterCalls++;
+        throw new Error('getter side effect');
+      },
+    });
+    // The credential-named getter is flagged by name (fail-closed); the
+    // getter itself is never invoked, so the throw never reaches the
+    // dispatcher. Without this defense, `Object.entries` would invoke
+    // the getter and propagate the throw.
+    const hits = scanArgsForCredentials(obj);
+    assert.deepStrictEqual(hits, ['snap_access_token']);
+    assert.strictEqual(getterCalls, 0, 'getter must not be invoked');
+  });
+
+  it('strips /g and /y flags from extend patterns to prevent lastIndex skip-alternation', () => {
+    const stateful = /credentials/gi;
+    // Without flag stripping, repeated test() calls on the same regex
+    // would skip alternating inputs because lastIndex advances.
+    const hits1 = scanArgsForCredentials({ credentials_blob: 'a', credentials_other: 'b' }, { extend: [stateful] });
+    assert.deepStrictEqual(hits1.sort(), ['credentials_blob', 'credentials_other'].sort());
+
+    // Run a second time to verify state hasn't been retained.
+    const hits2 = scanArgsForCredentials({ credentials_one: 'a', credentials_two: 'b' }, { extend: [stateful] });
+    assert.deepStrictEqual(hits2.sort(), ['credentials_one', 'credentials_two'].sort());
+  });
+
+  it('preserves /i (case-insensitive) flag when stripping /g and /y', () => {
+    // Stripping should remove only stateful flags; case-insensitivity
+    // is intent-bearing and must survive.
+    const hits = scanArgsForCredentials({ CREDENTIALS_X: 'a', credentials_y: 'b' }, { extend: [/credentials/gi] });
+    assert.deepStrictEqual(hits.sort(), ['CREDENTIALS_X', 'credentials_y'].sort());
+  });
+
+  it('matcher receives parent path for context-aware decisions', () => {
+    const hits = scanArgsForCredentials(
+      {
+        unsafe_in_context_only: 'flag-me',
+        context: { unsafe_in_context_only: 'flag-me-too' },
+        ext: { unsafe_in_context_only: 'do-not-flag' },
+      },
+      {
+        // Flag only when nested under `context`
+        matcher: (key, path) => key === 'unsafe_in_context_only' && path[0] === 'context',
+      }
+    );
+    assert.deepStrictEqual(hits, ['context.unsafe_in_context_only']);
+  });
+
   it('does not flag legitimate non-credential fields adjacent to credential vocabulary', () => {
     // `idempotency_key` does not match `_token$` / `_secret$` / `_password$` /
     // `api[_-]?key` / `^bearer$` / `^accessToken$` / `^refreshToken$`.
@@ -301,7 +375,12 @@ describe('#1529 L1 — credentialPolicy server-wired enforcement', () => {
     });
     assert.strictEqual(result.isError, true, 'expected rejection');
     const err = result.structuredContent.adcp_error;
-    assert.strictEqual(err.code, 'INVALID_REQUEST');
+    // PERMISSION_DENIED — caller authenticated, payload schema-valid,
+    // seller policy refuses. INVALID_REQUEST is for malformed/schema
+    // violations, which this isn't.
+    assert.strictEqual(err.code, 'PERMISSION_DENIED');
+    assert.strictEqual(err.recovery, 'correctable');
+    assert.strictEqual(err.details.scope, 'credentials');
     // `field` deliberately omitted so the envelope doesn't imply a single
     // path when several vectors may be present together.
     assert.strictEqual(err.field, undefined);
@@ -436,5 +515,52 @@ describe('#1529 L1 — credentialPolicy server-wired enforcement', () => {
     assert.ok(paths.includes('snap_access_token'));
     assert.ok(paths.includes('context.linkedin_access_token'));
     assert.ok(paths.includes('ext.tiktok_access_token'));
+  });
+
+  it('rejects BEFORE idempotency lookup — credential-bearing payload does not poison the replay cache', async () => {
+    // Pin the dispatcher ordering: scan runs before idempotency. A
+    // buyer who sends a credential-bearing request and then retries
+    // with the same idempotency_key but a CLEAN payload must not see
+    // an IDEMPOTENCY_CONFLICT (canonical-payload mismatch with cached
+    // success), because the credential request never populated the
+    // cache in the first place.
+    let handlerCalls = 0;
+    const platform = buildPlatform(async () => {
+      handlerCalls++;
+      return {
+        reporting_period: { start: '2026-05-01T00:00:00Z', end: '2026-05-02T00:00:00Z' },
+        media_buy_deliveries: [],
+      };
+    });
+    const server = createAdcpServerFromPlatform(platform, {
+      ...BASE_OPTS,
+      credentialPolicy: 'authInfo-only',
+    });
+    const sharedKey = '00000000-0000-4000-8000-000000000001';
+
+    // First request: credential-bearing. Must reject before reaching
+    // the idempotency cache OR the handler.
+    const rejected = await callDelivery(server, {
+      media_buy_ids: ['mb_1'],
+      idempotency_key: sharedKey,
+      snap_access_token: 'attacker-pat',
+    });
+    assert.strictEqual(rejected.isError, true);
+    assert.strictEqual(rejected.structuredContent.adcp_error.code, 'PERMISSION_DENIED');
+    assert.strictEqual(handlerCalls, 0, 'handler must not run on the rejected request');
+
+    // Second request: clean payload, same idempotency_key. Should
+    // succeed normally — the cache is empty because the first request
+    // never populated it.
+    const clean = await callDelivery(server, {
+      media_buy_ids: ['mb_1'],
+      idempotency_key: sharedKey,
+    });
+    assert.notStrictEqual(
+      clean.isError,
+      true,
+      `clean retry should succeed; got ${JSON.stringify(clean.structuredContent)}`
+    );
+    assert.strictEqual(handlerCalls, 1, 'handler must run on the clean retry');
   });
 });

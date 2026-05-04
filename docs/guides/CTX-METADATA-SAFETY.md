@@ -172,8 +172,13 @@ rejects:
 }
 ```
 
-All three reject with `INVALID_REQUEST` and `details.credential_paths`
-listing the offending paths (values are not echoed back).
+All three reject with `PERMISSION_DENIED` (`details.scope: 'credentials'`,
+`recovery: 'correctable'`) and `details.credential_paths` listing the
+offending paths (values are not echoed back). The code is
+`PERMISSION_DENIED` rather than `INVALID_REQUEST` because the request
+is *schema-valid* — every AdCP request schema sets `additionalProperties:
+true` — and what's refused is the seller policy "credentials must
+arrive on `authInfo`."
 
 Opt in at server construction:
 
@@ -187,11 +192,13 @@ createAdcpServer({
 ```
 
 The framework scans every incoming request's args bag for credential-
-shaped keys at any depth. Default patterns: `_access_token$`,
-`_secret$`, `_password$`, `accessToken`, `refreshToken`. Hits reject
-with `INVALID_REQUEST` listing the offending paths (not values, and
-the rejection envelope deliberately skips `params.context` echo so the
-credential doesn't round-trip through the response).
+shaped keys at any depth. Default patterns cover the common credential
+vocabulary: `_token`, `_secret`, `_password`, `api_key`, `private_key`,
+`authorization`, `cookie`, `bearer`, `accessToken`, `refreshToken`
+(case-insensitive). Hits reject with `PERMISSION_DENIED` listing the
+offending paths (not values, and the rejection envelope deliberately
+skips `params.context` echo so the credential doesn't round-trip through
+the response).
 
 Customize patterns when your platform vocabulary needs more:
 

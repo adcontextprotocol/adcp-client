@@ -81,21 +81,27 @@ export type CredentialPolicy = CredentialPolicyMode | CredentialPolicyConfig;
 /**
  * Default credential-name patterns. Catches the three vectors observed
  * in PR scope3data/agentic-adapters#248 plus the broader credential
- * vocabulary common in TS ecosystems. Adopters whose platform names
- * fall outside this set extend via {@link CredentialPatternsConfig.extend}.
+ * vocabulary common in TS ecosystems and HTTPSig / OAuth flows.
+ * Adopters whose platform names fall outside this set extend via
+ * {@link CredentialPatternsConfig.extend}.
  *
  * Coverage:
  *   - `_token$` (case-insensitive) — `*_access_token`, `bearer_token`,
- *     `id_token`, `session_token`, `refresh_token`.
+ *     `id_token`, `session_token`, `auth_token`, `refresh_token`.
  *   - `_secret$` / `_password$` — `client_secret`, `db_password`.
- *   - `api[_-]?key` — `api_key`, `apiKey`, `api-key`.
+ *   - `api[_-]?key` (case-insensitive) — `api_key`, `apiKey`, `api-key`,
+ *     and prefixed variants like `criteo_api_key`.
+ *   - `private[_-]?key` (case-insensitive) — `private_key`, `privateKey`,
+ *     `private-key`. Common in JWT / RFC 9421 signing-key flows.
+ *   - `^authorization$` / `^cookie$` (case-insensitive) — HTTP-header
+ *     value smuggled as a field.
  *   - `^bearer$` — bare `bearer` field.
  *   - `^accessToken$` / `^refreshToken$` (case-insensitive) — camelCase
  *     and PascalCase exact matches.
  *
  * Intentionally excluded from defaults (too many false positives):
- *   - bare `key`, `principal`, `auth_token` (no `_token` boundary
- *     elsewhere — `_token$` covers `auth_token` since it ends in `_token`).
+ *   - bare `key` / `principal` / `kid` / `pat` — too short to risk
+ *     matching legitimate routing fields.
  *   - `*Token$` PascalCase suffix without a known prefix — e.g.
  *     `paymentToken` could be a legitimate wire field. Adopters who
  *     want broader coverage extend.
@@ -105,13 +111,28 @@ export const DEFAULT_CREDENTIAL_PATTERNS: readonly RegExp[] = Object.freeze([
   /_secret$/i,
   /_password$/i,
   /api[_-]?key/i,
+  /private[_-]?key/i,
+  /^authorization$/i,
+  /^cookie$/i,
   /^bearer$/i,
   /^accessToken$/i,
   /^refreshToken$/i,
 ]);
 
-interface ResolvedMatcher {
-  match(key: string, path: readonly string[]): boolean;
+type ResolvedMatcher = (key: string, path: readonly string[]) => boolean;
+
+/**
+ * Strip `/g` and `/y` flags from a regex. With those flags set,
+ * `RegExp.prototype.test` advances `lastIndex`, causing alternating-skip
+ * behavior on repeated calls against the same pattern instance. The
+ * scanner calls `.test()` per key per request and reuses the regex
+ * instance across calls, so `/credentials/gi` (a natural footgun) would
+ * produce non-deterministic hits. Strip the offending flags rather than
+ * forcing adopters to read a footnote.
+ */
+function stripStatefulFlags(rx: RegExp): RegExp {
+  if (!rx.global && !rx.sticky) return rx;
+  return new RegExp(rx.source, rx.flags.replace(/[gy]/g, ''));
 }
 
 function buildMatcher(patterns?: CredentialPatternsConfig): ResolvedMatcher {
@@ -123,13 +144,12 @@ function buildMatcher(patterns?: CredentialPatternsConfig): ResolvedMatcher {
     );
   }
   if (patterns?.matcher) {
-    const fn = patterns.matcher;
-    return { match: (key, path) => fn(key, path) };
+    return patterns.matcher;
   }
-  const regexes = patterns?.extend ? [...DEFAULT_CREDENTIAL_PATTERNS, ...patterns.extend] : DEFAULT_CREDENTIAL_PATTERNS;
-  return {
-    match: (key: string) => regexes.some(rx => rx.test(key)),
-  };
+  const regexes = patterns?.extend
+    ? [...DEFAULT_CREDENTIAL_PATTERNS, ...patterns.extend.map(stripStatefulFlags)]
+    : DEFAULT_CREDENTIAL_PATTERNS;
+  return (key: string) => regexes.some(rx => rx.test(key));
 }
 
 /**
@@ -138,10 +158,19 @@ function buildMatcher(patterns?: CredentialPatternsConfig): ResolvedMatcher {
  * 'context.snap_access_token', 'ext.snap_access_token']`). Empty array
  * means clean.
  *
- * Scans through both objects and arrays; array indices appear in the
- * path as numeric segments. Stops at primitives. Cycle-safe via a
- * Set-tracked depth-first traversal — buyers who send self-referential
- * objects don't infinite-loop the scanner.
+ * Scope:
+ *   - Walks own string-keyed data properties only. Symbol keys,
+ *     prototype-chain inherited properties, and accessor (getter/setter)
+ *     properties are skipped — JSON-derived inputs (the only source the
+ *     framework dispatches) cannot carry any of those. Hand-built
+ *     objects with credential-named getters are still flagged
+ *     fail-closed (the property name is matched against the regex
+ *     set), but the getter is never invoked, so a throwing or
+ *     side-effecting getter cannot reach the dispatcher.
+ *   - Walks both plain objects and arrays; array indices appear as
+ *     numeric path segments.
+ *   - Stops at primitives.
+ *   - Cycle-safe via a `WeakSet` tracking visited objects.
  */
 export function scanArgsForCredentials(value: unknown, patterns?: CredentialPatternsConfig): string[] {
   const matcher = buildMatcher(patterns);
@@ -160,12 +189,37 @@ export function scanArgsForCredentials(value: unknown, patterns?: CredentialPatt
       return;
     }
 
-    for (const [key, child] of Object.entries(node as Record<string, unknown>)) {
+    // Use property descriptors so accessor (getter/setter) properties
+    // are visible to the scanner without invoking the getter — a
+    // throwing getter on a credential-named property would otherwise
+    // either crash the dispatcher or land the surrounding `params`
+    // object in an outer error log. Data-only inputs (JSON.parse,
+    // structured clone) never have accessor descriptors, so this is
+    // a defensive measure for hand-built test inputs and any future
+    // transport that bypasses JSON parsing.
+    let descriptors: Record<string, PropertyDescriptor>;
+    try {
+      descriptors = Object.getOwnPropertyDescriptors(node) as Record<string, PropertyDescriptor>;
+    } catch {
+      // Proxy-trapped property enumeration that throws — fail closed
+      // by recording the parent path as suspicious. Cannot enumerate
+      // to a finer-grained location.
+      hits.push([...path, '<unreadable>'].join('.'));
+      return;
+    }
+
+    for (const key of Object.keys(descriptors)) {
+      const desc = descriptors[key];
+      if (desc === undefined) continue;
       const childPath = [...path, key];
-      if (matcher.match(key, path)) {
+      if (matcher(key, path)) {
         hits.push(childPath.join('.'));
       }
-      walk(child, childPath);
+      // Only recurse into data descriptors. Accessor descriptors
+      // (no `value` slot) are flagged-by-name above but never invoked.
+      if ('value' in desc) {
+        walk(desc.value, childPath);
+      }
     }
   };
 
@@ -198,6 +252,10 @@ export function resolveCredentialPolicyForTool(
  * register for this server (spec tools for the claimed specialisms +
  * any adopter-supplied custom tools). Pass after the registration
  * loop completes so the set is authoritative.
+ *
+ * @internal — adopters cannot construct `knownToolNames` outside the
+ * framework. The framework calls this once, late in `createAdcpServer`,
+ * after every tool (including `get_adcp_capabilities`) is registered.
  */
 export function validateCredentialPolicy(
   policy: CredentialPolicy | undefined,

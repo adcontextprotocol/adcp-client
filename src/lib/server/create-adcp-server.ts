@@ -3245,14 +3245,25 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
           if (effectivePolicy === 'authInfo-only') {
             const hits = scanArgsForCredentials(params, credentialPolicyPatterns);
             if (hits.length > 0) {
+              // Spec-correct code: the caller is authenticated and the
+              // payload is schema-valid (every AdCP request schema sets
+              // `additionalProperties: true`). What's refused is the
+              // SELLER POLICY of "credentials must arrive on authInfo,
+              // not in args". That's `PERMISSION_DENIED` per
+              // `enums/error-code.json`, not `INVALID_REQUEST` (which
+              // is for malformed/schema violations). `details.scope:
+              // 'credentials'` mirrors the existing agent-status
+              // rejection's `details.scope: 'agent'`.
+              //
               // Deliberately omit `field` — it implies a single offending
               // path, which under-discloses when several vectors are
-              // present together (round-1 + round-2 + round-3 in one
-              // request). Full list lives in `details.credential_paths`.
-              return adcpError('INVALID_REQUEST', {
+              // present together. Full list lives in
+              // `details.credential_paths`.
+              return adcpError('PERMISSION_DENIED', {
                 message:
                   'Request args carry credential-shaped keys. Credentials must arrive on authInfo, not in the request body.',
-                details: { credential_paths: hits },
+                recovery: 'correctable',
+                details: { scope: 'credentials', credential_paths: hits },
               });
             }
           }
@@ -3959,15 +3970,6 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
   // Tool coherence warnings
   checkCoherence(registeredToolNames, logger);
 
-  // Validate `credentialPolicy.tools` keys against the registered tool
-  // set. Catches typos at server construction so an adopter's
-  // `tools: { activte_signal: 'lax' }` (missing 'a') doesn't silently
-  // no-op the per-tool override and start fail-closing legitimate
-  // buyer-creds traffic in production. Also re-validates the
-  // `patterns.matcher`/`patterns.extend` mutual-exclusion at
-  // construction time so the diagnostic doesn't wait for first traffic.
-  validateCredentialPolicy(credentialPolicy, registeredToolNames);
-
   // --- Idempotency configuration guardrails ---
   //
   // A seller that registers mutating handlers but doesn't supply an
@@ -4115,6 +4117,21 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
       return capabilitiesResponse(data);
     }) as Parameters<typeof server.registerTool>[2]
   );
+  registeredToolNames.add('get_adcp_capabilities');
+
+  // Validate `credentialPolicy.tools` keys against the FULL registered
+  // tool set, including `get_adcp_capabilities` (registered just above).
+  // Earlier placement (before this tool was added) made
+  // `tools: { get_adcp_capabilities: 'lax' }` spuriously throw — low
+  // real-world impact (the tool never carries credentials) but the
+  // typo-check claim "the registered tool set is authoritative" was
+  // false for that one tool. Catches typos at construction so an
+  // adopter's `tools: { activte_signal: 'lax' }` (missing 'a') doesn't
+  // silently no-op the per-tool override and start fail-closing
+  // legitimate buyer-creds traffic in production. Also re-validates
+  // the `patterns.matcher`/`patterns.extend` mutual-exclusion at
+  // construction so the diagnostic doesn't wait for first traffic.
+  validateCredentialPolicy(credentialPolicy, registeredToolNames);
 
   const compliance = {
     async reset({
