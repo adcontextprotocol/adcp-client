@@ -336,6 +336,63 @@ If you migrate from a hand-rolled `scrubRequestForFanout` (e.g. the
 `scope3data/agentic-adapters` shim), do the swap atomically — both
 helpers in the same diff, same code review, same merge.
 
+### `scanAuthInfo`: extending the perimeter to `ctx.authInfo.extra` (#1539)
+
+`credentialPolicy.policy` enforces the args-bag scan. Custom
+authenticators that stamp values into `authInfo.extra` (token-
+introspection responses, JWT claim sets, OAuth scope blobs) are
+outside that scan — but adopter handler code that reads
+`ctx.authInfo.extra.<credential>` for upstream auth produces a silent
+leak surface, and a buggy `BuyerAgentRegistry.resolve` factory that
+throws an error embedding `extra` lands the value in `logger.error`.
+
+`scanAuthInfo: true` extends the credential-shaped scan to cover
+`ctx.authInfo.extra` at any depth using the same pattern set as the
+args scan. **Orthogonal to `policy`** — adopters can mix-and-match:
+
+```ts
+// Strictest: scan both args and authInfo
+credentialPolicy: { policy: 'authInfo-only', scanAuthInfo: true }
+
+// Trust args, defend authInfo log propagation
+credentialPolicy: { policy: 'lax', scanAuthInfo: true }
+
+// L1 baseline (default — scanAuthInfo omitted)
+credentialPolicy: 'authInfo-only'
+```
+
+Default `false` is deliberate: OAuth introspection blobs and JWT
+claims in `extra` will false-positive on default patterns like
+`/_token$/i` (`id_token`, `access_token` claims that the framework's
+authenticator legitimately stamps). Adopters opt in only when their
+authenticator keeps `extra` credential-clean.
+
+**Wire-envelope discipline.** Args-bag hits report in
+`details.credential_paths` (the buyer already knows what they sent).
+**`authInfo.extra` hits are LOG-ONLY** — paths surface in
+`logger.warn` server-side; the wire envelope reports a coarse signal
+(`details.scope: 'credentials'`, `recovery: 'terminal'`) without
+enumerating which `extra` field tripped the scan. Disclosing
+authInfo paths to buyers would create a probing oracle for an
+internal value the buyer has no read access to.
+
+**Log-sink discipline.** If your logger fans out to a buyer-readable
+destination (multi-tenant log multiplex, shared OTel collector with
+weak tenant routing), the path strings re-enter the disclosure
+surface. Keep `logger.warn` output on a tenant-isolated destination
+— same rule that applies to every other server-side log line per
+the rest of this guide.
+
+**Testing discipline.** The args scan runs first; if your test
+fixtures always carry args-bag credentials, you'll never exercise
+the authInfo path. Cover both independently — a dev test passing
+on the args side is no signal that the authInfo path works.
+
+Per-tool `'lax'` overrides only affect the args scan — `scanAuthInfo`
+fires regardless. Adopters who legitimately stamp credential-shaped
+values into `authInfo.extra` should fix the authenticator, not
+per-tool-disable the scan.
+
 ### What `credentialPolicy` does NOT cover
 
 `credentialPolicy` closes the **credential-smuggling** half of the

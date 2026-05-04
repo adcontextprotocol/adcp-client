@@ -105,6 +105,48 @@ export interface CredentialPolicyConfig {
    * `'packages.0.extra.tiktok_access_token'` (array element).
    */
   tools?: Record<string, ToolCredentialPolicy>;
+
+  /**
+   * Extend the credential-shaped-key scan to cover `ctx.authInfo.extra`
+   * in addition to the buyer args bag. Default `false`.
+   *
+   * Custom authenticators that stamp values into `authInfo.extra` (token
+   * introspection responses, JWT claim sets, OAuth scope blobs) are
+   * outside L1's args-bag scan. Adopter handler code that reads
+   * `ctx.authInfo.extra.<credential>` for upstream auth produces a
+   * silent leak surface: a buggy `BuyerAgentRegistry.resolve` factory
+   * that throws an error embedding `extra` lands the value in
+   * `logger.error` before `redactCredentialPatterns` (which only catches
+   * labeled `Bearer <token>` shapes and ≥32-char base64 blobs) could
+   * mask it.
+   *
+   * Orthogonal to {@link policy} — adopters can mix-and-match. Common
+   * shapes:
+   *
+   * - `policy: 'authInfo-only', scanAuthInfo: true` — strictest.
+   * - `policy: 'lax', scanAuthInfo: true` — trust args, defend log
+   *   propagation of authInfo extras.
+   * - `policy: 'authInfo-only', scanAuthInfo: false` — current default
+   *   if `scanAuthInfo` is omitted; args-only enforcement.
+   *
+   * **Default `false` is deliberate.** OAuth introspection blobs and
+   * JWT claims in `extra` will false-positive on default patterns
+   * like `/_token$/i` (e.g. `id_token`, `access_token` claims that
+   * the framework's authenticator legitimately stamps).
+   *
+   * **Wire-envelope discipline.** Args-bag hits are reported in
+   * `details.credential_paths` (the buyer already sent these — no
+   * info disclosure). `authInfo.extra` hits are NOT reported on
+   * the wire; they're logged server-side only. Returning paths
+   * to the buyer would create a probing oracle for the structure
+   * of `authInfo.extra` (an internal value the buyer has no read
+   * access to). The wire envelope reports a coarse signal —
+   * `details.scope: 'credentials'` plus a generic message —
+   * without enumerating which `extra` field tripped the scan.
+   *
+   * See adcontextprotocol/adcp-client#1539.
+   */
+  scanAuthInfo?: boolean;
 }
 
 export type CredentialPolicy = CredentialPolicyMode | CredentialPolicyConfig;

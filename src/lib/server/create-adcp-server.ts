@@ -3276,6 +3276,68 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
           }
         }
 
+        // --- authInfo.extra credential scan (opt-in via #1539) ---
+        // FULLY ORTHOGONAL to the args-bag scan above. Whereas the args
+        // scan branches on `policy` mode and per-tool overrides
+        // (`'lax'` short-circuits), `scanAuthInfo: true` ALWAYS fires
+        // when set. The two settings answer different questions:
+        //
+        //   - `policy` / `tools` — does this server / tool accept buyer
+        //     credentials in the args bag?
+        //   - `scanAuthInfo` — does authInfo.extra carry credential-
+        //     shaped keys that adopter handler code or log lines could
+        //     leak?
+        //
+        // Per-tool `'lax'` opt-out only affects args. authInfo.extra
+        // is server-internal; adopters who legitimately stamp
+        // credential-shaped values into it should restructure the
+        // authenticator (extra is the wrong layer for credentials)
+        // rather than per-tool-disable the scan.
+        //
+        // Wire-envelope discipline (per #1539 design): args-bag hits
+        // surface in `details.credential_paths` (the buyer already
+        // knows what they sent); authInfo.extra hits are LOG-ONLY.
+        // Disclosing authInfo.extra paths to the buyer would create
+        // a probing oracle for an internal value the buyer has no
+        // read access to. The wire envelope reports a coarse signal:
+        // `details.scope: 'credentials'`, generic message, no paths.
+        if (
+          credentialPolicy !== undefined &&
+          typeof credentialPolicy !== 'string' &&
+          credentialPolicy.scanAuthInfo === true
+        ) {
+          const extra = ctx.authInfo?.extra;
+          if (extra !== null && extra !== undefined && typeof extra === 'object') {
+            const authInfoHits = scanArgsForCredentials(extra, credentialPolicyPatterns);
+            if (authInfoHits.length > 0) {
+              // Wrap the log call defensively. Adopter loggers that throw
+              // on serialization (Pino circular-ref edge cases, custom
+              // transports that reject deep nesting, OTel exporters
+              // mid-flush) would otherwise fault the rejection path and
+              // surface as a generic 500 / unhandled rejection instead of
+              // the intended PERMISSION_DENIED. The asymmetry with the
+              // args-scan rejection (which doesn't log) made this a
+              // logger-misconfig DoS vector before this guard.
+              try {
+                logger.warn('credentialPolicy: authInfo.extra carries credential-shaped keys', {
+                  tool: toolName,
+                  paths: authInfoHits.map(p => `authInfo.extra.${p}`),
+                });
+              } catch {
+                // Swallow — the rejection envelope is the load-bearing
+                // signal; losing the diagnostic log is acceptable when
+                // the alternative is failing the request entirely.
+              }
+              return adcpError('PERMISSION_DENIED', {
+                message:
+                  'Request authentication context carries credential-shaped keys. Configure your authenticator to keep credentials off authInfo.extra.',
+                recovery: 'terminal',
+                details: { scope: 'credentials' },
+              });
+            }
+          }
+        }
+
         // --- Request schema validation (opt-in) ---
         // Runs before idempotency so drifted payloads never touch the
         // replay cache. `off` short-circuits without calling AJV.
