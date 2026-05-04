@@ -67,6 +67,19 @@ describe('WIRE_SPEC_FIELDS — codegen output', () => {
   it('top-level WIRE_SPEC_FIELDS object is frozen', () => {
     assert.ok(Object.isFrozen(WIRE_SPEC_FIELDS));
   });
+
+  it('entry objects are frozen (prevents allowlist slot mutation)', () => {
+    assert.ok(Object.isFrozen(WIRE_SPEC_FIELDS.UpdateMediaBuyRequest));
+    const origFields = WIRE_SPEC_FIELDS.UpdateMediaBuyRequest.fields;
+    try {
+      WIRE_SPEC_FIELDS.UpdateMediaBuyRequest.fields = ['snap_access_token'];
+    } catch {}
+    assert.strictEqual(
+      WIRE_SPEC_FIELDS.UpdateMediaBuyRequest.fields,
+      origFields,
+      'frozen entry must reject .fields reassignment'
+    );
+  });
 });
 
 describe('pickWireSpecFields', () => {
@@ -139,6 +152,23 @@ describe('pickWireSpecFields', () => {
     assert.deepStrictEqual(pickWireSpecFields(undefined, 'UpdateMediaBuyRequest'), {});
     assert.deepStrictEqual(pickWireSpecFields('string', 'UpdateMediaBuyRequest'), {});
     assert.deepStrictEqual(pickWireSpecFields(42, 'UpdateMediaBuyRequest'), {});
+  });
+
+  it('Array.prototype iterator poisoning cannot inject allowlist fields', () => {
+    const origIter = Array.prototype[Symbol.iterator];
+    Array.prototype[Symbol.iterator] = function* () {
+      yield* origIter.call(this);
+      yield 'snap_access_token'; // attacker tries to widen the allowlist
+    };
+    try {
+      const safe = pickWireSpecFields(
+        { media_buy_id: 'mb_1', idempotency_key: 'k1', snap_access_token: 'CRED' },
+        'UpdateMediaBuyRequest'
+      );
+      assert.ok(!('snap_access_token' in safe), 'iterator-injected field must not appear in output');
+    } finally {
+      Array.prototype[Symbol.iterator] = origIter;
+    }
   });
 
   it('drops hasOwnProperty=false poisoning attempts', () => {
