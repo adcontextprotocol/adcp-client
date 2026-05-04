@@ -21,7 +21,6 @@ const { pickWireSpecFields, scrubExtensions, WIRE_SPEC_FIELDS } = require('../di
 
 describe('WIRE_SPEC_FIELDS — codegen output', () => {
   it('includes the canonical mutating-tool request shapes', () => {
-    // Sanity-check a few well-known entries
     assert.ok(WIRE_SPEC_FIELDS.UpdateMediaBuyRequest);
     assert.ok(WIRE_SPEC_FIELDS.CreateMediaBuyRequest);
     assert.ok(WIRE_SPEC_FIELDS.ActivateSignalRequest);
@@ -29,7 +28,7 @@ describe('WIRE_SPEC_FIELDS — codegen output', () => {
   });
 
   it('UpdateMediaBuyRequest field set matches the wire spec', () => {
-    const fields = WIRE_SPEC_FIELDS.UpdateMediaBuyRequest;
+    const fields = WIRE_SPEC_FIELDS.UpdateMediaBuyRequest.fields;
     // Required fields per spec
     assert.ok(fields.includes('media_buy_id'));
     assert.ok(fields.includes('idempotency_key'));
@@ -46,17 +45,27 @@ describe('WIRE_SPEC_FIELDS — codegen output', () => {
     assert.ok(!fields.includes('access_token'));
   });
 
-  it('field arrays are read-only (frozen at codegen)', () => {
-    // Codegen emits `as const` — verify TS-level readonly via runtime
-    // mutation attempt. (TS would reject the assignment; runtime push
-    // throws because the array is frozen by `as const` semantics in
-    // tsc output? Actually `as const` is type-level only — runtime is
-    // a regular array. Test that push works runtime-wise but the
-    // type contract is read-only.) Skip the runtime freeze test;
-    // codegen could add Object.freeze if needed.
-    const fields = WIRE_SPEC_FIELDS.UpdateMediaBuyRequest;
-    assert.ok(Array.isArray(fields));
-    assert.ok(fields.length > 5);
+  it('field arrays are runtime-frozen (defense in depth against shared-state mutation)', () => {
+    const fields = WIRE_SPEC_FIELDS.UpdateMediaBuyRequest.fields;
+    assert.ok(Object.isFrozen(fields), 'codegen must emit Object.freeze()');
+    // Non-strict-mode mutation silently fails; strict mode throws.
+    // Assert the EFFECT (no mutation) rather than the mode-dependent
+    // throw — the security property is "you can't widen the scrub,"
+    // not "you can't try."
+    const originalLength = fields.length;
+    const originalFirst = fields[0];
+    try {
+      fields.push('snap_access_token');
+    } catch {}
+    try {
+      fields[0] = 'overwritten';
+    } catch {}
+    assert.strictEqual(fields.length, originalLength, 'frozen array must reject push (no length change)');
+    assert.strictEqual(fields[0], originalFirst, 'frozen array must reject index write (no value change)');
+  });
+
+  it('top-level WIRE_SPEC_FIELDS object is frozen', () => {
+    assert.ok(Object.isFrozen(WIRE_SPEC_FIELDS));
   });
 });
 
@@ -259,6 +268,78 @@ describe('scrubExtensions', () => {
     // Documents the layering: the filter is for buyer keys; the
     // inject is for storefront-controlled credentials/IDs.
     assert.strictEqual(scrubbed.context.partner_id, 'storefront-supplied');
+  });
+
+  it('recursive scan drops nested credentials INSIDE allowlisted top-level keys (round-4)', () => {
+    // The buyer hides credentials one level deep inside an allowlisted
+    // key. Without recursive scanning, `partner.partner_access_token`
+    // would survive because `partner` is allowlisted at the top level.
+    // Default patterns catch `*_access_token`, `*_token$`, `*_secret$`,
+    // etc. — bare `token` (no separator) is intentionally NOT in the
+    // default set (false-positive risk on `paymentToken`-style fields);
+    // adopters extend if they need broader coverage.
+    const safe = pickWireSpecFields(
+      {
+        media_buy_id: 'mb_1',
+        idempotency_key: 'uuid-1',
+        ext: {
+          partner: {
+            request_id: 'legitimate',
+            partner_access_token: 'attacker-deep-nesting',
+            inner: { snap_access_token: 'attacker-deeper' },
+          },
+        },
+      },
+      'UpdateMediaBuyRequest'
+    );
+    const scrubbed = scrubExtensions(safe, {
+      allowedExtKeys: new Set(['partner']),
+    });
+    // partner survived (allowlisted), but its credential-shaped
+    // descendants are dropped at any depth.
+    assert.deepStrictEqual(scrubbed.ext, {
+      partner: {
+        request_id: 'legitimate',
+        inner: {},
+      },
+    });
+  });
+
+  it('recursive scan with no allowlist drops top-level credential keys too', () => {
+    // No `allowedExtKeys` — recursive scan fires from depth 0.
+    const safe = pickWireSpecFields(
+      {
+        media_buy_id: 'mb_1',
+        idempotency_key: 'uuid-1',
+        ext: {
+          partner_request_id: 'legitimate',
+          snap_access_token: 'attacker-top-level',
+        },
+      },
+      'UpdateMediaBuyRequest'
+    );
+    const scrubbed = scrubExtensions(safe, {});
+    assert.deepStrictEqual(scrubbed.ext, { partner_request_id: 'legitimate' });
+  });
+
+  it('recursive scan can be disabled per-call via recursiveCredentialScan: false', () => {
+    const safe = pickWireSpecFields(
+      {
+        media_buy_id: 'mb_1',
+        idempotency_key: 'uuid-1',
+        ext: { partner: { token: 'preserved-because-scan-disabled' } },
+      },
+      'UpdateMediaBuyRequest'
+    );
+    const scrubbed = scrubExtensions(safe, {
+      allowedExtKeys: new Set(['partner']),
+      recursiveCredentialScan: false,
+    });
+    // With scan disabled, nested credential survives. Adopters opt
+    // out only when they've validated the surviving shape themselves.
+    assert.deepStrictEqual(scrubbed.ext, {
+      partner: { token: 'preserved-because-scan-disabled' },
+    });
   });
 
   it('preserves wire-spec fields outside ext/context untouched', () => {

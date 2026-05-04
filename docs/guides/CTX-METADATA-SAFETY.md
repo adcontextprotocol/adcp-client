@@ -284,6 +284,35 @@ aren't in the codegen allowlist; if your storefront fans out a
 read-only call, the buyer-facing `credentialPolicy` already covers
 the input scan.
 
+**Migration footgun: chain `pickWireSpecFields` with `scrubExtensions`.**
+`pickWireSpecFields` ALONE doesn't close the round-2 / round-3
+vectors (nested `context.<x>_access_token`, nested
+`ext.<x>_access_token`). `ext` and `context` are wire-spec fields, so
+`pickWireSpecFields` preserves them whole. You MUST chain
+`scrubExtensions` after the pick to filter ext/context to a known-
+safe key allowlist AND recursively drop credential-shaped keys at
+any depth (the helper's `recursiveCredentialScan` option, on by
+default, walks `ext`/`context` values and drops nested credential-
+shaped keys per the L1 default pattern set).
+
+```ts
+// ❌ Round-2 / round-3 reopened: ext and context preserved verbatim
+const safe = pickWireSpecFields(buyerReq, 'UpdateMediaBuyRequest');
+await operational.updateMediaBuy(ctx, safe);  // bug
+
+// ✅ ext/context filtered + recursively scrubbed
+const safe = pickWireSpecFields(buyerReq, 'UpdateMediaBuyRequest');
+const perTarget = scrubExtensions(safe, {
+  allowedExtKeys: new Set(['scope3_api_key', 'partner_request_id']),
+  // recursiveCredentialScan defaults to true — closes nested vectors
+});
+await operational.updateMediaBuy(ctx, perTarget);
+```
+
+If you migrate from a hand-rolled `scrubRequestForFanout` (e.g. the
+`scope3data/agentic-adapters` shim), do the swap atomically — both
+helpers in the same diff, same code review, same merge.
+
 ### What `credentialPolicy` does NOT cover
 
 `credentialPolicy` closes the **credential-smuggling** half of the
