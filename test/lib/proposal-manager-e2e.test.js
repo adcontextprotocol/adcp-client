@@ -253,3 +253,87 @@ test('e2e: v1 path unchanged when no proposalStore wired', async () => {
   );
   assert.deepStrictEqual(calls, ['getProducts', 'createMediaBuy']);
 });
+
+test('e2e: finalize HITL — TaskHandoff commits proposal on completion + emits path=handoff log', async () => {
+  const store = new InMemoryProposalStore();
+  store.putDraft({
+    proposalId: 'p1',
+    accountId: 'acct_1',
+    recipes: new Map([['prod_a', { recipe_kind: 'mock' }]]),
+    proposalPayload: { proposal_id: 'p1', name: 'draft' },
+  });
+
+  const expires = new Date(Date.now() + 3_600_000);
+  let handoffRan = false;
+  let logCaptured = null;
+  const { setProposalLifecycleLogger } = require('../../dist/lib/server/index.js');
+  setProposalLifecycleLogger({
+    info: (message, fields) => {
+      if (fields?.event === 'proposal.finalized') logCaptured = fields;
+    },
+  });
+
+  const proposalManager = {
+    capabilities: { salesSpecialism: 'sales-guaranteed', finalize: true },
+    getProducts: async () => ({ products: [], proposals: [] }),
+    finalizeProposal: async (req, ctx) => {
+      // HITL slow path — adopter hands off to a background task. The
+      // framework wraps this so store.commit fires when the handoff
+      // resolves.
+      return ctx.handoffToTask(async _taskCtx => {
+        handoffRan = true;
+        return {
+          proposal: {
+            proposal_id: req.proposalId,
+            name: 'final',
+            proposal_status: 'committed',
+            expires_at: expires.toISOString(),
+          },
+          expiresAt: expires,
+        };
+      });
+    },
+  };
+  const sales = {
+    createMediaBuy: async () => ({
+      media_buy_id: 'mb_x',
+      buyer_ref: 'br',
+      packages: [],
+      status: 'pending_creative',
+    }),
+    updateMediaBuy: async () => ({ media_buy_id: 'mb_x', buyer_ref: 'br', packages: [], status: 'active' }),
+    getMediaBuyDelivery: async () => ({
+      media_buy_deliveries: [],
+      reporting_period: { start_date: '2026-01-01', end_date: '2026-01-02' },
+    }),
+  };
+  const server = createAdcpServerFromPlatform(buildPlatform({ proposalManager, sales }), {
+    name: 'e2e-hitl',
+    version: '1.0',
+    proposalStore: store,
+    validation: { requests: 'off', responses: 'off' },
+  });
+  await server.dispatchTestRequest(
+    {
+      method: 'tools/call',
+      params: {
+        name: 'get_products',
+        arguments: {
+          buying_mode: 'refine',
+          refine: [{ scope: 'proposal', action: 'finalize', proposal_id: 'p1' }],
+        },
+      },
+    },
+    { authInfo }
+  );
+  // Background task completes asynchronously after the dispatch returns
+  // the Submitted envelope. Allow the next macrotask to run so the
+  // wrapped handoff fn (and store.commit) fire.
+  await new Promise(resolve => setTimeout(resolve, 50));
+  assert.ok(handoffRan, 'expected adopter handoff fn to run in background');
+  const record = store.get('p1');
+  assert.strictEqual(record.state, 'committed', 'proposal should commit when HITL handoff resolves');
+  assert.strictEqual(record.expiresAt.getTime(), expires.getTime());
+  assert.ok(logCaptured, 'expected proposal.finalized log emission');
+  assert.strictEqual(logCaptured.path, 'handoff', 'log should mark this as the handoff path');
+});

@@ -39,7 +39,14 @@
  * @packageDocumentation
  */
 
-import { AdcpError, isTaskHandoff } from '../async-outcome';
+import {
+  AdcpError,
+  _createTaskHandoff,
+  _extractTaskFn,
+  isTaskHandoff,
+  type TaskHandoff,
+  type TaskHandoffContext,
+} from '../async-outcome';
 import type { GetProductsRequest, GetProductsResponse, Product, Proposal } from '../../../types/tools.generated';
 import {
   detectFinalizeAction,
@@ -84,7 +91,10 @@ function hasFinalizeCapability<TRecipe extends Recipe, TCtxMeta>(
  *
  * @public
  */
-export type FinalizeInterceptResult = { kind: 'intercepted'; response: GetProductsResponse } | { kind: 'pass' };
+export type FinalizeInterceptResult =
+  | { kind: 'intercepted'; response: GetProductsResponse }
+  | { kind: 'handoff'; handoff: TaskHandoff<GetProductsResponse> }
+  | { kind: 'pass' };
 
 /**
  * Intercept `buying_mode: 'refine'` requests carrying a
@@ -147,14 +157,51 @@ export async function maybeInterceptFinalize<TRecipe extends Recipe, TCtxMeta>(a
   const result = await manager!.finalizeProposal!(finalizeReq, ctx as never);
 
   if (isTaskHandoff(result)) {
-    // v1.5 inline-only. The post-completion commit hook is a v1.6+
-    // follow-up; reject for now rather than silently dropping the commit.
-    throw new AdcpError('INTERNAL_ERROR', {
-      recovery: 'terminal',
-      message:
-        `finalizeProposal returned a TaskHandoff — HITL finalize is not yet wired in v1.5. ` +
-        `Return FinalizeProposalSuccess inline for now.`,
+    // HITL slow path. The framework wraps the adopter's handoff fn so
+    // store.commit + the `path: 'handoff'` log fire when the handoff
+    // resolves. The wrapped handoff returns a wire `GetProductsResponse`
+    // shape so `routeIfHandoff` projects the right Submitted envelope
+    // and terminal task artifact.
+    const innerFn = _extractTaskFn<FinalizeProposalSuccess<TRecipe>>(
+      result as TaskHandoff<FinalizeProposalSuccess<TRecipe>>
+    );
+    if (!innerFn) {
+      // Forged TaskHandoff — `isTaskHandoff` already checked WeakMap
+      // presence, so this is unreachable. Defensive throw keeps the
+      // type-narrowing clean for the wrapper closure.
+      throw new AdcpError('INTERNAL_ERROR', {
+        recovery: 'terminal',
+        message: 'finalizeProposal returned a TaskHandoff with no extractable handoff fn.',
+      });
+    }
+    const finalizeProposalId = finalizeEntry.proposalId;
+    const wrappedHandoff = _createTaskHandoff<GetProductsResponse>(async (taskCtx: TaskHandoffContext) => {
+      const success = await innerFn(taskCtx);
+      if (!isFinalizeSuccess<TRecipe>(success)) {
+        throw new AdcpError('INTERNAL_ERROR', {
+          recovery: 'terminal',
+          message:
+            `finalizeProposal handoff resolved to an unexpected shape; expected ` +
+            `FinalizeProposalSuccess with 'proposal' and 'expiresAt' fields.`,
+        });
+      }
+      await store.commit(finalizeProposalId, {
+        expiresAt: success.expiresAt,
+        proposalPayload: success.proposal,
+      });
+      logFinalizeSucceeded({
+        proposalId: finalizeProposalId,
+        accountId,
+        expiresAt: success.expiresAt,
+        path: 'handoff',
+      });
+      return projectFinalizeResponse({
+        request,
+        committedProposal: success.proposal,
+        finalizeProposalId,
+      });
     });
+    return { kind: 'handoff', handoff: wrappedHandoff };
   }
 
   if (!isFinalizeSuccess<TRecipe>(result)) {
