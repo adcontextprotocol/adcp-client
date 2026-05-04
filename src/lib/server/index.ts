@@ -20,7 +20,7 @@ export {
 export {
   scanArgsForCredentials,
   resolveCredentialPolicyForTool,
-  getCredentialPatterns,
+  validateCredentialPolicy,
   DEFAULT_CREDENTIAL_PATTERNS,
 } from './credential-policy';
 export type {

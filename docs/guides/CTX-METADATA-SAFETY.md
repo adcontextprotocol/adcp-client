@@ -148,6 +148,33 @@ where storefront fan-out paths read `args.<platform>_access_token`
 `args.ext.<platform>_access_token` (round-3) under the storefront's TLS
 and IP reputation. Confused-deputy by default.
 
+The three vectors as concrete payloads — what `'authInfo-only'`
+rejects:
+
+```jsonc
+// Round-1: top-level credential
+{
+  "media_buy_id": "mb_123",
+  "paused": true,
+  "snap_access_token": "<attacker-PAT>"
+}
+
+// Round-2: nested in `context`
+{
+  "media_buy_id": "mb_123",
+  "context": { "linkedin_access_token": "<attacker-PAT>" }
+}
+
+// Round-3: nested in `ext`
+{
+  "media_buy_id": "mb_123",
+  "ext": { "tiktok_access_token": "<attacker-PAT>" }
+}
+```
+
+All three reject with `INVALID_REQUEST` and `details.credential_paths`
+listing the offending paths (values are not echoed back).
+
 Opt in at server construction:
 
 ```ts
@@ -192,3 +219,32 @@ The blessed credential channel remains `authInfo` (resolved by the
 framework's authenticator). Anything that arrives on the args bag is
 either a buyer-supplied non-secret OR a smuggled credential — the
 policy refuses to disambiguate.
+
+### What `credentialPolicy` does NOT cover
+
+`credentialPolicy` closes the **credential-smuggling** half of the
+storefront fan-out attack surface. It does NOT cover **identity
+pivoting** — a buyer who sends `request.account: { brand:
+'attacker.com' }` to pivot the resolved account onto a different
+tenant inside the storefront's session. That category looks like
+this:
+
+```jsonc
+// NOT caught by credentialPolicy — `account` is a wire-spec field,
+// not credential-shaped.
+{
+  "media_buy_id": "mb_123",
+  "account": { "brand": "attacker.com" }
+}
+```
+
+The mitigation lives in `AccountStore.resolve`: every storefront
+should validate that the resolved account is one the authenticated
+principal is authorized to access. The framework's
+`createDerivedAccountStore` (single-tenant) and `createTenantStore`
+(multi-tenant) bake this in; custom resolvers must implement the
+org-gating check themselves. See
+[`docs/guides/account-resolution.md`](./account-resolution.md).
+
+If your resolver doesn't gate on the principal's authorized accounts,
+`credentialPolicy: 'authInfo-only'` will not save you.

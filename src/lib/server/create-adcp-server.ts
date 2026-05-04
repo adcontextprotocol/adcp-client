@@ -63,7 +63,7 @@ import { redactCredentialPatterns } from './redact';
 import {
   scanArgsForCredentials,
   resolveCredentialPolicyForTool,
-  getCredentialPatterns,
+  validateCredentialPolicy,
   type CredentialPolicy,
 } from './credential-policy';
 import { ADCP_ERROR_FIELD_ALLOWLIST } from './envelope-allowlist';
@@ -2606,11 +2606,12 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
     testController: testControllerBridge,
   } = config;
 
-  // Pre-resolve credential-policy patterns once. The matcher is rebuilt
-  // per-call inside `scanArgsForCredentials` (cheap — regex.test fanout)
-  // but `getCredentialPatterns` materializes the config object once so
-  // the per-call cost is just the recursive walk.
-  const credentialPolicyPatterns = getCredentialPatterns(credentialPolicy);
+  // Pre-resolve credential-policy patterns once. The patterns config is
+  // a stable property of `CredentialPolicyConfig`; pulling it out here
+  // keeps the per-call hot path (`scanArgsForCredentials`) free of the
+  // string-vs-object discrimination on every dispatch.
+  const credentialPolicyPatterns =
+    credentialPolicy === undefined || typeof credentialPolicy === 'string' ? undefined : credentialPolicy.patterns;
 
   // Resolve `adcpVersion` early — the validator-call closures below capture
   // it by reference and would hit a TDZ ReferenceError if any of them ran
@@ -3244,10 +3245,13 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
           if (effectivePolicy === 'authInfo-only') {
             const hits = scanArgsForCredentials(params, credentialPolicyPatterns);
             if (hits.length > 0) {
+              // Deliberately omit `field` — it implies a single offending
+              // path, which under-discloses when several vectors are
+              // present together (round-1 + round-2 + round-3 in one
+              // request). Full list lives in `details.credential_paths`.
               return adcpError('INVALID_REQUEST', {
                 message:
                   'Request args carry credential-shaped keys. Credentials must arrive on authInfo, not in the request body.',
-                field: hits[0],
                 details: { credential_paths: hits },
               });
             }
@@ -3954,6 +3958,15 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
 
   // Tool coherence warnings
   checkCoherence(registeredToolNames, logger);
+
+  // Validate `credentialPolicy.tools` keys against the registered tool
+  // set. Catches typos at server construction so an adopter's
+  // `tools: { activte_signal: 'lax' }` (missing 'a') doesn't silently
+  // no-op the per-tool override and start fail-closing legitimate
+  // buyer-creds traffic in production. Also re-validates the
+  // `patterns.matcher`/`patterns.extend` mutual-exclusion at
+  // construction time so the diagnostic doesn't wait for first traffic.
+  validateCredentialPolicy(credentialPolicy, registeredToolNames);
 
   // --- Idempotency configuration guardrails ---
   //

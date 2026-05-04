@@ -47,8 +47,8 @@ export interface CredentialPatternsConfig {
   /**
    * Replace the regex-based check entirely. Receives each property name
    * encountered during recursion, plus the parent path. Return `true`
-   * to flag as credential-bearing. Mutually exclusive with `extend`;
-   * if both are set, `matcher` wins.
+   * to flag as credential-bearing. Mutually exclusive with `extend` —
+   * setting both throws at server construction.
    */
   matcher?: (key: string, path: readonly string[]) => boolean;
 }
@@ -80,16 +80,34 @@ export type CredentialPolicy = CredentialPolicyMode | CredentialPolicyConfig;
 
 /**
  * Default credential-name patterns. Catches the three vectors observed
- * in PR scope3data/agentic-adapters#248 plus camelCase variants common
- * in TS ecosystems. Adopters whose platform vocabulary uses additional
- * names extend via {@link CredentialPatternsConfig.extend}.
+ * in PR scope3data/agentic-adapters#248 plus the broader credential
+ * vocabulary common in TS ecosystems. Adopters whose platform names
+ * fall outside this set extend via {@link CredentialPatternsConfig.extend}.
+ *
+ * Coverage:
+ *   - `_token$` (case-insensitive) — `*_access_token`, `bearer_token`,
+ *     `id_token`, `session_token`, `refresh_token`.
+ *   - `_secret$` / `_password$` — `client_secret`, `db_password`.
+ *   - `api[_-]?key` — `api_key`, `apiKey`, `api-key`.
+ *   - `^bearer$` — bare `bearer` field.
+ *   - `^accessToken$` / `^refreshToken$` (case-insensitive) — camelCase
+ *     and PascalCase exact matches.
+ *
+ * Intentionally excluded from defaults (too many false positives):
+ *   - bare `key`, `principal`, `auth_token` (no `_token` boundary
+ *     elsewhere — `_token$` covers `auth_token` since it ends in `_token`).
+ *   - `*Token$` PascalCase suffix without a known prefix — e.g.
+ *     `paymentToken` could be a legitimate wire field. Adopters who
+ *     want broader coverage extend.
  */
 export const DEFAULT_CREDENTIAL_PATTERNS: readonly RegExp[] = Object.freeze([
-  /_access_token$/i,
+  /_token$/i,
   /_secret$/i,
   /_password$/i,
-  /^accessToken$/,
-  /^refreshToken$/,
+  /api[_-]?key/i,
+  /^bearer$/i,
+  /^accessToken$/i,
+  /^refreshToken$/i,
 ]);
 
 interface ResolvedMatcher {
@@ -97,6 +115,13 @@ interface ResolvedMatcher {
 }
 
 function buildMatcher(patterns?: CredentialPatternsConfig): ResolvedMatcher {
+  if (patterns?.matcher && patterns.extend) {
+    throw new Error(
+      'createAdcpServer: credentialPolicy.patterns cannot set both `matcher` and `extend`. ' +
+        '`matcher` fully replaces the regex-based check; `extend` adds to the default set. ' +
+        'Pick one — they answer different questions and combining them silently drops the regex set.'
+    );
+  }
   if (patterns?.matcher) {
     const fn = patterns.matcher;
     return { match: (key, path) => fn(key, path) };
@@ -163,10 +188,45 @@ export function resolveCredentialPolicyForTool(
 }
 
 /**
- * Extract the patterns config from a `CredentialPolicy`. Returns
- * `undefined` for the string shorthand (no customization) or for `'lax'`.
+ * Validate a `CredentialPolicy` at server construction. Catches typos
+ * in `tools` keys (`activte_signal` instead of `activate_signal`) and
+ * the both-`extend`-and-`matcher` config error before any traffic
+ * dispatches. Throws `Error` with a specific message; callers convert
+ * to their construction-time error envelope of choice.
+ *
+ * `knownToolNames` is the set of tool names the framework will
+ * register for this server (spec tools for the claimed specialisms +
+ * any adopter-supplied custom tools). Pass after the registration
+ * loop completes so the set is authoritative.
  */
-export function getCredentialPatterns(policy: CredentialPolicy | undefined): CredentialPatternsConfig | undefined {
-  if (policy === undefined || typeof policy === 'string') return undefined;
-  return policy.patterns;
+export function validateCredentialPolicy(
+  policy: CredentialPolicy | undefined,
+  knownToolNames: ReadonlySet<string>
+): void {
+  if (policy === undefined || typeof policy === 'string') return;
+
+  // Surface the both-fields-set conflict at construction, not on the
+  // first credential-bearing request. Mirrors the runtime check in
+  // `buildMatcher` so adopters get the same diagnostic regardless of
+  // whether traffic is flowing yet.
+  if (policy.patterns?.matcher && policy.patterns?.extend) {
+    throw new Error(
+      'createAdcpServer: credentialPolicy.patterns cannot set both `matcher` and `extend`. ' +
+        '`matcher` fully replaces the regex-based check; `extend` adds to the default set. Pick one.'
+    );
+  }
+
+  if (!policy.tools) return;
+  const unknownTools = Object.keys(policy.tools).filter(name => !knownToolNames.has(name));
+  if (unknownTools.length > 0) {
+    const known = [...knownToolNames].sort().join(', ');
+    throw new Error(
+      `createAdcpServer: credentialPolicy.tools references unregistered tool name(s): ${unknownTools
+        .map(n => JSON.stringify(n))
+        .join(', ')}. ` +
+        `A typo in this map silently no-ops the per-tool override and the server-wide policy applies, ` +
+        `which fails-closed on tools that needed an opt-out. ` +
+        `Known tool names: ${known}.`
+    );
+  }
 }
