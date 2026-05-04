@@ -137,7 +137,13 @@ export function pickWireSpecFields<K extends WireSpecRequestName>(
     return out as WireSafe<WireSpecRequestShape<K>>;
   }
   const source = request as Record<string, unknown>;
-  for (const field of allowlist) {
+  // Indexed loop instead of for-of: avoids Array.prototype[Symbol.iterator]
+  // dispatch, which a supply-chain dep could poison to inject extra field
+  // names into the iteration at call time (freeze of the array object does
+  // not prevent iterator-protocol interception).
+  const len = allowlist.length;
+  for (let i = 0; i < len; i++) {
+    const field = allowlist[i]!; // non-null: i is bounds-checked by len
     if (Object.prototype.hasOwnProperty.call(source, field)) {
       out[field] = source[field];
     }
@@ -223,9 +229,10 @@ export interface ScrubExtensionsOptions {
    *
    * **Adopter-side ONLY — values here MUST be storefront-derived,
    * never read from the incoming buyer request.** Threading buyer-
-   * controlled values through `inject` defeats the discipline. The
-   * inject precedes the allowlist filter, so a buyer value injected
-   * here would survive every check.
+   * controlled values through `inject` defeats the discipline.
+   * Values injected here bypass the recursive credential scan and
+   * are merged in after it completes — ensure they are fully
+   * storefront-derived, never shaped by buyer input.
    */
   inject?: {
     ext?: Record<string, unknown>;

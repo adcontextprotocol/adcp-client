@@ -203,18 +203,18 @@ function main(): void {
     ' * return type narrows per `schemaName`. Runtime cost: one null',
     ' * property per entry.',
     ' *',
-    ' * Arrays are runtime-frozen via `Object.freeze` so a misbehaving',
-    ' * dependency cannot widen the scrub via prototype pollution or',
-    ' * shared-state mutation.',
+    ' * Arrays and entry objects are runtime-frozen via `Object.freeze`',
+    ' * so a misbehaving dependency cannot widen the scrub via prototype',
+    ' * pollution or shared-state mutation of the allowlist.',
     ' */',
     'export const WIRE_SPEC_FIELDS = Object.freeze({',
   ];
   for (const entry of sorted) {
     lines.push(`  /** ${entry.source} */`);
-    lines.push(`  ${entry.typeName}: {`);
+    lines.push(`  ${entry.typeName}: Object.freeze({`);
     lines.push(`    fields: Object.freeze(${JSON.stringify(entry.fields)}) as readonly string[],`);
     lines.push(`    __type: null as unknown as ${entry.typeName},`);
-    lines.push(`  },`);
+    lines.push(`  }),`);
   }
   lines.push('} as const);');
   lines.push('');
