@@ -38,6 +38,10 @@ export const PROBE_TASK_ALLOWLIST: readonly string[] = Object.freeze([
   'list_authorized_properties',
   'get_signals',
   'list_si_sessions',
+  // Governance read-only tools — all params optional, no required fields
+  'list_property_lists',
+  'list_collection_lists',
+  'list_content_standards',
 ]);
 
 /**
