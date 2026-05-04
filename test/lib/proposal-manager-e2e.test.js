@@ -112,7 +112,7 @@ test('e2e: getProducts persists drafts to store after manager returns', async ()
     { method: 'tools/call', params: { name: 'get_products', arguments: { buying_mode: 'brief' } } },
     { authInfo }
   );
-  const record = store.get('p1');
+  const record = store.get('p1', { expectedAccountId: 'acct_1' });
   assert.ok(record, 'expected p1 to be persisted as draft');
   assert.strictEqual(record.state, 'draft');
   assert.strictEqual(record.recipes.get('prod_a').sku, 'a');
@@ -165,7 +165,7 @@ test('e2e: createMediaBuy with proposal_id reserves + hydrates ctx.recipes + fin
   assert.ok(seenRecipes, 'expected ctx.recipes to be populated');
   assert.strictEqual(seenRecipes.get('prod_a').priority, 'high');
   // Post-success: state is CONSUMED with media_buy_id back-ref
-  const record = store.get('p1');
+  const record = store.get('p1', { expectedAccountId: 'acct_1' });
   assert.strictEqual(record.state, 'consumed');
   assert.strictEqual(record.mediaBuyId, 'mb_xyz');
 });
@@ -208,7 +208,7 @@ test('e2e: createMediaBuy adapter throw → reservation rolled back to COMMITTED
     { authInfo }
   );
   // Adapter threw, framework wrapped; reservation should be released.
-  assert.strictEqual(store.get('p1').state, 'committed');
+  assert.strictEqual(store.get('p1', { expectedAccountId: 'acct_1' }).state, 'committed');
 });
 
 test('e2e: v1 path unchanged when no proposalStore wired', async () => {
@@ -331,7 +331,7 @@ test('e2e: finalize HITL — TaskHandoff commits proposal on completion + emits 
   // wrapped handoff fn (and store.commit) fire.
   await new Promise(resolve => setTimeout(resolve, 50));
   assert.ok(handoffRan, 'expected adopter handoff fn to run in background');
-  const record = store.get('p1');
+  const record = store.get('p1', { expectedAccountId: 'acct_1' });
   assert.strictEqual(record.state, 'committed', 'proposal should commit when HITL handoff resolves');
   assert.strictEqual(record.expiresAt.getTime(), expires.getTime());
   assert.ok(logCaptured, 'expected proposal.finalized log emission');

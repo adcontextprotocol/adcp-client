@@ -133,8 +133,15 @@ export interface ProposalStore<TRecipe extends Recipe = Recipe> {
    * than the raw record — required to defeat principal-enumeration via
    * `proposalId` probing. The dispatch path always passes the
    * authenticated principal's `accountId`.
+   *
+   * **`expectedAccountId` is required.** Earlier preview made it optional
+   * for "framework-internal raw read" callers, but every call site that
+   * loads a record into a buyer-visible response path needs the tenant
+   * gate. Direct-debug callers that legitimately want a raw record across
+   * tenants should reach for a separate operator-tool surface, not bypass
+   * this gate. Closes a sharp edge an adopter would silently miss.
    */
-  get(proposalId: string, options?: { expectedAccountId?: string }): MaybePromise<ProposalRecord<TRecipe> | null>;
+  get(proposalId: string, args: { expectedAccountId: string }): MaybePromise<ProposalRecord<TRecipe> | null>;
 
   /**
    * Promote DRAFT → COMMITTED. Idempotent on re-call with equal `expiresAt`
@@ -328,11 +335,11 @@ export class InMemoryProposalStore<TRecipe extends Recipe = Recipe> implements P
     }
   }
 
-  get(proposalId: string, options?: { expectedAccountId?: string }): ProposalRecord<TRecipe> | null {
+  get(proposalId: string, args: { expectedAccountId: string }): ProposalRecord<TRecipe> | null {
     this.evictExpired();
     const record = this.records.get(proposalId);
     if (!record) return null;
-    if (options?.expectedAccountId !== undefined && record.accountId !== options.expectedAccountId) {
+    if (record.accountId !== args.expectedAccountId) {
       // Cross-tenant probe — return null, not raw record.
       return null;
     }

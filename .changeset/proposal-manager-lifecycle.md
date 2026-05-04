@@ -23,6 +23,6 @@
 
 **`RequestContext.recipes`:** new optional `ReadonlyMap<string, Recipe>` field that the framework populates during proposal-mode dispatch. Adopter `createMediaBuy` / `updateMediaBuy` / `getMediaBuyDelivery` methods read `ctx.recipes` to apply per-product internal-config without re-fetching from the store. Undefined when no proposal-mode dispatch is wired.
 
-**HITL finalize:** v1.5 ships inline-only commit. `finalizeProposal` returning a `TaskHandoff<FinalizeProposalSuccess>` is detected and rejected with `INTERNAL_ERROR` — the post-completion commit hook lands in v1.6+.
+**HITL finalize:** v1.5 ships *both* inline and HITL commit paths in this same release. `finalizeProposal` may return a `FinalizeProposalSuccess` directly (sync commit) OR a `TaskHandoff<FinalizeProposalSuccess>` (HITL slow path — framework wraps the handoff so `ProposalStore.commit` + `proposal.finalized` log with `path: 'handoff'` fire when the background task resolves). See the companion `proposal-manager-hitl-finalize` changeset for the HITL surface details. The earlier "deferred to v1.6+" rejection text in this changeset's draft was superseded — disregard.
 
 **Spec-aligned error codes:** `PROPOSAL_NOT_COMMITTED` and `PROPOSAL_EXPIRED` are AdCP 3.0 GA. `PROPOSAL_NOT_FOUND` lands in 3.1; emitted today via the `(string & {})` non-standard path with `recovery: 'terminal'` (matches Python's `KNOWN_NON_SPEC_CODES` allowlist).

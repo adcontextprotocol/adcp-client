@@ -14,4 +14,36 @@
 
 **Status**: primitives only. Framework dispatch wiring (the five seams that intercept `getProducts`, `createMediaBuy`, `updateMediaBuy`, `getMediaBuyDelivery` to persist drafts, hydrate recipes, and commit on finalize) lands in a follow-up release.
 
-**Breaking change**: removes the pre-v6 stub `ProposalManager` / `AIProposalManager` / `defaultProposalManager` exports under `src/lib/adapters/`. The stub had no observable behavior (`isSupported() === false` everywhere) and would have collided with the new sibling-platform shape. Adopters with code referencing the stub names should remove those imports — the new `ProposalManager` interface lives at `@adcp/sdk/server`.
+**Breaking change — migration guide**: removes the pre-v6 stub `ProposalManager` class, `AIProposalManager` subclass, `defaultProposalManager` singleton, `IProposalManager` interface, `ProposalContext` shape, and `ProposalErrorCodes` constant from `@adcp/sdk` (previously exported under `src/lib/adapters/proposal-manager.ts`).
+
+The stub had no observable behavior — `isSupported()` returned `false` everywhere, `generateProposals()` and `refineProposal()` returned `[]` / `null` regardless of input. No path inside the SDK invoked it. Adopters who imported it were holding a placeholder.
+
+**If your code imports any of these names**, search-replace and migrate to the new surface:
+
+```diff
+- import { ProposalManager, AIProposalManager, defaultProposalManager, type IProposalManager } from '@adcp/sdk';
++ import {
++   type ProposalManager,
++   type ProposalCapabilities,
++   type Recipe,
++   InMemoryProposalStore,
++   MockProposalManager,
++ } from '@adcp/sdk/server';
+```
+
+The new `ProposalManager` is an *interface* (typed contract), not a class to extend. Adopters write a plain object that satisfies it:
+
+```ts
+const myProposalManager: ProposalManager<MyRecipe, MyTenantMeta> = {
+  capabilities: { salesSpecialism: 'sales-guaranteed', refine: true, finalize: true },
+  async getProducts(req, ctx) { /* ... */ },
+  async refineProducts(req, ctx) { /* ... */ },
+  async finalizeProposal(req, ctx) { /* ... */ },
+};
+// Wire on the platform:
+const platform = { capabilities: { ... }, accounts: ..., proposalManager: myProposalManager, sales: ... };
+```
+
+`MockProposalManager` is a concrete class (the only one in the new surface) — fetch-based forwarder for adopters wrapping a running `bin/adcp.js mock-server <specialism>`. Replaces the old `defaultProposalManager` singleton's role as a "no-op default."
+
+The old `ProposalErrorCodes` constants map onto AdCP standard codes the framework now emits directly (`PROPOSAL_NOT_FOUND`, `PROPOSAL_NOT_COMMITTED`, `PROPOSAL_EXPIRED`, `INVALID_REQUEST`, `UNSUPPORTED_FEATURE`). Adopters throwing `AdcpError` with these codes get the same wire envelopes; no separate constant is needed.

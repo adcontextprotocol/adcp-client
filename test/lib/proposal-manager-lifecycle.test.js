@@ -344,7 +344,7 @@ test('maybeInterceptFinalize', async t => {
     assert.strictEqual(result.response.proposals[0].proposal_status, 'committed');
     assert.strictEqual(result.response.refinement_applied[0].status, 'applied');
     // Store now committed
-    const committed = store.get('p1');
+    const committed = store.get('p1', { expectedAccountId: 'acct_1' });
     assert.strictEqual(committed.state, 'committed');
     // Manager called with hydrated draft
     assert.strictEqual(finalizeCalls.length, 1);
@@ -416,7 +416,7 @@ test('maybePersistDraftAfterGetProducts', async t => {
       store,
       ctx: { account: { id: 'acct_1' } },
     });
-    const record = store.get('p1');
+    const record = store.get('p1', { expectedAccountId: 'acct_1' });
     assert.strictEqual(record.state, 'draft');
     assert.strictEqual(record.recipes.size, 1); // only the referenced product
     assert.strictEqual(record.recipes.get('prod_a').sku, 'a');
@@ -460,7 +460,7 @@ test('maybePersistDraftAfterGetProducts', async t => {
       ctx: { account: { id: 'acct_1' } },
     });
     // No records stored
-    assert.strictEqual(store.get('any'), null);
+    assert.strictEqual(store.get('any', { expectedAccountId: 'acct_1' }), null);
   });
 });
 
@@ -517,7 +517,7 @@ test('maybeReserveProposalForCreateMediaBuy + finalize + release', async t => {
       }),
       err => err.code === 'PROPOSAL_EXPIRED'
     );
-    assert.strictEqual(store.get('p1').state, 'committed');
+    assert.strictEqual(store.get('p1', { expectedAccountId: 'acct_1' }).state, 'committed');
   });
 
   await t.test('parallel reserves: second loses with PROPOSAL_NOT_COMMITTED', async () => {
@@ -559,7 +559,7 @@ test('maybeReserveProposalForCreateMediaBuy + finalize + release', async t => {
       ctx: { account: { id: 'acct_1' } },
     });
     await finalizeProposalConsumption({ store, record: reserved, mediaBuyId: 'mb_1' });
-    assert.strictEqual(store.get('p1').state, 'consumed');
+    assert.strictEqual(store.get('p1', { expectedAccountId: 'acct_1' }).state, 'consumed');
     assert.strictEqual(store.getByMediaBuyId('mb_1', { expectedAccountId: 'acct_1' }).proposalId, 'p1');
   });
 
@@ -575,7 +575,7 @@ test('maybeReserveProposalForCreateMediaBuy + finalize + release', async t => {
       ctx: { account: { id: 'acct_1' } },
     });
     await releaseProposalReservation({ store, record: reserved });
-    assert.strictEqual(store.get('p1').state, 'committed');
+    assert.strictEqual(store.get('p1', { expectedAccountId: 'acct_1' }).state, 'committed');
     // Buyer can retry
     const retry = await maybeReserveProposalForCreateMediaBuy({
       request: { proposal_id: 'p1' },

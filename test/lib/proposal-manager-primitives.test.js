@@ -58,13 +58,15 @@ test('InMemoryProposalStore — putDraft + get + cross-tenant', async t => {
     assert.strictEqual(store.get('p1', { expectedAccountId: 'attacker' }), null);
   });
 
-  await t.test('get without expectedAccountId returns the record (framework dispatch path)', () => {
-    const got = store.get('p1');
-    assert.strictEqual(got.proposalId, 'p1');
+  await t.test('get rejects calls without expectedAccountId at runtime', () => {
+    // The interface is { expectedAccountId: string } (required). JS callers
+    // who omit it get a TypeError at runtime — failing closed loudly is the
+    // point of tightening the API. TS callers are caught at compile time.
+    assert.throws(() => store.get('p1'));
   });
 
   await t.test('get returns null for unknown proposal_id', () => {
-    assert.strictEqual(store.get('p_unknown'), null);
+    assert.strictEqual(store.get('p_unknown', { expectedAccountId: 'acct_1' }), null);
   });
 });
 
@@ -82,7 +84,7 @@ test('InMemoryProposalStore — putDraft overwrites in DRAFT state', () => {
     recipes: new Map([['prod_a', recipe('mock', { v: 2 })]]),
     proposalPayload: { v: 2 },
   });
-  const got = store.get('p1');
+  const got = store.get('p1', { expectedAccountId: 'acct_1' });
   assert.strictEqual(got.recipes.get('prod_a').v, 2);
   assert.strictEqual(got.proposalPayload.v, 2);
 });
@@ -120,7 +122,7 @@ test('InMemoryProposalStore — commit + idempotency', async t => {
 
   await t.test('DRAFT → COMMITTED', () => {
     store.commit('p1', { expiresAt: expires, proposalPayload: { a: 1, locked: true } });
-    const got = store.get('p1');
+    const got = store.get('p1', { expectedAccountId: 'acct_1' });
     assert.strictEqual(got.state, 'committed');
     assert.strictEqual(got.expiresAt.getTime(), expires.getTime());
     assert.strictEqual(got.proposalPayload.locked, true);
@@ -128,7 +130,7 @@ test('InMemoryProposalStore — commit + idempotency', async t => {
 
   await t.test('idempotent on identical re-commit', () => {
     store.commit('p1', { expiresAt: expires, proposalPayload: { a: 1, locked: true } });
-    assert.strictEqual(store.get('p1').state, 'committed');
+    assert.strictEqual(store.get('p1', { expectedAccountId: 'acct_1' }).state, 'committed');
   });
 
   await t.test('mismatched re-commit raises INTERNAL_ERROR', () => {
@@ -160,7 +162,7 @@ test('InMemoryProposalStore — two-phase consume', async t => {
   await t.test('tryReserveConsumption: COMMITTED → CONSUMING', () => {
     const reserved = store.tryReserveConsumption('p1', { expectedAccountId: 'acct_1' });
     assert.strictEqual(reserved.state, 'consuming');
-    assert.strictEqual(store.get('p1').state, 'consuming');
+    assert.strictEqual(store.get('p1', { expectedAccountId: 'acct_1' }).state, 'consuming');
   });
 
   await t.test('parallel reserve loses with PROPOSAL_NOT_COMMITTED', () => {
@@ -179,7 +181,7 @@ test('InMemoryProposalStore — two-phase consume', async t => {
 
   await t.test('finalizeConsumption: CONSUMING → CONSUMED + reverse-index', () => {
     store.finalizeConsumption('p1', { mediaBuyId: 'mb_1', expectedAccountId: 'acct_1' });
-    assert.strictEqual(store.get('p1').state, 'consumed');
+    assert.strictEqual(store.get('p1', { expectedAccountId: 'acct_1' }).state, 'consumed');
     const found = store.getByMediaBuyId('mb_1', { expectedAccountId: 'acct_1' });
     assert.strictEqual(found.proposalId, 'p1');
   });
@@ -213,12 +215,12 @@ test('InMemoryProposalStore — releaseConsumption rolls back', async t => {
 
   await t.test('CONSUMING → COMMITTED', () => {
     store.releaseConsumption('p1', { expectedAccountId: 'acct_1' });
-    assert.strictEqual(store.get('p1').state, 'committed');
+    assert.strictEqual(store.get('p1', { expectedAccountId: 'acct_1' }).state, 'committed');
   });
 
   await t.test('releasing already-COMMITTED is a no-op', () => {
     store.releaseConsumption('p1', { expectedAccountId: 'acct_1' });
-    assert.strictEqual(store.get('p1').state, 'committed');
+    assert.strictEqual(store.get('p1', { expectedAccountId: 'acct_1' }).state, 'committed');
   });
 
   await t.test('releasing unknown id is a no-op', () => {
@@ -247,12 +249,12 @@ test('InMemoryProposalStore — eviction respects TTL with injected clock', asyn
 
   await t.test('draft survives within TTL', () => {
     now += 500;
-    assert.strictEqual(store.get('p1').state, 'draft');
+    assert.strictEqual(store.get('p1', { expectedAccountId: 'acct_1' }).state, 'draft');
   });
 
   await t.test('draft evicted past TTL', () => {
     now += 1_000_000;
-    assert.strictEqual(store.get('p1'), null);
+    assert.strictEqual(store.get('p1', { expectedAccountId: 'acct_1' }), null);
   });
 });
 
