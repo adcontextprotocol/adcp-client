@@ -52,6 +52,7 @@ import {
 } from '@adcp/sdk/server';
 import { buildGAMLikeRecipe, GAM_LIKE_OVERLAP, type GAMLikeRecipe } from '@adcp/sdk/mock-server';
 import type {
+  AccountReference,
   CreateMediaBuyRequest,
   CreateMediaBuySuccess,
   GetMediaBuyDeliveryRequest,
@@ -60,11 +61,16 @@ import type {
   GetMediaBuysResponse,
   GetProductsRequest,
   GetProductsResponse,
-  Product,
-  Proposal,
   UpdateMediaBuyRequest,
   UpdateMediaBuySuccess,
 } from '@adcp/sdk/types';
+
+// Wire `Product` and `Proposal` aren't directly re-exported from
+// `@adcp/sdk/types` — derive from the response array (same pattern as
+// `hello_seller_adapter_guaranteed.ts`).
+type Product = GetProductsResponse['products'][number];
+type Proposal = NonNullable<GetProductsResponse['proposals']>[number];
+type Package = CreateMediaBuySuccess['packages'][number];
 
 const UPSTREAM_URL = process.env['UPSTREAM_URL'] ?? 'http://127.0.0.1:4450';
 const UPSTREAM_API_KEY = process.env['UPSTREAM_API_KEY'] ?? 'mock_sales_guaranteed_key_do_not_use_in_prod';
@@ -204,11 +210,21 @@ interface NetworkMeta {
   [key: string]: unknown;
 }
 
+// AccountReference is a discriminated union — narrow before reading.
+function publisherDomainFromRef(ref: AccountReference | undefined): string | undefined {
+  if (!ref) return undefined;
+  if ('brand' in ref) return ref.brand.domain;
+  // The {account_id} arm — adopters who store accounts pre-resolved at
+  // sync_accounts time would look up by id; this demo only accepts
+  // `pub_<domain>`-shaped ids as a self-rehydration trick.
+  if (ref.account_id.startsWith('pub_')) return ref.account_id.slice(4);
+  return undefined;
+}
+
 const accounts: AccountStore<NetworkMeta> = {
   resolution: 'explicit',
   async resolve(ref) {
-    const publisherDomain =
-      ref?.brand?.domain ?? (ref?.account_id?.startsWith('pub_') ? ref.account_id.slice(4) : undefined);
+    const publisherDomain = publisherDomainFromRef(ref);
     if (!publisherDomain || !KNOWN_PUBLISHERS.includes(publisherDomain)) return null;
     const network = await upstream.lookupNetwork(publisherDomain);
     if (!network) return null;
@@ -231,7 +247,10 @@ const accounts: AccountStore<NetworkMeta> = {
 const FORMAT_AGENT_URL = PUBLIC_AGENT_URL;
 
 function projectProduct(p: UpstreamProduct, publisherDomain: string, recipe: GAMLikeRecipe): Product {
-  return {
+  // The wire `Product` shape doesn't enumerate `implementation_config`
+  // — adapters attach it on the wire and the framework reads it back
+  // via cast in the dispatch helpers. We do the same on the way out.
+  const product: Product = {
     product_id: p.product_id,
     name: p.name,
     description: `${p.name} — ${p.delivery_type} ${p.channel}`,
@@ -264,11 +283,11 @@ function projectProduct(p: UpstreamProduct, publisherDomain: string, recipe: GAM
       available_metrics: ['impressions', 'clicks', 'spend'],
       date_range_support: 'date_range',
     },
-    // Recipe rides on implementation_config — opaque to buyer wire,
-    // typed for the adapter via the GAMLikeRecipe contract. The
-    // framework persists this through the proposal lifecycle.
-    implementation_config: recipe as unknown as Record<string, unknown>,
   };
+  // Attach the recipe via cast so strict TS doesn't reject the field
+  // that's not in the generated `Product` interface.
+  (product as { implementation_config?: GAMLikeRecipe }).implementation_config = recipe;
+  return product;
 }
 
 function projectProposal(up: UpstreamProposal, total_budget?: { amount: number; currency: string }): Proposal {
@@ -426,52 +445,46 @@ const sales: SalesCorePlatform<NetworkMeta> = {
     const totalBudget = req.total_budget?.amount ?? 0;
     const currency = req.total_budget?.currency ?? 'USD';
     const order = await upstream.createOrder(networkCode, {
-      name: `${req.buyer_ref ?? 'order'}_${Date.now()}`,
+      name: `prop_buy_${Date.now()}`,
       advertiser_id: networkCode,
       currency,
       budget: totalBudget,
-      ...(req.idempotency_key && { client_request_id: req.idempotency_key }),
+      client_request_id: req.idempotency_key,
     });
 
-    // Allocate budgets per recipe using the proposal's allocation
-    // percentages — but those live in ctx.recipes.size hints, not
-    // structured. Simpler: equal split across the recipes.
+    // Equal-split allocation across the recipes. Production adapters
+    // would honor the proposal's stored allocation percentages — those
+    // live in `ctx.recipes`'s carrier object on the framework side; the
+    // simpler split keeps the demo tight.
     const perPackageBudget = totalBudget / recipes.size;
-    const packages: CreateMediaBuySuccess['packages'] = [];
+    const packages: Package[] = [];
     for (const [productId, recipe] of recipes) {
       const lineItem = await upstream.createLineItem(networkCode, order.order_id, {
         product_id: productId,
         budget: perPackageBudget,
         ad_unit_targeting: [...recipe.ad_unit_ids],
-        ...(req.idempotency_key && { client_request_id: `${req.idempotency_key}_${productId}` }),
+        client_request_id: `${req.idempotency_key}_${productId}`,
       });
       packages.push({
         package_id: lineItem.line_item_id,
         product_id: productId,
-        // Wire shape: `budget` is a bare number; currency lives on the
-        // referenced pricing_option. The recipe carries the pricing
-        // model + currency so the adapter doesn't echo them on the
-        // package — it consumed them upstream.
         budget: perPackageBudget,
-        status: 'pending_creatives',
       });
     }
     return {
       media_buy_id: order.order_id,
-      buyer_ref: req.buyer_ref ?? `buy_${order.order_id}`,
-      packages,
       status: 'pending_creatives',
+      packages,
     };
   },
 
-  async updateMediaBuy(req: UpdateMediaBuyRequest, _ctx): Promise<UpdateMediaBuySuccess> {
-    // Simple pass-through; the storyboard for proposal-mode doesn't
-    // exercise updates beyond status reads. Production adopters
-    // patch packages via upstream PATCH.
+  async updateMediaBuy(buyId: string, _patch: UpdateMediaBuyRequest, _ctx): Promise<UpdateMediaBuySuccess> {
+    // Pass-through; the proposal-mode demo doesn't drive update logic.
+    // Production adapters branch on the patch shape and PATCH the
+    // upstream order, returning `affected_packages[]` for the modified
+    // package set.
     return {
-      media_buy_id: req.media_buy_id,
-      buyer_ref: `buy_${req.media_buy_id}`,
-      packages: [],
+      media_buy_id: buyId,
       status: 'active',
     };
   },
@@ -485,18 +498,17 @@ const sales: SalesCorePlatform<NetworkMeta> = {
       if (!delivery) continue;
       deliveries.push({
         media_buy_id: id,
-        buyer_ref: `buy_${id}`,
         status: 'active',
         totals: {
           impressions: delivery.totals.impressions,
           clicks: delivery.totals.clicks,
-          spend: { amount: delivery.totals.spend, currency: delivery.currency },
+          spend: delivery.totals.spend,
         },
         by_package: [],
       });
     }
     return {
-      reporting_period: { start_date: '2026-04-01', end_date: '2026-06-30' },
+      reporting_period: { start: '2026-04-01T00:00:00Z', end: '2026-06-30T23:59:59Z' },
       currency: 'USD',
       media_buy_deliveries: deliveries,
     };
@@ -514,9 +526,9 @@ const sales: SalesCorePlatform<NetworkMeta> = {
 const platform: DecisioningPlatform<unknown, NetworkMeta> = {
   capabilities: {
     specialisms: ['sales-proposal-mode'],
-    adcp_version: '3.0.6',
     channels: ['olv', 'ctv', 'display'],
     pricingModels: ['cpm'],
+    config: undefined,
   },
   accounts,
   proposalManager,
