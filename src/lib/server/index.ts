@@ -17,6 +17,14 @@ export {
   CONFLICT_ADCP_ERROR_ALLOWLIST,
 } from './envelope-allowlist';
 
+export { scanArgsForCredentials, DEFAULT_CREDENTIAL_PATTERNS } from './credential-policy';
+export type {
+  CredentialPolicy,
+  CredentialPolicyMode,
+  CredentialPolicyConfig,
+  CredentialPatternsConfig,
+} from './credential-policy';
+
 export {
   capabilitiesResponse,
   productsResponse,

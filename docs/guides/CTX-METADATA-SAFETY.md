@@ -136,3 +136,122 @@ This catches accidental wire leaks where an adopter spreads
 `ctx_metadata` into a response shape (don't do that).
 
 [issue]: https://github.com/adcontextprotocol/adcp-client/issues/1343
+
+## Defense in depth: `credentialPolicy` (#1529)
+
+`ctx_metadata` discipline keeps your own server-side state clean.
+**`credentialPolicy`** keeps the *buyer* from injecting credentials
+through the request body in the first place — the bug class observed
+across three rounds of review on PR scope3data/agentic-adapters#248,
+where storefront fan-out paths read `args.<platform>_access_token`
+(top-level), `args.context.<platform>_access_token` (round-2), and
+`args.ext.<platform>_access_token` (round-3) under the storefront's TLS
+and IP reputation. Confused-deputy by default.
+
+The three vectors as concrete payloads — what `'authInfo-only'`
+rejects:
+
+```jsonc
+// Round-1: top-level credential
+{
+  "media_buy_id": "mb_123",
+  "paused": true,
+  "snap_access_token": "<attacker-PAT>"
+}
+
+// Round-2: nested in `context`
+{
+  "media_buy_id": "mb_123",
+  "context": { "linkedin_access_token": "<attacker-PAT>" }
+}
+
+// Round-3: nested in `ext`
+{
+  "media_buy_id": "mb_123",
+  "ext": { "tiktok_access_token": "<attacker-PAT>" }
+}
+```
+
+All three reject with `PERMISSION_DENIED` (`details.scope: 'credentials'`,
+`recovery: 'correctable'`) and `details.credential_paths` listing the
+offending paths (values are not echoed back). The code is
+`PERMISSION_DENIED` rather than `INVALID_REQUEST` because the request
+is *schema-valid* — every AdCP request schema sets `additionalProperties:
+true` — and what's refused is the seller policy "credentials must
+arrive on `authInfo`."
+
+Opt in at server construction:
+
+```ts
+import { createAdcpServer } from '@adcp/sdk/server';
+
+createAdcpServer({
+  // ...
+  credentialPolicy: 'authInfo-only',
+});
+```
+
+The framework scans every incoming request's args bag for credential-
+shaped keys at any depth. Default patterns cover the common credential
+vocabulary: `_token`, `_secret`, `_password`, `api_key`, `private_key`,
+`authorization`, `cookie`, `bearer`, `accessToken`, `refreshToken`
+(case-insensitive). Hits reject with `PERMISSION_DENIED` listing the
+offending paths (not values, and the rejection envelope deliberately
+skips `params.context` echo so the credential doesn't round-trip through
+the response).
+
+Customize patterns when your platform vocabulary needs more:
+
+```ts
+credentialPolicy: {
+  policy: 'authInfo-only',
+  patterns: {
+    extend: [/^bearer$/i, /credentials/i, /Pat$/],
+    // or fully replace:
+    // matcher: (key, path) => mySanctionedKeys.has(key),
+  },
+}
+```
+
+Per-tool overrides for the rare legitimate buyer-creds tool:
+
+```ts
+credentialPolicy: {
+  policy: 'authInfo-only',
+  tools: { activate_signal: 'lax' },  // adopter-specific carve-out
+}
+```
+
+The blessed credential channel remains `authInfo` (resolved by the
+framework's authenticator). Anything that arrives on the args bag is
+either a buyer-supplied non-secret OR a smuggled credential — the
+policy refuses to disambiguate.
+
+### What `credentialPolicy` does NOT cover
+
+`credentialPolicy` closes the **credential-smuggling** half of the
+storefront fan-out attack surface. It does NOT cover **identity
+pivoting** — a buyer who sends `request.account: { brand:
+'attacker.com' }` to pivot the resolved account onto a different
+tenant inside the storefront's session. That category looks like
+this:
+
+```jsonc
+// NOT caught by credentialPolicy — `account` is a wire-spec field,
+// not credential-shaped.
+{
+  "media_buy_id": "mb_123",
+  "account": { "brand": "attacker.com" }
+}
+```
+
+The mitigation lives in `AccountStore.resolve`: every storefront
+should validate that the resolved account is one the authenticated
+principal is authorized to access. The framework's
+`createDerivedAccountStore` (single-tenant) and `createTenantStore`
+(multi-tenant) bake this in; custom resolvers must implement the
+org-gating check themselves. See
+[`docs/guides/account-resolution.md`](./account-resolution.md).
+
+If your resolver doesn't gate on the principal's authorized accounts,
+`credentialPolicy: 'authInfo-only'` will not save you.
