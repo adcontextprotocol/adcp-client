@@ -80,6 +80,16 @@ import type { CreativeBuilderPlatform } from '../specialisms/creative';
 import type { CreativeAdServerPlatform } from '../specialisms/creative-ad-server';
 import type { Audience } from '../specialisms/audiences';
 import type { RequestContext } from '../context';
+import {
+  maybeInterceptFinalize,
+  maybePersistDraftAfterGetProducts,
+  maybeReserveProposalForCreateMediaBuy,
+  finalizeProposalConsumption,
+  releaseProposalReservation,
+  maybeHydrateRecipesForMediaBuyId,
+  type ReservedProposal,
+  type Recipe as ProposalRecipe,
+} from '../proposal';
 import type {
   AccountReference,
   BuildCreativeMultiSuccess,
@@ -579,6 +589,32 @@ export interface CreateAdcpServerFromPlatformOptions extends Omit<
    * ```
    */
   mediaBuyStore?: MediaBuyStore;
+
+  /**
+   * Proposal lifecycle ledger — wires the v1.5 ProposalManager dispatch
+   * seams. When supplied alongside `platform.proposalManager`, the
+   * framework drives the full lifecycle:
+   *
+   *   - `getProducts` / refine responses persist `proposals[]` as DRAFT
+   *     records (with typed recipes pulled from
+   *     `Product.implementation_config`).
+   *   - `refine[i].action: 'finalize'` entries are intercepted before
+   *     dispatch; the manager's `finalizeProposal` is called and the
+   *     proposal is committed via the store.
+   *   - `createMediaBuy` requests carrying `proposal_id` are validated
+   *     against expiry + capability overlap, the proposal is reserved
+   *     (atomic CAS `COMMITTED → CONSUMING`), and `ctx.recipes` is
+   *     hydrated from the record. Adapter success → `CONSUMING →
+   *     CONSUMED`; adapter throw → rollback to `COMMITTED`.
+   *   - `updateMediaBuy` / `getMediaBuyDelivery` hydrate `ctx.recipes`
+   *     via the reverse-index `getByMediaBuyId`.
+   *
+   * Backed by any {@link ProposalStore} — `InMemoryProposalStore` for
+   * dev / single-process; adopters wire their own durable backings for
+   * production. Without this option (and/or without
+   * `platform.proposalManager`), the v1 path runs unchanged.
+   */
+  proposalStore?: import('../proposal').ProposalStore;
 
   /**
    * Allow `push_notification_config.url` to point at loopback / private-IP
@@ -1247,7 +1283,8 @@ export function createAdcpServerFromPlatform<P extends DecisioningPlatform<any, 
         },
         ctxFor,
         effectiveCtxMetadata,
-        opts.mediaBuyStore
+        opts.mediaBuyStore,
+        opts.proposalStore
       ),
       'mediaBuy',
       mergeOpts
@@ -3332,10 +3369,13 @@ function buildMediaBuyHandlers<P extends DecisioningPlatform<any, any>>(
   pushOpts: { allowPrivateWebhookUrls: boolean; autoEmitCompletionWebhooks: boolean },
   ctxFor: CtxForFn,
   ctxMetadataStore: CtxMetadataStore | undefined,
-  mediaBuyStore: MediaBuyStore | undefined
+  mediaBuyStore: MediaBuyStore | undefined,
+  proposalStore: import('../proposal').ProposalStore | undefined
 ): MediaBuyHandlers<Account> | undefined {
   const sales = platform.sales;
-  if (!sales) return undefined;
+  const proposalManager = (platform as { proposalManager?: import('../proposal').ProposalManager }).proposalManager;
+  // Without sales AND without a proposal manager, there's nothing to dispatch.
+  if (!sales && !proposalManager) return undefined;
 
   // Core lifecycle methods are optional on the SalesPlatform interface
   // (#1341) — the per-specialism mapping in `RequiredPlatformsFor<S>`
@@ -3347,12 +3387,43 @@ function buildMediaBuyHandlers<P extends DecisioningPlatform<any, any>>(
   // (`opts.mediaBuy.X`) can supply it OR the framework returns
   // `METHOD_NOT_FOUND` from `tools/list` for the unsupported tool.
   return {
-    ...(sales.getProducts && {
+    ...((sales?.getProducts || proposalManager) && {
       getProducts: async (params, ctx) => {
         const reqCtx = ctxFor(ctx);
+        // v1.5 seam: intercept refine[i].action='finalize' before
+        // dispatching to the manager / sales. When the framework
+        // commits the proposal inline, project the response directly.
+        if (proposalManager && proposalStore) {
+          const intercept = await maybeInterceptFinalize({
+            request: params,
+            manager: proposalManager,
+            store: proposalStore,
+            ctx: reqCtx as unknown as { account: { id: string } },
+          });
+          if (intercept.kind === 'intercepted') {
+            return intercept.response;
+          }
+        }
         return projectSync(
           async () => {
-            const result = await sales.getProducts!(params, reqCtx);
+            // Pick dispatch target: ProposalManager (when wired) takes
+            // ownership of get_products; sales is the v1 fallback.
+            // Refine routing per Python's _select_proposal_method:
+            // refine_products iff buying_mode='refine' AND
+            // capabilities.refine AND the manager implements it.
+            let result: import('../../../types/tools.generated').GetProductsResponse;
+            if (proposalManager) {
+              const buyingMode = (params as { buying_mode?: string }).buying_mode;
+              const useRefine =
+                buyingMode === 'refine' &&
+                proposalManager.capabilities.refine === true &&
+                typeof proposalManager.refineProducts === 'function';
+              result = useRefine
+                ? await proposalManager.refineProducts!(params, reqCtx as never)
+                : await proposalManager.getProducts(params, reqCtx as never);
+            } else {
+              result = await sales!.getProducts!(params, reqCtx);
+            }
             // Auto-store products: persist each Product's wire shape +
             // ctx_metadata so subsequent createMediaBuy / updateMediaBuy
             // calls referencing product_id can hydrate the full Product
@@ -3365,6 +3436,16 @@ function buildMediaBuyHandlers<P extends DecisioningPlatform<any, any>>(
               'product_id',
               logger
             );
+            // v1.5 seam: persist proposals[] as DRAFT records (with
+            // typed recipes pulled from Product.implementation_config)
+            // so subsequent finalize / create_media_buy can hydrate.
+            if (proposalStore) {
+              await maybePersistDraftAfterGetProducts({
+                response: result,
+                store: proposalStore,
+                ctx: reqCtx as unknown as { account: { id: string } },
+              });
+            }
             return result;
           },
           r => r
@@ -3372,7 +3453,7 @@ function buildMediaBuyHandlers<P extends DecisioningPlatform<any, any>>(
       },
     }),
 
-    ...(sales.createMediaBuy && {
+    ...(sales?.createMediaBuy && {
       createMediaBuy: async (params, ctx) => {
         const reqCtx = ctxFor(ctx);
         // Auto-hydrate: walk `params.packages`, attach the full Product object
@@ -3385,12 +3466,59 @@ function buildMediaBuyHandlers<P extends DecisioningPlatform<any, any>>(
           (params as { packages?: unknown[] })?.packages,
           logger
         );
+        // v1.5 seam: when the request carries a proposal_id, reserve
+        // the proposal (atomic CAS COMMITTED → CONSUMING), validate
+        // expiry + capability overlap, hydrate ctx.recipes. The
+        // adapter runs against the reservation; finalize_consumption
+        // (success) or release_consumption (failure) closes it out.
+        let reservation: ReservedProposal<ProposalRecipe> | null = null;
+        if (proposalStore) {
+          reservation = await maybeReserveProposalForCreateMediaBuy({
+            request: params as { proposal_id?: string; packages?: ReadonlyArray<unknown> } & Record<string, unknown>,
+            manager: proposalManager,
+            store: proposalStore,
+            ctx: reqCtx as unknown as { account: { id: string } },
+          });
+          if (reservation) {
+            (reqCtx as unknown as { recipes?: ReadonlyMap<string, ProposalRecipe> }).recipes = reservation.recipes;
+          }
+        }
         return projectSync(
           async () => {
             const push = extractPushConfig(params, logger, {
               allowPrivateWebhookUrls: pushOpts.allowPrivateWebhookUrls,
             });
-            const result = await sales.createMediaBuy!(params, reqCtx);
+            let result: Awaited<ReturnType<NonNullable<typeof sales.createMediaBuy>>>;
+            try {
+              result = await sales!.createMediaBuy!(params, reqCtx);
+            } catch (err) {
+              // Adapter rejected — roll back the reservation so the buyer
+              // can retry without PROPOSAL_NOT_COMMITTED blocking them.
+              if (reservation && proposalStore) {
+                await releaseProposalReservation({
+                  store: proposalStore,
+                  record: reservation,
+                  logger,
+                });
+              }
+              throw err;
+            }
+            // Inline-success path: promote CONSUMING → CONSUMED with the
+            // adapter's media_buy_id. HITL handoff: the proposal stays
+            // CONSUMING until the handoff completes — wiring the
+            // post-completion commit hook is a v1.6 follow-up; for now
+            // adopters using HITL accept the reservation lingers until
+            // eviction. Most adopters use inline create_media_buy.
+            if (reservation && proposalStore && !isTaskHandoff(result)) {
+              const mediaBuyId = (result as { media_buy_id?: string }).media_buy_id;
+              if (mediaBuyId) {
+                await finalizeProposalConsumption({
+                  store: proposalStore,
+                  record: reservation,
+                  mediaBuyId,
+                });
+              }
+            }
             return routeIfHandoff(
               taskRegistry,
               {
@@ -3415,7 +3543,7 @@ function buildMediaBuyHandlers<P extends DecisioningPlatform<any, any>>(
       },
     }),
 
-    ...(sales.updateMediaBuy && {
+    ...(sales?.updateMediaBuy && {
       updateMediaBuy: async (params, ctx) => {
         const reqCtx = ctxFor(ctx);
         // `media_buy_id` is required on the wire schema, but `validation: 'off'`
@@ -3434,12 +3562,27 @@ function buildMediaBuyHandlers<P extends DecisioningPlatform<any, any>>(
         // directly — no separate lookup. Misses are silent; publisher falls
         // back to its own DB. Schema-driven via `x-entity` (#1109).
         await hydrateForTool(ctxMetadataStore, reqCtx.account?.id, 'update_media_buy', params, logger);
+        // v1.5 seam: hydrate ctx.recipes via reverse-index so the adapter's
+        // updateMediaBuy can apply the same recipe that drove createMediaBuy.
+        // Re-validates capability overlap on any packages-shaped patch
+        // (Resolutions §5).
+        if (proposalStore) {
+          const record = await maybeHydrateRecipesForMediaBuyId({
+            mediaBuyId: media_buy_id,
+            store: proposalStore,
+            ctx: reqCtx as unknown as { account: { id: string } },
+            packages: (params as { packages?: ReadonlyArray<unknown> }).packages,
+          });
+          if (record) {
+            (reqCtx as unknown as { recipes?: ReadonlyMap<string, ProposalRecipe> }).recipes = record.recipes;
+          }
+        }
         return projectSync(
           async () => {
             const push = extractPushConfig(params, logger, {
               allowPrivateWebhookUrls: pushOpts.allowPrivateWebhookUrls,
             });
-            const result = await sales.updateMediaBuy!(media_buy_id, params, reqCtx);
+            const result = await sales!.updateMediaBuy!(media_buy_id, params, reqCtx);
             // Persist optimistically: the platform method returned without
             // throwing, so the patch was accepted at the seam. If the
             // publisher returned an error envelope on the success path
@@ -3480,7 +3623,7 @@ function buildMediaBuyHandlers<P extends DecisioningPlatform<any, any>>(
     syncCreatives: async (params, ctx) => {
       const reqCtx = ctxFor(ctx);
       const creatives = params.creatives ?? [];
-      if (!sales.syncCreatives) {
+      if (!sales?.syncCreatives) {
         return adcpError('UNSUPPORTED_FEATURE', {
           message: 'sync_creatives not supported by this sales platform',
         });
@@ -3488,7 +3631,7 @@ function buildMediaBuyHandlers<P extends DecisioningPlatform<any, any>>(
       return projectSync(
         async () => {
           const push = extractPushConfig(params, logger, { allowPrivateWebhookUrls: pushOpts.allowPrivateWebhookUrls });
-          const result = await sales.syncCreatives!(creatives, reqCtx);
+          const result = await sales!.syncCreatives!(creatives, reqCtx);
           return routeIfHandoff(
             taskRegistry,
             {
@@ -3509,12 +3652,32 @@ function buildMediaBuyHandlers<P extends DecisioningPlatform<any, any>>(
       );
     },
 
-    ...(sales.getMediaBuyDelivery && {
+    ...(sales?.getMediaBuyDelivery && {
       getMediaBuyDelivery: async (params, ctx) => {
         const reqCtx = ctxFor(ctx);
+        // v1.5 seam: hydrate ctx.recipes for delivery reads. Per
+        // Resolutions §5, recipe-driven delivery aggregation needs the
+        // same recipe view the originating createMediaBuy used.
+        if (proposalStore) {
+          const ids = (params as { media_buy_ids?: readonly string[] }).media_buy_ids;
+          // The wire shape uses `media_buy_ids[]`; hydrate from the first id
+          // when present (per-buy recipe lookup; if buyer queries multiple
+          // ids, the adapter is responsible for per-id recipe routing).
+          const firstId = Array.isArray(ids) && ids.length > 0 ? ids[0] : undefined;
+          if (firstId) {
+            const record = await maybeHydrateRecipesForMediaBuyId({
+              mediaBuyId: firstId,
+              store: proposalStore,
+              ctx: reqCtx as unknown as { account: { id: string } },
+            });
+            if (record) {
+              (reqCtx as unknown as { recipes?: ReadonlyMap<string, ProposalRecipe> }).recipes = record.recipes;
+            }
+          }
+        }
         return projectSync(
           async () => {
-            const result = await sales.getMediaBuyDelivery!(params, reqCtx);
+            const result = await sales!.getMediaBuyDelivery!(params, reqCtx);
             warnIfTruncatedMultiIdResponse(
               'getMediaBuyDelivery',
               'media_buy_ids',
@@ -3542,12 +3705,12 @@ function buildMediaBuyHandlers<P extends DecisioningPlatform<any, any>>(
     // platform-derived handler when absent lets `mergeHandlers` pick up the
     // adopter's custom handler from `opts.mediaBuy` instead of throwing
     // `sales.getMediaBuys is not a function`.
-    ...(sales.getMediaBuys && {
+    ...(sales?.getMediaBuys && {
       getMediaBuys: async (params, ctx) => {
         const reqCtx = ctxFor(ctx);
         return projectSync(
           async () => {
-            const result = await sales.getMediaBuys!(params, reqCtx);
+            const result = await sales!.getMediaBuys!(params, reqCtx);
             warnIfTruncatedMultiIdResponse(
               'getMediaBuys',
               'media_buy_ids',
@@ -3570,7 +3733,7 @@ function buildMediaBuyHandlers<P extends DecisioningPlatform<any, any>>(
         );
       },
     }),
-    ...(sales.providePerformanceFeedback && {
+    ...(sales?.providePerformanceFeedback && {
       providePerformanceFeedback: async (params, ctx) => {
         const reqCtx = ctxFor(ctx);
         // Auto-hydrate `req.media_buy` from the prior createMediaBuy /
@@ -3583,26 +3746,26 @@ function buildMediaBuyHandlers<P extends DecisioningPlatform<any, any>>(
         // (silent no-op when packages aren't seeded).
         await hydrateForTool(ctxMetadataStore, reqCtx.account?.id, 'provide_performance_feedback', params, logger);
         return projectSync(
-          () => sales.providePerformanceFeedback!(params, reqCtx),
+          () => sales!.providePerformanceFeedback!(params, reqCtx),
           r => r
         );
       },
     }),
-    ...(sales.listCreativeFormats && {
+    ...(sales?.listCreativeFormats && {
       listCreativeFormats: async (params, ctx) => {
         const reqCtx = ctxFor(ctx);
         return projectSync(
-          () => sales.listCreativeFormats!(params, reqCtx),
+          () => sales!.listCreativeFormats!(params, reqCtx),
           r => r
         );
       },
     }),
-    ...(sales.listCreatives && {
+    ...(sales?.listCreatives && {
       listCreatives: async (params, ctx) => {
         const reqCtx = ctxFor(ctx);
         return projectSync(
           async () => {
-            const result = await sales.listCreatives!(params, reqCtx);
+            const result = await sales!.listCreatives!(params, reqCtx);
             warnIfTruncatedMultiIdResponse(
               'listCreatives',
               'creative_ids',

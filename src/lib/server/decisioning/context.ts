@@ -32,6 +32,7 @@ import type {
 import type { TaskHandoff, TaskHandoffContext } from './async-outcome';
 import type { CtxMetadataRef, ResourceKind } from '../ctx-metadata';
 import type { BuyerAgent } from './buyer-agent';
+import type { Recipe } from './proposal';
 
 // Unconstrained `TAccount` (no `extends Account`) so adopters with metadata
 // types that don't extend `Record<string, unknown>` (interfaces without index
@@ -99,6 +100,25 @@ export interface RequestContext<TAccount = Account> {
    * @public
    */
   ctxMetadata?: CtxMetadataAccessor;
+
+  /**
+   * Hydrated typed recipes (`product_id -> Recipe`) for proposal-mode
+   * dispatch. Populated by the framework's v1.5 ProposalManager seams:
+   *
+   *   - `createMediaBuy` with `proposal_id`: framework reserves the
+   *     proposal, validates expiry + capability overlap, and writes the
+   *     recipe map here BEFORE the adapter runs.
+   *   - `updateMediaBuy` / `getMediaBuyDelivery`: framework hydrates
+   *     via the `getByMediaBuyId` reverse-index.
+   *
+   * Adopters read this map to apply per-product internal-config
+   * (e.g., `recipe.line_item_template_id` on the matching adapter
+   * upstream call). Undefined when no proposal-mode dispatch is wired
+   * for the request — the v1 path leaves it untouched.
+   *
+   * @public
+   */
+  recipes?: ReadonlyMap<string, Recipe>;
 
   /**
    * Hand off the call to a background task. Returns a `TaskHandoff<T>`

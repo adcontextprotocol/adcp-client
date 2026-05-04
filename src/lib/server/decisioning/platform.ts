@@ -16,6 +16,7 @@ import type { BuyerAgentRegistry } from './buyer-agent';
 import type { SessionContext, OnInstructionsError, MaybePromise } from '../create-adcp-server';
 import type { StatusMappers } from './status-mappers';
 import type { SalesPlatform, SalesCorePlatform, SalesIngestionPlatform } from './specialisms/sales';
+import type { ProposalManager, Recipe } from './proposal';
 import type { CreativeBuilderPlatform } from './specialisms/creative';
 import type { CreativeAdServerPlatform } from './specialisms/creative-ad-server';
 import type { AudiencePlatform } from './specialisms/audiences';
@@ -240,6 +241,23 @@ export interface DecisioningPlatform<TConfig = unknown, TCtxMeta = Record<string
   collectionLists?: CollectionListsPlatform<TCtxMeta>;
   /** @see DecisioningPlatform — § Cross-specialism dispatch (`acquireRights` is the canonical caller into `campaignGovernance.checkGovernance`). */
   brandRights?: BrandRightsPlatform<TCtxMeta>;
+
+  /**
+   * Optional sibling that owns the proposal side of the two-platform
+   * composition (port of `adcp-client-python`'s `ProposalManager`). When
+   * present, the framework routes `get_products` and refine traffic to
+   * the manager instead of `sales.getProducts`; `sales` stays
+   * responsible for media-buy execution. Either side can be mock-backed
+   * independently — see `MockProposalManager`.
+   *
+   * **Status**: primitive types only. Framework dispatch wiring (the
+   * five seams that intercept `getProducts`, `createMediaBuy`,
+   * `updateMediaBuy`, `getMediaBuyDelivery` to persist drafts, hydrate
+   * recipes, and commit on finalize) lands in a follow-up release. v1.5
+   * adopters can already implement against this surface; the framework
+   * just doesn't drive the lifecycle yet.
+   */
+  proposalManager?: ProposalManager<Recipe, TCtxMeta>;
 
   // v1.1+ specialisms add: creative-review.
 }

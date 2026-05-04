@@ -628,4 +628,172 @@ describe('mock-server sales-guaranteed', () => {
       assert.ok((body.traffic['POST /v1/availability'] ?? 0) >= 1);
     });
   });
+
+  describe('proposal lifecycle (/v1/proposals)', () => {
+    it('POST /v1/proposals creates a draft with even allocation across guaranteed products', async () => {
+      const res = await fetch(`${handle.url}/v1/proposals`, {
+        method: 'POST',
+        headers: authHeaders(true),
+        body: JSON.stringify({
+          brief: 'Q2 brand launch — premium video',
+          total_budget: { amount: 100_000, currency: 'USD' },
+        }),
+      });
+      assert.equal(res.status, 201);
+      const proposal = await res.json();
+      assert.ok(proposal.proposal_id.startsWith('prop_'));
+      assert.equal(proposal.status, 'draft');
+      assert.equal(proposal.brief, 'Q2 brand launch — premium video');
+      assert.ok(proposal.allocations.length > 0);
+      const total = proposal.allocations.reduce((s, a) => s + a.allocation_percentage, 0);
+      assert.equal(total, 100, 'allocations should sum to 100');
+      // Pre-finalize: indicative_cpm only, no locked_cpm
+      for (const allocation of proposal.allocations) {
+        assert.ok(allocation.indicative_cpm > 0);
+        assert.equal(allocation.locked_cpm, undefined);
+        assert.equal(allocation.upstream_line_item_template_id, undefined);
+      }
+      assert.equal(proposal.expires_at, undefined, 'draft has no expires_at');
+    });
+
+    it('POST /v1/proposals filters to specified product_ids', async () => {
+      const res = await fetch(`${handle.url}/v1/proposals`, {
+        method: 'POST',
+        headers: authHeaders(true),
+        body: JSON.stringify({
+          brief: 'Sports preroll only',
+          product_ids: ['sports_preroll_q2_guaranteed'],
+        }),
+      });
+      assert.equal(res.status, 201);
+      const proposal = await res.json();
+      assert.equal(proposal.allocations.length, 1);
+      assert.equal(proposal.allocations[0].product_id, 'sports_preroll_q2_guaranteed');
+      assert.equal(proposal.allocations[0].allocation_percentage, 100);
+    });
+
+    it('POST /v1/proposals rejects unknown product_ids', async () => {
+      const res = await fetch(`${handle.url}/v1/proposals`, {
+        method: 'POST',
+        headers: authHeaders(true),
+        body: JSON.stringify({ product_ids: ['nope_does_not_exist'] }),
+      });
+      assert.equal(res.status, 400);
+    });
+
+    it('GET /v1/proposals/{id} echoes the record', async () => {
+      const create = await fetch(`${handle.url}/v1/proposals`, {
+        method: 'POST',
+        headers: authHeaders(true),
+        body: JSON.stringify({}),
+      });
+      const draft = await create.json();
+      const get = await fetch(`${handle.url}/v1/proposals/${draft.proposal_id}`, { headers: authHeaders() });
+      assert.equal(get.status, 200);
+      const echoed = await get.json();
+      assert.equal(echoed.proposal_id, draft.proposal_id);
+      assert.equal(echoed.status, 'draft');
+    });
+
+    it('GET /v1/proposals/{id} 404s for unknown id', async () => {
+      const res = await fetch(`${handle.url}/v1/proposals/prop_nope`, { headers: authHeaders() });
+      assert.equal(res.status, 404);
+    });
+
+    it('POST /v1/proposals/{id}/refine accepts allocation overrides on draft', async () => {
+      const create = await fetch(`${handle.url}/v1/proposals`, {
+        method: 'POST',
+        headers: authHeaders(true),
+        body: JSON.stringify({
+          product_ids: ['sports_preroll_q2_guaranteed', 'outdoor_ctv_q2_guaranteed'],
+        }),
+      });
+      const draft = await create.json();
+      const res = await fetch(`${handle.url}/v1/proposals/${draft.proposal_id}/refine`, {
+        method: 'POST',
+        headers: authHeaders(true),
+        body: JSON.stringify({
+          allocation_overrides: [
+            { product_id: 'sports_preroll_q2_guaranteed', allocation_percentage: 70 },
+            { product_id: 'outdoor_ctv_q2_guaranteed', allocation_percentage: 30 },
+          ],
+        }),
+      });
+      assert.equal(res.status, 200);
+      const refined = await res.json();
+      const sports = refined.allocations.find(a => a.product_id === 'sports_preroll_q2_guaranteed');
+      assert.equal(sports.allocation_percentage, 70);
+    });
+
+    it('POST /v1/proposals/{id}/finalize promotes draft → committed and locks pricing', async () => {
+      const create = await fetch(`${handle.url}/v1/proposals`, {
+        method: 'POST',
+        headers: authHeaders(true),
+        body: JSON.stringify({ product_ids: ['sports_preroll_q2_guaranteed'] }),
+      });
+      const draft = await create.json();
+      const res = await fetch(`${handle.url}/v1/proposals/${draft.proposal_id}/finalize`, {
+        method: 'POST',
+        headers: authHeaders(true),
+      });
+      assert.equal(res.status, 200);
+      const committed = await res.json();
+      assert.equal(committed.status, 'committed');
+      assert.ok(committed.expires_at, 'finalize should set expires_at');
+      const allocation = committed.allocations[0];
+      assert.equal(allocation.locked_cpm, allocation.indicative_cpm);
+      assert.ok(allocation.upstream_line_item_template_id, 'finalize allocates a line-item template id');
+    });
+
+    it('POST /v1/proposals/{id}/refine rejected on committed (409)', async () => {
+      const create = await fetch(`${handle.url}/v1/proposals`, {
+        method: 'POST',
+        headers: authHeaders(true),
+        body: JSON.stringify({}),
+      });
+      const draft = await create.json();
+      await fetch(`${handle.url}/v1/proposals/${draft.proposal_id}/finalize`, {
+        method: 'POST',
+        headers: authHeaders(true),
+      });
+      const res = await fetch(`${handle.url}/v1/proposals/${draft.proposal_id}/refine`, {
+        method: 'POST',
+        headers: authHeaders(true),
+        body: JSON.stringify({ ask: 'shift to ctv' }),
+      });
+      assert.equal(res.status, 409);
+    });
+
+    it('POST /v1/proposals/{id}/finalize is idempotent (committed → committed returns same shape)', async () => {
+      const create = await fetch(`${handle.url}/v1/proposals`, {
+        method: 'POST',
+        headers: authHeaders(true),
+        body: JSON.stringify({}),
+      });
+      const draft = await create.json();
+      const first = await fetch(`${handle.url}/v1/proposals/${draft.proposal_id}/finalize`, {
+        method: 'POST',
+        headers: authHeaders(true),
+      });
+      assert.equal(first.status, 200);
+      const firstBody = await first.json();
+      const second = await fetch(`${handle.url}/v1/proposals/${draft.proposal_id}/finalize`, {
+        method: 'POST',
+        headers: authHeaders(true),
+      });
+      assert.equal(second.status, 200);
+      const secondBody = await second.json();
+      assert.equal(secondBody.expires_at, firstBody.expires_at);
+      assert.deepEqual(secondBody.allocations, firstBody.allocations);
+    });
+
+    it('proposal routes appear in /_debug/traffic', async () => {
+      const res = await fetch(`${handle.url}/_debug/traffic`);
+      const body = await res.json();
+      assert.ok((body.traffic['POST /v1/proposals'] ?? 0) >= 1);
+      assert.ok((body.traffic['GET /v1/proposals/{id}'] ?? 0) >= 1);
+      assert.ok((body.traffic['POST /v1/proposals/{id}/refine'] ?? 0) >= 1);
+      assert.ok((body.traffic['POST /v1/proposals/{id}/finalize'] ?? 0) >= 1);
+    });
+  });
 });
