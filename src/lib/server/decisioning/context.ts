@@ -29,7 +29,7 @@ import type {
   PropertyList,
   CollectionList,
 } from '../../types/tools.generated';
-import type { TaskHandoff, TaskHandoffContext } from './async-outcome';
+import type { TaskHandoff, TaskHandoffContext, TaskHandoffOptions } from './async-outcome';
 import type { CtxMetadataRef, ResourceKind } from '../ctx-metadata';
 import type { BuyerAgent } from './buyer-agent';
 
@@ -128,8 +128,17 @@ export interface RequestContext<TAccount = Account> {
    *   return await this.commitSync(req);
    * }
    * ```
+   *
+   * Pass `options.task_id` when an upstream system or test-controller directive
+   * has already issued the task id and the spec contract requires the response
+   * to echo it verbatim (e.g. `force_create_media_buy_arm`). The framework uses
+   * the supplied id instead of minting a fresh one; `taskCtx.id` reflects it.
+   * Constraints: non-empty, ≤ 128 characters. Throws if violated.
    */
-  handoffToTask<TResult>(fn: (taskCtx: TaskHandoffContext) => Promise<TResult>): TaskHandoff<TResult>;
+  handoffToTask<TResult>(
+    fn: (taskCtx: TaskHandoffContext) => Promise<TResult>,
+    options?: TaskHandoffOptions
+  ): TaskHandoff<TResult>;
 }
 
 // ---------------------------------------------------------------------------

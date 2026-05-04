@@ -21,6 +21,7 @@
 // task primitives — the framework owns task lifecycle and dispatches the
 // `*Task` method in the background.
 export { type AdcpStructuredError, type ErrorCode, AdcpError } from './async-outcome';
+export type { TaskHandoffOptions } from './async-outcome';
 
 // Typed `AdcpError` subclasses — adopter convenience for the highest-traffic
 // error codes. Each class encodes the canonical code/recovery/field shape.

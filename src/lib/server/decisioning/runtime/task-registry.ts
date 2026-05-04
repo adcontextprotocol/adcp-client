@@ -85,8 +85,17 @@ export interface TaskRegistry {
    *
    * `hasWebhook: true` when the buyer wired `push_notification_config.url`
    * — surfaced via `tasks_get`'s `has_webhook` field. Defaults to `false`.
+   *
+   * `overrideTaskId` — when set, the registry uses this exact string as the
+   * task id instead of minting a fresh one. Throws if the id is already
+   * registered (uniqueness is the caller's responsibility).
    */
-  create(opts: { tool: string; accountId: string; hasWebhook?: boolean }): Promise<{ taskId: string }>;
+  create(opts: {
+    tool: string;
+    accountId: string;
+    hasWebhook?: boolean;
+    overrideTaskId?: string;
+  }): Promise<{ taskId: string }>;
 
   /** Read a task by id. Returns `null` if unknown. */
   getTask<TResult = unknown>(taskId: string): Promise<TaskRecord<TResult> | null>;
@@ -133,8 +142,16 @@ export function createInMemoryTaskRegistry(): TaskRegistry {
   const backgrounds = new Map<string, Promise<void>>();
 
   return {
-    async create(opts: { tool: string; accountId: string; hasWebhook?: boolean }): Promise<{ taskId: string }> {
-      const taskId = `task_${randomUUID()}`;
+    async create(opts: {
+      tool: string;
+      accountId: string;
+      hasWebhook?: boolean;
+      overrideTaskId?: string;
+    }): Promise<{ taskId: string }> {
+      const taskId = opts.overrideTaskId ?? `task_${randomUUID()}`;
+      if (tasks.has(taskId)) {
+        throw new Error(`task_id already registered: ${taskId}`);
+      }
       const now = new Date().toISOString();
       tasks.set(taskId, {
         taskId,

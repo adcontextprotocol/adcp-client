@@ -112,7 +112,7 @@ import type {
 } from '../../media-buy-store';
 import { createPostgresTaskRegistry, getDecisioningTaskRegistryMigration } from './postgres-task-registry';
 import type { PgQueryable } from '../../postgres-task-store';
-import { isTaskHandoff, _extractTaskFn, type TaskHandoff } from '../async-outcome';
+import { isTaskHandoff, _extractHandoffEntry, type TaskHandoff } from '../async-outcome';
 import { TOOL_ENTITY_FIELDS } from './entity-hydration.generated';
 import { z } from 'zod';
 import { createInMemoryTaskRegistry, type TaskRegistry, type TaskRecord, type TaskStatus } from './task-registry';
@@ -2240,18 +2240,24 @@ async function routeIfHandoff<TInner, TWire>(
   project: (inner: TInner) => TWire | Promise<TWire>
 ): Promise<TWire | SubmittedEnvelope> {
   if (isTaskHandoff<TInner>(result)) {
-    const taskFn = _extractTaskFn(result);
-    if (!taskFn) {
+    const entry = _extractHandoffEntry(result);
+    if (!entry) {
       // Forgery — adopter constructed something with the brand symbol
       // but didn't go through ctx.handoffToTask. Treat as a sync
       // success arm with an empty body (caller-supplied projection
       // shapes the result; this branch is defensive).
       return await project(result as unknown as TInner);
     }
-    return dispatchHitl(taskRegistry, opts, async taskId => {
-      const inner = await taskFn(buildHandoffContext(taskRegistry, taskId));
-      return await project(inner);
-    });
+    const { fn: taskFn, options } = entry;
+    return dispatchHitl(
+      taskRegistry,
+      opts,
+      async taskId => {
+        const inner = await taskFn(buildHandoffContext(taskRegistry, taskId));
+        return await project(inner);
+      },
+      options?.task_id
+    );
   }
   // Catch the most common LLM-scaffolded mistake: hand-rolling a
   // `{status: 'submitted', task_id: '...'}` envelope instead of returning
@@ -2362,13 +2368,15 @@ async function emitSyncCompletionWebhook(opts: DispatchHitlOpts, result: unknown
 async function dispatchHitl<TResult>(
   taskRegistry: TaskRegistry,
   opts: DispatchHitlOpts,
-  taskFn: (taskId: string) => Promise<TResult>
+  taskFn: (taskId: string) => Promise<TResult>,
+  overrideTaskId?: string
 ): Promise<SubmittedEnvelope> {
   const createStart = Date.now();
   const { taskId } = await taskRegistry.create({
     tool: opts.tool,
     accountId: opts.accountId,
     hasWebhook: opts.pushNotificationUrl !== undefined,
+    ...(overrideTaskId !== undefined && { overrideTaskId }),
   });
   safeFire(
     opts.observability?.onTaskCreate,
