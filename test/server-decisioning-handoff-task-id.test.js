@@ -43,12 +43,14 @@ function buildPlatform(overrides = {}) {
 }
 
 async function dispatchCreate(server, extra = {}) {
+  // Spec idempotency_key pattern: ^[A-Za-z0-9_.:-]{16,255}$. Pad with the
+  // call timestamp so each test run gets a unique value above the minimum.
   return server.dispatchTestRequest({
     method: 'tools/call',
     params: {
       name: 'create_media_buy',
       arguments: {
-        idempotency_key: 'ik-' + Math.random().toString(36).slice(2),
+        idempotency_key: 'ik-handoff-test-' + Date.now() + '-' + Math.random().toString(36).slice(2),
         packages: [],
         start_time: '2026-05-01T00:00:00Z',
         end_time: '2026-06-01T00:00:00Z',
@@ -116,7 +118,7 @@ describe('ctx.handoffToTask options.task_id (#1554)', () => {
     });
 
     const result = await dispatchCreate(server);
-    assert.strictEqual(result.structuredContent.isError, true);
+    assert.strictEqual(result.isError, true);
     assert.match(JSON.stringify(result.structuredContent), /non-empty/);
   });
 
@@ -133,7 +135,7 @@ describe('ctx.handoffToTask options.task_id (#1554)', () => {
     });
 
     const result = await dispatchCreate(server);
-    assert.strictEqual(result.structuredContent.isError, true);
+    assert.strictEqual(result.isError, true);
     assert.match(JSON.stringify(result.structuredContent), /128/);
   });
 });
