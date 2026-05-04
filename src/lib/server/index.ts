@@ -25,6 +25,15 @@ export type {
   CredentialPatternsConfig,
 } from './credential-policy';
 
+export { createDynamicRegistry } from './dynamic-registry';
+export type {
+  DynamicRegistry,
+  DynamicRegistryConfig,
+  DynamicRegistryRegisterOptions,
+  PendingRegistries,
+  RegistryShape,
+} from './dynamic-registry';
+
 export {
   capabilitiesResponse,
   productsResponse,
