@@ -9,6 +9,16 @@
  * `tasks_get` or via the push_notification webhook. This is the
  * `ctx.handoffToTask(fn)` pattern in v6 typed platforms.
  *
+ * **v1.5 ProposalManager interop:** each `Product` returned by
+ * `getProducts` carries a typed `implementation_config: GAMLikeRecipe`.
+ * Buyers who use this agent's direct-buy path (the `sales_guaranteed`
+ * storyboard's flow) ignore the recipe — they send `packages[]`
+ * straight to `create_media_buy`. Buyers routing through proposal-mode
+ * (a separate adapter — see `examples/hello_seller_adapter_proposal_mode.ts`)
+ * read the same recipe via `ctx.recipes` after the framework hydrates
+ * it from the committed proposal. The recipe is the typed contract; the
+ * agent stays compatible with both flows.
+ *
  * Fork this. Replace `upstream` with calls to your real backend. The
  * AdCP-facing platform methods stay the same.
  *
@@ -66,6 +76,7 @@ import {
   type SyncCreativesRow,
   type SyncAccountsResultRow,
 } from '@adcp/sdk/server';
+import { buildGAMLikeRecipe, type GAMLikeRecipe } from '@adcp/sdk/mock-server';
 import type {
   GetProductsRequest,
   GetProductsResponse,
@@ -388,9 +399,18 @@ const FORMAT_AGENT_URL = PUBLIC_AGENT_URL;
  *  has many optional fields; we populate only the ones the storyboard
  *  validates plus the bare-minimum required spec fields. Production
  *  adopters lift more from their backend (forecast, performance_standards,
- *  reporting_capabilities, etc.). */
+ *  reporting_capabilities, etc.).
+ *
+ *  v1.5 ProposalManager interop: each Product carries a typed
+ *  `implementation_config: GAMLikeRecipe` so buyers who route through
+ *  proposal-mode (brief → finalize → create_media_buy(proposal_id)) get
+ *  the same recipe via `ctx.recipes`. This agent stays direct-buy for
+ *  the `sales_guaranteed` storyboard; the recipe is opt-in carrier the
+ *  framework reads only when the buyer goes through proposal-mode.
+ */
 function projectProduct(p: UpstreamProduct, publisherDomain: string): Product {
-  return {
+  const recipe = buildGAMLikeRecipe(p);
+  const product: Product = {
     product_id: p.product_id,
     name: p.name,
     description: `${p.name} — ${p.delivery_type} ${p.channel}`,
@@ -435,6 +455,13 @@ function projectProduct(p: UpstreamProduct, publisherDomain: string): Product {
     // without writing the projection first.
     ...(p.forecast && { forecast: p.forecast }),
   };
+  // Attach the v1.5 recipe via cast — wire `Product` doesn't enumerate
+  // `implementation_config` (it rides as an opaque-to-buyer extension);
+  // the framework's proposal-dispatch helpers read it back via the same
+  // pattern. Production sellers carrying real upstream IDs (line-item
+  // template ids, ad unit ids) get them here.
+  (product as { implementation_config?: GAMLikeRecipe }).implementation_config = recipe;
+  return product;
 }
 
 function mapMediaBuyStatus(
