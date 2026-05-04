@@ -15,7 +15,7 @@
  */
 
 const { AdCPClient, detectProtocol, usesDeprecatedAssetsField } = require('../dist/lib/index.js');
-const { readFileSync, statSync } = require('fs');
+const { readFileSync, statSync, writeFileSync } = require('fs');
 const path = require('path');
 const { pathToFileURL } = require('url');
 const net = require('net');
@@ -33,6 +33,105 @@ const {
 const { handleRegistryCommand } = require('./adcp-registry.js');
 const { captureStdoutLogs, writeJsonOutput } = require('./adcp-json-stdout.js');
 const { printStepHints, countHintsInResult } = require('./adcp-step-hints.js');
+
+function escapeMarkdownCell(s) {
+  return String(s || '')
+    .replace(/\|/g, '\\|')
+    .replace(/\n/g, ' ');
+}
+
+function buildComplianceSummaryMarkdown(result, agentUrl) {
+  const lines = [];
+  const s = result.summary;
+  lines.push(`# Storyboard run: ${agentUrl}`);
+  lines.push('');
+  lines.push(
+    `**Overall:** ${result.overall_status} — ` +
+      `${s.steps_passed ?? 0} passed / ${s.steps_failed ?? 0} failed / ${s.steps_skipped ?? 0} skipped`
+  );
+  const specialisms = result.agent_profile?.specialisms;
+  if (specialisms?.length) {
+    lines.push(`**Specialisms:** ${specialisms.join(', ')}`);
+  }
+  lines.push('');
+  const failures = result.failures;
+  if (failures?.length) {
+    lines.push('## Failures');
+    lines.push('');
+    lines.push('| Storyboard | Step | Reason |');
+    lines.push('|---|---|---|');
+    for (const f of failures) {
+      const reason = f.error || f.validation?.description || '';
+      lines.push(
+        `| ${escapeMarkdownCell(f.storyboard_id)} | ${escapeMarkdownCell(f.step_id)} | ${escapeMarkdownCell(reason)} |`
+      );
+    }
+    lines.push('');
+  } else if (result.overall_status !== 'passing') {
+    lines.push('_No per-step failure details available._');
+    lines.push('');
+  }
+  return lines.join('\n');
+}
+
+function buildStoryboardSummaryMarkdown(results, agentUrl, overallPassed) {
+  const lines = [];
+  lines.push(`# Storyboard run: ${agentUrl || 'local agent'}`);
+  lines.push('');
+  const totalPassed = results.reduce((n, r) => n + r.passed_count, 0);
+  const totalFailed = results.reduce((n, r) => n + r.failed_count, 0);
+  const totalSkipped = results.reduce((n, r) => n + r.skipped_count, 0);
+  lines.push(
+    `**Overall:** ${overallPassed ? 'passed' : 'failed'} — ` +
+      `${totalPassed} passed / ${totalFailed} failed / ${totalSkipped} skipped`
+  );
+  lines.push('');
+  const failures = [];
+  for (const r of results) {
+    for (const phase of r.phases || []) {
+      for (const step of phase.steps || []) {
+        if (!step.skipped && !step.passed) {
+          const reason =
+            step.validations
+              ?.filter(v => !v.passed)
+              .map(v => v.error || v.description)
+              .join('; ') ||
+            step.error ||
+            'failed';
+          failures.push({ storyboard: r.storyboard_id || '', step: step.id || step.title || '', reason });
+        }
+      }
+    }
+  }
+  if (failures.length > 0) {
+    lines.push('## Failures');
+    lines.push('');
+    lines.push('| Storyboard | Step | Reason |');
+    lines.push('|---|---|---|');
+    for (const f of failures) {
+      lines.push(
+        `| ${escapeMarkdownCell(f.storyboard)} | ${escapeMarkdownCell(f.step)} | ${escapeMarkdownCell(f.reason)} |`
+      );
+    }
+    lines.push('');
+  }
+  return lines.join('\n');
+}
+
+function writeSummaryFile(summaryFile, content) {
+  try {
+    writeFileSync(summaryFile, content, 'utf-8');
+  } catch (err) {
+    console.error(`WARNING: Could not write summary file ${summaryFile}: ${err.message}`);
+  }
+}
+
+function printSoftFailBlock(failedScenarios, jsonOutput) {
+  if (!jsonOutput && failedScenarios.length > 0) {
+    console.error(`\nSTORYBOARD FAILURES (${failedScenarios.length}): ${failedScenarios.join(', ')}`);
+    console.error('  --soft-fail set: exiting 0');
+  }
+}
 const { scheduleVersionCheck } = require('./adcp-version-check.js');
 const { formatStoryboardResultsAsJUnit } = require('../dist/lib/testing/storyboard/junit.js');
 const { LIBRARY_VERSION } = require('../dist/lib/version.js');
@@ -694,6 +793,26 @@ function parseAgentOptions(args) {
       ? args[formatIdx + 1]
       : null;
 
+  // --summary-file [PATH]: write a Markdown run summary to a file after the run.
+  // If present without a value, defaults to 'storyboard-result-summary.md'.
+  // Auto-activates when $GITHUB_STEP_SUMMARY is set (GitHub Actions native job summary).
+  const summaryFileIdx = args.indexOf('--summary-file');
+  let summaryFileFlagValue = null;
+  let summaryFile = null;
+  if (summaryFileIdx !== -1) {
+    if (summaryFileIdx + 1 < args.length && !args[summaryFileIdx + 1].startsWith('--')) {
+      summaryFileFlagValue = args[summaryFileIdx + 1];
+      summaryFile = summaryFileFlagValue;
+    } else {
+      summaryFile = 'storyboard-result-summary.md';
+    }
+  } else if (process.env.GITHUB_STEP_SUMMARY) {
+    summaryFile = process.env.GITHUB_STEP_SUMMARY;
+  }
+
+  // --soft-fail: exit 0 even when storyboards fail (replaces continue-on-error: true pattern).
+  const softFail = args.includes('--soft-fail');
+
   // Filter out flags and their values to find positional args. The `--file=PATH`
   // form is already removed by the `startsWith('--')` check; only the
   // space-separated value needs explicit exclusion. Use explicit nullish check
@@ -716,6 +835,7 @@ function parseAgentOptions(args) {
     localAgentValue,
     formatValue,
     fileIndex !== -1 ? file : null,
+    summaryFileFlagValue,
   ].filter(v => v !== null && v !== undefined);
   const positionalArgs = args.filter(arg => !arg.startsWith('--') && !flagValues.includes(arg));
 
@@ -732,6 +852,8 @@ function parseAgentOptions(args) {
     positionalArgs,
     localAgent: localAgentValue,
     format: formatValue,
+    summaryFile,
+    softFail,
   };
 }
 
@@ -1216,6 +1338,7 @@ Storyboard-driven testing
 USAGE:
   adcp storyboard list [--json]
   adcp storyboard show <id> [--json]
+  adcp storyboard show --specialism <slug> [--json]
   adcp storyboard run <agent> [id|bundle] [options]
   adcp storyboard run <agent> --file <path.yaml> [options]
   adcp storyboard run --local-agent <module> [id|bundle] [options]
@@ -1224,6 +1347,10 @@ USAGE:
 SUBCOMMANDS:
   list                Enumerate storyboards in the compliance cache
   show <id>           Show storyboard structure (phases, steps)
+  show --specialism <slug>
+                      Resolve which storyboards are graded when an agent claims
+                      a specialism (e.g. sales-guaranteed). Includes protocol
+                      baseline and universal storyboards.
   run <agent> [id]    Run storyboards. With id, run one bundle/storyboard; otherwise
                       the agent's get_adcp_capabilities drives selection.
   step <agent> <id> <step_id>  Run a single step (stateless, LLM-friendly)
@@ -1298,6 +1425,18 @@ OPTIONS:
                       runs. One of: table (default), json, junit. junit
                       emits a JUnit XML report to stdout — each storyboard
                       becomes a testsuite, each step a testcase.
+  --soft-fail         Exit 0 even when storyboards fail. Prints a
+                      STORYBOARD FAILURES (N) block to stderr so failures
+                      are visible without blocking CI. Replaces the
+                      continue-on-error: true pattern. Exit 1 (runner
+                      crash) and 2 (usage error) are not suppressed.
+  --summary-file [PATH]
+                      Write a Markdown run summary to PATH after the run.
+                      If PATH is omitted, defaults to
+                      storyboard-result-summary.md in the current directory.
+                      Auto-activates when \$GITHUB_STEP_SUMMARY is set so
+                      the summary appears in the GitHub Actions job summary
+                      tab without an extra upload step.
 
 OUTPUT:
   If you see a \`💡 Hint: …\` line in a failing step, the runner has
@@ -1329,6 +1468,9 @@ EXAMPLES:
     --invariants ./my-invariants.js,@adcp/invariants  # register cross-step invariants
   adcp storyboard list
   adcp storyboard show media_buy_seller
+  adcp storyboard show --specialism sales-guaranteed
+  adcp storyboard run test-mcp --soft-fail              # exit 0 on failures, print summary
+  adcp storyboard run test-mcp --summary-file           # write storyboard-result-summary.md
   adcp storyboard step test-mcp media_buy_seller sync_accounts --json
 `);
     process.exit(0);
@@ -1433,14 +1575,86 @@ async function handleStoryboardList(args) {
 }
 
 async function handleStoryboardShow(args) {
-  const { resolveBundleOrStoryboard, findBundleById, listAllComplianceStoryboards } =
-    await import('../dist/lib/testing/storyboard/index.js');
+  const {
+    resolveBundleOrStoryboard,
+    findBundleById,
+    listAllComplianceStoryboards,
+    loadComplianceIndex,
+    resolveStoryboardsForCapabilities,
+    PROTOCOL_TO_PATH,
+  } = await import('../dist/lib/testing/storyboard/index.js');
   const jsonOutput = args.includes('--json');
-  const positionalArgs = args.filter(a => !a.startsWith('--'));
+
+  // --specialism <slug>: resolve which storyboards are graded for a given specialism claim.
+  const specialismIdx = args.indexOf('--specialism');
+  let specialismSlug = null;
+  if (specialismIdx !== -1 && specialismIdx + 1 < args.length && !args[specialismIdx + 1].startsWith('--')) {
+    specialismSlug = args[specialismIdx + 1];
+  }
+
+  // Exclude --specialism value from positional args to avoid treating it as a storyboard ID.
+  const positionalArgs = args.filter((a, i) => !a.startsWith('--') && i !== specialismIdx + 1);
   const storyboardId = positionalArgs[0];
 
+  if (specialismSlug) {
+    const index = loadComplianceIndex();
+    const entry = index.specialisms.find(s => s.id === specialismSlug);
+    if (!entry) {
+      const known = index.specialisms.map(s => s.id).join(', ');
+      console.error(`Unknown specialism: ${specialismSlug}`);
+      console.error(`Known specialisms: ${known}`);
+      process.exit(2);
+    }
+    // entry.protocol is kebab-case (e.g. 'media-buy'); supported_protocols uses snake_case.
+    const snakeCaseProtocol = Object.entries(PROTOCOL_TO_PATH).find(([, v]) => v === entry.protocol)?.[0];
+    if (!snakeCaseProtocol) {
+      console.error(
+        `Cannot map specialism protocol "${entry.protocol}" to a supported_protocols value. Compliance cache may be stale.`
+      );
+      process.exit(2);
+    }
+    let resolved;
+    try {
+      resolved = resolveStoryboardsForCapabilities({
+        specialisms: [specialismSlug],
+        supported_protocols: [snakeCaseProtocol],
+      });
+    } catch (err) {
+      console.error(`Failed to resolve specialism "${specialismSlug}": ${err.message}`);
+      process.exit(1);
+    }
+    if (jsonOutput) {
+      await writeJsonOutput({
+        specialism: specialismSlug,
+        protocol: entry.protocol,
+        storyboards: resolved.storyboards.map(s => ({ id: s.id, title: s.title, track: s.track ?? null })),
+        not_applicable: resolved.not_applicable,
+      });
+    } else {
+      console.log(`\nSpecialism: ${specialismSlug}  (protocol: ${entry.protocol})`);
+      console.log(`Resolves to ${resolved.storyboards.length} storyboard(s):`);
+      for (const sb of resolved.storyboards) {
+        const gating = sb.requires_capability
+          ? ` (gated on ${sb.requires_capability.path} = ${sb.requires_capability.equals})`
+          : ' (always graded)';
+        const trackTag = sb.track ? ` [track: ${sb.track}]` : '';
+        console.log(`  - ${sb.id}${trackTag}${gating}`);
+      }
+      if (resolved.not_applicable.length > 0) {
+        console.log(`\n${resolved.not_applicable.length} storyboard(s) not applicable (version gated):`);
+        for (const na of resolved.not_applicable) {
+          console.log(`  ⏭️  ${na.storyboard_id} — ${na.reason}`);
+        }
+      }
+      console.log(`\nNote: also includes universal storyboards and ${snakeCaseProtocol} protocol baseline.`);
+    }
+    return;
+  }
+
   if (!storyboardId) {
-    console.error('Usage: adcp storyboard show <id>');
+    console.error(
+      'Usage: adcp storyboard show <id> [--json]\n       adcp storyboard show --specialism <slug> [--json]'
+    );
     process.exit(2);
   }
 
@@ -1724,9 +1938,14 @@ async function handleStoryboardRun(args) {
     if (restoreLogs) restoreLogs();
   }
 
+  if (opts.summaryFile) {
+    writeSummaryFile(opts.summaryFile, buildStoryboardSummaryMarkdown([result], agentUrl, result.overall_passed));
+  }
+
   if (format === 'junit') {
     process.stdout.write(formatStoryboardResultsAsJUnit([result]));
-    process.exit(result.overall_passed ? 0 : 3);
+    if (opts.softFail && !result.overall_passed) printSoftFailBlock([result.storyboard_id], jsonOutput);
+    process.exit(opts.softFail ? 0 : result.overall_passed ? 0 : 3);
   }
 
   if (jsonOutput) {
@@ -1791,7 +2010,8 @@ async function handleStoryboardRun(args) {
     printStrictSummary(result.strict_validation_summary);
   }
 
-  process.exit(result.overall_passed ? 0 : 3);
+  if (opts.softFail && !result.overall_passed) printSoftFailBlock([result.storyboard_id], jsonOutput);
+  process.exit(opts.softFail ? 0 : result.overall_passed ? 0 : 3);
 }
 
 /**
@@ -2556,13 +2776,32 @@ async function handleLocalAgentStoryboardRun(modulePath, args, opts) {
     if (restoreLogs) restoreLogs();
   }
 
+  if (opts.summaryFile) {
+    writeSummaryFile(
+      opts.summaryFile,
+      buildStoryboardSummaryMarkdown(result.results, result.agent_url, result.overall_passed)
+    );
+  }
+
   if (format === 'junit') {
     process.stdout.write(formatStoryboardResultsAsJUnit(result.results));
-    process.exit(result.overall_passed ? 0 : 3);
+    if (opts.softFail && !result.overall_passed) {
+      printSoftFailBlock(
+        result.results.filter(r => !r.overall_passed).map(r => r.storyboard_id),
+        jsonOutput
+      );
+    }
+    process.exit(opts.softFail ? 0 : result.overall_passed ? 0 : 3);
   }
   if (jsonOutput) {
     await writeJsonOutput(result);
-    process.exit(result.overall_passed ? 0 : 3);
+    if (opts.softFail && !result.overall_passed) {
+      printSoftFailBlock(
+        result.results.filter(r => !r.overall_passed).map(r => r.storyboard_id),
+        jsonOutput
+      );
+    }
+    process.exit(opts.softFail ? 0 : result.overall_passed ? 0 : 3);
   }
 
   // Human-readable summary
@@ -2587,7 +2826,13 @@ async function handleLocalAgentStoryboardRun(modulePath, args, opts) {
     `\n${overallIcon} ${result.passed_count} passed, ${result.failed_count} failed, ${result.skipped_count} skipped across ${result.results.length} storyboard(s)${hintTail}`
   );
   printStrictSummary(aggregateStrictSummaries(result.results.map(r => r.strict_validation_summary)));
-  process.exit(result.overall_passed ? 0 : 3);
+  if (opts.softFail && !result.overall_passed) {
+    printSoftFailBlock(
+      result.results.filter(r => !r.overall_passed).map(r => r.storyboard_id),
+      jsonOutput
+    );
+  }
+  process.exit(opts.softFail ? 0 : result.overall_passed ? 0 : 3);
 }
 
 /**
@@ -2930,7 +3175,13 @@ async function handleMultiInstanceStoryboardRun(args, opts, urls) {
     );
   }
 
-  process.exit(hadFailure ? 3 : 0);
+  if (opts.softFail && hadFailure) {
+    printSoftFailBlock(
+      results.filter(r => !r.overall_passed).map(r => r.storyboard_id),
+      opts.jsonOutput
+    );
+  }
+  process.exit(opts.softFail ? 0 : hadFailure ? 3 : 0);
 }
 
 /**
@@ -3115,7 +3366,13 @@ async function handleAgentsRoutedStoryboardRun(args, opts, routing) {
 
   if (format === 'junit') {
     process.stdout.write(formatStoryboardResultsAsJUnit(results));
-    process.exit(hadFailure ? 3 : 0);
+    if (opts.softFail && hadFailure) {
+      printSoftFailBlock(
+        results.filter(r => !r.overall_passed).map(r => r.storyboard_id),
+        jsonOutput
+      );
+    }
+    process.exit(opts.softFail ? 0 : hadFailure ? 3 : 0);
   }
 
   if (jsonOutput) {
@@ -3192,7 +3449,13 @@ async function handleAgentsRoutedStoryboardRun(args, opts, routing) {
     );
   }
 
-  process.exit(hadFailure ? 3 : 0);
+  if (opts.softFail && hadFailure) {
+    printSoftFailBlock(
+      results.filter(r => !r.overall_passed).map(r => r.storyboard_id),
+      opts.jsonOutput
+    );
+  }
+  process.exit(opts.softFail ? 0 : hadFailure ? 3 : 0);
 }
 
 // Shared implementation: run all matching storyboards against an agent
@@ -3308,6 +3571,10 @@ async function runFullAssessment(agentArg, rawArgs, parsedOpts) {
 
     const result = await comply(agentUrl, testOptions);
 
+    if (opts.summaryFile) {
+      writeSummaryFile(opts.summaryFile, buildComplianceSummaryMarkdown(result, agentUrl));
+    }
+
     if (opts.jsonOutput) {
       restoreLogs();
       await writeJsonOutput(formatComplianceResultsJSON(result));
@@ -3316,7 +3583,11 @@ async function runFullAssessment(agentArg, rawArgs, parsedOpts) {
     }
 
     const hasFailures = result.summary.tracks_failed > 0;
-    process.exit(hasFailures ? 3 : 0);
+    if (opts.softFail && hasFailures) {
+      const failedNames = result.failures?.map(f => f.storyboard_id).filter((v, i, a) => a.indexOf(v) === i) ?? [];
+      printSoftFailBlock(failedNames, opts.jsonOutput);
+    }
+    process.exit(opts.softFail ? 0 : hasFailures ? 3 : 0);
   } catch (error) {
     if (restoreLogs) restoreLogs();
     console.error(`\nAssessment failed: ${error.message}`);
