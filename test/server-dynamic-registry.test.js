@@ -58,6 +58,14 @@ describe('createDynamicRegistry — basic registration', () => {
     assert.deepStrictEqual(r.ids('v6'), ['snap']);
     assert.deepStrictEqual(r.ids('operational'), []);
   });
+
+  it('has() returns true for present entries, false for absent', () => {
+    const r = buildRegistry();
+    r.register('adapters', 'snap', { id: 'snap' });
+    assert.strictEqual(r.has('adapters', 'snap'), true);
+    assert.strictEqual(r.has('adapters', 'missing'), false);
+    assert.throws(() => r.has('not-a-registry', 'snap'), /unknown registry name/);
+  });
 });
 
 describe('createDynamicRegistry — duplicate registration', () => {
@@ -72,6 +80,17 @@ describe('createDynamicRegistry — duplicate registration', () => {
     r.register('adapters', 'snap', { v: 1 });
     r.register('adapters', 'snap', { v: 2 }, { overwrite: true });
     assert.deepStrictEqual(r.get('adapters', 'snap'), { v: 2 });
+  });
+
+  it('overwrite without pinned:true clears a stale pin', async () => {
+    const r = buildRegistry(async () => {});
+    r.register('adapters', 'snap', { v: 1 }, { pinned: true });
+    // Overwrite with new value but drop the pin
+    r.register('adapters', 'snap', { v: 2 }, { overwrite: true });
+    assert.deepStrictEqual(r.get('adapters', 'snap'), { v: 2 }, 'overwrite value visible immediately');
+    // Refresh wipes all non-pinned entries; 'snap' is no longer pinned
+    await r.refresh();
+    assert.strictEqual(r.get('adapters', 'snap'), undefined, 'stale pin must not carry forward');
   });
 
   it('same id under different registries is not a duplicate', () => {

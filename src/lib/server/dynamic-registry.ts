@@ -149,6 +149,10 @@ export interface DynamicRegistry<TRegistries extends RegistryShape> {
    * Register an entry under one named registry. Throws on duplicate
    * (same registry + same id) unless `{ overwrite: true }` is set.
    * Pinned entries survive every subsequent `refresh()`.
+   *
+   * Overwriting a previously-pinned entry without `{ pinned: true }`
+   * **clears the pin** — the entry will be dropped on the next
+   * `refresh()` unless re-registered with `{ pinned: true }`.
    */
   register<K extends keyof TRegistries & string>(
     name: K,
@@ -164,6 +168,13 @@ export interface DynamicRegistry<TRegistries extends RegistryShape> {
    * the process.
    */
   unregister(id: string): void;
+
+  /**
+   * Check whether `id` is present in the named registry. Equivalent
+   * to `get(name, id) !== undefined` but skips the value allocation
+   * on the hot path.
+   */
+  has<K extends keyof TRegistries & string>(name: K, id: string): boolean;
 
   /**
    * Look up an entry by registry name + id. Returns `undefined` for
@@ -224,7 +235,8 @@ export function createDynamicRegistry<TRegistries extends RegistryShape>(
     /**
      * The list of registry names. Required so the framework can
      * pre-allocate Maps and validate `register`/`get` calls before
-     * any entry is added.
+     * any entry is added. Pass `as const` to preserve per-registry
+     * value types in `get` and `register`.
      */
     registries: ReadonlyArray<keyof TRegistries & string>;
   }
@@ -299,6 +311,10 @@ export function createDynamicRegistry<TRegistries extends RegistryShape>(
       map.set(id, value);
       if (options?.pinned === true) {
         bundle.pinned[name].add(id);
+      } else {
+        // Clear any stale pin: overwriting without { pinned: true }
+        // means the caller no longer wants carry-forward semantics.
+        bundle.pinned[name].delete(id);
       }
     },
 
@@ -307,6 +323,11 @@ export function createDynamicRegistry<TRegistries extends RegistryShape>(
         bundle.maps[name].delete(id);
         bundle.pinned[name].delete(id);
       }
+    },
+
+    has(name, id) {
+      assertKnownRegistry(name);
+      return bundle.maps[name].has(id);
     },
 
     get(name, id) {
