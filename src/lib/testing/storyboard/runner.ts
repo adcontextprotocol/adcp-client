@@ -1712,11 +1712,12 @@ async function executeStoryboardPass(
               // downstream phase to `prerequisite_failed` collapses
               // useful coverage; let downstream phases run and fail on
               // their own merits if state genuinely never materialized.
-              const hasStatefulPeers = phaseStatefulStepIds.some(id => id !== step.id);
-              if (!hasStatefulPeers) {
-                // No peers — sole stateful step. Don't trip the cascade.
-                // Downstream phases evaluate independently.
-              } else if (!phaseStatefulCascades.has(phase.id)) {
+              //
+              // The skipping step is always stateful and always in
+              // `phaseStatefulStepIds` (built eagerly at phase init), so
+              // length > 1 ⇔ a stateful peer exists.
+              const hasStatefulPeers = phaseStatefulStepIds.length > 1;
+              if (hasStatefulPeers && !phaseStatefulCascades.has(phase.id)) {
                 // Multiple stateful steps in the phase but no declared
                 // substitute. Trip the cascade. First trip wins —
                 // subsequent triggers don't overwrite, since the cascade
