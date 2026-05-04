@@ -361,11 +361,28 @@ credentialPolicy: { policy: 'lax', scanAuthInfo: true }
 credentialPolicy: 'authInfo-only'
 ```
 
-Default `false` is deliberate: OAuth introspection blobs and JWT
-claims in `extra` will false-positive on default patterns like
-`/_token$/i` (`id_token`, `access_token` claims that the framework's
-authenticator legitimately stamps). Adopters opt in only when their
-authenticator keeps `extra` credential-clean.
+Default `false` is deliberate. Two false-positive classes warrant
+the opt-in rather than opt-out shape:
+
+1. **JWT / OAuth introspection claims** — `id_token`, `access_token`,
+   `refresh_token` claims that the framework's authenticator
+   legitimately stamps into `extra` will match `/_token$/i`. Default-
+   true would reject every adopter running an OAuth-introspection
+   authenticator on first deploy.
+2. **Adopter-stashed operational metadata with credential-shaped
+   names** — fields like `account_secret`, `tenant_password`, or
+   `partner_api_key` used as opaque routing/lookup metadata (not
+   actual credentials) match the runtime patterns. Two ways to fix
+   when you opt in: (a) rename the field to something the matcher
+   doesn't catch (`account_external_id`, `tenant_lookup_key`), or
+   (b) extend the runtime matcher with `credentialPolicy.patterns.matcher`
+   to define a custom predicate that excludes your specific names.
+   Renaming is preferred — credential-shaped names in operational
+   metadata are themselves a code-review smell.
+
+Adopters opt in only when their authenticator keeps `extra`
+credential-clean and their operational-metadata field names don't
+overlap the matcher set.
 
 **Wire-envelope discipline.** Args-bag hits report in
 `details.credential_paths` (the buyer already knows what they sent).
