@@ -188,6 +188,17 @@ describe('formatComplianceSummaryMarkdown', () => {
     const md = formatComplianceSummaryMarkdown(s);
     assert.match(md, /pipe \\\| break \\\| table/);
   });
+
+  test('escapes backslashes before pipes so adversarial reason strings cannot break the table', () => {
+    // CodeQL flagged the original implementation: `\|` in input combined with
+    // a naive `|` → `\|` replacement produced `\\|` (literal backslash + raw
+    // pipe), splitting the row. The fix is to escape backslashes first.
+    const result = failingResult();
+    result.failures[0].error = 'sneaky \\| literal';
+    const s = buildComplianceSummary(result, { sdkVersion: '6.9.0', adcpVersion: '3.0.6' });
+    const md = formatComplianceSummaryMarkdown(s);
+    assert.match(md, /sneaky \\\\\\\| literal/);
+  });
 });
 
 describe('buildCrashSummary', () => {

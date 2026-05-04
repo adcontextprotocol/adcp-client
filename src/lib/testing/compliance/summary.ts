@@ -193,7 +193,10 @@ export function formatComplianceSummaryMarkdown(s: ComplianceSummaryArtifact): s
 }
 
 function escapeTableCell(s: string): string {
-  return s.replace(/\|/g, '\\|').replace(/\n/g, ' ');
+  // Escape backslashes first so a `\|` in the input doesn't combine with
+  // the pipe-escape below and produce `\\|` (literal backslash + raw pipe,
+  // which breaks the table). Order matters: `\` → `\\` then `|` → `\|`.
+  return s.replace(/\\/g, '\\\\').replace(/\|/g, '\\|').replace(/\n/g, ' ');
 }
 
 /**
