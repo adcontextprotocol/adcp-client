@@ -60,6 +60,12 @@ import type { BuyerAgent, BuyerAgentRegistry } from './decisioning/buyer-agent';
 import type { ResolvedAuthInfo } from './decisioning/account';
 import { AdcpError } from './decisioning/async-outcome';
 import { redactCredentialPatterns } from './redact';
+import {
+  scanArgsForCredentials,
+  resolveCredentialPolicyForTool,
+  getCredentialPatterns,
+  type CredentialPolicy,
+} from './credential-policy';
 import { ADCP_ERROR_FIELD_ALLOWLIST } from './envelope-allowlist';
 import { InMemoryStateStore } from './state-store';
 import type { AdcpStateStore } from './state-store';
@@ -1565,6 +1571,39 @@ export interface AdcpServerConfig<TAccount = unknown> {
   };
 
   /**
+   * Reject buyer requests that smuggle credential-shaped keys through
+   * the args bag. Closes the bug class observed in storefront fan-out
+   * paths where keys like `<platform>_access_token` (top-level, in
+   * `context`, or in `ext`) flow through to upstream calls under the
+   * storefront's TLS / IP reputation — confused-deputy by default.
+   *
+   * Modes:
+   *   - `'lax'` (default) — no scan; preserves existing behavior.
+   *   - `'authInfo-only'` — scan args for credential-shaped keys at any
+   *     depth and reject with `INVALID_REQUEST`. Credentials must arrive
+   *     on `authInfo` (resolved by the framework's authenticator) and
+   *     never on the args bag.
+   *
+   * Pass the object form for pattern customization or per-tool overrides:
+   *
+   * ```ts
+   * credentialPolicy: {
+   *   policy: 'authInfo-only',
+   *   patterns: { extend: [/^bearer$/i, /credentials/i] },
+   *   tools: { activate_signal: 'lax' },  // legitimate buyer-creds tool
+   * }
+   * ```
+   *
+   * Default patterns: `_access_token$`, `_secret$`, `_password$`,
+   * `accessToken`, `refreshToken`. The next platform-specific vector
+   * lives in adopter config, not in the SDK.
+   *
+   * @see {@link CredentialPolicy}
+   * @see docs/guides/CTX-METADATA-SAFETY.md
+   */
+  credentialPolicy?: CredentialPolicy;
+
+  /**
    * Register tools outside {@link AdcpToolMap}. Keys are the public tool
    * names; values follow {@link AdcpCustomToolConfig}.
    *
@@ -2563,8 +2602,15 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
     webhooks,
     signedRequests,
     validation: validationConfig,
+    credentialPolicy,
     testController: testControllerBridge,
   } = config;
+
+  // Pre-resolve credential-policy patterns once. The matcher is rebuilt
+  // per-call inside `scanArgsForCredentials` (cheap — regex.test fanout)
+  // but `getCredentialPatterns` materializes the config object once so
+  // the per-call cost is just the recursive walk.
+  const credentialPolicyPatterns = getCredentialPatterns(credentialPolicy);
 
   // Resolve `adcpVersion` early — the validator-call closures below capture
   // it by reference and would hit a TDZ ReferenceError if any of them ran
@@ -3176,6 +3222,35 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
                 details: { supported_versions: buildSupportedVersionsList(capConfig, adcpVersion) },
               })
             );
+          }
+        }
+
+        // --- Credential discipline scan (opt-in) ---
+        // Runs before request validation so the rejection is uniform
+        // whether validation is `'off'`, `'warn'`, or `'strict'`. Closes
+        // the buyer-args credential-smuggling vector class — round-1
+        // top-level, round-2 nested-context, round-3 nested-ext from
+        // PR scope3data/agentic-adapters#248. Args-bag scan only;
+        // `authInfo` and `ctx_metadata` are not scanned (those are the
+        // blessed credential channels). `'lax'` short-circuits.
+        //
+        // Bypasses `finalize` deliberately — `injectContextIntoResponse`
+        // echoes `params.context` back into every response, which would
+        // re-export the credential the scan just caught. The rejection
+        // envelope reports paths (not values) and skips correlation_id
+        // / version injection on this path.
+        if (credentialPolicy !== undefined) {
+          const effectivePolicy = resolveCredentialPolicyForTool(credentialPolicy, toolName);
+          if (effectivePolicy === 'authInfo-only') {
+            const hits = scanArgsForCredentials(params, credentialPolicyPatterns);
+            if (hits.length > 0) {
+              return adcpError('INVALID_REQUEST', {
+                message:
+                  'Request args carry credential-shaped keys. Credentials must arrive on authInfo, not in the request body.',
+                field: hits[0],
+                details: { credential_paths: hits },
+              });
+            }
           }
         }
 

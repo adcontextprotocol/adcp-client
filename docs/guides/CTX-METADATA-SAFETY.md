@@ -136,3 +136,59 @@ This catches accidental wire leaks where an adopter spreads
 `ctx_metadata` into a response shape (don't do that).
 
 [issue]: https://github.com/adcontextprotocol/adcp-client/issues/1343
+
+## Defense in depth: `credentialPolicy` (#1529)
+
+`ctx_metadata` discipline keeps your own server-side state clean.
+**`credentialPolicy`** keeps the *buyer* from injecting credentials
+through the request body in the first place — the bug class observed
+across three rounds of review on PR scope3data/agentic-adapters#248,
+where storefront fan-out paths read `args.<platform>_access_token`
+(top-level), `args.context.<platform>_access_token` (round-2), and
+`args.ext.<platform>_access_token` (round-3) under the storefront's TLS
+and IP reputation. Confused-deputy by default.
+
+Opt in at server construction:
+
+```ts
+import { createAdcpServer } from '@adcp/sdk/server';
+
+createAdcpServer({
+  // ...
+  credentialPolicy: 'authInfo-only',
+});
+```
+
+The framework scans every incoming request's args bag for credential-
+shaped keys at any depth. Default patterns: `_access_token$`,
+`_secret$`, `_password$`, `accessToken`, `refreshToken`. Hits reject
+with `INVALID_REQUEST` listing the offending paths (not values, and
+the rejection envelope deliberately skips `params.context` echo so the
+credential doesn't round-trip through the response).
+
+Customize patterns when your platform vocabulary needs more:
+
+```ts
+credentialPolicy: {
+  policy: 'authInfo-only',
+  patterns: {
+    extend: [/^bearer$/i, /credentials/i, /Pat$/],
+    // or fully replace:
+    // matcher: (key, path) => mySanctionedKeys.has(key),
+  },
+}
+```
+
+Per-tool overrides for the rare legitimate buyer-creds tool:
+
+```ts
+credentialPolicy: {
+  policy: 'authInfo-only',
+  tools: { activate_signal: 'lax' },  // adopter-specific carve-out
+}
+```
+
+The blessed credential channel remains `authInfo` (resolved by the
+framework's authenticator). Anything that arrives on the args bag is
+either a buyer-supplied non-secret OR a smuggled credential — the
+policy refuses to disambiguate.
