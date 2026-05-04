@@ -1467,6 +1467,9 @@ describe('validateTestKit', () => {
         'list_authorized_properties',
         'get_signals',
         'list_si_sessions',
+        'list_property_lists',
+        'list_collection_lists',
+        'list_content_standards',
       ])
     );
   });
