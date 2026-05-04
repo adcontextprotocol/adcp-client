@@ -29,8 +29,7 @@ If your code dispatches in response to an MCP request, you want
 ## Five methods
 
 ```ts
-import { defineOperationalPlatform, type OperationalContext } from '@adcp/sdk/server';
-import { AdcpError } from '@adcp/sdk/server/decisioning';
+import { defineOperationalPlatform, type OperationalContext, AdcpError } from '@adcp/sdk/server';
 
 interface SnapOpCtx extends OperationalContext {
   advertiserId: string;
@@ -42,13 +41,22 @@ export const snapOperational = defineOperationalPlatform<SnapOpCtx>({
 
   // 1. Synthesize a per-call context from a stored token. The single
   // documented credential-synthesis path outside `AccountStore.resolve`.
+  //
+  // ⚠️  This signature serves THREE call patterns. Implement each
+  // case explicitly. The `args` argument is buyer-controlled in the
+  // fan-out path, so DO NOT read credential-shaped keys from it
+  // outside the poller path. See "Three call patterns of
+  // extractContext" below for the full discipline.
   extractContext: async (args, sessionToken, requireAuth = true) => {
-    const token = sessionToken ?? String(args.snap_access_token ?? '');
-    if (!token && requireAuth) {
+    // Poller / scheduled job: trust `sessionToken` from the credential
+    // store. Treat `args` as empty / opaque; do NOT read credentials
+    // from it because the same method is invoked by the storefront
+    // fan-out path with a buyer-controlled args bag.
+    if (!sessionToken && requireAuth) {
       throw new AdcpError('AUTH_REQUIRED', { message: 'No Snap token available' });
     }
     return {
-      accessToken: token || undefined,
+      accessToken: sessionToken,
       advertiserId: String(args.advertiser_id ?? ''),
       sandbox: Boolean(args.sandbox),
     };
@@ -60,12 +68,12 @@ export const snapOperational = defineOperationalPlatform<SnapOpCtx>({
   },
 
   // 3. Required.
-  getMediaBuyDelivery: async (ctx, mediaBuyId, startTime, endTime) => {
-    return upstream.delivery(ctx, mediaBuyId, startTime, endTime);
+  getMediaBuyDelivery: async (ctx, mediaBuyIds, startTime, endTime) => {
+    return upstream.delivery(ctx, mediaBuyIds, startTime, endTime);
   },
 
   // 4. Optional — audience-sync pollers only.
-  pollAudienceStatus: async (platformData, accessToken) => {
+  pollAudienceStatuses: async (platformData, accessToken) => {
     const map = new Map();
     for (const audienceId of upstream.listAudiences(platformData, accessToken)) {
       map.set(audienceId, /* ... */);
@@ -142,12 +150,22 @@ const result = await operational.updateMediaBuy(ctx, request);
 `OperationalPlatform.extractContext` is the only credential-synthesis
 path outside `AccountStore.resolve`. Apply the same discipline:
 
-- Re-derive bearers per request from a credential store; don't
+- **Re-derive bearers per request** from a credential store; don't
   embed long-lived secrets in args you persist.
-- Treat `args` as buyer-provided input — apply the same scrubbing
+- **Treat `args` as buyer-provided input** — apply the same scrubbing
   the buyer-facing path does. The storefront fan-out caller
   typically scrubs once before invoking `extractContext` for each
-  upstream target.
+  upstream target. The poller path passes `args = {}` so this is
+  moot for pollers.
+- **`platformData` (passed to `pollAudienceStatuses`) is for opaque
+  upstream IDs only — never for bearer tokens.** The contract passes
+  a fresh `accessToken` as a separate argument precisely because the
+  original auth principal that initiated the sync may be expired by
+  the time the poller runs. An adopter who stashed a bearer in
+  `platformData` at sync-init time and reads it from there in the
+  poll method will hit upstream with stale credentials. Best case:
+  401 noise. Worst case: requests land unauthenticated against
+  adopters that have a fallback path on 401.
 
 See [`CTX-METADATA-SAFETY.md`](./CTX-METADATA-SAFETY.md) for the
 full discipline.

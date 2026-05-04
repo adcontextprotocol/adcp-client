@@ -27,7 +27,7 @@
  *    these per upstream target.
  * 3. `getMediaBuyDelivery` — required. Pollers read delivery metrics
  *    here.
- * 4. `pollAudienceStatus` — optional. Audience-sync pollers only.
+ * 4. `pollAudienceStatuses` — optional. Audience-sync pollers only.
  * 5. `getProducts` — optional. Storefront bundle composition only;
  *    server-side internal call, not buyer-facing dispatch.
  *
@@ -154,12 +154,20 @@ export interface OperationalPlatform<TCtx extends OperationalContext = Operation
    * the same reason as `updateMediaBuy`: every operational consumer
    * assumes it.
    *
+   * `mediaBuyIds` is plural — matches the wire-spec
+   * `GetMediaBuyDeliveryRequest.media_buy_ids` field (per AdCP 3.0
+   * and PR #1342). Pollers that batch-query N buys in one upstream
+   * call pass an array; single-buy callers pass `[id]`. Decomposed
+   * here (vs. taking the full request shape) because pollers
+   * synthesize requests internally and don't have a typed wire
+   * payload to thread.
+   *
    * `args` carries optional adopter-specific pass-through (e.g.
    * tenant-scoped query parameters); pollers leave it `undefined`.
    */
   getMediaBuyDelivery(
     ctx: TCtx,
-    mediaBuyId: string,
+    mediaBuyIds: readonly string[],
     startTime: string,
     endTime: string,
     args?: Record<string, unknown>
@@ -175,12 +183,25 @@ export interface OperationalPlatform<TCtx extends OperationalContext = Operation
    * initiated under a now-expired auth principal; the poller carries
    * a freshly-resolved token from its own credential store.
    *
+   * **`platformData` is for opaque upstream IDs only — never for
+   * bearer tokens.** The fresh `accessToken` argument is the blessed
+   * credential channel; reading a stale token from `platformData`
+   * defeats the design and lands requests with revoked auth.
+   *
    * Returns a `Map<audience_id, AudienceStatus>`. Audiences not
    * resolvable upstream are omitted from the map. Throw
    * `AdcpError('REFERENCE_NOT_FOUND')` only when the entire batch
    * is unresolvable for the tenant.
+   *
+   * Plural method name aligns with `AudiencePlatform.pollAudienceStatuses`
+   * (the buyer-facing analog), which also returns
+   * `Map<string, AudienceStatus>`. Signature differs because operational
+   * callers don't have a `RequestContext` to thread.
    */
-  pollAudienceStatus?(platformData: Record<string, unknown>, accessToken: string): Promise<Map<string, AudienceStatus>>;
+  pollAudienceStatuses?(
+    platformData: Record<string, unknown>,
+    accessToken: string
+  ): Promise<Map<string, AudienceStatus>>;
 
   /**
    * Discover advertising products. Used by storefront bundle services

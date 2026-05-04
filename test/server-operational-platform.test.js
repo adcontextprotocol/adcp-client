@@ -43,16 +43,19 @@ describe('defineOperationalPlatform', () => {
         reporting_period: { start: '2026-05-01T00:00:00Z', end: '2026-05-02T00:00:00Z' },
         media_buy_deliveries: [],
       }),
-      pollAudienceStatus: async data => {
+      pollAudienceStatuses: async data => {
         const m = new Map();
         m.set(String(data.ad_account_id), 'active');
         return m;
       },
       getProducts: async () => ({ products: [] }),
     });
-    assert.strictEqual(typeof ops.pollAudienceStatus, 'function');
+    assert.strictEqual(typeof ops.pollAudienceStatuses, 'function');
     assert.strictEqual(typeof ops.getProducts, 'function');
-    assert.deepStrictEqual([...(await ops.pollAudienceStatus(platformData, 'tok')).entries()], [['act_123', 'active']]);
+    assert.deepStrictEqual(
+      [...(await ops.pollAudienceStatuses(platformData, 'tok')).entries()],
+      [['act_123', 'active']]
+    );
   });
 
   it('platforms without optional methods omit them entirely (not undefined-stub)', () => {
@@ -65,7 +68,7 @@ describe('defineOperationalPlatform', () => {
         media_buy_deliveries: [],
       }),
     });
-    assert.strictEqual('pollAudienceStatus' in ops, false);
+    assert.strictEqual('pollAudienceStatuses' in ops, false);
     assert.strictEqual('getProducts' in ops, false);
   });
 });
