@@ -51,6 +51,7 @@ export const TASK_TO_METHOD: Record<string, string> = {
   update_property_list: 'updatePropertyList',
   list_property_lists: 'listPropertyLists',
   delete_property_list: 'deletePropertyList',
+  list_collection_lists: 'listCollectionLists',
   list_content_standards: 'listContentStandards',
   get_content_standards: 'getContentStandards',
   create_content_standards: 'createContentStandards',
