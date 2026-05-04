@@ -342,6 +342,32 @@ describe('scrubExtensions', () => {
     });
   });
 
+  it('bare token (no _ separator) passes through recursive scan by default', () => {
+    // DEFAULT_CREDENTIAL_PATTERNS intentionally excludes bare `token`
+    // (no `_` separator) to avoid false positives on fields like
+    // `paymentToken`. This test pins that behavioral contract: a value
+    // at { partner: { token: 'kept' } } must survive scrubExtensions
+    // even with recursiveCredentialScan: true (the default). A
+    // regression in DEFAULT_CREDENTIAL_PATTERNS that added bare `token`
+    // would silently break adopters who inject token inside an
+    // allowlisted key.
+    const safe = pickWireSpecFields(
+      {
+        media_buy_id: 'mb_1',
+        idempotency_key: 'uuid-1',
+        ext: { partner: { token: 'kept' } },
+      },
+      'UpdateMediaBuyRequest'
+    );
+    const scrubbed = scrubExtensions(safe, {
+      allowedExtKeys: new Set(['partner']),
+      recursiveCredentialScan: true,
+    });
+    assert.deepStrictEqual(scrubbed.ext, {
+      partner: { token: 'kept' },
+    });
+  });
+
   it('preserves wire-spec fields outside ext/context untouched', () => {
     const safe = pickWireSpecFields(
       {

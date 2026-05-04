@@ -132,7 +132,10 @@ function loadSchema(file: string): SchemaEntry | null {
   const json = JSON.parse(readFileSync(file, 'utf8')) as { properties?: Record<string, unknown> };
   const properties = json.properties;
   if (!properties || typeof properties !== 'object') return null;
-  const fields = Object.keys(properties).sort();
+  // Explicit byte-order comparator — reproducible across locales.
+  // All schema keys are ASCII today, but locking the sort avoids
+  // any future locale-collation drift in generated output.
+  const fields = Object.keys(properties).sort((a, b) => (a < b ? -1 : a > b ? 1 : 0));
   if (fields.length === 0) return null;
   const basename = path.basename(file, '.json');
   const typeName = toTypeName(basename);
