@@ -1701,11 +1701,27 @@ async function executeStoryboardPass(
                 };
               }
             } else {
-              // Trip this phase's cascade. First trip wins — subsequent
-              // triggers don't overwrite, since the cascade text
-              // references the originating diagnostic (the leftmost
-              // missing-state stateful step in the phase).
-              if (!phaseStatefulCascades.has(phase.id)) {
+              // Sole-stateful-step exemption (adcp-client-python#550):
+              // when a hard-missing skip lands on the ONLY stateful step
+              // in the phase, no peer could have established substitute
+              // state — same shape as #1146's `not_applicable` exemption.
+              // The platform legitimately doesn't implement this pathway
+              // (e.g., proposal-mode / implicit-account adopters that
+              // skip `sync_accounts` because account state materializes
+              // on the first `get_products` call). Cascading every
+              // downstream phase to `prerequisite_failed` collapses
+              // useful coverage; let downstream phases run and fail on
+              // their own merits if state genuinely never materialized.
+              const hasStatefulPeers = phaseStatefulStepIds.some(id => id !== step.id);
+              if (!hasStatefulPeers) {
+                // No peers — sole stateful step. Don't trip the cascade.
+                // Downstream phases evaluate independently.
+              } else if (!phaseStatefulCascades.has(phase.id)) {
+                // Multiple stateful steps in the phase but no declared
+                // substitute. Trip the cascade. First trip wins —
+                // subsequent triggers don't overwrite, since the cascade
+                // text references the originating diagnostic (the
+                // leftmost missing-state stateful step in the phase).
                 phaseStatefulCascades.set(phase.id, {
                   stepId: step.id,
                   reason: result.skip_reason ?? 'missing_tool',
