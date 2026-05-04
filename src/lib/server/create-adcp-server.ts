@@ -3242,9 +3242,16 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
         // / version injection on this path.
         if (credentialPolicy !== undefined) {
           const effectivePolicy = resolveCredentialPolicyForTool(credentialPolicy, toolName);
-          if (effectivePolicy === 'authInfo-only') {
+          if (effectivePolicy !== 'lax') {
             const hits = scanArgsForCredentials(params, credentialPolicyPatterns);
-            if (hits.length > 0) {
+            // Granular allow-list: filter hits by the per-tool
+            // allowlist. Adopters whose tool legitimately accepts a
+            // specific buyer-presented credential field list it here;
+            // other credential-shaped keys still reject. String mode
+            // ('authInfo-only') means no allowlist — every hit blocks.
+            const blockedPaths =
+              typeof effectivePolicy === 'object' ? hits.filter(p => !effectivePolicy.allow.includes(p)) : hits;
+            if (blockedPaths.length > 0) {
               // Spec-correct code: the caller is authenticated and the
               // payload is schema-valid (every AdCP request schema sets
               // `additionalProperties: true`). What's refused is the
@@ -3263,7 +3270,7 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
                 message:
                   'Request args carry credential-shaped keys. Credentials must arrive on authInfo, not in the request body.',
                 recovery: 'correctable',
-                details: { scope: 'credentials', credential_paths: hits },
+                details: { scope: 'credentials', credential_paths: blockedPaths },
               });
             }
           }

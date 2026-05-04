@@ -54,6 +54,23 @@ export interface CredentialPatternsConfig {
 }
 
 /**
+ * Per-tool override shape. Adopters specify either a mode string for
+ * coarse-grained override (`'lax'` lets every credential-shaped key
+ * through; `'authInfo-only'` rejects them all) or a granular
+ * `{ allow: [...] }` allowlist that permits specific credential paths
+ * while still rejecting unlisted ones.
+ *
+ * The `allow` shape is the recommended choice for storefronts that
+ * legitimately accept ONE specific buyer-presented credential per
+ * tool — `tools: { activate_signal: 'lax' }` opens the tool to every
+ * credential-shaped key (including `password=`, `client_secret=`),
+ * while `tools: { activate_signal: { allow: ['delivery.api_token'] } }`
+ * permits only the spec-blessed field and still rejects everything
+ * else.
+ */
+export type ToolCredentialPolicy = CredentialPolicyMode | { readonly allow: readonly string[] };
+
+/**
  * Full credential-policy configuration. Pass a string for the simple
  * case (`credentialPolicy: 'authInfo-only'`) or this shape for
  * pattern customization or per-tool overrides.
@@ -69,11 +86,25 @@ export interface CredentialPolicyConfig {
    * ```ts
    * credentialPolicy: {
    *   policy: 'authInfo-only',
-   *   tools: { activate_signal: 'lax' },
+   *   tools: {
+   *     // Coarse: lets every credential-shaped key through
+   *     legacy_tool: 'lax',
+   *
+   *     // Granular: only the listed paths are allowlisted; other
+   *     // credential-shaped keys still reject. Recommended for
+   *     // tools where the legitimate buyer-presented credential is
+   *     // a known, named field.
+   *     activate_signal: { allow: ['delivery.api_token'] },
+   *   },
    * }
    * ```
+   *
+   * Allowlist entries are exact path matches against the
+   * dot-notation path the scanner emits — e.g. `'snap_access_token'`
+   * (top-level), `'context.linkedin_access_token'` (nested),
+   * `'packages.0.extra.tiktok_access_token'` (array element).
    */
-  tools?: Record<string, CredentialPolicyMode>;
+  tools?: Record<string, ToolCredentialPolicy>;
 }
 
 export type CredentialPolicy = CredentialPolicyMode | CredentialPolicyConfig;
@@ -228,14 +259,31 @@ export function scanArgsForCredentials(value: unknown, patterns?: CredentialPatt
 }
 
 /**
- * Normalize a `CredentialPolicy` (string or object) plus a tool name to
- * the effective {@link CredentialPolicyMode} for that tool. Per-tool
+ * Normalize a `CredentialPolicy` (string or object) plus a tool name
+ * to the effective {@link ToolCredentialPolicy} for that tool —
+ * either a mode string or an `{ allow: [...] }` allowlist. Per-tool
  * overrides win; otherwise the server-wide policy applies.
+ *
+ * Caller dispatch:
+ *
+ * ```ts
+ * const effective = resolveCredentialPolicyForTool(policy, toolName);
+ * if (effective === 'lax') return; // skip scan
+ * const hits = scanArgsForCredentials(args, patterns);
+ * if (typeof effective === 'object') {
+ *   // Granular allow — filter hits by the allowlist
+ *   const blocked = hits.filter(p => !effective.allow.includes(p));
+ *   if (blocked.length > 0) reject(blocked);
+ * } else {
+ *   // 'authInfo-only' — every hit blocks
+ *   if (hits.length > 0) reject(hits);
+ * }
+ * ```
  */
 export function resolveCredentialPolicyForTool(
   policy: CredentialPolicy | undefined,
   toolName: string
-): CredentialPolicyMode {
+): ToolCredentialPolicy {
   if (policy === undefined) return 'lax';
   if (typeof policy === 'string') return policy;
   return policy.tools?.[toolName] ?? policy.policy;
@@ -286,5 +334,33 @@ export function validateCredentialPolicy(
         `which fails-closed on tools that needed an opt-out. ` +
         `Known tool names: ${known}.`
     );
+  }
+
+  // Validate granular allow-shape entries — each must be a non-empty
+  // array of strings. An empty `allow` is the same as 'authInfo-only'
+  // for that tool (no path is permitted) and is almost certainly a
+  // bug — surface it at construction. Non-string entries would
+  // silently never match the dotted-path strings the scanner emits.
+  for (const [toolName, toolPolicy] of Object.entries(policy.tools)) {
+    if (typeof toolPolicy === 'string') continue;
+    if (!Array.isArray(toolPolicy.allow)) {
+      throw new Error(
+        `createAdcpServer: credentialPolicy.tools[${JSON.stringify(toolName)}].allow must be an array of path strings.`
+      );
+    }
+    if (toolPolicy.allow.length === 0) {
+      throw new Error(
+        `createAdcpServer: credentialPolicy.tools[${JSON.stringify(toolName)}].allow is empty. ` +
+          `An empty allow list is equivalent to 'authInfo-only' for this tool — drop the entry or use the string shorthand.`
+      );
+    }
+    const nonStrings = toolPolicy.allow.filter(p => typeof p !== 'string');
+    if (nonStrings.length > 0) {
+      throw new Error(
+        `createAdcpServer: credentialPolicy.tools[${JSON.stringify(toolName)}].allow contains non-string entries: ` +
+          `${nonStrings.map(n => JSON.stringify(n)).join(', ')}. ` +
+          `Allowlist entries are exact-match path strings (e.g. 'context.snap_access_token').`
+      );
+    }
   }
 }

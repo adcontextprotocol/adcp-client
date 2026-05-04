@@ -213,14 +213,37 @@ credentialPolicy: {
 }
 ```
 
-Per-tool overrides for the rare legitimate buyer-creds tool:
+Per-tool overrides for the rare legitimate buyer-creds tool. Two
+shapes — pick the narrowest exception that works:
 
 ```ts
+// Coarse: this tool legitimately reads multiple credential keys.
+// Every credential-shaped key passes the scan (including names you
+// didn't anticipate — `password`, `client_secret`, etc.).
 credentialPolicy: {
   policy: 'authInfo-only',
-  tools: { activate_signal: 'lax' },  // adopter-specific carve-out
+  tools: { legacy_tool: 'lax' },
+}
+
+// Granular: this tool reads ONE specific credential field, by name.
+// Only the listed paths pass the scan; other credential-shaped keys
+// still reject. Recommended over 'lax' wherever feasible — defense
+// in depth scales with the size of the exception.
+credentialPolicy: {
+  policy: 'authInfo-only',
+  tools: {
+    activate_signal: { allow: ['delivery.api_token'] },
+    legacy_partner: { allow: ['partner_secret', 'context.partner_secret'] },
+  },
 }
 ```
+
+Allowlist entries are exact-match dotted paths — the same shape the
+scanner emits in `details.credential_paths`. Top-level fields are bare
+names; nested fields use dots; array elements use numeric indices.
+A typo in the allowlist won't match the actual path the scanner
+produces, so the reject still fires (the adopter sees the rejection
+in dev and notices the typo).
 
 The blessed credential channel remains `authInfo` (resolved by the
 framework's authenticator). Anything that arrives on the args bag is
