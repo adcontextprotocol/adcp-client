@@ -419,6 +419,8 @@ export {
   MAX_TTL_SECONDS,
   stripCtxMetadata,
   hasCtxMetadata,
+  stripImplementationConfig,
+  hasImplementationConfig,
   ctxMetadataResultKey,
   scopeCtxMetadataKey,
 } from './ctx-metadata';

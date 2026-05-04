@@ -113,6 +113,112 @@ export function hasCtxMetadata(value: unknown): boolean {
   return walkForCtxMetadata(value as Record<string, unknown>);
 }
 
+// ---------------------------------------------------------------------------
+// Recipe `implementation_config` strip — Product-specific, parallel pattern
+// ---------------------------------------------------------------------------
+
+const IMPLEMENTATION_CONFIG_KEY = 'implementation_config' as const;
+
+/**
+ * Carrier locations for `implementation_config`. Recipes ride on
+ * `Product.implementation_config` per the v1.5 ProposalManager design;
+ * the field is opaque-to-buyer (typed-on-server) and must NOT cross to
+ * the buyer's wire response. Mirrors the `ctx_metadata` strip pattern.
+ *
+ * The wire `Product` shape's JSON schema is `additionalProperties: true`
+ * so the field is technically legal on the wire — but recipes carry
+ * upstream identifiers (network codes, line-item template ids, ad-unit
+ * ids, GAM line-item priority, etc.) that leak topology to buyers.
+ * Strip at the dispatcher seam, after the platform builds the wire
+ * shape and before the idempotency cache writes it.
+ *
+ * @public
+ */
+const IMPL_CONFIG_CARRIER_KEYS = ['product', 'products'] as const;
+
+/**
+ * Runtime strip for `Product.implementation_config`. Walks Product
+ * carrier locations in the response (top-level `products[]` plus
+ * single-product `product` slots inside `proposals[].products[]` etc.)
+ * and deletes the recipe field. Mutates in place.
+ *
+ * Adopters who deliberately want the recipe to ride to the buyer (rare;
+ * defeats the typed-on-server contract) can re-attach it in a
+ * post-strip hook — but the default is "strip, always."
+ *
+ * @public
+ */
+export function stripImplementationConfig<T>(value: T): T {
+  if (value == null || typeof value !== 'object') return value;
+  stripImplConfigFromCarrier(value as Record<string, unknown>);
+  return value;
+}
+
+function stripImplConfigFromCarrier(obj: Record<string, unknown>): void {
+  // Strip the field on the current object IF this object looks like a
+  // Product (has product_id). We don't strip blindly at every level
+  // because the field name could legitimately appear elsewhere (e.g.,
+  // a diagnostic envelope) in a future spec extension.
+  if ('product_id' in obj && IMPLEMENTATION_CONFIG_KEY in obj) {
+    delete obj[IMPLEMENTATION_CONFIG_KEY];
+  }
+  // Walk the same product carriers ctx_metadata uses, plus the
+  // proposal-mode `proposals[].products[]` nesting.
+  for (const key of IMPL_CONFIG_CARRIER_KEYS) {
+    const nested = obj[key];
+    if (nested == null) continue;
+    if (Array.isArray(nested)) {
+      for (const item of nested) {
+        if (item != null && typeof item === 'object') stripImplConfigFromCarrier(item as Record<string, unknown>);
+      }
+    } else if (typeof nested === 'object') {
+      stripImplConfigFromCarrier(nested as Record<string, unknown>);
+    }
+  }
+  // Proposals can carry their own products (`proposals[].products[]`)
+  // — recurse.
+  const proposals = obj['proposals'];
+  if (Array.isArray(proposals)) {
+    for (const p of proposals) {
+      if (p != null && typeof p === 'object') stripImplConfigFromCarrier(p as Record<string, unknown>);
+    }
+  }
+}
+
+/**
+ * Detect whether a payload contains `implementation_config` on any
+ * Product carrier. Test-suite helper — production paths call
+ * `stripImplementationConfig`.
+ *
+ * @public
+ */
+export function hasImplementationConfig(value: unknown): boolean {
+  if (value == null || typeof value !== 'object') return false;
+  return walkForImplConfig(value as Record<string, unknown>);
+}
+
+function walkForImplConfig(obj: Record<string, unknown>): boolean {
+  if ('product_id' in obj && IMPLEMENTATION_CONFIG_KEY in obj) return true;
+  for (const key of IMPL_CONFIG_CARRIER_KEYS) {
+    const nested = obj[key];
+    if (nested == null) continue;
+    if (Array.isArray(nested)) {
+      for (const item of nested) {
+        if (item != null && typeof item === 'object' && walkForImplConfig(item as Record<string, unknown>)) return true;
+      }
+    } else if (typeof nested === 'object') {
+      if (walkForImplConfig(nested as Record<string, unknown>)) return true;
+    }
+  }
+  const proposals = obj['proposals'];
+  if (Array.isArray(proposals)) {
+    for (const p of proposals) {
+      if (p != null && typeof p === 'object' && walkForImplConfig(p as Record<string, unknown>)) return true;
+    }
+  }
+  return false;
+}
+
 function walkForCtxMetadata(obj: Record<string, unknown>): boolean {
   if (CTX_METADATA_KEY in obj) return true;
   for (const key of CARRIER_KEYS) {

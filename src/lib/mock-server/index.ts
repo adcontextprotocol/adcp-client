@@ -29,7 +29,7 @@ import { BRANDS as SI_BRANDS, DEFAULT_API_KEY as SI_DEFAULT_API_KEY } from './sp
 // canonical shapes from here means hello agents and storyboard fixtures
 // share one definition.
 export { buildGAMLikeRecipe, GAM_LIKE_OVERLAP, type GAMLikeRecipe } from './sales-guaranteed/recipe';
-export { buildKevelLikeRecipe, KEVEL_LIKE_OVERLAP, type KevelLikeRecipe } from './sales-non-guaranteed/recipe';
+export { buildAuctionLikeRecipe, AUCTION_LIKE_OVERLAP, type AuctionLikeRecipe } from './sales-non-guaranteed/recipe';
 
 export interface MockServerOptions {
   specialism: string;

@@ -35,5 +35,5 @@ export {
 } from './backends/pg';
 export type { PgCtxMetadataBackendOptions } from './backends/pg';
 
-export { stripCtxMetadata, hasCtxMetadata } from './wire-shape';
+export { stripCtxMetadata, hasCtxMetadata, stripImplementationConfig, hasImplementationConfig } from './wire-shape';
 export type { WireShape } from './wire-shape';

@@ -236,6 +236,16 @@ function projectFinalizeResponse(args: {
       }
     }
   }
+  // **Decision: `products: []` on the finalize response by design.** The
+  // committed proposal carries `allocations[]` keyed by `product_id`;
+  // the buyer either has the products from the prior `brief_with_proposals`
+  // step (the natural flow) or fetches by id. Echoing the products here
+  // would require the framework to either re-emit from the persisted
+  // draft (extra wire bytes the buyer already has) or call back into the
+  // adopter (extra round-trip to upstream). Buyers who explicitly want
+  // products on the finalize response can fetch them via a follow-up
+  // `get_products({ product_ids: [...] })` keyed off
+  // `proposals[0].allocations[].product_id`.
   return {
     products: [],
     proposals: [args.committedProposal as unknown as Proposal],

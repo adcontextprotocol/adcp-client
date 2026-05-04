@@ -110,6 +110,7 @@ import {
   pgCtxMetadataStore,
   getCtxMetadataMigration,
   stripCtxMetadata,
+  stripImplementationConfig,
 } from '../../ctx-metadata';
 import { createIdempotencyStore, type IdempotencyStore } from '../../idempotency';
 import { pgBackend, getIdempotencyMigration } from '../../idempotency/backends/pg';
@@ -2193,8 +2194,18 @@ async function projectSync<TResult, TWire, TCtxMeta = unknown>(
     // Mutates `wire` in place — every handler builds a fresh response per
     // call so mutation is safe. Runs BEFORE the framework wraps in envelope
     // / caches in idempotency, so cached replays stay clean too.
+    //
+    // implementation_config strip: same pattern. Recipes ride on
+    // Product.implementation_config server-side (typed contract between
+    // ProposalManager and DecisioningPlatform via ctx.recipes) but are
+    // opaque-to-buyer. The wire schema is `additionalProperties: true`
+    // so the field is technically legal — but recipes carry upstream
+    // identifiers (network codes, line-item template ids, ad-unit ids,
+    // GAM line-item priority) that leak topology to buyers. Strip
+    // before the response leaves the dispatcher.
     if (wire != null && typeof wire === 'object') {
       stripCtxMetadata(wire as Record<string, unknown>);
+      stripImplementationConfig(wire as Record<string, unknown>);
     }
     return wire;
   } catch (err) {
@@ -3414,6 +3425,23 @@ function buildMediaBuyHandlers<P extends DecisioningPlatform<any, any>>(
             // returns and inside the background task for HITL handoffs.
             // Same machinery createMediaBuy / syncCreatives use — finalize
             // inherits the framework's task-lifecycle guarantees.
+            //
+            // **Known gap (HITL only)**: if the buyer calls tasks/cancel
+            // while the adopter's handoff fn is still mid-run, the
+            // framework marks the task cancelled but `intercept.project`
+            // (which fires when the handoff fn resolves) still runs
+            // store.commit. The committed proposal then sits in the
+            // store with no buyer-facing task to retrieve it. Same gap
+            // exists for createMediaBuy HITL today (see comment in
+            // `sales.createMediaBuy` body re: CONSUMING reservation
+            // cleanup). Mitigations: the proposal expires via the
+            // 7-day eviction window in `InMemoryProposalStore`, and
+            // production durable stores can implement a sweep against
+            // the task registry to release stale committed-but-
+            // unretrievable proposals. Closing the gap end-to-end
+            // requires propagating an AbortSignal into the projection
+            // — framework-level work tracked separately, not finalize-
+            // specific.
             const push = extractPushConfig(params, logger, {
               allowPrivateWebhookUrls: pushOpts.allowPrivateWebhookUrls,
             });
