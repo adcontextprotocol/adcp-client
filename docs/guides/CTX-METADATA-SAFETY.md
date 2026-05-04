@@ -376,6 +376,18 @@ enumerating which `extra` field tripped the scan. Disclosing
 authInfo paths to buyers would create a probing oracle for an
 internal value the buyer has no read access to.
 
+**Log-sink discipline.** If your logger fans out to a buyer-readable
+destination (multi-tenant log multiplex, shared OTel collector with
+weak tenant routing), the path strings re-enter the disclosure
+surface. Keep `logger.warn` output on a tenant-isolated destination
+— same rule that applies to every other server-side log line per
+the rest of this guide.
+
+**Testing discipline.** The args scan runs first; if your test
+fixtures always carry args-bag credentials, you'll never exercise
+the authInfo path. Cover both independently — a dev test passing
+on the args side is no signal that the authInfo path works.
+
 Per-tool `'lax'` overrides only affect the args scan — `scanAuthInfo`
 fires regardless. Adopters who legitimately stamp credential-shaped
 values into `authInfo.extra` should fix the authenticator, not

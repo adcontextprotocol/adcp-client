@@ -3310,10 +3310,24 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
           if (extra !== null && extra !== undefined && typeof extra === 'object') {
             const authInfoHits = scanArgsForCredentials(extra, credentialPolicyPatterns);
             if (authInfoHits.length > 0) {
-              logger.warn('credentialPolicy: authInfo.extra carries credential-shaped keys', {
-                tool: toolName,
-                paths: authInfoHits.map(p => `authInfo.extra.${p}`),
-              });
+              // Wrap the log call defensively. Adopter loggers that throw
+              // on serialization (Pino circular-ref edge cases, custom
+              // transports that reject deep nesting, OTel exporters
+              // mid-flush) would otherwise fault the rejection path and
+              // surface as a generic 500 / unhandled rejection instead of
+              // the intended PERMISSION_DENIED. The asymmetry with the
+              // args-scan rejection (which doesn't log) made this a
+              // logger-misconfig DoS vector before this guard.
+              try {
+                logger.warn('credentialPolicy: authInfo.extra carries credential-shaped keys', {
+                  tool: toolName,
+                  paths: authInfoHits.map(p => `authInfo.extra.${p}`),
+                });
+              } catch {
+                // Swallow — the rejection envelope is the load-bearing
+                // signal; losing the diagnostic log is acceptable when
+                // the alternative is failing the request entirely.
+              }
               return adcpError('PERMISSION_DENIED', {
                 message:
                   'Request authentication context carries credential-shaped keys. Configure your authenticator to keep credentials off authInfo.extra.',
