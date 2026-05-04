@@ -314,6 +314,15 @@ describe('resolveCredentialPolicyForTool', () => {
     assert.strictEqual(resolveCredentialPolicyForTool(cfg, 'get_products'), 'authInfo-only');
     assert.strictEqual(resolveCredentialPolicyForTool(cfg, 'activate_signal'), 'lax');
   });
+
+  it('returns granular allow shape verbatim', () => {
+    const cfg = {
+      policy: 'authInfo-only',
+      tools: { activate_signal: { allow: ['delivery.api_token'] } },
+    };
+    const resolved = resolveCredentialPolicyForTool(cfg, 'activate_signal');
+    assert.deepStrictEqual(resolved, { allow: ['delivery.api_token'] });
+  });
 });
 
 describe('validateCredentialPolicy', () => {
@@ -346,6 +355,44 @@ describe('validateCredentialPolicy', () => {
           KNOWN
         ),
       /cannot set both/
+    );
+  });
+
+  it('passes when granular allow lists are well-formed', () => {
+    assert.doesNotThrow(() =>
+      validateCredentialPolicy(
+        { policy: 'authInfo-only', tools: { activate_signal: { allow: ['delivery.api_token'] } } },
+        KNOWN
+      )
+    );
+  });
+
+  it('throws when allow is not an array', () => {
+    assert.throws(
+      () =>
+        validateCredentialPolicy(
+          { policy: 'authInfo-only', tools: { activate_signal: { allow: 'delivery.api_token' } } },
+          KNOWN
+        ),
+      /must be an array/
+    );
+  });
+
+  it('throws on empty allow list', () => {
+    assert.throws(
+      () => validateCredentialPolicy({ policy: 'authInfo-only', tools: { activate_signal: { allow: [] } } }, KNOWN),
+      /empty allow list/
+    );
+  });
+
+  it('throws on non-string entries in allow', () => {
+    assert.throws(
+      () =>
+        validateCredentialPolicy(
+          { policy: 'authInfo-only', tools: { activate_signal: { allow: ['ok', 42, null] } } },
+          KNOWN
+        ),
+      /non-string entries/
     );
   });
 });
@@ -466,6 +513,101 @@ describe('#1529 L1 — credentialPolicy server-wired enforcement', () => {
       snap_access_token: 'legitimate-buyer-presented',
     });
     assert.notStrictEqual(result.isError, true, `per-tool lax should allow credential-shaped key on opted-out tool`);
+  });
+
+  it('per-tool granular allow list permits listed paths only', async () => {
+    const server = createAdcpServerFromPlatform(buildPlatform(), {
+      ...BASE_OPTS,
+      credentialPolicy: {
+        policy: 'authInfo-only',
+        tools: {
+          get_media_buy_delivery: { allow: ['snap_access_token'] },
+        },
+      },
+    });
+    // snap_access_token is allowlisted — passes
+    const ok = await callDelivery(server, {
+      media_buy_ids: ['mb_1'],
+      snap_access_token: 'legitimate',
+    });
+    assert.notStrictEqual(ok.isError, true, 'allowlisted credential key passes');
+  });
+
+  it('per-tool granular allow list still rejects unlisted credential keys', async () => {
+    const server = createAdcpServerFromPlatform(buildPlatform(), {
+      ...BASE_OPTS,
+      credentialPolicy: {
+        policy: 'authInfo-only',
+        tools: {
+          get_media_buy_delivery: { allow: ['snap_access_token'] },
+        },
+      },
+    });
+    // tiktok_access_token is NOT allowlisted — rejects (defense in
+    // depth: opening one tool to a specific creds field doesn't open
+    // it to ALL creds fields)
+    const blocked = await callDelivery(server, {
+      media_buy_ids: ['mb_1'],
+      tiktok_access_token: 'attacker',
+    });
+    assert.strictEqual(blocked.isError, true);
+    assert.deepStrictEqual(blocked.structuredContent.adcp_error.details.credential_paths, ['tiktok_access_token']);
+  });
+
+  it('per-tool granular allow list filters mixed payloads — listed pass, unlisted reject together', async () => {
+    const server = createAdcpServerFromPlatform(buildPlatform(), {
+      ...BASE_OPTS,
+      credentialPolicy: {
+        policy: 'authInfo-only',
+        tools: {
+          get_media_buy_delivery: { allow: ['snap_access_token', 'context.partner_secret'] },
+        },
+      },
+    });
+    const result = await callDelivery(server, {
+      media_buy_ids: ['mb_1'],
+      snap_access_token: 'allowed',
+      context: { partner_secret: 'allowed-too' },
+      ext: { tiktok_access_token: 'blocked' },
+    });
+    // Only the unlisted hit reports back; the two allowlisted paths
+    // pass the scan and don't appear in `credential_paths`.
+    assert.strictEqual(result.isError, true);
+    assert.deepStrictEqual(result.structuredContent.adcp_error.details.credential_paths, ['ext.tiktok_access_token']);
+  });
+
+  it('per-tool granular allow on the wrong tool does not affect other tools', async () => {
+    const server = createAdcpServerFromPlatform(buildPlatform(), {
+      ...BASE_OPTS,
+      credentialPolicy: {
+        policy: 'authInfo-only',
+        tools: {
+          // Allow on get_products only — get_media_buy_delivery still
+          // strictly authInfo-only.
+          get_products: { allow: ['snap_access_token'] },
+        },
+      },
+    });
+    const result = await callDelivery(server, {
+      media_buy_ids: ['mb_1'],
+      snap_access_token: 'attacker',
+    });
+    assert.strictEqual(result.isError, true);
+    assert.deepStrictEqual(result.structuredContent.adcp_error.details.credential_paths, ['snap_access_token']);
+  });
+
+  it('server construction throws on malformed allow list', () => {
+    assert.throws(
+      () =>
+        createAdcpServerFromPlatform(buildPlatform(), {
+          ...BASE_OPTS,
+          credentialPolicy: {
+            policy: 'authInfo-only',
+            tools: { get_media_buy_delivery: { allow: [] } }, // empty — meaningless
+          },
+        }),
+      /empty allow list/
+    );
   });
 
   it('server construction throws on typo in credentialPolicy.tools key', () => {
