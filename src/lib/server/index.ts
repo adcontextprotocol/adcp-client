@@ -34,6 +34,9 @@ export type {
   RegistryShape,
 } from './dynamic-registry';
 
+export { defineOperationalPlatform } from './operational-platform';
+export type { OperationalPlatform, OperationalContext } from './operational-platform';
+
 export {
   capabilitiesResponse,
   productsResponse,
