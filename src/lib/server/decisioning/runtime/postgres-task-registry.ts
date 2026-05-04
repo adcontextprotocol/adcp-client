@@ -257,7 +257,7 @@ export function createPostgresTaskRegistry(opts: CreatePostgresTaskRegistryOptio
         `INSERT INTO ${table} (task_id, tool, account_id, status, has_webhook) VALUES ($1, $2, $3, 'submitted', $4) ON CONFLICT (task_id) DO NOTHING`,
         [taskId, createOpts.tool, createOpts.accountId, createOpts.hasWebhook === true]
       );
-      if (result.rowCount === 0) {
+      if ((result.rowCount ?? 0) === 0) {
         throw new Error(`task_id already registered: ${taskId}`);
       }
       return { taskId };
