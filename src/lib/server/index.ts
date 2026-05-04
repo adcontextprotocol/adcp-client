@@ -440,6 +440,13 @@ export { createRosterAccountStore, type RosterAccountStoreOptions } from '../ada
 
 export { createDerivedAccountStore, type DerivedAccountStoreOptions } from '../adapters/derived-account-store';
 
+export {
+  createDynamicRegistry,
+  type DynamicRegistryOptions,
+  type DynamicRegistry,
+  type RegistryTypeMap,
+} from './dynamic-registry';
+
 // ---------------------------------------------------------------------------
 // Socket Mode — outbound WebSocket bridge for adopter dev environments
 // ---------------------------------------------------------------------------
