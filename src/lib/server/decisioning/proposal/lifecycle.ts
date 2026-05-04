@@ -380,11 +380,14 @@ let logger: ProposalLifecycleLogger = {
 };
 
 /**
- * Replace the module-level logger. The dispatch path calls this once at
- * boot to thread the framework's logger through; tests call it to capture
- * structured emissions.
+ * Replace the module-level logger that proposal-lifecycle structured
+ * events (`proposal.draft_persisted`, `proposal.finalized`, `proposal.expired`,
+ * `proposal.consumed`) emit through. Adopters wire this to their existing
+ * logger (pino, bunyan, etc.) so lifecycle events route through the same
+ * pipeline as the rest of their server logs. Tests use it to capture
+ * structured emissions for assertion.
  *
- * @internal
+ * @public
  */
 export function setProposalLifecycleLogger(next: ProposalLifecycleLogger): void {
   logger = next;

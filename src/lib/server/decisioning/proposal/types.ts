@@ -130,15 +130,16 @@ export interface ProposalCapabilities {
 }
 
 /**
- * Validate a {@link ProposalCapabilities} object. Throws an `AdcpError`-shaped
- * structured error when the declaration is malformed. Called by the
- * framework at boot; adopters typically don't invoke directly.
+ * Validate a {@link ProposalCapabilities} object. Throws when the declaration
+ * is malformed (unknown `salesSpecialism`, negative `expiresAtGraceSeconds`).
+ * The framework calls this at boot; adopters can call it from their own
+ * config-validation code paths to fail fast on misconfiguration.
  *
  * Kept as a plain function rather than a class constructor to match the
  * codebase's preference for plain TS interfaces over runtime classes
  * for adopter-facing types.
  *
- * @internal
+ * @public
  */
 export function validateProposalCapabilities(caps: ProposalCapabilities): void {
   const valid: readonly ProposalSalesSpecialism[] = ['sales-guaranteed', 'sales-non-guaranteed'];
