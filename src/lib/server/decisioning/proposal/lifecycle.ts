@@ -48,7 +48,8 @@ import type { Recipe } from './types';
  *     The buyer needs to call `getProducts({ buying_mode: 'refine',
  *     refine: [{ action: 'finalize' }] })` first.
  *   - Committed but `now > expires_at + grace` → `PROPOSAL_EXPIRED`
- *     (terminal). The inventory hold window has lapsed.
+ *     (correctable per AdCP 3.0.6 — the buyer re-discovers via
+ *     `get_products` to obtain a fresh proposal).
  *
  * @public
  */
@@ -95,7 +96,11 @@ export async function enforceProposalExpiry<TRecipe extends Recipe>(
         graceSeconds,
       });
       throw new AdcpError('PROPOSAL_EXPIRED', {
-        recovery: 'terminal',
+        // Per AdCP 3.0.6 schemas/cache/3.0.6/enums/error-code.json,
+        // PROPOSAL_EXPIRED is `correctable` — the buyer re-discovers
+        // via `get_products` to obtain a fresh proposal (the hold
+        // window has lapsed but the buyer can re-request).
+        recovery: 'correctable',
         message:
           `Proposal ${JSON.stringify(proposalId)} expired at ${record.expiresAt.toISOString()}; ` +
           `create_media_buy must be called within the inventory hold window. Call get_products ` +

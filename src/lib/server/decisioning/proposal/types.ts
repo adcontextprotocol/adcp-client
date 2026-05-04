@@ -25,9 +25,6 @@
  *     framework-internal shapes for the finalize lifecycle (wired in the
  *     v1.5 dispatch helpers).
  *
- * **Status**: primitives only. Framework dispatch wiring (the five seams
- * in `proposal-dispatch.ts`) lands in a follow-up PR.
- *
  * @public
  * @packageDocumentation
  */

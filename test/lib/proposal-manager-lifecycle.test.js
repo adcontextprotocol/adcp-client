@@ -642,7 +642,8 @@ test('maybeHydrateRecipesForMediaBuyId', async t => {
       proposalPayload: {},
     });
     store.commit('p1', { expiresAt: new Date(Date.now() + 60_000), proposalPayload: {} });
-    store.markConsumed('p1', { mediaBuyId: 'mb_1' });
+    store.tryReserveConsumption('p1', { expectedAccountId: 'acct_1' });
+    store.finalizeConsumption('p1', { mediaBuyId: 'mb_1', expectedAccountId: 'acct_1' });
     return store;
   }
 
@@ -704,7 +705,8 @@ test('maybeHydrateRecipesForMediaBuyId', async t => {
       proposalPayload: {},
     });
     store.commit('p1', { expiresAt: new Date(Date.now() + 60_000), proposalPayload: {} });
-    store.markConsumed('p1', { mediaBuyId: 'mb_1' });
+    store.tryReserveConsumption('p1', { expectedAccountId: 'acct_1' });
+    store.finalizeConsumption('p1', { mediaBuyId: 'mb_1', expectedAccountId: 'acct_1' });
 
     await assert.rejects(
       maybeHydrateRecipesForMediaBuyId({

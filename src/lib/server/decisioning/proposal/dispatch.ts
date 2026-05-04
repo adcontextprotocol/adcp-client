@@ -31,10 +31,6 @@
  *     hydration via `getByMediaBuyId`. Re-runs capability-overlap
  *     validation per Resolutions §5.
  *
- * **Status**: helpers are exported but not yet wired into
- * `runtime/from-platform.ts`. Wiring lands in a follow-up commit on
- * this branch.
- *
  * @public
  * @packageDocumentation
  */

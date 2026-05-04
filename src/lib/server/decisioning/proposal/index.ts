@@ -5,11 +5,6 @@
  * execution (`create_media_buy`, lifecycle), mirroring `adcp-client-python`'s
  * v1.5 ProposalManager. Either side can be mock-backed independently.
  *
- * **Status**: primitives only (v1 + v1.5 types and storage). Framework
- * dispatch wiring (the five seams that intercept `getProducts`,
- * `createMediaBuy`, `updateMediaBuy`, `getMediaBuyDelivery`) lands in a
- * follow-up PR alongside the lifecycle helpers.
- *
  * @public
  * @packageDocumentation
  */

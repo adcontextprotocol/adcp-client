@@ -86,9 +86,8 @@ export interface ProposalRecord<TRecipe extends Recipe = Recipe> {
    */
   expiresAt?: Date;
   /**
-   * Set on `finalizeConsumption` (or legacy `markConsumed`). The accepted
-   * proposal's terminal binding to a media buy; reverse-index lookups via
-   * `getByMediaBuyId` use this.
+   * Set on `finalizeConsumption`. The accepted proposal's terminal binding
+   * to a media buy; reverse-index lookups via `getByMediaBuyId` use this.
    */
   mediaBuyId?: string;
   /**
@@ -176,14 +175,6 @@ export interface ProposalStore<TRecipe extends Recipe = Recipe> {
    * the buyer can retry without `PROPOSAL_NOT_COMMITTED`.
    */
   releaseConsumption(proposalId: string, args: { expectedAccountId: string }): MaybePromise<void>;
-
-  /**
-   * Legacy direct COMMITTED → CONSUMED transition. Preserved for
-   * back-compat with v1.5 alpha adopters. New code uses
-   * `tryReserveConsumption` + `finalizeConsumption` for race-safe two-phase
-   * commit; this method MUST NOT be called from concurrent dispatch paths.
-   */
-  markConsumed(proposalId: string, args: { mediaBuyId: string }): MaybePromise<void>;
 
   /**
    * Discard a proposal record. Idempotent — discarding an unknown id is
@@ -468,43 +459,6 @@ export class InMemoryProposalStore<TRecipe extends Recipe = Recipe> implements P
       });
     }
     this.records.set(proposalId, { ...record, state: 'committed' });
-  }
-
-  markConsumed(proposalId: string, args: { mediaBuyId: string }): void {
-    // Back-compat shim: equivalent to tryReserveConsumption +
-    // finalizeConsumption against a single-threaded write.
-    this.evictExpired();
-    const record = this.records.get(proposalId);
-    if (!record) {
-      throw new AdcpError('INTERNAL_ERROR', {
-        recovery: 'terminal',
-        message: `Cannot markConsumed proposal ${JSON.stringify(proposalId)}: not in store.`,
-      });
-    }
-    if (record.state === 'consumed') {
-      if (record.mediaBuyId === args.mediaBuyId) return;
-      throw new AdcpError('INTERNAL_ERROR', {
-        recovery: 'terminal',
-        message:
-          `Proposal ${JSON.stringify(proposalId)} already consumed by ` +
-          `media_buy_id=${JSON.stringify(record.mediaBuyId)}; cannot re-consume as ` +
-          `${JSON.stringify(args.mediaBuyId)}.`,
-      });
-    }
-    if (record.state !== 'committed') {
-      throw new AdcpError('INTERNAL_ERROR', {
-        recovery: 'terminal',
-        message:
-          `Cannot markConsumed proposal ${JSON.stringify(proposalId)} from state ` +
-          `${JSON.stringify(record.state)}; markConsumed requires COMMITTED.`,
-      });
-    }
-    this.records.set(proposalId, {
-      ...record,
-      state: 'consumed',
-      mediaBuyId: args.mediaBuyId,
-    });
-    this.mediaBuyIndex.set(this.mediaBuyKey(record.accountId, args.mediaBuyId), proposalId);
   }
 
   discard(proposalId: string): void {
