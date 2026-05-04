@@ -1,5 +1,28 @@
 # Changelog
 
+## 6.11.0
+
+### Minor Changes
+
+- f2ae766: feat(server): ctx.handoffToTask accepts optional task_id override
+
+  Adds `options?: { task_id?: string }` to `ctx.handoffToTask(fn, options?)`.
+  When `options.task_id` is set, the framework uses that exact string as the
+  submitted task_id instead of minting a fresh one. Validates non-empty, ≤ 128
+  characters. Closes #1554.
+
+  Required for the `force_create_media_buy_arm` comply_test_controller scenario,
+  which asserts the seller echoes the directive-supplied task_id verbatim on
+  the create_media_buy submitted arm.
+
+### Patch Changes
+
+- c812000: fix(comply): pass extension params through simulate_delivery and simulate_budget_spend dispatchers
+
+  `comply_test_controller`'s `params` field is spec-canonical `additionalProperties: true`, but the `SIMULATE_DELIVERY` and `SIMULATE_BUDGET_SPEND` dispatcher cases in `handleTestControllerRequest` silently dropped all keys not in their fixed typed sets. Extension params like `vendor_metric_values` (used by the `vendor_metric_accountability` storyboard) never reached seller adapters.
+
+  Both cases now spread the full `params` object verbatim. `TestControllerStore.simulateDelivery` and `simulateBudgetSpend`, along with `SimulateDeliveryParams` and `SimulateBudgetSpendParams` in `createComplyController`, gain `[key: string]: unknown` index signatures so extension fields are accessible to adapter authors without casting.
+
 ## 6.10.0
 
 ### Minor Changes
