@@ -8,7 +8,6 @@
  * Usage:
  * - ContentStandardsAdapter: Implement brand safety/suitability evaluation
  * - PropertyListAdapter: Manage buyer-defined property lists
- * - ProposalManager: Generate and refine media plan proposals
  * - SISessionManager: Handle Sponsored Intelligence conversational sessions
  * - InMemoryImplicitAccountStore: AccountStore for resolution: 'implicit' platforms
  */
@@ -32,16 +31,6 @@ export {
   isPropertyListError,
   defaultPropertyListAdapter,
 } from './property-list-adapter';
-
-// Proposal Management
-export {
-  ProposalManager,
-  AIProposalManager,
-  type IProposalManager,
-  type ProposalContext,
-  ProposalErrorCodes,
-  defaultProposalManager,
-} from './proposal-manager';
 
 // Governance (seller-side committed checks)
 export {

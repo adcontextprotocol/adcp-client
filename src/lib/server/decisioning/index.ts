@@ -300,6 +300,42 @@ export {
   definePlatformWithCompliance,
 } from './platform-helpers';
 
+// ProposalManager — primitives for the two-platform composition (port of
+// adcp-client-python PRs #504 + #550). Splits proposal assembly from
+// media-buy execution; either side can be mock-backed independently.
+// Framework dispatch wiring lands in a follow-up release.
+export type {
+  ProposalManager,
+  ProposalCapabilities,
+  ProposalSalesSpecialism,
+  Recipe,
+  CapabilityOverlap,
+  FinalizeProposalRequest,
+  FinalizeProposalSuccess,
+  ProposalState,
+  ProposalRecord,
+  ProposalStore,
+  InMemoryProposalStoreOptions,
+  MockProposalManagerOptions,
+} from './proposal';
+export {
+  validateProposalCapabilities,
+  InMemoryProposalStore,
+  MockProposalManager,
+  enforceProposalExpiry,
+  validateCapabilityOverlap,
+  validateOverlapSubsetOfWire,
+  detectFinalizeAction,
+  setProposalLifecycleLogger,
+  maybeInterceptFinalize,
+  maybePersistDraftAfterGetProducts,
+  maybeReserveProposalForCreateMediaBuy,
+  finalizeProposalConsumption,
+  releaseProposalReservation,
+  maybeHydrateRecipesForMediaBuyId,
+} from './proposal';
+export type { FinalizeActionRef, ProposalLifecycleLogger, FinalizeInterceptResult, ReservedProposal } from './proposal';
+
 // Wire-shape assembly helpers — emit correct Product / PricingOption /
 // package shapes from intent-shaped input. Reduces 30+ lines of wire
 // boilerplate per resource. Used in slim skill examples so LLMs scaffold

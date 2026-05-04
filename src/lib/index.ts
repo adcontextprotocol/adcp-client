@@ -1148,13 +1148,6 @@ export {
   PropertyListErrorCodes,
   isPropertyListError,
   defaultPropertyListAdapter,
-  // Proposal Management
-  ProposalManager,
-  AIProposalManager,
-  type IProposalManager,
-  type ProposalContext,
-  ProposalErrorCodes,
-  defaultProposalManager,
   // Sponsored Intelligence Sessions
   SISessionManager,
   AISISessionManager,

@@ -22,6 +22,15 @@ import { DEFAULT_API_KEY as SIGNAL_MARKETPLACE_DEFAULT_API_KEY, OPERATORS } from
 import { bootSponsoredIntelligence } from './sponsored-intelligence/server';
 import { BRANDS as SI_BRANDS, DEFAULT_API_KEY as SI_DEFAULT_API_KEY } from './sponsored-intelligence/seed-data';
 
+// Canonical Recipe shapes per specialism — adopters wrapping these
+// upstream mocks build their hello-agent's `Product.implementation_config`
+// from these helpers. The recipe is the typed contract between the
+// adapter's ProposalManager and DecisioningPlatform; exporting the
+// canonical shapes from here means hello agents and storyboard fixtures
+// share one definition.
+export { buildGAMLikeRecipe, GAM_LIKE_OVERLAP, type GAMLikeRecipe } from './sales-guaranteed/recipe';
+export { buildKevelLikeRecipe, KEVEL_LIKE_OVERLAP, type KevelLikeRecipe } from './sales-non-guaranteed/recipe';
+
 export interface MockServerOptions {
   specialism: string;
   port: number;
@@ -384,6 +393,10 @@ function formatSalesGuaranteedSummary(url: string, apiKey: string): string {
     `  GET    ${url}/v1/products?targeting=…&flight_start=…&budget=…             # products with per-query forecast`,
     `  POST   ${url}/v1/forecast                                                 # GAM-style getDeliveryForecast`,
     `  POST   ${url}/v1/availability                                             # multi-item availability dry-run`,
+    `  POST   ${url}/v1/proposals                                              # create draft proposal from brief`,
+    `  GET    ${url}/v1/proposals/{proposal_id}                                # read state`,
+    `  POST   ${url}/v1/proposals/{proposal_id}/refine                         # mutate allocations (draft only)`,
+    `  POST   ${url}/v1/proposals/{proposal_id}/finalize                       # lock pricing + reserve inventory`,
     `  GET    ${url}/v1/orders                                                   # list orders`,
     `  POST   ${url}/v1/orders                                                   # create (returns pending_approval + task_id)`,
     `  GET    ${url}/v1/orders/{order_id}                                        # poll order status`,
