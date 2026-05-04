@@ -694,6 +694,13 @@ function parseAgentOptions(args) {
       ? args[formatIdx + 1]
       : null;
 
+  // --summary-output is parsed locally inside `runFullAssessment`, but its
+  // value must be excluded from `positionalArgs` here so it doesn't
+  // accidentally get treated as a storyboard ID.
+  const summaryOutputIdx = args.indexOf('--summary-output');
+  const summaryOutputValue =
+    summaryOutputIdx !== -1 && summaryOutputIdx + 1 < args.length ? args[summaryOutputIdx + 1] : null;
+
   // Filter out flags and their values to find positional args. The `--file=PATH`
   // form is already removed by the `startsWith('--')` check; only the
   // space-separated value needs explicit exclusion. Use explicit nullish check
@@ -715,6 +722,7 @@ function parseAgentOptions(args) {
     invariantsValue,
     localAgentValue,
     formatValue,
+    summaryOutputValue,
     fileIndex !== -1 ? file : null,
   ].filter(v => v !== null && v !== undefined);
   const positionalArgs = args.filter(arg => !arg.startsWith('--') && !flagValues.includes(arg));
@@ -1145,6 +1153,7 @@ USAGE:
 
 COMMANDS:
   storyboard <subcommand>     Test agent flows (run, list, show, step)
+  specialism <subcommand>     Inspect a compliance specialism (list, show)
   grade <subject> <url>       Conformance graders (e.g. request-signing)
   fuzz <url>                  Property-based conformance fuzzing against schemas
   resolve <agent-url>         Walk the brand_json_url discovery chain
@@ -1241,6 +1250,22 @@ RUN OPTIONS (full assessment):
                       fallbacks, brand-domain heuristics, fixture
                       substitutes). Agents that don't recognize the
                       ext.adcp.disable_sandbox field ignore it.
+  --summary-output PATH
+                      Write a narrow, schema-stable summary artifact
+                      to PATH (JSON: { schema_version, passed, failed,
+                      failures: [{storyboard_id, step_id, reason}] }).
+                      Pin downstream tooling (badges, Slack bots,
+                      dashboards) to this contract — the full
+                      ComplianceResult on stdout in --json mode evolves
+                      with the protocol. Independent of --json.
+
+OUTPUT (always-on):
+  Every run writes a compact summary to stderr with a greppable
+  STORYBOARD-FAIL prefix when any step fails — visible regardless of
+  --json mode or workflow continue-on-error wiring. When
+  $GITHUB_STEP_SUMMARY is set (GitHub Actions), the same summary is
+  appended as a markdown table so PR reviewers see failures without
+  opening the run log.
 
 WEBHOOK OPTIONS:
   --webhook-receiver [MODE]       Host an ephemeral receiver so expect_webhook*
@@ -1355,6 +1380,176 @@ EXAMPLES:
       console.error('Available: list, show, run, step');
       process.exit(2);
   }
+}
+
+// ────────────────────────────────────────────────────────────
+// Specialism command: inspect what CI will exercise per specialism slug.
+// ────────────────────────────────────────────────────────────
+
+async function handleSpecialismCommand(args) {
+  if (args.length === 0 || args.includes('--help') || args.includes('-h')) {
+    console.log(`
+Inspect a compliance specialism — what CI will actually exercise against
+your server, before you run anything.
+
+USAGE:
+  adcp specialism list [--json]
+  adcp specialism show <slug> [--json]
+
+SUBCOMMANDS:
+  list                Enumerate every specialism the compliance cache
+                      knows about (slug, protocol, status, title).
+  show <slug>         Print the resolved required scenarios, required
+                      tools, and storyboard phases for a specialism.
+
+EXAMPLES:
+  adcp specialism list
+  adcp specialism show sales-guaranteed
+  adcp specialism show creative-template --json
+
+Specialism slugs are kebab-case (e.g. sales-guaranteed). Storyboard
+category IDs in the YAML are snake_case (e.g. sales_guaranteed) — same
+concept, two names. \`adcp specialism list\` always prints the slug.
+`);
+    process.exit(0);
+  }
+
+  const subcommand = args[0];
+  const subArgs = args.slice(1);
+  switch (subcommand) {
+    case 'list':
+      await handleSpecialismList(subArgs);
+      break;
+    case 'show':
+      await handleSpecialismShow(subArgs);
+      break;
+    default:
+      console.error(`Unknown specialism subcommand: ${subcommand}`);
+      console.error(`Run 'adcp specialism --help' for usage.`);
+      process.exit(2);
+  }
+}
+
+async function handleSpecialismList(args) {
+  const { listSpecialisms } = await import('../dist/lib/testing/storyboard/index.js');
+  const jsonOutput = args.includes('--json');
+  const specialisms = listSpecialisms();
+
+  if (jsonOutput) {
+    await writeJsonOutput(specialisms);
+    return;
+  }
+
+  console.log(`\nSpecialisms (${specialisms.length}) — from compliance cache:\n`);
+  const slugWidth = Math.max(...specialisms.map(s => s.id.length), 'SLUG'.length);
+  const protocolWidth = Math.max(...specialisms.map(s => s.protocol.length), 'PROTOCOL'.length);
+  console.log(`  ${'SLUG'.padEnd(slugWidth)}  ${'PROTOCOL'.padEnd(protocolWidth)}  STATUS    TITLE`);
+  console.log(`  ${'─'.repeat(slugWidth)}  ${'─'.repeat(protocolWidth)}  ────────  ─────`);
+  for (const s of specialisms) {
+    console.log(
+      `  ${s.id.padEnd(slugWidth)}  ${s.protocol.padEnd(protocolWidth)}  ${(s.status || '').padEnd(8)}  ${s.title ?? ''}`
+    );
+  }
+  console.log(`\n→ Run 'adcp specialism show <slug>' to see required scenarios, tools, and phases for a specialism.\n`);
+}
+
+async function handleSpecialismShow(args) {
+  const { loadSpecialismDetail } = await import('../dist/lib/testing/storyboard/index.js');
+  const slug = args.find(a => !a.startsWith('--'));
+  const jsonOutput = args.includes('--json');
+
+  if (!slug) {
+    console.error('Usage: adcp specialism show <slug> [--json]');
+    process.exit(2);
+  }
+
+  let detail;
+  try {
+    detail = loadSpecialismDetail(slug);
+  } catch (err) {
+    console.error(err.message);
+    process.exit(2);
+  }
+
+  if (jsonOutput) {
+    await writeJsonOutput({
+      slug: detail.slug,
+      protocol: detail.protocol,
+      status: detail.status,
+      title: detail.index_title ?? detail.storyboard.title,
+      summary: detail.storyboard.summary,
+      track: detail.storyboard.track,
+      required_tools: detail.required_tools,
+      invariants: detail.storyboard.invariants ?? null,
+      phases: detail.storyboard.phases.map(p => ({
+        id: p.id,
+        title: p.title,
+        steps: p.steps.map(s => ({ id: s.id, task: s.task })),
+      })),
+      required_scenarios: detail.required_scenarios.map(sb => ({
+        id: sb.id,
+        title: sb.title,
+        category: sb.category,
+        track: sb.track,
+        step_count: sb.phases.reduce((n, p) => n + p.steps.length, 0),
+      })),
+      unresolved_scenarios: detail.unresolved_scenarios,
+    });
+    return;
+  }
+
+  const sb = detail.storyboard;
+  const title = detail.index_title ?? sb.title;
+  console.log(`\n${title}`);
+  console.log('─'.repeat(title.length));
+  console.log(`Slug:     ${detail.slug}`);
+  console.log(`Protocol: ${detail.protocol}`);
+  console.log(`Status:   ${detail.status}`);
+  if (sb.track) console.log(`Track:    ${sb.track}`);
+  console.log(`\n${sb.summary}`);
+
+  if (detail.required_tools.length > 0) {
+    console.log(`\nRequired Tools`);
+    console.log('─'.repeat(50));
+    for (const tool of detail.required_tools) console.log(`  • ${tool}`);
+  }
+
+  console.log(`\nStoryboard Phases (${sb.phases.length})`);
+  console.log('─'.repeat(50));
+  for (const phase of sb.phases) {
+    console.log(`  ${phase.id} — ${phase.title} (${phase.steps.length} step${phase.steps.length === 1 ? '' : 's'})`);
+  }
+
+  console.log(`\nRequired Scenarios (${detail.required_scenarios.length})`);
+  console.log('─'.repeat(50));
+  if (detail.required_scenarios.length === 0) {
+    console.log('  (none)');
+  } else {
+    for (const scn of detail.required_scenarios) {
+      const stepCount = scn.phases.reduce((n, p) => n + p.steps.length, 0);
+      console.log(`  • ${scn.id} — ${scn.title}  (${stepCount} step${stepCount === 1 ? '' : 's'})`);
+    }
+  }
+  if (detail.unresolved_scenarios.length > 0) {
+    console.log(`\n⚠️  Unresolved (${detail.unresolved_scenarios.length}):`);
+    for (const ref of detail.unresolved_scenarios) console.log(`  • ${ref}`);
+    console.log(
+      `  Run \`npm run sync-schemas\` to refresh the cache, or these scenarios may be on a newer AdCP version.`
+    );
+  }
+
+  if (sb.invariants) {
+    console.log(`\nInvariants`);
+    console.log('─'.repeat(50));
+    const inv = sb.invariants;
+    if (Array.isArray(inv)) {
+      for (const id of inv) console.log(`  + ${id}`);
+    } else {
+      if (inv.enable?.length) for (const id of inv.enable) console.log(`  + ${id}`);
+      if (inv.disable?.length) for (const id of inv.disable) console.log(`  − ${id}`);
+    }
+  }
+  console.log('');
 }
 
 async function handleStoryboardList(args) {
@@ -3296,11 +3491,56 @@ async function runFullAssessment(agentArg, rawArgs, parsedOpts) {
     console.log('');
   }
 
-  const restoreLogs = opts.jsonOutput ? captureStdoutLogs() : null;
-  try {
-    const { comply, formatComplianceResults, formatComplianceResultsJSON } =
-      await import('../dist/lib/testing/compliance/index.js');
+  // --summary-output <path>: write the narrow ComplianceSummaryArtifact JSON
+  // (schema-stable: { schema_version, passed, failed, failures: [...] }) to
+  // a file. The full ComplianceResult on stdout in --json mode evolves with
+  // the protocol; the summary contract is what downstream tooling
+  // (badges, Slack bots, dashboards) should pin to.
+  const summaryOutputIndex = rawArgs.indexOf('--summary-output');
+  let summaryOutputPath = null;
+  if (summaryOutputIndex !== -1) {
+    if (summaryOutputIndex + 1 >= rawArgs.length) {
+      console.error('ERROR: --summary-output requires a file path\n');
+      process.exit(2);
+    }
+    summaryOutputPath = rawArgs[summaryOutputIndex + 1];
+  }
 
+  const {
+    comply,
+    formatComplianceResults,
+    formatComplianceResultsJSON,
+    buildComplianceSummary,
+    buildCrashSummary,
+    formatComplianceSummaryText,
+    formatComplianceSummaryMarkdown,
+  } = await import('../dist/lib/testing/compliance/index.js');
+  const { ADCP_VERSION } = await import('../dist/lib/version.js');
+
+  function emitSummary(summary) {
+    process.stderr.write(formatComplianceSummaryText(summary));
+    if (process.env.GITHUB_STEP_SUMMARY) {
+      try {
+        const fs = require('fs');
+        fs.appendFileSync(process.env.GITHUB_STEP_SUMMARY, formatComplianceSummaryMarkdown(summary) + '\n');
+      } catch (err) {
+        process.stderr.write(`\nWarning: could not write GITHUB_STEP_SUMMARY: ${err.message}\n`);
+      }
+    }
+    if (summaryOutputPath) {
+      try {
+        const fs = require('fs');
+        fs.writeFileSync(summaryOutputPath, JSON.stringify(summary, null, 2) + '\n');
+      } catch (err) {
+        process.stderr.write(`\nWarning: could not write --summary-output to ${summaryOutputPath}: ${err.message}\n`);
+      }
+    }
+  }
+
+  const restoreLogs = opts.jsonOutput ? captureStdoutLogs() : null;
+  const startedAt = new Date().toISOString();
+  const runStartTime = Date.now();
+  try {
     const { setAgentTesterLogger } = await import('../dist/lib/testing/client.js');
     if (!opts.debug) {
       setAgentTesterLogger({ info: () => {}, error: () => {}, warn: () => {}, debug: () => {} });
@@ -3315,12 +3555,47 @@ async function runFullAssessment(agentArg, rawArgs, parsedOpts) {
       console.log(formatComplianceResults(result));
     }
 
-    const hasFailures = result.summary.tracks_failed > 0;
-    process.exit(hasFailures ? 3 : 0);
+    // Always-on summary. STORYBOARD-FAIL fires on any non-passing run so
+    // CI greppers see failures regardless of `continue-on-error: true` or
+    // `|| true` shenanigans.
+    const summary = buildComplianceSummary(result, {
+      sdkVersion: LIBRARY_VERSION,
+      adcpVersion: ADCP_VERSION,
+    });
+    emitSummary(summary);
+
+    // Exit code policy: anything that doesn't represent "the agent
+    // exercised its tracks and they passed" is a CI failure. `partial`
+    // is preserved as exit 0 because some tracks were silent (wired but
+    // unexercised) — that's a reportable observation, not a hard failure.
+    const exitCode =
+      result.overall_status === 'failing' ||
+      result.overall_status === 'unreachable' ||
+      result.overall_status === 'auth_required'
+        ? 3
+        : 0;
+    process.exit(exitCode);
   } catch (error) {
     if (restoreLogs) restoreLogs();
     console.error(`\nAssessment failed: ${error.message}`);
     if (opts.debug) console.error(error.stack);
+
+    // Crash-path summary. Without this, a network drop or capabilities
+    // parse error silently exits 1 with no `STORYBOARD-FAIL` marker —
+    // breaking the always-on promise on the path where it matters most.
+    try {
+      const crashSummary = buildCrashSummary({
+        sdkVersion: LIBRARY_VERSION,
+        adcpVersion: ADCP_VERSION,
+        agentUrl,
+        error,
+        startedAt,
+        durationMs: Date.now() - runStartTime,
+      });
+      emitSummary(crashSummary);
+    } catch {
+      // Summary emission must never mask the original crash.
+    }
     process.exit(1);
   }
 }
@@ -3836,6 +4111,11 @@ async function main() {
 
   if (args[0] === 'storyboard') {
     await handleStoryboardCommand(args.slice(1));
+    return;
+  }
+
+  if (args[0] === 'specialism') {
+    await handleSpecialismCommand(args.slice(1));
     return;
   }
 

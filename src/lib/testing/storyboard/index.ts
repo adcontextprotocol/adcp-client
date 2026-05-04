@@ -108,6 +108,8 @@ export {
   findBundleById,
   resolveBundleOrStoryboard,
   resolveStoryboardsForCapabilities,
+  loadSpecialismDetail,
+  listSpecialisms,
   CapabilityResolutionError,
   PROTOCOL_TO_PATH,
 } from './compliance';
@@ -123,6 +125,7 @@ export type {
   ResolveOptions,
   ResolvedBundle,
   ResolvedStoryboards,
+  SpecialismDetail,
 } from './compliance';
 
 // Task mapping
