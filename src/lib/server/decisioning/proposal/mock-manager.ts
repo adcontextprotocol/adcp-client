@@ -106,8 +106,12 @@ export class MockProposalManager<TRecipe extends Recipe = Recipe, TCtxMeta = unk
       salesSpecialism: options.salesSpecialism ?? 'sales-non-guaranteed',
       refine: options.refine ?? false,
     };
-    // Strip trailing slash to keep `${url}/get_products` clean.
-    this.url = options.mockUpstreamUrl.replace(/\/+$/, '');
+    // Strip trailing slashes (loop-based, not regex) so we keep
+    // `${url}/get_products` clean without a quantifier-and-anchor
+    // pattern CodeQL flags as polynomial-ReDoS-adjacent.
+    let trimmed = options.mockUpstreamUrl;
+    while (trimmed.endsWith('/')) trimmed = trimmed.slice(0, -1);
+    this.url = trimmed;
     this.headers = options.defaultHeaders ?? {};
     this.timeoutMs = options.timeoutMs ?? 30_000;
     this.fetchImpl = options.fetch ?? globalThis.fetch;
