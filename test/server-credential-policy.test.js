@@ -60,14 +60,17 @@ const BASE_OPTS = {
   validation: { requests: 'off', responses: 'off' },
 };
 
-function callDelivery(server, args) {
-  return server.dispatchTestRequest({
-    method: 'tools/call',
-    params: {
-      name: 'get_media_buy_delivery',
-      arguments: { account: { account_id: 'acc_1' }, ...args },
+function callDelivery(server, args, dispatchOpts) {
+  return server.dispatchTestRequest(
+    {
+      method: 'tools/call',
+      params: {
+        name: 'get_media_buy_delivery',
+        arguments: { account: { account_id: 'acc_1' }, ...args },
+      },
     },
-  });
+    dispatchOpts
+  );
 }
 
 describe('scanArgsForCredentials', () => {
@@ -704,5 +707,187 @@ describe('#1529 L1 — credentialPolicy server-wired enforcement', () => {
       `clean retry should succeed; got ${JSON.stringify(clean.structuredContent)}`
     );
     assert.strictEqual(handlerCalls, 1, 'handler must run on the clean retry');
+  });
+});
+
+describe('#1539 — scanAuthInfo perimeter expansion', () => {
+  // L1 (#1535) scans the buyer args bag. Custom authenticators that
+  // stamp credential-shaped values into authInfo.extra (token-
+  // introspection responses, JWT claim sets, OAuth scope blobs)
+  // bypass that scan entirely. scanAuthInfo extends the perimeter
+  // with two design constraints:
+  //   1. Orthogonal to `policy` mode (mix-and-match permitted).
+  //   2. Wire envelope reports a coarse signal — paths log-only —
+  //      to avoid an info-disclosure oracle on internal authInfo
+  //      structure the buyer has no read access to.
+
+  it('default — undefined scanAuthInfo never inspects authInfo.extra', async () => {
+    const server = createAdcpServerFromPlatform(buildPlatform(), {
+      ...BASE_OPTS,
+      credentialPolicy: 'authInfo-only', // string shorthand — no scanAuthInfo field
+    });
+    // authInfo.extra carries credential-shaped key — but scanAuthInfo
+    // defaults to false, so the request dispatches normally.
+    const result = await callDelivery(
+      server,
+      { media_buy_ids: ['mb_1'] },
+      {
+        authInfo: {
+          token: 't',
+          clientId: 'b',
+          scopes: [],
+          extra: { upstream_access_token: 'legitimate-introspection-claim' },
+        },
+      }
+    );
+    assert.notStrictEqual(result.isError, true, 'scanAuthInfo defaults off; request proceeds');
+  });
+
+  it('rejects when scanAuthInfo: true and authInfo.extra carries credential-shaped key', async () => {
+    const server = createAdcpServerFromPlatform(buildPlatform(), {
+      ...BASE_OPTS,
+      credentialPolicy: { policy: 'authInfo-only', scanAuthInfo: true },
+    });
+    const result = await callDelivery(
+      server,
+      { media_buy_ids: ['mb_1'] },
+      {
+        authInfo: {
+          token: 't',
+          clientId: 'b',
+          scopes: [],
+          extra: { upstream_access_token: 'attacker-claim' },
+        },
+      }
+    );
+    assert.strictEqual(result.isError, true);
+    const err = result.structuredContent.adcp_error;
+    assert.strictEqual(err.code, 'PERMISSION_DENIED');
+    assert.strictEqual(err.recovery, 'terminal');
+    assert.strictEqual(err.details.scope, 'credentials');
+  });
+
+  it('wire envelope does NOT enumerate authInfo.extra paths (info-disclosure oracle protection)', async () => {
+    const server = createAdcpServerFromPlatform(buildPlatform(), {
+      ...BASE_OPTS,
+      credentialPolicy: { policy: 'authInfo-only', scanAuthInfo: true },
+    });
+    const result = await callDelivery(
+      server,
+      { media_buy_ids: ['mb_1'] },
+      {
+        authInfo: {
+          token: 't',
+          clientId: 'b',
+          scopes: [],
+          extra: {
+            INTERNAL_FIELD_BUYER_SHOULD_NOT_PROBE: 'shape',
+            upstream_access_token: 'creds',
+          },
+        },
+      }
+    );
+    assert.strictEqual(result.isError, true);
+    const serialized = JSON.stringify(result);
+    // The internal authInfo.extra structure must NOT leak into the wire
+    // envelope. Buyers must not be able to probe one field at a time.
+    assert.ok(
+      !serialized.includes('INTERNAL_FIELD_BUYER_SHOULD_NOT_PROBE'),
+      'authInfo.extra field names must not appear in the wire envelope'
+    );
+    assert.ok(
+      !serialized.includes('upstream_access_token'),
+      'authInfo.extra credential paths must not appear in the wire envelope either'
+    );
+    // Coarse signal IS present so adopters know it's a credentials issue
+    assert.strictEqual(result.structuredContent.adcp_error.details.scope, 'credentials');
+    // No `credential_paths` array on the wire (paths log-only)
+    assert.ok(
+      !('credential_paths' in (result.structuredContent.adcp_error.details ?? {})),
+      'authInfo.extra rejections must NOT include credential_paths'
+    );
+  });
+
+  it('scanAuthInfo is orthogonal to policy mode — works with policy: lax', async () => {
+    // Adopter trusts args (some legitimate-but-credential-shaped fields
+    // pass through) but wants to defend authInfo.extra against custom-
+    // authenticator stamping. policy:'lax' + scanAuthInfo:true is the
+    // documented orthogonal combination.
+    const server = createAdcpServerFromPlatform(buildPlatform(), {
+      ...BASE_OPTS,
+      credentialPolicy: { policy: 'lax', scanAuthInfo: true },
+    });
+    // Args carry credential-shaped key — passes (policy: lax)
+    const result = await callDelivery(
+      server,
+      { media_buy_ids: ['mb_1'], snap_access_token: 'pass-because-lax' },
+      {
+        authInfo: {
+          token: 't',
+          clientId: 'b',
+          scopes: [],
+          extra: { upstream_access_token: 'rejected-because-scanAuthInfo' },
+        },
+      }
+    );
+    // Rejection is from authInfo, not args
+    assert.strictEqual(result.isError, true);
+    assert.strictEqual(result.structuredContent.adcp_error.code, 'PERMISSION_DENIED');
+  });
+
+  it('scanAuthInfo is fully orthogonal — per-tool lax disables ARGS scan but NOT authInfo scan', async () => {
+    const server = createAdcpServerFromPlatform(buildPlatform(), {
+      ...BASE_OPTS,
+      credentialPolicy: {
+        policy: 'authInfo-only',
+        scanAuthInfo: true,
+        tools: { get_media_buy_delivery: 'lax' },
+      },
+    });
+    // Per-tool lax: args scan short-circuits (snap_access_token
+    // passes). authInfo.extra scan still runs because scanAuthInfo
+    // is fully orthogonal — adopters who legitimately stamp
+    // credential-shaped values into authInfo.extra should fix the
+    // authenticator, not per-tool-disable the scan.
+    const result = await callDelivery(
+      server,
+      { media_buy_ids: ['mb_1'], snap_access_token: 'args-passes-because-tool-lax' },
+      {
+        authInfo: {
+          token: 't',
+          clientId: 'b',
+          scopes: [],
+          extra: { upstream_access_token: 'authInfo-still-rejects' },
+        },
+      }
+    );
+    assert.strictEqual(result.isError, true, 'authInfo scan runs even when per-tool lax disables args scan');
+    assert.strictEqual(result.structuredContent.adcp_error.code, 'PERMISSION_DENIED');
+  });
+
+  it('scanAuthInfo with no authInfo present is a no-op (does not fault)', async () => {
+    const server = createAdcpServerFromPlatform(buildPlatform(), {
+      ...BASE_OPTS,
+      credentialPolicy: { policy: 'authInfo-only', scanAuthInfo: true },
+    });
+    // No `authInfo` passed via dispatchTestRequest — ctx.authInfo undefined
+    const result = await callDelivery(server, { media_buy_ids: ['mb_1'] });
+    assert.notStrictEqual(result.isError, true, 'absent authInfo is not credentials-bearing');
+  });
+
+  it('args scan still runs alongside scanAuthInfo — args hits report paths normally', async () => {
+    const server = createAdcpServerFromPlatform(buildPlatform(), {
+      ...BASE_OPTS,
+      credentialPolicy: { policy: 'authInfo-only', scanAuthInfo: true },
+    });
+    // Args have a credential — args scan runs first and rejects
+    // BEFORE the authInfo scan. Wire envelope reports the args path
+    // (existing behavior — buyer sent it, no info leak).
+    const result = await callDelivery(server, {
+      media_buy_ids: ['mb_1'],
+      snap_access_token: 'attacker',
+    });
+    assert.strictEqual(result.isError, true);
+    assert.deepStrictEqual(result.structuredContent.adcp_error.details.credential_paths, ['snap_access_token']);
   });
 });
