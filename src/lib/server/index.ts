@@ -37,6 +37,9 @@ export type {
 export { defineOperationalPlatform } from './operational-platform';
 export type { OperationalPlatform, OperationalContext } from './operational-platform';
 
+export { pickWireSpecFields, scrubExtensions, WIRE_SPEC_FIELDS } from './wire-safe';
+export type { WireSafe, WireSpecRequestName, ScrubExtensionsOptions } from './wire-safe';
+
 export {
   capabilitiesResponse,
   productsResponse,
