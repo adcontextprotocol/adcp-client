@@ -897,6 +897,173 @@ describe('runStoryboard: #1144 peer_substitutes_for — declared-substitute resc
     assert.doesNotMatch(assertStep.skip.detail ?? '', /declared substitute/);
   });
 
+  test('sole stateful step missing_tool → no cascade (adcp-client-python#550)', async () => {
+    // Surfaced by adcp-client-python#550 (ProposalManager v1.5). A
+    // proposal-mode adopter doesn't advertise sync_accounts because account
+    // state materializes implicitly on the first get_products call. With
+    // sync_accounts as the SOLE stateful step in the setup phase, the
+    // pre-fix runner tripped the cascade on its missing_tool skip and
+    // collapsed every downstream stateful phase (refine_proposal,
+    // finalize_proposal, accept_proposal) to prerequisite_failed.
+    //
+    // The sole-stateful-step exemption from #1146 (originally scoped to
+    // not_applicable) now extends to hard-missing skip reasons. No peer in
+    // the phase could have established substitute state, so the runner
+    // treats this as "platform legitimately doesn't use this pathway" and
+    // lets downstream phases run on their own merits.
+    agent = await startFakeAgent();
+    const storyboard = storyboardWithPhases([
+      {
+        id: 'account_setup',
+        title: 'setup (sync_accounts not advertised)',
+        steps: [
+          {
+            id: 'sync',
+            title: 'sync_accounts (missing_tool — proposal-mode adopter)',
+            task: 'sync_accounts',
+            stateful: true,
+            auth: 'none',
+            sample_request: { accounts: [] },
+          },
+        ],
+      },
+      {
+        id: 'consume',
+        title: 'downstream stateful phase',
+        steps: [
+          {
+            id: 'assert',
+            title: 'depends on implicit account state',
+            task: '__test_assert',
+            stateful: true,
+            auth: 'none',
+            sample_request: {},
+          },
+        ],
+      },
+    ]);
+    const ADVERTISED = ['__test_assert', 'get_adcp_capabilities'];
+    const result = await runStoryboard([agent.url], storyboard, {
+      protocol: 'mcp',
+      allow_http: true,
+      agentTools: ADVERTISED,
+      _profile: { name: 'fake', tools: ADVERTISED.map(name => ({ name })) },
+    });
+    const syncStep = result.phases[0].steps[0];
+    const assertStep = result.phases[1].steps[0];
+    assert.strictEqual(syncStep.skipped, true);
+    assert.strictEqual(syncStep.skip_reason, 'missing_tool');
+    assert.ok(!assertStep.skipped, 'downstream runs — sole stateful step missing_tool does not cascade');
+    assert.strictEqual(assertStep.passed, true);
+    // Exemption decision is surfaced on the skip detail so adopters reading
+    // per-step output see "downstream ran without state" rather than having
+    // to infer it from the absence of cascade-skips.
+    assert.match(syncStep.skip.detail ?? '', /Sole stateful step exemption applied for phase 'account_setup'/);
+  });
+
+  test('sole-stateful-step exemption: parity invariant across skip reasons', async () => {
+    // Structural guard against future asymmetric blind spots: every skip
+    // reason that participates in the sole-stateful-step exemption MUST
+    // produce identical cascade outcomes (downstream runs) and an explicit
+    // exemption marker on the skip detail. The bug behind adcp-client#1545
+    // (PR #1545 / adcp-client-python#550) was exactly an asymmetry — #1146
+    // fixed not_applicable, missing_tool was forgotten. This loop catches
+    // the next time someone adds a new skip reason and forgets to wire it
+    // into the exemption family. Add the new reason here when the family
+    // grows.
+    //
+    // Each row is one storyboard fixture run end-to-end. The skip-reason
+    // is induced by varying agentTools (missing_tool) or the profile's
+    // capability advertisement (not_applicable). missing_test_controller
+    // sits behind the controller-seeding probe and has its own dedicated
+    // tests in storyboard-controller-seeding.test.js — we don't mirror it
+    // here because the trigger surface is different (phase-level vs
+    // per-step), but the exemption logic shares the same code path so
+    // a regression in either surface is caught by these two reasons plus
+    // the controller-seeding suite.
+    agent = await startFakeAgent();
+    const buildStoryboard = () =>
+      storyboardWithPhases([
+        {
+          id: 'account_setup',
+          title: 'sole stateful step',
+          steps: [
+            {
+              id: 'sync',
+              title: 'sync_accounts',
+              task: 'sync_accounts',
+              stateful: true,
+              auth: 'none',
+              sample_request: { accounts: [] },
+            },
+          ],
+        },
+        {
+          id: 'consume',
+          title: 'downstream stateful phase',
+          steps: [
+            {
+              id: 'assert',
+              title: 'depends on implicit state',
+              task: '__test_assert',
+              stateful: true,
+              auth: 'none',
+              sample_request: {},
+            },
+          ],
+        },
+      ]);
+
+    const cases = [
+      {
+        skip_reason: 'missing_tool',
+        // sync_accounts not in agentTools → missing_tool
+        run: () =>
+          runStoryboard([agent.url], buildStoryboard(), {
+            protocol: 'mcp',
+            allow_http: true,
+            agentTools: ['__test_assert', 'get_adcp_capabilities'],
+            _profile: {
+              name: 'fake',
+              tools: [{ name: '__test_assert' }, { name: 'get_adcp_capabilities' }],
+            },
+          }),
+      },
+      {
+        skip_reason: 'not_applicable',
+        // sync_accounts advertised but profile signals not_applicable via
+        // raw_capabilities → not_applicable
+        run: () =>
+          runStoryboard([agent.url], buildStoryboard(), {
+            protocol: 'mcp',
+            allow_http: true,
+            agentTools: ['sync_accounts', '__test_assert', 'get_adcp_capabilities'],
+            _profile: {
+              name: 'fake',
+              tools: [{ name: 'sync_accounts' }, { name: '__test_assert' }, { name: 'get_adcp_capabilities' }],
+              raw_capabilities: { account: { require_operator_auth: true } },
+            },
+          }),
+      },
+    ];
+
+    for (const c of cases) {
+      const result = await c.run();
+      const setupStep = result.phases[0].steps[0];
+      const downstreamStep = result.phases[1].steps[0];
+
+      assert.strictEqual(setupStep.skipped, true, `${c.skip_reason}: setup step skipped`);
+      assert.strictEqual(setupStep.skip_reason, c.skip_reason, `${c.skip_reason}: skip_reason matches`);
+      assert.match(
+        setupStep.skip.detail ?? '',
+        /Sole stateful step exemption applied for phase 'account_setup'/,
+        `${c.skip_reason}: exemption marker present on skip detail`
+      );
+      assert.ok(!downstreamStep.skipped, `${c.skip_reason}: downstream phase runs (no cascade)`);
+      assert.strictEqual(downstreamStep.passed, true, `${c.skip_reason}: downstream passes`);
+    }
+  });
+
   test('peer_substitutes_for accepts string[] — any declared substitute passing rescues', async () => {
     // Bulk-substitute hedge: a `bulk_setup` step can declare it
     // substitutes for multiple peers at once. Any single passing
@@ -1160,6 +1327,11 @@ describe('runStoryboard: F6 round-2 — cascade survives phase boundaries', () =
     // Pre-fix: statefulFailed reset at phase boundary, assertion ran
     // against absent state and failed misleadingly. Post-fix: cascade
     // survives across phases, assertion cleanly skips.
+    //
+    // Phase 1 has a peer stateful step alongside `sync_gov` so the
+    // sole-stateful-step exemption (adcp-client-python#550) doesn't
+    // apply — both stateful steps miss with no rescue, the phase
+    // genuinely fails to establish state, and the cascade trips.
     agent = await startFakeAgent();
     const storyboard = storyboardWithPhases([
       {
@@ -1170,6 +1342,14 @@ describe('runStoryboard: F6 round-2 — cascade survives phase boundaries', () =
             id: 'sync_gov',
             title: 'sync_governance setup',
             task: '__test_setup_gov',
+            stateful: true,
+            auth: 'none',
+            sample_request: {},
+          },
+          {
+            id: 'sync_gov_peer',
+            title: 'sync_governance peer (also missing — no rescue)',
+            task: '__test_setup_gov_peer',
             stateful: true,
             auth: 'none',
             sample_request: {},
@@ -1564,6 +1744,11 @@ describe('runStoryboard: #1161 phase.depends_on cascade scoping', () => {
     // legacy "depend on every prior phase" semantics. The F6 round-2
     // cross-phase pattern (signal_marketplace/governance_denied) MUST
     // continue to cascade without YAML changes.
+    //
+    // Phase 1 has a stateful peer alongside `setup` so the
+    // sole-stateful-step exemption (adcp-client-python#550) doesn't
+    // apply — the cascade actually trips, and the cross-phase
+    // depends_on default carries it into phase 2.
     agent = await startFakeAgent();
     const storyboard = storyboardWithPhases([
       {
@@ -1574,6 +1759,14 @@ describe('runStoryboard: #1161 phase.depends_on cascade scoping', () => {
             id: 'setup',
             title: 'setup (missing)',
             task: 'sync_governance',
+            stateful: true,
+            auth: 'none',
+            sample_request: {},
+          },
+          {
+            id: 'setup_peer',
+            title: 'setup peer (also missing — no rescue)',
+            task: 'sync_governance_peer',
             stateful: true,
             auth: 'none',
             sample_request: {},

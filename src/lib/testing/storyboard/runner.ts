@@ -131,6 +131,21 @@ const OAUTH_NOT_ADVERTISED_DETAIL =
   'Skipped: agent does not advertise OAuth — /.well-known/oauth-protected-resource returned 404 (RFC 9728 §3). API-key path must carry auth_mechanism_verified for this storyboard to pass.';
 
 /**
+ * Suffix appended to the skip detail when the sole-stateful-step exemption
+ * fires (`not_applicable` / `missing_tool` / `missing_test_controller` on
+ * the only stateful step in a phase, no `provides_state_for` rescue
+ * declared). Adopters reading the report otherwise have to infer from the
+ * absence of cascade-skips that the runner consciously chose not to
+ * cascade — this marker makes the decision explicit.
+ *
+ * Pre-formatted phrase, parameterized only by phase id. Greppable via
+ * `sole stateful step exemption applied`.
+ */
+function soleStatefulExemptionDetail(phaseId: string): string {
+  return ` Sole stateful step exemption applied for phase '${phaseId}': no peer could have established substitute state, so downstream phases run without cascade (adcp#4053, adcp-client#1146/#1545).`;
+}
+
+/**
  * Per-reason override strings for detailed skip reasons that want a more
  * specific message than the canonical fallback. Used only when the probe
  * itself didn't emit an error-style detail.
@@ -1701,15 +1716,40 @@ async function executeStoryboardPass(
                 };
               }
             } else {
-              // Trip this phase's cascade. First trip wins — subsequent
-              // triggers don't overwrite, since the cascade text
-              // references the originating diagnostic (the leftmost
-              // missing-state stateful step in the phase).
-              if (!phaseStatefulCascades.has(phase.id)) {
+              // Sole-stateful-step exemption (adcp-client-python#550):
+              // when a hard-missing skip lands on the ONLY stateful step
+              // in the phase, no peer could have established substitute
+              // state — same shape as #1146's `not_applicable` exemption.
+              // The platform legitimately doesn't implement this pathway
+              // (e.g., proposal-mode / implicit-account adopters that
+              // skip `sync_accounts` because account state materializes
+              // on the first `get_products` call). Cascading every
+              // downstream phase to `prerequisite_failed` collapses
+              // useful coverage; let downstream phases run and fail on
+              // their own merits if state genuinely never materialized.
+              //
+              // The skipping step is always stateful and always in
+              // `phaseStatefulStepIds` (built eagerly at phase init), so
+              // length > 1 ⇔ a stateful peer exists.
+              const hasStatefulPeers = phaseStatefulStepIds.length > 1;
+              if (hasStatefulPeers && !phaseStatefulCascades.has(phase.id)) {
+                // Multiple stateful steps in the phase but no declared
+                // substitute. Trip the cascade. First trip wins —
+                // subsequent triggers don't overwrite, since the cascade
+                // text references the originating diagnostic (the
+                // leftmost missing-state stateful step in the phase).
                 phaseStatefulCascades.set(phase.id, {
                   stepId: step.id,
                   reason: result.skip_reason ?? 'missing_tool',
                 });
+              } else if (!hasStatefulPeers && result.skip) {
+                // Exemption applied. Surface the runner's decision on the
+                // step result so adopters reading per-step output don't
+                // have to infer it from the absence of downstream skips.
+                result.skip = {
+                  ...result.skip,
+                  detail: result.skip.detail + soleStatefulExemptionDetail(phase.id),
+                };
               }
             }
           } else if (result.skip_reason === 'not_applicable') {
@@ -1815,6 +1855,18 @@ async function executeStoryboardPass(
       const hadStatefulPeers = phaseStatefulStepIds.some(id => id !== phasePendingNotApplicable!.stepId);
       if (hadStatefulPeers) {
         phaseStatefulCascades.set(phase.id, phasePendingNotApplicable);
+      } else {
+        // Sole-stateful-step exemption fired. Mark the not_applicable
+        // step result so adopters see the runner's decision explicitly
+        // (parity with the missing_tool / missing_test_controller path
+        // upstream — both decision sites annotate the skip detail).
+        const naResult = stepResults.find(r => r.step_id === phasePendingNotApplicable!.stepId);
+        if (naResult?.skip) {
+          naResult.skip = {
+            ...naResult.skip,
+            detail: naResult.skip.detail + soleStatefulExemptionDetail(phase.id),
+          };
+        }
       }
     }
 
