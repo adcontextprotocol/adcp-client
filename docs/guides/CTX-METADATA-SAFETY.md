@@ -227,6 +227,63 @@ framework's authenticator). Anything that arrives on the args bag is
 either a buyer-supplied non-secret OR a smuggled credential — the
 policy refuses to disambiguate.
 
+### Operational fan-out: `WireSafe<T>` + `pickWireSpecFields` (L2 of #1529)
+
+`credentialPolicy` is enforced at the *buyer-facing* dispatch boundary
+— the request the buyer sends to the storefront. Storefronts that
+fan-out to N upstream platforms still need to scrub buyer-controlled
+input before forwarding it to each upstream, and that scrub happens
+*after* the dispatcher has already cleared the credential-policy gate.
+
+**`pickWireSpecFields(req, schemaName)`** is the typed boundary at
+that downstream point. It strips a buyer request to the AdCP wire-
+spec field allowlist for the named request type and returns the
+result branded `WireSafe<T>`. The brand is what makes the discipline
+load-bearing: code that spreads a buyer request directly cannot
+satisfy the brand. `{ ...buyerReq }` is `T`, not `WireSafe<T>`, so
+passing it where `WireSafe<T>` is required is a compile error.
+
+```ts
+import { pickWireSpecFields, scrubExtensions } from '@adcp/sdk/server';
+
+// Buyer-facing handler (the storefront-side `sales.updateMediaBuy`)
+async updateMediaBuy(buyerReq, ctx) {
+  // Strip to wire-spec fields. Drops top-level credentials,
+  // unknown keys, account-pivot fields not in the spec.
+  const safe = pickWireSpecFields(buyerReq, 'UpdateMediaBuyRequest');
+
+  // Per-target: filter ext/context to a known-safe key set, inject
+  // storefront-resolved credentials.
+  const targets = await resolveTargets(buyerReq, ctx);
+  for (const target of targets) {
+    const perTarget = scrubExtensions(safe, {
+      allowedExtKeys: new Set(['scope3_api_key', 'partner_request_id']),
+      inject: {
+        context: {
+          managed_access_token: target.token,
+          managed_advertiser_id: target.advertiserId,
+        },
+      },
+    });
+    await operational.updateMediaBuy(ctxFor(target), perTarget);
+  }
+}
+```
+
+The wire-spec field allowlists come from codegen
+(`scripts/generate-wire-spec-fields.ts` walks `schemas/cache/{version}/`
+and emits the field arrays). Drift between this map and the schemas
+is structurally impossible — both are emitted from the same codegen
+pass.
+
+`pickWireSpecFields` covers fan-out request types that adopters
+realistically forward upstream — every mutating tool in
+`MUTATING_TASKS` plus `get_media_buy_delivery` (the canonical poller
+read). Read-only catalog tools (`list_*`) aren't fan-out targets and
+aren't in the codegen allowlist; if your storefront fans out a
+read-only call, the buyer-facing `credentialPolicy` already covers
+the input scan.
+
 ### What `credentialPolicy` does NOT cover
 
 `credentialPolicy` closes the **credential-smuggling** half of the
