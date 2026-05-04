@@ -3401,17 +3401,15 @@ function buildMediaBuyHandlers<P extends DecisioningPlatform<any, any>>(
             ctx: reqCtx as unknown as { account: { id: string } },
           });
           if (intercept.kind === 'intercepted') {
-            return intercept.response;
-          }
-          if (intercept.kind === 'handoff') {
-            // HITL slow path. Route through the framework's standard
-            // task-handoff dispatch so the buyer sees the Submitted
-            // envelope immediately; the wrapped handoff commits the
-            // proposal when the adopter's HITL workflow resolves.
+            // Unified sync-or-HITL dispatch. routeIfHandoff runs
+            // `intercept.project` inline for sync `FinalizeProposalSuccess`
+            // returns and inside the background task for HITL handoffs.
+            // Same machinery createMediaBuy / syncCreatives use — finalize
+            // inherits the framework's task-lifecycle guarantees.
             const push = extractPushConfig(params, logger, {
               allowPrivateWebhookUrls: pushOpts.allowPrivateWebhookUrls,
             });
-            const handoffResult = await routeIfHandoff(
+            const out = await routeIfHandoff(
               taskRegistry,
               {
                 tool: 'get_products',
@@ -3423,14 +3421,10 @@ function buildMediaBuyHandlers<P extends DecisioningPlatform<any, any>>(
                 observability,
                 logger,
               },
-              intercept.handoff,
-              r => r
+              intercept.result,
+              intercept.project
             );
-            // routeIfHandoff returns either the resolved wire shape OR
-            // a SubmittedEnvelope. Both are valid responses on the wire
-            // for get_products with action='finalize' (the buyer
-            // pattern-matches on `task_id` vs. `proposals[]`).
-            return handoffResult as never;
+            return out as never;
           }
         }
         return projectSync(

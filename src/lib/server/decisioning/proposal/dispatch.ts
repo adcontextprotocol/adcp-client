@@ -39,14 +39,7 @@
  * @packageDocumentation
  */
 
-import {
-  AdcpError,
-  _createTaskHandoff,
-  _extractTaskFn,
-  isTaskHandoff,
-  type TaskHandoff,
-  type TaskHandoffContext,
-} from '../async-outcome';
+import { AdcpError, isTaskHandoff, type TaskHandoff } from '../async-outcome';
 import type { GetProductsRequest, GetProductsResponse, Product, Proposal } from '../../../types/tools.generated';
 import {
   detectFinalizeAction,
@@ -84,28 +77,50 @@ function hasFinalizeCapability<TRecipe extends Recipe, TCtxMeta>(
 /**
  * Result of {@link maybeInterceptFinalize}.
  *
- *   - `kind: 'intercepted'` — the framework handled the finalize and
- *     produced a wire response (caller returns this verbatim).
+ *   - `kind: 'intercepted'` — adopter's `finalizeProposal` was called.
+ *     Caller threads `result` and `project` through the framework's
+ *     standard `routeIfHandoff` so the projection callback fires
+ *     synchronously for sync `FinalizeProposalSuccess` returns AND
+ *     inside the background task for `TaskHandoff<FinalizeProposalSuccess>`
+ *     returns. The projection commits the proposal store, emits the
+ *     `proposal.finalized` log, and shapes the wire response.
  *   - `kind: 'pass'` — no finalize entry / no finalize-capable manager;
  *     caller continues with the standard `getProducts` dispatch.
  *
+ * No special-case handling: finalize HITL inherits the framework's
+ * task-lifecycle posture (cancellation, restart-via-durable-store,
+ * deadline, webhook delivery) from `routeIfHandoff`, the same machinery
+ * that drives `createMediaBuy` HITL and `syncCreatives` HITL.
+ *
  * @public
  */
-export type FinalizeInterceptResult =
-  | { kind: 'intercepted'; response: GetProductsResponse }
-  | { kind: 'handoff'; handoff: TaskHandoff<GetProductsResponse> }
+export type FinalizeInterceptResult<TRecipe extends Recipe = Recipe> =
+  | {
+      kind: 'intercepted';
+      result: FinalizeProposalSuccess<TRecipe> | TaskHandoff<FinalizeProposalSuccess<TRecipe>>;
+      project: (success: FinalizeProposalSuccess<TRecipe>) => Promise<GetProductsResponse>;
+    }
   | { kind: 'pass' };
 
 /**
  * Intercept `buying_mode: 'refine'` requests carrying a
  * `refine[i].action: 'finalize'` entry. Hydrates the draft, calls the
- * manager's `finalizeProposal`, commits the proposal, and projects the
- * wire response.
+ * manager's `finalizeProposal`, and returns the raw adopter result + a
+ * projection callback. The runtime threads them through the framework's
+ * standard `routeIfHandoff` so:
  *
- * v1.5 supports inline commit (`FinalizeProposalSuccess`). HITL handoff
- * (`TaskHandoff<FinalizeProposalSuccess>`) is detected and rejected
- * with `INTERNAL_ERROR` for now — the post-completion commit hook lands
- * in a v1.6+ follow-up.
+ *   - Sync `FinalizeProposalSuccess` returns: projection runs inline,
+ *     buyer sees the committed proposal in the response.
+ *   - HITL `TaskHandoff<FinalizeProposalSuccess>` returns: framework
+ *     returns the Submitted envelope to the buyer, runs the adopter's
+ *     handoff fn in background; projection runs when the handoff
+ *     resolves, commits the proposal, projects the terminal task
+ *     artifact.
+ *
+ * Same machinery as `createMediaBuy` HITL — finalize inherits whatever
+ * cancellation, restart-via-durable-store, deadline, and webhook
+ * delivery semantics the framework's task lifecycle provides for every
+ * other unified-hybrid tool. No special-case wrapper.
  *
  * @public
  */
@@ -114,7 +129,7 @@ export async function maybeInterceptFinalize<TRecipe extends Recipe, TCtxMeta>(a
   manager: ProposalManager<TRecipe, TCtxMeta> | undefined;
   store: ProposalStore<TRecipe> | undefined;
   ctx: { account: { id: string } } & Record<string, unknown>;
-}): Promise<FinalizeInterceptResult> {
+}): Promise<FinalizeInterceptResult<TRecipe>> {
   const { request, manager, store, ctx } = args;
   const finalizeEntry = detectFinalizeAction(request);
   if (!finalizeEntry) return { kind: 'pass' };
@@ -155,84 +170,41 @@ export async function maybeInterceptFinalize<TRecipe extends Recipe, TCtxMeta>(a
 
   // manager + finalizeProposal are non-undefined per hasFinalizeCapability.
   const result = await manager!.finalizeProposal!(finalizeReq, ctx as never);
+  // Pre-determine the path label by checking whether the adopter
+  // returned a TaskHandoff up-front. `routeIfHandoff` runs `project`
+  // synchronously for the sync arm and inside the background task for
+  // the handoff arm; either way, we want the log to reflect which arm
+  // the adopter chose.
+  const path: 'inline' | 'handoff' = isTaskHandoff(result) ? 'handoff' : 'inline';
+  const finalizeProposalId = finalizeEntry.proposalId;
 
-  if (isTaskHandoff(result)) {
-    // HITL slow path. The framework wraps the adopter's handoff fn so
-    // store.commit + the `path: 'handoff'` log fire when the handoff
-    // resolves. The wrapped handoff returns a wire `GetProductsResponse`
-    // shape so `routeIfHandoff` projects the right Submitted envelope
-    // and terminal task artifact.
-    const innerFn = _extractTaskFn<FinalizeProposalSuccess<TRecipe>>(
-      result as TaskHandoff<FinalizeProposalSuccess<TRecipe>>
-    );
-    if (!innerFn) {
-      // Forged TaskHandoff — `isTaskHandoff` already checked WeakMap
-      // presence, so this is unreachable. Defensive throw keeps the
-      // type-narrowing clean for the wrapper closure.
+  const project = async (success: FinalizeProposalSuccess<TRecipe>): Promise<GetProductsResponse> => {
+    if (!isFinalizeSuccess<TRecipe>(success)) {
       throw new AdcpError('INTERNAL_ERROR', {
         recovery: 'terminal',
-        message: 'finalizeProposal returned a TaskHandoff with no extractable handoff fn.',
+        message:
+          `finalizeProposal resolved to an unexpected shape; expected FinalizeProposalSuccess ` +
+          `with 'proposal' and 'expiresAt' fields.`,
       });
     }
-    const finalizeProposalId = finalizeEntry.proposalId;
-    const wrappedHandoff = _createTaskHandoff<GetProductsResponse>(async (taskCtx: TaskHandoffContext) => {
-      const success = await innerFn(taskCtx);
-      if (!isFinalizeSuccess<TRecipe>(success)) {
-        throw new AdcpError('INTERNAL_ERROR', {
-          recovery: 'terminal',
-          message:
-            `finalizeProposal handoff resolved to an unexpected shape; expected ` +
-            `FinalizeProposalSuccess with 'proposal' and 'expiresAt' fields.`,
-        });
-      }
-      await store.commit(finalizeProposalId, {
-        expiresAt: success.expiresAt,
-        proposalPayload: success.proposal,
-      });
-      logFinalizeSucceeded({
-        proposalId: finalizeProposalId,
-        accountId,
-        expiresAt: success.expiresAt,
-        path: 'handoff',
-      });
-      return projectFinalizeResponse({
-        request,
-        committedProposal: success.proposal,
-        finalizeProposalId,
-      });
+    await store.commit(finalizeProposalId, {
+      expiresAt: success.expiresAt,
+      proposalPayload: success.proposal,
     });
-    return { kind: 'handoff', handoff: wrappedHandoff };
-  }
-
-  if (!isFinalizeSuccess<TRecipe>(result)) {
-    throw new AdcpError('INTERNAL_ERROR', {
-      recovery: 'terminal',
-      message:
-        `finalizeProposal returned an unexpected shape; expected FinalizeProposalSuccess with ` +
-        `'proposal' and 'expiresAt' fields.`,
+    logFinalizeSucceeded({
+      proposalId: finalizeProposalId,
+      accountId,
+      expiresAt: success.expiresAt,
+      path,
     });
-  }
-
-  await store.commit(finalizeEntry.proposalId, {
-    expiresAt: result.expiresAt,
-    proposalPayload: result.proposal,
-  });
-
-  logFinalizeSucceeded({
-    proposalId: finalizeEntry.proposalId,
-    accountId,
-    expiresAt: result.expiresAt,
-    path: 'inline',
-  });
-
-  return {
-    kind: 'intercepted',
-    response: projectFinalizeResponse({
+    return projectFinalizeResponse({
       request,
-      committedProposal: result.proposal,
-      finalizeProposalId: finalizeEntry.proposalId,
-    }),
+      committedProposal: success.proposal,
+      finalizeProposalId,
+    });
   };
+
+  return { kind: 'intercepted', result, project };
 }
 
 function isFinalizeSuccess<TRecipe extends Recipe>(v: unknown): v is FinalizeProposalSuccess<TRecipe> {

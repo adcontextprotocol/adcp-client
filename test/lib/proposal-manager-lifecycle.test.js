@@ -309,7 +309,7 @@ test('maybeInterceptFinalize', async t => {
     );
   });
 
-  await t.test('intercepts + commits + projects wire response', async () => {
+  await t.test('intercepts + projects (project commits + emits wire response)', async () => {
     const store = new InMemoryProposalStore();
     store.putDraft({
       proposalId: 'p1',
@@ -331,7 +331,7 @@ test('maybeInterceptFinalize', async t => {
         expiresAt: expires,
       };
     });
-    const result = await maybeInterceptFinalize({
+    const intercept = await maybeInterceptFinalize({
       request: {
         buying_mode: 'refine',
         refine: [{ scope: 'proposal', action: 'finalize', proposal_id: 'p1', ask: 'lock' }],
@@ -340,9 +340,13 @@ test('maybeInterceptFinalize', async t => {
       store,
       ctx: { account: { id: 'acct_1' } },
     });
-    assert.strictEqual(result.kind, 'intercepted');
-    assert.strictEqual(result.response.proposals[0].proposal_status, 'committed');
-    assert.strictEqual(result.response.refinement_applied[0].status, 'applied');
+    assert.strictEqual(intercept.kind, 'intercepted');
+    // The runtime wraps `intercept.result` + `intercept.project` with
+    // `routeIfHandoff`. For sync arms, that's equivalent to calling
+    // project directly with the success.
+    const response = await intercept.project(intercept.result);
+    assert.strictEqual(response.proposals[0].proposal_status, 'committed');
+    assert.strictEqual(response.refinement_applied[0].status, 'applied');
     // Store now committed
     const committed = store.get('p1', { expectedAccountId: 'acct_1' });
     assert.strictEqual(committed.state, 'committed');
@@ -353,7 +357,7 @@ test('maybeInterceptFinalize', async t => {
     assert.strictEqual(finalizeCalls[0].recipes.get('prod_a').recipe_kind, 'mock');
   });
 
-  await t.test('rejects when manager returns wrong shape', async () => {
+  await t.test('project rejects when adopter returns wrong shape', async () => {
     const store = new InMemoryProposalStore();
     store.putDraft({
       proposalId: 'p1',
@@ -361,16 +365,21 @@ test('maybeInterceptFinalize', async t => {
       recipes: new Map(),
       proposalPayload: { proposal_id: 'p1' },
     });
+    const intercept = await maybeInterceptFinalize({
+      request: {
+        buying_mode: 'refine',
+        refine: [{ scope: 'proposal', action: 'finalize', proposal_id: 'p1' }],
+      },
+      manager: manager(async () => ({ wrong: 'shape' })),
+      store,
+      ctx: { account: { id: 'acct_1' } },
+    });
+    assert.strictEqual(intercept.kind, 'intercepted');
+    // Shape check moved into `project` — same place the framework runs
+    // it for both sync and HITL arms via routeIfHandoff. Calling
+    // project directly here surfaces the rejection.
     await assert.rejects(
-      maybeInterceptFinalize({
-        request: {
-          buying_mode: 'refine',
-          refine: [{ scope: 'proposal', action: 'finalize', proposal_id: 'p1' }],
-        },
-        manager: manager(async () => ({ wrong: 'shape' })),
-        store,
-        ctx: { account: { id: 'acct_1' } },
-      }),
+      intercept.project(intercept.result),
       err => err.code === 'INTERNAL_ERROR' && /FinalizeProposalSuccess/.test(err.message)
     );
   });

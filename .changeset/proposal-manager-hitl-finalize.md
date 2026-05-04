@@ -2,21 +2,23 @@
 '@adcp/sdk': minor
 ---
 
-**HITL finalize commit hook** — wire `TaskHandoff[FinalizeProposalSuccess]` through the framework's existing task-handoff dispatch. Adopters whose finalize logic needs human review (trafficker IO sign-off, broker approval, brand-manager confirmation) can now return `ctx.handoffToTask(fn)` from `proposalManager.finalizeProposal`; the framework wraps the handoff so:
+**HITL finalize commit hook** — `proposalManager.finalizeProposal` accepts both inline `FinalizeProposalSuccess` returns AND `TaskHandoff<FinalizeProposalSuccess>` returns. The framework threads both through its standard `routeIfHandoff` dispatch (the same machinery `createMediaBuy` and `syncCreatives` HITL use), running a single projection callback for both arms. The projection commits the proposal via `ProposalStore.commit`, emits the `proposal.finalized` log, and shapes the wire `GetProductsResponse`.
 
-- The buyer immediately receives the spec's `Submitted` envelope from `get_products` (`task_id` populated).
-- The wrapped handoff runs in background via the standard `TaskRegistry` flow.
-- When the adopter's handoff function resolves with a `FinalizeProposalSuccess`, the framework commits the proposal via `ProposalStore.commit`, emits the `proposal.finalized` log with `path: 'handoff'`, and projects the wire `GetProductsResponse` (committed proposal) as the task's terminal artifact.
-- If the handoff fn throws (or returns the wrong shape), the framework's task-registry path treats the task as failed; the proposal stays `draft` so the buyer can retry.
+There is no special-case wrapper for finalize. By design — finalize HITL inherits whatever cancellation, restart-via-durable-store, deadline, and webhook delivery semantics the framework's task lifecycle provides for every other unified-hybrid tool. If those guarantees improve in a future SDK release, finalize benefits without code changes here.
+
+**Buyer-facing behavior:**
+
+- Inline path (sync `FinalizeProposalSuccess` return): buyer gets the committed proposal in the `get_products` response immediately.
+- HITL path (`TaskHandoff<FinalizeProposalSuccess>` return): buyer gets the spec's `Submitted` envelope (`task_id` populated). Adopter's handoff fn runs in background; framework commits the proposal when it resolves; buyer polls `tasks/get` (or receives the `push_notification` webhook) to retrieve the committed proposal.
 
 Adopter shape:
 
 ```ts
 finalizeProposal: async (req, ctx) => {
-  if (await this.requiresHITL(req)) {
+  if (await this.requiresHumanApproval(req)) {
     return ctx.handoffToTask(async taskCtx => {
-      await taskCtx.update({ message: 'Awaiting trafficker' });
-      const approval = await this.runHITL(req);
+      await taskCtx.update({ message: 'Awaiting trafficker IO sign-off' });
+      const approval = await this.runApprovalWorkflow(req);
       return {
         proposal: { proposal_id: req.proposalId, /* committed */ },
         expiresAt: approval.expires_at,
@@ -27,8 +29,6 @@ finalizeProposal: async (req, ctx) => {
 }
 ```
 
-The five-seam dispatch helper (`maybeInterceptFinalize`) gains a third result arm: `{ kind: 'handoff', handoff: TaskHandoff<GetProductsResponse> }`. The runtime routes through `routeIfHandoff` (the same machinery `createMediaBuy` uses for HITL ad-server review). `FinalizeInterceptResult` type updated.
+The dispatch helper `maybeInterceptFinalize` returns the raw adopter result + a projection callback; the runtime threads them through `routeIfHandoff`. `FinalizeInterceptResult.intercepted` now carries `{ result, project }` instead of a pre-projected `response` — the projection callback is what fires for both arms. JS callers that consumed the previous `response`-shaped intercept arm need to call `await intercept.project(intercept.result)` themselves.
 
-Closes the v1.6+ deferral noted in the original v1.5 dispatch wiring changeset. The pre-existing rejection (`finalizeProposal returned a TaskHandoff — HITL finalize is not yet wired in v1.5`) is gone.
-
-Test coverage: new e2e test in `test/lib/proposal-manager-e2e.test.js` exercises the full flow via `dispatchTestRequest` — adopter returns `ctx.handoffToTask(fn)`, framework commits store + emits `path: 'handoff'` log when the background task resolves.
+Test coverage: new e2e test in `test/lib/proposal-manager-e2e.test.js` exercises the full HITL flow via `dispatchTestRequest` — adopter returns `ctx.handoffToTask(fn)`, framework commits store + emits `path: 'handoff'` log when the background task resolves.
