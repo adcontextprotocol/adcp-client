@@ -31,7 +31,12 @@ import type { HandlerContext } from '../../create-adcp-server';
 import type { Account } from '../account';
 import type { RequestContext, CtxMetadataAccessor } from '../context';
 import type { TaskRegistry } from './task-registry';
-import { _createTaskHandoff, type TaskHandoffContext, type TaskHandoff } from '../async-outcome';
+import {
+  _createTaskHandoff,
+  type TaskHandoffContext,
+  type TaskHandoff,
+  type TaskHandoffOptions,
+} from '../async-outcome';
 import type { CtxMetadataStore, ResourceKind, CtxMetadataRef } from '../../ctx-metadata';
 
 /**
@@ -136,8 +141,19 @@ export function buildRequestContext<TCtxMeta = Record<string, unknown>>(
       creativeFormat: stubResolver('creativeFormat'),
     },
     ctxMetadata,
-    handoffToTask<TResult>(fn: (taskCtx: TaskHandoffContext) => Promise<TResult>): TaskHandoff<TResult> {
-      return _createTaskHandoff(fn);
+    handoffToTask<TResult>(
+      fn: (taskCtx: TaskHandoffContext) => Promise<TResult>,
+      options?: TaskHandoffOptions
+    ): TaskHandoff<TResult> {
+      if (options?.task_id !== undefined) {
+        if (typeof options.task_id !== 'string' || options.task_id.length === 0) {
+          throw new Error('handoffToTask options.task_id must be a non-empty string');
+        }
+        if (options.task_id.length > 128) {
+          throw new Error('handoffToTask options.task_id must be ≤ 128 characters');
+        }
+      }
+      return _createTaskHandoff(fn, options);
     },
   };
 }

@@ -246,12 +246,20 @@ export function createPostgresTaskRegistry(opts: CreatePostgresTaskRegistryOptio
   const backgrounds = new Map<string, Promise<void>>();
 
   return {
-    async create(createOpts: { tool: string; accountId: string; hasWebhook?: boolean }): Promise<{ taskId: string }> {
-      const taskId = `task_${randomUUID()}`;
-      await pool.query(
-        `INSERT INTO ${table} (task_id, tool, account_id, status, has_webhook) VALUES ($1, $2, $3, 'submitted', $4)`,
+    async create(createOpts: {
+      tool: string;
+      accountId: string;
+      hasWebhook?: boolean;
+      overrideTaskId?: string;
+    }): Promise<{ taskId: string }> {
+      const taskId = createOpts.overrideTaskId ?? `task_${randomUUID()}`;
+      const result = await pool.query(
+        `INSERT INTO ${table} (task_id, tool, account_id, status, has_webhook) VALUES ($1, $2, $3, 'submitted', $4) ON CONFLICT (task_id) DO NOTHING`,
         [taskId, createOpts.tool, createOpts.accountId, createOpts.hasWebhook === true]
       );
+      if ((result.rowCount ?? 0) === 0) {
+        throw new Error(`task_id already registered: ${taskId}`);
+      }
       return { taskId };
     },
 
