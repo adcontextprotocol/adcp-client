@@ -152,12 +152,14 @@ export interface SimulateDeliveryParams {
   clicks?: number;
   conversions?: number;
   reported_spend?: { amount: number; currency: string };
+  [key: string]: unknown;
 }
 
 export interface SimulateBudgetSpendParams {
   account_id?: string;
   media_buy_id?: string;
   spend_percentage: number;
+  [key: string]: unknown;
 }
 
 // ────────────────────────────────────────────────────────────

@@ -261,6 +261,7 @@ export interface TestControllerStore {
       clicks?: number;
       reported_spend?: { amount: number; currency: string };
       conversions?: number;
+      [key: string]: unknown;
     }
   ): Promise<SimulationSuccess>;
 
@@ -269,6 +270,7 @@ export interface TestControllerStore {
     account_id?: string;
     media_buy_id?: string;
     spend_percentage: number;
+    [key: string]: unknown;
   }): Promise<SimulationSuccess>;
 
   /** Seed a product fixture. Returns when the fixture is persisted. */
@@ -878,12 +880,10 @@ async function handleTestControllerRequestImpl(
         if (!params?.media_buy_id) {
           return controllerError('INVALID_PARAMS', 'simulate_delivery requires params.media_buy_id');
         }
-        return await store.simulateDelivery(params.media_buy_id as string, {
-          impressions: params.impressions as number | undefined,
-          clicks: params.clicks as number | undefined,
-          reported_spend: params.reported_spend as { amount: number; currency: string } | undefined,
-          conversions: params.conversions as number | undefined,
-        });
+        // Spread params verbatim so extension fields (e.g. vendor_metric_values)
+        // reach the adapter — params is spec-canonical additionalProperties:true.
+        const { media_buy_id: simulateDeliveryId, ...simulateDeliveryRest } = params;
+        return await store.simulateDelivery(simulateDeliveryId as string, simulateDeliveryRest);
       }
 
       case CONTROLLER_SCENARIOS.SIMULATE_BUDGET_SPEND: {
@@ -899,11 +899,15 @@ async function handleTestControllerRequestImpl(
             'simulate_budget_spend requires params.account_id or params.media_buy_id'
           );
         }
-        return await store.simulateBudgetSpend({
-          account_id: params.account_id as string | undefined,
-          media_buy_id: params.media_buy_id as string | undefined,
-          spend_percentage: params.spend_percentage as number,
-        });
+        // Spread params verbatim so extension fields reach the adapter.
+        return await store.simulateBudgetSpend(
+          params as {
+            account_id?: string;
+            media_buy_id?: string;
+            spend_percentage: number;
+            [key: string]: unknown;
+          }
+        );
       }
 
       case CONTROLLER_SCENARIOS.FORCE_CREATE_MEDIA_BUY_ARM: {
