@@ -41,7 +41,7 @@ test('buildGAMLikeRecipe: guaranteed product → recipe with priority 8 + locked
   assert.deepStrictEqual(recipe.ad_unit_ids, ['au_us_video_preroll']);
   assert.equal(recipe.line_item_priority, 8, 'guaranteed default priority');
   assert.equal(recipe.delivery_type, 'guaranteed');
-  assert.equal(recipe.pricing.pricing_model, 'CPM');
+  assert.equal(recipe.pricing.pricing_model, 'cpm');
   assert.equal(recipe.pricing.rate, 35.0);
   assert.equal(recipe.pricing.currency, 'USD');
   assert.equal(recipe.min_spend, 25_000);
@@ -51,7 +51,10 @@ test('buildGAMLikeRecipe: guaranteed product → recipe with priority 8 + locked
     reserved_impressions: 50_000_000,
   });
   assert.strictEqual(recipe.upstream_ids, undefined, 'pre-finalize: no upstream_ids');
-  assert.equal(recipe.capability_overlap, GAM_LIKE_OVERLAP);
+  // Per-product overlap derives from the product's actual offering —
+  // CPM-only product → pricingModels={'cpm'}, not the full GAM set.
+  assert.deepStrictEqual([...recipe.capability_overlap.pricingModels], ['cpm']);
+  assert.deepStrictEqual([...recipe.capability_overlap.deliveryTypes], ['guaranteed']);
 });
 
 test('buildGAMLikeRecipe: non-guaranteed product → priority 12', () => {
@@ -93,8 +96,8 @@ test('buildGAMLikeRecipe: post-finalize population via upstream_ids option', () 
 });
 
 test('GAM_LIKE_OVERLAP advertises the guaranteed-friendly capability set', () => {
-  assert.ok(GAM_LIKE_OVERLAP.pricingModels.has('CPM'));
-  assert.ok(GAM_LIKE_OVERLAP.pricingModels.has('CPV'));
+  assert.ok(GAM_LIKE_OVERLAP.pricingModels.has('cpm'));
+  assert.ok(GAM_LIKE_OVERLAP.pricingModels.has('cpv'));
   assert.ok(GAM_LIKE_OVERLAP.deliveryTypes.has('guaranteed'));
   assert.ok(GAM_LIKE_OVERLAP.deliveryTypes.has('non_guaranteed'));
   assert.ok(GAM_LIKE_OVERLAP.targetingDimensions.has('audience'));
@@ -124,7 +127,8 @@ test('buildKevelLikeRecipe: floor-priced product → recipe with weight 5 + impr
   assert.equal(recipe.pricing.floor_cpm, 1.5);
   assert.equal(recipe.pricing.target_cpm, 2.25);
   assert.equal(recipe.pricing.currency, 'USD');
-  assert.equal(recipe.capability_overlap, KEVEL_LIKE_OVERLAP);
+  assert.deepStrictEqual([...recipe.capability_overlap.pricingModels], ['cpm']);
+  assert.deepStrictEqual([...recipe.capability_overlap.deliveryTypes], ['non_guaranteed']);
   assert.strictEqual(recipe.upstream_ids, undefined);
 });
 
@@ -147,8 +151,8 @@ test('buildKevelLikeRecipe: omits target_cpm when absent + threads min_spend', (
 });
 
 test('KEVEL_LIKE_OVERLAP advertises the auction-remnant capability set', () => {
-  assert.ok(KEVEL_LIKE_OVERLAP.pricingModels.has('CPM'));
-  assert.ok(!KEVEL_LIKE_OVERLAP.pricingModels.has('CPV'), 'auction remnant is CPM-only');
+  assert.ok(KEVEL_LIKE_OVERLAP.pricingModels.has('cpm'));
+  assert.ok(!KEVEL_LIKE_OVERLAP.pricingModels.has('cpv'), 'auction remnant is CPM-only');
   assert.ok(KEVEL_LIKE_OVERLAP.deliveryTypes.has('non_guaranteed'));
   assert.ok(!KEVEL_LIKE_OVERLAP.deliveryTypes.has('guaranteed'));
   assert.ok(!KEVEL_LIKE_OVERLAP.targetingDimensions.has('audience'), 'no audience axis on remnant');

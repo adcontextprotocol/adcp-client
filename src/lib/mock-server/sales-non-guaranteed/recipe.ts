@@ -82,7 +82,9 @@ export interface KevelLikeRecipe extends Recipe {
  * @public
  */
 export const KEVEL_LIKE_OVERLAP: CapabilityOverlap = {
-  pricingModels: new Set(['CPM']),
+  // Lowercase matches the AdCP wire `pricing_model` enum so the framework's
+  // `overlap ⊆ wire` validation passes.
+  pricingModels: new Set(['cpm']),
   deliveryTypes: new Set(['non_guaranteed']),
   targetingDimensions: new Set(['geo', 'device_type', 'language']),
 };
@@ -122,7 +124,15 @@ export function buildKevelLikeRecipe(
       ...(product.pricing.target_cpm !== undefined && { target_cpm: product.pricing.target_cpm }),
     },
     goal_type: options.goal_type ?? 'impressions',
-    capability_overlap: KEVEL_LIKE_OVERLAP,
+    // Per-product overlap: matches the auction-remnant model where
+    // every product is CPM-only non-guaranteed. The static constant
+    // happens to match for this specialism; we still derive
+    // per-product to keep the pattern consistent with GAM-like.
+    capability_overlap: {
+      pricingModels: new Set(['cpm']),
+      deliveryTypes: new Set(['non_guaranteed']),
+      targetingDimensions: KEVEL_LIKE_OVERLAP.targetingDimensions,
+    },
   };
   if (product.pricing.min_spend !== undefined) recipe.min_spend = product.pricing.min_spend;
   if (options.upstream_ids) recipe.upstream_ids = options.upstream_ids;

@@ -63,10 +63,12 @@ export interface GAMLikeRecipe extends Recipe {
 
   /**
    * Pricing the upstream will book at. Adopter's `finalizeProposal`
-   * locks these values; pre-finalize they're indicative.
+   * locks these values; pre-finalize they're indicative. Lowercase
+   * values match the AdCP wire `pricing_model` enum so the framework's
+   * `overlap ⊆ wire` validation accepts the recipe.
    */
   pricing: {
-    pricing_model: 'CPM' | 'CPV' | 'CPCV' | 'CPC';
+    pricing_model: 'cpm' | 'cpv' | 'cpcv' | 'cpc';
     rate: number;
     currency: string;
   };
@@ -101,15 +103,16 @@ export interface GAMLikeRecipe extends Recipe {
 }
 
 /**
- * Canonical {@link CapabilityOverlap} for `GAMLikeRecipe` products.
- * Declares the wire capabilities buyers can configure on a guaranteed
- * line item. Adopters tighten this per-product when their inventory
- * mix doesn't accept all of these axes.
+ * Maximum capability set a GAM-style upstream supports across its
+ * product mix. Per-product `capability_overlap` is derived from this
+ * intersected with the product's actual offering — see
+ * {@link buildGAMLikeRecipe}'s overlap computation. Use this constant
+ * directly only when you know the product accepts every axis.
  *
  * @public
  */
 export const GAM_LIKE_OVERLAP: CapabilityOverlap = {
-  pricingModels: new Set(['CPM', 'CPV', 'CPCV']),
+  pricingModels: new Set(['cpm', 'cpv', 'cpcv']),
   deliveryTypes: new Set(['guaranteed', 'non_guaranteed']),
   targetingDimensions: new Set(['geo', 'device_type', 'language', 'placement', 'audience']),
 };
@@ -147,18 +150,32 @@ export function buildGAMLikeRecipe(
   } = {}
 ): GAMLikeRecipe {
   const priority = options.line_item_priority ?? (product.delivery_type === 'guaranteed' ? 8 : 12);
+  // Per-product overlap: intersect the platform's full capability set
+  // with what THIS product actually advertises on the wire. Catches
+  // adopter drift where the recipe claims capabilities the product
+  // doesn't expose. Mirrors the AdCP wire pricing_model values
+  // (lowercase) so `validateOverlapSubsetOfWire` accepts the recipe.
+  const productPricingModels = new Set([product.pricing.model]);
+  const productDeliveryTypes = new Set([product.delivery_type]);
   const recipe: GAMLikeRecipe = {
     recipe_kind: 'gam',
     network_code: product.network_code,
     ad_unit_ids: product.ad_unit_ids,
     line_item_priority: priority,
     pricing: {
-      pricing_model: product.pricing.model === 'cpm' ? 'CPM' : 'CPV',
+      pricing_model: product.pricing.model === 'cpm' ? 'cpm' : 'cpv',
       rate: product.pricing.cpm,
       currency: product.pricing.currency,
     },
     delivery_type: product.delivery_type,
-    capability_overlap: GAM_LIKE_OVERLAP,
+    capability_overlap: {
+      pricingModels: productPricingModels,
+      deliveryTypes: productDeliveryTypes,
+      // Targeting dimensions are platform-wide (every product accepts
+      // them); leave the wide set since validateOverlapSubsetOfWire
+      // doesn't check targeting against per-product wire shape.
+      targetingDimensions: GAM_LIKE_OVERLAP.targetingDimensions,
+    },
   };
   if (options.availability_window) recipe.availability_window = options.availability_window;
   else if (product.availability?.start_date && product.availability?.end_date) {
