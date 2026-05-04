@@ -1,5 +1,142 @@
 # Changelog
 
+## 6.10.0
+
+### Minor Changes
+
+- cb1776c: `credentialPolicy.tools` now accepts a granular `{ allow: string[] }` shape per-tool. Storefronts that legitimately accept ONE specific buyer-presented credential field (e.g. `delivery.api_token` on `activate_signal`) can permit only that path while still rejecting other credential-shaped keys — defense-in-depth scaling with the size of the exception, instead of opening the entire tool with `'lax'`.
+
+  ```ts
+  credentialPolicy: {
+    policy: 'authInfo-only',
+    tools: {
+      // Coarse: every credential-shaped key passes
+      legacy_tool: 'lax',
+
+      // Granular: ONLY the listed paths pass; other credential-shaped
+      // keys still reject. Recommended over 'lax' wherever feasible.
+      activate_signal: { allow: ['delivery.api_token'] },
+    },
+  }
+  ```
+
+  Allowlist entries are exact-match dotted paths (the same shape the scanner emits in `details.credential_paths`). Construction-time validation throws on empty allow lists, non-string entries, or unregistered tool names. Closes #1538.
+
+- f57a9c7: **Security**: add opt-in `credentialPolicy` server config that scans incoming buyer args for credential-shaped keys at any depth and rejects with `PERMISSION_DENIED` (`details.scope: 'credentials'`) when configured `'authInfo-only'`. Closes the buyer-args credential-smuggling vector class (top-level, nested `context`, nested `ext`) observed across three rounds of review on PR scope3data/agentic-adapters#248. Default `'lax'` preserves existing behavior; opt in to enforce.
+
+  Default patterns cover the common credential vocabulary: `_token`, `_secret`, `_password`, `api_key`, `private_key`, `authorization`, `cookie`, `bearer`, `accessToken`, `refreshToken` (case-insensitive). Patterns extensible via `credentialPolicy.patterns.extend` or fully replaceable via `credentialPolicy.patterns.matcher`. Per-tool overrides via `credentialPolicy.tools` (typo-validated against the registered tool set at construction).
+
+  Rejection envelope reports paths only (never values) and bypasses `params.context` echo so the offending value does not round-trip through the response. Walker hardened against accessor-property getters: credential-named getters are flagged by name without invoking the getter, defending against throw / side-effect attacks on hand-built non-JSON inputs. `/g` and `/y` regex flags in adopter-supplied `extend` patterns are stripped to prevent `lastIndex`-based skip-alternation. See #1529.
+
+- c92390f: `credentialPolicy.scanAuthInfo` (default `false`) extends the credential-shaped scan to cover `ctx.authInfo.extra` at any depth, using the same pattern set as the args scan. Closes the leak surface where custom authenticators stamp credential-shaped values into `authInfo.extra` (token-introspection responses, JWT claim sets, OAuth scope blobs) and adopter handler code or log lines propagate them.
+
+  ```ts
+  createAdcpServer({
+    credentialPolicy: {
+      policy: 'authInfo-only',
+      scanAuthInfo: true, // NEW: extend perimeter to authInfo.extra
+    },
+  });
+  ```
+
+  **Fully orthogonal to `policy` mode.** Adopters can mix `policy: 'lax' + scanAuthInfo: true` (trust args, defend authInfo log propagation) or any combination. Per-tool `'lax'` overrides only affect the args scan — `scanAuthInfo` fires regardless.
+
+  **Wire-envelope discipline.** Args-bag hits report in `details.credential_paths` (existing behavior). `authInfo.extra` hits are LOG-ONLY — paths surface in `logger.warn` server-side; the wire envelope reports a coarse signal (`details.scope: 'credentials'`, `recovery: 'terminal'`) without enumerating which `extra` field tripped the scan. Prevents an info-disclosure oracle on internal authInfo structure the buyer has no read access to.
+
+  Default `false` because OAuth introspection blobs and JWT claims in `extra` will false-positive on default patterns like `/_token$/i`. Adopters opt in only when their authenticator keeps `extra` credential-clean. Closes #1539.
+
+- 1054e2f: Add `createDynamicRegistry<TRegistries>` — multi-registry plumbing with atomic-bundle-swap, in-flight refresh coalescing, and pinned-carry-forward semantics. Packages the multi-registry-atomicity idiom every adopter that hot-reloads tenants from a database independently rebuilds (the shim in scope3data/agentic-adapters built this three times before the pattern crystallized).
+
+  Five lessons baked in: single-pointer atomic swap (concurrent readers see consistent snapshots across `await`), in-flight refresh coalescing (parallel `refresh()` calls share one Promise), pinned-carry-forward (entries with `{ pinned: true }` survive every refresh; pin always wins over `pending` writes), lock-step unregister (clears across all registries), per-registry typed `get`.
+
+  Two design refinements over the original issue: `pinned: true` flag at register time replaces the parallel `staticIds()` Set (single source of truth, no drift hazard); duplicate registration throws by default (`{ overwrite: true }` opt-in) so silent tenant clobbering doesn't ship to production. See #1531.
+
+- a9e658e: Add `OperationalPlatform` interface and `defineOperationalPlatform` factory for in-process consumers (price-optimization pollers, audience-sync task pollers, scheduled jobs, storefront fan-out paths) that don't carry an MCP request. Distinct from `DecisioningPlatform` (buyer-facing dispatch with `RequestContext`).
+
+  Five-method surface: `extractContext` (synthesize per-call context from a stored token), `updateMediaBuy` (required), `getMediaBuyDelivery` (required, takes `mediaBuyIds: readonly string[]` matching the wire-spec plural field), `pollAudienceStatuses` (optional, returns `Map<string, AudienceStatus>` aligned with `AudiencePlatform.pollAudienceStatuses`), `getProducts` (optional). Methods throw `AdcpError` for structured rejection, matching `DecisioningPlatform`'s convention.
+
+  Type parameter `OperationalPlatform<TCtx extends OperationalContext>` carries adopter-specific context fields (advertiser id, sandbox mode, region) through every method without escape hatches.
+
+  The named contract eliminates the seam every operational adopter would otherwise reinvent. v5 adapters duck-type-satisfy `extractContext`'s shape (signature matches v5 `PlatformAdapter.extractContext`); methods that returned `Result<T, E>` in v5 / shim code need a `Result`-to-throw migration during adoption — replace `if (r.err) handle(r.err)` with `try { ... } catch (e) { if (e instanceof AdcpError) handle(e); }`. See #1530.
+
+- df023bb: Add an always-on storyboard summary surface and `adcp specialism show` for pre-flight inspection.
+
+  **Always-on summary at end of `adcp storyboard run`.** Every run now writes a compact summary block to **stderr** with three status-driven markers: `STORYBOARD-OK` (passing), `STORYBOARD-PARTIAL` (wired but partly unexercised — silent tracks), and `STORYBOARD-FAIL` (failing / unreachable / auth_required, or any individual step failed). The marker is **status-driven**, not just failure-count-driven: an unreachable agent now correctly renders `STORYBOARD-FAIL run ended unreachable` instead of the silent green pass it produced before. CI authors can `grep -q STORYBOARD-FAIL` to surface failures regardless of `--json` mode or workflow `continue-on-error: true` wiring. When `$GITHUB_STEP_SUMMARY` is set (GitHub Actions), the same content is appended as a markdown table so PR reviewers see failures in the run summary panel without opening the log.
+
+  **Status-aware exit code.** `adcp storyboard run` now exits 3 when `overall_status` is `failing`, `unreachable`, or `auth_required` — previously, an unreachable agent or auth-blocked run silently exited 0 because `tracks_failed` was zero. `partial` is preserved as exit 0 (some tracks ran silent — reportable but not a CI block). Runs that throw before `comply()` produces a result still exit 1 with a synthetic `pre-flight/comply` failure in the summary artifact (see below).
+
+  **Crash-path summary.** When `comply()` itself throws (network down, capabilities parse error, TLS-policy refusal), the catch block now emits the same stderr block, `$GITHUB_STEP_SUMMARY` markdown, and `--summary-output` JSON via a synthetic `buildCrashSummary` artifact (`overall_status: unreachable`, single failure with `storyboard_id: 'pre-flight'`, `step_id: 'comply'`, `reason_kind: 'error'`). The always-on promise now holds on the path where it matters most: a Slack bot reading `summary.json` sees a valid `schema_version: 1` payload precisely when the agent is broken hardest, instead of nothing.
+
+  **`--summary-output <path>`.** New flag on `storyboard run`. Writes a narrow, schema-stable JSON artifact for downstream tooling (badges, Slack bots, dashboards):
+
+  ```json
+  {
+    "schema_version": 1,
+    "agent_url": "...",
+    "sdk_version": "6.9.0",
+    "adcp_version": "3.0.6",
+    "overall_status": "failing",
+    "passed": 12,
+    "failed": 2,
+    "skipped": 1,
+    "failures": [
+      { "track": "media_buy", "storyboard_id": "...", "step_id": "...", "reason": "...", "reason_kind": "validation" }
+    ]
+  }
+  ```
+
+  `failures[].reason_kind` is a stable discriminator (`error` | `validation` | `expected_mismatch` | `unspecified`) so a Slack bot can color-code without regexing the reason string. Pin downstream tooling to this contract. The full `ComplianceResult` on stdout in `--json` mode evolves with the protocol; the summary doesn't.
+
+  **`adcp specialism show <slug>` (new top-level verb).** Prints the resolved required scenarios, required tools, storyboard phases, and invariants for a specialism — answers "what is CI actually exercising against my server?" _before_ runtime. `adcp specialism list` enumerates every specialism the compliance cache knows about. Both subcommands support `--json`. Specialisms get a top-level verb (parallel to `storyboard show`) rather than a flag on `storyboard show` so the positional contract stays unambiguous.
+
+  **Public API additions** (`@adcp/sdk`):
+  - `buildComplianceSummary(result, { sdkVersion, adcpVersion }) → ComplianceSummaryArtifact`
+  - `buildCrashSummary({ sdkVersion, adcpVersion, agentUrl, error, startedAt, durationMs }) → ComplianceSummaryArtifact`
+  - `formatComplianceSummaryText(artifact) → string` _(stderr-style block)_
+  - `formatComplianceSummaryMarkdown(artifact) → string` _(GitHub step summary table)_
+  - `loadSpecialismDetail(slug) → SpecialismDetail` _(resolves `requires_scenarios` against the bundled cache)_
+  - `listSpecialisms() → ComplianceIndexSpecialism[]`
+
+  Pure-additive surface at the wire, library API, and CLI. No breaking changes.
+
+- 9b7207c: `WireSafe<T>` brand + `pickWireSpecFields` + `scrubExtensions` — the L2 half of #1529's credential-discipline plan. Where L1 (`credentialPolicy`) catches credential-shaped keys at the buyer-facing dispatch boundary, L2 catches structural leakage at the operational fan-out boundary — storefront fan-out code that picks per-target args from a buyer request and forwards them upstream.
+
+  ```ts
+  import { pickWireSpecFields, scrubExtensions } from '@adcp/sdk/server';
+
+  const safe = pickWireSpecFields(buyerReq, 'UpdateMediaBuyRequest');
+  // safe: WireSafe<UpdateMediaBuyRequest> — every wire-spec-allowed
+  // field preserved, every other key (top-level credentials,
+  // arbitrary attacker payload) dropped.
+
+  const perTarget = scrubExtensions(safe, {
+    allowedExtKeys: new Set(['scope3_api_key', 'partner_request_id']),
+    inject: { context: { managed_access_token: target.token } },
+  });
+  await operational.updateMediaBuy(ctxFor(target), perTarget);
+  ```
+
+  Wire-spec field allowlists come from codegen (`scripts/generate-wire-spec-fields.ts`) walking `schemas/cache/{version}/` — drift between the helper and the schema is structurally impossible. Codegen covers 29 fan-out-relevant request types (every mutating tool + `get_media_buy_delivery`).
+
+  The `WireSafe<T>` brand is type-level only (constructed via `unique symbol`) — adopters who use the helper get the safety benefit at the picking site. `OperationalPlatform` method signatures keep their existing plain-typed parameters so #1530 remains source-compatible. Closes #1529.
+
+### Patch Changes
+
+- 4671d88: `npm run build:lib` now runs `schemas:ensure` before the wire-spec-fields codegen. The codegen reads from `schemas/cache/{version}/` (gitignored, populated by `sync-schemas`), so building on a fresh checkout — or from a CI workflow that doesn't explicitly sync schemas first — would fail with `schema cache not found`. `schemas:ensure` is the idempotent guard the pretest hook already uses; ~10ms when the cache is present, syncs only when missing. Fixes the Release workflow which calls `build:lib` directly.
+- ce04b4d: fix(server): createDynamicRegistry — clear stale pin on overwrite; add `has()` method
+
+  `register(..., { overwrite: true })` without `{ pinned: true }` no longer carries the previous pin forward through the next `refresh()`. Adds `DynamicRegistry.has(name, id)` for cheap presence checks. Adds JSDoc note that `registries` must be passed `as const` to preserve per-registry value types.
+
+- 266f8f7: Storyboard runner: a stateful step that skips with `missing_tool` or `missing_test_controller` no longer trips the cross-phase cascade when it is the SOLE stateful step in its phase and has no `peer_substitutes_for` declarations targeting it. The sole-stateful-step exemption from #1146 (originally scoped to `not_applicable`) now extends to hard-missing skip reasons.
+
+  Surfaced by adcp-client-python#550 (ProposalManager v1.5): proposal-mode adopters don't advertise `sync_accounts` because account state materializes on the first `get_products` call, but the storyboard's setup phase has `sync_accounts` as the only stateful step. Pre-fix, every downstream stateful phase (refine_proposal / finalize_proposal / accept_proposal) collapsed to `prerequisite_failed`. Post-fix, downstream phases run and surface real diagnostics on their own merits.
+
+  Multi-stateful-step phases preserve existing behavior: a `missing_tool` skip with at least one stateful peer (and no rescue declaration) still trips the cascade.
+
+  When the exemption fires, the skipping step's `skip.detail` is annotated with `Sole stateful step exemption applied for phase '<phase_id>': ...` so adopters reading per-step output see the runner's decision explicitly rather than having to infer it from the absence of cascade-skips. Greppable via `sole stateful step exemption applied`. Cross-runner alignment tracked at adcontextprotocol/adcp#4053 (lift the exemption rule into `runner-output-contract.yaml`).
+
+- 0a9f845: Fix `WIRE_SPEC_FIELDS` entry objects not being frozen, and harden `pickWireSpecFields` against `Array.prototype[Symbol.iterator]` poisoning. `Object.freeze(WIRE_SPEC_FIELDS)` froze the outer map's slots and the inner `fields` arrays, but the entry objects themselves were mutable — so `.fields` could be silently reassigned, defeating the L2 allowlist. Additionally, the `for-of` loop in `pickWireSpecFields` dispatched through `Array.prototype[Symbol.iterator]`, which a supply-chain dep could poison to inject extra field names at call time. Fixed by wrapping every entry in `Object.freeze({...})` (codegen script + generated file) and replacing the `for-of` with an indexed loop. Adds two new test assertions (entry-freeze + iterator-poisoning). Also corrects contradictory JSDoc on `ScrubExtensionsOptions.inject`.
+
 ## 6.9.0
 
 ### Minor Changes
