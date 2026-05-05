@@ -126,6 +126,132 @@ function checkDeprecatedFormats(formats) {
     .map(format => format.format_id?.id || format.format_id || format.id || format.name || 'unknown');
 }
 
+// Headers the SDK manages itself or that fetch/undici normalize at send time.
+// Set lowercase; comparisons must lower the candidate key. Splits the SDK's
+// concerns from user routing context:
+//   - auth/*: the bearer is owned by --auth (auth always wins).
+//   - signature*: RFC 9421 covers these; the signing wrapper at
+//     src/lib/protocols/a2a.ts:194-206 generates them per-request.
+//   - hop-by-hop: managed by the HTTP runtime; user overrides cause subtle
+//     framing bugs in MCP/A2A transports.
+const RESERVED_AUTH_HEADER_KEYS = new Set([
+  'authorization',
+  'x-adcp-auth',
+  // RFC 9421 — request-signing layer owns these.
+  'signature',
+  'signature-input',
+  'signature-agent',
+  'accept-signature',
+  // Hop-by-hop / fetch-managed — overriding causes framing bugs.
+  'content-type',
+  'content-length',
+  'host',
+  'connection',
+  'transfer-encoding',
+  'keep-alive',
+  'proxy-authorization',
+  'te',
+  'trailer',
+  'upgrade',
+]);
+
+// RFC 7230 token charset: alnum + !#$%&'*+-.^_`|~. Used for header field names.
+const HEADER_NAME_TOKEN = /^[A-Za-z0-9!#$%&'*+\-.^_`|~]+$/;
+
+/**
+ * Parse repeatable --header / -H KEY=VALUE flags. Accepts:
+ *   --header KEY=VALUE    --header=KEY=VALUE
+ *   -H KEY=VALUE          (short form)
+ *
+ * Returns:
+ *   { customHeaders, consumedTokens } where consumedTokens lists every arg
+ *   that should be excluded from positional resolution (the flag tokens
+ *   themselves and their KEY=VALUE values). Reserved keys (auth, signing,
+ *   hop-by-hop) are dropped with a stderr warning — the SDK owns them.
+ */
+function parseHeaderFlags(args) {
+  const customHeaders = {};
+  const consumedTokens = new Set();
+
+  const consumeKv = (raw, source) => {
+    const eq = raw.indexOf('=');
+    if (eq <= 0) {
+      console.error(`ERROR: ${source} requires KEY=VALUE, got: ${raw}\n`);
+      process.exit(2);
+    }
+    const key = raw.slice(0, eq).trim();
+    const value = raw.slice(eq + 1);
+    if (!key) {
+      console.error(`ERROR: ${source} requires a non-empty header name\n`);
+      process.exit(2);
+    }
+    // RFC 7230 §3.2.6: a token excludes whitespace and CTLs. Reject anything
+    // outside that charset so `-H 'Foo: bar=value'` (key would be "Foo: bar")
+    // and Unicode lookalikes like `-H 'Аuthorization=...'` (Cyrillic А) get
+    // surfaced at parse time rather than smuggled to the wire.
+    if (!HEADER_NAME_TOKEN.test(key)) {
+      console.error(`ERROR: ${source} key '${key}' contains characters outside the RFC 7230 token charset\n`);
+      process.exit(2);
+    }
+    // CR/LF/NUL in a header value is the classic header-splitting / request-
+    // smuggling shape. undici rejects it at send time, but the CLI is the
+    // right place to refuse — clearer error, no half-written config.
+    if (/[\r\n\0]/.test(value)) {
+      console.error(`ERROR: ${source} value for '${key}' contains CR, LF, or NUL\n`);
+      process.exit(2);
+    }
+    if (RESERVED_AUTH_HEADER_KEYS.has(key.toLowerCase())) {
+      console.error(`Warning: ignoring custom ${key} header — reserved for SDK auth/signing/transport.`);
+      return;
+    }
+    customHeaders[key] = value;
+  };
+
+  for (let i = 0; i < args.length; i++) {
+    const tok = args[i];
+    if (tok === '-H' || tok === '--header') {
+      const val = args[i + 1];
+      if (val === undefined || val.startsWith('--') || val === '-H') {
+        console.error(`ERROR: ${tok} requires a KEY=VALUE pair\n`);
+        process.exit(2);
+      }
+      consumedTokens.add(tok);
+      consumedTokens.add(val);
+      consumeKv(val, tok);
+      i++;
+    } else if (tok.startsWith('--header=')) {
+      consumedTokens.add(tok);
+      consumeKv(tok.slice('--header='.length), '--header');
+    } else if (tok.startsWith('-H=')) {
+      // Tolerate `-H=KEY=VALUE` even though the documented form is `-H KEY=VALUE`.
+      consumedTokens.add(tok);
+      consumeKv(tok.slice('-H='.length), '-H');
+    }
+  }
+
+  return { customHeaders, consumedTokens };
+}
+
+/**
+ * Merge saved per-agent headers with CLI-supplied headers. CLI wins on key
+ * conflict so verify scripts can override one-off values without rewriting
+ * the saved alias. Filters reserved keys case-insensitively from BOTH sides
+ * so a hand-edited `~/.adcp/config.json` cannot smuggle an `authorization`
+ * (lowercase) header that shadows the SDK-supplied `Authorization`.
+ */
+function mergeHeaders(savedHeaders, cliHeaders) {
+  const merged = { ...(savedHeaders || {}), ...(cliHeaders || {}) };
+  const filtered = {};
+  for (const [key, value] of Object.entries(merged)) {
+    if (RESERVED_AUTH_HEADER_KEYS.has(key.toLowerCase())) {
+      console.error(`Warning: ignoring saved ${key} header — reserved for SDK auth/signing/transport.`);
+      continue;
+    }
+    filtered[key] = value;
+  }
+  return Object.keys(filtered).length > 0 ? filtered : undefined;
+}
+
 /**
  * Extract human-readable protocol message from conversation
  */
@@ -701,6 +827,10 @@ function parseAgentOptions(args) {
   const summaryOutputValue =
     summaryOutputIdx !== -1 && summaryOutputIdx + 1 < args.length ? args[summaryOutputIdx + 1] : null;
 
+  // --header / -H KEY=VALUE: arbitrary outbound HTTP headers. Repeatable.
+  // Auth-conflicting keys are dropped here with a warning.
+  const { customHeaders, consumedTokens: headerTokens } = parseHeaderFlags(args);
+
   // Filter out flags and their values to find positional args. The `--file=PATH`
   // form is already removed by the `startsWith('--')` check; only the
   // space-separated value needs explicit exclusion. Use explicit nullish check
@@ -725,7 +855,11 @@ function parseAgentOptions(args) {
     summaryOutputValue,
     fileIndex !== -1 ? file : null,
   ].filter(v => v !== null && v !== undefined);
-  const positionalArgs = args.filter(arg => !arg.startsWith('--') && !flagValues.includes(arg));
+  // `-H` short form does NOT start with `--`, so we filter it (and its KEY=VALUE
+  // payload) out of positionals via the explicit `headerTokens` set.
+  const positionalArgs = args.filter(
+    arg => !arg.startsWith('--') && !flagValues.includes(arg) && !headerTokens.has(arg)
+  );
 
   return {
     authToken,
@@ -740,6 +874,7 @@ function parseAgentOptions(args) {
     positionalArgs,
     localAgent: localAgentValue,
     format: formatValue,
+    customHeaders,
   };
 }
 
@@ -956,6 +1091,7 @@ async function resolveAgent(agentArg, authToken, protocolFlag, jsonOutput) {
   let oauthTokens;
   let oauthClient;
   let oauthClientCredentials;
+  let savedHeaders;
   let aliasId;
 
   if (BUILT_IN_AGENTS[agentArg]) {
@@ -976,6 +1112,9 @@ async function resolveAgent(agentArg, authToken, protocolFlag, jsonOutput) {
       oauthClient = savedAgent.oauth_client;
     }
     finalAuthToken = finalAuthToken || getEffectiveAuthToken(savedAgent);
+    if (savedAgent.headers && Object.keys(savedAgent.headers).length > 0) {
+      savedHeaders = { ...savedAgent.headers };
+    }
   } else if (agentArg.startsWith('http://') || agentArg.startsWith('https://')) {
     agentUrl = agentArg;
   } else {
@@ -1004,6 +1143,7 @@ async function resolveAgent(agentArg, authToken, protocolFlag, jsonOutput) {
     oauthTokens,
     oauthClient,
     oauthClientCredentials,
+    savedHeaders,
     aliasId,
   };
 }
@@ -1194,6 +1334,8 @@ AGENT MANAGEMENT:
 OPTIONS:
   --protocol PROTO  Force protocol: mcp or a2a (default: auto-detect)
   --auth TOKEN      Authentication token
+  -H, --header K=V  Extra HTTP header on every request (repeatable). Auth wins on conflict.
+                    Common use: -H x-adcp-tenant=<id> for tenant routing behind a reverse proxy.
   --oauth           OAuth authentication (MCP only, opens browser)
   --clear-oauth     Clear saved OAuth tokens
   --wait            Wait for async/webhook responses
@@ -1839,7 +1981,10 @@ async function handleStoryboardRun(args) {
     oauthTokens: resolvedOauthTokens,
     oauthClient: resolvedOauthClient,
     oauthClientCredentials: resolvedOauthClientCredentials,
+    savedHeaders,
   } = await resolveAgent(agentArg, authToken, protocolFlag, jsonOutput);
+
+  const mergedRunHeaders = mergeHeaders(savedHeaders, opts.customHeaders);
 
   // Parse webhook-receiver flags up front so malformed values fail the run
   // before the dry-run short-circuit, not only on a live execution. Auto-tunnel
@@ -1909,6 +2054,7 @@ async function handleStoryboardRun(args) {
     }),
     ...(webhookReceiverOpts ?? {}),
     ...(opts.noSandbox && { sandbox: false, disable_sandbox: true }),
+    ...(mergedRunHeaders && { headers: mergedRunHeaders }),
   };
 
   const restoreLogs = jsonOutput ? captureStdoutLogs() : null;
@@ -3401,7 +3547,10 @@ async function runFullAssessment(agentArg, rawArgs, parsedOpts) {
     oauthTokens,
     oauthClient,
     oauthClientCredentials,
+    savedHeaders,
   } = await resolveAgent(agentArg, opts.authToken, opts.protocolFlag, opts.jsonOutput);
+
+  const mergedAssessmentHeaders = mergeHeaders(savedHeaders, opts.customHeaders);
 
   // Parse --tracks
   const tracksIndex = rawArgs.indexOf('--tracks');
@@ -3472,6 +3621,7 @@ async function runFullAssessment(agentArg, rawArgs, parsedOpts) {
     ...(opts.allowHttp && { allow_http: true }),
     ...(webhookReceiverOpts ?? {}),
     ...(opts.noSandbox && { sandbox: false, disable_sandbox: true }),
+    ...(mergedAssessmentHeaders && { headers: mergedAssessmentHeaders }),
   };
 
   if (!opts.jsonOutput) {
@@ -4191,6 +4341,13 @@ AUTH METHODS (pick one):
     --auth <token>            Pre-issued bearer token
     --no-auth                 Agent requires no auth
 
+HEADERS (compose with any auth method):
+    -H, --header K=V          Extra HTTP header on every request to this agent.
+                              Repeatable. Persists in ~/.adcp/config.json.
+                              Common use: -H x-adcp-tenant=<id> for routing behind
+                              a reverse proxy. Authorization headers are reserved
+                              for --auth and dropped here with a warning.
+
   Browser OAuth (authorization code flow):
     --oauth                   Opens a browser to authorize; stores tokens
                               so the SDK can refresh via refresh_token.
@@ -4263,10 +4420,19 @@ credential material — never sync or commit.
     const booleanFlags = new Set(['--no-auth', '--oauth', '--dry-run']);
     const parsedFlags = {};
     const positional = [];
+    // `--header` / `-H KEY=VALUE` pairs accumulate (repeatable) and are persisted
+    // alongside the alias as `agentConfig.headers`.
+    const savedHeadersFromFlags = parseHeaderFlags(args.slice(1));
     {
       const rest = args.slice(1);
       for (let i = 0; i < rest.length; i++) {
         const tok = rest[i];
+        if (savedHeadersFromFlags.consumedTokens.has(tok)) {
+          // --header / -H consumed by parseHeaderFlags above; skip the value too
+          // when it's the long-form `--header KEY=VALUE` or `-H KEY=VALUE` shape.
+          if (tok === '-H' || tok === '--header') i++;
+          continue;
+        }
         if (valueFlags.has(tok)) {
           const val = rest[i + 1];
           if (val === undefined || val.startsWith('--')) {
@@ -4282,6 +4448,7 @@ credential material — never sync or commit.
         }
       }
     }
+    const savedHeaders = savedHeadersFromFlags.customHeaders;
 
     const providedAuthToken = parsedFlags['--auth'] ?? null;
     const noAuthFlag = parsedFlags['--no-auth'] === true;
@@ -4582,6 +4749,7 @@ credential material — never sync or commit.
         protocol: protocol || 'mcp',
         oauth_client_credentials: credentials,
         oauth_tokens: tokens,
+        ...(Object.keys(savedHeaders).length > 0 && { headers: savedHeaders }),
       });
 
       console.log(`✅ Agent '${alias}' saved with client credentials.`);
@@ -4654,7 +4822,11 @@ credential material — never sync or commit.
         console.log('Saving agent without OAuth tokens.\n');
         await oauthProvider.cleanup();
         await mcpClient.close();
-        saveAgent(alias, { url, protocol: 'mcp' });
+        saveAgent(alias, {
+          url,
+          protocol: 'mcp',
+          ...(Object.keys(savedHeaders).length > 0 && { headers: savedHeaders }),
+        });
         console.log(`✅ Agent '${alias}' saved.`);
         console.log(`Use: adcp ${alias} <tool> <payload>\n`);
       } catch (error) {
@@ -4673,6 +4845,7 @@ credential material — never sync or commit.
               protocol: 'mcp',
               oauth_tokens: tempAgent.oauth_tokens,
               oauth_client: tempAgent.oauth_client,
+              ...(Object.keys(savedHeaders).length > 0 && { headers: savedHeaders }),
             };
             saveAgent(alias, agentConfig);
 
@@ -4701,7 +4874,7 @@ credential material — never sync or commit.
     const hasAuthDecision = providedAuthToken !== null || noAuthFlag;
     const nonInteractive = url && hasAuthDecision;
 
-    await interactiveSetup(alias, url, protocol, providedAuthToken, nonInteractive, noAuthFlag);
+    await interactiveSetup(alias, url, protocol, providedAuthToken, nonInteractive, noAuthFlag, savedHeaders);
     process.exit(0);
   }
 
@@ -4737,6 +4910,12 @@ credential material — never sync or commit.
       } else if (agent.oauth_tokens) {
         const hasValid = hasValidOAuthTokens(agent);
         console.log(`    OAuth: ${hasValid ? 'valid tokens' : 'expired (use --oauth to refresh)'}`);
+      }
+      if (agent.headers && Object.keys(agent.headers).length > 0) {
+        // Header NAMES only — values may carry tenant routing tokens or other
+        // sensitive context. Mirrors the CodeQL-driven minimalism applied to
+        // oauth_client_credentials above.
+        console.log(`    Headers: ${Object.keys(agent.headers).join(', ')}`);
       }
       console.log('');
     });
@@ -4817,6 +4996,8 @@ credential material — never sync or commit.
   const useLocalWebhook = args.includes('--local');
   const timeoutIndex = args.indexOf('--timeout');
   const timeout = timeoutIndex !== -1 ? parseInt(args[timeoutIndex + 1]) : 300000;
+  // --header / -H KEY=VALUE: arbitrary outbound headers. Repeatable. Auth wins on conflict.
+  const { customHeaders: cliHeaders, consumedTokens: headerTokens } = parseHeaderFlags(args);
   const useOAuth = args.includes('--oauth');
   const clearOAuth = args.includes('--clear-oauth');
 
@@ -4833,7 +5014,8 @@ credential material — never sync or commit.
       !arg.startsWith('--') &&
       arg !== authToken && // Don't include the auth token value
       arg !== protocolFlag && // Don't include the protocol value
-      arg !== (timeoutIndex !== -1 ? args[timeoutIndex + 1] : null) // Don't include timeout value
+      arg !== (timeoutIndex !== -1 ? args[timeoutIndex + 1] : null) && // Don't include timeout value
+      !headerTokens.has(arg) // Drop -H and its KEY=VALUE payload
   );
 
   // Determine if first arg is alias or URL
@@ -4988,6 +5170,10 @@ credential material — never sync or commit.
     }
   }
 
+  // Merge saved-alias headers (per-agent routing context, e.g. x-adcp-tenant)
+  // with `-H KEY=VALUE` flags from the current invocation. CLI wins on conflict.
+  const mergedHeaders = mergeHeaders(savedAgent && savedAgent.headers, cliHeaders);
+
   // Create agent config
   const agentConfig = {
     id: 'cli-agent',
@@ -4998,6 +5184,7 @@ credential material — never sync or commit.
     ...(agentOAuthTokens && { oauth_tokens: agentOAuthTokens }),
     ...(agentOAuthClient && { oauth_client: agentOAuthClient }),
     ...(agentOAuthClientCredentials && { oauth_client_credentials: agentOAuthClientCredentials }),
+    ...(mergedHeaders && { headers: mergedHeaders }),
   };
 
   // For saved aliases with any OAuth material, attach a file-backed storage

@@ -116,6 +116,16 @@ export interface TestOptions {
         credentials: import('../types/adcp').AgentOAuthClientCredentials;
         tokens?: import('../types/adcp').AgentOAuthTokens;
       };
+  /**
+   * Extra HTTP headers applied to every outbound request to the agent.
+   * Forwarded into `AgentConfig.headers`, so MCP and A2A transports both
+   * see them. `Authorization` and `x-adcp-auth` are reserved — auth wins.
+   *
+   * Typical use: tenant-routing headers (`x-adcp-tenant`, `Apx-Incoming-Host`)
+   * for multi-tenant agents fronted by a reverse proxy. The CLI exposes these
+   * via `-H KEY=VALUE` (repeatable) and persists them in `~/.adcp/config.json`.
+   */
+  headers?: Record<string, string>;
   // Brand manifest for creative testing
   brand_manifest?: {
     name: string;
