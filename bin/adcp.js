@@ -571,7 +571,7 @@ function parseCustomHeaders(args) {
     const tok = args[i];
     if (tok !== '-H' && tok !== '--header') continue;
     const val = args[i + 1];
-    if (val === undefined || val.startsWith('-')) {
+    if (val === undefined || val.startsWith('--')) {
       console.error(`ERROR: ${tok} requires a KEY=VALUE argument, e.g. ${tok} x-adcp-tenant=acme\n`);
       process.exit(2);
     }
@@ -1897,6 +1897,7 @@ async function handleStoryboardRun(args) {
     oauthTokens: resolvedOauthTokens,
     oauthClient: resolvedOauthClient,
     oauthClientCredentials: resolvedOauthClientCredentials,
+    headers: resolvedHeaders,
   } = await resolveAgent(agentArg, authToken, protocolFlag, jsonOutput);
 
   // Parse webhook-receiver flags up front so malformed values fail the run
@@ -1967,6 +1968,7 @@ async function handleStoryboardRun(args) {
     }),
     ...(webhookReceiverOpts ?? {}),
     ...(opts.noSandbox && { sandbox: false, disable_sandbox: true }),
+    ...(resolvedHeaders && { headers: resolvedHeaders }),
   };
 
   const restoreLogs = jsonOutput ? captureStdoutLogs() : null;
@@ -3459,6 +3461,7 @@ async function runFullAssessment(agentArg, rawArgs, parsedOpts) {
     oauthTokens,
     oauthClient,
     oauthClientCredentials,
+    headers: resolvedAgentHeaders,
   } = await resolveAgent(agentArg, opts.authToken, opts.protocolFlag, opts.jsonOutput);
 
   // Parse --tracks
@@ -3530,6 +3533,7 @@ async function runFullAssessment(agentArg, rawArgs, parsedOpts) {
     ...(opts.allowHttp && { allow_http: true }),
     ...(webhookReceiverOpts ?? {}),
     ...(opts.noSandbox && { sandbox: false, disable_sandbox: true }),
+    ...(resolvedAgentHeaders && { headers: resolvedAgentHeaders }),
   };
 
   if (!opts.jsonOutput) {
@@ -3688,6 +3692,7 @@ async function handleStoryboardStepCmd(args) {
     oauthTokens: resolvedOauthTokens,
     oauthClient: resolvedOauthClient,
     oauthClientCredentials: resolvedOauthClientCredentials,
+    headers: resolvedStepHeaders,
   } = await resolveAgent(agentArg, authToken, protocolFlag, jsonOutput);
 
   // Parse --context and --request flags (supports inline JSON or @file.json)
@@ -3712,6 +3717,7 @@ async function handleStoryboardStepCmd(args) {
       resolvedOauthClient,
       resolvedOauthClientCredentials,
     }),
+    ...(resolvedStepHeaders && { headers: resolvedStepHeaders }),
   };
 
   const restoreLogs = jsonOutput ? captureStdoutLogs() : null;
@@ -4338,7 +4344,7 @@ credential material — never sync or commit.
         const tok = rest[i];
         if (tok === '-H' || tok === '--header') {
           const val = rest[i + 1];
-          if (val === undefined || val.startsWith('-')) {
+          if (val === undefined || val.startsWith('--')) {
             console.error(`ERROR: ${tok} requires a KEY=VALUE argument, e.g. ${tok} x-adcp-tenant=acme\n`);
             process.exit(2);
           }
@@ -5105,7 +5111,8 @@ credential material — never sync or commit.
 
   // Merge saved agent headers with CLI-supplied -H headers (CLI wins over saved).
   // Auth headers always win — warn if a -H value tries to override them.
-  const savedAgentHeaders = isAlias(firstArg) ? (getAgent(firstArg)?.headers ?? null) : null;
+  // Use the already-fetched savedAgent to avoid a second config-file read.
+  const savedAgentHeaders = savedAgent?.headers ?? null;
   const mergedHeaders =
     savedAgentHeaders || cliCustomHeaders ? { ...(savedAgentHeaders ?? {}), ...(cliCustomHeaders ?? {}) } : null;
   if (mergedHeaders && authToken) {
