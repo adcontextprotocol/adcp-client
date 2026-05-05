@@ -558,6 +558,41 @@ function levenshtein(a, b) {
   return dp[m][n];
 }
 
+/**
+ * Parse -H KEY=VALUE / --header KEY=VALUE flags from an args array.
+ * Returns a Record<string,string> of collected headers, or undefined if none.
+ * Exits with code 2 on malformed input (missing value, bad KEY=VALUE format,
+ * or CRLF injection attempt).
+ */
+function parseCustomHeaders(args) {
+  const headers = {};
+  let found = false;
+  for (let i = 0; i < args.length; i++) {
+    const tok = args[i];
+    if (tok !== '-H' && tok !== '--header') continue;
+    const val = args[i + 1];
+    if (val === undefined || val.startsWith('-')) {
+      console.error(`ERROR: ${tok} requires a KEY=VALUE argument, e.g. ${tok} x-adcp-tenant=acme\n`);
+      process.exit(2);
+    }
+    const eqIdx = val.indexOf('=');
+    if (eqIdx <= 0) {
+      console.error(`ERROR: ${tok} value must be in KEY=VALUE format, e.g. ${tok} x-adcp-tenant=acme\n`);
+      process.exit(2);
+    }
+    const key = val.slice(0, eqIdx);
+    const value = val.slice(eqIdx + 1);
+    if (/[\r\n]/.test(key) || /[\r\n]/.test(value)) {
+      console.error(`ERROR: Header KEY and VALUE must not contain CR or LF\n`);
+      process.exit(2);
+    }
+    headers[key] = value;
+    found = true;
+    i++; // skip the value token
+  }
+  return found ? headers : undefined;
+}
+
 function parseAgentOptions(args) {
   const authIndex = args.indexOf('--auth');
   let authToken = process.env.ADCP_AUTH_TOKEN;
@@ -701,6 +736,19 @@ function parseAgentOptions(args) {
   const summaryOutputValue =
     summaryOutputIdx !== -1 && summaryOutputIdx + 1 < args.length ? args[summaryOutputIdx + 1] : null;
 
+  // Parse -H / --header flags (repeatable, single-dash short form)
+  const customHeaders = parseCustomHeaders(args);
+
+  // Collect -H / --header flag values so they're excluded from positionalArgs.
+  // Single-dash flags like -H don't start with '--' so they need explicit exclusion.
+  const headerFlagValues = [];
+  for (let i = 0; i < args.length; i++) {
+    if (args[i] === '-H' || args[i] === '--header') {
+      headerFlagValues.push(args[i]);
+      if (i + 1 < args.length) headerFlagValues.push(args[i + 1]);
+    }
+  }
+
   // Filter out flags and their values to find positional args. The `--file=PATH`
   // form is already removed by the `startsWith('--')` check; only the
   // space-separated value needs explicit exclusion. Use explicit nullish check
@@ -725,7 +773,9 @@ function parseAgentOptions(args) {
     summaryOutputValue,
     fileIndex !== -1 ? file : null,
   ].filter(v => v !== null && v !== undefined);
-  const positionalArgs = args.filter(arg => !arg.startsWith('--') && !flagValues.includes(arg));
+  const positionalArgs = args.filter(
+    arg => !arg.startsWith('--') && !flagValues.includes(arg) && !headerFlagValues.includes(arg)
+  );
 
   return {
     authToken,
@@ -740,6 +790,7 @@ function parseAgentOptions(args) {
     positionalArgs,
     localAgent: localAgentValue,
     format: formatValue,
+    customHeaders,
   };
 }
 
@@ -957,6 +1008,7 @@ async function resolveAgent(agentArg, authToken, protocolFlag, jsonOutput) {
   let oauthClient;
   let oauthClientCredentials;
   let aliasId;
+  let savedHeaders;
 
   if (BUILT_IN_AGENTS[agentArg]) {
     const builtIn = BUILT_IN_AGENTS[agentArg];
@@ -976,6 +1028,9 @@ async function resolveAgent(agentArg, authToken, protocolFlag, jsonOutput) {
       oauthClient = savedAgent.oauth_client;
     }
     finalAuthToken = finalAuthToken || getEffectiveAuthToken(savedAgent);
+    if (savedAgent.headers && Object.keys(savedAgent.headers).length > 0) {
+      savedHeaders = savedAgent.headers;
+    }
   } else if (agentArg.startsWith('http://') || agentArg.startsWith('https://')) {
     agentUrl = agentArg;
   } else {
@@ -1005,6 +1060,7 @@ async function resolveAgent(agentArg, authToken, protocolFlag, jsonOutput) {
     oauthClient,
     oauthClientCredentials,
     aliasId,
+    headers: savedHeaders,
   };
 }
 
@@ -1194,6 +1250,8 @@ AGENT MANAGEMENT:
 OPTIONS:
   --protocol PROTO  Force protocol: mcp or a2a (default: auto-detect)
   --auth TOKEN      Authentication token
+  -H KEY=VALUE      Extra request header (repeatable; auth header wins on conflict)
+  --header KEY=VALUE  Alias for -H. Example: -H x-adcp-tenant=acme
   --oauth           OAuth authentication (MCP only, opens browser)
   --clear-oauth     Clear saved OAuth tokens
   --wait            Wait for async/webhook responses
@@ -3945,6 +4003,7 @@ EXAMPLES:
       oauth_tokens: saved.oauth_tokens,
       oauth_client: saved.oauth_client,
       auth_token: saved.auth_token,
+      ...(saved.headers && Object.keys(saved.headers).length > 0 && { headers: saved.headers }),
     };
   } else if (target.startsWith('http://') || target.startsWith('https://')) {
     agentConfig = {
@@ -4230,11 +4289,18 @@ EXAMPLES:
     --oauth-token-url https://auth.example.com/oauth/token \\
     --client-id abc123 --client-secret xyz789
 
+  # Multi-tenant agent routed by header (no-auth or combined with --auth)
+  adcp --save-auth local http://localhost:8000/mcp --auth TOKEN -H x-adcp-tenant=acme
+
 OTHER FLAGS:
   --dry-run                   Print the resolved plan (discovered token
                               endpoint, scope, secret source) and exit
                               without exchanging tokens or writing the
                               config. Client-credentials only.
+  -H KEY=VALUE                Extra request header saved with the agent
+  --header KEY=VALUE            (repeatable). Sent on every call to this
+                              alias. Auth header wins on conflict.
+                              Example: -H x-adcp-tenant=acme
 
 EXIT CODES:
   0  success
@@ -4250,6 +4316,8 @@ credential material — never sync or commit.
     // Extract value-bearing flags and the positional args in one pass so we
     // don't have to reason about interleaving. Flags that take a value
     // consume the next token; boolean flags consume only themselves.
+    // -H / --header are repeatable KEY=VALUE flags (short single-dash form
+    // handled specially since the loop only auto-skips '--' long flags).
     const valueFlags = new Set([
       '--auth',
       '--oauth-token-url',
@@ -4262,12 +4330,32 @@ credential material — never sync or commit.
     ]);
     const booleanFlags = new Set(['--no-auth', '--oauth', '--dry-run']);
     const parsedFlags = {};
+    const parsedSaveAuthHeaders = {};
     const positional = [];
     {
       const rest = args.slice(1);
       for (let i = 0; i < rest.length; i++) {
         const tok = rest[i];
-        if (valueFlags.has(tok)) {
+        if (tok === '-H' || tok === '--header') {
+          const val = rest[i + 1];
+          if (val === undefined || val.startsWith('-')) {
+            console.error(`ERROR: ${tok} requires a KEY=VALUE argument, e.g. ${tok} x-adcp-tenant=acme\n`);
+            process.exit(2);
+          }
+          const eqIdx = val.indexOf('=');
+          if (eqIdx <= 0) {
+            console.error(`ERROR: ${tok} value must be in KEY=VALUE format, e.g. ${tok} x-adcp-tenant=acme\n`);
+            process.exit(2);
+          }
+          const hKey = val.slice(0, eqIdx);
+          const hVal = val.slice(eqIdx + 1);
+          if (/[\r\n]/.test(hKey) || /[\r\n]/.test(hVal)) {
+            console.error(`ERROR: Header KEY and VALUE must not contain CR or LF\n`);
+            process.exit(2);
+          }
+          parsedSaveAuthHeaders[hKey] = hVal;
+          i++;
+        } else if (valueFlags.has(tok)) {
           const val = rest[i + 1];
           if (val === undefined || val.startsWith('--')) {
             console.error(`ERROR: ${tok} requires a value\n`);
@@ -4582,6 +4670,7 @@ credential material — never sync or commit.
         protocol: protocol || 'mcp',
         oauth_client_credentials: credentials,
         oauth_tokens: tokens,
+        ...(Object.keys(parsedSaveAuthHeaders).length > 0 && { headers: parsedSaveAuthHeaders }),
       });
 
       console.log(`✅ Agent '${alias}' saved with client credentials.`);
@@ -4654,7 +4743,11 @@ credential material — never sync or commit.
         console.log('Saving agent without OAuth tokens.\n');
         await oauthProvider.cleanup();
         await mcpClient.close();
-        saveAgent(alias, { url, protocol: 'mcp' });
+        saveAgent(alias, {
+          url,
+          protocol: 'mcp',
+          ...(Object.keys(parsedSaveAuthHeaders).length > 0 && { headers: parsedSaveAuthHeaders }),
+        });
         console.log(`✅ Agent '${alias}' saved.`);
         console.log(`Use: adcp ${alias} <tool> <payload>\n`);
       } catch (error) {
@@ -4673,6 +4766,7 @@ credential material — never sync or commit.
               protocol: 'mcp',
               oauth_tokens: tempAgent.oauth_tokens,
               oauth_client: tempAgent.oauth_client,
+              ...(Object.keys(parsedSaveAuthHeaders).length > 0 && { headers: parsedSaveAuthHeaders }),
             };
             saveAgent(alias, agentConfig);
 
@@ -4701,7 +4795,15 @@ credential material — never sync or commit.
     const hasAuthDecision = providedAuthToken !== null || noAuthFlag;
     const nonInteractive = url && hasAuthDecision;
 
-    await interactiveSetup(alias, url, protocol, providedAuthToken, nonInteractive, noAuthFlag);
+    await interactiveSetup(
+      alias,
+      url,
+      protocol,
+      providedAuthToken,
+      nonInteractive,
+      noAuthFlag,
+      Object.keys(parsedSaveAuthHeaders).length > 0 ? parsedSaveAuthHeaders : null
+    );
     process.exit(0);
   }
 
@@ -4820,6 +4922,16 @@ credential material — never sync or commit.
   const useOAuth = args.includes('--oauth');
   const clearOAuth = args.includes('--clear-oauth');
 
+  // Parse -H / --header flags; collect their tokens for positional-arg exclusion
+  const cliCustomHeaders = parseCustomHeaders(args);
+  const headerFlagTokens = [];
+  for (let i = 0; i < args.length; i++) {
+    if (args[i] === '-H' || args[i] === '--header') {
+      headerFlagTokens.push(args[i]);
+      if (i + 1 < args.length) headerFlagTokens.push(args[i + 1]);
+    }
+  }
+
   // Validate protocol flag if provided
   if (protocolFlag && protocolFlag !== 'mcp' && protocolFlag !== 'a2a') {
     console.error(`ERROR: Invalid protocol '${protocolFlag}'. Must be 'mcp' or 'a2a'\n`);
@@ -4827,13 +4939,16 @@ credential material — never sync or commit.
     process.exit(2);
   }
 
-  // Filter out flag arguments to find positional arguments
+  // Filter out flag arguments to find positional arguments.
+  // Single-dash flags like -H must be excluded explicitly since they don't
+  // start with '--' and would otherwise be mistaken for an agent alias.
   const positionalArgs = args.filter(
     arg =>
       !arg.startsWith('--') &&
       arg !== authToken && // Don't include the auth token value
       arg !== protocolFlag && // Don't include the protocol value
-      arg !== (timeoutIndex !== -1 ? args[timeoutIndex + 1] : null) // Don't include timeout value
+      arg !== (timeoutIndex !== -1 ? args[timeoutIndex + 1] : null) && // Don't include timeout value
+      !headerFlagTokens.includes(arg) // Don't include -H flag tokens or their values
   );
 
   // Determine if first arg is alias or URL
@@ -4988,6 +5103,21 @@ credential material — never sync or commit.
     }
   }
 
+  // Merge saved agent headers with CLI-supplied -H headers (CLI wins over saved).
+  // Auth headers always win — warn if a -H value tries to override them.
+  const savedAgentHeaders = isAlias(firstArg) ? (getAgent(firstArg)?.headers ?? null) : null;
+  const mergedHeaders =
+    savedAgentHeaders || cliCustomHeaders ? { ...(savedAgentHeaders ?? {}), ...(cliCustomHeaders ?? {}) } : null;
+  if (mergedHeaders && authToken) {
+    const authKeys = ['authorization', 'x-adcp-auth'];
+    for (const k of Object.keys(mergedHeaders)) {
+      if (authKeys.includes(k.toLowerCase())) {
+        console.error(`WARNING: -H ${k}=... conflicts with --auth; --auth takes precedence\n`);
+        delete mergedHeaders[k];
+      }
+    }
+  }
+
   // Create agent config
   const agentConfig = {
     id: 'cli-agent',
@@ -4998,6 +5128,7 @@ credential material — never sync or commit.
     ...(agentOAuthTokens && { oauth_tokens: agentOAuthTokens }),
     ...(agentOAuthClient && { oauth_client: agentOAuthClient }),
     ...(agentOAuthClientCredentials && { oauth_client_credentials: agentOAuthClientCredentials }),
+    ...(mergedHeaders && Object.keys(mergedHeaders).length > 0 && { headers: mergedHeaders }),
   };
 
   // For saved aliases with any OAuth material, attach a file-backed storage

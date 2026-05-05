@@ -620,6 +620,9 @@ export async function connectMCP(options: {
       message: 'MCP: Using static token for authentication',
       timestamp: new Date().toISOString(),
     });
+  } else if (customHeaders && Object.keys(customHeaders).length > 0) {
+    // No auth, but custom headers (e.g. x-adcp-tenant for no-auth multi-tenant agents)
+    transportOptions.requestInit = { headers: customHeaders };
   }
 
   // RFC 9421 signing — wrap the transport's fetch so the signer sees the final
