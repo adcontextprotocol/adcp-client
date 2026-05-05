@@ -1,5 +1,5 @@
 ---
-'@adcp/sdk': major
+'@adcp/sdk': minor
 ---
 
 **Two-platform composition primitives** — port of `adcp-client-python` PRs #504 (v1) + #550 (v1.5). Splits proposal assembly (`get_products`, refine, finalize) from media-buy execution (`create_media_buy`, lifecycle), so either side can be mock-backed independently. New surface under `@adcp/sdk/server`:
@@ -14,9 +14,9 @@
 
 **Status**: primitives only. Framework dispatch wiring (the five seams that intercept `getProducts`, `createMediaBuy`, `updateMediaBuy`, `getMediaBuyDelivery` to persist drafts, hydrate recipes, and commit on finalize) lands in a follow-up release.
 
-**Breaking change — migration guide**: removes the pre-v6 stub `ProposalManager` class, `AIProposalManager` subclass, `defaultProposalManager` singleton, `IProposalManager` interface, `ProposalContext` shape, and `ProposalErrorCodes` constant from `@adcp/sdk` (previously exported under `src/lib/adapters/proposal-manager.ts`).
+**Removal of unused stub exports** — drops the pre-v6 stub `ProposalManager` class, `AIProposalManager` subclass, `defaultProposalManager` singleton, `IProposalManager` interface, `ProposalContext` shape, and `ProposalErrorCodes` constant from `@adcp/sdk` (previously exported under `src/lib/adapters/proposal-manager.ts`).
 
-The stub had no observable behavior — `isSupported()` returned `false` everywhere, `generateProposals()` and `refineProposal()` returned `[]` / `null` regardless of input. No path inside the SDK invoked it. Adopters who imported it were holding a placeholder.
+Released as a minor bump because the stub had **no observable behavior**: `isSupported()` returned `false` everywhere, `generateProposals()` and `refineProposal()` returned `[]` / `null` regardless of input, and no path inside the SDK invoked it. Adopters who imported it were holding a placeholder. The names typecheck-break on import after upgrade, but no runtime behavior changes for anyone — including consumers who imported the names without using them.
 
 **If your code imports any of these names**, search-replace and migrate to the new surface:
 
