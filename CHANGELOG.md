@@ -1,5 +1,217 @@
 # Changelog
 
+## 6.12.0
+
+### Minor Changes
+
+- a0e8e2e: **CLI: `-H` / `--header KEY=VALUE` flag for arbitrary outbound HTTP headers** (closes adcp-client#1563).
+
+  `npx adcp` previously accepted `--auth TOKEN` but had no way to attach the routing/context headers that multi-tenant agents require alongside the bearer. Verify scripts couldn't reach a freshly-provisioned tenant on `http://localhost:8000` because strategy 1 (Host-header → virtual host) falls through on `localhost`, leaving strategy 2 (`x-adcp-tenant`) the only option — and the CLI couldn't send it.
+
+  The flag is repeatable, persists via `--save-auth`, and composes with every existing auth method:
+
+  ```sh
+  # Ad-hoc invocation
+  npx adcp http://localhost:8000/mcp/ get_products '{...}' \
+    --auth TOKEN \
+    -H x-adcp-tenant=acme \
+    -H Apx-Incoming-Host=tenant-acme.example.com
+
+  # Persist on the saved alias
+  npx adcp --save-auth tenant-acme http://localhost:8000/mcp/ \
+    --auth TOKEN \
+    -H x-adcp-tenant=acme
+
+  # Saved headers flow through every subsequent invocation, including storyboard runs
+  npx adcp tenant-acme storyboard run media_buy_seller
+  ```
+
+  `Authorization` and `x-adcp-auth` are reserved — `--auth` always wins on conflict. Custom values for those keys are dropped with a stderr warning rather than silently overriding the bearer (acceptance criterion #3 from the issue).
+
+  Saved headers display as NAMES only in `--list-agents` (mirrors the redaction posture for `oauth_client_credentials`); values may carry tenant-routing tokens.
+
+  Plumbing details:
+  - `parseHeaderFlags(args)` (in `bin/adcp.js`) is the shared parser — used by the main one-shot tool call, `--save-auth`, and `parseAgentOptions` (so `storyboard run` and the capability-driven assessment also pick up CLI-supplied headers and merge with the saved alias).
+  - `AgentConfig.headers` already existed in the SDK and is plumbed end-to-end through both MCP and A2A transports (`src/lib/protocols/{mcp,a2a}.ts`, `src/lib/core/SingleAgentClient.ts`); the change is purely CLI/config wiring on top.
+  - `TestOptions.headers` added so storyboard runs honor saved/CLI headers via `createTestClient` → `agentConfig.headers`. Composes with `auth.basic` (Basic auth still wins on Authorization).
+  - Acceptance criteria from the issue:
+    - ✅ `-H K=V` works for ad-hoc invocations (repeatable; both `-H` and `--header`, plus `--header=K=V`).
+    - ✅ Per-agent `headers` field in `~/.adcp/config.json` is honored.
+    - ✅ Auth wins on conflict (Authorization / x-adcp-auth dropped with warning).
+
+  Companion gap in the Python SDK (`uvx adcp` and `AgentConfig.headers`) is tracked separately in `adcontextprotocol/adcp-client-python`.
+
+- 65333ea: **`hello_seller_adapter_proposal_mode`** — canonical reference adapter for the v1.5 ProposalManager + DecisioningPlatform two-platform composition. New file at `examples/hello_seller_adapter_proposal_mode.ts`, ~550 LOC including all imports, types, comments, and boot wiring.
+
+  Validates the v1.5 design end-to-end:
+  - The full proposal lifecycle (brief → draft → refine → finalize → committed → accept) lives behind `ProposalManager` (~120 LOC of substantive logic). The framework's `InMemoryProposalStore` carries the `draft → committed → consuming → consumed` state machine; the adapter just wraps the upstream's `/v1/proposals*` endpoints.
+  - `sales.createMediaBuy(proposal_id)` reads `ctx.recipes` (populated by the framework from the committed proposal) and uses `recipe.upstream_ids.line_item_template_id` to drive order creation. There's no second round-trip to the upstream's proposal store — the recipe IS the contract between the proposal-side and execution-side platforms.
+  - Smoke-tested end-to-end against the `sales-guaranteed` mock-server: brief → draft proposal with 3 allocations → refine ("shift more to ctv") biases the mix → finalize commits with `expires_at` → `create_media_buy(proposal_id)` creates an upstream order + 2 line items keyed off the recipe's `ad_unit_ids` and `line_item_template_id`.
+
+  **LOC comparison vs. existing direct-buy `hello_seller_adapter_guaranteed`:** 549 LOC including the entire proposal lifecycle, vs. 1213 LOC for the direct-buy agent that has no proposal lifecycle. The v1.5 surface absorbs the lifecycle ceremony into the framework — adopters write business logic against a typed recipe instead of hand-rolling state machines.
+
+  Companion CI gate: `test/examples/hello-seller-adapter-proposal-mode.test.js` runs the standard three-gate suite (strict tsc, storyboard pass, façade upstream-traffic check) against `media_buy_seller/proposal_finalize`. **All three gates pass.** Setup, brief_with_proposals, finalize_proposal, and accept_proposal pass; one allowlisted failure on `refine_proposal` traces to a spec-side gap (the `proposal_finalize.yaml` scenario lacks `context_outputs` / `context_inputs` declarations to chain the seller-minted `proposal_id` from `brief_with_proposals` into the refine step — the runner sends the literal placeholder `balanced_reach_q2` from the spec's `sample_request`). The lifecycle works end-to-end when a real buyer threads the prior `proposal_id`, as confirmed by the manual smoke test in the commit message of the previous commit.
+
+- 65333ea: **Mock-server recipes + proposal lifecycle** — publish canonical {@link Recipe} shapes per sales specialism, plus add the proposal lifecycle endpoints to the `sales-guaranteed` mock. First step toward validating the v1.5 ProposalManager design against real adopter shapes.
+
+  **New canonical recipes** (re-exported from `@adcp/sdk/mock-server`):
+  - `GAMLikeRecipe { recipe_kind: 'gam', network_code, ad_unit_ids[], line_item_priority, pricing, delivery_type, availability_window?, min_spend?, upstream_ids? }` — for hello adapters wrapping a GAM-style guaranteed-direct upstream. Plus `GAM_LIKE_OVERLAP` (canonical `CapabilityOverlap`) and `buildGAMLikeRecipe(mockProduct)` builder.
+  - `KevelLikeRecipe { recipe_kind: 'kevel', network_code, zone_ids[], weight, pricing: { floor_cpm, target_cpm? }, goal_type, min_spend?, upstream_ids? }` — for hello adapters wrapping a Kevel/OpenRTB-style auction-cleared remnant upstream. Plus `KEVEL_LIKE_OVERLAP` and `buildKevelLikeRecipe(mockProduct)` builder.
+
+  The recipes are the typed contract between the adapter's ProposalManager and DecisioningPlatform: hello agents project these onto `Product.implementation_config`, the framework persists them through the proposal lifecycle, and `ctx.recipes` carries them back to `sales.createMediaBuy` / `sales.updateMediaBuy` so adapter code can drive the upstream off recipe fields without re-fetching.
+
+  **New `sales-guaranteed` mock-server endpoints** (the lifecycle-aware specialism):
+  - `POST /v1/proposals` — create draft from a brief; auto-allocates across guaranteed products (or filters to supplied `product_ids`); returns indicative pricing + draft state.
+  - `GET /v1/proposals/{id}` — read state.
+  - `POST /v1/proposals/{id}/refine` — apply allocation overrides + free-text steering hints (e.g. `ask: "shift to ctv"`); rejected on committed proposals.
+  - `POST /v1/proposals/{id}/finalize` — promote `draft → committed`, lock pricing (`indicative_cpm → locked_cpm`), allocate `upstream_line_item_template_id` per allocation, and set a 24h `expires_at` inventory hold. Idempotent on re-finalize.
+
+  The hello adapter's `proposalManager` will wrap these endpoints; `getProducts` becomes "list catalog + create draft proposal", `refineProducts` becomes "POST /refine", `finalizeProposal` becomes "POST /finalize". `sales.createMediaBuy(proposal_id)` reads the recipes from `ctx.recipes` (hydrated by the v1.5 framework dispatch wiring) to drive the upstream order creation against the locked line-item template ids.
+
+  `sales-non-guaranteed` stays catalog-only — no draft → committed lifecycle, since auction-cleared remnant sells "right of first refusal at floor" without a finalize step. The Kevel-like recipe still applies (it captures how to flight a bid into the auction); just no proposal stages.
+
+  **Lesson surfaced by the validation play:** the recipe `capability_overlap.pricingModels` and `deliveryTypes` axes must be _derived per-product from the product's actual wire shape_, not pulled from a static "what the platform supports" constant. The framework's `validateOverlapSubsetOfWire` correctly rejects the latter — a CPM-only product can't carry an overlap that claims `cpv` and `cpcv` even if the upstream platform supports them on other products. The `buildGAMLikeRecipe` / `buildKevelLikeRecipe` helpers now derive overlap fields from `product.pricing.model` and `product.delivery_type`. Lowercase pricing-model literals (`'cpm'`, `'cpv'`) match the AdCP wire enum.
+
+- 4642329: **ProposalManager v1.5 follow-ups** — addresses every actionable concern from the parallel expert review on PR #1557 (code-reviewer / ad-tech-protocol-expert / security-reviewer / adtech-product-expert).
+
+  ### Wire-leak prevention: strip `Product.implementation_config`
+
+  Recipe data (`network_code`, `ad_unit_ids`, `line_item_template_id`, GAM line-item priority) rides on `Product.implementation_config` server-side as the typed contract between `ProposalManager` and `DecisioningPlatform`. The wire schema is `additionalProperties: true` so the field is technically legal on the wire — but emitting it leaks publisher topology to buyers. The framework now runs `stripImplementationConfig` at the dispatcher response-boundary chokepoint right after `stripCtxMetadata`, parallel pattern. New helpers `stripImplementationConfig` + `hasImplementationConfig` re-exported from `@adcp/sdk/server`. Test coverage in `test/lib/proposal-implementation-config-strip.test.js`.
+
+  **Also fixes a pre-existing latent leak surfaced by security review on this PR:** `dispatchHitl` (the framework's task-handoff completion path used by `createMediaBuy` HITL, `syncCreatives` HITL, and now `finalizeProposal` HITL) wrote the projected handoff result directly to `taskRegistry.complete` and `emitTaskWebhook` without running the wire-strip chokepoint. `tasks/get` polling and webhook delivery emitted server-only fields verbatim. Both strips (`stripCtxMetadata` + `stripImplementationConfig`) now run inside `dispatchHitl` before the registry write, so every downstream consumer inherits clean state. Companion regression test in `test/lib/proposal-manager-e2e.test.js` exercises the full HITL → tasks/get round-trip and asserts no leak.
+
+  **And one carrier alignment**: extended `CARRIER_KEYS` (the shared list both strips walk) to include `proposal` / `proposals`. Without it, `ctx_metadata` and `implementation_config` on `proposals[].products[]` survived the strip — proposal-mode-specific carrier the existing carrier list didn't anticipate. The implementation_config strip now reuses the shared `CARRIER_KEYS` constant rather than maintaining its own list, so future spec additions can't silently extend one strip and not the other.
+
+  ### Recipe rename: `KevelLikeRecipe` → `AuctionLikeRecipe`
+
+  Conflating a decision-engine (Kevel) with a wire protocol (OpenRTB) under one `recipe_kind: 'kevel'` was a category error per product-expert review. Renamed to `AuctionLikeRecipe` (generic across auction-cleared remnant backends) with `recipe_kind: 'auction'`. Adopters who want sharper-typed shapes declare their own `recipe_kind: 'kevel' | 'openrtb' | 'beeswax' | ...` subtype on top.
+
+  Breaking but pre-release (this is the first v1.5 release going out): adopters updating from a build of this branch's earlier commits replace `KevelLikeRecipe` → `AuctionLikeRecipe`, `buildKevelLikeRecipe` → `buildAuctionLikeRecipe`, `KEVEL_LIKE_OVERLAP` → `AUCTION_LIKE_OVERLAP`, and `recipe_kind: 'kevel'` → `recipe_kind: 'auction'` in their recipe shapes.
+
+  ### Recipe extensibility: `extensions` slot
+
+  Both `GAMLikeRecipe` and `AuctionLikeRecipe` gain an optional `extensions?: Record<string, unknown>` field. Adopters carrying richer upstream payloads (GAM `creative_placeholders`, Kevel `frequency_caps`, OpenRTB `private_auction`, FreeWheel `placement_types`, Operative `revenue_type`) use this slot rather than forking `recipe_kind` into N variants. Adopters with stricter shape requirements declare a typed subtype literal on top.
+
+  ### HITL finalize cancel-race documentation
+
+  Inline comment in `runtime/from-platform.ts` at the finalize-intercept site documents the known gap: if the buyer calls `tasks/cancel` while the adopter's HITL `finalizeProposal` handoff is still mid-run, the framework marks the task cancelled but `intercept.project` (which fires when the handoff resolves) still runs `store.commit`. Same gap exists for `createMediaBuy` HITL today. Mitigations: 7-day eviction window in `InMemoryProposalStore`, optional sweep against the task registry by production durable stores. End-to-end fix requires AbortSignal propagation into projection callbacks — framework-level, not finalize-specific.
+
+  ### `projectFinalizeResponse` products echo: explicit decision
+
+  Inline comment documents the `products: []` choice. Echoing on finalize would either re-emit from the persisted draft (extra wire bytes the buyer already has from the prior `brief_with_proposals` step) or call back into the adopter (extra round-trip). Buyers who explicitly want products on the finalize response fetch via `get_products({ product_ids: [...] })` keyed off `proposals[0].allocations[].product_id`.
+
+  ### Spec issue filed
+
+  `adcp#4107` — clarifies `refine[]` mixed-action semantics when `finalize` is one of multiple entries. The spec is silent today; `adcp-client` and `adcp-client-python` both implement first-finalize-only by convention. Once the spec picks one of the recommended contracts, both SDKs align.
+
+- 65333ea: **HITL finalize commit hook** — `proposalManager.finalizeProposal` accepts both inline `FinalizeProposalSuccess` returns AND `TaskHandoff<FinalizeProposalSuccess>` returns. The framework threads both through its standard `routeIfHandoff` dispatch (the same machinery `createMediaBuy` and `syncCreatives` HITL use), running a single projection callback for both arms. The projection commits the proposal via `ProposalStore.commit`, emits the `proposal.finalized` log, and shapes the wire `GetProductsResponse`.
+
+  There is no special-case wrapper for finalize. By design — finalize HITL inherits whatever cancellation, restart-via-durable-store, deadline, and webhook delivery semantics the framework's task lifecycle provides for every other unified-hybrid tool. If those guarantees improve in a future SDK release, finalize benefits without code changes here.
+
+  **Buyer-facing behavior:**
+  - Inline path (sync `FinalizeProposalSuccess` return): buyer gets the committed proposal in the `get_products` response immediately.
+  - HITL path (`TaskHandoff<FinalizeProposalSuccess>` return): buyer gets the spec's `Submitted` envelope (`task_id` populated). Adopter's handoff fn runs in background; framework commits the proposal when it resolves; buyer polls `tasks/get` (or receives the `push_notification` webhook) to retrieve the committed proposal.
+
+  Adopter shape:
+
+  ```ts
+  finalizeProposal: async (req, ctx) => {
+    if (await this.requiresHumanApproval(req)) {
+      return ctx.handoffToTask(async taskCtx => {
+        await taskCtx.update({ message: 'Awaiting trafficker IO sign-off' });
+        const approval = await this.runApprovalWorkflow(req);
+        return {
+          proposal: { proposal_id: req.proposalId /* committed */ },
+          expiresAt: approval.expires_at,
+        };
+      });
+    }
+    return /* inline FinalizeProposalSuccess */;
+  };
+  ```
+
+  The dispatch helper `maybeInterceptFinalize` returns the raw adopter result + a projection callback; the runtime threads them through `routeIfHandoff`. `FinalizeInterceptResult.intercepted` now carries `{ result, project }` instead of a pre-projected `response` — the projection callback is what fires for both arms. JS callers that consumed the previous `response`-shaped intercept arm need to call `await intercept.project(intercept.result)` themselves.
+
+  Test coverage: new e2e test in `test/lib/proposal-manager-e2e.test.js` exercises the full HITL flow via `dispatchTestRequest` — adopter returns `ctx.handoffToTask(fn)`, framework commits store + emits `path: 'handoff'` log when the background task resolves.
+
+- 65333ea: **ProposalManager v1.5 dispatch wiring** — port of `adcp-client-python` PR #550. The framework now drives the full proposal lifecycle around the adopter's `DecisioningPlatform` + `ProposalManager`. Strictly additive on top of the v1 primitives shipped in the previous release.
+
+  **New runtime wiring** (in `runtime/from-platform.ts`):
+  - New `proposalStore?: ProposalStore` option on `createAdcpServerFromPlatform`. When supplied alongside `platform.proposalManager`, the framework drives all five lifecycle seams.
+  - `getProducts` shim: routes to `platform.proposalManager.getProducts` (or `refineProducts` when `buying_mode === 'refine'` and capabilities allow). Falls through to `sales.getProducts` when no manager is wired.
+  - `getProducts` finalize interception: detects `refine[i].action: 'finalize'` entries, calls the manager's `finalizeProposal`, commits the proposal via `proposalStore.commit`, and projects the wire response with `proposal_status: 'committed'` + `expires_at`.
+  - `getProducts` post-call: walks `proposals[]`, validates `overlap ⊆ wire`, persists each as a DRAFT record with typed recipes pulled from `Product.implementation_config`.
+  - `createMediaBuy` pre-call: when `proposal_id` is set, validates expiry + capability overlap, atomically reserves the proposal (`COMMITTED → CONSUMING`), and hydrates `ctx.recipes`. Two parallel `createMediaBuy(proposal_id=X)` calls cannot both reserve — the loser raises `PROPOSAL_NOT_COMMITTED`.
+  - `createMediaBuy` post-success: promotes `CONSUMING → CONSUMED` and records the `mediaBuyId` back-reference.
+  - `createMediaBuy` adapter throw: rolls back `CONSUMING → COMMITTED` so the buyer can retry.
+  - `updateMediaBuy` and `getMediaBuyDelivery`: hydrate `ctx.recipes` via the `getByMediaBuyId` reverse-index. Re-validates capability overlap on packages-shaped patches per Resolutions §5.
+
+  **New helpers exported from `@adcp/sdk/server`:**
+  - `enforceProposalExpiry`, `validateCapabilityOverlap`, `validateOverlapSubsetOfWire`, `detectFinalizeAction` — pure lifecycle validators.
+  - `maybeInterceptFinalize`, `maybePersistDraftAfterGetProducts`, `maybeReserveProposalForCreateMediaBuy`, `finalizeProposalConsumption`, `releaseProposalReservation`, `maybeHydrateRecipesForMediaBuyId` — dispatch-side helpers (also called internally by the runtime).
+  - `setProposalLifecycleLogger` — replace the module-level logger; tests use this to capture structured `proposal.draft_persisted` / `proposal.finalized` / `proposal.expired` / `proposal.consumed` events.
+
+  **`RequestContext.recipes`:** new optional `ReadonlyMap<string, Recipe>` field that the framework populates during proposal-mode dispatch. Adopter `createMediaBuy` / `updateMediaBuy` / `getMediaBuyDelivery` methods read `ctx.recipes` to apply per-product internal-config without re-fetching from the store. Undefined when no proposal-mode dispatch is wired.
+
+  **HITL finalize:** v1.5 ships _both_ inline and HITL commit paths in this same release. `finalizeProposal` may return a `FinalizeProposalSuccess` directly (sync commit) OR a `TaskHandoff<FinalizeProposalSuccess>` (HITL slow path — framework wraps the handoff so `ProposalStore.commit` + `proposal.finalized` log with `path: 'handoff'` fire when the background task resolves). See the companion `proposal-manager-hitl-finalize` changeset for the HITL surface details. The earlier "deferred to v1.6+" rejection text in this changeset's draft was superseded — disregard.
+
+  **Spec-aligned error codes:** `PROPOSAL_NOT_COMMITTED` and `PROPOSAL_EXPIRED` are AdCP 3.0 GA. `PROPOSAL_NOT_FOUND` lands in 3.1; emitted today via the `(string & {})` non-standard path with `recovery: 'terminal'` (matches Python's `KNOWN_NON_SPEC_CODES` allowlist).
+
+- 65333ea: **Two-platform composition primitives** — port of `adcp-client-python` PRs #504 (v1) + #550 (v1.5). Splits proposal assembly (`get_products`, refine, finalize) from media-buy execution (`create_media_buy`, lifecycle), so either side can be mock-backed independently. New surface under `@adcp/sdk/server`:
+  - `ProposalManager<TRecipe, TCtxMeta>` interface — `getProducts` (required) + optional capability-gated `refineProducts` and `finalizeProposal`. Wired as a sibling on `DecisioningPlatform.proposalManager`.
+  - `ProposalCapabilities` — sales-axis-scoped (`sales-guaranteed | sales-non-guaranteed`) + flags (`refine`, `finalize`, `expiresAtGraceSeconds`, `dynamicProducts`, `rateCardPricing`, `availabilityReservations`).
+  - `Recipe` — typed `recipe_kind`-discriminated base. Adopters declare subtypes carrying their internal-config schema; the recipe rides on `Product.implementation_config` (opaque to buyers, persisted by the framework through the proposal lifecycle).
+  - `CapabilityOverlap` — typed declaration of which wire capabilities the buyer can configure on a product (`pricingModels`, `targetingDimensions`, `deliveryTypes`, `signalTypes`). Each axis is `ReadonlySet<string> | undefined`.
+  - `ProposalStore` interface + `InMemoryProposalStore` reference impl — single ledger across the lifecycle states `DRAFT → COMMITTED → CONSUMING → CONSUMED`, with reverse-index by `mediaBuyId`. Two-phase consume (`tryReserveConsumption` + `finalizeConsumption` / `releaseConsumption`) prevents the inventory double-spend race; cross-tenant probes return `null` to defeat principal enumeration.
+  - `MockProposalManager` — fetch-based forwarder that POSTs `getProducts` / `refineProducts` to a running `bin/adcp.js mock-server <specialism>`. Adopters who don't yet have proposal logic point this at the appropriate mock-server and ship a working seller agent with zero adopter code on the proposal side.
+  - `FinalizeProposalRequest` / `FinalizeProposalSuccess` — framework-internal shapes for the finalize lifecycle (commit hook).
+
+  **Status**: primitives only. Framework dispatch wiring (the five seams that intercept `getProducts`, `createMediaBuy`, `updateMediaBuy`, `getMediaBuyDelivery` to persist drafts, hydrate recipes, and commit on finalize) lands in a follow-up release.
+
+  **Removal of unused stub exports** — drops the pre-v6 stub `ProposalManager` class, `AIProposalManager` subclass, `defaultProposalManager` singleton, `IProposalManager` interface, `ProposalContext` shape, and `ProposalErrorCodes` constant from `@adcp/sdk` (previously exported under `src/lib/adapters/proposal-manager.ts`).
+
+  Released as a minor bump because the stub had **no observable behavior**: `isSupported()` returned `false` everywhere, `generateProposals()` and `refineProposal()` returned `[]` / `null` regardless of input, and no path inside the SDK invoked it. Adopters who imported it were holding a placeholder. The names typecheck-break on import after upgrade, but no runtime behavior changes for anyone — including consumers who imported the names without using them.
+
+  **If your code imports any of these names**, search-replace and migrate to the new surface:
+
+  ```diff
+  - import { ProposalManager, AIProposalManager, defaultProposalManager, type IProposalManager } from '@adcp/sdk';
+  + import {
+  +   type ProposalManager,
+  +   type ProposalCapabilities,
+  +   type Recipe,
+  +   InMemoryProposalStore,
+  +   MockProposalManager,
+  + } from '@adcp/sdk/server';
+  ```
+
+  The new `ProposalManager` is an _interface_ (typed contract), not a class to extend. Adopters write a plain object that satisfies it:
+
+  ```ts
+  const myProposalManager: ProposalManager<MyRecipe, MyTenantMeta> = {
+    capabilities: { salesSpecialism: 'sales-guaranteed', refine: true, finalize: true },
+    async getProducts(req, ctx) { /* ... */ },
+    async refineProducts(req, ctx) { /* ... */ },
+    async finalizeProposal(req, ctx) { /* ... */ },
+  };
+  // Wire on the platform:
+  const platform = { capabilities: { ... }, accounts: ..., proposalManager: myProposalManager, sales: ... };
+  ```
+
+  `MockProposalManager` is a concrete class (the only one in the new surface) — fetch-based forwarder for adopters wrapping a running `bin/adcp.js mock-server <specialism>`. Replaces the old `defaultProposalManager` singleton's role as a "no-op default."
+
+  The old `ProposalErrorCodes` constants map onto AdCP standard codes the framework now emits directly (`PROPOSAL_NOT_FOUND`, `PROPOSAL_NOT_COMMITTED`, `PROPOSAL_EXPIRED`, `INVALID_REQUEST`, `UNSUPPORTED_FEATURE`). Adopters throwing `AdcpError` with these codes get the same wire envelopes; no separate constant is needed.
+
+### Patch Changes
+
+- 65333ea: `examples/hello_seller_adapter_guaranteed.ts` now attaches a typed `GAMLikeRecipe` to each `Product`'s `implementation_config` via the new `buildGAMLikeRecipe` helper from `@adcp/sdk/mock-server`. Surgical change — keeps the agent direct-buy (the `sales_guaranteed` storyboard's flow) and preserves all existing HITL semantics. The recipe is opt-in: buyers using this agent's direct-buy path ignore it; buyers routing through proposal-mode (via a different adapter) read the same recipe via `ctx.recipes` after the framework hydrates it from the committed proposal.
+
+  **Why this is small instead of a full rebuild:** v1.5's value lands in _proposal-mode_ adapters (where the framework absorbs the lifecycle ceremony around brief→refine→finalize→accept). Direct-buy adapters — where the buyer hands over `packages[]` to `create_media_buy` directly — don't engage `ctx.recipes`. Forcibly threading proposal-mode through this agent would break the existing `sales_guaranteed` storyboard or balloon the LOC. Instead, this change demonstrates v1.5 _interoperability_: the same agent emits typed recipes a future proposal-mode buyer can consume, without disrupting today's direct-buy path. The big-LOC-reduction story for v1.5 is in `hello_seller_adapter_proposal_mode.ts` (549 LOC vs. 1213 LOC for this direct-buy agent — a +full proposal lifecycle that this agent doesn't have).
+
+  Verified: existing three-gate CI (strict tsc, `sales_guaranteed` storyboard, façade upstream-traffic) passes 3/3 unchanged.
+
+- bae554f: Widen `PROBE_TASK_ALLOWLIST` to include governance specialism read-only tools (`list_property_lists`, `list_collection_lists`, `list_content_standards`), fixing `security_baseline` grade failures for agents that expose only governance endpoints.
+
 ## 6.11.0
 
 ### Minor Changes
