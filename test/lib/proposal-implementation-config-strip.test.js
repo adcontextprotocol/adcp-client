@@ -84,6 +84,44 @@ test('stripImplementationConfig: handles null / non-object inputs without throwi
   assert.strictEqual(stripImplementationConfig(42), 42);
 });
 
+test('stripImplementationConfig: walks the full carrier set (parity with stripCtxMetadata)', () => {
+  // Future spec extensions can nest a Product under a non-product-named
+  // carrier (e.g. `media_buys[].products[]`,
+  // `creatives[].assigned_packages[].product`). The strip MUST follow
+  // every carrier `stripCtxMetadata` already follows so the two strips
+  // can't silently diverge on which subtrees they recurse through.
+  const wire = {
+    media_buys: [
+      {
+        media_buy_id: 'mb_1',
+        // Hypothetical future spec: bulk delivery shape that nests product slices.
+        products: [
+          {
+            product_id: 'prod_under_mb',
+            implementation_config: { recipe_kind: 'gam', network_code: 'leak_via_mb' },
+          },
+        ],
+      },
+    ],
+    creatives: [
+      {
+        creative_id: 'cr_1',
+        // Hypothetical future spec: creative-bound product slot.
+        product: {
+          product_id: 'prod_under_creative',
+          implementation_config: { recipe_kind: 'gam', network_code: 'leak_via_creative' },
+        },
+      },
+    ],
+  };
+  stripImplementationConfig(wire);
+  const serialized = JSON.stringify(wire);
+  assert.ok(!serialized.includes('leak_via_mb'), `media_buys[].products[] leaked: ${serialized}`);
+  assert.ok(!serialized.includes('leak_via_creative'), `creatives[].product leaked: ${serialized}`);
+  assert.strictEqual(wire.media_buys[0].products[0].implementation_config, undefined);
+  assert.strictEqual(wire.creatives[0].product.implementation_config, undefined);
+});
+
 test('hasImplementationConfig: detects across product carriers', () => {
   assert.ok(
     hasImplementationConfig({

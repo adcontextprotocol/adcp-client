@@ -110,6 +110,15 @@ export interface GAMLikeRecipe extends Recipe {
    * slot rather than forking `recipe_kind: 'gam'` into N variants.
    * Opaque to the framework; sharper-typed adopters can declare a
    * subtype literal `recipe_kind: 'gam-myco'` with a typed `extensions`.
+   *
+   * **MUST NOT carry credentials** (service-account JSON, OAuth refresh
+   * tokens, HMAC secrets). The framework strips the entire
+   * `implementation_config` envelope from buyer-facing wire responses,
+   * so credentials here are protected *by coincidence of strip*, not by
+   * a credential scan. Re-derive credentials per request from
+   * `ctx.authInfo` + your token cache; embed only non-secret upstream
+   * identifiers here. Same hazard class as `ctx_metadata` and `ext` —
+   * see `docs/guides/CTX-METADATA-SAFETY.md`.
    */
   extensions?: Record<string, unknown>;
 }

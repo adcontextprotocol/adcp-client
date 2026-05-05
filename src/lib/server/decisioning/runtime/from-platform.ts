@@ -2477,7 +2477,18 @@ async function dispatchHitl<TResult>(
     }
 
     if (taskFnError === undefined) {
-      // Success path
+      // Success path. Strip wire-only-server fields BEFORE the registry
+      // write so every downstream consumer (tasks/get polling at
+      // line 1826, emitTaskWebhook below at line 2493, idempotency
+      // replays of the Submitted envelope) inherits a clean payload.
+      // Mirrors the same chokepoint pattern projectSync uses for the
+      // sync arm. Without this strip, ctx_metadata + implementation_config
+      // ride to the buyer via the HITL completion path even though the
+      // sync path is clean — surfaced by security review on PR #1562.
+      if (result != null && typeof result === 'object') {
+        stripCtxMetadata(result as Record<string, unknown>);
+        stripImplementationConfig(result as Record<string, unknown>);
+      }
       try {
         await taskRegistry.complete(taskId, result as TResult);
       } catch (registryErr) {

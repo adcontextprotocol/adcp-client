@@ -86,6 +86,13 @@ const CARRIER_KEYS = [
   'collection_lists',
   'asset',
   'assets',
+  // Proposal-mode (v1.5 ProposalManager): committed proposals embed
+  // their own `products[]` slice. Without these carriers, ctx_metadata
+  // (and implementation_config, which shares this list) on
+  // `proposals[].products[]` survived the strip and leaked via the
+  // HITL handoff path. Surfaced by security review on PR #1562.
+  'proposal',
+  'proposals',
 ] as const;
 
 function stripFromCarrier(obj: Record<string, unknown>): void {
@@ -132,9 +139,16 @@ const IMPLEMENTATION_CONFIG_KEY = 'implementation_config' as const;
  * Strip at the dispatcher seam, after the platform builds the wire
  * shape and before the idempotency cache writes it.
  *
- * @public
+ * Carrier list mirrors `CARRIER_KEYS` (used by `stripCtxMetadata`)
+ * because future spec extensions may nest a Product under any
+ * resource carrier (e.g. `media_buys[].products[]`,
+ * `creatives[].assigned_packages[].product`). Reusing the same set
+ * keeps the two strips from silently diverging — adding a new wire
+ * carrier in `CARRIER_KEYS` for `ctx_metadata` automatically extends
+ * the implementation_config walk too. Surfaced by security review on
+ * PR #1562.
  */
-const IMPL_CONFIG_CARRIER_KEYS = ['product', 'products'] as const;
+const IMPL_CONFIG_CARRIER_KEYS = CARRIER_KEYS;
 
 /**
  * Runtime strip for `Product.implementation_config`. Walks Product
@@ -162,8 +176,8 @@ function stripImplConfigFromCarrier(obj: Record<string, unknown>): void {
   if ('product_id' in obj && IMPLEMENTATION_CONFIG_KEY in obj) {
     delete obj[IMPLEMENTATION_CONFIG_KEY];
   }
-  // Walk the same product carriers ctx_metadata uses, plus the
-  // proposal-mode `proposals[].products[]` nesting.
+  // Walk the shared carrier set (mirrors stripCtxMetadata) so future
+  // spec additions extending one strip automatically extend both.
   for (const key of IMPL_CONFIG_CARRIER_KEYS) {
     const nested = obj[key];
     if (nested == null) continue;
@@ -173,14 +187,6 @@ function stripImplConfigFromCarrier(obj: Record<string, unknown>): void {
       }
     } else if (typeof nested === 'object') {
       stripImplConfigFromCarrier(nested as Record<string, unknown>);
-    }
-  }
-  // Proposals can carry their own products (`proposals[].products[]`)
-  // — recurse.
-  const proposals = obj['proposals'];
-  if (Array.isArray(proposals)) {
-    for (const p of proposals) {
-      if (p != null && typeof p === 'object') stripImplConfigFromCarrier(p as Record<string, unknown>);
     }
   }
 }
@@ -208,12 +214,6 @@ function walkForImplConfig(obj: Record<string, unknown>): boolean {
       }
     } else if (typeof nested === 'object') {
       if (walkForImplConfig(nested as Record<string, unknown>)) return true;
-    }
-  }
-  const proposals = obj['proposals'];
-  if (Array.isArray(proposals)) {
-    for (const p of proposals) {
-      if (p != null && typeof p === 'object' && walkForImplConfig(p as Record<string, unknown>)) return true;
     }
   }
   return false;

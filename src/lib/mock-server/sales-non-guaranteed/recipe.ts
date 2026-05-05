@@ -85,6 +85,15 @@ export interface AuctionLikeRecipe extends Recipe {
    * upstream payloads don't have to fork `recipe_kind`. Opaque to the
    * framework. Subtype the recipe with a literal `recipe_kind` and
    * typed `extensions` if you want stricter shape enforcement.
+   *
+   * **MUST NOT carry credentials** (auction-house API keys, OAuth
+   * tokens, HMAC secrets). The framework strips the entire
+   * `implementation_config` envelope from buyer-facing wire responses,
+   * so credentials here are protected *by coincidence of strip*, not
+   * by a credential scan. Re-derive credentials per request from
+   * `ctx.authInfo` + your token cache; embed only non-secret upstream
+   * identifiers here. Same hazard class as `ctx_metadata` and `ext` —
+   * see `docs/guides/CTX-METADATA-SAFETY.md`.
    */
   extensions?: Record<string, unknown>;
 }
