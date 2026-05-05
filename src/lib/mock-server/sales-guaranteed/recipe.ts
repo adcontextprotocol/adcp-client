@@ -100,6 +100,27 @@ export interface GAMLikeRecipe extends Recipe {
      * create the bookable line item at `create_media_buy` time. */
     line_item_template_id?: string;
   };
+
+  /**
+   * Adopter-extension slot for upstream-specific fields the canonical
+   * shape doesn't enumerate — `creative_placeholders` (size + companion
+   * bundles), `custom_targeting` (key-values, dayparting), GAM
+   * `roadblock_settings`, FreeWheel `placement_types`, Operative
+   * `revenue_type`, etc. Adopters carrying richer payloads use this
+   * slot rather than forking `recipe_kind: 'gam'` into N variants.
+   * Opaque to the framework; sharper-typed adopters can declare a
+   * subtype literal `recipe_kind: 'gam-myco'` with a typed `extensions`.
+   *
+   * **MUST NOT carry credentials** (service-account JSON, OAuth refresh
+   * tokens, HMAC secrets). The framework strips the entire
+   * `implementation_config` envelope from buyer-facing wire responses,
+   * so credentials here are protected *by coincidence of strip*, not by
+   * a credential scan. Re-derive credentials per request from
+   * `ctx.authInfo` + your token cache; embed only non-secret upstream
+   * identifiers here. Same hazard class as `ctx_metadata` and `ext` —
+   * see `docs/guides/CTX-METADATA-SAFETY.md`.
+   */
+  extensions?: Record<string, unknown>;
 }
 
 /**
@@ -147,6 +168,8 @@ export function buildGAMLikeRecipe(
      * Set post-finalize. Empty pre-finalize.
      */
     upstream_ids?: GAMLikeRecipe['upstream_ids'];
+    /** Adopter-supplied extension blob. */
+    extensions?: Record<string, unknown>;
   } = {}
 ): GAMLikeRecipe {
   const priority = options.line_item_priority ?? (product.delivery_type === 'guaranteed' ? 8 : 12);
@@ -189,5 +212,6 @@ export function buildGAMLikeRecipe(
   }
   if (product.pricing.min_spend !== undefined) recipe.min_spend = product.pricing.min_spend;
   if (options.upstream_ids) recipe.upstream_ids = options.upstream_ids;
+  if (options.extensions) recipe.extensions = options.extensions;
   return recipe;
 }

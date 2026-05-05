@@ -1,13 +1,14 @@
 /**
- * `KevelLikeRecipe` — canonical {@link Recipe} shape for hello adapters
+ * `AuctionLikeRecipe` — canonical {@link Recipe} shape for hello adapters
  * wrapping the `sales-non-guaranteed` mock-server upstream.
  *
  * Auction-cleared programmatic remnant: floor pricing per zone (=
  * AdCP `ad_unit`), no inventory hold, no draft→committed lifecycle.
  * The recipe captures *how to flight a bid into the auction* — flight
- * id, zone targeting, weight, floor CPM. Adopters wrapping Kevel,
- * OpenRTB exchanges, Beeswax, Adelphic, or any auction-cleared remnant
- * platform map their native fields onto this shape.
+ * id, zone targeting, priority, floor CPM. Generic across decision-
+ * engine backends (Kevel) and exchange backends (OpenRTB DSPs/SSPs,
+ * Beeswax, Adelphic) — adopters who want a sharper-typed shape declare
+ * their own `recipe_kind: 'kevel' | 'openrtb' | ...` subtype on top.
  *
  * **No proposal lifecycle.** Non-guaranteed sells "right of first refusal
  * at floor"; there's no draft→committed ceremony. The recipe lands on
@@ -21,14 +22,18 @@ import type { CapabilityOverlap, Recipe } from '../../server/decisioning/proposa
 import type { MockProduct } from './seed-data';
 
 /**
- * Canonical recipe for hello adapters wrapping a Kevel-style auction
- * remnant upstream. Adopters extend with platform-specific fields
- * (e.g. Beeswax `bid_modifier_strategies`, Kevel `frequency_caps`).
+ * Canonical recipe for hello adapters wrapping an auction-cleared
+ * remnant upstream. Generic across decision-engine and exchange
+ * backends — fields map cleanly onto Kevel `Flight`, OpenRTB `imp`
+ * + deal, Beeswax `Strategy`, etc. Adopters with platform-specific
+ * fields (Kevel `frequency_caps`, Beeswax `bid_modifier_strategies`)
+ * either extend in `extensions` or declare a sharper `recipe_kind`
+ * subtype.
  *
  * @public
  */
-export interface KevelLikeRecipe extends Recipe {
-  recipe_kind: 'kevel';
+export interface AuctionLikeRecipe extends Recipe {
+  recipe_kind: 'auction';
 
   /** Upstream tenant — the publisher's network/account code. */
   network_code: string;
@@ -40,9 +45,9 @@ export interface KevelLikeRecipe extends Recipe {
   zone_ids: readonly string[];
 
   /**
-   * Auction-priority weight. Kevel default 5; higher = more aggressive.
-   * Adopters with platform-specific priority semantics (OpenRTB
-   * `bidfloor` deal vs PMP, Beeswax `priority`) translate at the seam.
+   * Auction-priority weight. Kevel default 5 (higher = more
+   * aggressive); OpenRTB-flavored adapters typically map to deal
+   * priority or `bidfloor` tier.
    */
   weight: number;
 
@@ -72,16 +77,37 @@ export interface KevelLikeRecipe extends Recipe {
   upstream_ids?: {
     flight_id?: string;
   };
+
+  /**
+   * Adopter-extension slot for platform-specific fields (Kevel
+   * `frequency_caps`, OpenRTB `private_auction`, Beeswax
+   * `bid_modifier_strategies`, etc.) so adopters carrying richer
+   * upstream payloads don't have to fork `recipe_kind`. Opaque to the
+   * framework. Subtype the recipe with a literal `recipe_kind` and
+   * typed `extensions` if you want stricter shape enforcement.
+   *
+   * **MUST NOT carry credentials** (auction-house API keys, OAuth
+   * tokens, HMAC secrets). The framework strips the entire
+   * `implementation_config` envelope from buyer-facing wire responses,
+   * so credentials here are protected *by coincidence of strip*, not
+   * by a credential scan. Re-derive credentials per request from
+   * `ctx.authInfo` + your token cache; embed only non-secret upstream
+   * identifiers here. Same hazard class as `ctx_metadata` and `ext` —
+   * see `docs/guides/CTX-METADATA-SAFETY.md`.
+   */
+  extensions?: Record<string, unknown>;
 }
 
 /**
- * Canonical {@link CapabilityOverlap} for `KevelLikeRecipe` products.
- * Auction remnant exposes a narrower target dimension set than
- * guaranteed (no audience/placement axes).
+ * Maximum capability set the auction-remnant model supports — every
+ * product is CPM-only non-guaranteed; targeting axes are the ones
+ * exchanges and decision engines commonly enforce. Per-product
+ * `capability_overlap` is derived from this in {@link buildAuctionLikeRecipe}
+ * intersected with the product's actual offering.
  *
  * @public
  */
-export const KEVEL_LIKE_OVERLAP: CapabilityOverlap = {
+export const AUCTION_LIKE_OVERLAP: CapabilityOverlap = {
   // Lowercase matches the AdCP wire `pricing_model` enum so the framework's
   // `overlap ⊆ wire` validation passes.
   pricingModels: new Set(['cpm']),
@@ -90,7 +116,7 @@ export const KEVEL_LIKE_OVERLAP: CapabilityOverlap = {
 };
 
 /**
- * Build a {@link KevelLikeRecipe} from a {@link MockProduct} returned
+ * Build an {@link AuctionLikeRecipe} from a {@link MockProduct} returned
  * by the `sales-non-guaranteed` mock-server's `/v1/products` endpoint.
  *
  * Hello adapters call this inside their `proposalManager.getProducts`
@@ -99,22 +125,24 @@ export const KEVEL_LIKE_OVERLAP: CapabilityOverlap = {
  *
  * @public
  */
-export function buildKevelLikeRecipe(
+export function buildAuctionLikeRecipe(
   product: MockProduct,
   options: {
     /** Override the auction-priority weight. Defaults to `5`. */
     weight?: number;
     /**
-     * Goal axis. Defaults to `'impressions'` (Kevel's typical setting
-     * for floor-priced remnant).
+     * Goal axis. Defaults to `'impressions'` (typical for
+     * floor-priced remnant).
      */
-    goal_type?: KevelLikeRecipe['goal_type'];
+    goal_type?: AuctionLikeRecipe['goal_type'];
     /** Set post-`create_media_buy`. */
-    upstream_ids?: KevelLikeRecipe['upstream_ids'];
+    upstream_ids?: AuctionLikeRecipe['upstream_ids'];
+    /** Adopter-supplied extension blob. */
+    extensions?: Record<string, unknown>;
   } = {}
-): KevelLikeRecipe {
-  const recipe: KevelLikeRecipe = {
-    recipe_kind: 'kevel',
+): AuctionLikeRecipe {
+  const recipe: AuctionLikeRecipe = {
+    recipe_kind: 'auction',
     network_code: product.network_code,
     zone_ids: product.ad_unit_ids,
     weight: options.weight ?? 5,
@@ -125,16 +153,18 @@ export function buildKevelLikeRecipe(
     },
     goal_type: options.goal_type ?? 'impressions',
     // Per-product overlap: matches the auction-remnant model where
-    // every product is CPM-only non-guaranteed. The static constant
-    // happens to match for this specialism; we still derive
-    // per-product to keep the pattern consistent with GAM-like.
+    // every product is CPM-only non-guaranteed. We derive per-product
+    // (rather than reusing AUCTION_LIKE_OVERLAP wholesale) to keep the
+    // pattern consistent with GAM-like and to surface adopter drift
+    // when a product's wire shape doesn't match the recipe overlap.
     capability_overlap: {
       pricingModels: new Set(['cpm']),
       deliveryTypes: new Set(['non_guaranteed']),
-      targetingDimensions: KEVEL_LIKE_OVERLAP.targetingDimensions,
+      targetingDimensions: AUCTION_LIKE_OVERLAP.targetingDimensions,
     },
   };
   if (product.pricing.min_spend !== undefined) recipe.min_spend = product.pricing.min_spend;
   if (options.upstream_ids) recipe.upstream_ids = options.upstream_ids;
+  if (options.extensions) recipe.extensions = options.extensions;
   return recipe;
 }

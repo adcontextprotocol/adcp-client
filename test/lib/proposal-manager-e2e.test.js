@@ -337,3 +337,106 @@ test('e2e: finalize HITL — TaskHandoff commits proposal on completion + emits 
   assert.ok(logCaptured, 'expected proposal.finalized log emission');
   assert.strictEqual(logCaptured.path, 'handoff', 'log should mark this as the handoff path');
 });
+
+test('e2e: HITL handoff result strips ctx_metadata + implementation_config before tasks/get returns it', async () => {
+  // Regression for the security-review finding on PR #1562: the strip
+  // chokepoint at projectSync only covered the sync arm. The HITL
+  // handoff path emitted the projected result via tasks/get + webhook
+  // verbatim — including any ctx_metadata or implementation_config the
+  // adopter let through. Fix runs both strips inside dispatchHitl
+  // before taskRegistry.complete so every downstream consumer
+  // inherits clean state.
+  const store = new InMemoryProposalStore();
+  store.putDraft({
+    proposalId: 'p1',
+    accountId: 'acct_1',
+    recipes: new Map(),
+    proposalPayload: { proposal_id: 'p1' },
+  });
+  const expires = new Date(Date.now() + 60_000);
+
+  // Adopter return carries server-only fields the strip MUST remove
+  // before the buyer sees the resolved task artifact.
+  const proposalManager = {
+    capabilities: { salesSpecialism: 'sales-guaranteed', finalize: true },
+    getProducts: async () => ({ products: [], proposals: [] }),
+    finalizeProposal: async (req, ctx) => {
+      return ctx.handoffToTask(async () => ({
+        proposal: {
+          proposal_id: req.proposalId,
+          name: 'final',
+          proposal_status: 'committed',
+          expires_at: expires.toISOString(),
+          // Embedded products carrying server-only fields the buyer
+          // must NOT see.
+          products: [
+            {
+              product_id: 'prod_a',
+              implementation_config: {
+                recipe_kind: 'gam',
+                network_code: 'TOPOLOGY_LEAK_HITL',
+                upstream_ids: { line_item_template_id: 'lit_secret_HITL' },
+              },
+              ctx_metadata: { gam_internal_token: 'BEARER_THAT_MUST_NOT_REACH_WIRE' },
+            },
+          ],
+        },
+        expiresAt: expires,
+      }));
+    },
+  };
+  const sales = {
+    createMediaBuy: async () => ({ media_buy_id: 'mb', packages: [], status: 'pending_creative' }),
+    updateMediaBuy: async () => ({ media_buy_id: 'mb', packages: [], status: 'active' }),
+    getMediaBuyDelivery: async () => ({
+      media_buy_deliveries: [],
+      reporting_period: { start: '2026-01-01T00:00:00Z', end: '2026-01-02T00:00:00Z' },
+    }),
+  };
+  const server = createAdcpServerFromPlatform(buildPlatform({ proposalManager, sales }), {
+    name: 'e2e-hitl-strip',
+    version: '1.0',
+    proposalStore: store,
+    validation: { requests: 'off', responses: 'off' },
+  });
+  const submitted = await server.dispatchTestRequest(
+    {
+      method: 'tools/call',
+      params: {
+        name: 'get_products',
+        arguments: {
+          buying_mode: 'refine',
+          refine: [{ scope: 'proposal', action: 'finalize', proposal_id: 'p1' }],
+        },
+      },
+    },
+    { authInfo }
+  );
+  // Pull out the task_id from the Submitted envelope, then poll
+  // tasks/get to read what a buyer would actually see.
+  const submittedJson = JSON.stringify(submitted);
+  const taskIdMatch = submittedJson.match(/"task_id"\s*:\s*"([^"]+)"/);
+  assert.ok(taskIdMatch, `submitted envelope missing task_id: ${submittedJson.slice(0, 300)}`);
+  const taskId = taskIdMatch[1];
+
+  // Wait for the background handoff to resolve.
+  await new Promise(resolve => setTimeout(resolve, 50));
+
+  const taskResp = await server.dispatchTestRequest(
+    { method: 'tools/call', params: { name: 'tasks_get', arguments: { task_id: taskId } } },
+    { authInfo }
+  );
+  const taskJson = JSON.stringify(taskResp);
+  assert.ok(
+    !taskJson.includes('TOPOLOGY_LEAK_HITL'),
+    `tasks/get HITL result leaked implementation_config: ${taskJson.slice(0, 500)}`
+  );
+  assert.ok(
+    !taskJson.includes('lit_secret_HITL'),
+    `tasks/get HITL result leaked upstream_ids: ${taskJson.slice(0, 500)}`
+  );
+  assert.ok(
+    !taskJson.includes('BEARER_THAT_MUST_NOT_REACH_WIRE'),
+    `tasks/get HITL result leaked ctx_metadata: ${taskJson.slice(0, 500)}`
+  );
+});

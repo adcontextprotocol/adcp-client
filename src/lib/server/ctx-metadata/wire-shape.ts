@@ -86,6 +86,13 @@ const CARRIER_KEYS = [
   'collection_lists',
   'asset',
   'assets',
+  // Proposal-mode (v1.5 ProposalManager): committed proposals embed
+  // their own `products[]` slice. Without these carriers, ctx_metadata
+  // (and implementation_config, which shares this list) on
+  // `proposals[].products[]` survived the strip and leaked via the
+  // HITL handoff path. Surfaced by security review on PR #1562.
+  'proposal',
+  'proposals',
 ] as const;
 
 function stripFromCarrier(obj: Record<string, unknown>): void {
@@ -111,6 +118,105 @@ function stripFromCarrier(obj: Record<string, unknown>): void {
 export function hasCtxMetadata(value: unknown): boolean {
   if (value == null || typeof value !== 'object') return false;
   return walkForCtxMetadata(value as Record<string, unknown>);
+}
+
+// ---------------------------------------------------------------------------
+// Recipe `implementation_config` strip — Product-specific, parallel pattern
+// ---------------------------------------------------------------------------
+
+const IMPLEMENTATION_CONFIG_KEY = 'implementation_config' as const;
+
+/**
+ * Carrier locations for `implementation_config`. Recipes ride on
+ * `Product.implementation_config` per the v1.5 ProposalManager design;
+ * the field is opaque-to-buyer (typed-on-server) and must NOT cross to
+ * the buyer's wire response. Mirrors the `ctx_metadata` strip pattern.
+ *
+ * The wire `Product` shape's JSON schema is `additionalProperties: true`
+ * so the field is technically legal on the wire — but recipes carry
+ * upstream identifiers (network codes, line-item template ids, ad-unit
+ * ids, GAM line-item priority, etc.) that leak topology to buyers.
+ * Strip at the dispatcher seam, after the platform builds the wire
+ * shape and before the idempotency cache writes it.
+ *
+ * Carrier list mirrors `CARRIER_KEYS` (used by `stripCtxMetadata`)
+ * because future spec extensions may nest a Product under any
+ * resource carrier (e.g. `media_buys[].products[]`,
+ * `creatives[].assigned_packages[].product`). Reusing the same set
+ * keeps the two strips from silently diverging — adding a new wire
+ * carrier in `CARRIER_KEYS` for `ctx_metadata` automatically extends
+ * the implementation_config walk too. Surfaced by security review on
+ * PR #1562.
+ */
+const IMPL_CONFIG_CARRIER_KEYS = CARRIER_KEYS;
+
+/**
+ * Runtime strip for `Product.implementation_config`. Walks Product
+ * carrier locations in the response (top-level `products[]` plus
+ * single-product `product` slots inside `proposals[].products[]` etc.)
+ * and deletes the recipe field. Mutates in place.
+ *
+ * Adopters who deliberately want the recipe to ride to the buyer (rare;
+ * defeats the typed-on-server contract) can re-attach it in a
+ * post-strip hook — but the default is "strip, always."
+ *
+ * @public
+ */
+export function stripImplementationConfig<T>(value: T): T {
+  if (value == null || typeof value !== 'object') return value;
+  stripImplConfigFromCarrier(value as Record<string, unknown>);
+  return value;
+}
+
+function stripImplConfigFromCarrier(obj: Record<string, unknown>): void {
+  // Strip the field on the current object IF this object looks like a
+  // Product (has product_id). We don't strip blindly at every level
+  // because the field name could legitimately appear elsewhere (e.g.,
+  // a diagnostic envelope) in a future spec extension.
+  if ('product_id' in obj && IMPLEMENTATION_CONFIG_KEY in obj) {
+    delete obj[IMPLEMENTATION_CONFIG_KEY];
+  }
+  // Walk the shared carrier set (mirrors stripCtxMetadata) so future
+  // spec additions extending one strip automatically extend both.
+  for (const key of IMPL_CONFIG_CARRIER_KEYS) {
+    const nested = obj[key];
+    if (nested == null) continue;
+    if (Array.isArray(nested)) {
+      for (const item of nested) {
+        if (item != null && typeof item === 'object') stripImplConfigFromCarrier(item as Record<string, unknown>);
+      }
+    } else if (typeof nested === 'object') {
+      stripImplConfigFromCarrier(nested as Record<string, unknown>);
+    }
+  }
+}
+
+/**
+ * Detect whether a payload contains `implementation_config` on any
+ * Product carrier. Test-suite helper — production paths call
+ * `stripImplementationConfig`.
+ *
+ * @public
+ */
+export function hasImplementationConfig(value: unknown): boolean {
+  if (value == null || typeof value !== 'object') return false;
+  return walkForImplConfig(value as Record<string, unknown>);
+}
+
+function walkForImplConfig(obj: Record<string, unknown>): boolean {
+  if ('product_id' in obj && IMPLEMENTATION_CONFIG_KEY in obj) return true;
+  for (const key of IMPL_CONFIG_CARRIER_KEYS) {
+    const nested = obj[key];
+    if (nested == null) continue;
+    if (Array.isArray(nested)) {
+      for (const item of nested) {
+        if (item != null && typeof item === 'object' && walkForImplConfig(item as Record<string, unknown>)) return true;
+      }
+    } else if (typeof nested === 'object') {
+      if (walkForImplConfig(nested as Record<string, unknown>)) return true;
+    }
+  }
+  return false;
 }
 
 function walkForCtxMetadata(obj: Record<string, unknown>): boolean {

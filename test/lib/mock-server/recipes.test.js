@@ -1,7 +1,7 @@
 /**
  * Recipe-builder tests for the mock-server canonical Recipe shapes.
  * These shapes are the public contract hello adapters consume — both
- * the typed shape (`GAMLikeRecipe`, `KevelLikeRecipe`) and the builder
+ * the typed shape (`GAMLikeRecipe`, `AuctionLikeRecipe`) and the builder
  * helpers that project upstream native products onto the recipes.
  */
 
@@ -11,8 +11,8 @@ const assert = require('node:assert');
 const {
   buildGAMLikeRecipe,
   GAM_LIKE_OVERLAP,
-  buildKevelLikeRecipe,
-  KEVEL_LIKE_OVERLAP,
+  buildAuctionLikeRecipe,
+  AUCTION_LIKE_OVERLAP,
 } = require('../../../dist/lib/mock-server/index.js');
 
 // ---------------------------------------------------------------------------
@@ -104,10 +104,10 @@ test('GAM_LIKE_OVERLAP advertises the guaranteed-friendly capability set', () =>
 });
 
 // ---------------------------------------------------------------------------
-// Kevel-like recipe (sales-non-guaranteed)
+// AuctionLike recipe (sales-non-guaranteed)
 // ---------------------------------------------------------------------------
 
-test('buildKevelLikeRecipe: floor-priced product → recipe with weight 5 + impressions goal', () => {
+test('buildAuctionLikeRecipe: floor-priced product → recipe with weight 5 + impressions goal', () => {
   const product = {
     product_id: 'display_medrec_remnant',
     name: 'Display Medrec Remnant',
@@ -118,8 +118,8 @@ test('buildKevelLikeRecipe: floor-priced product → recipe with weight 5 + impr
     ad_unit_ids: ['au_us_display_medrec'],
     pricing: { min_cpm: 1.5, target_cpm: 2.25, currency: 'USD' },
   };
-  const recipe = buildKevelLikeRecipe(product);
-  assert.equal(recipe.recipe_kind, 'kevel');
+  const recipe = buildAuctionLikeRecipe(product);
+  assert.equal(recipe.recipe_kind, 'auction');
   assert.equal(recipe.network_code, 'net_remnant_us');
   assert.deepStrictEqual(recipe.zone_ids, ['au_us_display_medrec']);
   assert.equal(recipe.weight, 5, 'default weight');
@@ -132,7 +132,7 @@ test('buildKevelLikeRecipe: floor-priced product → recipe with weight 5 + impr
   assert.strictEqual(recipe.upstream_ids, undefined);
 });
 
-test('buildKevelLikeRecipe: omits target_cpm when absent + threads min_spend', () => {
+test('buildAuctionLikeRecipe: omits target_cpm when absent + threads min_spend', () => {
   const product = {
     product_id: 'p',
     name: 'P',
@@ -143,17 +143,17 @@ test('buildKevelLikeRecipe: omits target_cpm when absent + threads min_spend', (
     ad_unit_ids: ['au_x'],
     pricing: { min_cpm: 8, currency: 'USD', min_spend: 1000 },
   };
-  const recipe = buildKevelLikeRecipe(product, { weight: 9, goal_type: 'spend' });
+  const recipe = buildAuctionLikeRecipe(product, { weight: 9, goal_type: 'spend' });
   assert.strictEqual(recipe.pricing.target_cpm, undefined);
   assert.equal(recipe.weight, 9);
   assert.equal(recipe.goal_type, 'spend');
   assert.equal(recipe.min_spend, 1000);
 });
 
-test('KEVEL_LIKE_OVERLAP advertises the auction-remnant capability set', () => {
-  assert.ok(KEVEL_LIKE_OVERLAP.pricingModels.has('cpm'));
-  assert.ok(!KEVEL_LIKE_OVERLAP.pricingModels.has('cpv'), 'auction remnant is CPM-only');
-  assert.ok(KEVEL_LIKE_OVERLAP.deliveryTypes.has('non_guaranteed'));
-  assert.ok(!KEVEL_LIKE_OVERLAP.deliveryTypes.has('guaranteed'));
-  assert.ok(!KEVEL_LIKE_OVERLAP.targetingDimensions.has('audience'), 'no audience axis on remnant');
+test('AUCTION_LIKE_OVERLAP advertises the auction-remnant capability set', () => {
+  assert.ok(AUCTION_LIKE_OVERLAP.pricingModels.has('cpm'));
+  assert.ok(!AUCTION_LIKE_OVERLAP.pricingModels.has('cpv'), 'auction remnant is CPM-only');
+  assert.ok(AUCTION_LIKE_OVERLAP.deliveryTypes.has('non_guaranteed'));
+  assert.ok(!AUCTION_LIKE_OVERLAP.deliveryTypes.has('guaranteed'));
+  assert.ok(!AUCTION_LIKE_OVERLAP.targetingDimensions.has('audience'), 'no audience axis on remnant');
 });
