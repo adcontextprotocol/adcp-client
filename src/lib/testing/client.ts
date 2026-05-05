@@ -120,12 +120,19 @@ export function createTestClient(agentUrl: string, protocol: 'mcp' | 'a2a' = 'mc
     protocol,
   };
 
+  // Caller-supplied tenant/routing headers carry through to every transport
+  // request. Merged before auth so auth still wins on Authorization conflicts
+  // (the basic-auth branch below intentionally overwrites this).
+  if (options.headers && Object.keys(options.headers).length > 0) {
+    agentConfig.headers = { ...options.headers };
+  }
+
   // Add auth to agent config - the library will use it automatically
   if (options.auth) {
     if (options.auth.type === 'basic') {
       // basic: encode credentials here; library sends the Authorization header as-is
       const encoded = Buffer.from(`${options.auth.username}:${options.auth.password}`).toString('base64');
-      agentConfig.headers = { Authorization: `Basic ${encoded}` };
+      agentConfig.headers = { ...agentConfig.headers, Authorization: `Basic ${encoded}` };
     } else if (options.auth.type === 'oauth') {
       // oauth: attach tokens + client registration; ProtocolClient detects
       // oauth_tokens and routes through the refresh-capable MCP OAuth path.
