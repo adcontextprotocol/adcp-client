@@ -243,7 +243,12 @@ export function normalizeProductPricing(product: any): any {
  * Converts v3 fields to their v2 equivalents:
  * - brand (BrandReference) → brand_manifest (base domain URL string)
  * - catalog → promoted_offerings (type='offering') or promoted_offerings.product_selectors (type='product')
- * - channels in filters → v2 channel names
+ *
+ * Channels in filters are passed through unchanged. AdCP v2.5.3 aligned the
+ * channel enum with v3 taxonomy (`olv`, `ctv`, `streaming_audio`, `retail_media`),
+ * so v2 servers running v2.5.3+ reject the older `video`/`audio`/`retail` names
+ * — see /schemas/2.5.3/enums/channels.json which describes itself as the
+ * "AdCP v3 taxonomy".
  *
  * Strips v3-only fields v2 agents don't understand:
  * - buying_mode, buyer_campaign_ref, property_list, account_id, pagination (top-level)
@@ -279,22 +284,6 @@ export function adaptGetProductsRequestForV2(request: any): any {
       };
     }
     delete adapted.catalog;
-  }
-
-  // Map v3 channel names to v2 equivalents
-  if (adapted.filters?.channels) {
-    const v2ChannelMap: Record<string, string> = {
-      olv: 'video',
-      ctv: 'video',
-      streaming_audio: 'audio',
-      retail_media: 'retail',
-    };
-    // Deduplicate after mapping (e.g. olv+ctv both become 'video')
-    const mapped = adapted.filters.channels.map((ch: string) => v2ChannelMap[ch] ?? ch);
-    adapted.filters = {
-      ...adapted.filters,
-      channels: [...new Set(mapped)],
-    };
   }
 
   // Strip v3-only filter fields (format_ids exists in both v2 and v3, keep it)

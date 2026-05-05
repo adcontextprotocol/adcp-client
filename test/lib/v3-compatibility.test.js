@@ -689,6 +689,27 @@ describe('Creative Assignment Adapter', () => {
       assert.strictEqual(result.brand, undefined);
       assert.strictEqual(result.brand_manifest, 'https://acme.com');
     });
+
+    test('should pass v3 channel names through unchanged (v2.5.3 aligned with v3 taxonomy)', () => {
+      const v3Request = {
+        buying_mode: 'brief',
+        brief: 'News content',
+        filters: {
+          channels: ['display', 'olv', 'ctv', 'streaming_audio', 'retail_media'],
+          countries: ['US'],
+        },
+      };
+
+      const result = adaptGetProductsRequestForV2(v3Request);
+
+      assert.deepStrictEqual(result.filters.channels, [
+        'display',
+        'olv',
+        'ctv',
+        'streaming_audio',
+        'retail_media',
+      ]);
+    });
   });
 
   describe('adaptUpdateMediaBuyRequestForV2', () => {
