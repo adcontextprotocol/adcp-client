@@ -60,6 +60,31 @@ export {
 export { CLIFlowHandler, type CLIFlowHandlerConfig } from './CLIFlowHandler';
 export { NonInteractiveFlowHandler, type NonInteractiveFlowHandlerConfig } from './NonInteractiveFlowHandler';
 
+// Web (server-side) OAuth flow — companion to CLIFlowHandler for environments
+// where /oauth/start and /oauth/callback may be served by different processes.
+// Note: standalone functions, NOT a class implementing OAuthFlowHandler — see
+// docs/guides/WEB-OAUTH.md for the rationale (the contract spans two requests).
+export {
+  startWebOAuthFlow,
+  completeWebOAuthFlow,
+  safeReturnTo,
+  InMemoryPendingFlowStore,
+  InvalidOrExpiredFlowError,
+  StateMismatchError,
+  TokenExchangeError,
+  ProtectedResourceMetadataError,
+  AgentVanishedDuringFlowError,
+  ConfidentialClientNotAllowedError,
+  DEFAULT_WEB_FLOW_TTL_MS,
+  type PendingWebFlow,
+  type PendingWebFlowStore,
+  type PendingFlowStore,
+  type StartWebFlowOptions,
+  type StartWebFlowResult,
+  type CompleteWebFlowOptions,
+  type CompleteWebFlowResult,
+} from './web-flow';
+
 // Main provider
 export { MCPOAuthProvider } from './MCPOAuthProvider';
 
