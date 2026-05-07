@@ -275,6 +275,59 @@ describe('A2A Protocol Compliance', { skip: process.env.CI ? 'Slow tests - skipp
         'Should throw error when server returns nested error in result'
       );
     });
+
+    test('should route failed-task with result.error + artifacts through unwrapper (polling path)', async () => {
+      // The @a2a-js/sdk annotates result.error ("Task X is in terminal state: 3")
+      // when its internal polling observes a terminal-failed task, but the
+      // artifact DataPart still carries the spec-canonical adcp_error. The shim
+      // must return the full response rather than throwing so handleAsyncResponse
+      // can extract adcp_error from the DataPart (fixes #1575).
+      closeA2AConnections();
+      const pollingClient = {
+        sendMessage: async () => ({
+          jsonrpc: '2.0',
+          id: 'test-id',
+          result: {
+            kind: 'task',
+            id: 'task-9a364eb3',
+            status: { state: 'failed' },
+            error: { message: 'Task task-9a364eb3 is in terminal state: 3' },
+            artifacts: [
+              {
+                parts: [
+                  {
+                    kind: 'data',
+                    data: {
+                      adcp_error: {
+                        code: 'TERMS_REJECTED',
+                        message: 'Terms rejected for this inventory.',
+                        recovery: 'correctable',
+                        field: 'targeting.age_range',
+                      },
+                      context: { correlation_id: 'test-corr-id' },
+                    },
+                  },
+                  { kind: 'text', text: 'Terms rejected for this inventory.' },
+                ],
+              },
+            ],
+          },
+        }),
+      };
+
+      const originalA2AClient = require('@a2a-js/sdk/client').A2AClient;
+      originalA2AClient.fromCardUrl = async () => pollingClient;
+
+      // Must NOT throw — returns the task envelope so the caller can
+      // extract adcp_error from the artifact DataPart.
+      const response = await callA2ATool('https://test.com', 'get_products_brief', {});
+      assert.strictEqual(response?.result?.kind, 'task', 'should return A2A task response');
+      assert.strictEqual(response?.result?.status?.state, 'failed', 'should preserve failed state');
+      assert.ok(
+        Array.isArray(response?.result?.artifacts) && response.result.artifacts.length > 0,
+        'should preserve artifacts for downstream adcp_error extraction'
+      );
+    });
   });
 
   describe('Debug Logging Integration', () => {

@@ -12,6 +12,7 @@ import { withSpan, injectTraceHeaders } from '../observability/tracing';
 import { isAgentCardPath, buildCardUrls } from '../utils/a2a-discovery';
 import { buildAgentSigningFetch, signingContextStorage, type AgentSigningContext } from '../signing/client';
 import { redactIdempotencyKeyInArgs } from '../utils/idempotency';
+import { TERMINAL_FAILURE_A2A_STATES } from '../utils/response-unwrapper';
 import { wrapFetchWithCapture } from './rawResponseCapture';
 import { wrapFetchWithSizeLimit } from './responseSizeLimit';
 
@@ -353,6 +354,28 @@ async function callA2AToolImpl(
     });
 
     if (messageResponse?.error || messageResponse?.result?.error) {
+      // On the polling/blocking path, the @a2a-js/sdk annotates result.error
+      // ("Task X is in terminal state: 3") when a polled task settles to a
+      // terminal failed/rejected/canceled state — but the artifact DataPart
+      // still carries the spec-canonical adcp_error. Prefer the artifact
+      // extraction pipeline over the raw transport message so callers receive
+      // structured error codes rather than the SDK sentinel string.
+      const taskResult = messageResponse?.result;
+      if (
+        taskResult?.kind === 'task' &&
+        Array.isArray(taskResult?.artifacts) &&
+        taskResult.artifacts.length > 0 &&
+        typeof taskResult?.status?.state === 'string' &&
+        TERMINAL_FAILURE_A2A_STATES.has(taskResult.status.state)
+      ) {
+        debugLogs.push({
+          type: 'info',
+          message: `A2A: Terminal task (${taskResult.status.state}) has artifacts — routing through unwrap pipeline for adcp_error extraction`,
+          timestamp: new Date().toISOString(),
+          skill: toolName,
+        });
+        return messageResponse;
+      }
       const errorObj = messageResponse.error || messageResponse.result?.error;
       const errorMessage = errorObj.message || JSON.stringify(errorObj);
       throw new Error(`A2A agent returned error: ${errorMessage}`);

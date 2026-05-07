@@ -380,6 +380,9 @@ export function readExtractionPath(data: unknown): McpExtractionPath | undefined
  * so callers handle them at the response level.
  */
 const TERMINAL_A2A_STATES: ReadonlySet<string> = new Set(['completed', 'failed', 'rejected', 'canceled']);
+// Failure-only subset — excludes 'completed'. Used by the A2A shim to distinguish
+// terminal-failed tasks (which carry adcp_error in artifacts) from success terminals.
+export const TERMINAL_FAILURE_A2A_STATES: ReadonlySet<string> = new Set(['failed', 'rejected', 'canceled']);
 
 function unwrapA2AResponse(response: any): AdCPResponse {
   const taskState = response.result?.status?.state;
