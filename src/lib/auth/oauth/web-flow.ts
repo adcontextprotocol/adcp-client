@@ -114,6 +114,15 @@ export interface PendingWebFlow {
  *
  * `consume` MUST treat expired rows as absent (return null) and SHOULD
  * delete them on read so a separate sweep is not strictly required.
+ *
+ * **Tradeoff: consume runs before token exchange.** `completeWebOAuthFlow`
+ * consumes the pending row before attempting `exchangeAuthorization`. If
+ * the AS returns a transient 5xx (or the network blips between us and the
+ * AS), the row is gone and the user must restart from `/oauth/start`.
+ * This is the right call for `invalid_grant` (replay protection — the
+ * authorization code is one-shot at the AS regardless), but it means
+ * transient AS failures cost the user a click. Revisit only if you see
+ * real retry-loss in the field.
  */
 export interface PendingWebFlowStore {
   /** Insert a new flow. MUST reject duplicate `state`. */
@@ -360,6 +369,11 @@ export async function startWebOAuthFlow(opts: StartWebFlowOptions): Promise<Star
  * the authorization code for tokens, and (if storage is provided)
  * persists tokens to `agent.oauth_tokens`. Returns whatever the caller
  * stashed in `carry` so the consumer can route the user appropriately.
+ *
+ * The pending row is consumed BEFORE `exchangeAuthorization` runs. A
+ * transient AS failure leaves the user with no row to retry against and
+ * they must restart from `/oauth/start`. See {@link PendingWebFlowStore}
+ * for the full tradeoff discussion.
  */
 export async function completeWebOAuthFlow(opts: CompleteWebFlowOptions): Promise<CompleteWebFlowResult> {
   const { state, code, pendingFlowStore, agentStorage, fetch: fetchFn, expectedState } = opts;
@@ -494,9 +508,19 @@ export class InMemoryPendingFlowStore implements PendingWebFlowStore {
 // ============================================================
 
 /**
- * The MCP SDK reports a 404 PRM lookup with this message; treat it as
- * "PRM is genuinely absent" and fall back. Anything else is a connection,
- * parse, or 5xx error and is allowed to bubble.
+ * The MCP SDK reports a 404 PRM lookup with this exact message; treat it
+ * as "PRM is genuinely absent" and fall back. Anything else is a
+ * connection, parse, or 5xx error and is allowed to bubble.
+ *
+ * Source (verified against `@modelcontextprotocol/sdk@1.29.0`):
+ *   `dist/esm/client/auth.js` → `discoverOAuthProtectedResourceMetadata`
+ *   throws `new Error(`Resource server does not implement OAuth 2.0 Protected Resource Metadata.`)`
+ *   when `response.status === 404` (or no response was returned).
+ *
+ * If a future MCP SDK reword this message, the test
+ * "falls back to server-derived resource on a 404 PRM" at
+ * `test/lib/oauth-web-flow.test.js` will fail — that test calls the real
+ * SDK against a 404 fixture and is the canary for this regression.
  */
 const PRM_ABSENT_MARKER = 'does not implement OAuth 2.0 Protected Resource Metadata';
 
