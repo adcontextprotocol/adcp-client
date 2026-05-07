@@ -368,24 +368,36 @@ export function readExtractionPath(data: unknown): McpExtractionPath | undefined
 }
 
 /**
+ * Terminal A2A task states whose artifacts should be extracted.
+ * Intermediate states (working, submitted, input-required, auth-required)
+ * carry no artifacts and must not reach this function.
+ *
+ * `auth-required` is intentionally excluded — this SDK treats it as a
+ * paused/intermediate state awaiting a buyer OAuth round-trip (see
+ * ProtocolResponseParser EXCLUSIVE_TASK_STATUSES). `unknown` is excluded
+ * as a wire-error sentinel, not a real task outcome with artifacts.
+ */
+const A2A_TERMINAL_STATES = new Set(['completed', 'failed', 'rejected', 'canceled']);
+
+/**
  * Unwrap A2A response
  *
- * Called for terminal task states ("completed", "failed", "rejected",
- * "canceled"). All four carry the same artifact + DataPart envelope per
- * AdCP transport-errors §A2A Binding — failed tasks place `adcp_error`
- * into the DataPart alongside an optional terse TextPart.
+ * Handles all terminal task states: "completed", "failed", "rejected", "canceled".
+ * Failed/rejected/canceled tasks follow the same artifact shape as completed tasks —
+ * the DataPart carries the adcp_error envelope per the AdCP A2A transport binding.
+ * Intermediate statuses ("working", "submitted", "input-required") are handled
+ * at the response level (not in artifacts) and must not reach this function.
  *
- * Intermediate statuses ("working", "submitted", "input-required",
- * "auth-required") do not yet have AdCP artifacts and are rejected here
- * so callers handle them at the response level.
+ * A2A response flow:
+ * - Intermediate: { status: "working", ... } - NO artifacts yet
+ * - Terminal: { status: "completed"|"failed"|"rejected"|"canceled", result: { artifacts: [...] } }
  */
-const TERMINAL_A2A_STATES: ReadonlySet<string> = new Set(['completed', 'failed', 'rejected', 'canceled']);
-
 function unwrapA2AResponse(response: any): AdCPResponse {
-  const taskState = response.result?.status?.state;
-  if (taskState && !TERMINAL_A2A_STATES.has(taskState)) {
+  // Only reject non-terminal (intermediate) statuses — terminal failure states
+  // (failed, rejected, canceled) carry artifacts with the adcp_error DataPart.
+  if (response.result?.status?.state && !A2A_TERMINAL_STATES.has(response.result.status.state)) {
     throw new Error(
-      `Cannot unwrap A2A response with intermediate status: ${taskState}. ` +
+      `Cannot unwrap A2A response with intermediate status: ${response.result.status.state}. ` +
         'Only terminal responses (completed, failed, rejected, canceled) should be unwrapped.'
     );
   }
@@ -402,22 +414,22 @@ function unwrapA2AResponse(response: any): AdCPResponse {
     };
   }
 
-  // A2A terminal response — same shape regardless of success or failure:
+  // A2A terminal response — applies to completed, failed, rejected, and canceled tasks.
   // - MUST have result.artifacts array with at least one artifact
-  // - Artifact MUST have at least one DataPart (kind: 'data') with the AdCP payload
-  //   (success payload for `completed`, `adcp_error` envelope for `failed`)
+  // - Artifact MUST have at least one DataPart (kind: 'data') with the AdCP response
   // - MAY have TextParts (kind: 'text') with optional messages
 
   const artifacts = response.result?.artifacts;
   if (!Array.isArray(artifacts) || artifacts.length === 0) {
-    throw new Error('A2A response must have at least one artifact');
+    throw new Error('A2A completed response must have at least one artifact');
   }
 
   // Take last artifact (conversational protocols append artifacts over time)
   // Note: A2A artifacts don't have a status field - only Tasks have status.
+  // If the Task status is "completed", all artifacts in result.artifacts are completed.
   const artifact = artifacts[artifacts.length - 1];
   if (!artifact) {
-    throw new Error('A2A response must have at least one artifact');
+    throw new Error('A2A completed response must have at least one artifact');
   }
 
   if (!artifact.parts || !Array.isArray(artifact.parts)) {
@@ -429,7 +441,7 @@ function unwrapA2AResponse(response: any): AdCPResponse {
   const dataParts = artifact.parts.filter((p: any) => p.kind === 'data');
   const dataPart = dataParts[dataParts.length - 1];
   if (!dataPart?.data) {
-    throw new Error('A2A response must have a DataPart with AdCP data');
+    throw new Error('A2A completed response must have a DataPart with AdCP data');
   }
 
   const textParts = artifact.parts.filter((p: any) => p.kind === 'text' && p.text).map((p: any) => p.text);
