@@ -541,6 +541,74 @@ describe('Response Unwrapper', () => {
       );
     });
 
+    test('should unwrap A2A failed task carrying adcp_error DataPart', () => {
+      // Per AdCP transport-errors §A2A Binding: a failed task carries an
+      // artifact with a DataPart containing `adcp_error` plus a TextPart
+      // for human/LLM consumption. The unwrapper must surface the DataPart
+      // so storyboard validators (`error_code`, `field_value`) can read
+      // `adcp_error.code` / `context.correlation_id` from the unwrapped
+      // payload instead of falling back to `Task.status.state`.
+      const a2aFailedResponse = {
+        jsonrpc: '2.0',
+        result: {
+          kind: 'task',
+          status: { state: 'failed' },
+          artifacts: [
+            {
+              parts: [
+                {
+                  kind: 'data',
+                  data: {
+                    context: { correlation_id: 'invalid_transitions--update_unknown_media_buy' },
+                    adcp_error: {
+                      code: 'MEDIA_BUY_NOT_FOUND',
+                      message: "Media buy 'does-not-exist' not found.",
+                      recovery: 'correctable',
+                    },
+                  },
+                },
+                { kind: 'text', text: "Media buy 'does-not-exist' not found." },
+              ],
+            },
+          ],
+        },
+      };
+
+      const result = unwrapProtocolResponse(a2aFailedResponse, undefined, 'a2a');
+
+      assert.ok(result.adcp_error, 'should surface adcp_error from DataPart');
+      assert.strictEqual(result.adcp_error.code, 'MEDIA_BUY_NOT_FOUND');
+      assert.strictEqual(result.adcp_error.recovery, 'correctable');
+      assert.ok(result.context, 'should surface context from DataPart');
+      assert.strictEqual(result.context.correlation_id, 'invalid_transitions--update_unknown_media_buy');
+      // TextPart joined onto _message for human/LLM consumption
+      assert.ok(result._message?.includes('not found'));
+    });
+
+    test('should unwrap A2A rejected task with DataPart payload', () => {
+      const a2aRejectedResponse = {
+        result: {
+          kind: 'task',
+          status: { state: 'rejected' },
+          artifacts: [
+            {
+              parts: [
+                {
+                  kind: 'data',
+                  data: {
+                    adcp_error: { code: 'POLICY_VIOLATION', message: 'rejected by policy' },
+                  },
+                },
+              ],
+            },
+          ],
+        },
+      };
+
+      const result = unwrapProtocolResponse(a2aRejectedResponse, undefined, 'a2a');
+      assert.strictEqual(result.adcp_error.code, 'POLICY_VIOLATION');
+    });
+
     test('should include text snippet in error for unparseable MCP JSON', () => {
       const mcpResponse = {
         content: [{ type: 'text', text: 'This is not JSON, just plain text that should be included in error' }],
