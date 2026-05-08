@@ -362,6 +362,27 @@ interface PollEligibleEnvelopeShape {
   task_id: string;
 }
 
+/**
+ * Clear retained A2A session state (`contextId`, `pendingTaskId`) on each
+ * shared client at the start of a storyboard run. AgentClient is documented
+ * as one-instance-per-conversation; `comply()` reuses a single instance
+ * across every storyboard for transport caching, so the runner has to
+ * re-establish the "fresh conversation" boundary per storyboard. Without
+ * this, a stale `pendingTaskId` from a prior storyboard's non-terminal
+ * step rides into this storyboard's first call and the seller surfaces
+ * "Task <uuid> not found". See adcp-client#1585.
+ *
+ * Calls go through a duck-typed `resetContext()` accessor so the helper
+ * stays compatible with adapter-built clients that don't subclass
+ * AgentClient directly.
+ */
+function resetClientSessions(clients: readonly TestClient[]): void {
+  for (const client of clients) {
+    const reset = (client as unknown as { resetContext?: () => void }).resetContext;
+    if (typeof reset === 'function') reset.call(client);
+  }
+}
+
 function isPollEligibleEnvelope(data: unknown): data is PollEligibleEnvelopeShape {
   if (data == null || typeof data !== 'object') return false;
   const obj = data as { status?: unknown; task_id?: unknown };
@@ -995,6 +1016,10 @@ async function executeStoryboardPass(
       return buildDiscoveryFailedResult(agentUrls, storyboard, failedStep);
     }
     clients = [...routingContext.clients.values()];
+    // See note on the non-routing branch below: per-storyboard session reset
+    // prevents a stale `pendingTaskId` from a prior storyboard's non-terminal
+    // step from auto-threading into this storyboard's first call. (#1585)
+    resetClientSessions(clients);
     // Pick the first agent's profile as the "primary" for downstream code
     // that reads single-profile fields (library_version on per-step result
     // records, raw_capabilities for `requires_capability`). Per-step
@@ -1017,6 +1042,17 @@ async function executeStoryboardPass(
     // Build one client per URL. In single-URL mode `_client` (from comply()) is
     // honored so the shared MCP transport is reused across storyboards.
     clients = agentUrls.map(url => getOrCreateClient(url, options));
+
+    // Drop any retained A2A session ids before this storyboard's first call.
+    // `comply()` shares one client across N storyboards for transport reuse;
+    // AgentClient.retainSession holds onto `pendingTaskId` from non-terminal
+    // responses (`submitted`/`working`/`input-required`) and auto-threads it
+    // into every subsequent `message/send`. Without a per-storyboard reset, a
+    // prior storyboard's stale `task_id` rides into the next storyboard's
+    // first call (typically `get_products`) and the seller correctly
+    // returns "Task <uuid> not found" on a buyer-side reference to a task it
+    // never opened. (#1585)
+    resetClientSessions(clients);
 
     // Discover agent profile against the first instance; all instances are
     // expected to run the same code behind a shared state store, so one probe
