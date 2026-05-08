@@ -1,5 +1,113 @@
 # Changelog
 
+## 6.15.0
+
+### Minor Changes
+
+- 918385f: `adcpError()` and the `{errors:[...]}` typed Error arm now both ship the
+  two-layer wire shape required by 18 AdCP response schemas
+  (`{adcp_error: {...}, errors: [{...}]}` instead of envelope-only or
+  payload-only). Adopters keep calling `adcpError()` and returning typed
+  Error arms exactly as before — the framework dispatcher derives the
+  affected tools from the bundled schema cache at server build, then
+  mirrors `adcp_error` ↔ `errors[]` in the `finalize()` seam on the
+  failure path so both spec-mandated layers ride on every failing
+  response.
+
+  The wire change is on the failure path only and is strictly additive:
+  responses that previously failed schema validation against the
+  `*Error` arm of their `oneOf` now pass it. Adopters who already emit
+  both layers manually are detected and pass through unchanged
+  (idempotent — no duplicate or replacement). Tools whose response
+  schema does NOT declare an Error arm (e.g. `get_products`,
+  `get_signals`, `tasks/get`) are untouched. No adopter code changes
+  required.
+
+  Eighteen tools auto-wrap: `create_media_buy`, `update_media_buy`,
+  `provide_performance_feedback`, `build_creative`, `sync_audiences`,
+  `sync_catalogs`, `sync_event_sources`, `log_event`, `activate_signal`,
+  `sync_creatives`, `get_creative_features`, `validate_content_delivery`,
+  `list_content_standards`, `get_media_buy_artifacts`,
+  `get_content_standards`, `create_content_standards`,
+  `update_content_standards`, `calibrate_content`. The set is derived
+  dynamically — future AdCP minors that add Error-arm tools join
+  automatically.
+
+  `update_content_standards` is the lone tool whose Error arm carries a
+  `success: false` discriminator alongside `errors[]`; the dispatcher
+  stamps the constant when synthesising so the payload satisfies its
+  `oneOf` discriminator.
+
+  Migration recipe: `docs/migration-6.14-to-6.15.md`. RFC:
+  `docs/proposals/adcperror-two-layer-emission.md`. Closes #1606.
+
+- a0ad369: Five new typed-factory namespaces for discriminator-injecting builders, mirroring the asset-builders / render-builders pattern. Each prevents a discriminator-missing wire-shape mistake at write time:
+  - `activationKey.{segment, keyValue}` — `ActivationKey` `oneOf` on `type` (SHAPE-GOTCHAS §1)
+  - `signalId.{catalog, agent}` — `SignalID` `oneOf` on `source` (SHAPE-GOTCHAS §2)
+  - `buildCreativeReturn.{single, multi, singleEnveloped, multiEnveloped}` — `BuildCreativeReturn` 4-arm union (SHAPE-GOTCHAS §5)
+  - `previewCreative.{single, batch, variant}` — `PreviewCreativeResponse` 3-arm `oneOf` on `response_type` (SHAPE-GOTCHAS §4)
+  - `mediaBuyDeliveryNotification.{scheduled, final, delayed, adjusted, windowUpdate}` — webhook `notification_type` discriminator on `GetMediaBuyDeliveryResponse`
+
+  Reference adapters (`examples/hello_creative_adapter_*.ts`, `hello_signals_adapter_marketplace.ts`, `signals-agent.ts`) migrated to use the new factories. Top-level `previewCreativeResponse` v5 server-helper export retained for backwards compatibility; the new factory ships under `previewCreative` to avoid collision with the v5 function.
+
+  Closes #1386.
+
+### Patch Changes
+
+- 25af9a0: Bump `ADCP_VERSION` to 3.0.8. Patch release that extends the [adcp#4218](https://github.com/adcontextprotocol/adcp/pull/4218) storyboard idempotency-key precedent to the rest of the suite (adcp#4230). Fifteen storyboard steps across nine media-buy scenarios still shipped hardcoded `idempotency_key` literals on state-mutating tasks (`create_media_buy`, `sync_creatives`, `sync_plans`, `update_media_buy`); against a long-running seller the runner's dynamic `start_time` substitution shifted the canonical body forward while the static key replayed, arming the spec-mandated `IDEMPOTENCY_CONFLICT` (or, when the seller's emit shape changed between runs, replaying a now-spec-non-compliant cached payload). Every remaining literal is now `$generate:uuid_v4#<scenario>_<step>` so each storyboard run mints fresh keys.
+
+  Affected scenarios: `creative_fate_after_cancellation` (5), `governance_approved`, `governance_conditions`, `governance_denied`, `governance_denied_recovery` (3), `invalid_transitions`, `inventory_list_no_match`, `inventory_list_targeting`, `pending_creatives_to_start`.
+
+  `COMPATIBLE_ADCP_VERSIONS` extended with `'3.0.8'` for editor autocomplete on the `adcpVersion` constructor option. Generated types regenerated; functional schema content is identical to 3.0.7 (this release was a storyboard-only fix — no wire-format or schema change).
+
+- 192ebef: fix(test): retarget proposal-mode allowlist after AdCP 3.0.7 cascade unmask
+
+  The 3.0.7 schema bump (#1595) landed adcp#4088, fixing `proposal_id` chaining in `proposal_finalize.yaml`. `get_products_refine` now passes — and the cascade-skip that hid `create_media_buy` is gone, exposing a real adapter bug: `create_media_buy`'s response doesn't satisfy the 3.0.7 `create-media-buy-response.json` schema. Allowlist retargeted to mask `create_media_buy` until the adapter is fixed (tracked at #1600). Unblocks main CI.
+
+- 20fce14: fix(storyboard): proposal-mode `create_media_buy` request shape (closes adcp-client#1600)
+
+  After AdCP 3.0.7 (#1595) landed adcp#4088, the `proposal_finalize` storyboard runs end-to-end through `accept_proposal` for the first time. The runner's `create_media_buy` enricher in `request-builder.ts` was unaware of the proposal-mode request shape — it always returned `{ account, brand, start_time, end_time, packages }` even when the storyboard's `sample_request` carried `proposal_id: "$context.proposal_id"`. Two failures fell out:
+  1. **Schema rejection.** AdCP 3.0.7's `create-media-buy-request.json` declares `dependencies.proposal_id: ["total_budget"]` and disallows `packages` alongside `proposal_id`. Synthesising packages with the proposal_id elided made the request fail validation against the buyer-side strict gate.
+  2. **Account resolution.** `create_media_buy` is in `FIXTURE_AWARE_ENRICHERS`, so the enricher's output is used verbatim and the fixture's `account` does not flow through the generic merge. The non-proposal path always replaces `account` with `resolveAccount(options)` (default brand `test.example`); proposal-mode storyboards author a non-default brand (`acmeoutdoor.example`) that the adapter resolved end-to-end through brief/refine/finalize, so the override produced `ACCOUNT_NOT_FOUND` at the accept step.
+
+  The enricher now detects proposal-mode (either `step.sample_request.proposal_id` resolving via `$context.*` or `context.proposal_id` set directly) and returns the fixture spread (with `total_budget` and other proposal-mode-required fields preserved) plus the harness-normalised `start_time` / `end_time` and `proposal_id`. `account` and `brand` prefer the fixture when supplied so non-default brands survive to the wire; otherwise the same `context.account ?? resolveAccount(options)` fallback applies.
+
+  `hello_seller_adapter_proposal_mode` regression coverage updated: `EXPECTED_FAILURES` cleared (both `get_products_refine` — fixed by adcp#4088 — and `create_media_buy` — fixed here). `expectedRoutes` extended with `POST /v1/orders` and `POST /v1/orders/{id}/lineitems` so the façade gate now asserts the full proposal lifecycle reaches the upstream's order endpoints.
+
+- 89256d2: fix(task-executor): return descriptive failed result when polling an evicted task
+
+  `TaskExecutor.pollTaskCompletion` now catches `"Task <id> not found"` errors
+  from `getTaskStatus` and returns a `TaskResultFailure` with an actionable
+  error message rather than letting an opaque exception escape the polling
+  loop.
+
+  A2A 0.3.x defines no minimum retention TTL for completed tasks, so a seller
+  MAY evict a task between the buyer observing the working-state response and
+  the first explicit `tasks/get` poll firing. The error suggests using push
+  notifications (`reporting_webhook`) instead of polling, or configuring a
+  longer task retention TTL on the seller.
+
+  Defense-in-depth follow-up to #1585. The cross-storyboard root cause was
+  already addressed in #1588 (`resetContext()` per storyboard) and #1593
+  (narrowed `pendingTaskId` auto-thread to same-skill same-context); this
+  change improves the error surface for any residual case where an evicted
+  task is queried.
+
+- 8117e93: docs(skills): collapse signal/creative/seller specialism skills onto fork-target pointers
+
+  In-scope subset of #1385. Skills with a worked-example adapter now reduce to a fork-target pointer plus this-specialism's deltas, instead of duplicating inline pattern teaching.
+  - `signal-marketplace` + `signal-owned`: restructured to fork-target + delta sections
+  - `creative-generative`: points at `creative-template` adapter; adds delta-only generative section
+  - `sales-broadcast-tv`, `sales-streaming-tv` (new), `sales-catalog-driven` + `sales-retail-media`, `audience-sync` (-46 lines / 60% reduction), `sales-proposal-mode`: each adopts the fork-target shape
+
+  No behavior change.
+
+- 6e0bcc3: fix(storyboard-runner): preserve sample_request fields when enriching mutating-tool requests (#1604)
+
+  Fixture-aware enrichers in `src/lib/testing/storyboard/request-builder.ts` rebuilt their request body from scratch and only copied an enumerated set of fields from `step.sample_request` (`start_time`, `end_time`, `packages`). Anything else the storyboard authored at the top level — `total_budget`, `buyer_ref`, `currency`, `reporting_webhook`, scenario-specific extensions — was silently dropped before the request hit the wire. The non-proposal `create_media_buy` path was the immediate trigger; PR #1603's proposal-mode branch already spread the fixture but the structural fix wasn't applied to the rest of the enricher.
+
+  The fix spreads `sample_request` first (after `$context` injection), then layers the runner's substitutions (account, brand, normalised dates, packages with discovery-derived identifiers) on top. Envelope fields (`context`, `ext`, `push_notification_config`, `idempotency_key`) are deliberately omitted from the local spread and re-applied by the outer `enrichRequest` with `runnerVars` so mustache substitutions like `{{runner.webhook_url:<step_id>}}` expand correctly. The same `omitEnvelopeFields` discipline is now applied uniformly across `create_media_buy`, `update_media_buy`, `get_media_buys`, `get_media_buy_delivery`, and `comply_test_controller`.
+
 ## 6.14.0
 
 ### Minor Changes
