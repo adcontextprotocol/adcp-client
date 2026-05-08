@@ -336,8 +336,13 @@ export class AgentClient {
           taskName: meta.taskName,
         };
       }
-      // Partial metadata (e.g., deferred without serverTaskId) preserves
-      // the pre-defer handle.
+      // Partial metadata preserves the pre-existing handle. Two distinct
+      // cases land here: (1) the deferred resume-token path, where the
+      // server intentionally omits a new `serverTaskId`; (2) a non-spec
+      // A2A Task that lacks `contextId` or surfaces no `taskName` — by
+      // design those are NOT retained as a fresh handle, since auto-
+      // threading a partially-keyed taskId into a future call is exactly
+      // the leak class #1590 narrows.
     } else {
       this.pendingTask = undefined;
     }
