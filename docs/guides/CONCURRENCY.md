@@ -138,13 +138,18 @@ If every handler's state is scoped to a tenant/brand/publisher account, use
 the session-scoping primitives instead of threading a key through every call:
 
 ```ts
-import { createAdcpServer, scopedStore, requireSessionKey } from '@adcp/sdk/server/legacy/v5';
+import {
+  createAdcpServerFromPlatform,
+  scopedStore,
+  requireSessionKey,
+  definePlatform,
+  defineSalesCorePlatform,
+} from '@adcp/sdk/server';
 
-const server = createAdcpServer({
-  name: 'My Publisher', version: '1.0.0',
-  stateStore,
-  resolveSessionKey: ({ account }) => account?.tenant_id,
-  mediaBuy: {
+const platform = definePlatform({
+  capabilities: { specialisms: ['sales-non-guaranteed'] as const, pricingModels: ['cpm'] as const },
+  accounts: { resolve: async (ref, ctx) => /* ... */ null },
+  sales: defineSalesCorePlatform({
     createMediaBuy: async (params, ctx) => {
       const sessionKey = requireSessionKey(ctx);
       const store = scopedStore(ctx.store, sessionKey);
@@ -153,7 +158,14 @@ const server = createAdcpServer({
       await store.put('media_buys', 'mb_1', { status: 'active' });
       const { items } = await store.list('media_buys');
     },
-  },
+  }),
+});
+
+const server = createAdcpServerFromPlatform(platform, {
+  name: 'My Publisher',
+  version: '1.0.0',
+  stateStore,
+  resolveSessionKey: ({ account }) => account?.tenant_id,
 });
 ```
 

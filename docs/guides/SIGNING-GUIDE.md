@@ -468,10 +468,10 @@ app.post('/webhook', async (req, res) => {
 
 ## Step 6: Sign Outbound Webhooks (Seller)
 
-Configure `createAdcpServer` with a webhook signing key:
+Configure `createAdcpServerFromPlatform` with a webhook signing key:
 
 ```typescript
-serve(() => createAdcpServer({
+serve(() => createAdcpServerFromPlatform(myPlatform, {
   name: 'My Seller',
   version: '1.0.0',
   webhooks: {
@@ -481,7 +481,6 @@ serve(() => createAdcpServer({
       privateKey: webhookPrivateJwk,
     },
   },
-  mediaBuy: { /* ... */ },
 }));
 ```
 
@@ -496,14 +495,15 @@ The SDK exports `createPinAndBindFetch()` — a `fetch` that resolves DNS, valid
 Wire it as the `fetch` for production webhook delivery:
 
 ```typescript
-import { createWebhookEmitter, createPinAndBindFetch } from '@adcp/sdk/server';
+import { createAdcpServerFromPlatform, createWebhookEmitter, createPinAndBindFetch } from '@adcp/sdk/server';
 
-createAdcpServer({
+createAdcpServerFromPlatform(myPlatform, {
+  name: 'My Seller',
+  version: '1.0.0',
   webhooks: {
     signerKey: { /* ... */ },
     fetch: createPinAndBindFetch(),
   },
-  mediaBuy: { /* ... */ },
 });
 ```
 
@@ -609,7 +609,9 @@ AdCP 4.0 will mandate `signingKey`; until then this is a soft launch path. Buyer
 If your seller agent verifies inbound signatures, declare `request_signing` in your capabilities so buyers know to sign:
 
 ```typescript
-createAdcpServer({
+createAdcpServerFromPlatform(myPlatform, {
+  name: 'My Seller',
+  version: '1.0.0',
   capabilities: {
     overrides: {
       request_signing: {
@@ -620,7 +622,6 @@ createAdcpServer({
       },
     },
   },
-  mediaBuy: { /* ... */ },
 });
 ```
 

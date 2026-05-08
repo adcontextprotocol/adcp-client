@@ -48,7 +48,7 @@ For other agent shapes:
 - **Brand-rights agent:** swap for `BrandRightsPlatform`
 - **Multi-tenant host:** add `createTenantRegistry`
 
-The full export list is in `@adcp/sdk/server`. Many surfaces are marked `@deprecated` (legacy v5 response builders, old MCP task helpers) — your IDE will strikethrough them. Trust the strikethrough.
+The full export list is in `@adcp/sdk/server`. Surfaces marked `@deprecated` will strikethrough in your IDE. Trust the strikethrough — pick from the typed-error catalog above instead.
 
 ## When you need...
 

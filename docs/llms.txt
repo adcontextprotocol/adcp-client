@@ -13,7 +13,7 @@ AdCP is an open protocol for AI agents to buy, manage, and optimize advertising 
 ## Are you building a client or a server?
 
 - **Client** (calling existing agents): Continue reading — the Quick Start below is for you.
-- **Server** (implementing an agent that others call): Read `docs/guides/BUILD-AN-AGENT.md` and `docs/migration-5.x-to-6.x.md`. v6 recommended path:
+- **Server** (implementing an agent that others call): Read `docs/guides/BUILD-AN-AGENT.md`. The recommended path:
 
 ```typescript
 import { serve } from '@adcp/sdk';
@@ -45,7 +45,7 @@ serve(() => createAdcpServerFromPlatform(platform, {
 
 Compile-time enforcement: `RequiredPlatformsFor<S>` catches missing specialism methods. Capability projection auto-derives `get_adcp_capabilities` blocks (`audience_targeting`, `conversion_tracking`, `compliance_testing.scenarios`, etc.). Idempotency, RFC 9421 signing, async tasks, status normalization, and sync-completion webhook auto-emit are framework-owned.
 
-Lower-level option: `createAdcpServer({ signals: { getSignals: ... } })` from `@adcp/sdk/server/legacy/v5` — handler-bag API. Still fully supported, the substrate the platform path calls into. Use when you need fine control over individual handlers, mid-migration from a v5 codebase, or custom-shaped tools the platform interface doesn't yet model. `wrapEnvelope(inner, { replayed, context, operationId })` from `@adcp/sdk/server` attaches protocol envelope fields with the per-error-code allowlist (IDEMPOTENCY_CONFLICT drops `replayed`).
+`wrapEnvelope(inner, { replayed, context, operationId })` from `@adcp/sdk/server` attaches protocol envelope fields with the per-error-code allowlist (IDEMPOTENCY_CONFLICT drops `replayed`).
 
 **Identity helpers (drop `req: unknown` casts on inline platforms).** `definePlatform` / `defineSalesCorePlatform` / `defineSalesIngestionPlatform` / `defineSignalsPlatform` / `defineCreativeBuilderPlatform` / `defineCreativeAdServerPlatform` / `defineCampaignGovernancePlatform` / `defineContentStandardsPlatform` / `definePropertyListsPlatform` / `defineCollectionListsPlatform` / `defineBrandRightsPlatform` / `definePlatformWithCompliance` are pure identity helpers from `@adcp/sdk/server`. They force a concrete platform interface as the parameter type so TypeScript flows `req` / `ctx` typing into nested handler bodies. Class-pattern adopters with explicit property annotations (`sales: SalesCorePlatform<Meta> & SalesIngestionPlatform<Meta> = { ... }`) don't need them.
 
@@ -1188,12 +1188,12 @@ Run compliance tests with `adcp test <agent> <scenario>`. 24 built-in scenarios:
 
 ### Seeding fixtures for compliance (seller-side)
 
-Group A storyboards seed fixtures via `comply_test_controller.seed_product` (and the other `seed_*` scenarios) before calling the spec tool. Two SDK helpers bridge this to `createAdcpServer`:
+Group A storyboards seed fixtures via `comply_test_controller.seed_product` (and the other `seed_*` scenarios) before calling the spec tool. Two SDK helpers bridge this:
 
 - **`mergeSeedProduct`** (plus `mergeSeedPricingOption`, `mergeSeedCreative`, `mergeSeedPlan`, `mergeSeedMediaBuy`): permissive merge of a sparse storyboard fixture onto the seller's baseline defaults. `undefined`/`null` keep base; arrays replace by default; well-known id-keyed lists (`pricing_options`, `publisher_properties`, `packages`, `assets`, plan `findings`) overlay by id so seeding one entry doesn't drop the rest.
 - **`bridgeFromTestControllerStore(store, productDefaults)`**: wires a `Map<string, unknown>` seed store into `get_products` responses automatically. Sandbox requests merge seeded + handler products (seeded wins collisions); production traffic (no sandbox marker, or a resolved non-sandbox account) skips the bridge.
 
-Wire on `createAdcpServer({ testController: bridgeFromTestControllerStore(store, baseline) })`. See `skills/build-seller-agent/SKILL.md` for the full pattern alongside `createComplyController`.
+Wire on `createAdcpServerFromPlatform(platform, { testController: bridgeFromTestControllerStore(store, baseline) })`. See `skills/build-seller-agent/SKILL.md` for the full pattern alongside `createComplyController`.
 
 ### Anti-façade upstream-traffic recording (`@adcp/sdk/upstream-recorder`)
 

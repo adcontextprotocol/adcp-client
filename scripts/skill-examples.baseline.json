@@ -86,38 +86,8 @@
   },
   {
     "source": "skills/build-seller-agent/deployment.md",
-    "errorCode": "LINT-as-any",
-    "messagePrefix": "`as any` hides API drift; use a typed factory or // @ts-expect-error instead"
-  },
-  {
-    "source": "skills/build-seller-agent/deployment.md",
-    "errorCode": "TS1309",
-    "messagePrefix": "The current file is a CommonJS module and cannot use 'await' at the top level."
-  },
-  {
-    "source": "skills/build-seller-agent/deployment.md",
     "errorCode": "TS2304",
     "messagePrefix": "Cannot find name 'AdapterConfig'."
-  },
-  {
-    "source": "skills/build-seller-agent/deployment.md",
-    "errorCode": "TS2304",
-    "messagePrefix": "Cannot find name 'lookupAccount'."
-  },
-  {
-    "source": "skills/build-seller-agent/deployment.md",
-    "errorCode": "TS2304",
-    "messagePrefix": "Cannot find name 'lookupAccount'."
-  },
-  {
-    "source": "skills/build-seller-agent/deployment.md",
-    "errorCode": "TS2304",
-    "messagePrefix": "Cannot find name 'lookupAccount'."
-  },
-  {
-    "source": "skills/build-seller-agent/deployment.md",
-    "errorCode": "TS2304",
-    "messagePrefix": "Cannot find name 'MediaBuyHandlers'."
   },
   {
     "source": "skills/build-seller-agent/deployment.md",
@@ -127,30 +97,10 @@
   {
     "source": "skills/build-seller-agent/deployment.md",
     "errorCode": "TS2304",
-    "messagePrefix": "Cannot find name 'metaHandlers'."
-  },
-  {
-    "source": "skills/build-seller-agent/deployment.md",
-    "errorCode": "TS2304",
-    "messagePrefix": "Cannot find name 'myOAuthProvider'."
-  },
-  {
-    "source": "skills/build-seller-agent/deployment.md",
-    "errorCode": "TS2304",
     "messagePrefix": "Cannot find name 'snapConfig'."
   },
   {
     "source": "skills/build-seller-agent/deployment.md",
-    "errorCode": "TS2304",
-    "messagePrefix": "Cannot find name 'snapHandlers'."
-  },
-  {
-    "source": "skills/build-seller-agent/deployment.md",
-    "errorCode": "TS2305",
-    "messagePrefix": "Module '\"@adcp/sdk/server\"' has no exported member 'createAdcpServer'."
-  },
-  {
-    "source": "skills/build-seller-agent/deployment.md",
     "errorCode": "TS2322",
     "messagePrefix": "Type 'string | undefined' is not assignable to type 'string'."
   },
@@ -163,20 +113,5 @@
     "source": "skills/build-seller-agent/deployment.md",
     "errorCode": "TS2769",
     "messagePrefix": "No overload matches this call."
-  },
-  {
-    "source": "skills/build-seller-agent/deployment.md",
-    "errorCode": "TS2769",
-    "messagePrefix": "No overload matches this call."
-  },
-  {
-    "source": "skills/build-seller-agent/deployment.md",
-    "errorCode": "TS7006",
-    "messagePrefix": "Parameter 'ref' implicitly has an 'any' type."
-  },
-  {
-    "source": "skills/build-seller-agent/deployment.md",
-    "errorCode": "TS7031",
-    "messagePrefix": "Binding element 'authInfo' implicitly has an 'any' type."
   }
 ]

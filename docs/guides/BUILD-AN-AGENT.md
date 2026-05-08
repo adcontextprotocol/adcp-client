@@ -12,38 +12,28 @@ We'll build a **signals agent** that serves audience segments via the `get_signa
 - `@adcp/sdk` installed (`npm install @adcp/sdk`)
 - `@modelcontextprotocol/sdk` (installed as a dependency of `@adcp/sdk`)
 
-## Two paths
+## The server entry point
 
-`@adcp/sdk` exposes two server entry points. Pick based on the agent
-shape:
-
-- **`createAdcpServerFromPlatform`** — **recommended for new agents.**
-  You declare a typed `DecisioningPlatform` (per-specialism interfaces:
-  `SalesCorePlatform` + `SalesIngestionPlatform`, `CreativeBuilderPlatform`,
-  `AudiencePlatform`, `SignalsPlatform`, `CampaignGovernancePlatform`,
-  `BrandRightsPlatform`, etc.) and the framework wires capability
-  projection, idempotency, RFC 9421 signing, async tasks, status
-  normalization, lifecycle state, multi-tenant routing, and webhook
-  auto-emit on sync mutations. Compile-time enforcement via
-  `RequiredPlatformsFor<S>` catches missing methods before runtime.
-  6.7 `definePlatform` / `defineSalesCorePlatform` / etc. helpers let
-  you write inline platform literals without `req: unknown` casts.
-- **`createAdcpServer`** — the lower-level handler-bag API. Still
-  fully supported (it's the substrate `createAdcpServerFromPlatform`
-  calls into) but lives at `@adcp/sdk/server/legacy/v5` in 6.x.
-  Reach for it only when mid-migration from a v5 codebase, when you
-  need a custom-shaped tool the platform interface doesn't yet model,
-  or when you've decided to own the whole handler bag yourself. The
-  appendix at the bottom of this guide covers it.
+`@adcp/sdk` exposes `createAdcpServerFromPlatform` as the server entry
+point. You declare a typed `DecisioningPlatform` (per-specialism
+interfaces: `SalesCorePlatform` + `SalesIngestionPlatform`,
+`CreativeBuilderPlatform`, `AudiencePlatform`, `SignalsPlatform`,
+`CampaignGovernancePlatform`, `BrandRightsPlatform`, etc.) and the
+framework wires capability projection, idempotency, RFC 9421 signing,
+async tasks, status normalization, lifecycle state, multi-tenant
+routing, and webhook auto-emit on sync mutations. Compile-time
+enforcement via `RequiredPlatformsFor<S>` catches missing methods
+before runtime. The `definePlatform` / `defineSalesCorePlatform` /
+sibling helpers let you write inline platform literals without
+`req: unknown` casts.
 
 For multi-specialism production agents (sales + creative + governance +
-brand-rights), see `docs/migration-5.x-to-6.x.md` and
-`docs/migration-6.6-to-6.7.md`. The `examples/hello_*` family is the
-copy-paste starting point for each specialism.
+brand-rights), the `examples/hello_*` family is the copy-paste
+starting point for each specialism.
 
 ## Quick Start
 
-A minimal signals agent using `createAdcpServerFromPlatform` + the v6
+A minimal signals agent using `createAdcpServerFromPlatform` + the
 `definePlatform` / `defineSignalsPlatform` identity helpers:
 
 ```typescript
@@ -288,7 +278,7 @@ import { AdcpError } from '@adcp/sdk/server';
 throw new AdcpError('CUSTOM_CODE', { recovery: 'terminal', message: '...', details: { foo: 'bar' } });
 ```
 
-All surface as `isError: true` on the wire and skip response-schema validation. The lower-level `adcpError(code, ...)` *return value* form is a v5-substrate pattern; in 6.x, prefer throwing the typed class.
+All surface as `isError: true` on the wire and skip response-schema validation. Prefer throwing the typed class.
 
 **7 domain groups:**
 
@@ -541,7 +531,7 @@ See [SIGNING-GUIDE.md](./SIGNING-GUIDE.md) for the full walkthrough: key generat
 
 ### createTaskCapableServer (Low-Level)
 
-For advanced cases where you need direct control over MCP tool registration, schema wiring, and response formatting. `createAdcpServer` (the legacy v5 substrate) uses this internally; `createAdcpServerFromPlatform` calls into `createAdcpServer`.
+For advanced cases where you need direct control over MCP tool registration, schema wiring, and response formatting. `createAdcpServerFromPlatform` calls into this internally.
 
 ```typescript
 import { createTaskCapableServer, taskToolResponse, GetSignalsRequestSchema } from '@adcp/sdk';
@@ -585,13 +575,12 @@ return wrapEnvelope(
 
 ### Response Builders
 
-With `createAdcpServerFromPlatform` (and the legacy `createAdcpServer` substrate), response builders are applied automatically — return raw data and the framework wraps it. If you need manual control (e.g., with `createTaskCapableServer`), builders are available:
+With `createAdcpServerFromPlatform`, response builders are applied automatically — return raw data and the framework wraps it. If you need manual control (e.g., with `createTaskCapableServer`), builders are available:
 
 ```typescript
 import { productsResponse, mediaBuyResponse, deliveryResponse, taskToolResponse } from '@adcp/sdk';
-// For error envelopes, throw a typed error class (recipe #6 in the 6.6→6.7 migration doc)
-// — `AuthRequiredError`, `PermissionDeniedError`, `RateLimitedError`, etc. — instead of
-// returning the legacy `adcpError(code, ...)` envelope from the v5 substrate.
+// For error envelopes, throw a typed error class — `AuthRequiredError`,
+// `PermissionDeniedError`, `RateLimitedError`, etc. — from `@adcp/sdk/server`.
 ```
 
 ### Task Statuses (Server-Side Contract)
@@ -606,7 +595,7 @@ When your agent receives a tool call, it returns one of these statuses. The buye
 | `input_required` | Need clarification from buyer | Fires buyer's `InputHandler` callback with the question |
 | `deferred` | Requires human decision | Returns a token; human resumes later via `result.deferred.resume()` |
 
-With `createAdcpServerFromPlatform` (or the legacy `createAdcpServer`), synchronous handlers return raw data and the framework sets `completed` automatically. With `createTaskCapableServer`, use `taskToolResponse()` explicitly.
+With `createAdcpServerFromPlatform`, synchronous handlers return raw data and the framework sets `completed` automatically. With `createTaskCapableServer`, use `taskToolResponse()` explicitly.
 
 For async tools that need background processing, use `registerAdcpTaskTool()`:
 
@@ -649,7 +638,7 @@ throw new ServiceUnavailableError({ retryAfterSeconds: 30 });
 throw new PermissionDeniedError('account_access', { message: 'Contact support' });
 ```
 
-For codes without a typed wrapper, `throw new AdcpError('CUSTOM_CODE', { recovery, message })` is the raw escape hatch. v5 adopters who used `return adcpError('CODE', '...')` (the return-value form) keep working under the legacy substrate, but v6 adopters should throw.
+For codes without a typed wrapper, `throw new AdcpError('CUSTOM_CODE', { recovery, message })` is the raw escape hatch.
 
 > **Heads-up for buyer-agent authors**: four codes are spec-`correctable` but operator-semantically human-escalate — don't auto-mutate-and-retry on `POLICY_VIOLATION`, `COMPLIANCE_UNSATISFIED`, `GOVERNANCE_DENIED`, or `AUTH_REQUIRED`. Surface to the user. (`AUTH_REQUIRED` conflates missing-creds with revoked-creds; until [adcontextprotocol/adcp#3730](https://github.com/adcontextprotocol/adcp/issues/3730) splits these, treat as escalate.) See `skills/call-adcp-agent/SKILL.md` for the full callout.
 
@@ -778,7 +767,7 @@ See [`examples/signals-agent.ts`](../../examples/signals-agent.ts) for a complet
 See [`examples/error-compliant-server.ts`](../../examples/error-compliant-server.ts) for a media buy agent demonstrating:
 
 - Multiple tools (`get_products`, `create_media_buy`, `get_media_buy_delivery`)
-- Structured error handling (the example uses the v5 `adcpError(...)` return-value form; v6 adopters throw the typed error classes from `@adcp/sdk/server` — `AuthRequiredError`, `RateLimitedError`, etc. — see § "Returning errors from handlers")
+- Structured error handling (throw the typed error classes from `@adcp/sdk/server` — `AuthRequiredError`, `RateLimitedError`, etc. — see § "Returning errors from handlers")
 - Rate limiting
 - Business logic validation
 
