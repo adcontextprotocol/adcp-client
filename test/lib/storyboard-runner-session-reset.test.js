@@ -42,7 +42,7 @@ function spyClient() {
     calls,
     getAgentInfo: async () => ({ name: 'Test', tools: [] }),
     resetContext: function () {
-      calls.push(Date.now());
+      calls.push(true);
     },
   };
 }
