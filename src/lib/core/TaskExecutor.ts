@@ -1397,8 +1397,33 @@ export class TaskExecutor {
     pollInterval = 60000,
     transport?: import('../protocols').TransportOptions
   ): Promise<TaskResult<T>> {
+    const pollStartTime = Date.now();
     while (true) {
-      const status = await this.getTaskStatus(agent, taskId, transport);
+      // adcp-client#1585: sellers MAY evict completed tasks before the first
+      // explicit poll fires (A2A 0.3.x defines no minimum retention TTL).
+      // Catch "not found" transport errors and surface a descriptive failure
+      // rather than an opaque uncaught exception from the polling loop.
+      let status: TaskInfo;
+      try {
+        status = await this.getTaskStatus(agent, taskId, transport);
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        if (/task .* not found/i.test(msg)) {
+          return attachMatch({
+            success: false as const,
+            status: 'failed' as const,
+            error: `Task ${taskId} is no longer queryable — it may have been completed and evicted by the seller before this poll arrived. Consider using push notifications (reporting_webhook) instead of polling, or configuring a longer task retention TTL on the seller.`,
+            metadata: this.buildMetadata({
+              taskId,
+              taskName: 'unknown',
+              agent,
+              startTime: pollStartTime,
+              status: 'failed',
+            }),
+          });
+        }
+        throw err;
+      }
 
       if (status.status === ADCP_STATUS.COMPLETED) {
         const pollSuccess = this.isOperationSuccess(status.result);

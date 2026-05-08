@@ -134,6 +134,12 @@ export async function executeStoryboardTask(
       result = await Promise.race([result.submitted.waitForCompletion(2000), timeout]);
     } catch {
       // Polling failed or timed out — return the intermediate result as-is
+    } finally {
+      // adcp-client#1585: waitForCompletion bypasses AgentClient.retainSession,
+      // so pendingTaskId is never cleared after the poll completes. In batch
+      // storyboard runs all scenarios share a single AgentClient instance; the
+      // stale ID bleeds into the next scenario's message/send. Clear it here.
+      if (typeof client.clearPendingTask === 'function') client.clearPendingTask();
     }
   }
 

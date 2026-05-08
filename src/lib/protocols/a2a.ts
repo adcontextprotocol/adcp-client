@@ -355,6 +355,34 @@ async function callA2AToolImpl(
     if (messageResponse?.error || messageResponse?.result?.error) {
       const errorObj = messageResponse.error || messageResponse.result?.error;
       const errorMessage = errorObj.message || JSON.stringify(errorObj);
+      // adcp-client#1585: in batch storyboard runs the AgentClient carries
+      // `pendingTaskId` from a prior scenario's working-state response. When
+      // the seller has already completed and evicted that task, it returns
+      // "Task <uuid> not found". Retry once without the stale taskId so the
+      // call starts a fresh server-side task rather than trying to resume a
+      // completed one. A2A 0.3.x defines no minimum retention TTL for
+      // completed tasks, so the seller is spec-conformant; the SDK must
+      // handle this race gracefully.
+      // Guard is self-limiting: the retry passes `taskId: undefined`, so
+      // `session?.taskId` is falsy on the second call and this branch is skipped.
+      if (session?.taskId && /task .* not found/i.test(errorMessage)) {
+        debugLogs.push({
+          type: 'info',
+          message: `A2A: session.taskId ${session.taskId} not found — retrying without taskId (stale pendingTaskId, adcp-client#1585)`,
+          timestamp: new Date().toISOString(),
+          skill: toolName,
+        });
+        return callA2AToolImpl(
+          agentUrl,
+          toolName,
+          parameters,
+          authToken,
+          debugLogs,
+          pushNotificationConfig,
+          context,
+          { ...session, taskId: undefined }
+        );
+      }
       throw new Error(`A2A agent returned error: ${errorMessage}`);
     }
 

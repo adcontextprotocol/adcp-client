@@ -216,6 +216,18 @@ export class AgentClient {
   }
 
   /**
+   * Clear any retained `pendingTaskId` without requiring a new round-trip.
+   * Called by the storyboard poll path (`task-map.ts`) after `waitForCompletion`
+   * resolves, because that path bypasses `retainSession` and would otherwise
+   * leave a stale task ID on the session (adcp-client#1585).
+   *
+   * @internal
+   */
+  clearPendingTask(): void {
+    this.pendingTaskId = undefined;
+  }
+
+  /**
    * Returns the AdCP protocol version this client speaks. Mirrors
    * `SingleAgentClient.getAdcpVersion()`. See {@link SingleAgentClientConfig.adcpVersion}.
    */
