@@ -98,6 +98,26 @@ function asNonSentinel(value: unknown, sentinels: Set<string>): string | undefin
   return sentinels.has(value) ? undefined : value;
 }
 
+/**
+ * Envelope fields that live on every AdCP request and are owned by the
+ * storyboard author — `context.correlation_id`, runner-supplied
+ * `idempotency_key` aliases, webhook pointers, per-request extensions.
+ * Fixture-aware enrichers must NOT spread these from their internal
+ * `injectContext(sample_request, context)` call: that internal call
+ * doesn't receive `runnerVars`, so mustache tokens (`{{runner.webhook_url:<step_id>}}`)
+ * would ship to the wire literally. The outer `enrichRequest` overlays
+ * envelope fields from a `runnerVars`-aware fixture re-injection.
+ */
+const ENVELOPE_FIELDS = ['context', 'ext', 'push_notification_config', 'idempotency_key'] as const;
+
+function omitEnvelopeFields(obj: Record<string, unknown>): Record<string, unknown> {
+  const out: Record<string, unknown> = {};
+  for (const [k, v] of Object.entries(obj)) {
+    if (!(ENVELOPE_FIELDS as readonly string[]).includes(k)) out[k] = v;
+  }
+  return out;
+}
+
 const REQUEST_ENRICHERS: Record<string, RequestEnricher> = {
   // ── Account & Audience ─────────────────────────────────
 
@@ -299,9 +319,15 @@ const REQUEST_ENRICHERS: Record<string, RequestEnricher> = {
       step.sample_request !== undefined
         ? (injectContext({ ...(step.sample_request as Record<string, unknown>) }, context) as Record<string, unknown>)
         : {};
+    // Drop envelope fields from the local spread — the outer enrichRequest
+    // re-injects them with `runnerVars` so `{{runner.webhook_url:<step_id>}}`
+    // tokens inside push_notification_config expand. Spreading them here
+    // would carry through unexpanded mustache strings.
+    const fixtureBody = omitEnvelopeFields(fixture);
+
     const proposalId: unknown = fixture.proposal_id !== undefined ? fixture.proposal_id : context.proposal_id;
     if (typeof proposalId === 'string') {
-      const { packages: _droppedPackages, ...fixtureWithoutPackages } = fixture;
+      const { packages: _droppedPackages, ...fixtureWithoutPackages } = fixtureBody;
       return {
         ...fixtureWithoutPackages,
         account: fixtureWithoutPackages.account ?? context.account ?? resolveAccount(options),
@@ -312,7 +338,19 @@ const REQUEST_ENRICHERS: Record<string, RequestEnricher> = {
       };
     }
 
+    // Spread the fixture (after $context injection) so any sample_request
+    // fields the enricher doesn't explicitly normalise (total_budget,
+    // buyer_ref, currency, scenario-specific extensions) reach the wire.
+    // The enricher then layers its own substitutions on top: packages is
+    // replaced (the enricher merged samplePackages internally with
+    // discovery-derived identifiers above), account/brand/start_time/
+    // end_time are normalised. Per issue #1604, build-from-scratch dropped
+    // every fixture field outside this enumerated set — fixture-aware
+    // enrichers must spread sample_request first, then override. Envelope
+    // fields are omitted here and re-applied by the outer enrichRequest
+    // with `runnerVars` so mustache tokens expand correctly.
     return {
+      ...fixtureBody,
       account: context.account ?? resolveAccount(options),
       brand: resolveBrand(options),
       start_time: startTime,
@@ -329,8 +367,12 @@ const REQUEST_ENRICHERS: Record<string, RequestEnricher> = {
     // (otherwise the fixture's account silently routes update writes to a different
     // partition than the create wrote to, and a subsequent get_media_buys reading
     // from the create-time partition surfaces stale data — see adcp-client#1505).
+    // Envelope fields are dropped from the local spread; the outer enrichRequest
+    // re-injects them with `runnerVars` so mustache substitutions expand.
     const fixtureFields = step.sample_request
-      ? (injectContext({ ...(step.sample_request as Record<string, unknown>) }, context) as Record<string, unknown>)
+      ? omitEnvelopeFields(
+          injectContext({ ...(step.sample_request as Record<string, unknown>) }, context) as Record<string, unknown>
+        )
       : {};
     const request: Record<string, unknown> = { ...fixtureFields };
     request.account = context.account ?? resolveAccount(options);
@@ -363,9 +405,13 @@ const REQUEST_ENRICHERS: Record<string, RequestEnricher> = {
   get_media_buys(step, context, options) {
     // Spread fixture fields so storyboards can author filters, status, pagination, etc.
     // account is always overridden by the harness-resolved value so sandbox routing
-    // matches create_media_buy's namespace on every round-trip.
+    // matches create_media_buy's namespace on every round-trip. Envelope fields are
+    // dropped from the local spread so the outer enrichRequest re-injects them with
+    // `runnerVars` (mustache substitutions expand against the runner's webhook base).
     const fixtureFields = step.sample_request
-      ? (injectContext({ ...(step.sample_request as Record<string, unknown>) }, context) as Record<string, unknown>)
+      ? omitEnvelopeFields(
+          injectContext({ ...(step.sample_request as Record<string, unknown>) }, context) as Record<string, unknown>
+        )
       : {};
     const result: Record<string, unknown> = { ...fixtureFields };
     result.account = context.account ?? resolveAccount(options);
@@ -378,8 +424,12 @@ const REQUEST_ENRICHERS: Record<string, RequestEnricher> = {
   get_media_buy_delivery(step, context, options) {
     // Same account-resolution rule as get_media_buys — fixture fields preserved,
     // account overridden by harness so sandbox routing matches create_media_buy.
+    // Envelope fields dropped from the local spread; outer enrichRequest re-applies
+    // them with `runnerVars` so mustache substitutions expand.
     const fixtureFields = step.sample_request
-      ? (injectContext({ ...(step.sample_request as Record<string, unknown>) }, context) as Record<string, unknown>)
+      ? omitEnvelopeFields(
+          injectContext({ ...(step.sample_request as Record<string, unknown>) }, context) as Record<string, unknown>
+        )
       : {};
     const result: Record<string, unknown> = { ...fixtureFields };
     result.account = context.account ?? resolveAccount(options);
@@ -828,7 +878,12 @@ const REQUEST_ENRICHERS: Record<string, RequestEnricher> = {
       }
     }
     if (step.sample_request) {
-      return { ...injectContext({ ...step.sample_request }, context), account };
+      // Drop envelope fields; outer enrichRequest re-applies them with
+      // `runnerVars` so mustache substitutions expand correctly.
+      return {
+        ...omitEnvelopeFields(injectContext({ ...step.sample_request }, context) as Record<string, unknown>),
+        account,
+      };
     }
     return {
       account,
@@ -855,25 +910,6 @@ const REQUEST_ENRICHERS: Record<string, RequestEnricher> = {
  * empty return is reachable only for read tasks that have no fixture and
  * no registered enricher (rare).
  */
-/**
- * Envelope fields that live on every AdCP request and are owned by the
- * storyboard author — `context.correlation_id`, runner-supplied
- * `idempotency_key` aliases, webhook pointers, per-request extensions.
- * Fixture-aware enrichers (`create_media_buy`, `comply_test_controller`)
- * build their body from scratch and don't re-copy these fields, so the
- * outer `enrichRequest` overlays them from sample_request after the
- * enricher runs. Non-fixture-aware enrichers get these via the generic
- * top-level merge below.
- *
- * If a future fixture-aware enricher starts emitting an envelope field
- * itself (e.g. a scenario where the enricher needs to inject a specific
- * `idempotency_key` independent of the fixture), the `=== undefined`
- * guard below keeps the enricher's value — intentional, not a bug.
- * Fixture envelope fields only flow through for fields the enricher
- * didn't set.
- */
-const ENVELOPE_FIELDS = ['context', 'ext', 'push_notification_config', 'idempotency_key'] as const;
-
 export function enrichRequest(
   step: StoryboardStep,
   context: StoryboardContext,

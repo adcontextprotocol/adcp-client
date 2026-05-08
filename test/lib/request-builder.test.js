@@ -220,6 +220,37 @@ describe('Request Builder', () => {
       assert.strictEqual(result.packages[0].budget, 5000, 'non-sentinel fixture fields pass through');
     });
 
+    test('preserves top-level sample_request fields the enricher does not normalise (#1604)', () => {
+      // Regression: the non-proposal-mode create_media_buy enricher used to
+      // build its return value from scratch — only account, brand,
+      // start_time, end_time, packages — so any other top-level field the
+      // storyboard authored in sample_request was silently dropped.
+      // FIXTURE_AWARE_ENRICHERS bypass the outer fixture-overlay merge, so
+      // the drop wasn't compensated for downstream. The fix spreads
+      // sample_request first, then overrides only the fields the enricher
+      // explicitly controls.
+      const s = step('create_media_buy', {
+        sample_request: {
+          start_time: FUTURE_START,
+          end_time: FUTURE_END,
+          buyer_ref: 'order-2026-q2',
+          total_budget: 50000,
+          currency: 'USD',
+          reporting_webhook: { url: 'https://buyer.example/wh', authentication: { schemes: ['Bearer'] } },
+          packages: [{ product_id: 'p1', budget: 1000, pricing_option_id: 'opt' }],
+        },
+      });
+      const result = buildRequest(s, {}, DEFAULT_OPTIONS);
+      assert.strictEqual(result.buyer_ref, 'order-2026-q2', 'fixture buyer_ref reaches the wire');
+      assert.strictEqual(result.total_budget, 50000, 'fixture total_budget reaches the wire');
+      assert.strictEqual(result.currency, 'USD', 'fixture currency reaches the wire');
+      assert.deepStrictEqual(
+        result.reporting_webhook,
+        { url: 'https://buyer.example/wh', authentication: { schemes: ['Bearer'] } },
+        'fixture reporting_webhook reaches the wire'
+      );
+    });
+
     test('empty fixture package object {} falls back to discovery cleanly', () => {
       // Some storyboards ship `packages: [{}]` for defaults-only scenarios
       // where every field should come from discovery / enricher synthesis.
