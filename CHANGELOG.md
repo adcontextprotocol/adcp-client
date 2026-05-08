@@ -1,5 +1,55 @@
 # Changelog
 
+## 6.14.0
+
+### Minor Changes
+
+- d8a4dbc: feat(cli): storyboard CI UX improvements — soft-fail, summary file, specialism resolution
+
+  Adds three improvements to `adcp storyboard` surfaced by silent CI failures in reference adopter repos:
+  - **`--soft-fail`**: exit 0 even when storyboards fail, printing a `STORYBOARD FAILURES (N): scenario1, …` block to stderr. Eliminates the `continue-on-error: true` / `|| true` silent-failure pattern — adopters get "non-blocking but visible" without regressions going unnoticed. Applies to all run modes (capability-driven, bundle, `--file`, `--local-agent`, multi-instance, agents-map). Exit 1 (runner crash) and 2 (usage error) are not suppressed.
+  - **`--summary-file [PATH]`**: write a Markdown run summary to a file after the run. Defaults to `storyboard-result-summary.md` when `PATH` is omitted. Auto-activates when `$GITHUB_STEP_SUMMARY` is set so the summary appears in the GitHub Actions job summary tab without an extra upload step.
+  - **`adcp storyboard show --specialism <slug>`**: resolve which storyboards are graded when an agent claims a specialism (e.g. `adcp storyboard show --specialism sales-guaranteed`). Shows the full scenario list including protocol baseline and universal storyboards, with capability-gating annotations.
+
+### Patch Changes
+
+- 6f41b27: Narrow `AgentClient.withSession()` so the retained server-side `pendingTaskId` only auto-threads onto the next call when the call is plausibly a continuation of the SAME task — same skill name AND same effective `contextId`. A different skill or a switched contextId signals new work, and the retained handle is stale; sending it produces "Task not found" against spec-compliant A2A sellers (per A2A 0.3.0 §3.4 — `Message.taskId` continues the parent task). Closes #1590.
+
+  Defense in depth on top of the storyboard-runner reset shipped in #1588 (#1585). The runner-level fix protects `comply()`-style harnesses that own client lifecycle; this SDK-level narrowing protects every adopter who reuses one `AgentClient` across logically distinct conversations without an explicit `resetContext()` boundary.
+
+  HITL flows (e.g., `createMediaBuy` → `input-required` → `createMediaBuy` resume) match same-skill same-context and continue to thread as before. Caller-supplied `options.taskId` always wins, regardless of skill match.
+
+  Internally pairs `pendingTask` with the `(contextId, taskName)` it was retained under. `getPendingTaskId()` surface unchanged; `resetContext()` clears the handle as before.
+
+- e772ac2: Bump `ADCP_VERSION` to 3.0.7. Pulls in the upstream storyboard fix for `media_buy_seller/measurement_terms_rejected` (adcontextprotocol/adcp#4218) — both `create_media_buy` steps now use `$generate:uuid_v4#…` aliases instead of hardcoded literals, so each test run mints fresh idempotency keys and the spec-mandated `IDEMPOTENCY_CONFLICT` arm no longer fires against long-running seller deployments. Closes adcp-client#1586.
+
+  Also includes a docs-only refinement to the `list_creatives` filtering type column (`accounts: AccountRef[]`, `format_ids: FormatID[]`, `statuses: CreativeStatus`) — no schema or wire-format change.
+
+  `COMPATIBLE_ADCP_VERSIONS` extended with `'3.0.7'` for editor autocomplete on the `adcpVersion` constructor option. Generated types regenerated; functional schema content is identical to 3.0.6 (this release was docs + storyboard fix only).
+
+- 7a2f05c: test(storyboard): refactor `test/lib/storyboard-cascade-skip-on-skip.test.js` from prose-driven scenarios to a `(skip_reason × peer_shape × phase_topology)` fixture-table matrix (#1548)
+
+  Test-only change. Preserves all 35 historical assertions but reorganizes them as named matrix rows with a coverage-holes assertion at the bottom that fails CI when a new dimension value is introduced and left uncovered. Empty cells in the cube are now structurally visible to reviewers rather than discovered as production bugs (the asymmetric blind spot pattern that PR #1545 fixed). Net line shrink ~41% (2143 → 1256). No runner behavior change.
+
+- 3229edd: Docs corpus migration: rewrite remaining `createAdcpServer` v5 examples to v6 `createAdcpServerFromPlatform` across `skills/build-seller-agent/`, `skills/build-decisioning-*/`, `docs/guides/BUILD-AN-AGENT.md`, `docs/guides/CONCURRENCY.md`, `docs/guides/CTX-METADATA-SAFETY.md`, `docs/guides/account-resolution.md`, `docs/guides/SIGNING-GUIDE.md`, `docs/guides/VALIDATE-LOCALLY.md`, `docs/guides/VALIDATE-YOUR-AGENT.md`, and `docs/llms.txt`. Closes the corpus drift that left LLM-generated platforms starting from the v5 handler-bag shape despite the v6 surface being GA. Migration guides retain v5 references where the historical context is intentional.
+- 6b596e0: test(examples): wire `comply_test_controller` into `examples/hello_seller_adapter_proposal_mode.ts` and add issue-#1549 invariant assertions to its gate test (#1549)
+
+  Test + worked-example change. The proposal-mode reference adapter now declares `compliance_testing.scenarios` and ships `complyTest` adapters (`seed.media_buy`, `force.media_buy_status`, `simulate.delivery`) for parity with the other reference seller adapters — relevant when downstream cascade scenarios in the broader `sales_proposal_mode` storyboard suite drive the controller. The companion gate test (`test/examples/hello-seller-adapter-proposal-mode.test.js`) adds invariant assertions specific to the SDK behavior PR #1545 introduced: sync_accounts skip carries the sole-stateful-step exemption marker, and downstream phases (`brief_with_proposals`, `refine_proposal`, `finalize_proposal`, `accept_proposal`) are not cascade-skipped from the setup-phase skip. Closes the example-tier coverage gap noted by `nodejs-testing-expert` on PR #1545. No library behavior change.
+
+- bd84cc0: Fix A2A "Task not found" on first call of every storyboard after the first when running batch compliance suites (#1585).
+
+  `comply()` shares one `AgentClient` across every storyboard for transport reuse. The client retains `pendingTaskId` from non-terminal responses (`submitted` / `working` / `input-required`) and auto-threads it into every subsequent A2A `message/send`. Without a per-storyboard reset, a stale `task_id` from a prior storyboard's HITL or working step rode into the next storyboard's first call (typically `get_products`), and spec-compliant sellers correctly returned "Task &lt;uuid&gt; not found" because the buyer was referencing a task it never opened against this seller.
+
+  The runner now calls `client.resetContext()` on every shared client at the start of `executeStoryboardPass`, re-establishing the documented one-AgentClient-per-conversation boundary at the storyboard boundary. MCP transports are unaffected (no session ids on the wire). Sibling of #1571, #1575, #1579 — the previous fixes addressed unwrap-layer drops; this one addresses the upstream session-leak that caused the lookups in the first place.
+
+- 2d66e85: fix(framework): remove duplicate `listCreativeFormats` declarations on `CreativeBuilderPlatform` / `CreativeAdServerPlatform` (#1384)
+
+  Both interfaces previously declared `listCreativeFormats` twice — once correctly as `NoAccountCtx<TCtxMeta>` (matching the dispatch reality that no-account tools may receive `ctx.account === undefined`) and a second time as `Ctx<TCtxMeta>` (claiming `account` non-optional). TypeScript overload resolution on the implementation site preserved the narrow (so adopters were not silently exposed to the runtime crash #1327 fixed for `previewCreative`/`providePerformanceFeedback`), but the duplicate was a footgun for adopters reading the interface and a tripwire for future refactors.
+
+  Removed the `Ctx`-typed declaration on both interfaces, folded the precedence note into the surviving `NoAccountCtx` declaration on `CreativeBuilderPlatform`, and added regression locks in `decisioning.type-checks.ts` to prevent the duplicate from regressing.
+
+  This sweep also re-verified the rest of the typed-handler ctx surface introduced by #1327: `ctx.agent`, `ctx.ctxMetadata`, `ctx.recipes`, `ctx.handoffToTask`, `ctx.state.*`, and `ctx.resolve.*` all match their dispatch guarantees in `to-context.ts` / `from-platform.ts`. `ctx.authInfo`, `ctx.emitWebhook`, and `ctx.publishStatusChange` are not on `RequestContext` (they live on the legacy `HandlerContext` or as module-level exports) — out of scope for the typed-handler surface.
+
 ## 6.13.2
 
 ### Patch Changes
