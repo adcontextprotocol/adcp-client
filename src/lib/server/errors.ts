@@ -113,6 +113,16 @@ export interface AdcpErrorResponse {
  * the envelope can't become a stolen-key read oracle. Codes without a
  * registered allowlist pass through unchanged.
  *
+ * **Two-layer wire shape.** This builder emits the envelope layer
+ * (`structuredContent.adcp_error`) only. For tools whose response
+ * schema declares a typed Error arm (`errors[]` required at the top
+ * level), the framework dispatcher synthesises the payload-layer
+ * `errors[]` from the same data at finalize time, so the wire carries
+ * both the envelope marker and the typed Error arm together — no
+ * adopter code change required. The list of affected tools is derived
+ * at server build from the bundled schema cache. RFC:
+ * `docs/proposals/adcperror-two-layer-emission.md`.
+ *
  * @example
  * ```typescript
  * import { adcpError } from '@adcp/sdk';

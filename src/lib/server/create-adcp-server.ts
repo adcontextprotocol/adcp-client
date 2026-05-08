@@ -41,6 +41,7 @@ import { parseAdcpMajorVersion, type AdcpVersion } from '../version';
 import { resolveAdcpVersion } from '../utils/adcp-version-config';
 import { resolveBundleKey } from '../validation/schema-loader';
 import { bundleSupportsAdcpVersionField } from '../protocols';
+import { getToolsWithErrorArm, type ErrorArmDescriptor } from './error-arm-tools';
 import type { ToolCallback } from '@modelcontextprotocol/sdk/server/mcp.js';
 import type { ZodRawShapeCompat, AnySchema } from '@modelcontextprotocol/sdk/server/zod-compat.js';
 import type { ToolAnnotations } from '@modelcontextprotocol/sdk/types.js';
@@ -2276,6 +2277,175 @@ function sanitizeAdcpErrorEnvelope(response: McpToolResponse): void {
   }
 }
 
+/**
+ * Fields valid on a payload-layer `errors[]` item per the bundled
+ * `core/error.json` schema. Both layers of the AdCP error model carry
+ * the same conceptual fields, so the dispatcher projects from one to
+ * the other 1:1 — but the projection still needs to know which keys
+ * are part of the contract.
+ *
+ * `recovery` is included even though the schema marks it optional: it
+ * is the autonomous-buyer dispatch signal, and dropping it on the
+ * payload while keeping it on the envelope would force callers to read
+ * both layers to classify the failure. Mirroring matches the spec's
+ * intent (both layers carry the same data) without surprising adopters
+ * who rely on either side.
+ */
+const PAYLOAD_ERROR_FIELDS: ReadonlySet<string> = new Set([
+  'code',
+  'message',
+  'recovery',
+  'field',
+  'suggestion',
+  'retry_after',
+  'issues',
+  'details',
+]);
+
+function projectEnvelopeToPayloadError(envelope: Record<string, unknown>): Record<string, unknown> {
+  const out: Record<string, unknown> = {};
+  for (const key of Object.keys(envelope)) {
+    if (PAYLOAD_ERROR_FIELDS.has(key)) out[key] = envelope[key];
+  }
+  return out;
+}
+
+function projectPayloadErrorToEnvelope(payloadError: Record<string, unknown>): Record<string, unknown> {
+  const out: Record<string, unknown> = {};
+  for (const key of Object.keys(payloadError)) {
+    if (PAYLOAD_ERROR_FIELDS.has(key)) out[key] = payloadError[key];
+  }
+  return out;
+}
+
+/**
+ * Two-layer error emission for tools whose response schema declares a
+ * typed Error arm (`errors[]` required) at the top level.
+ *
+ * The AdCP spec (RFC `docs/proposals/adcperror-two-layer-emission.md`,
+ * `error-code.json#GOVERNANCE_DENIED`) requires both layers on the
+ * failure path:
+ *
+ *   - **Envelope layer**: `structuredContent.adcp_error: {code, message, ...}`
+ *     — the cross-protocol marker, programmatic extraction.
+ *   - **Payload layer**: `structuredContent.errors: [{code, message, ...}]`
+ *     — the typed Error arm of the response union.
+ *
+ * `adcpError()` emits the envelope only; `wrapErrorArm()` emits the
+ * payload only. This dispatcher seam fills in whichever layer is
+ * missing so the wire is two-layer regardless of which helper the
+ * adopter used. Idempotent on already-two-layer payloads (presence of
+ * both `adcp_error` and `errors[]` is a no-op).
+ *
+ * Gated on `toolsWithErrorArm` derived from the bundled schema cache:
+ * tools whose schema doesn't define `errors[]` (`get_adcp_capabilities`,
+ * `tasks/get`, `get_products`, etc.) are left unchanged.
+ *
+ * Scope is the failure path only — early returns when neither layer is
+ * present. Success-arm responses pass through untouched.
+ */
+function enrichErrorTwoLayer(
+  response: McpToolResponse,
+  toolName: string,
+  toolsWithErrorArm: ReadonlyMap<string, ErrorArmDescriptor>
+): void {
+  const descriptor = toolsWithErrorArm.get(toolName);
+  if (!descriptor) return;
+  const sc = response.structuredContent as Record<string, unknown> | undefined;
+  if (!sc || typeof sc !== 'object') return;
+
+  const env = sc.adcp_error as Record<string, unknown> | undefined;
+  const envValid = env != null && typeof env === 'object' && typeof env.code === 'string';
+  const payloadList = sc.errors;
+  const payloadValid = Array.isArray(payloadList) && payloadList.length > 0;
+
+  // Path A: envelope present, payload missing → synthesise payload-layer
+  // `errors[]` from the envelope. The `adcpError()` builder always lands
+  // here; hand-rolled `{adcp_error: {...}}` envelopes too.
+  if (envValid && !payloadValid) {
+    sc.errors = [projectEnvelopeToPayloadError(env)];
+    applyArmDiscriminators(sc, descriptor);
+    syncContentJsonText(response, sc);
+    return;
+  }
+
+  // Path B: payload present, envelope missing → synthesise envelope from
+  // the first payload item. `wrapErrorArm()` lands here when adopters
+  // return a typed Error arm directly.
+  if (!envValid && payloadValid) {
+    const first = (payloadList as unknown[])[0];
+    if (first && typeof first === 'object') {
+      const projected = projectPayloadErrorToEnvelope(first as Record<string, unknown>);
+      // Only stamp the envelope if the payload's first item carries the
+      // minimum spec-required `code` + `message`. A malformed Error arm
+      // (already warned about by the dispatcher's `isErrorArm` branch)
+      // shouldn't synthesise a half-formed envelope.
+      if (typeof projected.code === 'string' && typeof projected.message === 'string') {
+        sc.adcp_error = projected;
+        applyArmDiscriminators(sc, descriptor);
+        syncContentJsonText(response, sc);
+      }
+    }
+    return;
+  }
+
+  // Path C: both layers present (handler emitted a fully-formed
+  // two-layer payload). Idempotent passthrough — adopters that already
+  // ship the correct shape are not mutated. Discriminator constants
+  // are NOT stamped here: an adopter that built both layers also chose
+  // their own discriminator value, and overriding it could break the
+  // arm they intended to land in.
+}
+
+/**
+ * Stamp a tool's Error-arm discriminator constants on the response
+ * payload. For most tools the descriptor is empty (the arm requires
+ * `errors[]` only) and this is a no-op. `update_content_standards` is
+ * the canonical case: its Error arm declares `success: { const: false }`
+ * — without this stamp, the synthesised payload would still match the
+ * Success arm's `success: false` value (absent → undefined, neither
+ * `const: true` nor `const: false`), so the schema would reject the
+ * response on either branch.
+ *
+ * Only stamps fields that are NOT already set on the payload — adopters
+ * who deliberately set the discriminator (e.g. mid-migration) keep
+ * their choice.
+ */
+function applyArmDiscriminators(sc: Record<string, unknown>, descriptor: ErrorArmDescriptor): void {
+  for (const [key, value] of Object.entries(descriptor.extraRequired)) {
+    if (!(key in sc)) sc[key] = value;
+  }
+}
+
+/**
+ * Mirror a mutated `structuredContent` back into the L2 JSON text
+ * fallback so MCP clients reading either transport layer see the same
+ * shape. Same pattern as `sanitizeAdcpErrorEnvelope` and
+ * `injectContextIntoResponse`. Silent no-op when the L2 text isn't a
+ * JSON envelope (legitimate for non-JSON `content[0].text` summaries
+ * from `wrapErrorArm`).
+ */
+function syncContentJsonText(response: McpToolResponse, structuredContent: Record<string, unknown>): void {
+  if (!Array.isArray(response.content)) return;
+  const first = response.content[0];
+  if (!first || first.type !== 'text' || typeof first.text !== 'string') return;
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(first.text);
+  } catch {
+    // Not a JSON-bodied L2 fallback (e.g. wrapErrorArm's "CODE: message"
+    // summary). Leave it alone — the L3 structuredContent is the
+    // authoritative carrier; readers that fall back to L2 prose can
+    // still extract the code via pattern match.
+    return;
+  }
+  if (parsed == null || typeof parsed !== 'object') return;
+  const obj = parsed as Record<string, unknown>;
+  if ('adcp_error' in structuredContent) obj.adcp_error = structuredContent.adcp_error;
+  if ('errors' in structuredContent) obj.errors = structuredContent.errors;
+  first.text = JSON.stringify(obj);
+}
+
 // Echo the request context into a formatted MCP tool response so buyers can
 // trace correlation_id across both success and error responses. Only plain
 // objects are echoed: `si_get_offering` and `si_initiate_session` override
@@ -2633,6 +2803,15 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
     const bundleKey = resolveBundleKey(adcpVersion);
     return bundleSupportsAdcpVersionField(bundleKey) ? bundleKey : undefined;
   })();
+
+  // Tool-name set for two-layer error emission. Computed once at server
+  // build from the bundled response schemas: any tool whose top-level
+  // `oneOf`/`anyOf` declares an arm with `required: ["errors"]` joins
+  // the set, and the dispatcher mirrors `errors[]` ↔ `adcp_error` on
+  // the failure path so both spec-mandated layers ride on every
+  // failing response. Tools without an Error arm are untouched.
+  // RFC: docs/proposals/adcperror-two-layer-emission.md.
+  const toolsWithErrorArm = getToolsWithErrorArm(adcpVersion);
 
   // Defaults gated on `process.env.NODE_ENV`:
   //   - Production → both sides `'off'` (zero AJV overhead; trust the
@@ -3034,6 +3213,13 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
         // { adcp_error: ... } }` would otherwise ship unfiltered.
         const finalize = (response: McpToolResponse): McpToolResponse => {
           sanitizeAdcpErrorEnvelope(response);
+          // Two-layer error emission: when the tool's response schema
+          // declares an Error arm (`errors: [...]` required), mirror
+          // `adcp_error` ↔ `errors[]` so both spec-mandated layers are
+          // present on the wire. Order: AFTER sanitize so we project
+          // the allowlist-filtered envelope; BEFORE context/version
+          // injection so those run on the final two-layer payload.
+          enrichErrorTwoLayer(response, toolName, toolsWithErrorArm);
           injectContextIntoResponse(response, params.context);
           injectVersionIntoResponse(response, servedAdcpVersion);
           return response;
