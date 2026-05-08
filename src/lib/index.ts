@@ -542,7 +542,6 @@ export {
   performanceFeedbackResponse,
   buildCreativeResponse,
   buildCreativeMultiResponse,
-  previewCreativeResponse,
   creativeDeliveryResponse,
   listCreativesResponse,
   listPropertyListsResponse,
@@ -974,6 +973,56 @@ export {
   type ParameterizedRender,
   type RenderItem,
 } from './utils/format-render-builders';
+
+// ====== ACTIVATION KEY BUILDERS ======
+// Typed factories that inject the `type` discriminator on `ActivationKey`.
+// SHAPE-GOTCHAS §1 — `key`/`value` flatten on the activation key itself.
+export { activationKey, segmentIdActivationKey, keyValueActivationKey } from './utils/activation-key-builders';
+
+// ====== SIGNAL ID BUILDERS ======
+// Typed factories that inject the `source` discriminator on `SignalID`.
+// Used in `signal_ids` filter arrays and as the `signal_id` provenance
+// field on every `Signal` returned by `get_signals`. SHAPE-GOTCHAS §2.
+export { signalId, catalogSignalId, agentSignalId } from './utils/signal-id-builders';
+
+// ====== BUILD CREATIVE RETURN BUILDERS ======
+// Typed factories for the four return shapes accepted by the framework
+// from `build_creative` handlers. `.single` / `.multi` emit bare manifests
+// the framework auto-wraps; `.singleEnveloped` / `.multiEnveloped` emit
+// the shaped envelope when the handler needs to attach `sandbox` /
+// `expires_at` / `preview`. SHAPE-GOTCHAS §5.
+export {
+  buildCreativeReturn,
+  singleBuildCreativeReturn,
+  multiBuildCreativeReturn,
+  singleEnvelopedBuildCreativeReturn,
+  multiEnvelopedBuildCreativeReturn,
+} from './utils/build-creative-return-builders';
+
+// ====== PREVIEW CREATIVE RESPONSE BUILDERS ======
+// Typed factories that inject the `response_type` discriminator on
+// `PreviewCreativeResponse`. Three-way oneOf — `single | batch | variant`.
+// Pair with `urlRender` / `htmlRender` / `bothRender` for the per-render
+// `output_format`. SHAPE-GOTCHAS §4.
+export {
+  previewCreativeResponse,
+  singlePreviewCreativeResponse,
+  batchPreviewCreativeResponse,
+  variantPreviewCreativeResponse,
+} from './utils/preview-creative-response-builders';
+
+// ====== MEDIA BUY DELIVERY NOTIFICATION BUILDERS ======
+// Typed factories that inject the `notification_type` discriminator on
+// `GetMediaBuyDeliveryResponse` for webhook deliveries. Five variants:
+// `scheduled` / `final` / `delayed` / `adjusted` / `window_update`.
+export {
+  mediaBuyDeliveryNotification,
+  scheduledMediaBuyDeliveryNotification,
+  finalMediaBuyDeliveryNotification,
+  delayedMediaBuyDeliveryNotification,
+  adjustedMediaBuyDeliveryNotification,
+  windowUpdateMediaBuyDeliveryNotification,
+} from './utils/media-buy-delivery-notification-builders';
 
 // ====== V3.0 COMPATIBILITY UTILITIES ======
 // Capabilities detection, version negotiation, and v3 enforcement.

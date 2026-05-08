@@ -545,6 +545,80 @@ function _ad_server_list_creative_formats_requires_account_narrow(): void {
   });
 }
 
+// ── Discriminator-injecting builders are non-overridable (#1386) ──
+
+import { activationKey, segmentIdActivationKey, keyValueActivationKey } from '../../utils/activation-key-builders';
+import { signalId, catalogSignalId, agentSignalId } from '../../utils/signal-id-builders';
+import { buildCreativeReturn, singleEnvelopedBuildCreativeReturn } from '../../utils/build-creative-return-builders';
+import { previewCreativeResponse, singlePreviewCreativeResponse } from '../../utils/preview-creative-response-builders';
+import {
+  mediaBuyDeliveryNotification,
+  scheduledMediaBuyDeliveryNotification,
+} from '../../utils/media-buy-delivery-notification-builders';
+import type { ActivationKey, SignalID, CreativeManifest } from '../../types/core.generated';
+
+function _activation_key_factories_inject_discriminator(): void {
+  const seg: ActivationKey = activationKey.segment({ segment_id: 'plat_seg_xyz' });
+  const kv: ActivationKey = activationKey.keyValue({ key: 'segment', value: 'abc123' });
+  void seg;
+  void kv;
+  // @ts-expect-error — `type` is omitted from the parameter type; passing it must fail.
+  segmentIdActivationKey({ type: 'key_value', segment_id: 'x' });
+  // @ts-expect-error — same: cannot smuggle a conflicting discriminator via fields.
+  keyValueActivationKey({ type: 'segment_id', key: 'k', value: 'v' });
+}
+
+function _signal_id_factories_inject_discriminator(): void {
+  const cat: SignalID = signalId.catalog({ data_provider_domain: 'example.com', id: 'seg' });
+  const agt: SignalID = signalId.agent({ agent_url: 'https://x/.well-known/adcp/signals', id: 'seg' });
+  void cat;
+  void agt;
+  // @ts-expect-error — `source` is omitted from the parameter type.
+  catalogSignalId({ source: 'agent', data_provider_domain: 'x', id: 'y' });
+  // @ts-expect-error — same: agent factory rejects a `source: 'catalog'`.
+  agentSignalId({ source: 'catalog', agent_url: 'https://x', id: 'y' });
+}
+
+function _preview_creative_response_factories_inject_discriminator(): void {
+  const single = previewCreativeResponse.single({
+    previews: [{ preview_id: 'p', renders: [], input: { name: 'default' } }],
+    expires_at: '2026-05-03T00:00:00Z',
+  });
+  void single;
+  singlePreviewCreativeResponse({
+    // @ts-expect-error — `response_type` is omitted from the parameter type.
+    response_type: 'batch',
+    previews: [],
+    expires_at: '2026-05-03T00:00:00Z',
+  });
+}
+
+function _build_creative_return_factories_pin_arm(): void {
+  const m: CreativeManifest = {} as CreativeManifest;
+  const bare = buildCreativeReturn.single(m);
+  const enveloped = buildCreativeReturn.singleEnveloped({ manifest: m, sandbox: true });
+  void bare;
+  void enveloped;
+  // @ts-expect-error — `creative_manifest` is the wire field, not the helper input.
+  singleEnvelopedBuildCreativeReturn({ creative_manifest: m });
+}
+
+function _media_buy_delivery_notification_factories_inject_discriminator(): void {
+  const scheduled = mediaBuyDeliveryNotification.scheduled({
+    reporting_period: { start: '2026-05-01T00:00:00Z', end: '2026-05-02T00:00:00Z' },
+    currency: 'USD',
+    media_buy_deliveries: [],
+  });
+  void scheduled;
+  scheduledMediaBuyDeliveryNotification({
+    // @ts-expect-error — `notification_type` is omitted from the parameter type.
+    notification_type: 'final',
+    reporting_period: { start: '2026-05-01T00:00:00Z', end: '2026-05-02T00:00:00Z' },
+    currency: 'USD',
+    media_buy_deliveries: [],
+  });
+}
+
 function _ad_server_list_creative_formats_rejects_unnarrowed_access(): void {
   defineCreativeAdServerPlatform<{ catalog_id: string }>({
     buildCreative: async () => ({}) as never,
@@ -608,4 +682,9 @@ export const _references = [
   _builder_list_creative_formats_rejects_unnarrowed_access,
   _ad_server_list_creative_formats_requires_account_narrow,
   _ad_server_list_creative_formats_rejects_unnarrowed_access,
+  _activation_key_factories_inject_discriminator,
+  _signal_id_factories_inject_discriminator,
+  _preview_creative_response_factories_inject_discriminator,
+  _build_creative_return_factories_pin_arm,
+  _media_buy_delivery_notification_factories_inject_discriminator,
 ] as const;

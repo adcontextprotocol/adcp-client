@@ -52,6 +52,8 @@ import {
   javascriptAsset,
   audioAsset,
   urlRender,
+  buildCreativeReturn,
+  previewCreativeResponse,
   type Format,
   type ListCreativeFormatsResponse,
   type BuildCreativeRequest,
@@ -446,12 +448,13 @@ class CreativeTemplateAdapter implements DecisioningPlatform<Record<string, neve
         return projectRenderToManifest(completed, { agent_url: PUBLIC_AGENT_URL, id: target.id });
       };
 
-      // Multi-format request — return `CreativeManifest[]`; framework wraps
-      // as `{ creative_manifests: [...] }`. See BuildCreativeReturn (4-arm
-      // discriminated union) — returning the wrong arm fails wire-schema
-      // validation. SHAPE-GOTCHAS.md §5.
+      // `buildCreativeReturn.multi(...)` / `.single(...)` pin which arm of
+      // the 4-shape `BuildCreativeReturn` union you're emitting. The framework
+      // wraps `multi` into `{ creative_manifests: [...] }` and `single` into
+      // `{ creative_manifest: <obj> }` on the wire. SHAPE-GOTCHAS §5.
       if (req.target_format_ids && req.target_format_ids.length > 0) {
-        return Promise.all(req.target_format_ids.map((t, i) => buildOne(t, i)));
+        const manifests = await Promise.all(req.target_format_ids.map((t, i) => buildOne(t, i)));
+        return buildCreativeReturn.multi(manifests);
       }
 
       // Single-format request.
@@ -461,7 +464,7 @@ class CreativeTemplateAdapter implements DecisioningPlatform<Record<string, neve
           field: 'target_format_id',
         });
       }
-      return buildOne(req.target_format_id, 0);
+      return buildCreativeReturn.single(await buildOne(req.target_format_id, 0));
     },
 
     previewCreative: async (req: PreviewCreativeRequest, ctx): Promise<PreviewCreativeResponse> => {
@@ -516,12 +519,11 @@ class CreativeTemplateAdapter implements DecisioningPlatform<Record<string, neve
         throw new AdcpError('INVALID_REQUEST', { message: 'upstream returned no preview_url' });
       }
 
-      // PreviewCreativeResponse is a 3-way discriminated union (single |
-      // batch | variant). Single mode requires `previews[].renders[]` even
-      // for one preview — and each render needs the `output_format`
-      // discriminator. urlRender({...}) injects it. SHAPE-GOTCHAS.md §4.
-      return {
-        response_type: 'single',
+      // `previewCreativeResponse.single({...})` injects
+      // `response_type: 'single'`. The render slot's `output_format`
+      // discriminator is in turn injected by `urlRender({...})`.
+      // SHAPE-GOTCHAS §4.
+      return previewCreativeResponse.single({
         previews: [
           {
             preview_id: `prv_${created.render_id}`,
@@ -539,7 +541,7 @@ class CreativeTemplateAdapter implements DecisioningPlatform<Record<string, neve
           },
         ],
         expires_at: new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString(),
-      };
+      });
     },
   });
 }

@@ -18,6 +18,7 @@
 
 import { createAdcpServer, serve } from '@adcp/sdk/server/legacy/v5';
 import { createIdempotencyStore, memoryBackend } from '@adcp/sdk/server';
+import { activationKey, signalId } from '@adcp/sdk';
 import type { GetSignalsResponse, ServeContext } from '@adcp/sdk';
 
 // ---------------------------------------------------------------------------
@@ -28,11 +29,10 @@ type Signal = GetSignalsResponse['signals'][number];
 const SEGMENTS: Signal[] = [
   {
     signal_agent_segment_id: 'high_intent_shoppers',
-    signal_id: {
-      source: 'catalog',
+    signal_id: signalId.catalog({
       data_provider_domain: 'example-signals.com',
       id: 'high_intent_shoppers',
-    },
+    }),
     name: 'High Intent Shoppers',
     description: 'Users who visited product pages 3+ times in the last 7 days without purchasing.',
     value_type: 'binary',
@@ -51,11 +51,10 @@ const SEGMENTS: Signal[] = [
   },
   {
     signal_agent_segment_id: 'lapsed_subscribers',
-    signal_id: {
-      source: 'catalog',
+    signal_id: signalId.catalog({
       data_provider_domain: 'example-signals.com',
       id: 'lapsed_subscribers',
-    },
+    }),
     name: 'Lapsed Subscribers',
     description: 'Email subscribers who have not opened in 90+ days but previously had high engagement.',
     value_type: 'binary',
@@ -74,11 +73,10 @@ const SEGMENTS: Signal[] = [
   },
   {
     signal_agent_segment_id: 'geo_urban_commuters',
-    signal_id: {
-      source: 'catalog',
+    signal_id: signalId.catalog({
       data_provider_domain: 'example-signals.com',
       id: 'geo_urban_commuters',
-    },
+    }),
     name: 'Urban Commuters',
     description: 'Users whose location data indicates daily commute patterns through major metro areas.',
     value_type: 'binary',
@@ -171,21 +169,19 @@ function createSignalsAgent({ taskStore }: ServeContext) {
               platform: dest.platform,
               is_live: false,
               estimated_activation_duration_minutes: 30,
-              activation_key: {
-                type: 'segment_id' as const,
+              activation_key: activationKey.segment({
                 segment_id: `${dest.platform}_${params.signal_agent_segment_id}`,
-              },
+              }),
             };
           }
           return {
             type: 'agent' as const,
             agent_url: dest.agent_url,
             is_live: true,
-            activation_key: {
-              type: 'key_value' as const,
+            activation_key: activationKey.keyValue({
               key: 'audience',
               value: params.signal_agent_segment_id,
-            },
+            }),
             deployed_at: new Date().toISOString(),
           };
         });
