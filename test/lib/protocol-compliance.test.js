@@ -275,6 +275,99 @@ describe('A2A Protocol Compliance', { skip: process.env.CI ? 'Slow tests - skipp
         'Should throw error when server returns nested error in result'
       );
     });
+
+    // Regression: adcp-client#1575
+    // When the seller emits a spec-compliant terminal-state Task carrying an
+    // `adcp_error` DataPart per AdCP transport-errors §A2A Binding, the
+    // protocol layer must let the response through to the upstream unwrapper
+    // — even if the seller also embedded a transport-level `result.error`
+    // hint. Otherwise the structured `adcp_error.code` is lost behind a
+    // generic "A2A agent returned error" throw and storyboard validators
+    // read transport-state instead of the AdCP error envelope.
+    test('should pass through failed Task carrying adcp_error DataPart', async () => {
+      closeA2AConnections();
+      const failedTaskClient = {
+        sendMessage: async () => ({
+          jsonrpc: '2.0',
+          id: 'test-id',
+          result: {
+            kind: 'task',
+            id: 'task-9a364eb3',
+            contextId: 'ctx-abc',
+            status: { state: 'failed', timestamp: new Date().toISOString() },
+            // Some sellers also surface a transport-level error string alongside
+            // the structured artifact. The artifact is canonical per spec; the
+            // protocol layer must prefer it.
+            error: { message: 'Task 9a364eb3 is in terminal state: 3' },
+            artifacts: [
+              {
+                artifactId: 'art-1',
+                parts: [
+                  {
+                    kind: 'data',
+                    data: {
+                      adcp_error: {
+                        code: 'TERMS_REJECTED',
+                        message: 'Brief rejected by policy',
+                        recovery: 'correctable',
+                        field: 'brief',
+                      },
+                      context: { correlation_id: 'corr-123' },
+                    },
+                  },
+                  { kind: 'text', text: 'Rejected.' },
+                ],
+              },
+            ],
+          },
+        }),
+      };
+
+      const originalA2AClient = require('@a2a-js/sdk/client').A2AClient;
+      originalA2AClient.fromCardUrl = async () => failedTaskClient;
+
+      const response = await callA2ATool('https://test.com', 'get_products', { brief: 'x' });
+
+      // Spec-compliant terminal-state Task — must flow through unmodified so
+      // the unwrapper can extract `adcp_error` from the DataPart.
+      assert.strictEqual(response.result.kind, 'task');
+      assert.strictEqual(response.result.status.state, 'failed');
+      assert.strictEqual(response.result.artifacts[0].parts[0].data.adcp_error.code, 'TERMS_REJECTED');
+    });
+
+    test('should pass through rejected Task carrying adcp_error DataPart', async () => {
+      closeA2AConnections();
+      const rejectedTaskClient = {
+        sendMessage: async () => ({
+          jsonrpc: '2.0',
+          id: 'test-id',
+          result: {
+            kind: 'task',
+            id: 'task-rej',
+            status: { state: 'rejected' },
+            artifacts: [
+              {
+                parts: [
+                  {
+                    kind: 'data',
+                    data: {
+                      adcp_error: { code: 'POLICY_VIOLATION', message: 'no' },
+                    },
+                  },
+                ],
+              },
+            ],
+          },
+        }),
+      };
+
+      const originalA2AClient = require('@a2a-js/sdk/client').A2AClient;
+      originalA2AClient.fromCardUrl = async () => rejectedTaskClient;
+
+      const response = await callA2ATool('https://test.com', 'get_products', {});
+      assert.strictEqual(response.result.status.state, 'rejected');
+      assert.strictEqual(response.result.artifacts[0].parts[0].data.adcp_error.code, 'POLICY_VIOLATION');
+    });
   });
 
   describe('Debug Logging Integration', () => {

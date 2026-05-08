@@ -207,6 +207,43 @@ function buildFetchImpl(authToken: string | undefined) {
 }
 
 /**
+ * Terminal A2A task states per A2A 0.3.0 §3.4. Only these can carry the
+ * AdCP-mandated artifact + DataPart envelope (per transport-errors §A2A
+ * Binding); intermediate states (`working`, `submitted`, `input-required`,
+ * `auth-required`) carry no completion artifact.
+ */
+const TERMINAL_A2A_STATES = new Set(['completed', 'failed', 'rejected', 'canceled']);
+
+/**
+ * Detect whether a JSON-RPC response carries a spec-compliant terminal-state
+ * Task with an `adcp_error` DataPart (or the success-arm equivalent — any
+ * structured `data` payload) on its first artifact. Used to short-circuit the
+ * generic "A2A agent returned error" throw when the seller surfaces both a
+ * transport-level error hint and the canonical AdCP error envelope side-by-side.
+ */
+function hasStructuredAdcpErrorArtifact(response: unknown): boolean {
+  if (!response || typeof response !== 'object') return false;
+  const result = (response as { result?: unknown }).result;
+  if (!result || typeof result !== 'object') return false;
+  const r = result as { kind?: unknown; status?: unknown; artifacts?: unknown };
+  if (r.kind !== 'task') return false;
+  const status = r.status as { state?: unknown } | undefined;
+  if (typeof status?.state !== 'string' || !TERMINAL_A2A_STATES.has(status.state)) return false;
+  if (!Array.isArray(r.artifacts) || r.artifacts.length === 0) return false;
+  for (const artifact of r.artifacts) {
+    if (!artifact || typeof artifact !== 'object') continue;
+    const parts = (artifact as { parts?: unknown }).parts;
+    if (!Array.isArray(parts)) continue;
+    for (const part of parts) {
+      if (!part || typeof part !== 'object') continue;
+      const p = part as { kind?: unknown; data?: unknown };
+      if (p.kind === 'data' && p.data && typeof p.data === 'object') return true;
+    }
+  }
+  return false;
+}
+
+/**
  * Protocol-level session identifiers that ride on the A2A Message envelope
  * (not in the skill parameters). `contextId` binds sends to a server-side
  * conversation; `taskId` resumes an existing non-terminal task.
@@ -353,9 +390,17 @@ async function callA2AToolImpl(
     });
 
     if (messageResponse?.error || messageResponse?.result?.error) {
-      const errorObj = messageResponse.error || messageResponse.result?.error;
-      const errorMessage = errorObj.message || JSON.stringify(errorObj);
-      throw new Error(`A2A agent returned error: ${errorMessage}`);
+      // adcp-client#1575: when the seller emits a spec-compliant terminal-state
+      // Task carrying an `adcp_error` DataPart (per AdCP transport-errors §A2A
+      // Binding), the structured artifact is canonical — even if the seller
+      // also surfaced a transport-level error string. Pass the response
+      // through so the upstream unwrapper extracts `adcp_error.code` instead
+      // of throwing a generic message that loses the AdCP error envelope.
+      if (!hasStructuredAdcpErrorArtifact(messageResponse)) {
+        const errorObj = messageResponse.error || messageResponse.result?.error;
+        const errorMessage = errorObj.message || JSON.stringify(errorObj);
+        throw new Error(`A2A agent returned error: ${errorMessage}`);
+      }
     }
 
     return messageResponse;
