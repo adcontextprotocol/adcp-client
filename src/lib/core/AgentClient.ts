@@ -180,10 +180,25 @@ const NON_TERMINAL_STATES: ReadonlySet<string> = new Set([
  * non-terminal response and pass it to `resetContext(id)` on rehydration.
  * The server will route the next call back to the same session.
  */
+/**
+ * Retained server-side task handle. Paired with the `contextId` and skill
+ * name under which it was returned so {@link AgentClient.withSession} only
+ * auto-threads it when the next call is plausibly a continuation of the
+ * SAME task (same skill, same conversation). A different skill or switched
+ * contextId signals new work — sending the retained handle in that case
+ * produces "Task not found" against spec-compliant A2A sellers (per A2A
+ * 0.3.0 §3.4 — Message.taskId continues the parent task).
+ */
+interface PendingTaskHandle {
+  taskId: string;
+  contextId: string;
+  taskName: string;
+}
+
 export class AgentClient {
   private client: SingleAgentClient;
   private currentContextId?: string;
-  private pendingTaskId?: string;
+  private pendingTask?: PendingTaskHandle;
   private readonly _isInProcess: boolean;
 
   constructor(
@@ -298,14 +313,15 @@ export class AgentClient {
 
   /**
    * Absorb the session ids the server returned on `result.metadata`:
-   * retain `contextId` whenever one is present, and retain `serverTaskId`
-   * only while the response was non-terminal. Terminal responses clear
-   * `pendingTaskId` so the next call starts a fresh server-side task.
+   * retain `contextId` whenever one is present, and retain a
+   * `PendingTaskHandle` (taskId + contextId + skill name) only while the
+   * response was non-terminal. Terminal responses clear `pendingTask` so
+   * the next call starts a fresh server-side task.
    *
    * The `deferred` case is deliberately asymmetric: deferred results don't
    * surface a new `serverTaskId` on metadata (the caller holds a resume
-   * token, not a task-id), so the `if (serverTaskId)` guard preserves the
-   * pre-defer `pendingTaskId` — which is exactly what a later resume needs.
+   * token, not a task-id), so the partial-metadata guard preserves the
+   * pre-defer handle — which is exactly what a later resume needs.
    */
   private retainSession<T>(result: TaskResult<T>): void {
     const meta = result.metadata;
@@ -313,11 +329,17 @@ export class AgentClient {
       this.currentContextId = meta.contextId;
     }
     if (NON_TERMINAL_STATES.has(meta?.status as string)) {
-      if (meta?.serverTaskId) {
-        this.pendingTaskId = meta.serverTaskId;
+      if (meta?.serverTaskId && meta?.contextId && meta?.taskName) {
+        this.pendingTask = {
+          taskId: meta.serverTaskId,
+          contextId: meta.contextId,
+          taskName: meta.taskName,
+        };
       }
+      // Partial metadata (e.g., deferred without serverTaskId) preserves
+      // the pre-defer handle.
     } else {
-      this.pendingTaskId = undefined;
+      this.pendingTask = undefined;
     }
   }
 
@@ -327,18 +349,31 @@ export class AgentClient {
    * Caller-supplied ids win (explicit > implicit); unset caller fields fall
    * back to the retained ones.
    *
-   * Switching conversations: if the caller explicitly supplies a
-   * `contextId` that differs from the retained one, the retained
-   * `pendingTaskId` is dropped from the merge. Carrying a stale taskId
-   * from a previous conversation into a new one is never what you want —
-   * it either resumes the wrong task or confuses the server.
+   * **Auto-threading the retained taskId is narrowed.** Per A2A 0.3.0 §3.4,
+   * `Message.taskId` continues the parent task — sending it implies "this
+   * message belongs to that task." We auto-thread `pendingTask.taskId` only
+   * when the next call is plausibly a continuation: same skill name AND
+   * same effective contextId. A different skill (different work) or a
+   * switched contextId signals new work; the retained handle is stale, and
+   * sending it produces "Task not found" against spec-compliant sellers.
+   *
+   * HITL flows (e.g., `createMediaBuy` → `input-required` → `createMediaBuy`
+   * resume) match same-skill same-context and continue to thread as before.
+   * Cross-skill or cross-conversation reuse of one `AgentClient` no longer
+   * leaks taskIds — see #1585 / #1590 for the motivating compliance scenario.
    */
-  private withSession(options?: TaskOptions): TaskOptions {
+  private withSession(taskName: string, options?: TaskOptions): TaskOptions {
     const explicitSwitch = options?.contextId !== undefined && options.contextId !== this.currentContextId;
+    const effectiveContextId = options?.contextId ?? this.currentContextId;
+    const continuation =
+      !explicitSwitch &&
+      this.pendingTask !== undefined &&
+      this.pendingTask.contextId === effectiveContextId &&
+      this.pendingTask.taskName === taskName;
     return {
       ...options,
-      contextId: options?.contextId ?? this.currentContextId,
-      taskId: options?.taskId ?? (explicitSwitch ? undefined : this.pendingTaskId),
+      contextId: effectiveContextId,
+      taskId: options?.taskId ?? (continuation ? this.pendingTask?.taskId : undefined),
     };
   }
 
@@ -391,7 +426,7 @@ export class AgentClient {
     options?: TaskOptions
   ): Promise<TaskResult<GetProductsResponse>> {
     const result = await this.client.getProducts(params, inputHandler, {
-      ...this.withSession(options),
+      ...this.withSession('get_products', options),
     });
 
     this.retainSession(result);
@@ -408,7 +443,7 @@ export class AgentClient {
     options?: TaskOptions
   ): Promise<TaskResult<ListCreativeFormatsResponse>> {
     const result = await this.client.listCreativeFormats(params, inputHandler, {
-      ...this.withSession(options),
+      ...this.withSession('list_creative_formats', options),
     });
 
     this.retainSession(result);
@@ -425,7 +460,7 @@ export class AgentClient {
     options?: TaskOptions
   ): Promise<TaskResult<CreateMediaBuyResponse>> {
     const result = await this.client.createMediaBuy(params, inputHandler, {
-      ...this.withSession(options),
+      ...this.withSession('create_media_buy', options),
     });
 
     this.retainSession(result);
@@ -442,7 +477,7 @@ export class AgentClient {
     options?: TaskOptions
   ): Promise<TaskResult<UpdateMediaBuyResponse>> {
     const result = await this.client.updateMediaBuy(params, inputHandler, {
-      ...this.withSession(options),
+      ...this.withSession('update_media_buy', options),
     });
 
     this.retainSession(result);
@@ -459,7 +494,7 @@ export class AgentClient {
     options?: TaskOptions
   ): Promise<TaskResult<SyncCreativesResponse>> {
     const result = await this.client.syncCreatives(params, inputHandler, {
-      ...this.withSession(options),
+      ...this.withSession('sync_creatives', options),
     });
 
     this.retainSession(result);
@@ -476,7 +511,7 @@ export class AgentClient {
     options?: TaskOptions
   ): Promise<TaskResult<ListCreativesResponse>> {
     const result = await this.client.listCreatives(params, inputHandler, {
-      ...this.withSession(options),
+      ...this.withSession('list_creatives', options),
     });
 
     this.retainSession(result);
@@ -493,7 +528,7 @@ export class AgentClient {
     options?: TaskOptions
   ): Promise<TaskResult<GetMediaBuysResponse>> {
     const result = await this.client.getMediaBuys(params, inputHandler, {
-      ...this.withSession(options),
+      ...this.withSession('get_media_buys', options),
     });
 
     this.retainSession(result);
@@ -510,7 +545,7 @@ export class AgentClient {
     options?: TaskOptions
   ): Promise<TaskResult<GetMediaBuyDeliveryResponse>> {
     const result = await this.client.getMediaBuyDelivery(params, inputHandler, {
-      ...this.withSession(options),
+      ...this.withSession('get_media_buy_delivery', options),
     });
 
     this.retainSession(result);
@@ -527,7 +562,7 @@ export class AgentClient {
     options?: TaskOptions
   ): Promise<TaskResult<ProvidePerformanceFeedbackResponse>> {
     const result = await this.client.providePerformanceFeedback(params, inputHandler, {
-      ...this.withSession(options),
+      ...this.withSession('provide_performance_feedback', options),
     });
 
     this.retainSession(result);
@@ -545,7 +580,7 @@ export class AgentClient {
     inputHandler?: InputHandler,
     options?: TaskOptions
   ): Promise<TaskResult<GetSignalsResponse>> {
-    const result = await this.client.getSignals(params, inputHandler, this.withSession(options));
+    const result = await this.client.getSignals(params, inputHandler, this.withSession('get_signals', options));
 
     this.retainSession(result);
 
@@ -561,7 +596,7 @@ export class AgentClient {
     options?: TaskOptions
   ): Promise<TaskResult<ActivateSignalResponse>> {
     const result = await this.client.activateSignal(params, inputHandler, {
-      ...this.withSession(options),
+      ...this.withSession('activate_signal', options),
     });
 
     this.retainSession(result);
@@ -580,7 +615,7 @@ export class AgentClient {
     options?: TaskOptions
   ): Promise<TaskResult<GetAdCPCapabilitiesResponse>> {
     const result = await this.client.getAdcpCapabilities(params, inputHandler, {
-      ...this.withSession(options),
+      ...this.withSession('get_adcp_capabilities', options),
     });
 
     this.retainSession(result);
@@ -634,7 +669,7 @@ export class AgentClient {
     options?: TaskOptions
   ): Promise<TaskResult<PreviewCreativeResponse>> {
     const result = await this.client.previewCreative(params, inputHandler, {
-      ...this.withSession(options),
+      ...this.withSession('preview_creative', options),
     });
     this.retainSession(result);
     return result;
@@ -649,7 +684,7 @@ export class AgentClient {
     options?: TaskOptions
   ): Promise<TaskResult<BuildCreativeResponse>> {
     const result = await this.client.buildCreative(params, inputHandler, {
-      ...this.withSession(options),
+      ...this.withSession('build_creative', options),
     });
     this.retainSession(result);
     return result;
@@ -666,7 +701,7 @@ export class AgentClient {
     options?: TaskOptions
   ): Promise<TaskResult<ListAccountsResponse>> {
     const result = await this.client.listAccounts(params, inputHandler, {
-      ...this.withSession(options),
+      ...this.withSession('list_accounts', options),
     });
     this.retainSession(result);
     return result;
@@ -681,7 +716,7 @@ export class AgentClient {
     options?: TaskOptions
   ): Promise<TaskResult<SyncAccountsResponse>> {
     const result = await this.client.syncAccounts(params, inputHandler, {
-      ...this.withSession(options),
+      ...this.withSession('sync_accounts', options),
     });
     this.retainSession(result);
     return result;
@@ -696,7 +731,7 @@ export class AgentClient {
     options?: TaskOptions
   ): Promise<TaskResult<SyncAudiencesResponse>> {
     const result = await this.client.syncAudiences(params, inputHandler, {
-      ...this.withSession(options),
+      ...this.withSession('sync_audiences', options),
     });
     this.retainSession(result);
     return result;
@@ -713,7 +748,7 @@ export class AgentClient {
     options?: TaskOptions
   ): Promise<TaskResult<CreatePropertyListResponse>> {
     const result = await this.client.createPropertyList(params, inputHandler, {
-      ...this.withSession(options),
+      ...this.withSession('create_property_list', options),
     });
     this.retainSession(result);
     return result;
@@ -728,7 +763,7 @@ export class AgentClient {
     options?: TaskOptions
   ): Promise<TaskResult<GetPropertyListResponse>> {
     const result = await this.client.getPropertyList(params, inputHandler, {
-      ...this.withSession(options),
+      ...this.withSession('get_property_list', options),
     });
     this.retainSession(result);
     return result;
@@ -743,7 +778,7 @@ export class AgentClient {
     options?: TaskOptions
   ): Promise<TaskResult<UpdatePropertyListResponse>> {
     const result = await this.client.updatePropertyList(params, inputHandler, {
-      ...this.withSession(options),
+      ...this.withSession('update_property_list', options),
     });
     this.retainSession(result);
     return result;
@@ -758,7 +793,7 @@ export class AgentClient {
     options?: TaskOptions
   ): Promise<TaskResult<ListPropertyListsResponse>> {
     const result = await this.client.listPropertyLists(params, inputHandler, {
-      ...this.withSession(options),
+      ...this.withSession('list_property_lists', options),
     });
     this.retainSession(result);
     return result;
@@ -773,7 +808,7 @@ export class AgentClient {
     options?: TaskOptions
   ): Promise<TaskResult<DeletePropertyListResponse>> {
     const result = await this.client.deletePropertyList(params, inputHandler, {
-      ...this.withSession(options),
+      ...this.withSession('delete_property_list', options),
     });
     this.retainSession(result);
     return result;
@@ -788,7 +823,7 @@ export class AgentClient {
     options?: TaskOptions
   ): Promise<TaskResult<ListContentStandardsResponse>> {
     const result = await this.client.listContentStandards(params, inputHandler, {
-      ...this.withSession(options),
+      ...this.withSession('list_content_standards', options),
     });
     this.retainSession(result);
     return result;
@@ -803,7 +838,7 @@ export class AgentClient {
     options?: TaskOptions
   ): Promise<TaskResult<GetContentStandardsResponse>> {
     const result = await this.client.getContentStandards(params, inputHandler, {
-      ...this.withSession(options),
+      ...this.withSession('get_content_standards', options),
     });
     this.retainSession(result);
     return result;
@@ -818,7 +853,7 @@ export class AgentClient {
     options?: TaskOptions
   ): Promise<TaskResult<CalibrateContentResponse>> {
     const result = await this.client.calibrateContent(params, inputHandler, {
-      ...this.withSession(options),
+      ...this.withSession('calibrate_content', options),
     });
     this.retainSession(result);
     return result;
@@ -833,7 +868,7 @@ export class AgentClient {
     options?: TaskOptions
   ): Promise<TaskResult<ValidateContentDeliveryResponse>> {
     const result = await this.client.validateContentDelivery(params, inputHandler, {
-      ...this.withSession(options),
+      ...this.withSession('validate_content_delivery', options),
     });
     this.retainSession(result);
     return result;
@@ -850,7 +885,7 @@ export class AgentClient {
     options?: TaskOptions
   ): Promise<TaskResult<SIGetOfferingResponse>> {
     const result = await this.client.siGetOffering(params, inputHandler, {
-      ...this.withSession(options),
+      ...this.withSession('si_get_offering', options),
     });
     this.retainSession(result);
     return result;
@@ -865,7 +900,7 @@ export class AgentClient {
     options?: TaskOptions
   ): Promise<TaskResult<SIInitiateSessionResponse>> {
     const result = await this.client.siInitiateSession(params, inputHandler, {
-      ...this.withSession(options),
+      ...this.withSession('si_initiate_session', options),
     });
     this.retainSession(result);
     return result;
@@ -880,7 +915,7 @@ export class AgentClient {
     options?: TaskOptions
   ): Promise<TaskResult<SISendMessageResponse>> {
     const result = await this.client.siSendMessage(params, inputHandler, {
-      ...this.withSession(options),
+      ...this.withSession('si_send_message', options),
     });
     this.retainSession(result);
     return result;
@@ -895,7 +930,7 @@ export class AgentClient {
     options?: TaskOptions
   ): Promise<TaskResult<SITerminateSessionResponse>> {
     const result = await this.client.siTerminateSession(params, inputHandler, {
-      ...this.withSession(options),
+      ...this.withSession('si_terminate_session', options),
     });
     this.retainSession(result);
     return result;
@@ -961,15 +996,16 @@ export class AgentClient {
    * conversation; pass a seed to rehydrate a persisted session id (e.g.,
    * across a process restart).
    *
-   * Always clears `pendingTaskId` — a persisted `contextId` places the next
-   * send into the same server-side session, but any old `taskId` is stale.
+   * Always clears the retained pending-task handle — a persisted `contextId`
+   * places the next send into the same server-side session, but any old
+   * `taskId` is stale.
    */
   resetContext(seed?: string): void {
     if (this.currentContextId) {
       this.client.clearConversationHistory(this.currentContextId);
     }
     this.currentContextId = seed;
-    this.pendingTaskId = undefined;
+    this.pendingTask = undefined;
   }
 
   /**
@@ -989,7 +1025,7 @@ export class AgentClient {
    * specific task (not just a conversation) across a process restart.
    */
   getPendingTaskId(): string | undefined {
-    return this.pendingTaskId;
+    return this.pendingTask?.taskId;
   }
 
   /**
@@ -1157,7 +1193,7 @@ export class AgentClient {
     options?: TaskOptions
   ): Promise<TaskResult<T>> {
     const result = await this.client.executeTask<T>(taskName, params, inputHandler, {
-      ...this.withSession(options),
+      ...this.withSession(taskName, options),
     });
 
     this.retainSession(result);
