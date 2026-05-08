@@ -27,13 +27,12 @@ const { runHelloAdapterGates } = require('./_helpers/runHelloAdapterGates');
 const REPO_ROOT = path.resolve(__dirname, '..', '..');
 const STORYBOARD_ID = 'media_buy_seller/proposal_finalize';
 
-// AdCP 3.0.7 (#1595) landed adcp#4088, which fixed `proposal_id` chaining
-// in `proposal_finalize.yaml`. `get_products_refine` now passes — but the
-// cascade-skip that previously hid `create_media_buy` is also gone,
-// exposing a real adapter bug: the adapter's `create_media_buy` response
-// doesn't satisfy the 3.0.7 `create-media-buy-response.json` schema.
-// Tracked at #1600 — drop this allowlist entry when the adapter is fixed.
-const EXPECTED_FAILURES = [{ storyboard_id: STORYBOARD_ID, step_id: 'create_media_buy' }];
+// adcp#4086 / PR #4088 fixed the storyboard's context chaining for the
+// refine steps; the SDK fix in request-builder.ts (PR adcp-client#1600)
+// forwards `context.proposal_id` into `create_media_buy` so the
+// proposal-mode adapter's `ctx.recipes` is hydrated and the accept step
+// passes end-to-end. No expected failures remain.
+const EXPECTED_FAILURES = [];
 
 function isExpectedFailure(f) {
   return EXPECTED_FAILURES.some(e => e.storyboard_id === (f.storyboard_id || '') && e.step_id === (f.step_id || ''));
@@ -121,11 +120,16 @@ runHelloAdapterGates({
   extraEnv: {
     UPSTREAM_API_KEY: 'mock_sales_guaranteed_key_do_not_use_in_prod',
   },
-  // Façade gate: only assert routes that the storyboard actually drives.
-  // refine + finalize + order routes are exercised by the primitives test
-  // suite end-to-end; the `proposal_finalize` storyboard stops at refine
-  // (per the adcp#4086 gap) so they don't appear in upstream traffic here.
-  expectedRoutes: ['GET /_lookup/network', 'GET /v1/products', 'POST /v1/proposals'],
+  // Façade gate: assert all routes the full proposal lifecycle drives.
+  // createOrder + createLineItem are now reachable since the SDK forwards
+  // proposal_id into create_media_buy (PR adcp-client#1600).
+  expectedRoutes: [
+    'GET /_lookup/network',
+    'GET /v1/products',
+    'POST /v1/proposals',
+    'POST /v1/orders',
+    'POST /v1/orders/{id}/lineitems',
+  ],
   filterFailures: grader => {
     // Issue-#1549 invariants run alongside the failure filter so the gate
     // fires on regressions even when the storyboard pass-count is clean.
@@ -147,7 +151,7 @@ runHelloAdapterGates({
     return failures.filter(f => !isExpectedFailure(f));
   },
   storyboardSummary:
-    'sole-stateful exemption (sync_accounts skipped, downstream phases run) + proposal lifecycle through brief',
+    'sole-stateful exemption (sync_accounts skipped, downstream phases run) + full proposal lifecycle through accept',
 });
 
 // Surface assert is a no-op if `node --test` doesn't import it; placed at

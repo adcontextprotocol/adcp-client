@@ -280,6 +280,38 @@ const REQUEST_ENRICHERS: Record<string, RequestEnricher> = {
       .slice(1)
       .map(p => injectContext({ ...p }, context) as Record<string, unknown>);
 
+    // Proposal-mode: when context carries a proposal_id (captured from
+    // `proposals[0]` in a prior brief/refine/finalize step), forward it
+    // and omit `packages`. The schema disallows synthesising packages
+    // alongside `proposal_id` — `dependencies.proposal_id` requires
+    // `total_budget` and the seller derives packages from the committed
+    // allocation.
+    //
+    // Spread the fixture (after $context injection) so proposal-mode-
+    // required fields like `total_budget` flow through. Prefer the
+    // fixture's account/brand when supplied — proposal-mode storyboards
+    // author a non-default brand (e.g. `acmeoutdoor.example`) that the
+    // adapter resolves end-to-end through brief/refine/finalize, and
+    // the harness-default `test.example` would fail account resolution
+    // at the accept step (adcp-client#1600). Dates and proposal_id
+    // are still normalised by the enricher.
+    const fixture =
+      step.sample_request !== undefined
+        ? (injectContext({ ...(step.sample_request as Record<string, unknown>) }, context) as Record<string, unknown>)
+        : {};
+    const proposalId: unknown = fixture.proposal_id !== undefined ? fixture.proposal_id : context.proposal_id;
+    if (typeof proposalId === 'string') {
+      const { packages: _droppedPackages, ...fixtureWithoutPackages } = fixture;
+      return {
+        ...fixtureWithoutPackages,
+        account: fixtureWithoutPackages.account ?? context.account ?? resolveAccount(options),
+        brand: fixtureWithoutPackages.brand ?? resolveBrand(options),
+        start_time: startTime,
+        end_time: endTime,
+        proposal_id: proposalId,
+      };
+    }
+
     return {
       account: context.account ?? resolveAccount(options),
       brand: resolveBrand(options),
