@@ -778,6 +778,7 @@ function parseAgentOptions(args) {
   // field PRESENCE rather than VALUE behave differently. Setting the flag
   // makes the production intent explicit on the wire.
   const noSandbox = args.includes('--no-sandbox');
+  const softFail = args.includes('--soft-fail');
 
   // Webhook-receiver flags are captured here solely so their values are excluded
   // from `positionalArgs`. The authoritative parse lives in
@@ -871,6 +872,7 @@ function parseAgentOptions(args) {
     dryRun,
     allowHttp,
     noSandbox,
+    softFail,
     positionalArgs,
     localAgent: localAgentValue,
     format: formatValue,
@@ -1400,6 +1402,11 @@ RUN OPTIONS (full assessment):
                       dashboards) to this contract — the full
                       ComplianceResult on stdout in --json mode evolves
                       with the protocol. Independent of --json.
+  --soft-fail         Exit 0 even when storyboards fail (suppresses
+                      exit 3 only; exit 1 and 2 are preserved). Writes
+                      a STORYBOARD FAILURES (N): ... line to stderr.
+                      Replaces || true / continue-on-error: true —
+                      failures stay visible without blocking CI.
 
 OUTPUT (always-on):
   Every run writes a compact summary to stderr with a greppable
@@ -1893,7 +1900,17 @@ function enforceStrictFlags(args, removedFound) {
 
 async function handleStoryboardRun(args) {
   const opts = parseAgentOptions(args);
-  const { authToken, protocolFlag, jsonOutput, dryRun, positionalArgs, file: filePath, localAgent, format } = opts;
+  const {
+    authToken,
+    protocolFlag,
+    jsonOutput,
+    dryRun,
+    softFail,
+    positionalArgs,
+    file: filePath,
+    localAgent,
+    format,
+  } = opts;
 
   enforceStrictFlags(args, warnRemovedFlags(args));
 
@@ -2067,7 +2084,8 @@ async function handleStoryboardRun(args) {
 
   if (format === 'junit') {
     process.stdout.write(formatStoryboardResultsAsJUnit([result]));
-    process.exit(result.overall_passed ? 0 : 3);
+    if (softFail && !result.overall_passed) emitSoftFailMarker([storyboard.id]);
+    process.exit(softFail ? 0 : result.overall_passed ? 0 : 3);
   }
 
   if (jsonOutput) {
@@ -2132,7 +2150,8 @@ async function handleStoryboardRun(args) {
     printStrictSummary(result.strict_validation_summary);
   }
 
-  process.exit(result.overall_passed ? 0 : 3);
+  if (softFail && !result.overall_passed) emitSoftFailMarker([storyboard.id]);
+  process.exit(softFail ? 0 : result.overall_passed ? 0 : 3);
 }
 
 /**
@@ -2831,7 +2850,7 @@ function validateAgentEntryUrl(raw, allowHttp, label) {
  * specifiers resolve as npm packages.
  */
 async function handleLocalAgentStoryboardRun(modulePath, args, opts) {
-  const { positionalArgs, jsonOutput, format, dryRun, debug } = opts;
+  const { positionalArgs, jsonOutput, format, dryRun, debug, softFail } = opts;
   const storyboardId = positionalArgs[0];
 
   if (dryRun) {
@@ -2897,13 +2916,19 @@ async function handleLocalAgentStoryboardRun(modulePath, args, opts) {
     if (restoreLogs) restoreLogs();
   }
 
+  const failedLocalIds = (result.results || [])
+    .filter(r => !r.overall_passed)
+    .map(r => r.storyboard_id)
+    .filter(Boolean);
   if (format === 'junit') {
     process.stdout.write(formatStoryboardResultsAsJUnit(result.results));
-    process.exit(result.overall_passed ? 0 : 3);
+    if (softFail && failedLocalIds.length) emitSoftFailMarker(failedLocalIds);
+    process.exit(softFail ? 0 : result.overall_passed ? 0 : 3);
   }
   if (jsonOutput) {
     await writeJsonOutput(result);
-    process.exit(result.overall_passed ? 0 : 3);
+    if (softFail && failedLocalIds.length) emitSoftFailMarker(failedLocalIds);
+    process.exit(softFail ? 0 : result.overall_passed ? 0 : 3);
   }
 
   // Human-readable summary
@@ -2928,7 +2953,8 @@ async function handleLocalAgentStoryboardRun(modulePath, args, opts) {
     `\n${overallIcon} ${result.passed_count} passed, ${result.failed_count} failed, ${result.skipped_count} skipped across ${result.results.length} storyboard(s)${hintTail}`
   );
   printStrictSummary(aggregateStrictSummaries(result.results.map(r => r.strict_validation_summary)));
-  process.exit(result.overall_passed ? 0 : 3);
+  if (softFail && failedLocalIds.length) emitSoftFailMarker(failedLocalIds);
+  process.exit(softFail ? 0 : result.overall_passed ? 0 : 3);
 }
 
 /**
@@ -2938,6 +2964,11 @@ async function handleLocalAgentStoryboardRun(modulePath, args, opts) {
  * `strict_only_failures > 0` is the production-readiness signal — tint
  * the icon to reflect it so scrolling eyes catch it.
  */
+function emitSoftFailMarker(failedIds) {
+  if (!failedIds.length) return;
+  process.stderr.write(`\nSTORYBOARD FAILURES (${failedIds.length}): ${failedIds.join(', ')}\n`);
+}
+
 function printStrictSummary(summary) {
   if (!summary || !summary.observable) return;
   const { checked, passed, strict_only_failures: strictOnly } = summary;
@@ -2975,7 +3006,7 @@ function aggregateStrictSummaries(summaries) {
 }
 
 async function handleMultiInstanceStoryboardRun(args, opts, urls) {
-  const { authToken, protocolFlag, jsonOutput, dryRun, positionalArgs, file: filePath } = opts;
+  const { authToken, protocolFlag, jsonOutput, dryRun, softFail, positionalArgs, file: filePath } = opts;
 
   if (urls.length < 2) {
     console.error('ERROR: Multi-instance mode requires 2+ --url flags. Drop --url for single-instance.');
@@ -3271,7 +3302,14 @@ async function handleMultiInstanceStoryboardRun(args, opts, urls) {
     );
   }
 
-  process.exit(hadFailure ? 3 : 0);
+  if (softFail && hadFailure)
+    emitSoftFailMarker(
+      results
+        .filter(r => !r.overall_passed)
+        .map(r => r.storyboard_id)
+        .filter(Boolean)
+    );
+  process.exit(softFail ? 0 : hadFailure ? 3 : 0);
 }
 
 /**
@@ -3285,7 +3323,7 @@ async function handleMultiInstanceStoryboardRun(args, opts, urls) {
  * Storyboard ID, bundle ID, or `--file` is required.
  */
 async function handleAgentsRoutedStoryboardRun(args, opts, routing) {
-  const { authToken, protocolFlag, jsonOutput, dryRun, positionalArgs, file: filePath, format } = opts;
+  const { authToken, protocolFlag, jsonOutput, dryRun, softFail, positionalArgs, file: filePath, format } = opts;
 
   const webhookAutoTunnel = args.includes('--webhook-receiver-auto-tunnel');
   const webhookReceiverBase = extractWebhookReceiverOptions(args);
@@ -3456,7 +3494,14 @@ async function handleAgentsRoutedStoryboardRun(args, opts, routing) {
 
   if (format === 'junit') {
     process.stdout.write(formatStoryboardResultsAsJUnit(results));
-    process.exit(hadFailure ? 3 : 0);
+    if (softFail && hadFailure)
+      emitSoftFailMarker(
+        results
+          .filter(r => !r.overall_passed)
+          .map(r => r.storyboard_id)
+          .filter(Boolean)
+      );
+    process.exit(softFail ? 0 : hadFailure ? 3 : 0);
   }
 
   if (jsonOutput) {
@@ -3533,7 +3578,14 @@ async function handleAgentsRoutedStoryboardRun(args, opts, routing) {
     );
   }
 
-  process.exit(hadFailure ? 3 : 0);
+  if (softFail && hadFailure)
+    emitSoftFailMarker(
+      results
+        .filter(r => !r.overall_passed)
+        .map(r => r.storyboard_id)
+        .filter(Boolean)
+    );
+  process.exit(softFail ? 0 : hadFailure ? 3 : 0);
 }
 
 // Shared implementation: run all matching storyboards against an agent
@@ -3724,7 +3776,7 @@ async function runFullAssessment(agentArg, rawArgs, parsedOpts) {
       result.overall_status === 'auth_required'
         ? 3
         : 0;
-    process.exit(exitCode);
+    process.exit(opts.softFail && exitCode === 3 ? 0 : exitCode);
   } catch (error) {
     if (restoreLogs) restoreLogs();
     console.error(`\nAssessment failed: ${error.message}`);
