@@ -11,14 +11,19 @@ A seller agent receives briefs from buyers, returns products, accepts media buys
 
 Each of these is a worked, currently-running, three-gate-tested reference adapter. Fork it, swap the upstream, ship.
 
-| Specialism | Fork this | Mock upstream | Storyboard |
-| --- | --- | --- | --- |
-| `sales-guaranteed` | [`hello_seller_adapter_guaranteed.ts`](../../examples/hello_seller_adapter_guaranteed.ts) | `npx adcp mock-server sales-guaranteed` | `sales_guaranteed` |
-| `sales-non-guaranteed` | [`hello_seller_adapter_non_guaranteed.ts`](../../examples/hello_seller_adapter_non_guaranteed.ts) | `npx adcp mock-server sales-non-guaranteed` | `sales_non_guaranteed` |
-| `sales-social` | [`hello_seller_adapter_social.ts`](../../examples/hello_seller_adapter_social.ts) | `npx adcp mock-server sales-social` | `sales_social` |
-| Multi-tenant holdco hub | [`hello_seller_adapter_multi_tenant.ts`](../../examples/hello_seller_adapter_multi_tenant.ts) | composed | per specialism |
+| Specialism              | Fork this                                                                                         | Mock upstream                               | Storyboard             |
+| ----------------------- | ------------------------------------------------------------------------------------------------- | ------------------------------------------- | ---------------------- |
+| `sales-guaranteed`      | [`hello_seller_adapter_guaranteed.ts`](../../examples/hello_seller_adapter_guaranteed.ts)         | `npx adcp mock-server sales-guaranteed`     | `sales_guaranteed`     |
+| `sales-non-guaranteed`  | [`hello_seller_adapter_non_guaranteed.ts`](../../examples/hello_seller_adapter_non_guaranteed.ts) | `npx adcp mock-server sales-non-guaranteed` | `sales_non_guaranteed` |
+| `sales-social`          | [`hello_seller_adapter_social.ts`](../../examples/hello_seller_adapter_social.ts)                 | `npx adcp mock-server sales-social`         | `sales_social`         |
+| Multi-tenant holdco hub | [`hello_seller_adapter_multi_tenant.ts`](../../examples/hello_seller_adapter_multi_tenant.ts)     | composed                                    | per specialism         |
 
-The other sales-* specialisms (`sales-broadcast-tv`, `sales-streaming-tv`, `sales-exchange`, `sales-proposal-mode`) currently fork from `sales-guaranteed` or `sales-non-guaranteed` and apply specialism deltas — see `specialisms/<id>.md`. `sales-streaming-tv` and `sales-exchange` are preview specialisms with placeholder storyboards (claim them to advertise intent; baseline is all that's enforced today).
+The other sales-\* specialisms reuse one of the primary fork targets and apply specialism deltas:
+
+- [`sales-broadcast-tv`](specialisms/sales-broadcast-tv.md) — forks `hello_seller_adapter_guaranteed.ts`; deltas around DMA, GRP, daypart, agency estimate number, measurement windows.
+- [`sales-streaming-tv`](specialisms/sales-streaming-tv.md) — forks `hello_seller_adapter_guaranteed.ts`; deltas around CTV (audience-vs-program targeting, reach/freq forecast). Preview specialism — placeholder storyboard.
+- [`sales-proposal-mode`](specialisms/sales-proposal-mode.md) — forks `hello_seller_adapter_proposal_mode.ts`; deltas around `ProposalManager` two-platform composition, `ctx.recipes` hydration, sole-stateful exemption.
+- `sales-exchange` — forks `hello_seller_adapter_non_guaranteed.ts`; preview specialism (placeholder storyboard).
 
 For exact response shapes, error codes, and optional fields, `docs/llms.txt` is the canonical reference. The fork target stays in sync with the spec because PR #1394's three-gate contract fails CI when it drifts.
 
@@ -38,7 +43,7 @@ For exact response shapes, error codes, and optional fields, `docs/llms.txt` is 
 
 ## Cross-cutting rules
 
-Every sales-* seller hits the cross-cutting rules in [`../cross-cutting.md`](../cross-cutting.md). The high-traffic ones for sellers (deep-linked to the rule):
+Every sales-\* seller hits the cross-cutting rules in [`../cross-cutting.md`](../cross-cutting.md). The high-traffic ones for sellers (deep-linked to the rule):
 
 - [`idempotency_key`](../cross-cutting.md#idempotency_key-is-required-on-every-mutating-call) on every mutating request — `create_media_buy`, `update_media_buy`, `sync_creatives`, `sync_audiences`, etc.
 - [Resolve-then-authorize](../cross-cutting.md#resolve-then-authorize--uniform-errors-for-not-found--not-yours) — byte-equivalent errors for `media_buy_id` cross-tenant lookups
@@ -53,6 +58,7 @@ The fork target covers the baseline. Specialism subpages cover the deltas — wh
 - [`specialisms/sales-guaranteed.md`](specialisms/sales-guaranteed.md) — **read before coding if you claim `sales-guaranteed`**: IO-task envelope, three `create_media_buy` return shapes (task envelope / `pending_creatives` / `active`), `TERMS_REJECTED` on aggressive `measurement_terms`. Applying only the task-envelope path fails 5 storyboard `create_media_buy` steps.
 - [`specialisms/sales-non-guaranteed.md`](specialisms/sales-non-guaranteed.md) — **read if your inventory clears at request time** (programmatic auction, no HITL approval): sync confirmation, `bid_price`, `update_media_buy` for in-flight changes.
 - [`specialisms/sales-broadcast-tv.md`](specialisms/sales-broadcast-tv.md) — **read if you sell linear / broadcast TV**: `agency_estimate_number`, Ad-ID `industry_identifiers`, `measurement_windows` (Live/C3/C7).
+- [`specialisms/sales-streaming-tv.md`](specialisms/sales-streaming-tv.md) — **read if you sell CTV / OTT streaming inventory** (preview): audience-vs-program targeting, reach/freq forecast, frequency caps.
 - [`specialisms/sales-social.md`](specialisms/sales-social.md) — **read if you're a social platform** (Snap, Meta, TikTok, etc.): additive — claim alongside `sales-non-guaranteed`. Adds `sync_audiences`, `sync_catalogs` (DPA), `log_event` (conversions), `get_account_financials`.
 - [`specialisms/sales-proposal-mode.md`](specialisms/sales-proposal-mode.md) — **read if you negotiate via proposals before line-itemizing**: `proposals[]` with `budget_allocations`, `buying_mode: 'refine'`.
 - [`specialisms/audience-sync.md`](specialisms/audience-sync.md) — **read if buyers push audiences to you** (walled-garden + identity-provider patterns): `sync_audiences` track. Hashed identifiers, match-rate telemetry.
