@@ -1404,7 +1404,10 @@ RUN OPTIONS (full assessment):
                       with the protocol. Independent of --json.
   --soft-fail         Exit 0 even when storyboards fail (suppresses
                       exit 3 only; exit 1 and 2 are preserved). Writes
-                      a STORYBOARD FAILURES (N): ... line to stderr.
+                      a STORYBOARD FAILURES (N): ... line to stderr
+                      (--file / --local-agent / --url / --agents-map
+                      modes). Capability-driven runs already emit a
+                      STORYBOARD-FAIL marker via the always-on summary.
                       Replaces || true / continue-on-error: true —
                       failures stay visible without blocking CI.
 
@@ -2084,7 +2087,7 @@ async function handleStoryboardRun(args) {
 
   if (format === 'junit') {
     process.stdout.write(formatStoryboardResultsAsJUnit([result]));
-    if (softFail && !result.overall_passed) emitSoftFailMarker([storyboard.id]);
+    if (softFail && !result.overall_passed) emitSoftFailMarker([storyboard.id ?? filePath].filter(Boolean));
     process.exit(softFail ? 0 : result.overall_passed ? 0 : 3);
   }
 
@@ -2150,7 +2153,7 @@ async function handleStoryboardRun(args) {
     printStrictSummary(result.strict_validation_summary);
   }
 
-  if (softFail && !result.overall_passed) emitSoftFailMarker([storyboard.id]);
+  if (softFail && !result.overall_passed) emitSoftFailMarker([storyboard.id ?? filePath].filter(Boolean));
   process.exit(softFail ? 0 : result.overall_passed ? 0 : 3);
 }
 
