@@ -10,7 +10,7 @@ Six patterns surfaced repeatedly while building reference adapters (`examples/he
 
 When returning `activate_signal` deployments with `type: 'key_value'` activation keys, `key` and `value` sit at the TOP level of `activation_key`. NOT nested under a `key_value` sub-field.
 
-✗ Wrong (intuitive — the discriminator name *suggests* nesting):
+✗ Wrong (intuitive — the discriminator name _suggests_ nesting):
 
 ```ts
 activation_key: {
@@ -37,6 +37,17 @@ activation_key: { type: 'segment_id', segment_id: 'plat_seg_xyz' }
 
 — same flatness, single string ID under the discriminator.
 
+**Prevent at write time:** import `activationKey` from `@adcp/sdk`. The
+typed factory injects the `type` discriminator and accepts the flat shape:
+
+```ts
+activation_key: activationKey.keyValue({ key: 'segment', value: 'abc123' });
+activation_key: activationKey.segment({ segment_id: 'plat_seg_xyz' });
+```
+
+The nested-`key_value` mistake doesn't typecheck — `activationKey.keyValue`
+takes `{ key, value }`, not `{ key_value: {...} }`.
+
 ---
 
 ## 2. `signal_ids` is `signal_id[]` (provenance objects), not `string[]`
@@ -46,7 +57,9 @@ activation_key: { type: 'segment_id', segment_id: 'plat_seg_xyz' }
 ✗ Wrong:
 
 ```ts
-{ signal_ids: ['cohort_abc', 'cohort_xyz'] }
+{
+  signal_ids: ['cohort_abc', 'cohort_xyz'];
+}
 ```
 
 ✓ Right (matches `/schemas/3.0/core/signal-id.json`):
@@ -62,11 +75,23 @@ activation_key: { type: 'segment_id', segment_id: 'plat_seg_xyz' }
 
 `SignalID` is a discriminated union: `source: 'catalog'` (with `data_provider_domain` + `id`) or `source: 'agent'` (with `agent_url` + `id`). When implementing the filter on the seller side, narrow on `source` before reading `data_provider_domain` — only the catalog variant has it.
 
+**Prevent at write time:** import `signalId` from `@adcp/sdk`. The typed
+factory injects the `source` discriminator and only takes the fields the
+selected variant requires:
+
+```ts
+signalId.catalog({ data_provider_domain: 'tridentauto.example', id: 'likely_ev_buyers' });
+signalId.agent({ agent_url: 'https://liveramp.com/.well-known/adcp/signals', id: 'custom_auto_intenders' });
+```
+
+A bare-string `signal_ids` filter is rejected by the request type as soon
+as you stop typing it as `any`.
+
 ---
 
 ## 3. `VASTAsset` requires an embedded `delivery_type` discriminator
 
-`asset_type: 'vast'` is itself a discriminator at the asset level. A *second* discriminator (`delivery_type`) picks between inline VAST XML and a redirect URL. Both are required; you can't pass `content` or `vast_url` without `delivery_type`.
+`asset_type: 'vast'` is itself a discriminator at the asset level. A _second_ discriminator (`delivery_type`) picks between inline VAST XML and a redirect URL. Both are required; you can't pass `content` or `vast_url` without `delivery_type`.
 
 ✗ Wrong (flat `content` without `delivery_type`):
 
@@ -125,6 +150,28 @@ Same pattern applies to `DAASTAsset` (audio).
 
 Each `PreviewRender` requires `render_id`, `output_format: 'url'` (or `'inline_html'`), `preview_url`, and `role`. Don't omit `role` — the validator requires it.
 
+**Prevent at write time:** import `previewCreative` from
+`@adcp/sdk`. The typed factory injects the `response_type` discriminator
+and pairs naturally with `urlRender({...})` / `htmlRender({...})` /
+`bothRender({...})` for the per-render `output_format`:
+
+```ts
+previewCreative.single({
+  previews: [
+    {
+      preview_id: 'prv_abc',
+      renders: [urlRender({ render_id: 'rnd_1', preview_url: 'https://...', role: 'primary' })],
+      input: { name: 'default' },
+    },
+  ],
+  expires_at: '2026-05-03T00:00:00Z',
+});
+previewCreative.batch({ results: [...] });
+previewCreative.variant({ variant_id, creative_id, previews });
+```
+
+A flat `{ preview: {...} }` shape doesn't typecheck.
+
 ---
 
 ## 5. `BuildCreativeReturn` has 4 valid shapes — framework auto-wraps the bare manifest
@@ -133,13 +180,13 @@ Each `PreviewRender` requires `render_id`, `output_format: 'url'` (or `'inline_h
 
 ```ts
 type BuildCreativeReturn =
-  | CreativeManifest                    // bare single — framework wraps as { creative_manifest: <obj> }
-  | CreativeManifest[]                  // bare multi  — framework wraps as { creative_manifests: <arr> }
-  | BuildCreativeSuccess                // shaped single — passthrough; you set sandbox/expires_at/preview
-  | BuildCreativeMultiSuccess           // shaped multi  — passthrough
+  | CreativeManifest // bare single — framework wraps as { creative_manifest: <obj> }
+  | CreativeManifest[] // bare multi  — framework wraps as { creative_manifests: <arr> }
+  | BuildCreativeSuccess // shaped single — passthrough; you set sandbox/expires_at/preview
+  | BuildCreativeMultiSuccess; // shaped multi  — passthrough
 ```
 
-Easy mistake: return a bare `CreativeManifest` and confirm the response *seems* fine via tests that read `response.format_id` directly. The wire shape after framework wrapping is `response.creative_manifest.format_id` — a level deeper. Storyboards check the wire path; if you didn't go through the framework wrapper in your test, the storyboard will surface "field missing at `creative_manifest.format_id`" while your local test passes.
+Easy mistake: return a bare `CreativeManifest` and confirm the response _seems_ fine via tests that read `response.format_id` directly. The wire shape after framework wrapping is `response.creative_manifest.format_id` — a level deeper. Storyboards check the wire path; if you didn't go through the framework wrapper in your test, the storyboard will surface "field missing at `creative_manifest.format_id`" while your local test passes.
 
 If you need to set `sandbox: true` or attach `preview` previews, return the shaped envelope directly:
 
@@ -151,16 +198,29 @@ return {
 };
 ```
 
+**Prevent at write time:** import `buildCreativeReturn` from `@adcp/sdk`.
+The typed factory pins which arm of the 4-shape union you're emitting and
+handles the singular/plural manifest-field rename for the shaped envelopes:
+
+```ts
+return buildCreativeReturn.single(manifest); // bare — framework wraps as { creative_manifest }
+return buildCreativeReturn.multi(manifests); // bare — framework wraps as { creative_manifests }
+return buildCreativeReturn.singleEnveloped({ manifest, sandbox: true, expires_at });
+return buildCreativeReturn.multiEnveloped({ manifests, sandbox: true });
+```
+
+Mixing `manifest` / `manifests` arms doesn't typecheck.
+
 ---
 
 ## 6. `log_event` projection for walled-garden CAPIs
 
 Sales-social adopters fronting walled-garden conversion APIs translate AdCP's `log_event` wire shape onto the upstream CAPI's. Three projections trip every walled-garden integration on the first pass — the upstream returns `400` and the AdCP wire surface gives no hint that the field name or encoding was the problem.
 
-| AdCP wire (`Event`)                                                            | Walled-garden CAPI                                                                          | Translation                                                                  |
-| ------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------- |
-| `event_type` (string)                                                          | `event_name` (string)                                                                       | rename on the way out                                                        |
-| `event_time` (ISO 8601 string)                                                 | `event_time` (UNIX seconds, number)                                                         | `Math.floor(new Date(t).getTime() / 1000)`                                   |
+| AdCP wire (`Event`)                                                                                      | Walled-garden CAPI                                                       | Translation                                                                  |
+| -------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------ | ---------------------------------------------------------------------------- |
+| `event_type` (string)                                                                                    | `event_name` (string)                                                    | rename on the way out                                                        |
+| `event_time` (ISO 8601 string)                                                                           | `event_time` (UNIX seconds, number)                                      | `Math.floor(new Date(t).getTime() / 1000)`                                   |
 | `user_match` (`hashed_email` / `hashed_phone` / `uids[]` / `click_id` / `client_ip`+`client_user_agent`) | `user_data.{email_sha256,phone_sha256,external_id_sha256}` (≥1 required) | map per the upstream's identifier types; drop events with empty `user_match` |
 
 ### 6.1 `event_name`, not `event_type`
@@ -187,13 +247,17 @@ upstream.trackEvents({
 ✗ Wrong:
 
 ```ts
-{ event_time: e.event_time }                 // '2026-04-05T14:30:00Z'
+{
+  event_time: e.event_time;
+} // '2026-04-05T14:30:00Z'
 ```
 
 ✓ Right:
 
 ```ts
-{ event_time: Math.floor(new Date(e.event_time).getTime() / 1000) }
+{
+  event_time: Math.floor(new Date(e.event_time).getTime() / 1000);
+}
 ```
 
 ### 6.3 Hashed-identifier requirement — read `Event.user_match`, drop on empty
@@ -221,11 +285,11 @@ The `examples/hello_seller_adapter_social.ts` reference adapter codifies all thr
 
 The spec definitions:
 
-| Value | Use when | Example adopter |
-| --- | --- | --- |
-| `marketplace` | Resold third-party segments. Provider's authorization is verifiable via their `adagents.json`. | LiveRamp marketplace; Oracle Data Cloud catalog; reseller of third-party panels |
-| `owned` | First-party segments derived from data the signal agent **directly owns**. | Retailer purchase data (Kroger 84.51°, Walmart Connect); publisher behavioral data (NYT subscribers); telco data |
-| `custom` | Agent-native segment built **on demand** from models, composites, or buyer inputs. Not attributable to a standing upstream provider. | Contextual classifier you train per-request; lookalike model output computed from a buyer's seed audience |
+| Value         | Use when                                                                                                                             | Example adopter                                                                                                  |
+| ------------- | ------------------------------------------------------------------------------------------------------------------------------------ | ---------------------------------------------------------------------------------------------------------------- |
+| `marketplace` | Resold third-party segments. Provider's authorization is verifiable via their `adagents.json`.                                       | LiveRamp marketplace; Oracle Data Cloud catalog; reseller of third-party panels                                  |
+| `owned`       | First-party segments derived from data the signal agent **directly owns**.                                                           | Retailer purchase data (Kroger 84.51°, Walmart Connect); publisher behavioral data (NYT subscribers); telco data |
+| `custom`      | Agent-native segment built **on demand** from models, composites, or buyer inputs. Not attributable to a standing upstream provider. | Contextual classifier you train per-request; lookalike model output computed from a buyer's seed audience        |
 
 **`owned` is the default for first-party data agents.** Most non-marketplace adopters mis-classify their segments as `custom` because the segment was "built" — but the test is provenance, not lifecycle. If you can point at a stable data-asset you own (a customer table, a pixel, a panel), it's `owned`. `custom` is reserved for segments that don't have a standing data asset behind them — the agent computed them per-call.
 
