@@ -5,20 +5,18 @@ description: Use when building an AdCP retail media network agent — a platform
 
 # Build a Retail Media Agent
 
-A retail media agent sells on-site placements driven by a product catalog and reports conversion outcomes back to buyers. The fastest path is to **fork a seller adapter** and add the catalog-driven surface (`syncCatalogs`, `syncEventSources`, `logEvent`, `providePerformanceFeedback`) on top.
+A retail media agent sells on-site placements driven by a product catalog and reports conversion outcomes back to buyers. The fastest path is to **fork a worked seller adapter** and replace its `// SWAP:` markers with calls to your backend.
 
 ## Pick your fork target
 
-There's no dedicated `hello_retail_media_adapter_*.ts` yet — retail-media is additive on top of `sales-non-guaranteed`, so adopters fork the seller adapter and add the catalog surface.
+| Specialism             | Status  | Fork this                                                                         | Mock upstream                       | Storyboard             |
+| ---------------------- | ------- | --------------------------------------------------------------------------------- | ----------------------------------- | ---------------------- |
+| `sales-catalog-driven` | stable  | [`hello_seller_adapter_social.ts`](../../examples/hello_seller_adapter_social.ts) | `npx adcp mock-server sales-social` | `sales_catalog_driven` |
+| `sales-retail-media`   | preview | Same                                                                              | Same                                | placeholder            |
 
-| Specialism | Status | Fork this | Add | Storyboard |
-| --- | --- | --- | --- | --- |
-| `sales-catalog-driven` | stable | [`hello_seller_adapter_non_guaranteed.ts`](../../examples/hello_seller_adapter_non_guaranteed.ts) | `syncCatalogs`, `syncEventSources`, `logEvent`, `providePerformanceFeedback` | `sales_catalog_driven` |
-| `sales-retail-media` | preview | Same | + retail-specific surface encoding in `publisher_properties` / `format_ids` (search vs PDP vs homepage vs offsite vs in-store) | placeholder |
+The social fork target is the closest baseline because it already implements the catalog-driven surface (`syncCatalogs`, `syncEventSources`, `logEvent`) on top of `SalesIngestionPlatform`. Walled-garden social platforms and retail media networks share the same wire-level shape — buyer pushes catalogs and audiences, platform reports conversions, both close the loop via `provide_performance_feedback`. Apply the retail-specific deltas below.
 
-A worked retail-media fork target is tracked as a follow-up. Until then, the seller `hello_seller_adapter_non_guaranteed.ts` is the closest baseline; the deltas are in [`docs/llms.txt`](../../docs/llms.txt) under `#### \`sync_catalogs\``, `#### \`sync_event_sources\``, `#### \`log_event\``, `#### \`provide_performance_feedback\``.
-
-For exact response shapes, error codes, and optional fields, `docs/llms.txt` is the canonical reference.
+For exact response shapes, error codes, and optional fields, [`docs/llms.txt`](../../docs/llms.txt) is the canonical reference. The fork target stays in sync with the spec because PR #1394's three-gate contract fails CI when it drifts.
 
 ## When to use this skill
 
@@ -36,31 +34,39 @@ For exact response shapes, error codes, and optional fields, `docs/llms.txt` is 
 
 ## Cross-cutting rules
 
-Every retail-media agent hits the cross-cutting rules in [`../cross-cutting.md`](../cross-cutting.md). Plus all the seller cross-cutting from [`../build-seller-agent/SKILL.md`](../build-seller-agent/SKILL.md) — retail-media is additive on top of the seller baseline. The high-traffic ones for retail-media (deep-linked to the rule):
+Every retail-media agent hits the cross-cutting rules in [`../cross-cutting.md`](../cross-cutting.md) plus the seller cross-cutting from [`../build-seller-agent/SKILL.md`](../build-seller-agent/SKILL.md) — retail-media is additive on top of the seller baseline. The high-traffic ones for retail-media:
 
-- [`idempotency_key`](../cross-cutting.md#idempotency_key-is-required-on-every-mutating-call) on `sync_catalogs`, `sync_event_sources`, `log_event`, `provide_performance_feedback` (in addition to the seller-side mutating tools)
-- [Webhooks](../cross-cutting.md#webhooks-stable-operation_id-across-retries) — for catalog-ingestion completions, use `catalog_sync.${catalog_id}.${batch_id}` as a stable `operation_id`
+- [`idempotency_key`](../cross-cutting.md#idempotency_key-is-required-on-every-mutating-call) on `sync_catalogs`, `sync_event_sources`, `log_event`, `provide_performance_feedback`
+- [Webhooks](../cross-cutting.md#webhooks-stable-operation_id-across-retries) — for catalog-ingestion completions, use `catalog_sync.${catalog_id}.${batch_id}` as the stable `operation_id`
+- [SHAPE-GOTCHAS §6](../SHAPE-GOTCHAS.md#6-log_event-projection-for-walled-garden-capis) — `log_event` field-name + UNIX-seconds + `user_match` projections (shared with sales-social CAPIs)
 
-## Specialism deltas at a glance
+## Specialism deltas
 
-**`sales-catalog-driven`** —
+### `sales-catalog-driven`
 
-- Products declare `supports_catalog: true` and `supports_conversion_tracking: true`
-- `create_media_buy` accepts `packages[].catalogs[]` referencing previously-synced catalog ids
-- `sync_catalogs` ingests product feeds (JSON/CSV/XML) with at minimum `product_id`, `title`, `price`, `image_url`, `category`
-- `sync_event_sources` registers conversion endpoints (purchase, add_to_cart, page_view, search)
-- `log_event` accepts conversion events with `content_ids` and returns a `match_quality` score; counter-only responses pass the storyboard (closed-loop attribution lands in 3.1)
-- `provide_performance_feedback` accepts buyer optimization signals back
+What's different from the social baseline you forked:
 
-**`sales-retail-media`** — currently a v3.1 placeholder (empty `phases`). Ship the catalog-driven baseline plus retail-specific surface encoding in `publisher_properties` / `format_ids`. Claim the specialism to advertise intent.
+- **Products declare catalog support**: `supports_catalog: true` and `supports_conversion_tracking: true` on each `Product`.
+- **`create_media_buy` accepts `packages[].catalogs[]`** — references to previously-synced catalog ids. The seller renders the dynamic ad from the catalog row at serve time.
+- **`sync_catalogs`** ingests product feeds (JSON / CSV / XML). Required per-row fields: `product_id`, `title`, `price`, `image_url`, `category`. Reject rows missing any of these with a structured error and surface the per-row failures in the response.
+- **`sync_event_sources`** registers conversion endpoints — `purchase`, `add_to_cart`, `page_view`, `search`. Each event source has a `source_id` the buyer references on subsequent `log_event` calls.
+- **`log_event` accepts `content_ids`** — the catalog row IDs the conversion attaches to. Counter-only responses pass the storyboard today; closed-loop attribution lands in 3.1.
+- **`provide_performance_feedback`** accepts buyer optimization signals (clicked / not-clicked / converted / not-converted on specific impressions). Use it to close the bid-quality loop.
 
-Attribution linkage (`log_event.content_ids` → catalog `item_id` → `media_buy_id`) is deliberately out-of-scope for AdCP 3.0 — the storyboard accepts counter-only responses. Closed-loop attribution + ROAS reporting land in 3.1.
+### `sales-retail-media`
+
+Currently a v3.1 placeholder (empty `phases` in `index.yaml`); the protocol baseline is all that's enforced today. Claim the specialism to advertise intent. The forward-looking deltas on top of `sales-catalog-driven`:
+
+- **Onsite placement encoding** in `publisher_properties` and `format_ids` — search results, product detail page (PDP), homepage, category, offsite (display retargeting), in-store (DOOH).
+- **Sponsored-product vs sponsored-display** distinction surfaces as separate `format_ids` per product.
+- **Offsite + in-store** require `publisher_properties.environment` to disambiguate the rendering surface (web vs DOOH vs CTV) — the buyer's targeting overlays vary by environment.
+- **Closed-loop ROAS** lands with attribution in 3.1.
 
 ## Validate locally
 
 ```bash
-# Run the fork-matrix gate against the seller-non-guaranteed baseline
-npm run compliance:fork-matrix -- --test-name-pattern="hello-seller-adapter-non-guaranteed"
+# Run the fork-matrix gate against the social baseline
+npm run compliance:fork-matrix -- --test-name-pattern="hello-seller-adapter-social"
 
 # Or validate your forked agent directly against the catalog-driven storyboard
 adcp storyboard run http://127.0.0.1:3005/mcp sales_catalog_driven \
@@ -73,7 +79,7 @@ For deeper validation: [`docs/guides/VALIDATE-YOUR-AGENT.md`](../../docs/guides/
 
 ## Common shape gotchas
 
-`get_media_buy_delivery /reporting_period/start|end` are ISO 8601 **date-time** strings, not date-only. Per-package billing rows require `package_id`, `spend`, `pricing_model`, `rate`, `currency`. `sync_accounts` rows require `action: 'created' | 'updated' | 'unchanged' | 'failed'`. See [`../SHAPE-GOTCHAS.md`](../SHAPE-GOTCHAS.md).
+`get_media_buy_delivery /reporting_period/start|end` are ISO 8601 **date-time** strings, not date-only. Per-package billing rows require `package_id`, `spend`, `pricing_model`, `rate`, `currency`. `sync_accounts` rows require `action: 'created' | 'updated' | 'unchanged' | 'failed'`. See [`../SHAPE-GOTCHAS.md`](../SHAPE-GOTCHAS.md) and [§6](../SHAPE-GOTCHAS.md#6-log_event-projection-for-walled-garden-capis) for `log_event` field-rename + UNIX-seconds patterns shared with social CAPIs.
 
 ## Migration notes
 
