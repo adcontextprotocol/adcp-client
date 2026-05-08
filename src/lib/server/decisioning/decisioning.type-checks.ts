@@ -452,7 +452,12 @@ function _format_renders_accept_display_render(): void {
 
 // ── NoAccountCtx narrows ctx.account on no-account tools ──
 
-import { defineCreativeBuilderPlatform } from './platform-helpers';
+import { defineCreativeBuilderPlatform, defineCreativeAdServerPlatform } from './platform-helpers';
+import type {
+  ListCreativeFormatsResponse,
+  GetCreativeDeliveryResponse,
+  ListCreativesResponse,
+} from '../../types/tools.generated';
 
 // `previewCreative` handlers must narrow `ctx.account` before reading
 // `ctx_metadata` — the wire schema does not carry an `account` field, so
@@ -481,6 +486,76 @@ function _preview_creative_rejects_unnarrowed_access(): void {
       const _ws: string = ctx.account.ctx_metadata.workspace_id;
       void _ws;
       return {} as PreviewCreativeResponse;
+    },
+  });
+}
+
+// `listCreativeFormats` on `CreativeBuilderPlatform` is a no-account tool.
+// Same dispatch contract as `previewCreative`: wire schema omits `account`,
+// framework dispatches with `ctx.account === undefined` when
+// `accounts.resolve(undefined)` returns null. Regression lock against #1384
+// — a previous version of `CreativeBuilderPlatform` carried two declarations
+// for `listCreativeFormats` (one `NoAccountCtx`, one `Ctx`); TS overload
+// resolution kept the narrow at the implementation site, but the duplicate
+// was a footgun for adopters and a tripwire for future refactors. Removing
+// the duplicate and locking the narrow here.
+function _builder_list_creative_formats_requires_account_narrow(): void {
+  defineCreativeBuilderPlatform<{ catalog_id: string }>({
+    buildCreative: async () => ({}) as never,
+    listCreativeFormats: async (_req, ctx) => {
+      if (ctx.account == null) {
+        return {} as ListCreativeFormatsResponse;
+      }
+      const _catalog: string = ctx.account.ctx_metadata.catalog_id;
+      void _catalog;
+      return {} as ListCreativeFormatsResponse;
+    },
+  });
+}
+
+function _builder_list_creative_formats_rejects_unnarrowed_access(): void {
+  defineCreativeBuilderPlatform<{ catalog_id: string }>({
+    buildCreative: async () => ({}) as never,
+    listCreativeFormats: async (_req, ctx) => {
+      // @ts-expect-error — ctx.account is `Account | undefined`; reading without narrowing fails.
+      const _catalog: string = ctx.account.ctx_metadata.catalog_id;
+      void _catalog;
+      return {} as ListCreativeFormatsResponse;
+    },
+  });
+}
+
+// Same lock for `CreativeAdServerPlatform.listCreativeFormats` — the
+// ad-server interface carried the same duplicate-declaration pattern
+// before #1384. Lock the narrow.
+function _ad_server_list_creative_formats_requires_account_narrow(): void {
+  defineCreativeAdServerPlatform<{ catalog_id: string }>({
+    buildCreative: async () => ({}) as never,
+    previewCreative: async () => ({}) as PreviewCreativeResponse,
+    listCreatives: async () => ({}) as ListCreativesResponse,
+    getCreativeDelivery: async () => ({}) as GetCreativeDeliveryResponse,
+    listCreativeFormats: async (_req, ctx) => {
+      if (ctx.account == null) {
+        return {} as ListCreativeFormatsResponse;
+      }
+      const _catalog: string = ctx.account.ctx_metadata.catalog_id;
+      void _catalog;
+      return {} as ListCreativeFormatsResponse;
+    },
+  });
+}
+
+function _ad_server_list_creative_formats_rejects_unnarrowed_access(): void {
+  defineCreativeAdServerPlatform<{ catalog_id: string }>({
+    buildCreative: async () => ({}) as never,
+    previewCreative: async () => ({}) as PreviewCreativeResponse,
+    listCreatives: async () => ({}) as ListCreativesResponse,
+    getCreativeDelivery: async () => ({}) as GetCreativeDeliveryResponse,
+    listCreativeFormats: async (_req, ctx) => {
+      // @ts-expect-error — ctx.account is `Account | undefined`; reading without narrowing fails.
+      const _catalog: string = ctx.account.ctx_metadata.catalog_id;
+      void _catalog;
+      return {} as ListCreativeFormatsResponse;
     },
   });
 }
@@ -529,4 +604,8 @@ export const _references = [
   _format_renders_accept_display_render,
   _preview_creative_requires_account_narrow,
   _preview_creative_rejects_unnarrowed_access,
+  _builder_list_creative_formats_requires_account_narrow,
+  _builder_list_creative_formats_rejects_unnarrowed_access,
+  _ad_server_list_creative_formats_requires_account_narrow,
+  _ad_server_list_creative_formats_rejects_unnarrowed_access,
 ] as const;
