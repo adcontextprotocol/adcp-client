@@ -472,14 +472,16 @@ async function resolveTaskCompletionOutputs(
 
   const racers: Promise<Winner>[] = [];
 
-  // Poll path. Note: when the outer race resolves first, the SDK's
-  // `pollTaskCompletion` keeps polling internally until it observes a
-  // terminal state. The runner's outer timeout is enough to bound the
-  // *step* duration; the inner loop continuation is a known limitation
-  // pending an AbortSignal addition to the SDK.
+  // Poll path. An AbortSignal tied to the same `timeoutMs` budget is passed
+  // to `pollTaskCompletion` so the inner loop exits as soon as the outer race
+  // timer fires — no orphaned `tasks/get` requests survive the step boundary.
+  // (adcp-client#1612: previously the loop ran indefinitely after the outer
+  // timeout resolved, accumulating background A2A calls that consumed the
+  // full comply() budget.)
   if (canPoll) {
+    const pollSignal = AbortSignal.timeout(timeoutMs);
     racers.push(
-      executor.pollTaskCompletion(agent, taskId, pollIntervalMs).then(
+      executor.pollTaskCompletion(agent, taskId, pollIntervalMs, undefined, pollSignal).then(
         (result: TaskResult): PollWin => ({
           kind: 'poll',
           result,
