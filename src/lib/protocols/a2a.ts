@@ -216,12 +216,20 @@ const TERMINAL_A2A_STATES = new Set(['completed', 'failed', 'rejected', 'cancele
 
 /**
  * Detect whether a JSON-RPC response carries a spec-compliant terminal-state
- * Task with an `adcp_error` DataPart (or the success-arm equivalent — any
- * structured `data` payload) on its first artifact. Used to short-circuit the
- * generic "A2A agent returned error" throw when the seller surfaces both a
- * transport-level error hint and the canonical AdCP error envelope side-by-side.
+ * Task with at least one artifact containing a structured DataPart payload.
+ * Per AdCP transport-errors §A2A Binding, the artifact's DataPart is the
+ * canonical envelope for both the success arm (`completed`) and the error
+ * arms (`failed` / `rejected` / `canceled`). The criterion intentionally
+ * matches the unwrapper's terminal-state extraction in
+ * `unwrapA2AResponse` — keeping protocol layer and unwrapper in lockstep
+ * across all terminal states, not just the error arms.
+ *
+ * Used to short-circuit the generic "A2A agent returned error" throw when
+ * a non-conformant seller surfaces both a transport-level `result.error`
+ * hint and the canonical artifact envelope side-by-side. The DataPart is
+ * authoritative; the throw would otherwise swallow it.
  */
-function hasStructuredAdcpErrorArtifact(response: unknown): boolean {
+function hasTerminalTaskWithDataArtifact(response: unknown): boolean {
   if (!response || typeof response !== 'object') return false;
   const result = (response as { result?: unknown }).result;
   if (!result || typeof result !== 'object') return false;
@@ -396,7 +404,7 @@ async function callA2AToolImpl(
       // also surfaced a transport-level error string. Pass the response
       // through so the upstream unwrapper extracts `adcp_error.code` instead
       // of throwing a generic message that loses the AdCP error envelope.
-      if (!hasStructuredAdcpErrorArtifact(messageResponse)) {
+      if (!hasTerminalTaskWithDataArtifact(messageResponse)) {
         const errorObj = messageResponse.error || messageResponse.result?.error;
         const errorMessage = errorObj.message || JSON.stringify(errorObj);
         throw new Error(`A2A agent returned error: ${errorMessage}`);

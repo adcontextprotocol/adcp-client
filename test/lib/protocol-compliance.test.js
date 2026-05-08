@@ -335,6 +335,62 @@ describe('A2A Protocol Compliance', { skip: process.env.CI ? 'Slow tests - skipp
       assert.strictEqual(response.result.artifacts[0].parts[0].data.adcp_error.code, 'TERMS_REJECTED');
     });
 
+    // Negative: terminal-state Task without a DataPart (only TextParts) must
+    // still throw — there's no canonical envelope to defer to.
+    test('should still throw when terminal Task has only TextParts (no DataPart)', async () => {
+      closeA2AConnections();
+      const textOnlyClient = {
+        sendMessage: async () => ({
+          jsonrpc: '2.0',
+          id: 'test-id',
+          result: {
+            kind: 'task',
+            id: 'task-x',
+            status: { state: 'failed' },
+            error: { message: 'transport hint' },
+            artifacts: [{ parts: [{ kind: 'text', text: 'sorry' }] }],
+          },
+        }),
+      };
+
+      const originalA2AClient = require('@a2a-js/sdk/client').A2AClient;
+      originalA2AClient.fromCardUrl = async () => textOnlyClient;
+
+      await assert.rejects(
+        async () => callA2ATool('https://test.com', 'test_skill', {}),
+        { message: /A2A agent returned error: transport hint/ },
+        'TextPart-only artifact has no canonical envelope — must throw'
+      );
+    });
+
+    // Negative: terminal-state Task with empty artifacts array must still
+    // throw — no envelope present.
+    test('should still throw when terminal Task has empty artifacts array', async () => {
+      closeA2AConnections();
+      const emptyArtifactsClient = {
+        sendMessage: async () => ({
+          jsonrpc: '2.0',
+          id: 'test-id',
+          result: {
+            kind: 'task',
+            id: 'task-y',
+            status: { state: 'failed' },
+            error: { message: 'no artifact' },
+            artifacts: [],
+          },
+        }),
+      };
+
+      const originalA2AClient = require('@a2a-js/sdk/client').A2AClient;
+      originalA2AClient.fromCardUrl = async () => emptyArtifactsClient;
+
+      await assert.rejects(
+        async () => callA2ATool('https://test.com', 'test_skill', {}),
+        { message: /A2A agent returned error: no artifact/ },
+        'Empty artifacts array — must throw'
+      );
+    });
+
     test('should pass through rejected Task carrying adcp_error DataPart', async () => {
       closeA2AConnections();
       const rejectedTaskClient = {
