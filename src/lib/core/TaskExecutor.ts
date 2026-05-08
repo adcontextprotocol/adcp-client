@@ -1397,8 +1397,39 @@ export class TaskExecutor {
     pollInterval = 60000,
     transport?: import('../protocols').TransportOptions
   ): Promise<TaskResult<T>> {
+    const pollStartTime = Date.now();
     while (true) {
-      const status = await this.getTaskStatus(agent, taskId, transport);
+      // adcp-client#1585: A2A 0.3.x defines no minimum retention TTL for
+      // completed tasks. A seller may evict a task between the buyer
+      // observing the working-state response and the first explicit
+      // `tasks/get` poll firing — `getTaskStatus` then throws with a
+      // "Task <id> not found" message. Surface a descriptive `failed`
+      // `TaskResult` so the caller sees an actionable error instead of an
+      // opaque uncaught exception escaping from the polling loop.
+      let status: TaskInfo;
+      try {
+        status = await this.getTaskStatus(agent, taskId, transport);
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        // Bounded `\S{1,128}` task-id segment (no `.*`) keeps the match
+        // linear-time on adversarial inputs — CodeQL flags unbounded
+        // polynomial regex on uncontrolled error strings.
+        if (/\btask\s+\S{1,128}\s+not found\b/i.test(msg)) {
+          return attachMatch({
+            success: false as const,
+            status: 'failed' as const,
+            error: `Task ${taskId} is no longer queryable — it may have been completed and evicted by the seller before this poll arrived. Consider using push notifications (reporting_webhook) instead of polling, or configuring a longer task retention TTL on the seller.`,
+            metadata: this.buildMetadata({
+              taskId,
+              taskName: 'unknown',
+              agent,
+              startTime: pollStartTime,
+              status: 'failed',
+            }),
+          });
+        }
+        throw err;
+      }
 
       if (status.status === ADCP_STATUS.COMPLETED) {
         const pollSuccess = this.isOperationSuccess(status.result);
