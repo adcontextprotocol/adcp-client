@@ -381,6 +381,35 @@ export function readExtractionPath(data: unknown): McpExtractionPath | undefined
  */
 const TERMINAL_A2A_STATES: ReadonlySet<string> = new Set(['completed', 'failed', 'rejected', 'canceled']);
 
+/**
+ * Detect whether a response carries a spec-compliant terminal-state Task
+ * with a structured DataPart artifact. Mirrors the protocol-layer guard in
+ * `src/lib/protocols/a2a.ts` (`hasTerminalTaskWithDataArtifact`) so the
+ * unwrapper defers to the canonical envelope when a non-conformant seller
+ * surfaces both a top-level transport error and the AdCP artifact.
+ */
+function hasTerminalTaskWithDataArtifact(response: unknown): boolean {
+  if (!response || typeof response !== 'object') return false;
+  const result = (response as { result?: unknown }).result;
+  if (!result || typeof result !== 'object') return false;
+  const r = result as { kind?: unknown; status?: unknown; artifacts?: unknown };
+  if (r.kind !== 'task') return false;
+  const status = r.status as { state?: unknown } | undefined;
+  if (typeof status?.state !== 'string' || !TERMINAL_A2A_STATES.has(status.state)) return false;
+  if (!Array.isArray(r.artifacts) || r.artifacts.length === 0) return false;
+  for (const artifact of r.artifacts) {
+    if (!artifact || typeof artifact !== 'object') continue;
+    const parts = (artifact as { parts?: unknown }).parts;
+    if (!Array.isArray(parts)) continue;
+    for (const part of parts) {
+      if (!part || typeof part !== 'object') continue;
+      const p = part as { kind?: unknown; data?: unknown };
+      if (p.kind === 'data' && p.data && typeof p.data === 'object') return true;
+    }
+  }
+  return false;
+}
+
 function unwrapA2AResponse(response: any): AdCPResponse {
   const taskState = response.result?.status?.state;
   if (taskState && !TERMINAL_A2A_STATES.has(taskState)) {
@@ -389,8 +418,15 @@ function unwrapA2AResponse(response: any): AdCPResponse {
         'Only terminal responses (completed, failed, rejected, canceled) should be unwrapped.'
     );
   }
-  // A2A error response (JSON-RPC error)
-  if (response.error) {
+  // A2A error response (JSON-RPC error). adcp-client#1575: when a
+  // non-conformant seller surfaces both a top-level JSON-RPC error AND a
+  // terminal-state Task with a structured DataPart artifact, the artifact
+  // is canonical per AdCP transport-errors §A2A Binding — defer to the
+  // artifact extraction below. Mirrors the protocol-layer guard at
+  // `src/lib/protocols/a2a.ts` so the two layers stay symmetric and
+  // direct callers (storyboard fixtures, cached responses, webhook
+  // payloads) inherit the same defensive behavior.
+  if (response.error && !hasTerminalTaskWithDataArtifact(response)) {
     return {
       errors: [
         {
