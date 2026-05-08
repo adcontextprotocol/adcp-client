@@ -253,14 +253,15 @@ const client = new SingleAgentClient(url, {
 });
 
 // Server side — opt-in validation on incoming requests + handler responses
-import { createAdcpServer } from '@adcp/sdk/server/legacy/v5';
+import { createAdcpServerFromPlatform } from '@adcp/sdk/server';
 
-createAdcpServer({
+createAdcpServerFromPlatform(platform, {
+  name: 'My Agent',
+  version: '1.0.0',
   validation: {
     requests: 'strict',      // reject malformed requests with VALIDATION_ERROR
     responses: 'strict',     // catch handler-returned drift (dev/test canary)
   },
-  // ... other config
 });
 ```
 

@@ -2,22 +2,22 @@
 
 If you're writing a server-side AdCP agent, the minimum loop you want is: **change code → run compliance → see failures**, with nothing else between you and the answer. No Express bootstrap. No webhook tunnel. No hand-seeded fixtures.
 
-`runAgainstLocalAgent` from `@adcp/sdk/testing` composes `createAdcpServer` + `serve` + `seedComplianceFixtures` + the webhook receiver + the storyboard runner into one call. If you already know your handlers, ten lines is enough.
+`runAgainstLocalAgent` from `@adcp/sdk/testing` composes `createAdcpServerFromPlatform` + `serve` + `seedComplianceFixtures` + the webhook receiver + the storyboard runner into one call. If you already know your platform, ten lines is enough.
 
 ```ts
 // tests/compliance.test.ts
 import { runAgainstLocalAgent } from '@adcp/sdk/testing';
-import { createAdcpServer, InMemoryStateStore } from '@adcp/sdk/server/legacy/v5';
+import { createAdcpServerFromPlatform, InMemoryStateStore } from '@adcp/sdk/server';
+import { myPublisherPlatform } from './platform';
 
 const stateStore = new InMemoryStateStore();
 
 const result = await runAgainstLocalAgent({
   createAgent: () =>
-    createAdcpServer({
+    createAdcpServerFromPlatform(myPublisherPlatform, {
       name: 'My Publisher',
       version: '1.0.0',
       stateStore,
-      mediaBuy: { getProducts, createMediaBuy, getMediaBuyDelivery },
     }),
   storyboards: {
     supported_protocols: ['media_buy'],
@@ -44,7 +44,7 @@ The helper calls your `createAgent` factory multiple times — once to seed fixt
 const stateStore = new InMemoryStateStore(); // outside the factory
 
 const result = await runAgainstLocalAgent({
-  createAgent: () => createAdcpServer({ ..., stateStore }), // inside the factory
+  createAgent: () => createAdcpServerFromPlatform(myPublisherPlatform, { name: 'My Publisher', version: '1.0.0', stateStore }), // inside the factory
 });
 ```
 
@@ -71,7 +71,7 @@ The CLI imports the module, expects `default.createAgent` or a named `createAgen
 
 ```ts
 const result = await runAgainstLocalAgent({
-  createAgent: () => createAdcpServer({ ..., stateStore }),
+  createAgent: () => createAdcpServerFromPlatform(myPublisherPlatform, { name: 'My Publisher', version: '1.0.0', stateStore }),
   authorizationServer: true,
   onListening: async ({ agentUrl, auth }) => {
     if (!auth) return;
@@ -126,7 +126,7 @@ Supply `resolvePerStoryboard`:
 
 ```ts
 const result = await runAgainstLocalAgent({
-  createAgent: () => createAdcpServer({ ..., stateStore }),
+  createAgent: () => createAdcpServerFromPlatform(myPublisherPlatform, { name: 'My Publisher', version: '1.0.0', stateStore }),
   resolvePerStoryboard: (sb, defaultAgentUrl) => {
     if (sb.id === 'signed_requests') {
       return { agentUrl: defaultAgentUrl.replace(/\/mcp$/, '/mcp-strict') };

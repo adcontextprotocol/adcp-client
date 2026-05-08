@@ -951,7 +951,7 @@ function generateLlmsTxt(
   ln(`### Seeding fixtures for compliance (seller-side)`);
   ln();
   ln(
-    `Group A storyboards seed fixtures via \`comply_test_controller.seed_product\` (and the other \`seed_*\` scenarios) before calling the spec tool. Two SDK helpers bridge this to \`createAdcpServer\`:`
+    `Group A storyboards seed fixtures via \`comply_test_controller.seed_product\` (and the other \`seed_*\` scenarios) before calling the spec tool. Two SDK helpers bridge this:`
   );
   ln();
   ln(
@@ -962,7 +962,7 @@ function generateLlmsTxt(
   );
   ln();
   ln(
-    `Wire on \`createAdcpServer({ testController: bridgeFromTestControllerStore(store, baseline) })\`. See \`skills/build-seller-agent/SKILL.md\` for the full pattern alongside \`createComplyController\`.`
+    `Wire on \`createAdcpServerFromPlatform(platform, { testController: bridgeFromTestControllerStore(store, baseline) })\`. See \`skills/build-seller-agent/SKILL.md\` for the full pattern alongside \`createComplyController\`.`
   );
   ln();
 

@@ -23,15 +23,22 @@ The `WWW-Authenticate` header is the grading surface — return the right error 
 
 **Use the SDK's server verifier.** Don't write signature parsing or canonicalization yourself — `@adcp/sdk/signing/server` ships the full pipeline. The canonical wiring lives in [§ Composing OAuth, signing, and idempotency](#composing-oauth-signing-and-idempotency) which feeds `verifyRequestSignature` through `serve({ preTransport })`; don't hand-roll an Express middleware chain alongside it. What you need that's specific to this specialism is the capability advertisement and the revocation-store pre-state:
 
-**Auto-wiring via `createAdcpServer`.** When you're already using `createAdcpServer`, pass `signedRequests: { jwks, replayStore, revocationStore }` and add `'signed-requests'` to `capabilities.specialisms` — the framework builds the verifier preTransport for you and `serve()` auto-mounts it. `createAdcpServer` throws at startup when `signedRequests` is set without the specialism claim (buyers wouldn't sign), and logs a loud error in the other direction (leaving the legacy manual `serve({ preTransport })` path working). Keep `request_signing` in capabilities separately — it's still how buyers discover your `required_for` policy.
+**Auto-wiring via `createAdcpServerFromPlatform`.** Pass `signedRequests: { jwks, replayStore, revocationStore }` alongside your platform and add `'signed-requests'` to `capabilities.specialisms` — the framework builds the verifier preTransport for you and `serve()` auto-mounts it. `createAdcpServerFromPlatform` throws at startup when `signedRequests` is set without the specialism claim (buyers wouldn't sign), and logs a loud error in the other direction. Keep `request_signing` in capabilities separately — it's still how buyers discover your `required_for` policy.
 
 ```typescript
-createAdcpServer({
-  // ...handlers...
+const platform = definePlatform({
   capabilities: {
+    specialisms: ['signed-requests', 'sales-non-guaranteed'] as const,
     request_signing: capability,
-    specialisms: ['signed-requests'],
+    pricingModels: ['cpm'] as const,
   },
+  accounts: { resolve: async (ref, ctx) => /* ... */ null },
+  sales: defineSalesCorePlatform({ /* handlers */ }),
+});
+
+createAdcpServerFromPlatform(platform, {
+  name: 'My Seller',
+  version: '1.0.0',
   signedRequests: {
     jwks,
     replayStore,

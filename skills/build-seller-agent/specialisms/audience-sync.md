@@ -13,8 +13,19 @@ Required tools: `sync_audiences` and `list_accounts`. `sync_audiences` is overlo
 There is no separate `delete_audience` tool — deletion rides on `sync_audiences`.
 
 ```typescript
-createAdcpServer({
+import {
+  createAdcpServerFromPlatform,
+  definePlatform,
+  defineAudiencePlatform,
+} from '@adcp/sdk/server';
+
+const platform = definePlatform({
+  capabilities: {
+    specialisms: ['audience-sync', 'sales-non-guaranteed'] as const,
+    pricingModels: ['cpm'] as const,
+  },
   accounts: {
+    resolve: async (ref, ctx) => /* lookup */ null,
     syncAccounts: /* baseline */,
     listAccounts: async (params, ctx) => {
       const { items } = await ctx.store.list('accounts');
@@ -22,7 +33,7 @@ createAdcpServer({
       return { accounts: brandFilter ? items.filter((a) => a.brand.domain === brandFilter) : items };
     },
   },
-  eventTracking: {
+  audiences: defineAudiencePlatform({
     syncAudiences: async (params, ctx) => {
       // Discovery mode — no audiences in request
       if (!params.audiences?.length) {
@@ -52,7 +63,12 @@ createAdcpServer({
         })),
       };
     },
-  },
+  }),
+});
+
+const server = createAdcpServerFromPlatform(platform, {
+  name: 'Audience-sync seller',
+  version: '1.0.0',
 });
 ```
 

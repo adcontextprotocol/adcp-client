@@ -1,28 +1,28 @@
 ---
 name: build-decisioning-creative-template
-description: Build an AdCP v6.0 creative-template decisioning platform — a stateless creative transform service (TTS, watermarking, format conversion, template fill). Use when the user wants the v6.0 DecisioningPlatform shape; for the lower-level handler-bag API, use `build-creative-agent` instead.
+description: Build an AdCP creative-template decisioning platform — a stateless creative transform service (TTS, watermarking, format conversion, template fill). Use when the user wants the typed `DecisioningPlatform` shape; for fork-an-adapter starting points, see `build-creative-agent`.
 ---
 
-# Build a Creative-Template Decisioning Platform (v6.0)
+# Build a Creative-Template Decisioning Platform
 
 You're building a **stateless creative transform** service that fits the AdCP `creative-template` specialism: take an input creative manifest + format spec, produce an output creative manifest. No library, no review queue, no persisting state. Examples: TTS audio synthesis, image watermarking, video format conversion, template-based ad generation.
 
 ## When this skill applies
 
-- User wants a creative-template service on the **v6.0 DecisioningPlatform** surface
+- User wants a creative-template service against the typed `DecisioningPlatform` surface
 - Specialism: `creative-template` (stateless transform; not `creative-ad-server` which is stateful, not `creative-generative` which is brief-driven — though `creative-template` and `creative-generative` share the same `CreativeBuilderPlatform` interface; pick the specialism ID that matches your behavior)
-- SDK package: `@adcp/sdk` 6.0+
+- SDK package: `@adcp/sdk`
 
 **Wrong skill if:**
 
-- User wants the lower-level handler-bag API → `skills/build-creative-agent/`
+- User wants to fork a worked adapter → `skills/build-creative-agent/`
 - User wants stateful creative library/ad-server → `skills/build-creative-agent/` § creative-ad-server
 - User wants brief-to-creative generation → same skill as this one (Builder covers both); declare `'creative-generative'` instead of `'creative-template'`
 - User wants to sell media inventory → `skills/build-seller-agent/`
 
 ## The whole shape (read this first)
 
-A v6.0 creative-template platform is a **single class** implementing `DecisioningPlatform` with a `creative` field of type `CreativeBuilderPlatform`. The framework dispatches each tool call to the right method. (`CreativeTemplatePlatform` and `CreativeGenerativePlatform` are deprecated aliases of `CreativeBuilderPlatform` for source compat.)
+A creative-template platform is a **single class** implementing `DecisioningPlatform` with a `creative` field of type `CreativeBuilderPlatform`. The framework dispatches each tool call to the right method. (`CreativeTemplatePlatform` and `CreativeGenerativePlatform` are deprecated aliases of `CreativeBuilderPlatform` for source compat.)
 
 ### Key fact: `CreativeManifest.assets` is a **keyed map**, not an array
 
@@ -406,7 +406,7 @@ serve(() => server, {
 - Wraps each method with `AdcpError`-catch + `submitted`-envelope projection for HITL
 - Returns a `DecisioningAdcpServer` (extends `AdcpServer`) with `getTaskState(taskId)` + `awaitTask(taskId)` for HITL inspection
 
-`serve()` is unchanged from v5.x; it accepts the server and binds HTTP transport for both MCP and A2A.
+`serve()` accepts the server and binds HTTP transport for both MCP and A2A.
 
 ## Capabilities — declare what you support
 
@@ -486,9 +486,7 @@ For HITL platforms, `server.awaitTask(taskId)` settles the background promise; `
 
 ## What NOT to do
 
-❌ **Don't import from `@adcp/sdk/server` for the platform shape.** That's the v5.x handler-style API. Use `@adcp/sdk/server` for v6.0.
-
-❌ **Don't use `ctx.runAsync(...)` or `ctx.startTask(...)`.** Those were in earlier preview drops; they're gone in v2.1. The async story is dual-method (`xxx` vs `xxxTask`), period.
+❌ **Don't use `ctx.runAsync(...)` or `ctx.startTask(...)`.** The async story is dual-method (`xxx` vs `xxxTask`), period.
 
 ❌ **Don't define both `buildCreative` and `buildCreativeTask`.** `validatePlatform()` will throw with a clear diagnostic. Pick one.
 

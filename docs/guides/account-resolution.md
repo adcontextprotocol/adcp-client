@@ -134,8 +134,11 @@ For tests and getting-started scenarios, import the built-in reference
 implementation:
 
 ```ts
-import { InMemoryImplicitAccountStore } from '@adcp/sdk/server';
-import { createAdcpServer } from '@adcp/sdk/server';
+import {
+  createAdcpServerFromPlatform,
+  definePlatform,
+  InMemoryImplicitAccountStore,
+} from '@adcp/sdk/server';
 
 const accountStore = new InMemoryImplicitAccountStore({
   // Convert a buyer's AccountReference to your platform's Account shape.
@@ -155,10 +158,13 @@ const accountStore = new InMemoryImplicitAccountStore({
   ttlMs: 86_400_000, // 24h
 });
 
-createAdcpServer({
+const platform = definePlatform({
+  capabilities: { specialisms: ['sales-non-guaranteed'] as const, pricingModels: ['cpm'] as const },
   accounts: accountStore,
-  // ... other platform config
+  // ... other platform fields
 });
+
+createAdcpServerFromPlatform(platform, { name: 'My Agent', version: '1.0.0' });
 ```
 
 For a runnable example see `examples/decisioning-platform-implicit-accounts.ts`.
