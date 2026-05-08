@@ -802,6 +802,116 @@ const MATRIX_ROWS = [
       );
     },
   },
+  {
+    axes: { skip_reason: 'real_failure', peer_shape: 'peer_passes', phase_topology: 'same_phase' },
+    title:
+      'real failure with passing peer earlier in same phase: cascade still fires (no rescue without peer_substitutes_for)',
+    issue: 'adcp-client#1589',
+    build: () => ({
+      // Peer runs first and passes; trigger then fails. Without
+      // peer_substitutes_for, a passing peer does not rescue a real
+      // failure — cascade still fires for the same-phase consumer.
+      storyboard: storyboardWith([
+        step('peer', '__test_setup'),
+        step('setup', '__test_fail'),
+        step('assert', '__test_assert'),
+      ]),
+      advertised: ['__test_fail', '__test_setup', '__test_assert', 'get_adcp_capabilities'],
+    }),
+    assert: result => {
+      const [peerStep, setupStep, assertStep] = result.phases[0].steps;
+      assert.strictEqual(peerStep.passed, true, 'peer ran and passed');
+      assert.notStrictEqual(peerStep.skipped, true, 'peer not skipped');
+      assert.strictEqual(setupStep.passed, false, 'setup actually failed');
+      assert.notStrictEqual(setupStep.skipped, true, 'setup ran and failed');
+      assert.strictEqual(assertStep.skipped, true, 'consumer cascade-skipped');
+      assert.strictEqual(assertStep.skip_reason, 'prerequisite_failed');
+      assert.match(assertStep.skip.detail ?? '', /prior stateful step failed/);
+    },
+  },
+  {
+    axes: { skip_reason: 'real_failure', peer_shape: 'peer_passes', phase_topology: 'downstream_phase' },
+    title: 'real failure with passing peer in setup phase: downstream phase still cascades',
+    issue: 'adcp-client#1589',
+    build: () => ({
+      storyboard: storyboardWithPhases([
+        {
+          id: 'setup_phase',
+          title: 'setup',
+          steps: [step('peer', '__test_setup'), step('setup', '__test_fail')],
+        },
+        { id: 'consume', title: 'consume', steps: [step('assert', '__test_assert')] },
+      ]),
+      advertised: ['__test_fail', '__test_setup', '__test_assert', 'get_adcp_capabilities'],
+    }),
+    assert: result => {
+      const [peerStep, setupStep] = result.phases[0].steps;
+      const assertStep = result.phases[1].steps[0];
+      assert.strictEqual(peerStep.passed, true, 'peer passed');
+      assert.strictEqual(setupStep.passed, false, 'setup actually failed');
+      assert.strictEqual(assertStep.skipped, true, 'downstream cascade fires');
+      assert.strictEqual(assertStep.skip_reason, 'prerequisite_failed');
+      assert.match(assertStep.skip.detail ?? '', /prior stateful step failed/);
+    },
+  },
+  {
+    axes: { skip_reason: 'real_failure', peer_shape: 'peer_fails', phase_topology: 'same_phase' },
+    title: 'real failure earlier in same phase + later peer also fails: consumer cascade-skips with failure detail',
+    issue: 'adcp-client#1589',
+    build: () => ({
+      // Two real failures in one phase: the second is itself
+      // cascade-skipped (within-phase cascade kicks in on the first
+      // failure), and the consumer downstream of both gets the same
+      // "prior stateful step failed" detail.
+      storyboard: storyboardWith([
+        step('setup', '__test_fail'),
+        step('peer', '__test_fail'),
+        step('assert', '__test_assert'),
+      ]),
+      advertised: ['__test_fail', '__test_assert', 'get_adcp_capabilities'],
+    }),
+    assert: result => {
+      const [setupStep, peerStep, assertStep] = result.phases[0].steps;
+      assert.strictEqual(setupStep.passed, false, 'setup failed');
+      assert.notStrictEqual(setupStep.skipped, true, 'setup ran');
+      // peer is cascade-skipped because the first real failure already
+      // tripped the within-phase cascade — runner does not run further
+      // stateful steps in the phase.
+      assert.strictEqual(peerStep.skipped, true, 'peer cascade-skipped after first failure');
+      assert.strictEqual(peerStep.skip_reason, 'prerequisite_failed');
+      assert.strictEqual(assertStep.skipped, true, 'consumer cascade-skipped');
+      assert.strictEqual(assertStep.skip_reason, 'prerequisite_failed');
+      assert.match(assertStep.skip.detail ?? '', /prior stateful step failed/);
+      assert.doesNotMatch(assertStep.skip.detail ?? '', /skipped \(/, 'detail must NOT call a real failure a skip');
+    },
+  },
+  {
+    axes: { skip_reason: 'real_failure', peer_shape: 'peer_fails', phase_topology: 'downstream_phase' },
+    title: 'real failure in setup phase + peer also a real failure: downstream phase cascades with failure detail',
+    issue: 'adcp-client#1589',
+    build: () => ({
+      storyboard: storyboardWithPhases([
+        {
+          id: 'setup_phase',
+          title: 'setup',
+          steps: [step('setup', '__test_fail'), step('peer', '__test_fail')],
+        },
+        { id: 'consume', title: 'consume', steps: [step('assert', '__test_assert')] },
+      ]),
+      advertised: ['__test_fail', '__test_assert', 'get_adcp_capabilities'],
+    }),
+    assert: result => {
+      const [setupStep, peerStep] = result.phases[0].steps;
+      const assertStep = result.phases[1].steps[0];
+      assert.strictEqual(setupStep.passed, false, 'setup failed');
+      // peer is cascade-skipped within the same phase after the first failure.
+      assert.strictEqual(peerStep.skipped, true, 'peer cascade-skipped after setup failure');
+      assert.strictEqual(assertStep.skipped, true, 'downstream cascade fires');
+      assert.strictEqual(assertStep.skip_reason, 'prerequisite_failed');
+      assert.match(assertStep.skip.detail ?? '', /prior stateful step failed/);
+      assert.doesNotMatch(assertStep.skip.detail ?? '', /skipped \(/, 'detail must NOT call a real failure a skip');
+    },
+  },
 ];
 
 // ---------------------------------------------------------------------
@@ -983,16 +1093,16 @@ const TRACKED_GAPS = new Map([
   // a peer_substitutes_for declaration — the runner currently has no
   // "implicit substitute" rule. Behavior is "cascade fires" but no
   // dedicated row exists. Tracked for explicit assertion in a follow-up.
-  ['missing_tool|peer_passes|same_phase', 'tracked_in_issue_1548_followup'],
-  ['missing_tool|peer_passes|downstream_phase', 'tracked_in_issue_1548_followup'],
-  ['missing_tool|peer_fails|same_phase', 'tracked_in_issue_1548_followup'],
+  ['missing_tool|peer_passes|same_phase', 'tracked_in_issue_1589'],
+  ['missing_tool|peer_passes|downstream_phase', 'tracked_in_issue_1589'],
+  ['missing_tool|peer_fails|same_phase', 'tracked_in_issue_1589'],
 
   // missing_tool peer_substitute_missing × same_phase: in the prose-driven
   // suite, the mutual-declaration "both miss" case asserts cross-phase
   // cascade; the same-phase variant (substitute target and consumer in
   // the same phase) is functionally redundant given intra-phase cascade
   // is unconditional. Tracked for explicit row.
-  ['missing_tool|peer_substitute_missing|same_phase', 'tracked_in_issue_1548_followup'],
+  ['missing_tool|peer_substitute_missing|same_phase', 'tracked_in_issue_1589'],
 
   // missing_test_controller × peer_substitute_*: declared substitutes for
   // controller-seeding skips are not exercised — the controller-seeding
@@ -1016,21 +1126,13 @@ const TRACKED_GAPS = new Map([
   // not_applicable already has its own deferred-resolution path; the
   // peer_substitute_declared shape is functionally redundant with
   // peer_passes for not_applicable. Tracked for explicit row.
-  ['not_applicable|peer_substitute_declared|same_phase', 'tracked_in_issue_1548_followup'],
-  ['not_applicable|peer_substitute_declared|downstream_phase', 'tracked_in_issue_1548_followup'],
-  ['not_applicable|peer_substitute_missing|same_phase', 'tracked_in_issue_1548_followup'],
-  ['not_applicable|peer_substitute_missing|downstream_phase', 'tracked_in_issue_1548_followup'],
-  ['not_applicable|sole_stateful|same_phase', 'tracked_in_issue_1548_followup'],
-  ['not_applicable|peer_passes|same_phase', 'tracked_in_issue_1548_followup'],
-  ['not_applicable|peer_fails|same_phase', 'tracked_in_issue_1548_followup'],
-
-  // real_failure: in-phase peer interactions for real_failure are
-  // covered by F6 round-1 tests in storyboard-runner.test.js (the
-  // statefulFailed path is tested there). Tracked for explicit mirror.
-  ['real_failure|peer_passes|same_phase', 'tracked_in_storyboard-runner.test.js'],
-  ['real_failure|peer_passes|downstream_phase', 'tracked_in_storyboard-runner.test.js'],
-  ['real_failure|peer_fails|same_phase', 'tracked_in_storyboard-runner.test.js'],
-  ['real_failure|peer_fails|downstream_phase', 'tracked_in_storyboard-runner.test.js'],
+  ['not_applicable|peer_substitute_declared|same_phase', 'tracked_in_issue_1589'],
+  ['not_applicable|peer_substitute_declared|downstream_phase', 'tracked_in_issue_1589'],
+  ['not_applicable|peer_substitute_missing|same_phase', 'tracked_in_issue_1589'],
+  ['not_applicable|peer_substitute_missing|downstream_phase', 'tracked_in_issue_1589'],
+  ['not_applicable|sole_stateful|same_phase', 'tracked_in_issue_1589'],
+  ['not_applicable|peer_passes|same_phase', 'tracked_in_issue_1589'],
+  ['not_applicable|peer_fails|same_phase', 'tracked_in_issue_1589'],
 ]);
 
 function cellKey(reason, peer, topology) {
