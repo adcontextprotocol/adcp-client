@@ -27,19 +27,13 @@ const { runHelloAdapterGates } = require('./_helpers/runHelloAdapterGates');
 const REPO_ROOT = path.resolve(__dirname, '..', '..');
 const STORYBOARD_ID = 'media_buy_seller/proposal_finalize';
 
-// Storyboard scenarios that fail because `proposal_finalize.yaml` doesn't
-// declare `context_outputs` / `context_inputs` to chain the seller's
-// freshly-minted `proposal_id` from `brief_with_proposals` into the
-// subsequent `refine_proposal` / `finalize_proposal` steps. The runner
-// sends the literal `balanced_reach_q2` from the spec yaml's
-// `sample_request`, the adapter forwards it to the upstream where no
-// such proposal exists, and the upstream 404s. Tracked at
-// adcontextprotocol/adcp#4086 + draft PR #4088 (storyboard fix).
-//
-// When #4088 lands and the schema cache updates, the chained
-// `$context.proposal_id` will replace the placeholder and refine →
-// finalize → accept will pass end-to-end. Drop this allowlist entry then.
-const EXPECTED_FAILURES = [{ storyboard_id: STORYBOARD_ID, step_id: 'get_products_refine' }];
+// AdCP 3.0.7 (#1595) landed adcp#4088, which fixed `proposal_id` chaining
+// in `proposal_finalize.yaml`. `get_products_refine` now passes — but the
+// cascade-skip that previously hid `create_media_buy` is also gone,
+// exposing a real adapter bug: the adapter's `create_media_buy` response
+// doesn't satisfy the 3.0.7 `create-media-buy-response.json` schema.
+// Tracked at #1600 — drop this allowlist entry when the adapter is fixed.
+const EXPECTED_FAILURES = [{ storyboard_id: STORYBOARD_ID, step_id: 'create_media_buy' }];
 
 function isExpectedFailure(f) {
   return EXPECTED_FAILURES.some(e => e.storyboard_id === (f.storyboard_id || '') && e.step_id === (f.step_id || ''));
