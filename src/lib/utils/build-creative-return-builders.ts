@@ -8,10 +8,10 @@
 // distinction between single (`creative_manifest`) and multi
 // (`creative_manifests`) field names. SHAPE-GOTCHAS §5.
 
-import type { BuildCreativeSuccess, BuildCreativeMultiSuccess, CreativeManifest } from "../types/core.generated";
+import type { BuildCreativeSuccess, BuildCreativeMultiSuccess, CreativeManifest } from '../types/core.generated';
 
-type SingleEnvelopeFields = Omit<BuildCreativeSuccess, "creative_manifest"> & { manifest: CreativeManifest };
-type MultiEnvelopeFields = Omit<BuildCreativeMultiSuccess, "creative_manifests"> & { manifests: CreativeManifest[] };
+type SingleEnvelopeFields = Omit<BuildCreativeSuccess, 'creative_manifest'> & { manifest: CreativeManifest };
+type MultiEnvelopeFields = Omit<BuildCreativeMultiSuccess, 'creative_manifests'> & { manifests: CreativeManifest[] };
 
 /** Bare single-format manifest. Framework wraps as `{ creative_manifest }`. */
 export function singleBuildCreativeReturn(manifest: CreativeManifest): CreativeManifest {

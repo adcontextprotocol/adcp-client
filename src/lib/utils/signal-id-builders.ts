@@ -4,20 +4,20 @@
 // strings for `signal_ids` filters even though the wire shape is an array
 // of provenance objects. SHAPE-GOTCHAS §2.
 
-import type { SignalID } from "../types/core.generated";
+import type { SignalID } from '../types/core.generated';
 
-type CatalogSignal = Extract<SignalID, { source: "catalog" }>;
-type AgentSignal = Extract<SignalID, { source: "agent" }>;
-type Tagged<T, Tag extends string> = Omit<T, "source"> & { source: Tag };
+type CatalogSignal = Extract<SignalID, { source: 'catalog' }>;
+type AgentSignal = Extract<SignalID, { source: 'agent' }>;
+type Tagged<T, Tag extends string> = Omit<T, 'source'> & { source: Tag };
 
 /** Build a `catalog`-variant `SignalID`. Verifiable via the providers adagents.json. */
-export function catalogSignalId(fields: Omit<CatalogSignal, "source">): Tagged<CatalogSignal, "catalog"> {
-  return { ...fields, source: "catalog" };
+export function catalogSignalId(fields: Omit<CatalogSignal, 'source'>): Tagged<CatalogSignal, 'catalog'> {
+  return { ...fields, source: 'catalog' };
 }
 
 /** Build an `agent`-variant `SignalID`. Agent-native segments not in a catalog. */
-export function agentSignalId(fields: Omit<AgentSignal, "source">): Tagged<AgentSignal, "agent"> {
-  return { ...fields, source: "agent" };
+export function agentSignalId(fields: Omit<AgentSignal, 'source'>): Tagged<AgentSignal, 'agent'> {
+  return { ...fields, source: 'agent' };
 }
 
 /** Grouped accessor for both `SignalID` variants. */

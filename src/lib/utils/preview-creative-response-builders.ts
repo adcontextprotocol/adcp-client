@@ -6,29 +6,29 @@ import type {
   PreviewCreativeSingleResponse,
   PreviewCreativeBatchResponse,
   PreviewCreativeVariantResponse,
-} from "../types/core.generated";
+} from '../types/core.generated';
 
-type Tagged<T, Tag extends string> = Omit<T, "response_type"> & { response_type: Tag };
+type Tagged<T, Tag extends string> = Omit<T, 'response_type'> & { response_type: Tag };
 
 /** Build a `single`-variant `PreviewCreativeResponse`. */
 export function singlePreviewCreativeResponse(
-  fields: Omit<PreviewCreativeSingleResponse, "response_type">,
-): Tagged<PreviewCreativeSingleResponse, "single"> {
-  return { ...fields, response_type: "single" };
+  fields: Omit<PreviewCreativeSingleResponse, 'response_type'>
+): Tagged<PreviewCreativeSingleResponse, 'single'> {
+  return { ...fields, response_type: 'single' };
 }
 
 /** Build a `batch`-variant `PreviewCreativeResponse`. */
 export function batchPreviewCreativeResponse(
-  fields: Omit<PreviewCreativeBatchResponse, "response_type">,
-): Tagged<PreviewCreativeBatchResponse, "batch"> {
-  return { ...fields, response_type: "batch" };
+  fields: Omit<PreviewCreativeBatchResponse, 'response_type'>
+): Tagged<PreviewCreativeBatchResponse, 'batch'> {
+  return { ...fields, response_type: 'batch' };
 }
 
 /** Build a `variant`-variant `PreviewCreativeResponse`. */
 export function variantPreviewCreativeResponse(
-  fields: Omit<PreviewCreativeVariantResponse, "response_type">,
-): Tagged<PreviewCreativeVariantResponse, "variant"> {
-  return { ...fields, response_type: "variant" };
+  fields: Omit<PreviewCreativeVariantResponse, 'response_type'>
+): Tagged<PreviewCreativeVariantResponse, 'variant'> {
+  return { ...fields, response_type: 'variant' };
 }
 
 /** Grouped accessor for the three `PreviewCreativeResponse` variants. */

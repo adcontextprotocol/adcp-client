@@ -8,20 +8,20 @@
 // writes the discriminator last, so a runtime cast that smuggles `type`
 // in via `fields` cannot clobber it.
 
-import type { ActivationKey } from "../types/core.generated";
+import type { ActivationKey } from '../types/core.generated';
 
-type SegmentIdKey = Extract<ActivationKey, { type: "segment_id" }>;
-type KeyValueKey = Extract<ActivationKey, { type: "key_value" }>;
-type Tagged<T, Tag extends string> = Omit<T, "type"> & { type: Tag };
+type SegmentIdKey = Extract<ActivationKey, { type: 'segment_id' }>;
+type KeyValueKey = Extract<ActivationKey, { type: 'key_value' }>;
+type Tagged<T, Tag extends string> = Omit<T, 'type'> & { type: Tag };
 
 /** Build a `segment_id`-variant `ActivationKey`. */
-export function segmentIdActivationKey(fields: Omit<SegmentIdKey, "type">): Tagged<SegmentIdKey, "segment_id"> {
-  return { ...fields, type: "segment_id" };
+export function segmentIdActivationKey(fields: Omit<SegmentIdKey, 'type'>): Tagged<SegmentIdKey, 'segment_id'> {
+  return { ...fields, type: 'segment_id' };
 }
 
 /** Build a `key_value`-variant `ActivationKey`. `key`/`value` flatten on the top level. SHAPE-GOTCHAS §1. */
-export function keyValueActivationKey(fields: Omit<KeyValueKey, "type">): Tagged<KeyValueKey, "key_value"> {
-  return { ...fields, type: "key_value" };
+export function keyValueActivationKey(fields: Omit<KeyValueKey, 'type'>): Tagged<KeyValueKey, 'key_value'> {
+  return { ...fields, type: 'key_value' };
 }
 
 /** Grouped accessor for both `ActivationKey` variants. */
