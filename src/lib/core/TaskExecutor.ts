@@ -186,17 +186,19 @@ function unwrapTasksGetEnvelope(obj: Record<string, unknown>, depth = 0): Record
         }
       }
       // adcp-client#1612: When the A2A Task has no DataPart artifacts (e.g. the
-      // seller returns intermediate A2A transport states without an AdCP payload),
-      // surface the A2A transport-layer status as a last-resort hint so
+      // seller returns an A2A transport-level state without an AdCP DataPart
+      // payload), surface the transport-layer status as a last-resort hint so
       // `mapTasksGetResponseToTaskInfo` can map terminal states to `failed` /
       // `completed` rather than falling through to `'unknown'`. The transport
-      // state uses the same string values as AdCP for the terminal arms
-      // (`completed`, `failed`, `rejected`, `canceled`) and for in-progress
-      // arms (`working`, `submitted`), so the mapping is lossless for all
-      // conformant A2A sellers.
+      // state overlaps with AdCP status strings for all A2A-native values
+      // (`completed`, `failed`, `rejected`, `canceled`, `working`, `submitted`).
+      // Note: `auth-required` is an AdCP-layer concept; it won't surface via
+      // this path (no A2A-native transport state carries that label) — those
+      // responses reach the `unknown` exit branch instead. Also include the A2A
+      // task handle (`result.id`) so polling error messages carry the real id.
       const transportStatus = (r.status as Record<string, unknown> | undefined)?.state;
       if (typeof transportStatus === 'string') {
-        return { status: transportStatus };
+        return { status: transportStatus, task_id: typeof r.id === 'string' ? r.id : undefined };
       }
     }
   }
@@ -1135,8 +1137,8 @@ export class TaskExecutor {
       webhookUrl,
       track: (transport?: import('../protocols').TransportOptions) =>
         this.getTaskStatus(agent, serverTaskId, transport ?? options.transport),
-      waitForCompletion: (pollInterval = 60000) =>
-        this.pollTaskCompletion<T>(agent, serverTaskId, pollInterval, options.transport),
+      waitForCompletion: (pollInterval = 60000, signal?: AbortSignal) =>
+        this.pollTaskCompletion<T>(agent, serverTaskId, pollInterval, options.transport, signal),
     };
 
     return {
@@ -1581,6 +1583,9 @@ export class TaskExecutor {
       }
 
       await this.sleep(pollInterval);
+      // Re-check after sleep so a signal that fired mid-sleep exits at the top
+      // of the next iteration rather than issuing one more `getTaskStatus` call.
+      if (signal?.aborted) continue;
     }
   }
 

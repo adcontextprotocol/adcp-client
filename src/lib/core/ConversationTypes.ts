@@ -271,8 +271,12 @@ export interface SubmittedContinuation<T> {
   webhookUrl?: string;
   /** Get current task status. Pass `transport` to override the executor-constructor cap for this poll. */
   track: (transport?: import('../protocols').TransportOptions) => Promise<TaskInfo>;
-  /** Wait for completion with polling. Transport cap is fixed at task-submission time; use `track` for per-poll override. */
-  waitForCompletion: (pollInterval?: number) => Promise<TaskResult<T>>;
+  /**
+   * Wait for completion with polling. Transport cap is fixed at task-submission time; use `track` for per-poll override.
+   * Pass `signal` to cancel the polling loop early (e.g. `AbortSignal.timeout(ms)`); the loop exits cleanly on abort
+   * rather than continuing to issue `tasks/get` requests after the caller has moved on. (adcp-client#1612)
+   */
+  waitForCompletion: (pollInterval?: number, signal?: AbortSignal) => Promise<TaskResult<T>>;
 }
 
 /**
