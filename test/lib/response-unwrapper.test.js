@@ -585,6 +585,63 @@ describe('Response Unwrapper', () => {
       assert.ok(result._message?.includes('not found'));
     });
 
+    // Sibling of adcp-client#1575 at the unwrap layer. When a non-conformant
+    // seller surfaces both a top-level JSON-RPC error AND a terminal-state Task
+    // with a structured DataPart artifact, the artifact is canonical per AdCP
+    // transport-errors §A2A Binding. Mirrors the protocol-layer guard added in
+    // PR #1577 so direct callers (storyboard fixtures, cached responses,
+    // webhook normalize paths) inherit the same defensive behavior.
+    test('should prefer DataPart artifact over top-level JSON-RPC error', () => {
+      const dualSignalResponse = {
+        jsonrpc: '2.0',
+        // Transport-level hint — would short-circuit pre-fix.
+        error: { code: -32000, message: 'Task is in terminal state: 3' },
+        // Canonical envelope — must win.
+        result: {
+          kind: 'task',
+          status: { state: 'failed' },
+          artifacts: [
+            {
+              parts: [
+                {
+                  kind: 'data',
+                  data: {
+                    adcp_error: { code: 'TERMS_REJECTED', message: 'rejected', recovery: 'correctable' },
+                    context: { correlation_id: 'corr-1575-sibling' },
+                  },
+                },
+              ],
+            },
+          ],
+        },
+      };
+
+      const result = unwrapProtocolResponse(dualSignalResponse, undefined, 'a2a');
+
+      assert.strictEqual(result.adcp_error.code, 'TERMS_REJECTED');
+      assert.strictEqual(result.adcp_error.recovery, 'correctable');
+      assert.strictEqual(result.context.correlation_id, 'corr-1575-sibling');
+      // Errors[] from the JSON-RPC short-circuit must NOT be present.
+      assert.strictEqual(result.errors, undefined);
+    });
+
+    // Negative: top-level JSON-RPC error WITHOUT a structured artifact must
+    // still go through the errors[] short-circuit. Defends the guard's
+    // discriminator (kind === 'task' + terminal state + DataPart) against
+    // accidental over-broadening.
+    test('should keep errors[] short-circuit when no terminal-Task artifact present', () => {
+      const errorOnlyResponse = {
+        jsonrpc: '2.0',
+        error: { code: -32602, message: 'Invalid params', data: { field: 'x' } },
+      };
+
+      const result = unwrapProtocolResponse(errorOnlyResponse, undefined, 'a2a');
+
+      assert.ok(Array.isArray(result.errors));
+      assert.strictEqual(result.errors[0].code, '-32602');
+      assert.strictEqual(result.errors[0].message, 'Invalid params');
+    });
+
     test('should unwrap A2A rejected task with DataPart payload', () => {
       const a2aRejectedResponse = {
         result: {
