@@ -66,7 +66,7 @@ import {
   type DecisioningPlatform,
   type SyncCreativesRow,
 } from '@adcp/sdk/server';
-import { FormatAsset, buildCreativeReturn, previewCreativeResponse, urlRender } from '@adcp/sdk';
+import { FormatAsset, buildCreativeReturn, previewCreative, urlRender } from '@adcp/sdk';
 import type {
   BuildCreativeRequest,
   BuildCreativeSuccess,
@@ -554,9 +554,9 @@ class CreativeAdServerAdapter implements DecisioningPlatform<Record<string, neve
         });
       }
       const rendered = await upstream.renderCreative(networkCode, creativeId, {});
-      // `previewCreativeResponse.single({...})` injects
+      // `previewCreative.single({...})` injects
       // `response_type: 'single'`. SHAPE-GOTCHAS §4.
-      return previewCreativeResponse.single({
+      return previewCreative.single({
         previews: [
           {
             preview_id: `prv_${creative.creative_id}`,

@@ -32,7 +32,7 @@ export function variantPreviewCreativeResponse(
 }
 
 /** Grouped accessor for the three `PreviewCreativeResponse` variants. */
-export const previewCreativeResponse = {
+export const previewCreative = {
   single: singlePreviewCreativeResponse,
   batch: batchPreviewCreativeResponse,
   variant: variantPreviewCreativeResponse,

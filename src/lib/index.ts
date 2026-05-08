@@ -542,6 +542,7 @@ export {
   performanceFeedbackResponse,
   buildCreativeResponse,
   buildCreativeMultiResponse,
+  previewCreativeResponse,
   creativeDeliveryResponse,
   listCreativesResponse,
   listPropertyListsResponse,
@@ -999,17 +1000,17 @@ export {
   multiEnvelopedBuildCreativeReturn,
 } from './utils/build-creative-return-builders';
 
-// ====== PREVIEW CREATIVE RESPONSE BUILDERS ======
+// ====== PREVIEW CREATIVE BUILDERS ======
 // Typed factories that inject the `response_type` discriminator on
 // `PreviewCreativeResponse`. Three-way oneOf — `single | batch | variant`.
 // Pair with `urlRender` / `htmlRender` / `bothRender` for the per-render
 // `output_format`. SHAPE-GOTCHAS §4.
 export {
-  previewCreativeResponse,
+  previewCreative,
   singlePreviewCreativeResponse,
   batchPreviewCreativeResponse,
   variantPreviewCreativeResponse,
-} from './utils/preview-creative-response-builders';
+} from './utils/preview-creative-builders';
 
 // ====== MEDIA BUY DELIVERY NOTIFICATION BUILDERS ======
 // Typed factories that inject the `notification_type` discriminator on

@@ -53,7 +53,7 @@ import {
   audioAsset,
   urlRender,
   buildCreativeReturn,
-  previewCreativeResponse,
+  previewCreative,
   type Format,
   type ListCreativeFormatsResponse,
   type BuildCreativeRequest,
@@ -519,11 +519,11 @@ class CreativeTemplateAdapter implements DecisioningPlatform<Record<string, neve
         throw new AdcpError('INVALID_REQUEST', { message: 'upstream returned no preview_url' });
       }
 
-      // `previewCreativeResponse.single({...})` injects
+      // `previewCreative.single({...})` injects
       // `response_type: 'single'`. The render slot's `output_format`
       // discriminator is in turn injected by `urlRender({...})`.
       // SHAPE-GOTCHAS §4.
-      return previewCreativeResponse.single({
+      return previewCreative.single({
         previews: [
           {
             preview_id: `prv_${created.render_id}`,

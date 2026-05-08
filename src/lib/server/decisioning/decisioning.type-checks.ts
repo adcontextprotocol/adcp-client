@@ -550,7 +550,7 @@ function _ad_server_list_creative_formats_requires_account_narrow(): void {
 import { activationKey, segmentIdActivationKey, keyValueActivationKey } from '../../utils/activation-key-builders';
 import { signalId, catalogSignalId, agentSignalId } from '../../utils/signal-id-builders';
 import { buildCreativeReturn, singleEnvelopedBuildCreativeReturn } from '../../utils/build-creative-return-builders';
-import { previewCreativeResponse, singlePreviewCreativeResponse } from '../../utils/preview-creative-response-builders';
+import { previewCreative, singlePreviewCreativeResponse } from '../../utils/preview-creative-builders';
 import {
   mediaBuyDeliveryNotification,
   scheduledMediaBuyDeliveryNotification,
@@ -579,8 +579,8 @@ function _signal_id_factories_inject_discriminator(): void {
   agentSignalId({ source: 'catalog', agent_url: 'https://x', id: 'y' });
 }
 
-function _preview_creative_response_factories_inject_discriminator(): void {
-  const single = previewCreativeResponse.single({
+function _preview_creative_factories_inject_discriminator(): void {
+  const single = previewCreative.single({
     previews: [{ preview_id: 'p', renders: [], input: { name: 'default' } }],
     expires_at: '2026-05-03T00:00:00Z',
   });
@@ -684,7 +684,7 @@ export const _references = [
   _ad_server_list_creative_formats_rejects_unnarrowed_access,
   _activation_key_factories_inject_discriminator,
   _signal_id_factories_inject_discriminator,
-  _preview_creative_response_factories_inject_discriminator,
+  _preview_creative_factories_inject_discriminator,
   _build_creative_return_factories_pin_arm,
   _media_buy_delivery_notification_factories_inject_discriminator,
 ] as const;

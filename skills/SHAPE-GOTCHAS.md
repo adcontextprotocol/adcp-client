@@ -150,13 +150,13 @@ Same pattern applies to `DAASTAsset` (audio).
 
 Each `PreviewRender` requires `render_id`, `output_format: 'url'` (or `'inline_html'`), `preview_url`, and `role`. Don't omit `role` — the validator requires it.
 
-**Prevent at write time:** import `previewCreativeResponse` from
+**Prevent at write time:** import `previewCreative` from
 `@adcp/sdk`. The typed factory injects the `response_type` discriminator
 and pairs naturally with `urlRender({...})` / `htmlRender({...})` /
 `bothRender({...})` for the per-render `output_format`:
 
 ```ts
-previewCreativeResponse.single({
+previewCreative.single({
   previews: [
     {
       preview_id: 'prv_abc',
@@ -166,8 +166,8 @@ previewCreativeResponse.single({
   ],
   expires_at: '2026-05-03T00:00:00Z',
 });
-previewCreativeResponse.batch({ results: [...] });
-previewCreativeResponse.variant({ variant_id, creative_id, previews });
+previewCreative.batch({ results: [...] });
+previewCreative.variant({ variant_id, creative_id, previews });
 ```
 
 A flat `{ preview: {...} }` shape doesn't typecheck.
