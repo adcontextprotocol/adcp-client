@@ -21,6 +21,7 @@ import { unwrapProtocolResponse, isAdcpError } from '../utils/response-unwrapper
 import { extractAdcpErrorInfo, extractCorrelationId } from '../utils/error-extraction';
 import { generateIdempotencyKey, isMutatingTask, redactIdempotencyKeyInArgs } from '../utils/idempotency';
 import { normalizeGetProductsResponse } from '../utils/pricing-adapter';
+import { cancelA2ATask } from '../protocols/a2a';
 import type {
   Message,
   InputRequest,
@@ -1423,6 +1424,20 @@ export class TaskExecutor {
       if (signal?.aborted) {
         const reason =
           signal.reason instanceof Error ? signal.reason.message : String(signal.reason ?? 'polling cancelled');
+        // adcp-client#1617: Phase 1 — notify the seller so it can stop doing
+        // work for a buyer that has already given up. A2A 0.3.0 §7.4 defines
+        // tasks/cancel for exactly this case. Fire-and-forget: cancel failure
+        // (TaskNotCancelable, network error, terminal-state race) is non-fatal.
+        // TODO(adcp-client#1617-phase2): upgrade to awaited cancel once AdCP
+        // spec defines a cross-protocol cancel verb.
+        if (agent.protocol === 'a2a' && taskId && agent.agent_uri) {
+          void cancelA2ATask(agent.agent_uri, taskId, getAuthToken(agent)).catch((err: unknown) => {
+            console.warn(
+              `A2A tasks/cancel for task ${taskId} failed (non-fatal):`,
+              err instanceof Error ? err.message : 'unknown error'
+            );
+          });
+        }
         return attachMatch({
           success: false as const,
           status: 'failed' as const,

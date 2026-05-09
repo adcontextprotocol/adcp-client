@@ -63,6 +63,67 @@ export function closeA2AConnections(): void {
   pendingA2AClients.clear();
 }
 
+/**
+ * Fire-and-forget A2A tasks/cancel for an in-flight task (A2A 0.3.0 §7.4).
+ *
+ * Sends a raw JSON-RPC 2.0 POST directly to the agent endpoint. Uses the same
+ * auth header shape as `callA2AToolImpl` (Bearer + x-adcp-auth) and applies
+ * request signing when a signing context is active (required for `signed-requests`
+ * sellers that verify signatures on mutating operations). Does NOT enter
+ * `callContextStorage` — debug-log capture and 401-cache-eviction are
+ * intentionally skipped for best-effort cancellation.
+ *
+ * **Auth-code OAuth gap:** `authToken` is resolved by `getAuthToken(agent)`,
+ * which returns `undefined` for authorization-code-flow sellers (those tokens are
+ * managed by the OAuth provider path in `ProtocolClient.callTool`, not accessible
+ * here). Cancel calls to those sellers go out unauthenticated and will likely 401.
+ * This is acceptable — the cancel is best-effort and the buyer is already
+ * abandoning the task.
+ *
+ * The caller is responsible for swallowing errors: cancel failure
+ * (TaskNotCancelable, network error, auth rejection) is non-fatal because
+ * the buyer is already abandoning the task.
+ *
+ * @param agentUrl  The A2A agent endpoint URL (agent.agent_uri).
+ * @param taskId    The server-assigned A2A Task.id to cancel.
+ * @param authToken Bearer token for the seller, if available.
+ */
+export async function cancelA2ATask(agentUrl: string, taskId: string, authToken: string | undefined): Promise<void> {
+  const headers: Record<string, string> = {
+    'content-type': 'application/json',
+    accept: 'application/json',
+  };
+  if (authToken) {
+    headers['Authorization'] = `Bearer ${authToken}`;
+    headers['x-adcp-auth'] = authToken;
+  }
+  const body = JSON.stringify({
+    jsonrpc: '2.0',
+    id: null,
+    method: 'tasks/cancel',
+    params: { id: taskId },
+  });
+  // Apply request signing when a signing context is active. Sellers claiming
+  // `signed-requests` verify signatures on mutating operations including
+  // tasks/cancel — without this, the cancel would be rejected with 401/403,
+  // leaving the task orphaned even though the buyer dispatched a cancel.
+  // Note: the `callA2ATool` → `signingContextStorage.run()` ALS context is
+  // NOT active during `pollTaskCompletion` (different execution context), so
+  // `getStore()` returns undefined here unless the caller explicitly wraps
+  // `pollTaskCompletion` in `signingContextStorage.run()`. The signing branch
+  // is a forward-compatibility hook; in practice Phase 1 cancel calls are
+  // unsigned for signed-requests sellers and will 401 non-fatally.
+  const signingContext = signingContextStorage.getStore();
+  const fetchFn = signingContext
+    ? buildAgentSigningFetch({
+        upstream: (input, init) => fetch(input as any, init),
+        signing: signingContext.signing,
+        getCapability: signingContext.getCapability,
+      })
+    : fetch;
+  await fetchFn(agentUrl as any, { method: 'POST', headers, body });
+}
+
 async function getOrCreateA2AClient(
   agentUrl: string,
   authToken: string | undefined
