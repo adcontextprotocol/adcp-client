@@ -43,25 +43,31 @@ function startServer(handler) {
 }
 
 describe('NetworkConsistencyChecker — SSRF policy gate (#1633)', () => {
-  test('probeAgent refuses agent URL pointing at IMDS', async () => {
+  test('probeAgent refuses agent URL pointing at IMDS with [SSRF refused] tag', async () => {
     const checker = new NetworkConsistencyChecker({
       domains: ['attacker.example.com'],
       logLevel: 'silent',
     });
-    // Direct invocation via the public probeAgent surface (instance
-    // method exposed for testing). Refusal lands as
-    // `{ reachable: false, error: '...' }` because the existing catch
-    // handler maps any error to that shape — but the SsrfRefusedError
-    // code is what we want to verify fires.
     const result = await checker['probeAgent']({
       url: 'http://169.254.169.254/',
       authorized_for: 'attacker',
     });
     assert.strictEqual(result.reachable, false);
-    // The error message ought to mention the policy refusal explicitly,
-    // not a generic "fetch failed". `validateAgentUrl` would refuse
-    // first if it caught IMDS; if that's the case, just confirm reachable=false.
-    assert.ok(result.error, 'must surface an error string');
+    // The sanitizeError path tags policy refusals with `[SSRF refused]`
+    // so operators can tell "host unreachable" apart from "host refused
+    // on policy grounds" — closes the catch-swallow regression flagged
+    // by the security review of #1638.
+    //
+    // `validateAgentUrl` may also catch IMDS earlier with its own
+    // message; tolerate either path but require non-generic wording so
+    // a regression that downgrades to `'Request failed'` would fail.
+    assert.ok(
+      result.error?.includes('[SSRF refused]') ||
+        result.error?.includes('169.254') ||
+        result.error?.includes('cloud-metadata') ||
+        result.error?.includes('always-blocked'),
+      `expected SSRF-refusal-shaped error, got: ${result.error}`
+    );
   });
 
   test('probeAgent succeeds against a loopback agent server', async () => {

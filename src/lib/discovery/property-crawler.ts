@@ -13,7 +13,7 @@ import { getPropertyIndex } from './property-index';
 import { createLogger, type LogLevel } from '../utils/logger';
 import { LIBRARY_VERSION } from '../version';
 import { validateUserAgent } from '../utils/validate-user-agent';
-import { ssrfSafeFetch, decodeBodyAsJsonOrText } from '../net/ssrf-fetch';
+import { ssrfSafeFetch, SsrfRefusedError, SSRF_TRANSIENT_CODES, decodeBodyAsJsonOrText } from '../net/ssrf-fetch';
 import { isInternalProbesAllowed } from '../utils/probe-policy';
 import type { Property, AdAgentsJson } from './types';
 
@@ -381,6 +381,14 @@ export class PropertyCrawler {
         }),
       };
     } catch (error) {
+      // adcp-client#1633 review: tag SSRF policy refusals distinctly so a
+      // policy refusal (private/IMDS/etc.) doesn't masquerade as a generic
+      // "fetch failed". The transient codes (DNS / body-cap) keep their
+      // plain wording so the existing `EXPECTED_FAILURE_PATTERNS` matcher
+      // continues to suppress them at debug level.
+      if (error instanceof SsrfRefusedError && !SSRF_TRANSIENT_CODES.has(error.code)) {
+        throw new Error(`Failed to fetch adagents.json: [SSRF refused] ${error.message}`);
+      }
       throw new Error(`Failed to fetch adagents.json: ${error instanceof Error ? error.message : String(error)}`);
     }
   }

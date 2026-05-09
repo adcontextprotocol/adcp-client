@@ -12,7 +12,7 @@ import { createLogger, type LogLevel } from '../utils/logger';
 import { LIBRARY_VERSION } from '../version';
 import { validateUserAgent } from '../utils/validate-user-agent';
 import { validateAgentUrl } from '../validation';
-import { ssrfSafeFetch, SsrfRefusedError, decodeBodyAsJsonOrText } from '../net/ssrf-fetch';
+import { ssrfSafeFetch, SsrfRefusedError, SSRF_TRANSIENT_CODES, decodeBodyAsJsonOrText } from '../net/ssrf-fetch';
 import { isInternalProbesAllowed } from '../utils/probe-policy';
 import type { AdAgentsJson, AuthorizedAgent, Property } from './types';
 
@@ -370,6 +370,11 @@ export class NetworkConsistencyChecker {
         error: error instanceof Error ? error.message : String(error),
       };
     }
+    // adcp-client#1633 review: share a single AbortController across the
+    // initial probe AND any redirect-follow so the total wall-clock stays
+    // bounded by `this.timeoutMs`. Without this, each ssrfSafeFetch gets a
+    // fresh budget and a malicious redirect chain doubles the wait.
+    const sharedSignal = AbortSignal.timeout(this.timeoutMs);
     try {
       // adcp-client#1633: route through ssrfSafeFetch for DNS-pin / TOCTOU
       // defense. validateAgentUrl above is the literal-hostname gate; the
@@ -381,6 +386,7 @@ export class NetworkConsistencyChecker {
         method: 'HEAD',
         timeoutMs: this.timeoutMs,
         allowPrivateIp: isInternalProbesAllowed(),
+        signal: sharedSignal,
         // Body cap is irrelevant for HEAD but keep small as defense-in-depth
         // in case the seller incorrectly returns a body on HEAD.
         maxBodyBytes: 1024,
@@ -407,6 +413,7 @@ export class NetworkConsistencyChecker {
           method: 'HEAD',
           timeoutMs: this.timeoutMs,
           allowPrivateIp: isInternalProbesAllowed(),
+          signal: sharedSignal,
           maxBodyBytes: 1024,
           headers: {
             ...FETCH_HEADERS,
@@ -570,6 +577,10 @@ export class NetworkConsistencyChecker {
 
   private async fetchJson<T>(url: string): Promise<T> {
     validateAgentUrl(url);
+    // Shared AbortController: total wall-clock bounded by `this.timeoutMs`
+    // across the initial fetch + any 1-redirect follow. See `probeAgent`
+    // for the same pattern + rationale.
+    const sharedSignal = AbortSignal.timeout(this.timeoutMs);
     try {
       // adcp-client#1633: ssrfSafeFetch handles DNS-pin / TOCTOU / body cap
       // / scheme guard / redirect: 'manual' in one wrapper. Each ssrfSafeFetch
@@ -578,6 +589,7 @@ export class NetworkConsistencyChecker {
       let result = await ssrfSafeFetch(url, {
         timeoutMs: this.timeoutMs,
         allowPrivateIp: isInternalProbesAllowed(),
+        signal: sharedSignal,
         maxBodyBytes: MAX_RESPONSE_BYTES,
         headers: {
           ...FETCH_HEADERS,
@@ -600,6 +612,7 @@ export class NetworkConsistencyChecker {
         result = await ssrfSafeFetch(redirectUrl, {
           timeoutMs: this.timeoutMs,
           allowPrivateIp: isInternalProbesAllowed(),
+          signal: sharedSignal,
           maxBodyBytes: MAX_RESPONSE_BYTES,
           headers: {
             ...FETCH_HEADERS,
@@ -633,6 +646,23 @@ export class NetworkConsistencyChecker {
   }
 
   private sanitizeError(error: unknown): string {
+    // adcp-client#1633 review: SSRF policy refusals must surface distinctly
+    // so operators can tell "host unreachable" apart from "host refused on
+    // policy grounds." Without this carve-out, an attacker-supplied URL
+    // resolving to a private/IMDS address would masquerade as a generic
+    // fetch failure (the catch-swallow class flagged in #1618 review).
+    // The transient codes (DNS / body-cap) still surface as their plain
+    // strings — the user-visible distinction is `[SSRF refused]` in front
+    // of the policy-class messages.
+    if (error instanceof SsrfRefusedError) {
+      if (SSRF_TRANSIENT_CODES.has(error.code)) {
+        // Map transient codes to existing strings the test suite expects.
+        if (error.code === 'dns_lookup_failed' || error.code === 'dns_empty') return 'DNS resolution failed';
+        if (error.code === 'body_exceeds_limit') return 'Response too large';
+      }
+      // Policy refusal: prefix so the report makes the distinction visible.
+      return `[SSRF refused] ${error.message}`;
+    }
     if (error instanceof Error) {
       if (error.name === 'AbortError') return 'Request timed out';
       if (error.message.startsWith('HTTP ')) return error.message;
