@@ -37,6 +37,19 @@ async function detectA2AOrMcp(url: string, timeoutMs: number): Promise<'a2a' | '
     return 'mcp';
   }
 
+  // adcp-client#1612: classify each well-known card probe into one of three
+  // signals so we can distinguish "this is A2A but momentarily 503" from
+  // "this is not A2A":
+  //   - `confirm`  : 200/3xx — A2A confirmed
+  //   - `suspect`  : 5xx or transport error — host knows the path but can't
+  //                  serve it right now; still strong evidence of A2A. Falling
+  //                  back to MCP here is what produced the original #1612
+  //                  symptom (425s of MCP retries against an A2A root).
+  //   - `negative` : 4xx (other than 401/403/429) — host doesn't recognize
+  //                  the well-known path; MCP is the better default.
+  // 401/403/429 are auth/rate signals on the well-known path itself, which
+  // also indicate "host knows the path" → suspect.
+  let suspect = false;
   for (const path of A2A_CARD_PATHS) {
     try {
       const discoveryUrl = new URL(path, url);
@@ -56,10 +69,20 @@ async function detectA2AOrMcp(url: string, timeoutMs: number): Promise<'a2a' | '
       if (response.ok) {
         return 'a2a';
       }
-    } catch (error) {
-      // Fetch failed - try next path
+      // 5xx or auth-on-the-path: treat as A2A suspicion (host has this route
+      // but couldn't return the card right now). Don't return immediately —
+      // a later path might confirm with a 200.
+      if (response.status >= 500 || response.status === 401 || response.status === 403 || response.status === 429) {
+        suspect = true;
+      }
+      // 4xx (other than the above): negative evidence, leave suspect alone.
+    } catch {
+      // Network error or our 5s timeout fired. The host may still be A2A
+      // (just slow); upgrade suspicion so we don't fall back to MCP and
+      // burn the caller's discovery budget on a non-MCP root.
+      suspect = true;
     }
   }
 
-  return 'mcp';
+  return suspect ? 'a2a' : 'mcp';
 }

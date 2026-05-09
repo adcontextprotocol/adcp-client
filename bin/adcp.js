@@ -432,14 +432,23 @@ async function handleTestCommand(args) {
     authToken = args[authIndex + 1];
   }
 
+  // adcp-client#1612: accept `--transport` as an alias for `--protocol`.
+  // The original symptom report used `--transport a2a` (per A2A SDK
+  // convention), which silently dropped through to auto-detect — auto-detect
+  // returns 'mcp' for any URL whose well-known A2A card path doesn't 200,
+  // so MCP discovery then ran against a non-MCP root URL and burned ~7 min.
+  // Alias is non-breaking; explicit `--protocol` still wins on conflict.
   const protocolIndex = args.indexOf('--protocol');
+  const transportIndex = args.indexOf('--transport');
   let protocolFlag = null;
-  if (protocolIndex !== -1) {
-    if (protocolIndex + 1 >= args.length || args[protocolIndex + 1].startsWith('--')) {
-      console.error('ERROR: --protocol requires a value (mcp or a2a)\n');
+  const flagIndex = protocolIndex !== -1 ? protocolIndex : transportIndex;
+  const flagName = protocolIndex !== -1 ? '--protocol' : '--transport';
+  if (flagIndex !== -1) {
+    if (flagIndex + 1 >= args.length || args[flagIndex + 1].startsWith('--')) {
+      console.error(`ERROR: ${flagName} requires a value (mcp or a2a)\n`);
       process.exit(2);
     }
-    protocolFlag = args[protocolIndex + 1];
+    protocolFlag = args[flagIndex + 1];
   }
 
   const briefIndex = args.indexOf('--brief');
@@ -697,10 +706,14 @@ function parseAgentOptions(args) {
     authToken = args[authIndex + 1];
   }
 
+  // adcp-client#1612: accept `--transport` as an alias for `--protocol`.
+  // See parseStorboardArgs for full rationale.
   const protocolIndex = args.indexOf('--protocol');
+  const transportIndex = args.indexOf('--transport');
   let protocolFlag = null;
-  if (protocolIndex !== -1 && protocolIndex + 1 < args.length && !args[protocolIndex + 1].startsWith('--')) {
-    protocolFlag = args[protocolIndex + 1];
+  const flagIndex = protocolIndex !== -1 ? protocolIndex : transportIndex;
+  if (flagIndex !== -1 && flagIndex + 1 < args.length && !args[flagIndex + 1].startsWith('--')) {
+    protocolFlag = args[flagIndex + 1];
   }
 
   const briefIndex = args.indexOf('--brief');
@@ -1365,6 +1378,7 @@ AGENT MANAGEMENT:
 
 OPTIONS:
   --protocol PROTO  Force protocol: mcp or a2a (default: auto-detect)
+  --transport PROTO  Alias for --protocol (A2A SDK convention)
   --auth TOKEN      Authentication token
   -H, --header K=V  Extra HTTP header on every request (repeatable). Auth wins on conflict.
                     Common use: -H x-adcp-tenant=<id> for tenant routing behind a reverse proxy.
@@ -1481,6 +1495,7 @@ OPTIONS:
                       has no valid tokens yet. Requires a saved alias
                       (use --save-auth first for raw URLs). MCP only.
   --protocol PROTO    Force protocol: mcp or a2a
+  --transport PROTO   Alias for --protocol (A2A SDK convention)
   --dry-run           Preview steps without executing
   --debug             Debug output
   --invariants SPECS  Comma-separated module specifiers to dynamic-import
@@ -5180,8 +5195,11 @@ credential material — never sync or commit.
   // Parse options first
   const authIndex = args.indexOf('--auth');
   let authToken = authIndex !== -1 ? args[authIndex + 1] : process.env.ADCP_AUTH_TOKEN;
+  // adcp-client#1612: accept `--transport` as an alias for `--protocol`.
   const protocolIndex = args.indexOf('--protocol');
-  const protocolFlag = protocolIndex !== -1 ? args[protocolIndex + 1] : null;
+  const transportIndex = args.indexOf('--transport');
+  const flagIndex = protocolIndex !== -1 ? protocolIndex : transportIndex;
+  const protocolFlag = flagIndex !== -1 ? args[flagIndex + 1] : null;
   const jsonOutput = args.includes('--json');
   const debug = args.includes('--debug') || process.env.ADCP_DEBUG === 'true';
   const waitForAsync = args.includes('--wait');

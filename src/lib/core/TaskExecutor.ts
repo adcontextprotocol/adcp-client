@@ -170,18 +170,35 @@ function unwrapTasksGetEnvelope(obj: Record<string, unknown>, depth = 0): Record
   const result = obj.result;
   if (result != null && typeof result === 'object' && !Array.isArray(result)) {
     const r = result as Record<string, unknown>;
-    if (r.kind === 'task' && Array.isArray(r.artifacts) && r.artifacts.length > 0) {
-      const artifact = r.artifacts[0] as Record<string, unknown> | null;
-      if (
-        artifact != null &&
-        typeof artifact === 'object' &&
-        Array.isArray(artifact.parts) &&
-        artifact.parts.length > 0
-      ) {
-        const firstPart = artifact.parts[0] as Record<string, unknown> | null;
-        if (firstPart?.kind === 'data' && firstPart.data != null && typeof firstPart.data === 'object') {
-          return unwrapTasksGetEnvelope(firstPart.data as Record<string, unknown>, depth + 1);
+    if (r.kind === 'task') {
+      if (Array.isArray(r.artifacts) && r.artifacts.length > 0) {
+        const artifact = r.artifacts[0] as Record<string, unknown> | null;
+        if (
+          artifact != null &&
+          typeof artifact === 'object' &&
+          Array.isArray(artifact.parts) &&
+          artifact.parts.length > 0
+        ) {
+          const firstPart = artifact.parts[0] as Record<string, unknown> | null;
+          if (firstPart?.kind === 'data' && firstPart.data != null && typeof firstPart.data === 'object') {
+            return unwrapTasksGetEnvelope(firstPart.data as Record<string, unknown>, depth + 1);
+          }
         }
+      }
+      // adcp-client#1612: When the A2A Task has no DataPart artifacts (e.g. the
+      // seller returns an A2A transport-level state without an AdCP DataPart
+      // payload), surface the transport-layer status as a last-resort hint so
+      // `mapTasksGetResponseToTaskInfo` can map terminal states to `failed` /
+      // `completed` rather than falling through to `'unknown'`. The transport
+      // state overlaps with AdCP status strings for all A2A-native values
+      // (`completed`, `failed`, `rejected`, `canceled`, `working`, `submitted`).
+      // Note: `auth-required` is an AdCP-layer concept; it won't surface via
+      // this path (no A2A-native transport state carries that label) — those
+      // responses reach the `unknown` exit branch instead. Also include the A2A
+      // task handle (`result.id`) so polling error messages carry the real id.
+      const transportStatus = (r.status as Record<string, unknown> | undefined)?.state;
+      if (typeof transportStatus === 'string') {
+        return { status: transportStatus, task_id: typeof r.id === 'string' ? r.id : undefined };
       }
     }
   }
@@ -1120,8 +1137,8 @@ export class TaskExecutor {
       webhookUrl,
       track: (transport?: import('../protocols').TransportOptions) =>
         this.getTaskStatus(agent, serverTaskId, transport ?? options.transport),
-      waitForCompletion: (pollInterval = 60000) =>
-        this.pollTaskCompletion<T>(agent, serverTaskId, pollInterval, options.transport),
+      waitForCompletion: (pollInterval = 60000, signal?: AbortSignal) =>
+        this.pollTaskCompletion<T>(agent, serverTaskId, pollInterval, options.transport, signal),
     };
 
     return {
@@ -1395,10 +1412,31 @@ export class TaskExecutor {
     agent: AgentConfig,
     taskId: string,
     pollInterval = 60000,
-    transport?: import('../protocols').TransportOptions
+    transport?: import('../protocols').TransportOptions,
+    signal?: AbortSignal
   ): Promise<TaskResult<T>> {
     const pollStartTime = Date.now();
     while (true) {
+      // adcp-client#1612: When the outer storyboard race timer fires, the
+      // caller's AbortSignal is already aborted. Exit cleanly rather than
+      // continuing to send `tasks/get` requests that nobody is waiting for.
+      if (signal?.aborted) {
+        const reason =
+          signal.reason instanceof Error ? signal.reason.message : String(signal.reason ?? 'polling cancelled');
+        return attachMatch({
+          success: false as const,
+          status: 'failed' as const,
+          error: `tasks/get polling was cancelled before a terminal state was observed: ${reason}`,
+          metadata: this.buildMetadata({
+            taskId,
+            taskName: 'unknown',
+            agent,
+            startTime: pollStartTime,
+            status: 'failed',
+          }),
+        });
+      }
+
       // adcp-client#1585: A2A 0.3.x defines no minimum retention TTL for
       // completed tasks. A seller may evict a task between the buyer
       // observing the working-state response and the first explicit
@@ -1519,7 +1557,35 @@ export class TaskExecutor {
         });
       }
 
+      // adcp-client#1612: `status: 'unknown'` means `mapTasksGetResponseToTaskInfo`
+      // could not extract a recognizable status string from the response — the
+      // seller's `tasks/get` response did not conform to any expected envelope
+      // shape (flat AdCP, MCP structuredContent, or A2A DataPart artifact).
+      // Continuing to poll would spin forever since the shape won't change.
+      // Surface a descriptive failure so the storyboard runner reports the
+      // seller's non-conformance rather than burning the outer timeout budget.
+      if (status.status === 'unknown') {
+        return attachMatch({
+          success: false as const,
+          status: 'failed' as const,
+          error:
+            `tasks/get returned an unrecognizable response (parsed status: "unknown", taskId: "${status.taskId}"). ` +
+            `The seller may not implement tasks/get as an AdCP skill, or its response did not match any ` +
+            `supported envelope shape (flat AdCP, MCP structuredContent, or A2A DataPart artifact).`,
+          metadata: this.buildMetadata({
+            taskId,
+            taskName: 'unknown',
+            agent,
+            startTime: pollStartTime,
+            status: 'failed',
+          }),
+        });
+      }
+
       await this.sleep(pollInterval);
+      // Re-check after sleep so a signal that fired mid-sleep exits at the top
+      // of the next iteration rather than issuing one more `getTaskStatus` call.
+      if (signal?.aborted) continue;
     }
   }
 

@@ -472,14 +472,16 @@ async function resolveTaskCompletionOutputs(
 
   const racers: Promise<Winner>[] = [];
 
-  // Poll path. Note: when the outer race resolves first, the SDK's
-  // `pollTaskCompletion` keeps polling internally until it observes a
-  // terminal state. The runner's outer timeout is enough to bound the
-  // *step* duration; the inner loop continuation is a known limitation
-  // pending an AbortSignal addition to the SDK.
+  // Poll path. An AbortSignal tied to the same `timeoutMs` budget is passed
+  // to `pollTaskCompletion` so the inner loop exits as soon as the outer race
+  // timer fires — no orphaned `tasks/get` requests survive the step boundary.
+  // (adcp-client#1612: previously the loop ran indefinitely after the outer
+  // timeout resolved, accumulating background A2A calls that consumed the
+  // full comply() budget.)
   if (canPoll) {
+    const pollSignal = AbortSignal.timeout(timeoutMs);
     racers.push(
-      executor.pollTaskCompletion(agent, taskId, pollIntervalMs).then(
+      executor.pollTaskCompletion(agent, taskId, pollIntervalMs, undefined, pollSignal).then(
         (result: TaskResult): PollWin => ({
           kind: 'poll',
           result,
@@ -1361,6 +1363,10 @@ async function executeStoryboardPass(
   }
 
   for (const phase of storyboard.phases) {
+    // adcp-client#1612: bail at phase boundaries when comply()'s combined
+    // timeout/external signal has aborted. Without this the phase loop runs
+    // to completion regardless of the outer budget.
+    options.signal?.throwIfAborted();
     const phaseStart = Date.now();
     const stepResults: StoryboardStepResult[] = [];
     let phasePassed = true;
@@ -1501,6 +1507,11 @@ async function executeStoryboardPass(
     }
 
     for (const step of phase.steps) {
+      // adcp-client#1612: per-step abort gate. The dominant comply() cost
+      // on a healthy seller is sequential per-tool calls inside a single
+      // storyboard's phase — without this check the phase runs to completion
+      // even after comply() has already signalled "give up".
+      options.signal?.throwIfAborted();
       // Cascade-skip when the PRM presence probe declared the phase absent.
       if (phaseAbsent) {
         const cascadeResult: StoryboardStepResult = {
