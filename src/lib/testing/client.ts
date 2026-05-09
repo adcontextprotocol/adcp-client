@@ -189,6 +189,36 @@ export async function getOrDiscoverProfile(
 /**
  * Run a single test step with timing
  */
+/**
+ * Race a promise against an AbortSignal. Adopted by `discoverAgentProfile`
+ * so the comply pipeline's timeout actually bounds discovery wall-clock —
+ * the underlying transport's `getAgentInfo()` doesn't accept a signal
+ * (public API), so we resolve the wrapper promise on abort and let the
+ * orphaned in-flight request finish on its own. (adcp-client#1612)
+ *
+ * Throws the signal's reason on abort.
+ */
+function raceWithSignal<T>(promise: Promise<T>, signal?: AbortSignal): Promise<T> {
+  if (!signal) return promise;
+  if (signal.aborted) {
+    return Promise.reject(signal.reason ?? new Error('aborted'));
+  }
+  return new Promise<T>((resolve, reject) => {
+    const onAbort = () => reject(signal.reason ?? new Error('aborted'));
+    signal.addEventListener('abort', onAbort, { once: true });
+    promise.then(
+      v => {
+        signal.removeEventListener('abort', onAbort);
+        resolve(v);
+      },
+      e => {
+        signal.removeEventListener('abort', onAbort);
+        reject(e);
+      }
+    );
+  });
+}
+
 export async function runStep<T>(
   stepName: string,
   taskName: string | undefined,
@@ -228,12 +258,19 @@ export async function runStep<T>(
  * When the agent exposes `get_adcp_capabilities`, its response populates
  * `supported_protocols` + `specialisms` on the profile so the compliance
  * runner can select domain and specialism bundles.
+ *
+ * Pass `signal` (typically comply()'s combined timeout/external signal) to
+ * bound discovery latency. Without it, an unhealthy agent whose well-known
+ * card path returns 503-with-30s-tail or whose MCP transport silently
+ * retries against a non-MCP root can stretch a single `getAgentInfo` call
+ * past comply()'s timeout — the wall-clock symptom in adcp-client#1612.
  */
 export async function discoverAgentProfile(
-  client: TestClient
+  client: TestClient,
+  signal?: AbortSignal
 ): Promise<{ profile: AgentProfile; step: TestStepResult }> {
   const { result: agentInfo, step } = await runStep('Discover agent capabilities', 'getAgentInfo', () =>
-    client.getAgentInfo()
+    raceWithSignal(client.getAgentInfo(), signal)
   );
 
   const profile: AgentProfile = {
@@ -255,7 +292,7 @@ export async function discoverAgentProfile(
 
   if (profile.tools.includes('get_adcp_capabilities')) {
     try {
-      const caps = (await client.getAdcpCapabilities({})) as TaskResult;
+      const caps = (await raceWithSignal(client.getAdcpCapabilities({}), signal)) as TaskResult;
       if (caps?.success && caps?.data) {
         profile.raw_capabilities = caps.data;
         const parsed = parseCapabilitiesResponse(caps.data);

@@ -805,9 +805,11 @@ async function complyImpl(agentUrl: string, options: ComplyOptions): Promise<Com
     // Collect observations across all tracks
     const allObservations: AdvisoryObservation[] = [];
 
-    // Discover agent capabilities once and share across all storyboards
+    // Discover agent capabilities once and share across all storyboards.
+    // Pass the combined signal so a slow/unresponsive agent can't hold the
+    // comply pipeline past its own timeout (adcp-client#1612).
     const client = createTestClient(agentUrl, effectiveOptions.protocol ?? 'mcp', effectiveOptions);
-    const { profile, step: profileStep } = await discoverAgentProfile(client);
+    const { profile, step: profileStep } = await discoverAgentProfile(client, signal);
     effectiveOptions._client = client;
     effectiveOptions._profile = profile;
 
