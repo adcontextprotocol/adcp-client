@@ -1,9 +1,9 @@
 /**
- * Derived `AccountStore` factory for `resolution: 'derived'` single-tenant
- * agents — there is no `account_id` on the wire and the auth principal alone
- * identifies the tenant. Most self-hosted broadcasters, retail-media operators
- * in proxy mode, and creative-only adapters (audiostack, flashtalking) where
- * every API call is scoped by the buyer's per-request credential.
+ * Derived `AccountStore` factory for `resolution: 'derived'` agents — there is
+ * no `account_id` on the wire and the auth principal alone routes each request.
+ * Covers self-hosted broadcasters, retail-media operators in proxy mode, and
+ * creative-only adapters (audiostack, flashtalking) where every API call is
+ * scoped by the buyer's per-request credential.
  *
  * Pairs with the existing reference adapters. Pick by asking *who creates the
  * account?*:
@@ -25,7 +25,8 @@
  */
 
 import type { AccountReference } from '../types/tools.generated';
-import type { Account, AccountStore, ResolveContext } from '../server/decisioning/account';
+import type { Account, AccountFilter, AccountStore, ResolveContext } from '../server/decisioning/account';
+import type { CursorPage, CursorRequest } from '../server/decisioning/pagination';
 import { AdcpError } from '../server/decisioning/async-outcome';
 
 /**
@@ -74,6 +75,49 @@ export interface DerivedAccountStoreOptions<TCtxMeta = Record<string, unknown>> 
    * @default false
    */
   skipAuthCheck?: boolean;
+
+  /**
+   * Optional `list_accounts` implementation. When provided, the factory
+   * includes it on the returned `AccountStore`; the framework auto-wires
+   * `list_accounts` via the existing `if (accounts.list)` gate.
+   *
+   * **Use case — spec compliance for derived-mode sellers.** AdCP requires
+   * every seller to expose at least one of `list_accounts` / `sync_accounts`.
+   * `'derived'` agents that claim neither fail conformance under the
+   * storyboard runner (see adcp-client#1624). Providing this callback
+   * satisfies that requirement without changing the resolution mode.
+   *
+   * **Semantics — discovery, not addressing.** `'derived'` mode still refuses
+   * inline `account_id` references on subsequent requests (the framework
+   * emits `INVALID_REQUEST` before reaching `accounts.resolve`). The
+   * `account_id` values returned by this callback are informational — buyers
+   * use them to discover what accounts are accessible to their auth
+   * principal, but all per-request routing continues to flow through
+   * `toAccount(ctx)` via the auth credential alone. Do NOT expose this
+   * option if buyers are expected to pass the listed `account_id`s back on
+   * mutating calls — use `resolution: 'explicit'` or `createTenantStore`
+   * for that pattern.
+   *
+   * **Auth gate.** `skipAuthCheck` guards `resolve` only. Auth checking for
+   * `list` is the adopter's responsibility — check `ctx.authInfo` inside
+   * the callback and throw `AdcpError('AUTH_REQUIRED', ...)` when the
+   * principal is absent, if your platform requires authentication to
+   * enumerate accounts.
+   *
+   * @example Auth-scoped upstream roster:
+   * ```ts
+   * const accounts = createDerivedAccountStore({
+   *   toAccount: ctx => deriveAccount(ctx),
+   *   list: async (filter, ctx) => {
+   *     const cred = ctx?.authInfo?.credential;
+   *     if (!cred) throw new AdcpError('AUTH_REQUIRED', { recovery: 'correctable' });
+   *     const page = await upstreamPlatform.listAccounts(cred, filter);
+   *     return { items: page.rows.map(toAccount), nextCursor: page.cursor };
+   *   },
+   * });
+   * ```
+   */
+  list?: (filter: AccountFilter & CursorRequest, ctx?: ResolveContext) => Promise<CursorPage<Account<TCtxMeta>>>;
 }
 
 /**
@@ -89,16 +133,21 @@ export interface DerivedAccountStoreOptions<TCtxMeta = Record<string, unknown>> 
  *    fail-closed only when none of the three are present.
  * 3. Calls `toAccount(ctx)` and returns the result. Buyer-supplied
  *    `AccountReference` is ignored — single-tenant by definition.
- * 4. Omits `list` / `upsert` — single-tenant adapters have nothing to
- *    enumerate or write. Adopters who want either compose via spread.
+ * 4. Omits `upsert` — single-tenant adapters have no buyer-managed roster.
+ *    Adopters who need `upsert` compose via spread.
+ * 5. Wires `list` when `options.list` is provided (see `DerivedAccountStoreOptions.list`
+ *    for semantics and the spec-compliance motivation).
  *
- * **When NOT to use this.** If two different auth principals should resolve
- * to two different `account.id` values, you want Shape B
- * ({@link createOAuthPassthroughResolver}) or `createTenantStore` — NOT this
- * factory. Misusing Shape D in a multi-tenant deployment routes every buyer
- * to the same singleton id and breaks tenant isolation silently (no error,
- * no log). The factory is single-tenant by design — `toAccount(ctx)` should
- * return the same `id` for every principal that calls it.
+ * **When NOT to use this.** If buyers need to pass `account_id` on mutating
+ * requests (i.e., different auth principals reference different accounts by
+ * id), use Shape B ({@link createOAuthPassthroughResolver}) or
+ * `createTenantStore` with `resolution: 'explicit'`. The `'derived'`
+ * resolution mode refuses inline `account_id` references unconditionally —
+ * even if you provide `list?` and the listing returns multiple accounts,
+ * buyers cannot address those accounts by id on subsequent calls. The
+ * `list?` option is for discovery / spec-compliance only (see
+ * `DerivedAccountStoreOptions.list`). If you need buyers to address specific
+ * accounts by id after listing them, use `'explicit'` mode.
  *
  * @example AudioStack-shaped creative adapter:
  * ```ts
@@ -171,6 +220,8 @@ export function createDerivedAccountStore<TCtxMeta = Record<string, unknown>>(
       }
       return options.toAccount(ctx);
     },
+
+    ...(options.list ? { list: options.list } : {}),
   };
 }
 

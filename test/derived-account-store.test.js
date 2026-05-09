@@ -33,7 +33,7 @@ describe('createDerivedAccountStore (#1462)', () => {
     assert.equal(store.resolution, 'derived');
   });
 
-  it('omits list/upsert/refreshToken/getAccountFinancials/reportUsage', () => {
+  it('omits list/upsert/refreshToken/getAccountFinancials/reportUsage when list option is not provided', () => {
     const store = createDerivedAccountStore({
       toAccount: () => ({ id: 'x', name: 'x', status: 'active', ctx_metadata: {} }),
     });
@@ -195,6 +195,46 @@ describe('createDerivedAccountStore (#1462)', () => {
         },
       });
       await assert.rejects(() => store.resolve(undefined, oauthCtx('b1')), /upstream is down/);
+    });
+  });
+
+  describe('list callback (#1628)', () => {
+    it('wires list onto the store when options.list is provided', () => {
+      const listFn = async () => ({ items: [], nextCursor: undefined });
+      const store = createDerivedAccountStore({
+        toAccount: () => ({ id: 'x', name: 'x', status: 'active', ctx_metadata: {} }),
+        list: listFn,
+      });
+      assert.equal(store.list, listFn);
+    });
+
+    it('resolution remains derived when list is provided', () => {
+      const store = createDerivedAccountStore({
+        toAccount: () => ({ id: 'x', name: 'x', status: 'active', ctx_metadata: {} }),
+        list: async () => ({ items: [] }),
+      });
+      assert.equal(store.resolution, 'derived');
+    });
+
+    it('list is callable and returns the callback result', async () => {
+      const item = { id: 'acct-1', name: 'Acct 1', status: 'active', ctx_metadata: {} };
+      const store = createDerivedAccountStore({
+        toAccount: () => ({ id: 'x', name: 'x', status: 'active', ctx_metadata: {} }),
+        list: async (_filter, ctx) => ({
+          items: [{ ...item, ctx_metadata: { cid: ctx?.authInfo?.credential?.client_id } }],
+        }),
+      });
+      const result = await store.list({ limit: 10 }, oauthCtx('buyer-1'));
+      assert.equal(result.items.length, 1);
+      assert.equal(result.items[0].id, 'acct-1');
+      assert.deepEqual(result.items[0].ctx_metadata, { cid: 'buyer-1' });
+    });
+
+    it('list is absent when options.list is not provided', () => {
+      const store = createDerivedAccountStore({
+        toAccount: () => ({ id: 'x', name: 'x', status: 'active', ctx_metadata: {} }),
+      });
+      assert.equal(store.list, undefined);
     });
   });
 

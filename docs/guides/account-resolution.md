@@ -12,7 +12,7 @@ How sellers implement the three `AccountStore.resolution` modes — `'explicit'`
 |---|---|---|
 | `'explicit'` (default) | `ext.account_ref` on every request | `ref.account_id` or `ref.brand`/`ref.operator` |
 | `'implicit'` | Nothing (no `ext.account_ref`) — but must call `sync_accounts` first | `ctx.authInfo` credential key |
-| `'derived'` | Nothing | Single-tenant singleton; no per-request resolution needed |
+| `'derived'` | Nothing | Auth principal alone; `createDerivedAccountStore` defaults to singleton, optional `list?` for account discovery |
 
 Declare the mode on `AccountStore`:
 
@@ -179,11 +179,23 @@ accountStore.size;                              // number of stored linkages
 
 ---
 
-## `'derived'` (single-tenant)
+## `'derived'` mode
 
-Return a fixed singleton regardless of `ref`. For the canonical Shape D
-pattern (auth principal IS the tenant — audiostack, flashtalking,
-single-namespace retail-media), use `createDerivedAccountStore`:
+In `'derived'` mode the framework refuses inline `account_id` references before
+reaching `accounts.resolve` — every call is routed by the auth principal alone.
+This is the correct mode when there is no `account_id` concept on the wire: the
+buyer's credential identifies their tenant, full stop.
+
+> **Resolution mode vs. factory default.** The `'derived'` mode itself does not
+> require a singleton. `createDerivedAccountStore` defaults to single-tenant (one
+> fixed id for all callers), but `'derived'` stores can expose a `list_accounts`
+> surface for account discovery. See [Multi-tenant derived](#multi-tenant-derived)
+> below.
+
+### Single-tenant (canonical Shape D)
+
+For the canonical shape — one auth-derived singleton, no roster — use
+`createDerivedAccountStore`:
 
 ```ts
 import { createDerivedAccountStore } from '@adcp/sdk/server';
@@ -201,8 +213,7 @@ const accounts = createDerivedAccountStore<MyMeta>({
 The factory sets `resolution: 'derived'`, throws
 `AdcpError('AUTH_REQUIRED')` when `ctx.authInfo.credential` is absent
 (skip with `skipAuthCheck: true` for genuinely unauthenticated agents),
-and ignores any buyer-supplied `account_id` (single-tenant by
-definition). Hand-rolled equivalent:
+and ignores any buyer-supplied `account_id`. Hand-rolled equivalent:
 
 ```ts
 accounts: {
@@ -219,11 +230,61 @@ accounts: {
 No `upsert` needed. The framework returns `UNSUPPORTED_FEATURE` to any
 buyer that calls `sync_accounts`.
 
+### Multi-tenant derived
+
+Use `list?` when your agent fronts an upstream platform with its own
+account roster and you want to expose `list_accounts` for discovery. The
+auth principal still routes every request (`toAccount(ctx)` is called per
+request); `list` lets buyers enumerate which accounts are visible to their
+credential.
+
+**Key constraint: listing is for discovery only.** Even when `list?` is
+provided, the framework still refuses inline `account_id` references for
+`'derived'` platforms (`INVALID_REQUEST` before `accounts.resolve`). Buyers
+cannot pass a listed `account_id` back on mutating calls. If buyers need to
+address specific accounts by id on subsequent requests, use
+`resolution: 'explicit'` or `createTenantStore` instead.
+
+**Spec compliance.** AdCP requires every seller to expose at least one of
+`list_accounts` / `sync_accounts`. `'derived'` agents that expose neither
+will fail storyboard conformance checks (see adcp-client#1624). Providing
+`list?` satisfies this requirement.
+
+```ts
+import { createDerivedAccountStore, AdcpError } from '@adcp/sdk/server';
+
+// Replace `deriveAccount` and `upstreamPlatform` with your own implementations —
+// these are not SDK exports.
+const accounts = createDerivedAccountStore<UpstreamMeta>({
+  toAccount: ctx => deriveAccount(ctx),   // adopter-supplied: maps auth principal → Account
+
+  list: async (filter, ctx) => {
+    const cred = ctx?.authInfo?.credential;
+    if (!cred) throw new AdcpError('AUTH_REQUIRED', { recovery: 'correctable' });
+
+    // Scope the listing to this buyer's auth principal.
+    const page = await upstreamPlatform.listAccounts(cred, {  // adopter-supplied
+      limit: filter.limit,
+      cursor: filter.cursor,
+    });
+    return {
+      items: page.rows.map(row => ({
+        id: row.id,
+        name: row.name,
+        status: 'active',
+        ctx_metadata: { upstreamId: row.id },
+      })),
+      nextCursor: page.nextCursor,
+    };
+  },
+});
+```
+
 **Inline `account_id` refusal.** Since adcp-client#1468, the framework
 refuses inline `{ account_id }` references for `'derived'` platforms with
 `AdcpError('INVALID_REQUEST', { field: 'account.account_id' })` *before*
 reaching `accounts.resolve` — same shape as `'implicit'`'s refusal (#1364),
-with a single-tenant message instead of the `sync_accounts`-first guidance.
+with a derived-mode message instead of the `sync_accounts`-first guidance.
 Hand-rolled `'derived'` stores get this for free; the
 `createDerivedAccountStore` factory's defensive ignore is a belt + braces
 fallback. The brand+operator union arm is still permitted (route through
