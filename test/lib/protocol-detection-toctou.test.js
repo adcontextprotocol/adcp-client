@@ -98,22 +98,28 @@ describe('detectProtocol — 3xx redirects are not auto-followed (#1627)', () =>
     process.env.ADCP_ALLOW_INTERNAL_PROBES = '1';
   });
 
-  test('302 with Location to a different host does NOT bounce', async () => {
-    // ssrfSafeFetch sets `redirect: 'manual'`, so a 302 stays 302 and the
-    // Location header is ignored by detectProtocol. Result: 302 doesn't
-    // match the 200-confirm or 5xx-suspect bands → falls through to mcp.
-    // The point of THIS test is "we don't follow into an attacker URL",
-    // not the resulting classification — those land in negative evidence.
+  test('302 with same-origin Location does NOT auto-follow (redirect: manual)', async () => {
+    // The PRIOR shape pointed Location at `http://169.254.169.254/` — but
+    // that target gets refused by `ssrfSafeFetch`'s address gate even
+    // under `redirect: 'follow'`, so the assertion would still pass on a
+    // regression that swapped to follow-mode (caught by code-reviewer).
+    //
+    // Same-origin Location is the right test: a regression to
+    // `redirect: 'follow'` would auto-fetch the local `/probed` path,
+    // which `probedLocation = true` records.
     let probedLocation = false;
     const server = await new Promise(resolve => {
       const s = http.createServer((req, res) => {
         if (req.url.includes('/.well-known/')) {
-          res.writeHead(302, { Location: 'http://169.254.169.254/' });
+          res.writeHead(302, { Location: '/probed' });
           res.end();
-        } else {
+        } else if (req.url === '/probed') {
           probedLocation = true;
           res.writeHead(200);
           res.end('{}');
+        } else {
+          res.writeHead(404);
+          res.end();
         }
       });
       s.listen(0, '127.0.0.1', () =>
@@ -125,11 +131,15 @@ describe('detectProtocol — 3xx redirects are not auto-followed (#1627)', () =>
     });
     try {
       const result = await detectProtocol(server.url);
-      // We don't assert the exact classification here — the surface invariant
-      // is "do not follow into the attacker URL". A 302 lands in negative
-      // evidence (not a 200, not 5xx, not auth/rate), so result is 'mcp'.
+      // 302 is neither 200/2xx nor 5xx/auth/rate — falls through to
+      // negative evidence → 'mcp'. The load-bearing assertion is the
+      // probedLocation flag below.
       assert.strictEqual(result, 'mcp');
-      assert.strictEqual(probedLocation, false, 'Must NOT follow Location header into an attacker URL');
+      assert.strictEqual(
+        probedLocation,
+        false,
+        'Must NOT auto-follow same-origin Location — would catch a regression to redirect: "follow"'
+      );
     } finally {
       await server.close();
     }
