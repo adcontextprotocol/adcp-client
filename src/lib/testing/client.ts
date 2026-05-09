@@ -18,6 +18,8 @@ import type {
 import type { TestOptions, TestStepResult, AgentProfile, TaskResult, Logger } from './types';
 import { TOOL_RESPONSE_SCHEMAS } from '../utils/response-schemas';
 import { parseCapabilitiesResponse } from '../utils/capabilities';
+import { classifyProbeUrl } from '../utils/probe-policy';
+import { SsrfRefusedError } from '../net/ssrf-fetch';
 
 /**
  * Extract a principal identifier from TestOptions auth.
@@ -96,6 +98,27 @@ export function getLogger(): Logger {
  * Create a test client for an agent
  */
 export function createTestClient(agentUrl: string, protocol: 'mcp' | 'a2a' = 'mcp', options: TestOptions = {}) {
+  // adcp-client#1618: SSRF policy gate at client construction. Once the
+  // TestClient exists, every transport call inherits its agent URI; guarding
+  // once here covers the entire client lifecycle, including downstream
+  // `discoverAgentProfile` fetches (`getAgentInfo`, `getAdcpCapabilities`).
+  // Throws synchronously — `SsrfRefusedError` is the documented refusal
+  // type and operators see a clear hostname-only message (no resolved IP
+  // in the user-visible text; see `probe-policy.ts` rationale).
+  const policy = classifyProbeUrl(agentUrl);
+  if (!policy.allowed) {
+    // `classifyProbeUrl` already returned `{ allowed: true }` for any URL
+    // that fails `new URL(...)`, so reaching the !allowed branch implies the
+    // URL parses cleanly. Reparse only to extract the bare hostname for the
+    // SsrfRefusedError meta.
+    const hostname = new URL(agentUrl).hostname.replace(/^\[|\]$/g, '');
+    throw new SsrfRefusedError(
+      policy.code === 'always_blocked' ? 'always_blocked_address' : 'private_address',
+      policy.reason,
+      { url: agentUrl, hostname }
+    );
+  }
+
   const headers: Record<string, string> = {};
 
   if (options.test_session_id) {
