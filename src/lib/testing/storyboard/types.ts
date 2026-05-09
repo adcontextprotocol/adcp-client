@@ -40,7 +40,15 @@ export interface Storyboard {
    *
    * Recognised names:
    *   - `controller` — the agent must advertise `comply_test_controller`.
-   *     Detected from `options.agentTools`.
+   *     Detected from `options.agentTools`. Callers reusing an external
+   *     client without supplying `agentTools` (the `_client`-without-tools
+   *     escape hatch — same shape as the `required_tools` gate) bypass
+   *     this check; their storyboard runs into the per-step
+   *     `missing_test_controller` cascade instead. The gate degrades
+   *     rather than false-fails — by design — but adopters relying on
+   *     `requires: [controller]` for whole-storyboard skip semantics
+   *     should populate `agentTools` (the standard `comply()` path
+   *     always does).
    *   - `seeded_state` — the operator must pass `--asserts-seeded-state`
    *     (or set `assertsSeededState: true`) declaring that initial state
    *     has been provisioned out-of-band (HTTP admin, pre-test script,

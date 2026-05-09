@@ -892,7 +892,7 @@ function buildRequirementUnmetResult(
   const reason = REQUIREMENT_TO_SKIP_REASON[requirement];
   const syntheticStep: StoryboardStepResult = {
     storyboard_id: storyboard.id,
-    step_id: 'requirement_unmet',
+    step_id: `requirement_unmet:${requirement}`,
     phase_id: 'requirement_unmet',
     title: `Storyboard skipped: requires '${requirement}'`,
     task: '',

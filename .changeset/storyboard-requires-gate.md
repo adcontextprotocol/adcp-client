@@ -1,5 +1,5 @@
 ---
-"@adcp/sdk": minor
+'@adcp/sdk': minor
 ---
 
 feat(storyboard): per-storyboard `requires:` gate + `--asserts-seeded-state` flag
@@ -15,6 +15,7 @@ requires: [controller]
 ```
 
 Recognised requirements:
+
 - `controller` — agent must advertise `comply_test_controller`. Detected from
   `options.agentTools`.
 - `seeded_state` — operator must pass `--asserts-seeded-state` declaring that
@@ -43,6 +44,7 @@ granularity.
 ```
 
 Migration:
+
 - SDK-internal storyboard tagging is opt-in. Untagged storyboards keep their
   existing per-step `missing_test_controller` cascade behavior.
 - Upstream storyboards in `compliance/cache/` are auto-synced from
@@ -51,5 +53,25 @@ Migration:
 - Per-step `requires_tool` (#933) is unchanged and still applies for
   fine-grained per-step gating.
 
+Downstream consumers — `controller` unmet emits BOTH the existing
+`skip_reason: 'missing_test_controller'` AND the new
+`skip.requirement: 'controller'` field on the same skip event. The
+intent is back-compat for skip-cause aggregators keyed on the string
+plus richer per-requirement grouping for new consumers. **Do not
+double-count**: pick one channel. Treat them as the same event seen
+through two lenses, not two separate skips.
+
+`--asserts-seeded-state` is operator-attested with no runner-side
+verification. Trust signals (verified-live badges, scoreboards,
+ecosystem dashboards) MUST NOT consume `requires: [seeded_state]`
+pass results without independent verification — a malicious or
+mistaken operator can flip the flag to widen the graded set without
+the underlying state actually existing. Self-correcting for
+assessment use (scenarios fail naturally if state isn't present),
+but not for trust propagation.
+
 Spec: adcp-client#1626. The schema may be proposed upstream as an additive
-storyboard contract once it has bedded in across SDK adopters.
+storyboard contract once it has bedded in across SDK adopters. If upstream
+picks an `applicable_modes`-style runtime axis instead, `requires` may be
+subsumed by a rename + namespace shift on this SDK-internal field — no
+wire break.
