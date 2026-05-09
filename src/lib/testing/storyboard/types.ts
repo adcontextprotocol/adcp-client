@@ -32,6 +32,44 @@ export interface Storyboard {
   /** Tools that make this storyboard applicable (at least one must be present) */
   required_tools?: string[];
   /**
+   * Runtime requirements this storyboard depends on. Each name describes
+   * something the runner detects from the agent or from operator-supplied
+   * options; an unmet requirement skips the whole storyboard with
+   * `skip_reason: 'requirement_unmet'` rather than producing a cascade of
+   * misleading per-step `missing_test_controller` skips.
+   *
+   * Recognised names:
+   *   - `controller` — the agent must advertise `comply_test_controller`.
+   *     Detected from `options.agentTools`. Callers reusing an external
+   *     client without supplying `agentTools` (the `_client`-without-tools
+   *     escape hatch — same shape as the `required_tools` gate) bypass
+   *     this check; their storyboard runs into the per-step
+   *     `missing_test_controller` cascade instead. The gate degrades
+   *     rather than false-fails — by design — but adopters relying on
+   *     `requires: [controller]` for whole-storyboard skip semantics
+   *     should populate `agentTools` (the standard `comply()` path
+   *     always does).
+   *   - `seeded_state` — the operator must pass `--asserts-seeded-state`
+   *     (or set `assertsSeededState: true`) declaring that initial state
+   *     has been provisioned out-of-band (HTTP admin, pre-test script,
+   *     staging fixture). The runner does not verify the assertion;
+   *     scenarios that need state still fail naturally if the seed is
+   *     not actually present.
+   *   - `real_wire` — always available. Tag scenarios that observe
+   *     production behavior with this when you want them excluded from
+   *     a future `--mock-only` mode; today the tag is a no-op gate.
+   *
+   * Default when the field is absent: `[real_wire]` (storyboard runs
+   * everywhere — matches existing pre-tagging behavior). Tagging is
+   * additive opt-in; loader rejects unknown requirement names and an
+   * empty array (`requires: []`) so authoring mistakes fail loud.
+   *
+   * Spec: adcp-client#1626. The schema may be proposed upstream to
+   * `adcontextprotocol/adcp` once it has bedded in across SDK
+   * storyboards.
+   */
+  requires?: RequirementName[];
+  /**
    * Predicate evaluated against the agent's declared capabilities before any
    * phase runs. When the predicate is false, the runner emits a single
    * `{ skipped: true, skip_reason: 'capability_unsupported' }` storyboard
@@ -880,6 +918,17 @@ export interface StoryboardRunOptions extends TestOptions {
    */
   allow_http?: boolean;
   /**
+   * Operator assertion that initial state has been provisioned out-of-band
+   * (HTTP admin, pre-test script, staging fixture) — flips the
+   * `seeded_state` requirement to available so storyboards declaring
+   * `requires: [seeded_state]` run instead of skipping with
+   * `requirement_unmet`. Default false. The runner does NOT verify the
+   * assertion; if state isn't actually seeded the scenario fails
+   * naturally on its first stateful step, which is the right signal.
+   * CLI: `--asserts-seeded-state`. Spec: adcp-client#1626.
+   */
+  assertsSeededState?: boolean;
+  /**
    * Request-signing grader knobs (applied when the runner encounters
    * synthesized `request_signing_probe` steps from the signed-requests
    * specialism).
@@ -1137,6 +1186,16 @@ export type RunnerSkipReason =
   | 'missing_test_controller'
   | 'unsatisfied_contract'
   /**
+   * A storyboard-level `requires:` tag named a requirement that is not
+   * available on the current run (e.g. `controller` when the agent doesn't
+   * advertise `comply_test_controller`, or `seeded_state` when the operator
+   * didn't pass `--asserts-seeded-state`). Distinct from `missing_tool` /
+   * `missing_test_controller` (per-step tool gates) and `unsatisfied_contract`
+   * (capability predicate). The `RunnerSkipResult.requirement` field carries
+   * the unmet requirement name. Spec: adcp-client#1626.
+   */
+  | 'requirement_unmet'
+  /**
    * A peer optional phase in the same `branch_set` already contributed the
    * aggregation flag, so this non-chosen branch's failing steps are moot
    * (see storyboard-schema.yaml > "Per-step grading in any_of branch
@@ -1219,7 +1278,38 @@ export const DETAILED_SKIP_TO_CANONICAL: Record<RunnerDetailedSkipReason, Runner
 export interface RunnerSkipResult {
   reason: RunnerSkipReason;
   detail: string;
+  /**
+   * Set when `reason === 'requirement_unmet'` to name the storyboard-level
+   * requirement that was not available on this run. Carries the same value
+   * authored in `Storyboard.requires`. Consumers (skip-cause aggregation,
+   * dashboards) key on this field to group not-applicable scenarios by
+   * cause. Absent for every other skip reason. Spec: adcp-client#1626.
+   */
+  requirement?: RequirementName;
 }
+
+/**
+ * Recognised values for `Storyboard.requires`. See `Storyboard.requires`
+ * for what each name detects from. Adding a new value here is a wire
+ * surface change; coordinate with the upstream spec proposal before
+ * extending.
+ *
+ * Spec: adcp-client#1626.
+ */
+export type RequirementName = 'controller' | 'seeded_state' | 'real_wire';
+
+/**
+ * Closed enumeration of every known requirement. Used by the loader to
+ * reject typos in `Storyboard.requires` (`requires: [contoller]` fails
+ * load rather than silently dropping coverage) and by the runner to
+ * compute available requirements for the gate. Keep in sync with
+ * `RequirementName`.
+ */
+export const KNOWN_REQUIREMENTS: ReadonlySet<RequirementName> = new Set([
+  'controller',
+  'seeded_state',
+  'real_wire',
+] as const satisfies readonly RequirementName[]);
 
 /**
  * Machine-readable Zod/AJV-style validation error. Emitted in

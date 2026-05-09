@@ -74,6 +74,7 @@ import type {
   RunnerExtractionRecord,
   RunnerRequestRecord,
   RunnerResponseRecord,
+  RequirementName,
   RunnerSkipReason,
   StepAuthDirective,
   Storyboard,
@@ -120,6 +121,8 @@ const SKIP_DETAILS: Record<RunnerSkipReason, string> = {
   missing_test_controller:
     'Skipped: deterministic_testing phase requires comply_test_controller, which the agent did not advertise.',
   unsatisfied_contract: 'Skipped: test-kit contract is out of scope for this grading run.',
+  requirement_unmet:
+    'Skipped: a requires: tag named a runtime requirement that is not available on this run (see RunnerSkipResult.requirement).',
   peer_branch_taken: 'Skipped: a peer branch in the same any_of branch set already contributed the aggregation flag.',
   peer_substituted: 'Skipped: a same-phase peer step established equivalent state via `provides_state_for`.',
 };
@@ -853,6 +856,140 @@ function buildCapabilityUnsupportedResult(
 }
 
 /**
+ * Map a `requires:` requirement onto the canonical `RunnerSkipReason` to
+ * emit when that requirement is unmet. `controller` reuses the existing
+ * `missing_test_controller` value so back-compat consumers (skip-cause
+ * aggregators, dashboards keyed on the existing string) keep grouping
+ * controller-driven skips into the same bucket they already track. Other
+ * requirements use the new `requirement_unmet` reason; consumers that
+ * want per-requirement granularity read `RunnerSkipResult.requirement`.
+ *
+ * Spec: adcp-client#1626 (no-rename design — keep existing skip_reason
+ * values stable as the back-compat surface; add `requirement_unmet` only
+ * for requirement names that have no existing canonical reason).
+ */
+const REQUIREMENT_TO_SKIP_REASON: Record<RequirementName, RunnerSkipReason> = {
+  controller: 'missing_test_controller',
+  seeded_state: 'requirement_unmet',
+  real_wire: 'requirement_unmet',
+};
+
+/**
+ * Build a minimal StoryboardResult for a storyboard skipped because a
+ * `requires:` tag named a requirement that isn't available on this run
+ * (e.g. `controller` when the agent doesn't advertise
+ * `comply_test_controller`, or `seeded_state` when the operator didn't
+ * pass `--asserts-seeded-state`). Mirrors `buildCapabilityUnsupportedResult`
+ * but carries the structured `requirement` field so consumers can group
+ * not-applicable scenarios by cause. Spec: adcp-client#1626.
+ */
+function buildRequirementUnmetResult(
+  agentUrls: string[],
+  storyboard: Storyboard,
+  requirement: RequirementName,
+  detail: string
+): StoryboardResult {
+  const reason = REQUIREMENT_TO_SKIP_REASON[requirement];
+  const syntheticStep: StoryboardStepResult = {
+    storyboard_id: storyboard.id,
+    step_id: `requirement_unmet:${requirement}`,
+    phase_id: 'requirement_unmet',
+    title: `Storyboard skipped: requires '${requirement}'`,
+    task: '',
+    passed: true,
+    skipped: true,
+    skip_reason: reason,
+    skip: { reason, detail, requirement },
+    duration_ms: 0,
+    validations: [],
+    context: {},
+    extraction: { path: 'none' },
+  };
+  return {
+    storyboard_id: storyboard.id,
+    storyboard_title: storyboard.title,
+    agent_url: agentUrls[0]!,
+    overall_passed: true,
+    phases: [
+      {
+        phase_id: 'requirement_unmet',
+        phase_title: `Requirement unmet: ${requirement}`,
+        passed: true,
+        steps: [syntheticStep],
+        duration_ms: 0,
+      },
+    ],
+    context: {},
+    total_duration_ms: 0,
+    passed_count: 0,
+    failed_count: 0,
+    skipped_count: 1,
+    tested_at: new Date().toISOString(),
+    strict_validation_summary: {
+      observable: false,
+      checked: 0,
+      passed: 0,
+      failed: 0,
+      strict_only_failures: 0,
+      lenient_also_failed: 0,
+    },
+  };
+}
+
+/**
+ * Resolve a storyboard's `requires:` tags against the runtime environment.
+ * Returns the first unmet requirement (with a human-readable detail) or
+ * `null` when every requirement is available. Spec: adcp-client#1626.
+ *
+ * Detection rules:
+ *   - `controller` — agent advertises `comply_test_controller` (read from
+ *     `options.agentTools`). When `options.agentTools` is undefined the
+ *     gate is a no-op — the caller accepted responsibility for tool
+ *     compatibility by reusing an external client.
+ *   - `seeded_state` — operator passed `assertsSeededState: true`
+ *     (CLI: `--asserts-seeded-state`).
+ *   - `real_wire` — always available; the runner is hitting a real wire
+ *     by definition. The tag is a no-op gate today, reserved for a
+ *     future `--mock-only` mode.
+ */
+function checkRequires(
+  requires: readonly RequirementName[],
+  options: StoryboardRunOptions
+): { requirement: RequirementName; detail: string } | null {
+  for (const requirement of requires) {
+    switch (requirement) {
+      case 'controller': {
+        if (!options.agentTools) continue;
+        if (!options.agentTools.includes('comply_test_controller')) {
+          return {
+            requirement,
+            detail:
+              `Storyboard requires 'controller'; agent does not advertise comply_test_controller. ` +
+              `Agent tools: [${options.agentTools.join(', ')}].`,
+          };
+        }
+        break;
+      }
+      case 'seeded_state': {
+        if (options.assertsSeededState !== true) {
+          return {
+            requirement,
+            detail:
+              "Storyboard requires 'seeded_state'; pass --asserts-seeded-state to declare " +
+              'that initial state has been provisioned out-of-band.',
+          };
+        }
+        break;
+      }
+      case 'real_wire':
+        // Always available — reserved for a future --mock-only mode.
+        break;
+    }
+  }
+  return null;
+}
+
+/**
  * Build a hard-failure StoryboardResult for when agent capability
  * discovery (`get_agent_info` / MCP `tools/list`) failed. Surfacing
  * discovery errors as a hard storyboard failure prevents the silent
@@ -1083,6 +1220,21 @@ async function executeStoryboardPass(
       }
     } else {
       profile = options._profile;
+    }
+  }
+
+  // Evaluate `requires` tags before any phase setup. The runner detects
+  // which requirements are available on this run; an unmet requirement
+  // skips the whole storyboard with `requirement_unmet` rather than
+  // producing a cascade of `missing_test_controller` per-step skips.
+  // Spec: adcp-client#1626. The default (no `requires` field) is
+  // `[real_wire]`, which is always available — untagged storyboards
+  // run unchanged.
+  if (storyboard.requires?.length) {
+    const unmet = checkRequires(storyboard.requires, options);
+    if (unmet) {
+      if (!options._client) await closeConnections(options.protocol);
+      return buildRequirementUnmetResult(agentUrls, storyboard, unmet.requirement, unmet.detail);
     }
   }
 
