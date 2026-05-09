@@ -1,5 +1,94 @@
 # Changelog
 
+## 6.15.1
+
+### Patch Changes
+
+- f3e3950: fix(cli/discovery): three compounding A2A timeout bugs (#1612)
+
+  Investigation of the original #1612 symptom against
+  `wonderstruck.sales-agent.scope3.com` (`storyboard run … --transport a2a`
+  hanging at 307s+) found three independent bugs whose interaction produced
+  the observed wall-clock:
+  1. **`--transport` flag was silently dropped.** CLI accepted only
+     `--protocol`. The original repro and many users use `--transport`
+     (A2A SDK convention). Now accepted as an alias; explicit `--protocol`
+     wins on conflict.
+  2. **`detectProtocol` returned `'mcp'` on any non-200 response from the
+     well-known A2A card path** — including 5xx, 401, 403, 429, and network
+     timeouts. A host that returns 503 on `/.well-known/agent.json` is far
+     more likely to be A2A-with-an-unhealthy-card than MCP-at-root. New
+     classification: 5xx/401/403/429/network-error → A2A suspect, only 4xx
+     (other than auth/rate) and clean miss → MCP fallback.
+  3. **`discoverAgentProfile` had no AbortSignal awareness.** When the SDK
+     was misled into trying MCP discovery against a non-MCP root, the
+     internal `getAgentInfo()` call could spin past comply()'s timeout
+     (we observed 425s of orphaned MCP retries). `comply()` now passes its
+     combined timeout/external signal to `discoverAgentProfile`, which
+     races the underlying transport calls so the comply pipeline unblocks
+     on abort. The orphaned in-flight transport request still resolves in
+     the background; the fix bounds caller-visible latency, not the
+     transport's own retry budget.
+
+  **Empirical verification against Wonderstruck**:
+
+  | Invocation                                | Before | After |
+  | ----------------------------------------- | ------ | ----- |
+  | `--transport a2a` (typo for `--protocol`) | 425s   | 31s   |
+  | bare URL auto-detect                      | 425s   | 41s   |
+  | `--protocol mcp` against `/mcp`           | 60.8s  | 31s   |
+
+  These three fixes are independent — each addresses a distinct failure mode
+  exposed by the same symptom. The `pollTaskCompletion` hardening from the
+  prior commits remains relevant for the per-step polling case.
+
+- f3e3950: fix(a2a): stop pollTaskCompletion spinning indefinitely on unrecognized tasks/get responses
+
+  Four-part fix for the A2A comply() 180s timeout (issue #1612):
+  1. `pollTaskCompletion` now exits immediately with a `failed` `TaskResult` when
+     `mapTasksGetResponseToTaskInfo` returns `status: 'unknown'` — i.e., when the
+     seller's `tasks/get` response does not conform to any recognised envelope shape
+     (flat AdCP, MCP `structuredContent`, or A2A DataPart artifact). Previously the
+     loop fell through to `sleep(pollInterval)` and retried forever until the outer
+     comply() timeout fired.
+  2. `pollTaskCompletion` and `SubmittedContinuation.waitForCompletion` now accept an
+     optional `AbortSignal` (5th / 2nd parameter respectively). The storyboard runner
+     passes `AbortSignal.timeout(timeoutMs)` so the inner polling loop exits as soon
+     as the outer 30-second step race timer fires. Previously the loop kept issuing
+     `tasks/get` A2A calls in the background, accumulating until the full comply()
+     budget was exhausted. Buyers using the public `waitForCompletion()` API also
+     benefit — pass `AbortSignal.timeout(ms)` to bound the polling lifetime.
+  3. `unwrapTasksGetEnvelope` now falls back to the A2A transport-layer
+     `result.status.state` (and `result.id` task handle) when an A2A Task carries
+     no DataPart artifacts. This allows terminal states (`completed`, `failed`, etc.)
+     to surface correctly for sellers that return A2A transport states without an
+     AdCP DataPart artifact.
+  4. A second `signal?.aborted` check after `sleep(pollInterval)` limits abort
+     latency to one sleep interval rather than one full poll cycle.
+
+- f3e3950: fix(comply): thread AbortSignal through the storyboard run loop so comply()'s timeout actually bounds wall-clock (#1612, MCP side)
+
+  Before this change, `complyImpl`'s combined `timeout_ms` / external-signal
+  `AbortController` only fired between storyboards (`signal.throwIfAborted()` at
+  the top of each `for (const sb of applicableStoryboards)` iteration). Inside a
+  single storyboard, `executeStoryboardPass` had no signal awareness — so a
+  storyboard with many sequential per-step calls would burn the full comply()
+  budget regardless of when the abort fired.
+
+  Three changes:
+  1. `StoryboardRunOptions.signal?: AbortSignal` (new optional field).
+  2. `complyImpl` forwards its combined signal into `runOptions`.
+  3. `executeStoryboardPass` calls `options.signal?.throwIfAborted()` at the
+     start of every phase iteration AND every step iteration, so the abort
+     fires between any two steps — not only between storyboards.
+
+  Empirical verification against `wonderstruck.sales-agent.scope3.com/mcp` with
+  a 60s timeout: wall-clock went from **150s → 60.8s** (timeout + 0.8s tail).
+
+  Note: the A2A path against the same agent still leaks ~250s past the abort.
+  That's a separate root cause (A2A discovery / probe loop with no signal
+  awareness) tracked under the same issue and not addressed here.
+
 ## 6.15.0
 
 ### Minor Changes
