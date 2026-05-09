@@ -6,7 +6,7 @@
 
 import { A2A_CARD_PATHS } from './a2a-discovery';
 import { classifyProbeUrl, isInternalProbesAllowed } from './probe-policy';
-import { SsrfRefusedError, ssrfSafeFetch } from '../net/ssrf-fetch';
+import { SsrfRefusedError, ssrfSafeFetch, SSRF_TRANSIENT_CODES } from '../net/ssrf-fetch';
 
 /**
  * Detect protocol for a given agent URL
@@ -115,25 +115,13 @@ async function detectA2AOrMcp(url: string, timeoutMs: number): Promise<'a2a' | '
       // Distinguish policy refusals (must propagate — caller is reaching
       // for SSRF targets) from runtime/network conditions (treat as
       // suspect — host is unreachable or non-conformant in a way that's
-      // consistent with a slow / large A2A seller).
-      //
-      // Propagate: `always_blocked_address`, `private_address`,
-      //   `scheme_not_allowed`, `non_https_without_opt_in`, `invalid_url`.
-      //   These mean the caller's URL was rejected on policy grounds;
-      //   silently converting them to `'a2a'` would reintroduce the
-      //   catch-swallow class flagged in #1618 review.
-      // Treat as suspect: `dns_lookup_failed`, `dns_empty`,
-      //   `body_exceeds_limit`. DNS conditions mean the network is
-      //   misbehaving, not that the URL is dangerous — and the pre-#1627
-      //   native-fetch behavior also swallowed these into suspect.
-      //   `body_exceeds_limit` fires when the agent card exceeds the
-      //   defensive 4 KiB cap; A2A 0.3.0 §5 doesn't cap card size, so a
-      //   large legitimate card shouldn't be misclassified as a policy
-      //   attack — the host clearly knows the well-known path
-      //   (the response started, just got too big), which is exactly
-      //   the suspect-A2A signal.
+      // consistent with a slow / large A2A seller). The shared
+      // `SSRF_TRANSIENT_CODES` set encodes which codes fall through —
+      // see its JSDoc for the rationale on each. Silently downgrading a
+      // policy refusal would reintroduce the catch-swallow class flagged
+      // in #1618 review.
       if (err instanceof SsrfRefusedError) {
-        if (err.code === 'dns_lookup_failed' || err.code === 'dns_empty' || err.code === 'body_exceeds_limit') {
+        if (SSRF_TRANSIENT_CODES.has(err.code)) {
           suspect = true;
           continue;
         }
