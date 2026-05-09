@@ -5,6 +5,8 @@
  */
 
 import { A2A_CARD_PATHS } from './a2a-discovery';
+import { classifyProbeUrl } from './probe-policy';
+import { SsrfRefusedError } from '../net/ssrf-fetch';
 
 /**
  * Detect protocol for a given agent URL
@@ -35,6 +37,28 @@ export async function detectProtocolWithTimeout(url: string, timeoutMs: number =
 async function detectA2AOrMcp(url: string, timeoutMs: number): Promise<'a2a' | 'mcp'> {
   if (url.endsWith('/mcp/') || url.endsWith('/mcp')) {
     return 'mcp';
+  }
+
+  // adcp-client#1618: SSRF policy gate. MUST run BEFORE the try/catch loop
+  // below — placing this inside the loop would let `catch { suspect = true }`
+  // silently convert a denied URL into `'a2a'`, defeating the whole point of
+  // the policy. The hostname-literal check catches obvious attacks
+  // (`http://169.254.169.254/`, `http://10.0.0.1/`); per-IP DNS-aware
+  // protection lives one layer down (in callers that route through
+  // `ssrfSafeFetch`).
+  const policy = classifyProbeUrl(url);
+  if (!policy.allowed) {
+    let parsed: URL | undefined;
+    try {
+      parsed = new URL(url);
+    } catch {
+      /* policy already classified URL parsing as allowed; rethrow shape below uses url verbatim */
+    }
+    throw new SsrfRefusedError(
+      policy.code === 'always_blocked' ? 'always_blocked_address' : 'private_address',
+      policy.reason,
+      { url, hostname: parsed?.hostname.replace(/^\[|\]$/g, '') ?? url }
+    );
   }
 
   // adcp-client#1612: classify each well-known card probe into one of three
