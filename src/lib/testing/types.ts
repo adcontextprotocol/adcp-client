@@ -240,6 +240,14 @@ export interface TestStepResult {
   skipped?: boolean;
   /** Canonical skip reason when `skipped` is true; maps to `RunnerSkipReason`. */
   skip_reason?: string;
+  /**
+   * Names the unmet runtime requirement when `skip_reason` is
+   * `'requirement_unmet'` (per adcp-client#1626). Carries the same value
+   * the storyboard authored in `Storyboard.requires`. Lets skip-cause
+   * aggregators sub-group not-applicable scenarios per-requirement
+   * without parsing the warning text. Absent for every other skip reason.
+   */
+  requirement?: string;
 }
 
 export interface AgentProfile {

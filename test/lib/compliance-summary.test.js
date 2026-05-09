@@ -407,6 +407,198 @@ describe('buildComplianceSummary — skip causes', () => {
     assert.strictEqual(s.skip_causes[1].cause, 'missing_tool: sync_accounts');
     assert.strictEqual(s.skip_causes[1].count, 1);
   });
+
+  test('aggregates requirement_unmet causes by requirement name (#1626)', () => {
+    const base = passingResult();
+    const result = {
+      ...base,
+      tracks: [
+        {
+          track: 'media_buy',
+          status: 'skip',
+          label: 'Media Buy',
+          observations: [],
+          duration_ms: 0,
+          scenarios: [
+            {
+              agent_url: 'https://agent.example/mcp',
+              scenario: 'a/setup',
+              overall_passed: true,
+              summary: 'ok',
+              total_duration_ms: 0,
+              tested_at: base.tested_at,
+              steps: [
+                {
+                  step: 'requires-seed',
+                  passed: true,
+                  skipped: true,
+                  skip_reason: 'requirement_unmet',
+                  requirement: 'seeded_state',
+                  duration_ms: 0,
+                },
+              ],
+            },
+            {
+              agent_url: 'https://agent.example/mcp',
+              scenario: 'b/setup',
+              overall_passed: true,
+              summary: 'ok',
+              total_duration_ms: 0,
+              tested_at: base.tested_at,
+              steps: [
+                {
+                  step: 'requires-seed-2',
+                  passed: true,
+                  skipped: true,
+                  skip_reason: 'requirement_unmet',
+                  requirement: 'seeded_state',
+                  duration_ms: 0,
+                },
+              ],
+            },
+          ],
+          skipped_scenarios: [],
+        },
+      ],
+    };
+    const s = buildComplianceSummary(result, { sdkVersion: '6.9.0', adcpVersion: '3.0.6' });
+    assert.ok(s.skip_causes);
+    const seeded = s.skip_causes.find(c => c.cause === 'requirement_unmet: seeded_state');
+    assert.ok(seeded, 'requirement_unmet: seeded_state should be present');
+    assert.strictEqual(seeded.count, 2);
+    assert.strictEqual(seeded.affected.length, 2);
+  });
+
+  test('storyboard-level missing-tool emits one cause per tool (#1623)', () => {
+    // Per #1624: "agent does not advertise any of [sync_accounts, list_accounts]"
+    // is one warning that names two distinct gaps. Each tool gets its own
+    // cause entry rather than a comma-joined "missing_tool: sync_accounts, list_accounts".
+    const base = passingResult();
+    const result = {
+      ...base,
+      tracks: [
+        {
+          track: 'media_buy',
+          status: 'skip',
+          label: 'Media Buy',
+          observations: [],
+          duration_ms: 0,
+          scenarios: [
+            {
+              agent_url: 'https://agent.example/mcp',
+              scenario: 'refine_products/setup',
+              overall_passed: true,
+              summary: 'ok',
+              total_duration_ms: 0,
+              tested_at: base.tested_at,
+              steps: [
+                {
+                  step: 'discover',
+                  passed: true,
+                  skipped: true,
+                  skip_reason: 'missing_tool',
+                  duration_ms: 0,
+                  warnings: [
+                    'Required: agent does not advertise any of [sync_accounts, list_accounts]; agent tools: [].',
+                  ],
+                },
+              ],
+            },
+          ],
+          skipped_scenarios: [],
+        },
+      ],
+    };
+    const s = buildComplianceSummary(result, { sdkVersion: '6.9.0', adcpVersion: '3.0.6' });
+    assert.ok(s.skip_causes);
+    const sync = s.skip_causes.find(c => c.cause === 'missing_tool: sync_accounts');
+    const list = s.skip_causes.find(c => c.cause === 'missing_tool: list_accounts');
+    assert.ok(sync, 'missing_tool: sync_accounts should be present');
+    assert.ok(list, 'missing_tool: list_accounts should be present');
+  });
+
+  test('detailed skip reasons normalize to canonical actionability (controller_seeding_failed)', () => {
+    // The runner writes detailed RunnerDetailedSkipReason values directly
+    // to step.skip_reason. The aggregator must map them through
+    // DETAILED_SKIP_TO_CANONICAL — controller_seeding_failed maps to
+    // prerequisite_failed (actionable) so the cause should appear.
+    const base = passingResult();
+    const result = {
+      ...base,
+      tracks: [
+        {
+          track: 'media_buy',
+          status: 'skip',
+          label: 'Media Buy',
+          observations: [],
+          duration_ms: 0,
+          scenarios: [
+            {
+              agent_url: 'https://agent.example/mcp',
+              scenario: 'pre/setup',
+              overall_passed: true,
+              summary: 'ok',
+              total_duration_ms: 0,
+              tested_at: base.tested_at,
+              steps: [
+                {
+                  step: 'seed',
+                  passed: true,
+                  skipped: true,
+                  skip_reason: 'controller_seeding_failed',
+                  duration_ms: 0,
+                },
+              ],
+            },
+          ],
+          skipped_scenarios: [],
+        },
+      ],
+    };
+    const s = buildComplianceSummary(result, { sdkVersion: '6.9.0', adcpVersion: '3.0.6' });
+    assert.ok(s.skip_causes);
+    const csf = s.skip_causes.find(c => c.cause === 'controller_seeding_failed');
+    assert.ok(csf, 'controller_seeding_failed should be present (maps canonical prerequisite_failed)');
+  });
+
+  test('caps affected list at SKIP_CAUSE_AFFECTED_LIMIT in the JSON artifact', () => {
+    const base = passingResult();
+    const steps = Array.from({ length: 10 }, (_, i) => ({
+      step: `s${i}`,
+      passed: true,
+      skipped: true,
+      skip_reason: 'missing_test_controller',
+      duration_ms: 0,
+    }));
+    const scenarios = steps.map((step, i) => ({
+      agent_url: 'https://agent.example/mcp',
+      scenario: `sb${i}/setup`,
+      overall_passed: true,
+      summary: 'ok',
+      total_duration_ms: 0,
+      tested_at: base.tested_at,
+      steps: [step],
+    }));
+    const result = {
+      ...base,
+      tracks: [
+        {
+          track: 'media_buy',
+          status: 'skip',
+          label: 'Media Buy',
+          observations: [],
+          duration_ms: 0,
+          scenarios,
+          skipped_scenarios: [],
+        },
+      ],
+    };
+    const s = buildComplianceSummary(result, { sdkVersion: '6.9.0', adcpVersion: '3.0.6' });
+    assert.ok(s.skip_causes);
+    const cause = s.skip_causes[0];
+    assert.strictEqual(cause.count, 10, 'count reflects the full population');
+    assert.ok(cause.affected.length <= 5, `affected[] should be capped at 5 (got ${cause.affected.length})`);
+  });
 });
 
 describe('formatComplianceSummaryText — skip causes', () => {

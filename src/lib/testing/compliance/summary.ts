@@ -18,6 +18,7 @@
  */
 
 import type { ComplianceFailure, ComplianceResult, ComplianceTrack, OverallStatus } from './types';
+import { DETAILED_SKIP_TO_CANONICAL, type RunnerDetailedSkipReason } from '../storyboard/types';
 
 const SUMMARY_SCHEMA_VERSION = 1;
 
@@ -133,25 +134,53 @@ function truncate(s: string, max: number): string {
 
 const SKIP_CAUSE_AFFECTED_LIMIT = 5;
 
-// Actionable reasons — gaps the adopter can close. Internal runner-routing
-// reasons (peer_branch_taken, not_applicable, probe_skipped, …) are excluded
-// because they are expected behavior, not agent deficiencies.
-const ACTIONABLE_SKIP_REASONS = new Set([
+// Actionable canonical reasons — gaps the adopter can close. Internal
+// runner-routing reasons (peer_branch_taken, not_applicable, …) are excluded
+// because they are expected behavior, not agent deficiencies. Detailed
+// skip reasons (e.g. `controller_seeding_failed`, `capability_unsupported`,
+// `requirement_unmet` per adcp-client#1626) are normalized via
+// `DETAILED_SKIP_TO_CANONICAL` before this lookup; the runner writes
+// detailed forms to `step.skip_reason` directly per types.ts so consumers
+// of `step.skip_reason` see the more specific value.
+const ACTIONABLE_CANONICAL_REASONS = new Set<string>([
   'missing_tool',
   'missing_test_controller',
   'prerequisite_failed',
   'unsatisfied_contract',
   'no_phases',
+  'requirement_unmet',
 ]);
 
-function extractMissingToolName(warning: string): string | undefined {
+/**
+ * True when the skip reason is something the adopter can act on.
+ * Accepts both canonical `RunnerSkipReason` and detailed
+ * `RunnerDetailedSkipReason` strings — detailed forms are mapped to their
+ * canonical equivalent before the actionability check, so e.g.
+ * `controller_seeding_failed` (detailed) → `prerequisite_failed`
+ * (canonical, actionable) is correctly surfaced rather than silently
+ * dropped.
+ */
+function isActionableSkipReason(reason: string): boolean {
+  if (ACTIONABLE_CANONICAL_REASONS.has(reason)) return true;
+  const canonical = DETAILED_SKIP_TO_CANONICAL[reason as RunnerDetailedSkipReason];
+  return canonical !== undefined && ACTIONABLE_CANONICAL_REASONS.has(canonical);
+}
+
+function extractMissingToolNames(warning: string): string[] {
   // Step-level: `Agent did not advertise tool "sync_accounts"; agent tools: [...]`
   const stepMatch = warning.match(/Agent did not advertise tool "([^"]+)"/i);
-  if (stepMatch) return stepMatch[1];
+  if (stepMatch) return [stepMatch[1]!];
   // Storyboard-level: `agent does not advertise any of [sync_accounts, list_accounts]`
+  // Each tool is a separate gap — emit one cause per tool so dashboards see
+  // the full list, not a single comma-joined "tool name".
   const sbMatch = warning.match(/agent does not advertise any of \[([^\]]+)\]/i);
-  if (sbMatch) return sbMatch[1];
-  return undefined;
+  if (sbMatch) {
+    return sbMatch[1]!
+      .split(/,\s*/)
+      .map(t => t.trim())
+      .filter(Boolean);
+  }
+  return [];
 }
 
 function skipCauseDetail(reason: string): string {
@@ -166,6 +195,12 @@ function skipCauseDetail(reason: string): string {
       return 'test-kit contract out of scope';
     case 'no_phases':
       return 'storyboard has no executable phases';
+    case 'requirement_unmet':
+      return 'storyboard requires a runtime that is not available on this run';
+    case 'controller_seeding_failed':
+      return 'pre-flight controller seeding failed';
+    case 'capability_unsupported':
+      return 'agent self-declared capability unsupported';
     default:
       return reason;
   }
@@ -174,29 +209,52 @@ function skipCauseDetail(reason: string): string {
 function buildSkipCauses(result: ComplianceResult): ComplianceSummarySkipCause[] {
   const causeMap = new Map<string, { count: number; detail: string; affectedSet: Set<string> }>();
 
+  const recordCause = (causeKey: string, baseReason: string, scenarioId: string) => {
+    if (!causeMap.has(causeKey)) {
+      causeMap.set(causeKey, {
+        count: 0,
+        detail: skipCauseDetail(baseReason),
+        affectedSet: new Set(),
+      });
+    }
+    const entry = causeMap.get(causeKey)!;
+    entry.count++;
+    entry.affectedSet.add(scenarioId);
+  };
+
   for (const track of result.tracks) {
     for (const scenario of track.scenarios) {
       const scenarioId = String(scenario.scenario);
       for (const step of scenario.steps ?? []) {
         if (!step.skipped || !step.skip_reason) continue;
-        if (!ACTIONABLE_SKIP_REASONS.has(step.skip_reason)) continue;
+        if (!isActionableSkipReason(step.skip_reason)) continue;
 
-        let causeKey = step.skip_reason;
+        // missing_tool: sub-group by tool name. Storyboard-level matches
+        // can carry multiple tools (one cause per tool); step-level matches
+        // are always single-tool. extractMissingToolNames returns [] when
+        // the warning text doesn't match either pattern, in which case we
+        // fall through to the un-grouped reason.
         if (step.skip_reason === 'missing_tool' && step.warnings?.[0]) {
-          const toolName = extractMissingToolName(step.warnings[0]);
-          if (toolName) causeKey = `missing_tool: ${toolName}`;
+          const toolNames = extractMissingToolNames(step.warnings[0]);
+          if (toolNames.length > 0) {
+            for (const toolName of toolNames) {
+              recordCause(`missing_tool: ${toolName}`, 'missing_tool', scenarioId);
+            }
+            continue;
+          }
         }
 
-        if (!causeMap.has(causeKey)) {
-          causeMap.set(causeKey, {
-            count: 0,
-            detail: skipCauseDetail(step.skip_reason),
-            affectedSet: new Set(),
-          });
+        // requirement_unmet: sub-group by the unmet requirement name
+        // (adcp-client#1626). The runner emits `step.skip.requirement`
+        // which `toComplianceStep` propagates as `step.requirement` on
+        // the flattened `TestStepResult`, so per-requirement aggregation
+        // works without parsing the warning text.
+        if (step.skip_reason === 'requirement_unmet' && step.requirement) {
+          recordCause(`requirement_unmet: ${step.requirement}`, 'requirement_unmet', scenarioId);
+          continue;
         }
-        const entry = causeMap.get(causeKey)!;
-        entry.count++;
-        entry.affectedSet.add(scenarioId);
+
+        recordCause(step.skip_reason, step.skip_reason, scenarioId);
       }
     }
   }
@@ -207,7 +265,10 @@ function buildSkipCauses(result: ComplianceResult): ComplianceSummarySkipCause[]
       cause,
       count,
       detail,
-      affected: Array.from(affectedSet),
+      // Cap at aggregator level so JSON consumers see the same bound the
+      // text/markdown renderers honor — keeps the JSON contract truthful
+      // about the cap documented on `ComplianceSummarySkipCause.affected`.
+      affected: Array.from(affectedSet).slice(0, SKIP_CAUSE_AFFECTED_LIMIT),
     }));
 }
 
@@ -245,8 +306,14 @@ export function formatComplianceSummaryText(s: ComplianceSummaryArtifact): strin
     for (const cause of s.skip_causes) {
       const count = String(cause.count).padStart(countWidth);
       lines.push(`    [${count}] ${cause.cause} — ${cause.detail}`);
+      // Overflow is the difference between the total count for this cause
+      // and how many distinct scenario IDs we kept after the aggregator's
+      // SKIP_CAUSE_AFFECTED_LIMIT cap. The slice here is defensive — the
+      // aggregator already caps, but if a future caller hands us an
+      // uncapped artifact (e.g. JSON re-input from an older runner), we
+      // still bound the visible list.
       const visible = cause.affected.slice(0, SKIP_CAUSE_AFFECTED_LIMIT);
-      const overflow = cause.affected.length - visible.length;
+      const overflow = cause.count - visible.length;
       const affectedText = overflow > 0 ? `${visible.join(', ')}, … ${overflow} more` : visible.join(', ');
       lines.push(`${affectedIndent}Affected: ${affectedText}`);
     }
@@ -320,7 +387,7 @@ export function formatComplianceSummaryMarkdown(s: ComplianceSummaryArtifact): s
     lines.push('| --- | --- | --- | --- |');
     for (const cause of s.skip_causes) {
       const visible = cause.affected.slice(0, SKIP_CAUSE_AFFECTED_LIMIT);
-      const overflow = cause.affected.length - visible.length;
+      const overflow = cause.count - visible.length;
       const affectedText =
         overflow > 0
           ? `${visible.map(escapeTableCell).join(', ')}, … ${overflow} more`
