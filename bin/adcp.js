@@ -798,6 +798,14 @@ function parseAgentOptions(args) {
   // makes the production intent explicit on the wire.
   const noSandbox = args.includes('--no-sandbox');
 
+  // `--asserts-seeded-state` declares that the operator has provisioned
+  // initial test state out-of-band (HTTP admin endpoint, pre-test script,
+  // staging fixture). Storyboards declaring `requires: [seeded_state]`
+  // run instead of skipping with `requirement_unmet`. The runner does
+  // NOT verify the assertion; if state is not actually seeded, scenarios
+  // fail naturally on first stateful step. Spec: adcp-client#1626.
+  const assertsSeededState = args.includes('--asserts-seeded-state');
+
   // Webhook-receiver flags are captured here solely so their values are excluded
   // from `positionalArgs`. The authoritative parse lives in
   // `extractWebhookReceiverOptions(args)` which validates and exits on error.
@@ -913,6 +921,7 @@ function parseAgentOptions(args) {
     dryRun,
     allowHttp,
     noSandbox,
+    assertsSeededState,
     positionalArgs,
     localAgent: localAgentValue,
     format: formatValue,
@@ -1443,6 +1452,15 @@ RUN OPTIONS (full assessment):
                       fallbacks, brand-domain heuristics, fixture
                       substitutes). Agents that don't recognize the
                       ext.adcp.disable_sandbox field ignore it.
+  --asserts-seeded-state
+                      Declare that initial test state has been
+                      provisioned out-of-band (HTTP admin, pre-test
+                      script, staging fixture). Storyboards declaring
+                      requires: [seeded_state] grade instead of
+                      skipping with requirement_unmet. The runner does
+                      not verify the assertion — scenarios still fail
+                      naturally if state isn't actually present
+                      (#1626).
   --summary-output PATH
                       Write a narrow, schema-stable summary artifact
                       to PATH (JSON: { schema_version, passed, failed,
@@ -2199,6 +2217,7 @@ async function handleStoryboardRun(args) {
     }),
     ...(webhookReceiverOpts ?? {}),
     ...(opts.noSandbox && { sandbox: false, disable_sandbox: true }),
+    ...(opts.assertsSeededState && { assertsSeededState: true }),
     ...(mergedRunHeaders && { headers: mergedRunHeaders }),
   };
 
@@ -3028,7 +3047,14 @@ async function handleLocalAgentStoryboardRun(modulePath, args, opts) {
     result = await runAgainstLocalAgent({
       createAgent,
       storyboards: storyboardsSpec,
-      ...(opts.noSandbox && { runStoryboardOptions: { sandbox: false, disable_sandbox: true } }),
+      ...(opts.noSandbox || opts.assertsSeededState
+        ? {
+            runStoryboardOptions: {
+              ...(opts.noSandbox && { sandbox: false, disable_sandbox: true }),
+              ...(opts.assertsSeededState && { assertsSeededState: true }),
+            },
+          }
+        : {}),
       onStoryboardComplete:
         jsonOutput || format === 'junit'
           ? undefined
@@ -3365,6 +3391,7 @@ async function handleMultiInstanceStoryboardRun(args, opts, urls) {
     multi_instance_strategy: strategy,
     ...(webhookReceiverOpts ?? {}),
     ...(opts.noSandbox && { sandbox: false, disable_sandbox: true }),
+    ...(opts.assertsSeededState && { assertsSeededState: true }),
   };
 
   const restoreLogs = jsonOutput ? captureStdoutLogs() : null;
@@ -3623,6 +3650,7 @@ async function handleAgentsRoutedStoryboardRun(args, opts, routing) {
     ...(routing.default_agent ? { default_agent: routing.default_agent } : {}),
     ...(webhookReceiverOpts ?? {}),
     ...(opts.noSandbox && { sandbox: false, disable_sandbox: true }),
+    ...(opts.assertsSeededState && { assertsSeededState: true }),
   };
 
   const restoreLogs = jsonOutput ? captureStdoutLogs() : null;
@@ -3821,6 +3849,7 @@ async function runFullAssessment(agentArg, rawArgs, parsedOpts) {
     ...(opts.allowHttp && { allow_http: true }),
     ...(webhookReceiverOpts ?? {}),
     ...(opts.noSandbox && { sandbox: false, disable_sandbox: true }),
+    ...(opts.assertsSeededState && { assertsSeededState: true }),
     ...(mergedAssessmentHeaders && { headers: mergedAssessmentHeaders }),
   };
 
