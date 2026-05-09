@@ -1430,13 +1430,24 @@ export class TaskExecutor {
         // (TaskNotCancelable, network error, terminal-state race) is non-fatal.
         // TODO(adcp-client#1617-phase2): upgrade to awaited cancel once AdCP
         // spec defines a cross-protocol cancel verb.
+        //
+        // SECURITY: silent on rejection. The orphan rejection's `Error.message`
+        // can carry an echoed transport response body — same trust-boundary
+        // concern as `raceWithSignal` in `src/lib/testing/client.ts`. A buyer
+        // who has already aborted MUST NOT see seller-controlled text leak
+        // into their logs/telemetry. The outer try AND the `.catch(() => {})`
+        // are both intentional: a malformed `agent_uri` could throw
+        // synchronously from `fetch(...)` before the promise chain catches
+        // it, so the try guards the dispatch path; the `.catch()` guards the
+        // async settlement path.
         if (agent.protocol === 'a2a' && taskId && agent.agent_uri) {
-          void cancelA2ATask(agent.agent_uri, taskId, getAuthToken(agent)).catch((err: unknown) => {
-            console.warn(
-              `A2A tasks/cancel for task ${taskId} failed (non-fatal):`,
-              err instanceof Error ? err.message : 'unknown error'
-            );
-          });
+          try {
+            void cancelA2ATask(agent.agent_uri, taskId, getAuthToken(agent)).catch(() => {
+              /* see SECURITY note above */
+            });
+          } catch {
+            /* see SECURITY note above */
+          }
         }
         return attachMatch({
           success: false as const,

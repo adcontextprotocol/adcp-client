@@ -54,9 +54,42 @@ describe('pollTaskCompletion A2A cancel-on-abort (#1617)', () => {
     const [call] = cancelCalls;
     assert.strictEqual(call.url, mockAgent.agent_uri, 'should POST to agent_uri');
     assert.strictEqual(call.body.jsonrpc, '2.0');
-    assert.strictEqual(call.body.id, null, 'fire-and-forget uses null id per JSON-RPC 2.0 spec');
+    // A2A 0.3.0 §7.4 defines tasks/cancel as request/response, so the wire
+    // request must carry a real (non-null) id — JSON-RPC 2.0 §4.1.3 reserves
+    // null for notifications. Fire-and-forget is the caller's discipline
+    // (we don't await/parse the response), not a wire-protocol claim.
+    assert.match(
+      call.body.id,
+      /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/,
+      `expected a UUID v4 id, got: ${JSON.stringify(call.body.id)}`
+    );
     assert.strictEqual(call.body.method, 'tasks/cancel');
     assert.strictEqual(call.body.params.id, 'task-xyz', 'should address cancel by server task id');
+  });
+
+  // code-reviewer follow-up on #1620: confirm the auth-header shape matches
+  // callA2AToolImpl (Bearer + x-adcp-auth). Without this test, a refactor
+  // that drops one of the two headers could ship undetected — Phase 1
+  // sellers split on which header they recognize.
+  test('cancel POST carries Bearer + x-adcp-auth headers when agent has auth_token', async () => {
+    let lastHeaders;
+    global.fetch = mock.fn(async (_url, options) => {
+      lastHeaders = options.headers;
+      return new Response('{}', { status: 200 });
+    });
+
+    const authedAgent = { ...mockAgent, auth_token: 'tok-secret-abc' };
+    const executor = new TaskExecutor();
+    const signal = AbortSignal.abort('test cancelled');
+    await executor.pollTaskCompletion(authedAgent, 'task-auth', 10, undefined, signal);
+
+    // Two microtask ticks — the fire-and-forget chain settles via
+    // Promise.then chained inside .catch(), so a single tick is racy.
+    await new Promise(resolve => setTimeout(resolve, 0));
+    await new Promise(resolve => setTimeout(resolve, 0));
+
+    assert.strictEqual(lastHeaders.Authorization, 'Bearer tok-secret-abc');
+    assert.strictEqual(lastHeaders['x-adcp-auth'], 'tok-secret-abc');
   });
 
   test('does NOT fire tasks/cancel for MCP agents on abort', async () => {
