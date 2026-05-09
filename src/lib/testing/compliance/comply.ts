@@ -403,7 +403,10 @@ export interface ComplyOptions extends TestOptions {
   storyboards?: string[];
   /** Post-filter reported tracks to only these. Applied after execution. */
   tracks?: ComplianceTrack[];
-  /** Timeout in milliseconds — stops new storyboards from starting when exceeded. */
+  /**
+   * Timeout in milliseconds. When exceeded, cancels the run at the next phase
+   * or step boundary inside the active storyboard (not just between storyboards).
+   */
   timeout_ms?: number;
   /** AbortSignal for external cancellation (e.g., graceful shutdown). */
   signal?: AbortSignal;
@@ -1149,6 +1152,7 @@ async function runWithDegradedProfile(
     agentTools: [],
     ...(options.webhook_receiver !== undefined && { webhook_receiver: options.webhook_receiver }),
     ...(options.contracts !== undefined && { contracts: options.contracts }),
+    ...(signal !== undefined && { signal }),
   };
 
   for (const sb of storyboards) {
