@@ -1050,6 +1050,15 @@ export interface StoryboardRunOptions extends TestOptions {
     /** Override the required tag. Defaults to `adcp/webhook-signing/v1`. */
     required_tag?: string;
   };
+  /**
+   * Cancel the run when this signal aborts. Threaded down to the per-phase
+   * and per-step loops inside `executeStoryboardPass` so an abort fires
+   * between any two steps, not only between storyboards. Without it,
+   * `comply()`'s timeout would only bound the *next* storyboard's start —
+   * a single in-flight storyboard could exhaust its full timeout budget
+   * inside one fan-out of sequential MCP/A2A calls. (adcp-client#1612)
+   */
+  signal?: AbortSignal;
 }
 
 // ────────────────────────────────────────────────────────────

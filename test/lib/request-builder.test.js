@@ -969,6 +969,46 @@ describe('Request Builder', () => {
       );
       assert.strictEqual(cancelResult.canceled, true);
     });
+
+    test('resolves `$generate:uuid_v4#alias` idempotency_key from sample_request to a real UUID (#1614)', () => {
+      // Regression guard: the upstream `invalid_transitions/update_unknown_package`
+      // storyboard uses `idempotency_key: "$generate:uuid_v4#update_unknown_package"`
+      // in its sample_request. The wire body must carry a real UUID, not the
+      // literal placeholder, and `account` must be preserved alongside it —
+      // both fields are spec-required on UpdateMediaBuyRequest.
+      const result = buildRequest(
+        step('update_media_buy', {
+          id: 'update_unknown_package',
+          sample_request: {
+            account: {
+              brand: { domain: 'acmeoutdoor.example' },
+              operator: 'pinnacle-agency.example',
+            },
+            media_buy_id: '$context.media_buy_id',
+            idempotency_key: '$generate:uuid_v4#update_unknown_package',
+            packages: [{ package_id: 'does-not-exist', paused: true }],
+          },
+        }),
+        {
+          media_buy_id: 'mb_real',
+          account: { brand: { domain: 'acmeoutdoor.example' }, operator: 'pinnacle-agency.example' },
+        },
+        DEFAULT_OPTIONS
+      );
+      // account: present, harness-resolved (matches context override rule from #1505)
+      assert.ok(result.account, 'account must be present on the wire');
+      // idempotency_key: resolved from `$generate:` placeholder to a real UUID v4
+      assert.ok(result.idempotency_key, 'idempotency_key must be present on the wire');
+      assert.match(
+        result.idempotency_key,
+        /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/,
+        `idempotency_key must be a real UUID v4, got: ${result.idempotency_key}`
+      );
+      // media_buy_id: resolved from `$context.media_buy_id`
+      assert.strictEqual(result.media_buy_id, 'mb_real');
+      // packages: preserved verbatim from fixture
+      assert.deepStrictEqual(result.packages, [{ package_id: 'does-not-exist', paused: true }]);
+    });
   });
 
   describe('calibrate_content (#989)', () => {

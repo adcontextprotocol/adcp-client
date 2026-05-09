@@ -1363,6 +1363,10 @@ async function executeStoryboardPass(
   }
 
   for (const phase of storyboard.phases) {
+    // adcp-client#1612: bail at phase boundaries when comply()'s combined
+    // timeout/external signal has aborted. Without this the phase loop runs
+    // to completion regardless of the outer budget.
+    options.signal?.throwIfAborted();
     const phaseStart = Date.now();
     const stepResults: StoryboardStepResult[] = [];
     let phasePassed = true;
@@ -1503,6 +1507,11 @@ async function executeStoryboardPass(
     }
 
     for (const step of phase.steps) {
+      // adcp-client#1612: per-step abort gate. The dominant comply() cost
+      // on a healthy seller is sequential per-tool calls inside a single
+      // storyboard's phase — without this check the phase runs to completion
+      // even after comply() has already signalled "give up".
+      options.signal?.throwIfAborted();
       // Cascade-skip when the PRM presence probe declared the phase absent.
       if (phaseAbsent) {
         const cascadeResult: StoryboardStepResult = {
