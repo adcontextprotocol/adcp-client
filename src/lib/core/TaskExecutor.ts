@@ -21,6 +21,7 @@ import { unwrapProtocolResponse, isAdcpError } from '../utils/response-unwrapper
 import { extractAdcpErrorInfo, extractCorrelationId } from '../utils/error-extraction';
 import { generateIdempotencyKey, isMutatingTask, redactIdempotencyKeyInArgs } from '../utils/idempotency';
 import { normalizeGetProductsResponse } from '../utils/pricing-adapter';
+import { cancelA2ATask } from '../protocols/a2a';
 import type {
   Message,
   InputRequest,
@@ -1423,6 +1424,31 @@ export class TaskExecutor {
       if (signal?.aborted) {
         const reason =
           signal.reason instanceof Error ? signal.reason.message : String(signal.reason ?? 'polling cancelled');
+        // adcp-client#1617: Phase 1 — notify the seller so it can stop doing
+        // work for a buyer that has already given up. A2A 0.3.0 §7.4 defines
+        // tasks/cancel for exactly this case. Fire-and-forget: cancel failure
+        // (TaskNotCancelable, network error, terminal-state race) is non-fatal.
+        // TODO(adcp-client#1617-phase2): upgrade to awaited cancel once AdCP
+        // spec defines a cross-protocol cancel verb.
+        //
+        // SECURITY: silent on rejection. The orphan rejection's `Error.message`
+        // can carry an echoed transport response body — same trust-boundary
+        // concern as `raceWithSignal` in `src/lib/testing/client.ts`. A buyer
+        // who has already aborted MUST NOT see seller-controlled text leak
+        // into their logs/telemetry. The outer try AND the `.catch(() => {})`
+        // are both intentional: a malformed `agent_uri` could throw
+        // synchronously from `fetch(...)` before the promise chain catches
+        // it, so the try guards the dispatch path; the `.catch()` guards the
+        // async settlement path.
+        if (agent.protocol === 'a2a' && taskId && agent.agent_uri) {
+          try {
+            void cancelA2ATask(agent.agent_uri, taskId, getAuthToken(agent)).catch(() => {
+              /* see SECURITY note above */
+            });
+          } catch {
+            /* see SECURITY note above */
+          }
+        }
         return attachMatch({
           success: false as const,
           status: 'failed' as const,
