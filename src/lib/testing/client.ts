@@ -197,6 +197,19 @@ export async function getOrDiscoverProfile(
  * orphaned in-flight request finish on its own. (adcp-client#1612)
  *
  * Throws the signal's reason on abort.
+ *
+ * **SECURITY (security-reviewer follow-up on #1612):** the orphaned
+ * promise's `.then` handlers below stay attached until the underlying
+ * transport call settles. The resolved value `v` carries an authenticated
+ * agent response — `getAgentInfo()` and `getAdcpCapabilities()` round-trip
+ * through the bearer-token transport, so the promise body holds the wire
+ * response in memory until GC'd. **Do not log `v` from inside this
+ * resolver** (or any future `console.error` / telemetry hook on the
+ * orphaned path) — the buyer has already moved on past the abort, and
+ * logging here would leak agent-side data after the caller stopped
+ * trusting it. The early `resolve(v)` is intentionally a no-op on the
+ * already-rejected race-promise; `v` becomes unreferenced and GC-eligible
+ * the moment this `.then` returns.
  */
 function raceWithSignal<T>(promise: Promise<T>, signal?: AbortSignal): Promise<T> {
   if (!signal) return promise;
@@ -209,6 +222,8 @@ function raceWithSignal<T>(promise: Promise<T>, signal?: AbortSignal): Promise<T
     promise.then(
       v => {
         signal.removeEventListener('abort', onAbort);
+        // INTENTIONAL: no-op on an already-rejected race-promise. Do NOT
+        // log `v` here — see security note in the JSDoc above.
         resolve(v);
       },
       e => {

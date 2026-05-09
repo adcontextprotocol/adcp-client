@@ -5196,10 +5196,17 @@ credential material — never sync or commit.
   const authIndex = args.indexOf('--auth');
   let authToken = authIndex !== -1 ? args[authIndex + 1] : process.env.ADCP_AUTH_TOKEN;
   // adcp-client#1612: accept `--transport` as an alias for `--protocol`.
+  // Match the validation pattern at the other two CLI parse sites: skip the
+  // flag if it has no value or is followed by another flag, so a trailing
+  // `--transport` doesn't produce a `protocolFlag === undefined` that
+  // sneaks past the truthiness gate downstream.
   const protocolIndex = args.indexOf('--protocol');
   const transportIndex = args.indexOf('--transport');
   const flagIndex = protocolIndex !== -1 ? protocolIndex : transportIndex;
-  const protocolFlag = flagIndex !== -1 ? args[flagIndex + 1] : null;
+  const protocolFlag =
+    flagIndex !== -1 && flagIndex + 1 < args.length && !args[flagIndex + 1].startsWith('--')
+      ? args[flagIndex + 1]
+      : null;
   const jsonOutput = args.includes('--json');
   const debug = args.includes('--debug') || process.env.ADCP_DEBUG === 'true';
   const waitForAsync = args.includes('--wait');
