@@ -48,16 +48,16 @@ async function detectA2AOrMcp(url: string, timeoutMs: number): Promise<'a2a' | '
   // `ssrfSafeFetch`).
   const policy = classifyProbeUrl(url);
   if (!policy.allowed) {
-    let parsed: URL | undefined;
-    try {
-      parsed = new URL(url);
-    } catch {
-      /* policy already classified URL parsing as allowed; rethrow shape below uses url verbatim */
-    }
+    // `classifyProbeUrl` already returned `{ allowed: true }` for any URL
+    // that fails `new URL(...)`, so reaching the !allowed branch implies the
+    // URL parses cleanly. Reparse here only to extract the bare hostname for
+    // the `SsrfRefusedError` meta (the policy returned the human-readable
+    // refusal reason but not the structured hostname).
+    const hostname = new URL(url).hostname.replace(/^\[|\]$/g, '');
     throw new SsrfRefusedError(
       policy.code === 'always_blocked' ? 'always_blocked_address' : 'private_address',
       policy.reason,
-      { url, hostname: parsed?.hostname.replace(/^\[|\]$/g, '') ?? url }
+      { url, hostname }
     );
   }
 

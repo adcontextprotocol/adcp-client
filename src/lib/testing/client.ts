@@ -107,16 +107,15 @@ export function createTestClient(agentUrl: string, protocol: 'mcp' | 'a2a' = 'mc
   // in the user-visible text; see `probe-policy.ts` rationale).
   const policy = classifyProbeUrl(agentUrl);
   if (!policy.allowed) {
-    let parsed: URL | undefined;
-    try {
-      parsed = new URL(agentUrl);
-    } catch {
-      /* leave parsed undefined; SsrfRefusedError carries the raw url field */
-    }
+    // `classifyProbeUrl` already returned `{ allowed: true }` for any URL
+    // that fails `new URL(...)`, so reaching the !allowed branch implies the
+    // URL parses cleanly. Reparse only to extract the bare hostname for the
+    // SsrfRefusedError meta.
+    const hostname = new URL(agentUrl).hostname.replace(/^\[|\]$/g, '');
     throw new SsrfRefusedError(
       policy.code === 'always_blocked' ? 'always_blocked_address' : 'private_address',
       policy.reason,
-      { url: agentUrl, hostname: parsed?.hostname.replace(/^\[|\]$/g, '') ?? agentUrl }
+      { url: agentUrl, hostname }
     );
   }
 

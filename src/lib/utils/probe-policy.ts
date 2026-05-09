@@ -27,15 +27,15 @@
  * NOT controlled by `NODE_ENV`: a multi-tenant staging image with
  * `NODE_ENV=test` MUST NOT inherit looser SSRF posture than production.
  *
- * ## Known gap (TOCTOU)
+ * ## Known gap (TOCTOU) — adcp-client#1627
  *
  * `classifyProbeUrl` does NOT do DNS resolution — it inspects the
  * URL's hostname literal. A hostname like `evil.example.com` that
  * resolves to `169.254.169.254` will pass this gate; the per-IP block
  * inside `ssrfSafeFetch` (which DOES resolve and pin) catches it.
  * Use both: this gate refuses obvious literal attacks; `ssrfSafeFetch`
- * refuses DNS-based attacks. Tracked separately for the rebind defense
- * deferral discussed in the issue.
+ * refuses DNS-based attacks. Routing `detectProtocol` through
+ * `ssrfSafeFetch` for full TOCTOU defense is tracked under #1627.
  */
 
 import { BlockList, isIP } from 'node:net';
