@@ -239,6 +239,8 @@ export function formatComplianceSummaryText(s: ComplianceSummaryArtifact): strin
   lines.push(`Steps:     ${s.passed} passed, ${s.failed} failed, ${s.skipped} skipped`);
   if (s.skip_causes?.length) {
     const countWidth = String(Math.max(...s.skip_causes.map(c => c.count))).length;
+    // "    [" + countWidth chars + "] " — derived so Affected: aligns under the cause text
+    const affectedIndent = ' '.repeat(4 + 1 + countWidth + 1 + 1);
     lines.push(`  Skip causes:`);
     for (const cause of s.skip_causes) {
       const count = String(cause.count).padStart(countWidth);
@@ -246,7 +248,7 @@ export function formatComplianceSummaryText(s: ComplianceSummaryArtifact): strin
       const visible = cause.affected.slice(0, SKIP_CAUSE_AFFECTED_LIMIT);
       const overflow = cause.affected.length - visible.length;
       const affectedText = overflow > 0 ? `${visible.join(', ')}, … ${overflow} more` : visible.join(', ');
-      lines.push(`           Affected: ${affectedText}`);
+      lines.push(`${affectedIndent}Affected: ${affectedText}`);
     }
   }
   lines.push(`Duration:  ${(s.total_duration_ms / 1000).toFixed(1)}s`);
