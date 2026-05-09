@@ -1019,14 +1019,17 @@ export interface StoryboardRunOptions extends TestOptions {
     public_url?: string;
   };
   /**
-   * Abort signal forwarded from `comply()`. When the signal fires,
-   * `executeStoryboardPass` throws at the start of the next phase or step,
-   * unwinding the run mid-storyboard rather than waiting for the current
-   * storyboard to complete before the between-storyboard check in
-   * `complyImpl` can fire.
+   * Abort signal for the storyboard run. When the signal fires,
+   * `executeStoryboardPass` throws (`AbortError`) at the start of the next
+   * phase or step boundary — the caller receives a rejected promise, not a
+   * partial `StoryboardResult`. This matches `complyImpl`'s existing
+   * between-storyboard abort behavior; threading the signal here lets the
+   * abort fire mid-storyboard rather than waiting for the full storyboard
+   * to complete.
    *
+   * `comply()` forwards its combined timeout+external signal automatically.
    * Callers of `runStoryboard()` directly may pass their own signal to
-   * bound a single storyboard run.
+   * bound a single storyboard run independently of `comply()`.
    */
   signal?: AbortSignal;
   /**
