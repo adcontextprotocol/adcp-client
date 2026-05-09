@@ -5196,17 +5196,22 @@ credential material — never sync or commit.
   const authIndex = args.indexOf('--auth');
   let authToken = authIndex !== -1 ? args[authIndex + 1] : process.env.ADCP_AUTH_TOKEN;
   // adcp-client#1612: accept `--transport` as an alias for `--protocol`.
-  // Match the validation pattern at the other two CLI parse sites: skip the
-  // flag if it has no value or is followed by another flag, so a trailing
-  // `--transport` doesn't produce a `protocolFlag === undefined` that
-  // sneaks past the truthiness gate downstream.
+  // Hard-fail when the flag is present without a value, matching sites 1
+  // and 2 — security review of #1619 flagged the silent-fallthrough as a
+  // UX asymmetry: `adcp <cmd> --protocol` would auto-detect here while
+  // exiting 2 with a clear error elsewhere.
   const protocolIndex = args.indexOf('--protocol');
   const transportIndex = args.indexOf('--transport');
   const flagIndex = protocolIndex !== -1 ? protocolIndex : transportIndex;
-  const protocolFlag =
-    flagIndex !== -1 && flagIndex + 1 < args.length && !args[flagIndex + 1].startsWith('--')
-      ? args[flagIndex + 1]
-      : null;
+  const flagName = protocolIndex !== -1 ? '--protocol' : '--transport';
+  let protocolFlag = null;
+  if (flagIndex !== -1) {
+    if (flagIndex + 1 >= args.length || args[flagIndex + 1].startsWith('--')) {
+      console.error(`ERROR: ${flagName} requires a value (mcp or a2a)\n`);
+      process.exit(2);
+    }
+    protocolFlag = args[flagIndex + 1];
+  }
   const jsonOutput = args.includes('--json');
   const debug = args.includes('--debug') || process.env.ADCP_DEBUG === 'true';
   const waitForAsync = args.includes('--wait');

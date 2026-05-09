@@ -228,6 +228,9 @@ function raceWithSignal<T>(promise: Promise<T>, signal?: AbortSignal): Promise<T
       },
       e => {
         signal.removeEventListener('abort', onAbort);
+        // INTENTIONAL: no-op on an already-rejected race-promise. Do NOT
+        // log `e` here either — `Error.message` from a transport rejection
+        // can carry an echoed response body, see security note above.
         reject(e);
       }
     );
