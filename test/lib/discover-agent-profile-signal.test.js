@@ -88,4 +88,52 @@ describe('discoverAgentProfile: AbortSignal honored (#1612)', () => {
     assert.strictEqual(profile.name, 'Slow');
     client.cleanup();
   });
+
+  // code-reviewer follow-up on #1612: the wrapper covers the second
+  // `getAdcpCapabilities()` call, not just the first `getAgentInfo()`.
+  // Cover that path explicitly so a future refactor that bypasses
+  // `raceWithSignal` on the second call gets caught.
+  test('aborts the getAdcpCapabilities call too, not just getAgentInfo', async () => {
+    let capabilitiesCalls = 0;
+    let pendingTimers = [];
+    const cleanup = () => {
+      pendingTimers.forEach(t => clearTimeout(t));
+      pendingTimers = [];
+    };
+    const client = {
+      // Fast getAgentInfo so the second call (capabilities) is the one
+      // racing the abort.
+      getAgentInfo: async () => ({
+        name: 'Fast',
+        tools: [{ name: 'get_adcp_capabilities' }],
+      }),
+      getAdcpCapabilities: () => {
+        capabilitiesCalls += 1;
+        return new Promise(resolve => {
+          const t = setTimeout(() => resolve({ success: true, data: {} }), 5000);
+          pendingTimers.push(t);
+        });
+      },
+    };
+
+    const controller = new AbortController();
+    setTimeout(() => controller.abort(new Error('mid-capabilities')), 30);
+
+    const t0 = Date.now();
+    const { profile } = await discoverAgentProfile(client, controller.signal);
+    const elapsed = Date.now() - t0;
+    cleanup();
+
+    assert.strictEqual(capabilitiesCalls, 1, 'capabilities should have been invoked once');
+    assert.ok(elapsed < 1000, `expected fast abort exit, took ${elapsed}ms`);
+    // capabilities never resolved, so capabilities-derived fields stay unset.
+    assert.strictEqual(profile.adcp_version, undefined);
+    assert.strictEqual(profile.specialisms, undefined);
+    // The capabilities_probe_error is set in the catch path — it should
+    // mention the abort, not silently succeed.
+    assert.ok(
+      profile.capabilities_probe_error?.includes('mid-capabilities'),
+      `expected capabilities_probe_error to mention abort, got: ${profile.capabilities_probe_error}`
+    );
+  });
 });
