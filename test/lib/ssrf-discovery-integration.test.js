@@ -9,14 +9,37 @@
  * 2. `createTestClient` — guard runs at URL construction so every transport
  *    call inherits the agent URI's policy verdict (covers downstream
  *    `getAgentInfo` / `getAdcpCapabilities` without instrumenting them).
+ *
+ * #1627 update: detectProtocol now routes through `ssrfSafeFetch` (real DNS,
+ * connection-pinned, `redirect: 'manual'`). Tests that exercise the "passes
+ * the gate" path against loopback need the env opt-in set BEFORE module
+ * load; tests that exercise refusal don't.
  */
+
+// Set BEFORE any require so `probe-policy`'s module-load-time read picks
+// up the opt-in. Without this, loopback URLs would be refused by the
+// `ssrfSafeFetch` private-address guard one layer below the policy gate.
+process.env.ADCP_ALLOW_INTERNAL_PROBES = '1';
 
 const { describe, test } = require('node:test');
 const assert = require('node:assert');
+const http = require('node:http');
 
 const { detectProtocol } = require('../../dist/lib/utils/protocol-detection.js');
 const { createTestClient } = require('../../dist/lib/testing/client.js');
 const { SsrfRefusedError } = require('../../dist/lib/net/ssrf-fetch.js');
+
+function startServer(handler) {
+  return new Promise(resolve => {
+    const s = http.createServer(handler);
+    s.listen(0, '127.0.0.1', () => {
+      resolve({
+        url: `http://127.0.0.1:${s.address().port}`,
+        close: () => new Promise(r => s.close(() => r())),
+      });
+    });
+  });
+}
 
 describe('detectProtocol: SSRF policy gate (#1618)', () => {
   test('rejects AWS IMDS literal BEFORE entering the try/catch loop', async () => {
@@ -33,50 +56,38 @@ describe('detectProtocol: SSRF policy gate (#1618)', () => {
     );
   });
 
-  test('rejects RFC-1918 hostname literal in default-strict mode', async () => {
-    await assert.rejects(
-      () => detectProtocol('http://10.0.0.5/'),
-      err => {
-        assert.ok(err instanceof SsrfRefusedError);
-        assert.strictEqual(err.code, 'private_address');
-        return true;
-      }
-    );
-  });
+  // RFC-1918 refusal in default-strict mode lives in `probe-policy.test.js`
+  // (subprocess-based). This file enables `ADCP_ALLOW_INTERNAL_PROBES=1`
+  // so it can spin loopback servers for the integration assertions —
+  // RFC-1918 acceptance is the by-design consequence of that opt-in.
 
-  test('allows public hostname through the gate', async () => {
-    // Mock fetch to a 404 so detectProtocol picks 'mcp' — confirms the
-    // policy gate does NOT refuse public addresses, only blocks the
-    // SSRF targets.
-    const original = globalThis.fetch;
-    globalThis.fetch = async () => ({ ok: false, status: 404, statusText: 'Not Found' });
+  test('passes the gate for public hostnames (refusal is from DNS, not the gate)', async () => {
+    // `agent.example.com` doesn't resolve in CI. The point of this test is
+    // "the SSRF gate didn't block it" — any non-SsrfRefusedError on the
+    // private/always_blocked codes means the gate let it through. DNS
+    // resolution failure (`dns_lookup_failed`) is acceptable.
+    let err;
     try {
-      const result = await detectProtocol('https://agent.example.com/');
-      assert.strictEqual(result, 'mcp');
-    } finally {
-      globalThis.fetch = original;
+      await detectProtocol('https://agent.example.com/');
+    } catch (e) {
+      err = e;
+    }
+    if (err instanceof SsrfRefusedError) {
+      assert.notStrictEqual(err.code, 'always_blocked_address', 'gate must not refuse public hostname');
+      assert.notStrictEqual(err.code, 'private_address', 'gate must not refuse public hostname');
     }
   });
 
-  test('allows loopback (localhost) through the gate', async () => {
-    const original = globalThis.fetch;
-    globalThis.fetch = async () => ({ ok: false, status: 404, statusText: 'Not Found' });
+  test('allows 127.0.0.1 loopback through the gate (with env opt-in)', async () => {
+    const server = await startServer((_req, res) => {
+      res.writeHead(404);
+      res.end();
+    });
     try {
-      const result = await detectProtocol('http://localhost:3000/');
+      const result = await detectProtocol(server.url);
       assert.strictEqual(result, 'mcp');
     } finally {
-      globalThis.fetch = original;
-    }
-  });
-
-  test('allows 127.0.0.1 loopback IP through the gate', async () => {
-    const original = globalThis.fetch;
-    globalThis.fetch = async () => ({ ok: false, status: 404, statusText: 'Not Found' });
-    try {
-      const result = await detectProtocol('http://127.0.0.1:3000/');
-      assert.strictEqual(result, 'mcp');
-    } finally {
-      globalThis.fetch = original;
+      await server.close();
     }
   });
 });
@@ -95,16 +106,8 @@ describe('createTestClient: SSRF policy gate (#1618)', () => {
     );
   });
 
-  test('throws SsrfRefusedError on RFC-1918', () => {
-    assert.throws(
-      () => createTestClient('http://192.168.1.5/'),
-      err => {
-        assert.ok(err instanceof SsrfRefusedError);
-        assert.strictEqual(err.code, 'private_address');
-        return true;
-      }
-    );
-  });
+  // RFC-1918 refusal at createTestClient lives under the env-opt-out
+  // subprocess tests in `probe-policy.test.js` — same reason as above.
 
   test('throws SsrfRefusedError on IPv6 link-local', () => {
     assert.throws(
