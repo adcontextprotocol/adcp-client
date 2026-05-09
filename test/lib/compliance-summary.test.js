@@ -201,6 +201,262 @@ describe('formatComplianceSummaryMarkdown', () => {
   });
 });
 
+function resultWithSkips() {
+  const base = passingResult();
+  return {
+    ...base,
+    overall_status: 'partial',
+    summary: {
+      ...base.summary,
+      steps_skipped: 3,
+    },
+    tracks: [
+      {
+        track: 'media_buy',
+        status: 'skip',
+        label: 'Media Buy',
+        observations: [],
+        duration_ms: 0,
+        scenarios: [
+          {
+            agent_url: 'https://agent.example/mcp',
+            scenario: 'refine_products/setup',
+            overall_passed: true,
+            summary: 'ok',
+            total_duration_ms: 0,
+            tested_at: base.tested_at,
+            steps: [
+              {
+                step: 'sync_accounts',
+                task: 'sync_accounts',
+                passed: true,
+                skipped: true,
+                skip_reason: 'missing_tool',
+                duration_ms: 0,
+                warnings: ['Agent did not advertise tool "sync_accounts"; agent tools: [get_adcp_capabilities].'],
+              },
+              {
+                step: 'list_accounts',
+                task: 'list_accounts',
+                passed: true,
+                skipped: true,
+                skip_reason: 'missing_tool',
+                duration_ms: 0,
+                warnings: ['Agent did not advertise tool "list_accounts"; agent tools: [get_adcp_capabilities].'],
+              },
+            ],
+          },
+          {
+            agent_url: 'https://agent.example/mcp',
+            scenario: 'create_buy/deterministic',
+            overall_passed: true,
+            summary: 'ok',
+            total_duration_ms: 0,
+            tested_at: base.tested_at,
+            steps: [
+              {
+                step: 'seed',
+                task: 'comply_test_controller',
+                passed: true,
+                skipped: true,
+                skip_reason: 'missing_test_controller',
+                duration_ms: 0,
+                warnings: ['Skipped: deterministic_testing phase requires comply_test_controller, which the agent did not advertise.'],
+              },
+            ],
+          },
+        ],
+        skipped_scenarios: [],
+      },
+    ],
+  };
+}
+
+describe('buildComplianceSummary — skip causes', () => {
+  test('no skip_causes field when steps_skipped is zero', () => {
+    const s = buildComplianceSummary(passingResult(), { sdkVersion: '6.9.0', adcpVersion: '3.0.6' });
+    assert.strictEqual(s.skip_causes, undefined);
+  });
+
+  test('aggregates missing_tool causes by tool name', () => {
+    const result = resultWithSkips();
+    const s = buildComplianceSummary(result, { sdkVersion: '6.9.0', adcpVersion: '3.0.6' });
+    assert.ok(s.skip_causes);
+    const missingSync = s.skip_causes.find(c => c.cause === 'missing_tool: sync_accounts');
+    assert.ok(missingSync, 'missing_tool: sync_accounts should be present');
+    assert.strictEqual(missingSync.count, 1);
+    assert.deepStrictEqual(missingSync.affected, ['refine_products/setup']);
+  });
+
+  test('aggregates missing_test_controller as its own cause', () => {
+    const result = resultWithSkips();
+    const s = buildComplianceSummary(result, { sdkVersion: '6.9.0', adcpVersion: '3.0.6' });
+    assert.ok(s.skip_causes);
+    const mtc = s.skip_causes.find(c => c.cause === 'missing_test_controller');
+    assert.ok(mtc, 'missing_test_controller should be present');
+    assert.strictEqual(mtc.count, 1);
+    assert.ok(mtc.detail.includes('comply_test_controller'));
+  });
+
+  test('excludes non-actionable skip reasons (peer_branch_taken, not_applicable)', () => {
+    const base = passingResult();
+    const result = {
+      ...base,
+      tracks: [
+        {
+          track: 'media_buy',
+          status: 'skip',
+          label: 'Media Buy',
+          observations: [],
+          duration_ms: 0,
+          scenarios: [
+            {
+              agent_url: 'https://agent.example/mcp',
+              scenario: 'foo/bar',
+              overall_passed: true,
+              summary: 'ok',
+              total_duration_ms: 0,
+              tested_at: base.tested_at,
+              steps: [
+                {
+                  step: 'peer-skip',
+                  passed: true,
+                  skipped: true,
+                  skip_reason: 'peer_branch_taken',
+                  duration_ms: 0,
+                },
+                {
+                  step: 'na-skip',
+                  passed: true,
+                  skipped: true,
+                  skip_reason: 'not_applicable',
+                  duration_ms: 0,
+                },
+              ],
+            },
+          ],
+          skipped_scenarios: [],
+        },
+      ],
+    };
+    const s = buildComplianceSummary(result, { sdkVersion: '6.9.0', adcpVersion: '3.0.6' });
+    assert.strictEqual(s.skip_causes, undefined);
+  });
+
+  test('sorts causes by count descending', () => {
+    const base = passingResult();
+    const result = {
+      ...base,
+      tracks: [
+        {
+          track: 'media_buy',
+          status: 'skip',
+          label: 'Media Buy',
+          observations: [],
+          duration_ms: 0,
+          scenarios: [
+            {
+              agent_url: 'https://agent.example/mcp',
+              scenario: 'a/setup',
+              overall_passed: true,
+              summary: 'ok',
+              total_duration_ms: 0,
+              tested_at: base.tested_at,
+              steps: [
+                { step: 's1', passed: true, skipped: true, skip_reason: 'missing_test_controller', duration_ms: 0, warnings: ['Skipped: deterministic_testing phase requires comply_test_controller, which the agent did not advertise.'] },
+                { step: 's2', passed: true, skipped: true, skip_reason: 'missing_test_controller', duration_ms: 0, warnings: ['Skipped: deterministic_testing phase requires comply_test_controller, which the agent did not advertise.'] },
+                { step: 's3', passed: true, skipped: true, skip_reason: 'missing_tool', duration_ms: 0, warnings: ['Agent did not advertise tool "sync_accounts"; agent tools: [].'] },
+              ],
+            },
+          ],
+          skipped_scenarios: [],
+        },
+      ],
+    };
+    const s = buildComplianceSummary(result, { sdkVersion: '6.9.0', adcpVersion: '3.0.6' });
+    assert.ok(s.skip_causes);
+    assert.strictEqual(s.skip_causes[0].cause, 'missing_test_controller');
+    assert.strictEqual(s.skip_causes[0].count, 2);
+    assert.strictEqual(s.skip_causes[1].cause, 'missing_tool: sync_accounts');
+    assert.strictEqual(s.skip_causes[1].count, 1);
+  });
+});
+
+describe('formatComplianceSummaryText — skip causes', () => {
+  test('renders Skip causes block when causes are present', () => {
+    const result = resultWithSkips();
+    const s = buildComplianceSummary(result, { sdkVersion: '6.9.0', adcpVersion: '3.0.6' });
+    const text = formatComplianceSummaryText(s);
+    assert.match(text, /Skip causes:/);
+    assert.match(text, /missing_tool: sync_accounts/);
+    assert.match(text, /missing_test_controller/);
+    assert.match(text, /Affected:/);
+  });
+
+  test('no Skip causes block when skips are zero', () => {
+    const s = buildComplianceSummary(passingResult(), { sdkVersion: '6.9.0', adcpVersion: '3.0.6' });
+    const text = formatComplianceSummaryText(s);
+    assert.doesNotMatch(text, /Skip causes:/);
+  });
+
+  test('truncates Affected list beyond SKIP_CAUSE_AFFECTED_LIMIT', () => {
+    const base = passingResult();
+    const scenarios = Array.from({ length: 8 }, (_, i) => ({
+      agent_url: 'https://agent.example/mcp',
+      scenario: `storyboard_${i}/setup`,
+      overall_passed: true,
+      summary: 'ok',
+      total_duration_ms: 0,
+      tested_at: base.tested_at,
+      steps: [
+        {
+          step: 'seed',
+          passed: true,
+          skipped: true,
+          skip_reason: 'missing_test_controller',
+          duration_ms: 0,
+          warnings: ['Skipped: deterministic_testing phase requires comply_test_controller, which the agent did not advertise.'],
+        },
+      ],
+    }));
+    const result = {
+      ...base,
+      tracks: [
+        {
+          track: 'media_buy',
+          status: 'skip',
+          label: 'Media Buy',
+          observations: [],
+          duration_ms: 0,
+          scenarios,
+          skipped_scenarios: [],
+        },
+      ],
+    };
+    const s = buildComplianceSummary(result, { sdkVersion: '6.9.0', adcpVersion: '3.0.6' });
+    const text = formatComplianceSummaryText(s);
+    assert.match(text, /… 3 more/);
+  });
+});
+
+describe('formatComplianceSummaryMarkdown — skip causes', () => {
+  test('renders <details> block for skip causes', () => {
+    const result = resultWithSkips();
+    const s = buildComplianceSummary(result, { sdkVersion: '6.9.0', adcpVersion: '3.0.6' });
+    const md = formatComplianceSummaryMarkdown(s);
+    assert.match(md, /<details>/);
+    assert.match(md, /Skip causes/);
+    assert.match(md, /missing_tool: sync_accounts/);
+    assert.match(md, /<\/details>/);
+  });
+
+  test('no skip causes block when causes absent', () => {
+    const s = buildComplianceSummary(passingResult(), { sdkVersion: '6.9.0', adcpVersion: '3.0.6' });
+    const md = formatComplianceSummaryMarkdown(s);
+    assert.doesNotMatch(md, /<details>/);
+  });
+});
+
 describe('buildCrashSummary', () => {
   test('produces a schema_version-1 artifact when comply() throws', () => {
     const summary = buildCrashSummary({

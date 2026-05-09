@@ -10,11 +10,29 @@
  *   - `buildComplianceSummary`        → ComplianceSummaryArtifact (the JSON contract)
  *   - `formatComplianceSummaryText`   → stderr block with greppable `STORYBOARD-FAIL` prefix
  *   - `formatComplianceSummaryMarkdown` → table for $GITHUB_STEP_SUMMARY
+ *
+ * The `skip_causes` field on `ComplianceSummaryArtifact` is an additive v1
+ * extension — treat unknown fields as ignorable per schema_version semantics.
+ * Crash-path summaries built by `buildCrashSummary` omit `skip_causes`
+ * because the runner never reached the storyboard execution phase.
  */
 
 import type { ComplianceFailure, ComplianceResult, ComplianceTrack, OverallStatus } from './types';
 
 const SUMMARY_SCHEMA_VERSION = 1;
+
+/**
+ * A grouped skip-cause entry for the always-on summary block.
+ * Only actionable causes are included — internal runner routing skips
+ * (peer_branch_taken, not_applicable, etc.) are filtered out.
+ */
+export interface ComplianceSummarySkipCause {
+  cause: string;
+  count: number;
+  detail: string;
+  /** Scenario IDs affected (capped at SKIP_CAUSE_AFFECTED_LIMIT; remainder noted in text output). */
+  affected: string[];
+}
 
 /**
  * Stable, schema-versioned summary. Adopters depending on this shape should
@@ -33,6 +51,8 @@ export interface ComplianceSummaryArtifact {
   tested_at: string;
   storyboards_executed: string[];
   failures: ComplianceSummaryFailure[];
+  /** Actionable skip causes grouped by reason. Present only when skipped > 0. */
+  skip_causes?: ComplianceSummarySkipCause[];
 }
 
 /**
@@ -59,6 +79,7 @@ export interface BuildSummaryOptions {
 }
 
 export function buildComplianceSummary(result: ComplianceResult, opts: BuildSummaryOptions): ComplianceSummaryArtifact {
+  const skipCauses = buildSkipCauses(result);
   return {
     schema_version: SUMMARY_SCHEMA_VERSION,
     agent_url: result.agent_url,
@@ -72,6 +93,7 @@ export function buildComplianceSummary(result: ComplianceResult, opts: BuildSumm
     tested_at: result.tested_at,
     storyboards_executed: result.storyboards_executed ?? [],
     failures: (result.failures ?? []).map(toSummaryFailure),
+    ...(skipCauses.length > 0 ? { skip_causes: skipCauses } : {}),
   };
 }
 
@@ -105,6 +127,90 @@ function truncate(s: string, max: number): string {
   return s.length > max ? `${s.slice(0, max - 1)}…` : s;
 }
 
+// ────────────────────────────────────────────────────────────────────────────
+// Skip-cause aggregation
+// ────────────────────────────────────────────────────────────────────────────
+
+const SKIP_CAUSE_AFFECTED_LIMIT = 5;
+
+// Actionable reasons — gaps the adopter can close. Internal runner-routing
+// reasons (peer_branch_taken, not_applicable, probe_skipped, …) are excluded
+// because they are expected behavior, not agent deficiencies.
+const ACTIONABLE_SKIP_REASONS = new Set([
+  'missing_tool',
+  'missing_test_controller',
+  'prerequisite_failed',
+  'unsatisfied_contract',
+  'no_phases',
+]);
+
+function extractMissingToolName(warning: string): string | undefined {
+  // Step-level: `Agent did not advertise tool "sync_accounts"; agent tools: [...]`
+  const stepMatch = warning.match(/Agent did not advertise tool "([^"]+)"/i);
+  if (stepMatch) return stepMatch[1];
+  // Storyboard-level: `agent does not advertise any of [sync_accounts, list_accounts]`
+  const sbMatch = warning.match(/agent does not advertise any of \[([^\]]+)\]/i);
+  if (sbMatch) return sbMatch[1];
+  return undefined;
+}
+
+function skipCauseDetail(reason: string): string {
+  switch (reason) {
+    case 'missing_test_controller':
+      return "agent doesn't expose comply_test_controller";
+    case 'missing_tool':
+      return "agent doesn't advertise tool";
+    case 'prerequisite_failed':
+      return 'prerequisite step did not pass';
+    case 'unsatisfied_contract':
+      return 'test-kit contract out of scope';
+    case 'no_phases':
+      return 'storyboard has no executable phases';
+    default:
+      return reason;
+  }
+}
+
+function buildSkipCauses(result: ComplianceResult): ComplianceSummarySkipCause[] {
+  const causeMap = new Map<string, { count: number; detail: string; affectedSet: Set<string> }>();
+
+  for (const track of result.tracks) {
+    for (const scenario of track.scenarios) {
+      const scenarioId = String(scenario.scenario);
+      for (const step of scenario.steps ?? []) {
+        if (!step.skipped || !step.skip_reason) continue;
+        if (!ACTIONABLE_SKIP_REASONS.has(step.skip_reason)) continue;
+
+        let causeKey = step.skip_reason;
+        if (step.skip_reason === 'missing_tool' && step.warnings?.[0]) {
+          const toolName = extractMissingToolName(step.warnings[0]);
+          if (toolName) causeKey = `missing_tool: ${toolName}`;
+        }
+
+        if (!causeMap.has(causeKey)) {
+          causeMap.set(causeKey, {
+            count: 0,
+            detail: skipCauseDetail(step.skip_reason),
+            affectedSet: new Set(),
+          });
+        }
+        const entry = causeMap.get(causeKey)!;
+        entry.count++;
+        entry.affectedSet.add(scenarioId);
+      }
+    }
+  }
+
+  return Array.from(causeMap.entries())
+    .sort((a, b) => b[1].count - a[1].count)
+    .map(([cause, { count, detail, affectedSet }]) => ({
+      cause,
+      count,
+      detail,
+      affected: Array.from(affectedSet),
+    }));
+}
+
 /**
  * Hard-failure statuses — runs that should never look green to CI. `partial`
  * is intentionally not in this set: it means some tracks ran silent (wired
@@ -131,6 +237,20 @@ export function formatComplianceSummaryText(s: ComplianceSummaryArtifact): strin
   lines.push(`SDK:       @adcp/sdk ${s.sdk_version} (AdCP ${s.adcp_version})`);
   lines.push(`Status:    ${s.overall_status}`);
   lines.push(`Steps:     ${s.passed} passed, ${s.failed} failed, ${s.skipped} skipped`);
+  if (s.skip_causes?.length) {
+    const countWidth = String(Math.max(...s.skip_causes.map(c => c.count))).length;
+    lines.push(`  Skip causes:`);
+    for (const cause of s.skip_causes) {
+      const count = String(cause.count).padStart(countWidth);
+      lines.push(`    [${count}] ${cause.cause} — ${cause.detail}`);
+      const visible = cause.affected.slice(0, SKIP_CAUSE_AFFECTED_LIMIT);
+      const overflow = cause.affected.length - visible.length;
+      const affectedText = overflow > 0
+        ? `${visible.join(', ')}, … ${overflow} more`
+        : visible.join(', ');
+      lines.push(`           Affected: ${affectedText}`);
+    }
+  }
   lines.push(`Duration:  ${(s.total_duration_ms / 1000).toFixed(1)}s`);
   lines.push('');
 
@@ -186,6 +306,26 @@ export function formatComplianceSummaryMarkdown(s: ComplianceSummaryArtifact): s
     for (const f of s.failures) {
       lines.push(`| \`${f.track}\` | \`${f.storyboard_id}\` | \`${f.step_id}\` | ${escapeTableCell(f.reason)} |`);
     }
+    lines.push('');
+  }
+
+  if (s.skip_causes?.length) {
+    const total = s.skip_causes.reduce((n, c) => n + c.count, 0);
+    lines.push(`<details>`);
+    lines.push(`<summary>Skip causes (${s.skip_causes.length} cause${s.skip_causes.length === 1 ? '' : 's'}, ${total} skipped step${total === 1 ? '' : 's'})</summary>`);
+    lines.push('');
+    lines.push('| Count | Cause | Detail | Affected |');
+    lines.push('| --- | --- | --- | --- |');
+    for (const cause of s.skip_causes) {
+      const visible = cause.affected.slice(0, SKIP_CAUSE_AFFECTED_LIMIT);
+      const overflow = cause.affected.length - visible.length;
+      const affectedText = overflow > 0
+        ? `${visible.map(escapeTableCell).join(', ')}, … ${overflow} more`
+        : visible.map(escapeTableCell).join(', ');
+      lines.push(`| ${cause.count} | \`${escapeTableCell(cause.cause)}\` | ${escapeTableCell(cause.detail)} | ${affectedText} |`);
+    }
+    lines.push('');
+    lines.push('</details>');
     lines.push('');
   }
 
