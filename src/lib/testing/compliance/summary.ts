@@ -245,9 +245,7 @@ export function formatComplianceSummaryText(s: ComplianceSummaryArtifact): strin
       lines.push(`    [${count}] ${cause.cause} — ${cause.detail}`);
       const visible = cause.affected.slice(0, SKIP_CAUSE_AFFECTED_LIMIT);
       const overflow = cause.affected.length - visible.length;
-      const affectedText = overflow > 0
-        ? `${visible.join(', ')}, … ${overflow} more`
-        : visible.join(', ');
+      const affectedText = overflow > 0 ? `${visible.join(', ')}, … ${overflow} more` : visible.join(', ');
       lines.push(`           Affected: ${affectedText}`);
     }
   }
@@ -312,17 +310,22 @@ export function formatComplianceSummaryMarkdown(s: ComplianceSummaryArtifact): s
   if (s.skip_causes?.length) {
     const total = s.skip_causes.reduce((n, c) => n + c.count, 0);
     lines.push(`<details>`);
-    lines.push(`<summary>Skip causes (${s.skip_causes.length} cause${s.skip_causes.length === 1 ? '' : 's'}, ${total} skipped step${total === 1 ? '' : 's'})</summary>`);
+    lines.push(
+      `<summary>Skip causes (${s.skip_causes.length} cause${s.skip_causes.length === 1 ? '' : 's'}, ${total} skipped step${total === 1 ? '' : 's'})</summary>`
+    );
     lines.push('');
     lines.push('| Count | Cause | Detail | Affected |');
     lines.push('| --- | --- | --- | --- |');
     for (const cause of s.skip_causes) {
       const visible = cause.affected.slice(0, SKIP_CAUSE_AFFECTED_LIMIT);
       const overflow = cause.affected.length - visible.length;
-      const affectedText = overflow > 0
-        ? `${visible.map(escapeTableCell).join(', ')}, … ${overflow} more`
-        : visible.map(escapeTableCell).join(', ');
-      lines.push(`| ${cause.count} | \`${escapeTableCell(cause.cause)}\` | ${escapeTableCell(cause.detail)} | ${affectedText} |`);
+      const affectedText =
+        overflow > 0
+          ? `${visible.map(escapeTableCell).join(', ')}, … ${overflow} more`
+          : visible.map(escapeTableCell).join(', ');
+      lines.push(
+        `| ${cause.count} | \`${escapeTableCell(cause.cause)}\` | ${escapeTableCell(cause.detail)} | ${affectedText} |`
+      );
     }
     lines.push('');
     lines.push('</details>');

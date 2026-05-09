@@ -261,7 +261,9 @@ function resultWithSkips() {
                 skipped: true,
                 skip_reason: 'missing_test_controller',
                 duration_ms: 0,
-                warnings: ['Skipped: deterministic_testing phase requires comply_test_controller, which the agent did not advertise.'],
+                warnings: [
+                  'Skipped: deterministic_testing phase requires comply_test_controller, which the agent did not advertise.',
+                ],
               },
             ],
           },
@@ -363,9 +365,34 @@ describe('buildComplianceSummary — skip causes', () => {
               total_duration_ms: 0,
               tested_at: base.tested_at,
               steps: [
-                { step: 's1', passed: true, skipped: true, skip_reason: 'missing_test_controller', duration_ms: 0, warnings: ['Skipped: deterministic_testing phase requires comply_test_controller, which the agent did not advertise.'] },
-                { step: 's2', passed: true, skipped: true, skip_reason: 'missing_test_controller', duration_ms: 0, warnings: ['Skipped: deterministic_testing phase requires comply_test_controller, which the agent did not advertise.'] },
-                { step: 's3', passed: true, skipped: true, skip_reason: 'missing_tool', duration_ms: 0, warnings: ['Agent did not advertise tool "sync_accounts"; agent tools: [].'] },
+                {
+                  step: 's1',
+                  passed: true,
+                  skipped: true,
+                  skip_reason: 'missing_test_controller',
+                  duration_ms: 0,
+                  warnings: [
+                    'Skipped: deterministic_testing phase requires comply_test_controller, which the agent did not advertise.',
+                  ],
+                },
+                {
+                  step: 's2',
+                  passed: true,
+                  skipped: true,
+                  skip_reason: 'missing_test_controller',
+                  duration_ms: 0,
+                  warnings: [
+                    'Skipped: deterministic_testing phase requires comply_test_controller, which the agent did not advertise.',
+                  ],
+                },
+                {
+                  step: 's3',
+                  passed: true,
+                  skipped: true,
+                  skip_reason: 'missing_tool',
+                  duration_ms: 0,
+                  warnings: ['Agent did not advertise tool "sync_accounts"; agent tools: [].'],
+                },
               ],
             },
           ],
@@ -415,7 +442,9 @@ describe('formatComplianceSummaryText — skip causes', () => {
           skipped: true,
           skip_reason: 'missing_test_controller',
           duration_ms: 0,
-          warnings: ['Skipped: deterministic_testing phase requires comply_test_controller, which the agent did not advertise.'],
+          warnings: [
+            'Skipped: deterministic_testing phase requires comply_test_controller, which the agent did not advertise.',
+          ],
         },
       ],
     }));
