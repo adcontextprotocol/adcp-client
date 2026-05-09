@@ -922,6 +922,7 @@ async function complyImpl(agentUrl: string, options: ComplyOptions): Promise<Com
       agentTools: profile.tools,
       ...(webhook_receiver !== undefined && { webhook_receiver }),
       ...(contracts !== undefined && { contracts }),
+      ...(signal !== undefined && { signal }),
     };
 
     for (const sb of applicableStoryboards) {

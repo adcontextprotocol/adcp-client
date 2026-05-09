@@ -1019,6 +1019,17 @@ export interface StoryboardRunOptions extends TestOptions {
     public_url?: string;
   };
   /**
+   * Abort signal forwarded from `comply()`. When the signal fires,
+   * `executeStoryboardPass` throws at the start of the next phase or step,
+   * unwinding the run mid-storyboard rather than waiting for the current
+   * storyboard to complete before the between-storyboard check in
+   * `complyImpl` can fire.
+   *
+   * Callers of `runStoryboard()` directly may pass their own signal to
+   * bound a single storyboard run.
+   */
+  signal?: AbortSignal;
+  /**
    * Test-kit contract ids that are in scope for this run. A step with
    * `requires_contract: <id>` grades `not_applicable` when the id is not
    * listed here. Storyboards that assert webhook behavior typically declare

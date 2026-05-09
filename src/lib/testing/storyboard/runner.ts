@@ -1361,6 +1361,7 @@ async function executeStoryboardPass(
   }
 
   for (const phase of storyboard.phases) {
+    options.signal?.throwIfAborted();
     const phaseStart = Date.now();
     const stepResults: StoryboardStepResult[] = [];
     let phasePassed = true;
@@ -1501,6 +1502,7 @@ async function executeStoryboardPass(
     }
 
     for (const step of phase.steps) {
+      options.signal?.throwIfAborted();
       // Cascade-skip when the PRM presence probe declared the phase absent.
       if (phaseAbsent) {
         const cascadeResult: StoryboardStepResult = {
@@ -2106,6 +2108,7 @@ async function runMultiPass(
   const passes: StoryboardPassResult[] = [];
   const passResults: StoryboardResult[] = [];
   for (let passIdx = 0; passIdx < agentUrls.length; passIdx++) {
+    options.signal?.throwIfAborted();
     const passSeeded: PreSeededInput = { result: preSeededResult, attach: passIdx === 0 };
     const result = await executeStoryboardPass(agentUrls, storyboard, options, passIdx, passSeeded);
     passResults.push(result);
