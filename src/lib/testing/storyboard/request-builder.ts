@@ -325,7 +325,18 @@ const REQUEST_ENRICHERS: Record<string, RequestEnricher> = {
     // would carry through unexpanded mustache strings.
     const fixtureBody = omitEnvelopeFields(fixture);
 
-    const proposalId: unknown = fixture.proposal_id !== undefined ? fixture.proposal_id : context.proposal_id;
+    // Proposal-mode applies only when the storyboard's fixture explicitly
+    // names a `proposal_id`. `context.proposal_id` is auto-captured from
+    // any prior `get_products` response that returned `proposals[0]` (see
+    // context.ts), which is essentially every brief flow — using it as a
+    // fallback would override a fixture's explicit `packages` direction
+    // and force every sales storyboard through proposal-mode validation,
+    // including ones that intentionally exercise package-mode (sales-
+    // guaranteed, schema_validation, media_buy_seller/*). Fixture is the
+    // storyboard author's intent; respect it.
+    const fixtureHasPackages = Array.isArray(fixture.packages) && (fixture.packages as unknown[]).length > 0;
+    const proposalId: unknown =
+      fixture.proposal_id !== undefined ? fixture.proposal_id : fixtureHasPackages ? undefined : context.proposal_id;
     if (typeof proposalId === 'string') {
       const { packages: _droppedPackages, ...fixtureWithoutPackages } = fixtureBody;
       return {
