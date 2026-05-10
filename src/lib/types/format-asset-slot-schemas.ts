@@ -191,14 +191,10 @@ export const GroupWebhookAssetSlotSchema = BaseGroupAssetSlotSchema.and(
   z.object({ asset_type: z.literal('webhook'), requirements: WebhookAssetRequirementsSchema.optional() }).passthrough()
 );
 
-export const GroupBriefAssetSlotSchema = BaseGroupAssetSlotSchema.and(
-  z.object({ asset_type: z.literal('brief') }).passthrough()
-);
-
-export const GroupCatalogAssetSlotSchema = BaseGroupAssetSlotSchema.and(
-  z.object({ asset_type: z.literal('catalog'), requirements: CatalogRequirementsSchema.optional() }).passthrough()
-);
-
+// brief and catalog are intentionally excluded from GroupAssetSlotSchema — they are
+// campaign-input metadata types, not delivery-ready assets suitable for repeatable groups.
+// This mirrors the generated RepeatableGroupAssetSchema in schemas.generated.ts (lines
+// 4121-4131) which also excludes them. Individual brief/catalog slots remain valid.
 export const GroupAssetSlotSchema = z.union([
   GroupImageAssetSlotSchema,
   GroupVideoAssetSlotSchema,
@@ -212,8 +208,6 @@ export const GroupAssetSlotSchema = z.union([
   GroupDaastAssetSlotSchema,
   GroupUrlAssetSlotSchema,
   GroupWebhookAssetSlotSchema,
-  GroupBriefAssetSlotSchema,
-  GroupCatalogAssetSlotSchema,
 ]);
 
 // ---------- Repeatable group ----------

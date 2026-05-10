@@ -23,7 +23,10 @@ describe('format-asset-slot-schemas', async () => {
       requirements: { aspect_ratio: '16:9', formats: ['jpg', 'png'] },
     };
     const result = schemas.IndividualAssetSlotSchema.safeParse(slot);
-    assert.ok(result.success, `IndividualAssetSlotSchema should parse image slot: ${JSON.stringify(result.error?.issues)}`);
+    assert.ok(
+      result.success,
+      `IndividualAssetSlotSchema should parse image slot: ${JSON.stringify(result.error?.issues)}`
+    );
   });
 
   test('IndividualAssetSlotSchema parses text slot', async () => {
@@ -36,7 +39,10 @@ describe('format-asset-slot-schemas', async () => {
       requirements: { max_length: 90 },
     };
     const result = schemas.IndividualAssetSlotSchema.safeParse(slot);
-    assert.ok(result.success, `IndividualAssetSlotSchema should parse text slot: ${JSON.stringify(result.error?.issues)}`);
+    assert.ok(
+      result.success,
+      `IndividualAssetSlotSchema should parse text slot: ${JSON.stringify(result.error?.issues)}`
+    );
   });
 
   test('IndividualAssetSlotSchema parses brief slot (no requirements)', async () => {
@@ -48,7 +54,10 @@ describe('format-asset-slot-schemas', async () => {
       asset_type: 'brief',
     };
     const result = schemas.IndividualAssetSlotSchema.safeParse(slot);
-    assert.ok(result.success, `IndividualAssetSlotSchema should parse brief slot: ${JSON.stringify(result.error?.issues)}`);
+    assert.ok(
+      result.success,
+      `IndividualAssetSlotSchema should parse brief slot: ${JSON.stringify(result.error?.issues)}`
+    );
   });
 
   test('RepeatableGroupSlotSchema parses carousel slot', async () => {
@@ -66,7 +75,10 @@ describe('format-asset-slot-schemas', async () => {
       ],
     };
     const result = schemas.RepeatableGroupSlotSchema.safeParse(group);
-    assert.ok(result.success, `RepeatableGroupSlotSchema should parse carousel: ${JSON.stringify(result.error?.issues)}`);
+    assert.ok(
+      result.success,
+      `RepeatableGroupSlotSchema should parse carousel: ${JSON.stringify(result.error?.issues)}`
+    );
   });
 
   test('FormatAssetSlotSchema accepts both individual and group slots', async () => {
@@ -109,13 +121,20 @@ describe('format-asset-slot-schemas', async () => {
   test('all 14 per-type individual slot schemas are exported', async () => {
     if (!schemas) schemas = await import('../../dist/lib/index.js');
     const expectedSchemas = [
-      'IndividualImageAssetSlotSchema', 'IndividualVideoAssetSlotSchema',
-      'IndividualAudioAssetSlotSchema', 'IndividualTextAssetSlotSchema',
-      'IndividualMarkdownAssetSlotSchema', 'IndividualHtmlAssetSlotSchema',
-      'IndividualCssAssetSlotSchema', 'IndividualJavascriptAssetSlotSchema',
-      'IndividualVastAssetSlotSchema', 'IndividualDaastAssetSlotSchema',
-      'IndividualUrlAssetSlotSchema', 'IndividualWebhookAssetSlotSchema',
-      'IndividualBriefAssetSlotSchema', 'IndividualCatalogAssetSlotSchema',
+      'IndividualImageAssetSlotSchema',
+      'IndividualVideoAssetSlotSchema',
+      'IndividualAudioAssetSlotSchema',
+      'IndividualTextAssetSlotSchema',
+      'IndividualMarkdownAssetSlotSchema',
+      'IndividualHtmlAssetSlotSchema',
+      'IndividualCssAssetSlotSchema',
+      'IndividualJavascriptAssetSlotSchema',
+      'IndividualVastAssetSlotSchema',
+      'IndividualDaastAssetSlotSchema',
+      'IndividualUrlAssetSlotSchema',
+      'IndividualWebhookAssetSlotSchema',
+      'IndividualBriefAssetSlotSchema',
+      'IndividualCatalogAssetSlotSchema',
     ];
     for (const name of expectedSchemas) {
       assert.ok(schemas[name], `${name} should be exported`);
@@ -126,5 +145,30 @@ describe('format-asset-slot-schemas', async () => {
     if (!schemas) schemas = await import('../../dist/lib/index.js');
     assert.ok(schemas.GroupAssetSlotSchema, 'GroupAssetSlotSchema should be exported');
     assert.ok(schemas.RepeatableGroupSlotSchema, 'RepeatableGroupSlotSchema should be exported');
+  });
+
+  test('RepeatableGroupSlotSchema rejects group with invalid inner asset_type', async () => {
+    if (!schemas) schemas = await import('../../dist/lib/index.js');
+    const badGroup = {
+      item_type: 'repeatable_group',
+      asset_group_id: 'product',
+      required: true,
+      min_count: 1,
+      max_count: 5,
+      assets: [{ asset_id: 'item', asset_type: 'unknown_type', required: true }],
+    };
+    const result = schemas.RepeatableGroupSlotSchema.safeParse(badGroup);
+    assert.ok(!result.success, 'RepeatableGroupSlotSchema should reject group with invalid inner asset_type');
+  });
+
+  test('GroupAssetSlotSchema rejects brief and catalog (metadata types not valid in groups)', async () => {
+    if (!schemas) schemas = await import('../../dist/lib/index.js');
+    const briefSlot = { asset_id: 'b', asset_type: 'brief', required: false };
+    const catalogSlot = { asset_id: 'c', asset_type: 'catalog', required: false };
+    assert.ok(!schemas.GroupAssetSlotSchema.safeParse(briefSlot).success, 'GroupAssetSlotSchema should reject brief');
+    assert.ok(
+      !schemas.GroupAssetSlotSchema.safeParse(catalogSlot).success,
+      'GroupAssetSlotSchema should reject catalog'
+    );
   });
 });
