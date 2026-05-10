@@ -13,6 +13,7 @@ import type { TestOptions, TestResult, AgentProfile } from '../types';
 import { mapStoryboardResultsToTrackResult, TRACK_LABELS } from './storyboard-tracks';
 import { runStoryboard } from '../storyboard/runner';
 import { validateTestKit } from '../storyboard/test-kit';
+import { checkAccountDiscoveryGate } from './spec-conformance';
 
 // Side-effect import: registers default assertion stubs for invariant ids that
 // upstream storyboards (e.g., `universal/idempotency.yaml` after adcp#2639)
@@ -611,12 +612,31 @@ function groupByTrack(
 
   const grouped = new Map<ComplianceTrack, StoryboardResult[]>();
   for (const result of results) {
-    const track = trackLookup.get(result.storyboard_id);
+    // Synthetic spec-conformance gate results (adcp-client#1624 / #1642)
+    // aren't in `applicableStoryboards`, so they have no track in the
+    // lookup. Route them to `core` so their failures contribute to
+    // `tracks_failed` and `overall_status` flips to `failing` — without
+    // this, the gate hits `failures[]` but the run-level verdict stays
+    // green, masking the spec-noncompliance the gate is supposed to surface.
+    const track = trackLookup.get(result.storyboard_id) ?? specConformanceTrack(result.storyboard_id);
     if (!track) continue;
     if (!grouped.has(track)) grouped.set(track, []);
     grouped.get(track)!.push(result);
   }
   return grouped;
+}
+
+/**
+ * Map a synthetic spec-conformance storyboard ID (`__spec_conformance__/*`)
+ * to a real `ComplianceTrack` so it lands in the track rollup.
+ * Currently routes every spec-conformance gate to `core` — these are
+ * protocol-level invariants, not specialism-specific. Returns `undefined`
+ * for non-synthetic IDs so legitimate-but-unmapped storyboards are still
+ * dropped (the existing fail-loud-on-unknown contract).
+ */
+function specConformanceTrack(storyboardId: string): ComplianceTrack | undefined {
+  if (storyboardId.startsWith('__spec_conformance__/')) return 'core';
+  return undefined;
 }
 
 /**
@@ -942,6 +962,17 @@ async function complyImpl(agentUrl: string, options: ComplyOptions): Promise<Com
       storyboardResults.push(buildNotApplicableStoryboardResult(agentUrl, na));
     }
 
+    // Cross-storyboard spec-conformance gates. Push synthetic StoryboardResults
+    // for protocol-level invariants the AdCP spec mandates regardless of which
+    // specialism is being tested. Currently wires the universal account-discovery
+    // gate (adcp-client#1624 / adcp#4302; AdCP 3.0.9 §accounts/overview).
+    // Will migrate to per-storyboard `required_any_of_tools` tags once
+    // adcp#4325 lands; tracked in #1642.
+    const accountDiscoveryFailure = checkAccountDiscoveryGate(profile, agentUrl);
+    if (accountDiscoveryFailure) {
+      storyboardResults.push(accountDiscoveryFailure);
+    }
+
     // Group results by track and build TrackResults
     const grouped = groupByTrack(storyboardResults, applicableStoryboards, notApplicable);
     const trackResults: TrackResult[] = [];
@@ -952,6 +983,10 @@ async function complyImpl(agentUrl: string, options: ComplyOptions): Promise<Com
     for (const sb of applicableStoryboards) {
       if (sb.track) poolTrackSet.add(sb.track as ComplianceTrack);
     }
+    // Synthetic spec-conformance gates always land in `core`; ensure `core`
+    // is in the pool so its track row renders even when the run targeted a
+    // non-core specialism bundle that excluded universal storyboards.
+    if (accountDiscoveryFailure) poolTrackSet.add('core');
     for (const na of notApplicable) {
       if (na.track) poolTrackSet.add(na.track as ComplianceTrack);
     }
