@@ -39,13 +39,27 @@ export const ACCOUNT_DISCOVERY_GATE_STORYBOARD_ID = '__spec_conformance__/accoun
  * `accounts/overview.mdx`. Adopters claiming any of these specialisms
  * without an account-discovery tool are non-conformant.
  *
- * Match rules: `sales-*` prefix, exact `audience-sync`, `governance-*`
- * prefix.
+ * Match rules:
+ *   - `sales-*` prefix — every selling specialism operates on accounts.
+ *   - exact `audience-sync` — audiences belong to accounts.
+ *   - `governance-*` prefix — governance applies per-account.
+ *   - exact `creative-generative` — dual-role specialism. A generative
+ *     seller (selling inventory + generating creatives) is an account-
+ *     bearing adopter even if they only claim `creative-generative`,
+ *     not a `sales-*` specialism. The upstream storyboard at
+ *     `compliance/cache/<v>/specialisms/creative-generative/generative-seller.yaml`
+ *     exercises `sync_accounts` directly, confirming this scope.
+ *
+ * Other creative specialisms (`creative-ad-server`, `creative-template`)
+ * are stand-alone — those agents don't sell inventory and don't need
+ * account discovery. Same for `signal-*`, `brand-rights`,
+ * `signed-requests`.
  */
 function isAccountBearingSpecialism(specialism: string): boolean {
   if (specialism.startsWith('sales-')) return true;
   if (specialism === 'audience-sync') return true;
   if (specialism.startsWith('governance-')) return true;
+  if (specialism === 'creative-generative') return true;
   return false;
 }
 
@@ -69,6 +83,11 @@ function isAccountBearingSpecialism(specialism: string): boolean {
  * `profile.specialisms` is undefined), the gate is a no-op. The runner
  * separately surfaces an observation about the missing capability call;
  * we don't double-report.
+ *
+ * TODO(adcp-client#1642): once adcp#4325's `required_any_of_tools` schema
+ * lands in AdCP 3.1, migrate this gate to consume the per-storyboard tag
+ * for richer attribution. Delete this synthesis path when migration is
+ * complete and upstream storyboards in `compliance/cache/` carry the tag.
  */
 export function checkAccountDiscoveryGate(profile: AgentProfile, agentUrl: string): StoryboardResult | null {
   const accountBearing = (profile.specialisms ?? []).filter(isAccountBearingSpecialism);

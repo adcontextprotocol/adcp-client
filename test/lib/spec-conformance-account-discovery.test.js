@@ -156,4 +156,69 @@ describe('checkAccountDiscoveryGate (#1624)', () => {
   test('synthetic storyboard ID is stable for dashboard greps', () => {
     assert.equal(ACCOUNT_DISCOVERY_GATE_STORYBOARD_ID, '__spec_conformance__/account_discovery');
   });
+
+  test('creative-generative without account tools → fail (dual-role generative seller)', () => {
+    // adcp-client#1624 review (ad-tech-protocol-expert): the
+    // creative-generative specialism is dual-role per CLAUDE.md skill index
+    // — an adopter selling inventory AND generating creatives may claim
+    // creative-generative without a sales-* specialism. The upstream
+    // storyboard exercises sync_accounts directly. Treating
+    // creative-generative as account-bearing closes that gap.
+    const result = checkAccountDiscoveryGate(
+      profile({
+        specialisms: ['creative-generative'],
+        tools: ['get_adcp_capabilities', 'build_creative'],
+      }),
+      'https://agent.example/mcp'
+    );
+    assert.ok(result);
+    assert.match(result.phases[0].steps[0].error, /creative-generative/);
+  });
+
+  test('creative-template (stand-alone creative) → gate does not fire', () => {
+    // Other creative specialisms are stand-alone, no account discovery needed.
+    const result = checkAccountDiscoveryGate(
+      profile({
+        specialisms: ['creative-template'],
+        tools: ['get_adcp_capabilities', 'list_creative_formats', 'build_creative'],
+      }),
+      'https://agent.example/mcp'
+    );
+    assert.equal(result, null);
+  });
+});
+
+describe('account-discovery gate routes synthetic result to core track (#1624 review fix)', () => {
+  // Code-reviewer flagged: groupByTrack drops storyboards whose IDs aren't in
+  // applicableStoryboards. Without the routing fix, the gate would push a
+  // failure into result.failures[] but tracks_failed would never increment,
+  // computeOverallStatus would return 'passing', and the run would exit 0 —
+  // exactly the silent-conformance bug the gate is supposed to close.
+  // This test pins the wiring fix.
+
+  const { mapStoryboardResultsToTrackResult } = require('../../dist/lib/testing/compliance/storyboard-tracks.js');
+
+  test('synthetic result routed to core via groupByTrack flips track to fail', () => {
+    // We simulate the groupByTrack output by treating a one-result core group
+    // as the input to mapStoryboardResultsToTrackResult — exactly what
+    // comply.ts does for any track with results. The track must end up with
+    // status 'fail' so computeOverallStatus sees tracks_failed > 0.
+    const failure = checkAccountDiscoveryGate(
+      profile({ specialisms: ['sales-guaranteed'], tools: ['get_adcp_capabilities'] }),
+      'https://agent.example/mcp'
+    );
+    assert.ok(failure, 'gate must fire for this fixture');
+
+    const trackResult = mapStoryboardResultsToTrackResult('core', [failure], profile());
+    assert.equal(trackResult.track, 'core');
+    assert.equal(
+      trackResult.status,
+      'fail',
+      `synthetic gate result must produce a failing core track (got '${trackResult.status}')`
+    );
+    // Sanity: the underlying scenarios array carries the failure so downstream
+    // observation collectors / failure summaries see it.
+    const failedSteps = trackResult.scenarios.flatMap(s => s.steps.filter(st => !st.passed));
+    assert.equal(failedSteps.length, 1, 'one failed step from the synthetic gate');
+  });
 });

@@ -612,12 +612,31 @@ function groupByTrack(
 
   const grouped = new Map<ComplianceTrack, StoryboardResult[]>();
   for (const result of results) {
-    const track = trackLookup.get(result.storyboard_id);
+    // Synthetic spec-conformance gate results (adcp-client#1624 / #1642)
+    // aren't in `applicableStoryboards`, so they have no track in the
+    // lookup. Route them to `core` so their failures contribute to
+    // `tracks_failed` and `overall_status` flips to `failing` — without
+    // this, the gate hits `failures[]` but the run-level verdict stays
+    // green, masking the spec-noncompliance the gate is supposed to surface.
+    const track = trackLookup.get(result.storyboard_id) ?? specConformanceTrack(result.storyboard_id);
     if (!track) continue;
     if (!grouped.has(track)) grouped.set(track, []);
     grouped.get(track)!.push(result);
   }
   return grouped;
+}
+
+/**
+ * Map a synthetic spec-conformance storyboard ID (`__spec_conformance__/*`)
+ * to a real `ComplianceTrack` so it lands in the track rollup.
+ * Currently routes every spec-conformance gate to `core` — these are
+ * protocol-level invariants, not specialism-specific. Returns `undefined`
+ * for non-synthetic IDs so legitimate-but-unmapped storyboards are still
+ * dropped (the existing fail-loud-on-unknown contract).
+ */
+function specConformanceTrack(storyboardId: string): ComplianceTrack | undefined {
+  if (storyboardId.startsWith('__spec_conformance__/')) return 'core';
+  return undefined;
 }
 
 /**
@@ -964,6 +983,10 @@ async function complyImpl(agentUrl: string, options: ComplyOptions): Promise<Com
     for (const sb of applicableStoryboards) {
       if (sb.track) poolTrackSet.add(sb.track as ComplianceTrack);
     }
+    // Synthetic spec-conformance gates always land in `core`; ensure `core`
+    // is in the pool so its track row renders even when the run targeted a
+    // non-core specialism bundle that excluded universal storyboards.
+    if (accountDiscoveryFailure) poolTrackSet.add('core');
     for (const na of notApplicable) {
       if (na.track) poolTrackSet.add(na.track as ComplianceTrack);
     }
