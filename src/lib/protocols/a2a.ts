@@ -160,6 +160,14 @@ export async function cancelA2ATask(agent: AgentConfig, taskId: string): Promise
   // we send to it on the cancel path. Sellers with uniform "must be
   // signed" policies accept this; sellers that only check signing on
   // specific AdCP tools simply ignore the extra signature.
+  //
+  // TODO(adcp#4318, adcp-client#1617): when the AdCP spec adds explicit
+  // verifier coverage for A2A protocol methods (likely in 3.1 as a new
+  // `protocol_methods_supported_for` / `protocol_methods_required_for`
+  // field on `request_signing`), narrow this default by reading the
+  // seller's advertised coverage from `getCapability()` and gating on
+  // the `tasks/cancel` membership. The over-sign default stays as the
+  // fallback for spec-silent sellers (3.0.x and earlier).
   if (agent.request_signing) {
     const upstream: FetchLike = (input, ini) => fetch(input as RequestInfo, ini);
     if (isInlineSigningConfig(agent.request_signing)) {
