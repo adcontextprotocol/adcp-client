@@ -317,6 +317,11 @@ export * from './sync-rows';
 // Re-export Zod schemas for runtime validation
 export * from './schemas.generated';
 
+// Hand-authored Zod schemas for format asset slot shapes (IndividualAssetSlotSchema,
+// RepeatableGroupSlotSchema, FormatAssetSlotSchema, and per-type variants).
+// Companion to format-asset-slots.ts (TS types) and schemas.generated.ts (requirements schemas).
+export * from './format-asset-slot-schemas';
+
 // Re-export const-array enum values (e.g., MediaChannelValues, PacingValues)
 // for consumers that need to enumerate or validate against the spec's
 // literal sets without re-deriving them from Zod schemas.
