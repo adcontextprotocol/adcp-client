@@ -1,6 +1,6 @@
 // Generated entity-hydration field map — do NOT edit by hand
 //
-// Source: `schemas/cache/3.0.8/manifest.json` + per-tool request
+// Source: `schemas/cache/3.0.9/manifest.json` + per-tool request
 // schemas. Every top-level `x-entity`-tagged string field on a request
 // schema lands here. The runtime hydrator (`from-platform.ts` →
 // `hydrateForTool`) walks this map plus the hand-curated

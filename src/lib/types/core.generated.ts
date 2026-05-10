@@ -1,5 +1,5 @@
-// Generated AdCP core types from official schemas v3.0.8
-// Generated at: 2026-05-08T15:47:18.429Z
+// Generated AdCP core types from official schemas v3.0.9
+// Generated at: 2026-05-10T10:33:36.437Z
 
 // MEDIA-BUY SCHEMA
 /**
@@ -5581,7 +5581,7 @@ export interface A2UIUserAction {
 
 // brand/acquire-rights-request.json
 /**
- * Authentication schemes for push notification endpoints
+ * Legacy authentication schemes for the webhook auth block. Bearer: token sent in Authorization header. HMAC-SHA256: legacy shared-secret signing. Both are deprecated; new integrations SHOULD omit the authentication block and use the RFC 9421 webhook signing profile (applicable on schemas where authentication is optional). Removed in AdCP 4.0.
  */
 export type AuthenticationScheme = 'Bearer' | 'HMAC-SHA256';
 
@@ -9613,15 +9613,15 @@ export interface CreateMediaBuyRequest {
      */
     token?: string;
     /**
-     * Authentication configuration for webhook delivery (A2A-compatible)
+     * Legacy authentication configuration for webhook delivery (A2A-compatible). Opts the receiver into Bearer or HMAC-SHA256 signing. Both schemes are deprecated; the preferred signing profile for new integrations is RFC 9421, where the seller signs with a key published at its brand.json agents[] entry and the buyer verifies against the seller's JWKS — no shared secret crosses the wire (see docs/building/implementation/security.mdx#webhook-callbacks). This field is required in AdCP 3.x; the requirement is removed in AdCP 4.0 when the default RFC 9421 path becomes the only path.
      */
     authentication: {
       /**
-       * Array of authentication schemes. Supported: ['Bearer'] for simple token auth, ['HMAC-SHA256'] for signature verification (recommended for production)
+       * Array of authentication schemes. ['Bearer'] for simple token auth, ['HMAC-SHA256'] for legacy shared-secret signing. Both are deprecated; new integrations SHOULD use the RFC 9421 webhook signing profile instead.
        */
       schemes: AuthenticationScheme[];
       /**
-       * Credentials for authentication. For Bearer: token sent in Authorization header. For HMAC-SHA256: shared secret used to generate signature. Minimum 32 characters. Exchanged out-of-band during onboarding.
+       * Credentials for the legacy scheme. For Bearer: token sent in Authorization header. For HMAC-SHA256: shared secret used to generate signature. Minimum 32 characters. Exchanged out-of-band during onboarding.
        */
       credentials: string;
     };
@@ -9728,15 +9728,15 @@ export interface ReportingWebhook {
    */
   token?: string;
   /**
-   * Authentication configuration for webhook delivery (A2A-compatible)
+   * Legacy authentication configuration for webhook delivery (A2A-compatible). Opts the receiver into Bearer or HMAC-SHA256 signing. Both schemes are deprecated; the preferred signing profile for new integrations is RFC 9421, where the seller signs with a key published at its brand.json agents[] entry and the buyer verifies against the seller's JWKS — no shared secret crosses the wire (see docs/building/implementation/security.mdx#webhook-callbacks). This field is required in AdCP 3.x; the requirement is removed in AdCP 4.0 when the default RFC 9421 path becomes the only path.
    */
   authentication: {
     /**
-     * Array of authentication schemes. Supported: ['Bearer'] for simple token auth, ['HMAC-SHA256'] for signature verification (recommended for production)
+     * Array of authentication schemes. ['Bearer'] for simple token auth, ['HMAC-SHA256'] for legacy shared-secret signing. Both are deprecated; new integrations SHOULD use the RFC 9421 webhook signing profile instead.
      */
     schemes: AuthenticationScheme[];
     /**
-     * Credentials for authentication. For Bearer: token sent in Authorization header. For HMAC-SHA256: shared secret used to generate signature. Minimum 32 characters. Exchanged out-of-band during onboarding.
+     * Credentials for the legacy scheme. For Bearer: token sent in Authorization header. For HMAC-SHA256: shared secret used to generate signature. Minimum 32 characters. Exchanged out-of-band during onboarding.
      */
     credentials: string;
   };
