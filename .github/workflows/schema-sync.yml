@@ -47,19 +47,23 @@ jobs:
           npm run generate-types
           npm run generate-wellknown-schemas
 
-          if git diff --exit-code src/lib/types/ src/lib/agents/ package.json; then
+          # Always capture version so PR title is correct for compliance-only bumps too.
+          ADCP_VERSION=$(cat compliance/CACHE_VERSION 2>/dev/null | tr -d '[:space:]' || cat ADCP_VERSION)
+          echo "adcp_version=$ADCP_VERSION" >> $GITHUB_OUTPUT
+
+          # Include compliance/CACHE_VERSION in the diff guard so compliance-only
+          # spec bumps (e.g. fixed storyboard YAML, new idempotency_key strings)
+          # trigger a PR even when TypeScript types are unchanged.
+          # git status --short detects both new (untracked) and modified marker files.
+          COMPLIANCE_MARKER_CHANGED="$(git status --short compliance/CACHE_VERSION 2>/dev/null)"
+
+          if git diff --exit-code src/lib/types/ src/lib/agents/ package.json && \
+             [ -z "$COMPLIANCE_MARKER_CHANGED" ]; then
             echo "changes_detected=false" >> $GITHUB_OUTPUT
             echo "✅ No schema changes detected"
           else
             echo "changes_detected=true" >> $GITHUB_OUTPUT
             echo "📋 Schema changes detected"
-
-            ADCP_VERSION=$(node -e "
-              const fs = require('fs');
-              const index = JSON.parse(fs.readFileSync('schemas/cache/latest/index.json', 'utf8'));
-              console.log(index.adcp_version);
-            ")
-            echo "adcp_version=$ADCP_VERSION" >> $GITHUB_OUTPUT
           fi
 
       - name: Sync version if schemas changed

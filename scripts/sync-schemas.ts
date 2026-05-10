@@ -380,6 +380,15 @@ async function syncFromTarball(version: string): Promise<boolean> {
     updateLatestSymlink(SCHEMA_CACHE_DIR, version);
     updateLatestSymlink(COMPLIANCE_CACHE_DIR, version);
 
+    // Write a tracked marker so schema-sync CI can detect compliance-only spec
+    // bumps. compliance/cache/ is gitignored (populated at sync/publish time),
+    // but compliance/CACHE_VERSION sits one level above and IS tracked in git.
+    // This lets the diff guard in schema-sync.yml fire even when no TypeScript
+    // types changed — preventing stale storyboards from shipping in npm releases.
+    const cacheVersionMarker = path.join(path.dirname(COMPLIANCE_CACHE_DIR), 'CACHE_VERSION');
+    writeFileSync(cacheVersionMarker, `${semanticVersion}\n`);
+    console.log(`📝 compliance/CACHE_VERSION → ${semanticVersion}`);
+
     console.log(`📁 Schemas:    ${path.join(SCHEMA_CACHE_DIR, version)}`);
     console.log(`📁 Compliance: ${path.join(COMPLIANCE_CACHE_DIR, version)}`);
     if (existsSync(`${path.join(SCHEMA_CACHE_DIR, version)}.previous`)) {

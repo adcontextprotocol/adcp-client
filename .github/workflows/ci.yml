@@ -34,6 +34,23 @@ jobs:
       - name: Sync schemas from AdCP
         run: npm run sync-schemas:all
 
+      - name: Validate compliance cache version matches spec
+        run: |
+          EXPECTED=$(cat ADCP_VERSION | tr -d '[:space:]')
+          if [ ! -f compliance/CACHE_VERSION ]; then
+            echo "❌ compliance/CACHE_VERSION not found after sync — sync-schemas may have failed silently."
+            echo "   Run: npm run sync-schemas:all"
+            exit 1
+          fi
+          CACHED=$(cat compliance/CACHE_VERSION | tr -d '[:space:]')
+          if [ "$CACHED" != "$EXPECTED" ]; then
+            echo "❌ Compliance cache version mismatch: bundled '$CACHED', expected '$EXPECTED'"
+            echo "   Stale storyboards cause false pass/fail in buyer-side validation."
+            echo "   Run: npm run sync-schemas:all"
+            exit 1
+          fi
+          echo "✅ compliance/cache version matches spec: $CACHED"
+
       - name: Validate generated files are in sync
         run: |
           npm run generate-types
