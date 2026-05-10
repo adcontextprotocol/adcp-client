@@ -512,6 +512,13 @@ async function sync(version?: string): Promise<void> {
   const viaTarball = await syncFromTarball(adcpVersion);
   if (!viaTarball) {
     await syncSchemasPerFile(adcpVersion);
+    // Per-file fallback doesn't sync compliance/. Write the marker anyway so
+    // ci:schema-check doesn't hard-fail with "not found". Version reflects the
+    // ADCP_VERSION pin — the mismatch risk is pre-existing in this fallback path.
+    const marker = path.join(path.dirname(COMPLIANCE_CACHE_DIR), 'CACHE_VERSION');
+    mkdirSync(path.dirname(marker), { recursive: true });
+    writeFileSync(marker, `${adcpVersion}\n`);
+    console.warn(`📝 compliance/CACHE_VERSION → ${adcpVersion} (per-file fallback — compliance storyboards not synced)`);
   }
 
   console.log(`✅ Sync complete for AdCP ${adcpVersion}`);

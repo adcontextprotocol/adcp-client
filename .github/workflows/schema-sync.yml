@@ -48,7 +48,8 @@ jobs:
           npm run generate-wellknown-schemas
 
           # Always capture version so PR title is correct for compliance-only bumps too.
-          ADCP_VERSION=$(cat compliance/CACHE_VERSION 2>/dev/null | tr -d '[:space:]' || cat ADCP_VERSION)
+          # compliance/CACHE_VERSION is always written by sync-schemas (tarball or per-file path).
+          ADCP_VERSION=$(cat compliance/CACHE_VERSION | tr -d '[:space:]')
           echo "adcp_version=$ADCP_VERSION" >> $GITHUB_OUTPUT
 
           # Include compliance/CACHE_VERSION in the diff guard so compliance-only
