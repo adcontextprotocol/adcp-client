@@ -12,7 +12,7 @@ import { withSpan, injectTraceHeaders } from '../observability/tracing';
 import { isAgentCardPath, buildCardUrls } from '../utils/a2a-discovery';
 import { buildAgentSigningFetch, signingContextStorage, type AgentSigningContext } from '../signing/client';
 import { toSignerKey, isInlineSigningConfig, isProviderSigningConfig } from '../signing/agent-fetch';
-import { createSigningFetch } from '../signing/fetch';
+import { createSigningFetch, type FetchLike } from '../signing/fetch';
 import { createSigningFetchAsync } from '../signing/fetch-async';
 import type { AgentConfig } from '../types/adcp';
 import { redactIdempotencyKeyInArgs } from '../utils/idempotency';
@@ -108,6 +108,15 @@ const CANCEL_TIMEOUT_MS = 5000;
  * @param taskId    The server-assigned A2A Task.id to cancel.
  */
 export async function cancelA2ATask(agent: AgentConfig, taskId: string): Promise<void> {
+  // Defense-in-depth (ad-tech-protocol-expert review of #1640): the cancel
+  // POST is JSON-RPC at the bare A2A endpoint. Calling this on an MCP agent
+  // would POST `tasks/cancel` JSON-RPC at an MCP endpoint and 404. The
+  // single call site (`pollTaskCompletion`) already gates on
+  // `agent.protocol === 'a2a'`; this assertion catches future call sites
+  // that forget the gate.
+  if (agent.protocol !== 'a2a') {
+    return;
+  }
   const agentUrl = agent.agent_uri;
   const authToken = agent.auth_token;
 
@@ -152,20 +161,14 @@ export async function cancelA2ATask(agent: AgentConfig, taskId: string): Promise
   // signed" policies accept this; sellers that only check signing on
   // specific AdCP tools simply ignore the extra signature.
   if (agent.request_signing) {
-    const upstream = (input: string, ini?: RequestInit) => fetch(input, ini) as unknown as Promise<Response>;
+    const upstream: FetchLike = (input, ini) => fetch(input as RequestInfo, ini);
     if (isInlineSigningConfig(agent.request_signing)) {
-      const signed = createSigningFetch(
-        upstream as Parameters<typeof createSigningFetch>[0],
-        toSignerKey(agent.request_signing)
-      );
+      const signed = createSigningFetch(upstream, toSignerKey(agent.request_signing));
       await signed(agentUrl, init);
       return;
     }
     if (isProviderSigningConfig(agent.request_signing)) {
-      const signed = createSigningFetchAsync(
-        upstream as Parameters<typeof createSigningFetchAsync>[0],
-        agent.request_signing.provider
-      );
+      const signed = createSigningFetchAsync(upstream, agent.request_signing.provider);
       await signed(agentUrl, init);
       return;
     }
