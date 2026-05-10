@@ -251,6 +251,99 @@ describe('Request Builder', () => {
       );
     });
 
+    test('respects fixture packages over auto-captured context.proposal_id (#1603 follow-up)', () => {
+      // Regression: PR #1603 introduced proposal-mode in the create_media_buy
+      // enricher by reading `context.proposal_id` (auto-captured from any
+      // prior `get_products` response in `context.ts`). When the fixture
+      // explicitly authors `packages` and no `proposal_id`, the enricher
+      // was over-applying proposal-mode — dropping the fixture's packages
+      // and forcing every sales storyboard whose brief returned proposals
+      // through the seller's strict proposal-lifecycle validation. That
+      // broke sales-guaranteed, schema_validation, media_buy_seller/* and
+      // every other storyboard that author `packages` directly.
+      //
+      // Fixture is the storyboard author's intent; respect it. Proposal-
+      // mode applies only when the fixture explicitly names `proposal_id`
+      // (with `total_budget`, no `packages`).
+      const context = {
+        proposal_id: 'autocaptured_proposal_from_brief',
+        products: [
+          {
+            product_id: 'p1',
+            pricing_options: [{ pricing_option_id: 'opt', pricing_model: 'cpm' }],
+          },
+        ],
+      };
+      const s = step('create_media_buy', {
+        sample_request: {
+          start_time: FUTURE_START,
+          end_time: FUTURE_END,
+          packages: [{ product_id: 'p1', budget: 5000, pricing_option_id: 'opt' }],
+        },
+      });
+      const result = buildRequest(s, context, DEFAULT_OPTIONS);
+      assert.ok(Array.isArray(result.packages), 'packages preserved on the wire');
+      assert.strictEqual(result.packages.length, 1, 'exactly one package — fixture intent honored');
+      assert.strictEqual(result.proposal_id, undefined, 'no proposal_id on the wire (fixture has packages)');
+    });
+
+    test('proposal-mode still fires when fixture explicitly authors proposal_id', () => {
+      // The complement of the above test — sales_proposal_mode and
+      // media_buy_seller/proposal_finalize storyboards author proposal_id
+      // explicitly. Those still take the proposal-mode branch.
+      const context = {};
+      const s = step('create_media_buy', {
+        sample_request: {
+          start_time: FUTURE_START,
+          end_time: FUTURE_END,
+          proposal_id: 'balanced_reach_q2',
+          total_budget: { amount: 50000, currency: 'USD' },
+        },
+      });
+      const result = buildRequest(s, context, DEFAULT_OPTIONS);
+      assert.strictEqual(result.proposal_id, 'balanced_reach_q2', 'proposal-mode branch taken');
+      assert.deepStrictEqual(result.total_budget, { amount: 50000, currency: 'USD' });
+      assert.strictEqual(result.packages, undefined, 'packages omitted in proposal-mode');
+    });
+
+    test('proposal-mode resolves $context.proposal_id reference from fixture', () => {
+      // sample_request can carry `proposal_id: "$context.proposal_id"`
+      // (proposal_finalize storyboard pattern) — the $context substitution
+      // happens before this enricher runs, so by the time we check
+      // fixture.proposal_id, it's the resolved string.
+      const context = { proposal_id: 'committed_proposal_xyz' };
+      const s = step('create_media_buy', {
+        sample_request: {
+          start_time: FUTURE_START,
+          end_time: FUTURE_END,
+          proposal_id: '$context.proposal_id',
+          total_budget: { amount: 10000, currency: 'USD' },
+        },
+      });
+      const result = buildRequest(s, context, DEFAULT_OPTIONS);
+      assert.strictEqual(result.proposal_id, 'committed_proposal_xyz');
+      assert.strictEqual(result.packages, undefined);
+    });
+
+    test('falls back to context.proposal_id only when fixture has neither proposal_id nor packages', () => {
+      // The narrow case PR #1603 originally targeted: an under-specified
+      // fixture (no proposal_id, no packages) on a storyboard that ran a
+      // brief/refine/finalize sequence beforehand. The enricher uses the
+      // captured proposal_id rather than synthesizing packages.
+      const context = { proposal_id: 'finalized_proposal' };
+      const s = step('create_media_buy', {
+        sample_request: {
+          start_time: FUTURE_START,
+          end_time: FUTURE_END,
+          total_budget: { amount: 25000, currency: 'USD' },
+          // No packages, no proposal_id — fall through to context.
+        },
+      });
+      const result = buildRequest(s, context, DEFAULT_OPTIONS);
+      assert.strictEqual(result.proposal_id, 'finalized_proposal', 'context fallback fires');
+      assert.strictEqual(result.packages, undefined);
+    });
+
     test('empty fixture package object {} falls back to discovery cleanly', () => {
       // Some storyboards ship `packages: [{}]` for defaults-only scenarios
       // where every field should come from discovery / enricher synthesis.
