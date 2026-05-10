@@ -1442,7 +1442,10 @@ export class TaskExecutor {
         // async settlement path.
         if (agent.protocol === 'a2a' && taskId && agent.agent_uri) {
           try {
-            void cancelA2ATask(agent.agent_uri, taskId, getAuthToken(agent)).catch(() => {
+            // adcp-client#1617 Phase 2: pass the full agent so cancelA2ATask
+            // can sign the POST when agent.request_signing is configured.
+            // signed-requests sellers no longer 401 the cancel.
+            void cancelA2ATask(agent, taskId).catch(() => {
               /* see SECURITY note above */
             });
           } catch {

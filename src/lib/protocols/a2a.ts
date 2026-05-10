@@ -11,6 +11,10 @@ import { discoverOAuthMetadata } from '../auth/oauth/discovery';
 import { withSpan, injectTraceHeaders } from '../observability/tracing';
 import { isAgentCardPath, buildCardUrls } from '../utils/a2a-discovery';
 import { buildAgentSigningFetch, signingContextStorage, type AgentSigningContext } from '../signing/client';
+import { toSignerKey, isInlineSigningConfig, isProviderSigningConfig } from '../signing/agent-fetch';
+import { createSigningFetch, type FetchLike } from '../signing/fetch';
+import { createSigningFetchAsync } from '../signing/fetch-async';
+import type { AgentConfig } from '../types/adcp';
 import { redactIdempotencyKeyInArgs } from '../utils/idempotency';
 import { wrapFetchWithCapture } from './rawResponseCapture';
 import { wrapFetchWithSizeLimit } from './responseSizeLimit';
@@ -84,24 +88,38 @@ const CANCEL_TIMEOUT_MS = 5000;
  * accessible here). Cancel calls to those sellers go out unauthenticated and
  * will likely 401 non-fatally.
  *
- * **Signing gap (Phase 1 known limitation):** `signed-requests` sellers
- * verify signatures on mutating operations including `tasks/cancel`. The
- * `signingContextStorage` ALS scope is set up around `callA2AToolImpl`, NOT
- * around `pollTaskCompletion` — those are sibling execution contexts in the
- * runner's promise tree, so `getStore()` returns `undefined` here. Phase 1
- * cancel calls go unsigned for signed-requests sellers and will 401
- * non-fatally. Phase 2 (tracked under #1617) wires explicit context capture
- * at task-submission time and replays it here via `signingContextStorage.run()`.
+ * **Phase 2 (adcp-client#1617 follow-up):** when `agent.request_signing` is
+ * configured, the cancel POST is signed with the agent's signer key. The
+ * `signingContextStorage` ALS scope around `callA2AToolImpl` does NOT extend
+ * into `pollTaskCompletion` (sibling promise trees), so we can't replay the
+ * captured ALS context — instead we rebuild a one-shot signer fetch from
+ * `agent.request_signing` directly and use it for this single POST. Inline
+ * keys go through `createSigningFetch` (sync); provider-backed configs use
+ * `createSigningFetchAsync`. A `signed-requests` seller that requires
+ * signing on `tasks/cancel` (or applies a uniform "all mutating POSTs must
+ * be signed" policy) now accepts the cancel; one without signing config on
+ * the agent gets the Phase 1 unsigned path.
  *
  * The caller is responsible for swallowing errors: cancel failure
  * (TaskNotCancelable, network error, auth rejection, network timeout) is
  * non-fatal because the buyer is already abandoning the task.
  *
- * @param agentUrl  The A2A agent endpoint URL (agent.agent_uri).
+ * @param agent     The agent config (used for URL, auth token, signing).
  * @param taskId    The server-assigned A2A Task.id to cancel.
- * @param authToken Bearer token for the seller, if available.
  */
-export async function cancelA2ATask(agentUrl: string, taskId: string, authToken: string | undefined): Promise<void> {
+export async function cancelA2ATask(agent: AgentConfig, taskId: string): Promise<void> {
+  // Defense-in-depth (ad-tech-protocol-expert review of #1640): the cancel
+  // POST is JSON-RPC at the bare A2A endpoint. Calling this on an MCP agent
+  // would POST `tasks/cancel` JSON-RPC at an MCP endpoint and 404. The
+  // single call site (`pollTaskCompletion`) already gates on
+  // `agent.protocol === 'a2a'`; this assertion catches future call sites
+  // that forget the gate.
+  if (agent.protocol !== 'a2a') {
+    return;
+  }
+  const agentUrl = agent.agent_uri;
+  const authToken = agent.auth_token;
+
   const headers: Record<string, string> = {
     'content-type': 'application/json',
     accept: 'application/json',
@@ -126,12 +144,45 @@ export async function cancelA2ATask(agentUrl: string, taskId: string, authToken:
   // Bound the cancel: a hung fetch would orphan-pin the event loop past the
   // buyer's abort, defeating fire-and-forget. AbortSignal.timeout() is the
   // standard primitive; the caller's `.catch()` swallows the AbortError.
-  await fetch(agentUrl, {
+  const init: RequestInit = {
     method: 'POST',
     headers,
     body,
     signal: AbortSignal.timeout(CANCEL_TIMEOUT_MS),
-  });
+  };
+
+  // adcp-client#1617 Phase 2: sign the cancel POST when the agent has a
+  // signer configured. We bypass the `buildAgentSigningFetch` capability-
+  // gate path because `tasks/cancel` is an A2A protocol method, not an
+  // AdCP tool — the seller's `request_signing.supported_for` typically
+  // lists AdCP tool names, not protocol-level methods. The right model
+  // here: if the agent claims signing AT ALL, sign every mutating POST
+  // we send to it on the cancel path. Sellers with uniform "must be
+  // signed" policies accept this; sellers that only check signing on
+  // specific AdCP tools simply ignore the extra signature.
+  //
+  // TODO(adcp#4318, adcp-client#1617): when the AdCP spec adds explicit
+  // verifier coverage for A2A protocol methods (likely in 3.1 as a new
+  // `protocol_methods_supported_for` / `protocol_methods_required_for`
+  // field on `request_signing`), narrow this default by reading the
+  // seller's advertised coverage from `getCapability()` and gating on
+  // the `tasks/cancel` membership. The over-sign default stays as the
+  // fallback for spec-silent sellers (3.0.x and earlier).
+  if (agent.request_signing) {
+    const upstream: FetchLike = (input, ini) => fetch(input as RequestInfo, ini);
+    if (isInlineSigningConfig(agent.request_signing)) {
+      const signed = createSigningFetch(upstream, toSignerKey(agent.request_signing));
+      await signed(agentUrl, init);
+      return;
+    }
+    if (isProviderSigningConfig(agent.request_signing)) {
+      const signed = createSigningFetchAsync(upstream, agent.request_signing.provider);
+      await signed(agentUrl, init);
+      return;
+    }
+  }
+
+  await fetch(agentUrl, init);
 }
 
 async function getOrCreateA2AClient(
