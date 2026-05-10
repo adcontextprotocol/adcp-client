@@ -17,6 +17,15 @@ export interface VerifierCapabilityFixture {
   covers_content_digest: 'required' | 'forbidden' | 'either';
   required_for: string[];
   supported_for?: string[];
+  /**
+   * JSON-RPC protocol-method coverage (e.g. `tasks/cancel`, `tasks/get`) —
+   * separate namespace from `required_for` / `supported_for` (which carry
+   * AdCP tool names). Introduced in adcp#4326. Vectors targeting protocol
+   * methods (e.g. negative/028) populate these; vectors targeting AdCP tools
+   * leave them undefined.
+   */
+  protocol_methods_supported_for?: string[];
+  protocol_methods_required_for?: string[];
 }
 
 /**

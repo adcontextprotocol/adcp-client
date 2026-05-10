@@ -278,6 +278,15 @@ const MUTATIONS: Record<string, Mutator> = {
   // and the adversarial shape is precisely that absence. Passthrough preserves
   // the fixture bytes; retargeting still works via applyTransport.
   '027-webhook-registration-authentication-unsigned': (vector, _keys, options) => passthrough(vector, options),
+
+  // Vector 028 grades the `protocol_methods_required_for` namespace
+  // (adcp#4326). The fixture body is already a JSON-RPC envelope with
+  // `method: "tasks/cancel"` — NOT a `tools/call` envelope — so the standard
+  // MCP-mode `applyTransport` (which would wrap the body in `tools/call`)
+  // is wrong here. Use `protocolMethodPassthrough` which keeps the body
+  // verbatim and targets `baseUrl` directly when set, matching how an
+  // agent's MCP endpoint routes JSON-RPC `tasks/*` methods.
+  '028-unsigned-protocol-method-required': (vector, _keys, options) => protocolMethodPassthrough(vector, options),
 };
 
 function passthrough(vector: NegativeVector, options: BuildOptions): SignedHttpRequest {
@@ -287,6 +296,34 @@ function passthrough(vector: NegativeVector, options: BuildOptions): SignedHttpR
     url: shaped.url,
     headers: shaped.headers,
     body: shaped.body,
+  };
+}
+
+/**
+ * Passthrough for vectors whose body is already a JSON-RPC envelope with a
+ * non-`tools/call` `method` (e.g., `tasks/cancel`). MCP-mode `applyTransport`
+ * would wrap the body in `tools/call`, which is wrong: the protocol_methods
+ * namespace matches against the JSON-RPC envelope's `method` field, so
+ * wrapping in `tools/call` would route the request to MCP tool dispatch
+ * (looking up a tool literally named "tasks/cancel"; 404) instead of the
+ * SDK's auto-registered `tasks/cancel` JSON-RPC handler.
+ *
+ * Targets `options.baseUrl` directly when set (the MCP endpoint URL), or
+ * the vector's URL verbatim otherwise.
+ */
+function protocolMethodPassthrough(vector: NegativeVector, options: BuildOptions): SignedHttpRequest {
+  const url = options.baseUrl ?? vector.request.url;
+  const headers = { ...vector.request.headers };
+  // MCP Streamable HTTP requires this Accept negotiation header on JSON-RPC
+  // probes — match the wrapping path's behavior.
+  if (options.transport === 'mcp') {
+    headers['Accept'] = 'application/json, text/event-stream';
+  }
+  return {
+    method: vector.request.method,
+    url,
+    headers,
+    body: vector.request.body,
   };
 }
 

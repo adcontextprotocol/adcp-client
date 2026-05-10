@@ -206,6 +206,12 @@ function parseCapability(id: string, raw: unknown): PositiveVector['verifier_cap
     covers_content_digest: digest,
     required_for: strArray(r.required_for, `${id}.verifier_capability.required_for`),
     supported_for: Array.isArray(r.supported_for) ? (r.supported_for as string[]) : undefined,
+    protocol_methods_supported_for: Array.isArray(r.protocol_methods_supported_for)
+      ? (r.protocol_methods_supported_for as string[])
+      : undefined,
+    protocol_methods_required_for: Array.isArray(r.protocol_methods_required_for)
+      ? (r.protocol_methods_required_for as string[])
+      : undefined,
   };
 }
 
