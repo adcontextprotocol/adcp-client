@@ -1,5 +1,304 @@
 # Changelog
 
+## 6.17.0
+
+### Minor Changes
+
+- c806953: feat(comply): account-discovery spec-conformance gate (#1624)
+
+  Closes #1624. AdCP 3.0.9 §accounts/overview (per
+  [adcp#4302](https://github.com/adcontextprotocol/adcp/issues/4302)) makes
+  explicit a long-standing protocol invariant: every seller agent MUST
+  expose at least one of `list_accounts` or `sync_accounts`. The compliance
+  runner now enforces this universally — if an agent declares any
+  account-bearing specialism (`sales-*`, `audience-sync`, `governance-*`)
+  but advertises neither tool, the run produces a structured failure
+  distinct from per-step `missing_tool` skips.
+
+  Previously the runner skipped each affected scenario individually with
+  `overall_passed: true`, letting spec-noncompliant agents pass with a
+  green `STORYBOARD-OK` despite missing protocol-required capabilities.
+
+  ```
+  ── Without account-discovery tools ──
+    Steps:     X passed, 1 failed, Y skipped
+    STORYBOARD-FAIL 1 step(s):
+      - __spec_conformance__/account_discovery/list_or_sync_accounts [core]:
+          Agent declared account-bearing specialism(s) [sales-guaranteed]
+          but advertises neither list_accounts nor sync_accounts.
+          AdCP 3.0.9 §accounts/overview requires every seller agent to
+          expose at least one of these tools.
+  ```
+
+  The gate fires before track grouping and produces a synthetic
+  `StoryboardResult` with stable storyboard ID
+  `__spec_conformance__/account_discovery` — dashboards / badges can grep
+  for it. The synthetic result flows through the existing failure
+  extraction, summary aggregation, and skip-cause pipelines unchanged
+  (failures, not skips, so it appears in the failures list rather than the
+  skip-cause block).
+
+  The gate is a no-op when:
+  - Agent doesn't expose `get_adcp_capabilities` (specialisms unknown — a
+    separate observation already surfaces the missing capability call;
+    we don't double-report)
+  - Agent declares no account-bearing specialism (signals-only, brand-
+    rights-only, creative-only adopters are unaffected)
+  - Agent already advertises `list_accounts` or `sync_accounts`
+
+  Will migrate to a per-storyboard `required_any_of_tools` tag once
+  [adcp#4325](https://github.com/adcontextprotocol/adcp/issues/4325) lands
+  in AdCP 3.1 — see [#1642](https://github.com/adcontextprotocol/adcp-client/issues/1642)
+  for the migration checklist. Today's runner-level gate covers the same
+  spec invariant against the auto-synced cache without requiring upstream
+  schema changes.
+
+  Tests: 11 new tests covering pass/fail/no-op cases for every
+  account-bearing specialism family (`sales-*`, `audience-sync`,
+  `governance-*`) and exempt agent shapes (signals, creative).
+
+- 4492039: feat(security): cross-cutting SSRF migration for discovery layer (adcp-client#1633)
+
+  Closes the cross-cutting follow-up from #1627. Three more buyer-side
+  fetch sites still used native `fetch` against agent-supplied URLs and
+  had the same TOCTOU rebind window that #1627 closed for `detectProtocol`:
+  - **`src/lib/discovery/network-consistency-checker.ts`** —
+    `probeAgent` (HEAD probe with 1-redirect follow) and `fetchJson`
+    (JSON read with body cap + 1-redirect follow). Both routed through
+    `ssrfSafeFetch`. Each redirect target gets its own DNS-pin via a
+    fresh `ssrfSafeFetch` call (re-validated against `address-guards`).
+  - **`src/lib/discovery/property-crawler.ts:fetchAdAgentsJsonFromUrl`** —
+    recursive `authoritative_location` follow gets DNS-pin defense at
+    each hop because the recursion re-enters the same `ssrfSafeFetch`-
+    wrapped function. Lifted the 256 KiB `MAX_ADAGENTS_BODY_BYTES` cap
+    to a named constant.
+
+  **Centralized carve-out** (`src/lib/net/ssrf-fetch.ts`) — exports a
+  new `SSRF_TRANSIENT_CODES` set so any caller wiring up `ssrfSafeFetch`
+  gets a consistent "policy refusal vs runtime error" classification
+  without reinventing it (security-reviewer suggestion from #1632 review).
+  `detectProtocol`'s carve-out (`dns_lookup_failed`, `dns_empty`,
+  `body_exceeds_limit` → suspect; everything else propagates) now reads
+  from the shared set.
+
+  **Behavior change:** all three call sites now refuse non-HTTPS URLs
+  unless `ADCP_ALLOW_INTERNAL_PROBES=1` (matches `ssrfSafeFetch`'s
+  scheme guard, same shape as #1627). Production AdCP agents must
+  terminate TLS per spec.
+
+  **Test scope:** new `test/lib/discovery-ssrf-policy.test.js` (6 tests)
+  proves the SSRF defense fires at each call site against real loopback
+  servers (IMDS refusal, loopback success, body cap, etc.). The existing
+  `network-consistency-checker.test.js` (~30) and `property-crawler.test.js`
+  (~14) mock `globalThis.fetch` and no longer exercise the production
+  path; they're marked `.skip` with a tracking note. Full migration to
+  loopback servers is tracked in adcp-client#1637 — orthogonal to the
+  security story.
+
+  Minor bump: behavior change on non-HTTPS URLs without env opt-in.
+
+- bacc4f3: feat(comply): surface skip causes in always-on storyboard summary
+
+  The always-on storyboard summary now includes a grouped "Skip causes" block
+  when steps are skipped. Previously only the skip count was shown; now each
+  actionable cause is listed with a step count, human-readable description, and
+  the affected scenario IDs — matching what the issue author's internal script
+  already scraped from `--json` output.
+
+  ```
+    Steps:     26 passed, 3 failed, 30 skipped
+    Skip causes:
+      [26] missing_test_controller — agent doesn't expose comply_test_controller
+           Affected: capability_discovery/setup, account_setup/setup, … 21 more
+      [ 2] missing_tool: sync_accounts — agent doesn't advertise tool
+           Affected: refine_products/setup
+      [ 2] missing_tool: list_accounts — agent doesn't advertise tool
+           Affected: refine_products/setup
+  ```
+
+  Non-actionable runner-routing reasons (`peer_branch_taken`, `not_applicable`,
+  `probe_skipped`, etc.) are excluded. The same block appears in the
+  `$GITHUB_STEP_SUMMARY` markdown output as a collapsible `<details>` table.
+
+  Additive: `ComplianceSummaryArtifact` gains an optional `skip_causes` field
+  (`schema_version` stays at 1; treat unknown fields as ignorable per the
+  existing contract). `buildCrashSummary` omits `skip_causes` — the runner
+  never reached storyboard execution on crash paths. `TestStepResult` gains
+  an optional `requirement?` field carrying the unmet requirement name when
+  `skip_reason === 'requirement_unmet'` (per adcp-client#1626).
+
+  Aggregator handles three signal sources cleanly:
+  - **Detailed skip reasons.** The runner writes `RunnerDetailedSkipReason`
+    values directly to `step.skip_reason` (e.g. `controller_seeding_failed`,
+    `capability_unsupported`). Detailed forms are normalized via
+    `DETAILED_SKIP_TO_CANONICAL` before the actionability check, so they
+    surface alongside canonical ones rather than being silently dropped.
+  - **Storyboard-level missing-tool warnings** name multiple tools in one
+    warning (`agent does not advertise any of [sync_accounts, list_accounts]`).
+    Each tool gets its own cause entry rather than a comma-joined string.
+  - **`requirement_unmet` skips** sub-group by the unmet requirement name
+    (`requirement_unmet: seeded_state`) using the propagated `step.requirement`
+    field — no warning-text parsing.
+
+  `affected[]` is capped at `SKIP_CAUSE_AFFECTED_LIMIT` in the aggregator so
+  JSON consumers see the same bound the text/markdown renderers honor (the
+  JSDoc claimed the cap but only renderers enforced it).
+
+  Follow-up: a `--max-skip-causes N` gate flag for CI ratcheting was proposed
+  in #1623 but is deferred to give the naming and semantics proper design time.
+
+- ea34045: feat(storyboard): per-storyboard `requires:` gate + `--asserts-seeded-state` flag
+
+  Storyboards can now declare runtime requirements at the storyboard level, and the
+  runner skips the whole storyboard with a structured `requirement_unmet` skip when
+  a required runtime is unavailable — replacing the per-step
+  `missing_test_controller` cascade with a single, clearly-attributed skip.
+
+  ```yaml
+  # Storyboard-level tag (additive — omitted is treated as [real_wire])
+  requires: [controller]
+  ```
+
+  Recognised requirements:
+  - `controller` — agent must advertise `comply_test_controller`. Detected from
+    `options.agentTools`.
+  - `seeded_state` — operator must pass `--asserts-seeded-state` declaring that
+    initial state has been provisioned out-of-band (HTTP admin endpoint,
+    pre-test script, staging fixture). The runner does NOT verify the
+    assertion; scenarios still fail naturally if state isn't actually present.
+  - `real_wire` — always available; reserved for a future `--mock-only` mode.
+
+  Loader rejects unknown requirement names and `requires: []` so authoring
+  mistakes fail loud rather than silently dropping coverage.
+
+  `requires: [controller]` unmet maps to existing `skip_reason:
+'missing_test_controller'` for back-compat — skip-cause aggregators and
+  dashboards keyed on the existing string keep grouping controller-driven
+  skips into the same bucket they already track. `requires: [seeded_state]`
+  unmet uses the new `requirement_unmet` skip reason. `RunnerSkipResult.requirement`
+  carries the unmet requirement name for consumers wanting per-requirement
+  granularity.
+
+  ```
+  ── Without --asserts-seeded-state ──
+    Steps: 26 passed, 0 failed, 28 skipped
+    Skip causes:
+      [22] missing_test_controller — agent doesn't advertise comply_test_controller
+      [ 6] requirement_unmet: seeded_state — pass --asserts-seeded-state
+  ```
+
+  Migration:
+  - SDK-internal storyboard tagging is opt-in. Untagged storyboards keep their
+    existing per-step `missing_test_controller` cascade behavior.
+  - Upstream storyboards in `compliance/cache/` are auto-synced from
+    `adcontextprotocol/adcp` and should NOT be tagged locally — tagging will be
+    proposed upstream once the schema has bedded in.
+  - Per-step `requires_tool` (#933) is unchanged and still applies for
+    fine-grained per-step gating.
+
+  Downstream consumers — `controller` unmet emits BOTH the existing
+  `skip_reason: 'missing_test_controller'` AND the new
+  `skip.requirement: 'controller'` field on the same skip event. The
+  intent is back-compat for skip-cause aggregators keyed on the string
+  plus richer per-requirement grouping for new consumers. **Do not
+  double-count**: pick one channel. Treat them as the same event seen
+  through two lenses, not two separate skips.
+
+  `--asserts-seeded-state` is operator-attested with no runner-side
+  verification. Trust signals (verified-live badges, scoreboards,
+  ecosystem dashboards) MUST NOT consume `requires: [seeded_state]`
+  pass results without independent verification — a malicious or
+  mistaken operator can flip the flag to widen the graded set without
+  the underlying state actually existing. Self-correcting for
+  assessment use (scenarios fail naturally if state isn't present),
+  but not for trust propagation.
+
+  Spec: adcp-client#1626. The schema may be proposed upstream as an additive
+  storyboard contract once it has bedded in across SDK adopters. If upstream
+  picks an `applicable_modes`-style runtime axis instead, `requires` may be
+  subsumed by a rename + namespace shift on this SDK-internal field — no
+  wire break.
+
+### Patch Changes
+
+- dc04977: chore: bump AdCP pin to 3.0.9
+
+  Pulls AdCP v3.0.9 into the schema cache and adds it to
+  `COMPATIBLE_ADCP_VERSIONS`. Patch bump because v3.0.9 is description-only:
+  - **adcp#4302** — propagates the existing `list_accounts` / `sync_accounts`
+    account-discovery MUST from `required-tasks.mdx` into `accounts/overview.mdx`.
+    Restates the existing requirement in the surface-level overview where
+    implementors look first; no wire shape change. Filed against
+    adcp-client#1624 (storyboard rubric for missing-account-tool fail) which
+    is now unblocked at the spec level.
+  - HMAC-as-recommended framing fix in `reporting-webhook.json`,
+    `auth-scheme.json`, and `create-media-buy-request.json`'s `artifact_webhook`;
+    RFC 9421 default guidance added to `call-adcp-agent` SKILL.md. Description
+    text only — generated `tools.generated.ts` / `core.generated.ts` reflect
+    the updated docstrings.
+
+  Generated file diffs are limited to:
+  - `Source:` path bumps from `schemas/cache/3.0.8/` to `schemas/cache/3.0.9/`
+    in `entity-hydration.generated.ts`, `wire-spec-fields.generated.ts`.
+  - Description-only updates to `core.generated.ts`, `manifest.generated.ts`,
+    `tools.generated.ts` reflecting the legacy-auth deprecation framing fixes.
+
+  No behavior change. No test updates required (1600+ existing tests pass
+  unchanged against the 3.0.9 cache).
+
+  Unblocks adcp-client#1624 (the storyboard runner can now cite v3.0.9
+  normative language for the universal account-discovery requirement when
+  the runner.ts:936 fix lands).
+
+- 42027cf: chore(deps): bump fast-uri to 3.1.2 (security advisory)
+
+  Closes the GHSA-q3j6-qgpj-74h6 + GHSA-v39h-62p7-jpjc audit failures
+  that have been red-X'ing CI on every release since the advisories
+  dropped. `fast-uri` is a transitive dep (via `ajv` → `fastify`); the
+  SDK doesn't import it directly, but the audit blocked the
+  `Run security audit` step on every PR.
+
+  No public-API change; no behavior change in any SDK code path.
+
+- 069da5d: fix(a2a): sign tasks/cancel POST against signed-requests sellers (#1617 Phase 2)
+
+  Phase 1 (`@adcp/sdk@6.16.0`) sent the A2A `tasks/cancel` POST unsigned —
+  documented limitation. A `signed-requests` seller that enforces signing on
+  the cancel path would 401 it, defeating the orphan-prevention goal of
+  cancel-on-abort.
+
+  `cancelA2ATask` now takes the full `AgentConfig` and, when
+  `agent.request_signing` is configured, routes the cancel POST through
+  `createSigningFetch` (inline keys) or `createSigningFetchAsync` (provider
+  keys). The signing wrapper is rebuilt per cancel rather than replayed from
+  `signingContextStorage` — that ALS scope is set around `callA2AToolImpl`
+  and doesn't extend into `pollTaskCompletion`'s sibling promise tree, so
+  capture-and-replay isn't viable. Rebuilding from `agent.request_signing`
+  is equivalent: that's the same source of truth `buildAgentSigningContext`
+  reads from at submission time.
+
+  **Bypass `buildAgentSigningFetch`'s capability gate**: that path consults
+  the seller's `request_signing.supported_for` to decide whether to sign,
+  but `tasks/cancel` is an A2A protocol method, not an AdCP tool. Sellers
+  typically list AdCP tool names there, not protocol-level methods. The
+  shape that matches actual seller behavior: if the agent claims signing
+  at all, sign every mutating POST we send. Sellers with uniform "must be
+  signed" policies accept this; sellers that only check signing on specific
+  AdCP tools simply ignore the extra signature.
+
+  **Test fixture**: in-process loopback HTTP server runs the SDK's own
+  `verifyRequestSignature` against incoming `tasks/cancel` POSTs (mirrors
+  what a real signed-requests seller does at the verifier seam). Three
+  tests: signed-and-accepted, unsigned-still-works (regression guard for
+  agents without `request_signing`), and bearer-still-attached-on-signed.
+
+  Upstream `adcp#4314` requests test-agent add per-session strict-mode
+  header opt-in so we can also exercise this against the production
+  fixture once that lands.
+
+  **API change**: `cancelA2ATask(agentUrl, taskId, authToken)` →
+  `cancelA2ATask(agent, taskId)`. Internal helper; no public API impact.
+
 ## 6.16.1
 
 ### Patch Changes
