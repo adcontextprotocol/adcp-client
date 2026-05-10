@@ -13,6 +13,7 @@ import type { TestOptions, TestResult, AgentProfile } from '../types';
 import { mapStoryboardResultsToTrackResult, TRACK_LABELS } from './storyboard-tracks';
 import { runStoryboard } from '../storyboard/runner';
 import { validateTestKit } from '../storyboard/test-kit';
+import { checkAccountDiscoveryGate } from './spec-conformance';
 
 // Side-effect import: registers default assertion stubs for invariant ids that
 // upstream storyboards (e.g., `universal/idempotency.yaml` after adcp#2639)
@@ -940,6 +941,17 @@ async function complyImpl(agentUrl: string, options: ComplyOptions): Promise<Com
     // major_versions.
     for (const na of notApplicable) {
       storyboardResults.push(buildNotApplicableStoryboardResult(agentUrl, na));
+    }
+
+    // Cross-storyboard spec-conformance gates. Push synthetic StoryboardResults
+    // for protocol-level invariants the AdCP spec mandates regardless of which
+    // specialism is being tested. Currently wires the universal account-discovery
+    // gate (adcp-client#1624 / adcp#4302; AdCP 3.0.9 §accounts/overview).
+    // Will migrate to per-storyboard `required_any_of_tools` tags once
+    // adcp#4325 lands; tracked in #1642.
+    const accountDiscoveryFailure = checkAccountDiscoveryGate(profile, agentUrl);
+    if (accountDiscoveryFailure) {
+      storyboardResults.push(accountDiscoveryFailure);
     }
 
     // Group results by track and build TrackResults
