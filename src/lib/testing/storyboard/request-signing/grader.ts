@@ -744,6 +744,22 @@ function capabilityMismatch(
       `Either add the operation to the agent's request_signing.required_for, or accept the skip.`
     );
   }
+  // Same check for `protocol_methods_required_for` (adcp#4326 namespace).
+  // Negative vectors that grade JSON-RPC protocol methods (e.g. unsigned
+  // `tasks/cancel`) auto-skip when the agent doesn't declare the bucket —
+  // matching the behavior of `required_for` for AdCP-tool vectors.
+  const vectorProtocolMethodsRequiredFor = vectorCap.protocol_methods_required_for ?? [];
+  const agentProtocolMethodsRequiredForSet = new Set(agentCap.protocol_methods_required_for ?? []);
+  const missingProtocolMethodsRequiredFor = vectorProtocolMethodsRequiredFor.filter(
+    method => !agentProtocolMethodsRequiredForSet.has(method)
+  );
+  if (missingProtocolMethodsRequiredFor.length > 0) {
+    return (
+      `Vector asserts protocol_methods_required_for includes [${missingProtocolMethodsRequiredFor.join(', ')}] ` +
+      `but agent's protocol_methods_required_for does not. Either add the method to the agent's ` +
+      `request_signing.protocol_methods_required_for, or accept the skip.`
+    );
+  }
   return undefined;
 }
 
