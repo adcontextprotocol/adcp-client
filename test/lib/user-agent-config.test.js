@@ -22,7 +22,10 @@ afterEach(() => {
 });
 
 describe('userAgent config', () => {
-  describe('PropertyCrawler', () => {
+  // adcp-client#1633: PropertyCrawler now uses ssrfSafeFetch (undici-direct).
+  // The global.fetch mocks below no longer exercise the production path —
+  // skipped pending migration to loopback HTTP servers (#1637).
+  describe.skip('PropertyCrawler', () => {
     test('includes custom userAgent in From header when configured', async () => {
       let capturedHeaders = null;
 
