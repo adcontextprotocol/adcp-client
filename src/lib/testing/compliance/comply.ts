@@ -1186,6 +1186,7 @@ async function runWithDegradedProfile(
     agentTools: [],
     ...(options.webhook_receiver !== undefined && { webhook_receiver: options.webhook_receiver }),
     ...(options.contracts !== undefined && { contracts: options.contracts }),
+    ...(signal !== undefined && { signal }),
   };
 
   for (const sb of storyboards) {
