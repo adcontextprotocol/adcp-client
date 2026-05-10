@@ -1481,24 +1481,126 @@ const INDIVIDUAL_ASSET_DISCRIMINATORS: Array<{ name: string; assetType: string; 
   { name: 'IndividualCatalogAsset', assetType: 'catalog' },
 ];
 
+const GROUP_ASSET_DISCRIMINATORS: Array<{ name: string; assetType: string; requirementsType: string }> = [
+  { name: 'GroupImageAsset', assetType: 'image', requirementsType: 'ImageAssetRequirements' },
+  { name: 'GroupVideoAsset', assetType: 'video', requirementsType: 'VideoAssetRequirements' },
+  { name: 'GroupAudioAsset', assetType: 'audio', requirementsType: 'AudioAssetRequirements' },
+  { name: 'GroupTextAsset', assetType: 'text', requirementsType: 'TextAssetRequirements' },
+  { name: 'GroupMarkdownAsset', assetType: 'markdown', requirementsType: 'MarkdownAssetRequirements' },
+  { name: 'GroupHtmlAsset', assetType: 'html', requirementsType: 'HTMLAssetRequirements' },
+  { name: 'GroupCssAsset', assetType: 'css', requirementsType: 'CSSAssetRequirements' },
+  { name: 'GroupJavaScriptAsset', assetType: 'javascript', requirementsType: 'JavaScriptAssetRequirements' },
+  { name: 'GroupVastAsset', assetType: 'vast', requirementsType: 'VASTAssetRequirements' },
+  { name: 'GroupDaastAsset', assetType: 'daast', requirementsType: 'DAASTAssetRequirements' },
+  { name: 'GroupUrlAsset', assetType: 'url', requirementsType: 'URLAssetRequirements' },
+  { name: 'GroupWebhookAsset', assetType: 'webhook', requirementsType: 'WebhookAssetRequirements' },
+];
+
 export function applyIndividualAssetDiscriminators(typeDefinitions: string): string {
   let result = typeDefinitions;
   let rewritten = 0;
+  // The *AssetRequirements interfaces are declared in core.generated.ts. When this
+  // post-processor runs against tools.generated.ts, those interfaces aren't local —
+  // we inject an import so `requirements?: ImageAssetRequirements` references resolve
+  // and TS + ts-to-zod (and downstream Format.assets[] consumers) see the full shape.
+  const requirementsLocallyDeclared = /^export (interface|type) ImageAssetRequirements\b/m.test(result);
+  const importedRequirementsTypes: string[] = [];
+
   for (const entry of INDIVIDUAL_ASSET_DISCRIMINATORS) {
     const aliasPattern = new RegExp(`^export type ${entry.name} = BaseIndividualAsset;$`, 'm');
     if (!aliasPattern.test(result)) continue;
-    // Only emit `requirements?:` if the requirements type is declared in this
-    // same file — the tools.generated.ts artifact reuses BaseIndividualAsset
-    // but does not redeclare the *AssetRequirements interfaces, so referencing
-    // them there triggers TS2304.
-    const reqsAvailable =
-      entry.requirementsType !== undefined &&
-      new RegExp(`^export interface ${entry.requirementsType}\\b`, 'm').test(result);
+    const reqsAvailable = entry.requirementsType !== undefined;
     const reqsField = reqsAvailable ? `\n  requirements?: ${entry.requirementsType};` : '';
     const replacement = `export type ${entry.name} = BaseIndividualAsset & {\n  asset_type: '${entry.assetType}';${reqsField}\n};`;
     result = result.replace(aliasPattern, replacement);
     rewritten++;
+    if (reqsAvailable && !requirementsLocallyDeclared && entry.requirementsType) {
+      importedRequirementsTypes.push(entry.requirementsType);
+    }
   }
+
+  for (const entry of GROUP_ASSET_DISCRIMINATORS) {
+    const aliasPattern = new RegExp(`^export type ${entry.name} = BaseGroupAsset;$`, 'm');
+    if (!aliasPattern.test(result)) continue;
+    const replacement = `export type ${entry.name} = BaseGroupAsset & {\n  asset_type: '${entry.assetType}';\n  requirements?: ${entry.requirementsType};\n};`;
+    result = result.replace(aliasPattern, replacement);
+    rewritten++;
+    if (!requirementsLocallyDeclared) {
+      importedRequirementsTypes.push(entry.requirementsType);
+    }
+  }
+
+  // tools.generated.ts has no existing `import` statements — we only inject one when
+  // we actually emitted a reference to a non-local requirements type.
+  if (importedRequirementsTypes.length > 0) {
+    const sortedImports = [...new Set(importedRequirementsTypes)].sort();
+    const importBlock = `import type {\n${sortedImports.map(name => `  ${name},`).join('\n')}\n} from './core.generated';\n\n`;
+    result = importBlock + result;
+  }
+
+  // Emit named union aliases for the slot shapes so ts-to-zod produces named
+  // schemas (IndividualAssetSlotSchema, FormatAssetSlotSchema) and consumers
+  // can import the unions directly. Only emit when the constituent types are
+  // present in this file — keeps the post-processor a no-op on unrelated files.
+  const allIndividualPresent = INDIVIDUAL_ASSET_DISCRIMINATORS.every(entry =>
+    new RegExp(`^export type ${entry.name} = BaseIndividualAsset & \\{`, 'm').test(result)
+  );
+  const repeatableGroupPresent = /^export interface RepeatableGroupAsset \{/m.test(result);
+
+  if (allIndividualPresent && repeatableGroupPresent && !/^export type IndividualAssetSlot\b/m.test(result)) {
+    const slotUnion = [
+      `export type IndividualAssetSlot =`,
+      ...INDIVIDUAL_ASSET_DISCRIMINATORS.map((entry, i) => {
+        const tail = i === INDIVIDUAL_ASSET_DISCRIMINATORS.length - 1 ? ';' : '';
+        return `  | ${entry.name}${tail}`;
+      }),
+      ``,
+      `export type GroupAssetSlot =`,
+      ...GROUP_ASSET_DISCRIMINATORS.map((entry, i) => {
+        const tail = i === GROUP_ASSET_DISCRIMINATORS.length - 1 ? ';' : '';
+        return `  | ${entry.name}${tail}`;
+      }),
+      ``,
+      `export type FormatAssetSlot = IndividualAssetSlot | RepeatableGroupAsset;`,
+      ``,
+    ].join('\n');
+    result = result.trimEnd() + '\n\n' + slotUnion;
+
+    // Tighten Format.assets[] from the inline anonymous union to the named
+    // FormatAssetSlot[]. The codegen emits the inline union right after the
+    // 'Array of all assets supported for this format.' comment. If jsts ever
+    // changes its emitted indentation/wrapping the regex silently no-ops, so
+    // we count replacements and warn loudly — Format.assets[] would otherwise
+    // fall back to the loose anonymous union without TS surfacing it.
+    const formatAssetsPattern = new RegExp(
+      `(  assets\\?: )\\(\\s*(?:\\|\\s*Individual\\w+Asset\\s*)+\\|\\s*RepeatableGroupAsset\\s*\\)\\[\\];`,
+      'g'
+    );
+    let formatAssetsReplaced = 0;
+    result = result.replace(formatAssetsPattern, (_match, prefix) => {
+      formatAssetsReplaced++;
+      return `${prefix}FormatAssetSlot[];`;
+    });
+    if (formatAssetsReplaced === 0) {
+      console.warn(
+        '⚠️  applyIndividualAssetDiscriminators: Format.assets[] inline union not rewritten — jsts output layout may have changed'
+      );
+    }
+
+    // Same for RepeatableGroupAsset.assets[] — replace the inline group union with GroupAssetSlot[].
+    const groupAssetsPattern = new RegExp(`(  assets: )\\(\\s*(?:\\|\\s*Group\\w+Asset\\s*)+\\)\\[\\];`, 'g');
+    let groupAssetsReplaced = 0;
+    result = result.replace(groupAssetsPattern, (_match, prefix) => {
+      groupAssetsReplaced++;
+      return `${prefix}GroupAssetSlot[];`;
+    });
+    if (groupAssetsReplaced === 0) {
+      console.warn(
+        '⚠️  applyIndividualAssetDiscriminators: RepeatableGroupAsset.assets[] inline union not rewritten — jsts output layout may have changed'
+      );
+    }
+  }
+
   if (rewritten > 0) {
     console.log(`🔀 Restored asset_type discriminator on ${rewritten} Individual*Asset alias(es)`);
   }

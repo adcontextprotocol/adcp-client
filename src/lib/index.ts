@@ -938,8 +938,6 @@ export {
   daastGroupAsset,
   urlGroupAsset,
   webhookGroupAsset,
-  briefGroupAsset,
-  catalogGroupAsset,
 } from './utils/format-asset-slot-builders';
 
 // ====== PREVIEW RENDER BUILDERS ======

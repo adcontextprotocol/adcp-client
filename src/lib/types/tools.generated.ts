@@ -1,3 +1,18 @@
+import type {
+  AudioAssetRequirements,
+  CSSAssetRequirements,
+  DAASTAssetRequirements,
+  HTMLAssetRequirements,
+  ImageAssetRequirements,
+  JavaScriptAssetRequirements,
+  MarkdownAssetRequirements,
+  TextAssetRequirements,
+  URLAssetRequirements,
+  VASTAssetRequirements,
+  VideoAssetRequirements,
+  WebhookAssetRequirements,
+} from './core.generated';
+
 // Tool Parameter and Response Types
 // Generated from official AdCP schemas
 
@@ -2713,72 +2728,84 @@ export type DimensionUnit = 'px' | 'dp' | 'inches' | 'cm' | 'mm' | 'pt';
  */
 export type IndividualImageAsset = BaseIndividualAsset & {
   asset_type: 'image';
+  requirements?: ImageAssetRequirements;
 };
 /**
  * Video asset
  */
 export type IndividualVideoAsset = BaseIndividualAsset & {
   asset_type: 'video';
+  requirements?: VideoAssetRequirements;
 };
 /**
  * Audio asset
  */
 export type IndividualAudioAsset = BaseIndividualAsset & {
   asset_type: 'audio';
+  requirements?: AudioAssetRequirements;
 };
 /**
  * Text asset
  */
 export type IndividualTextAsset = BaseIndividualAsset & {
   asset_type: 'text';
+  requirements?: TextAssetRequirements;
 };
 /**
  * Markdown asset
  */
 export type IndividualMarkdownAsset = BaseIndividualAsset & {
   asset_type: 'markdown';
+  requirements?: MarkdownAssetRequirements;
 };
 /**
  * HTML asset
  */
 export type IndividualHtmlAsset = BaseIndividualAsset & {
   asset_type: 'html';
+  requirements?: HTMLAssetRequirements;
 };
 /**
  * CSS asset
  */
 export type IndividualCssAsset = BaseIndividualAsset & {
   asset_type: 'css';
+  requirements?: CSSAssetRequirements;
 };
 /**
  * JavaScript asset
  */
 export type IndividualJavaScriptAsset = BaseIndividualAsset & {
   asset_type: 'javascript';
+  requirements?: JavaScriptAssetRequirements;
 };
 /**
  * VAST asset
  */
 export type IndividualVastAsset = BaseIndividualAsset & {
   asset_type: 'vast';
+  requirements?: VASTAssetRequirements;
 };
 /**
  * DAAST asset
  */
 export type IndividualDaastAsset = BaseIndividualAsset & {
   asset_type: 'daast';
+  requirements?: DAASTAssetRequirements;
 };
 /**
  * URL asset
  */
 export type IndividualUrlAsset = BaseIndividualAsset & {
   asset_type: 'url';
+  requirements?: URLAssetRequirements;
 };
 /**
  * Webhook asset
  */
 export type IndividualWebhookAsset = BaseIndividualAsset & {
   asset_type: 'webhook';
+  requirements?: WebhookAssetRequirements;
 };
 /**
  * Brief asset
@@ -2795,51 +2822,87 @@ export type IndividualCatalogAsset = BaseIndividualAsset & {
 /**
  * Image asset in group
  */
-export type GroupImageAsset = BaseGroupAsset;
+export type GroupImageAsset = BaseGroupAsset & {
+  asset_type: 'image';
+  requirements?: ImageAssetRequirements;
+};
 /**
  * Video asset in group
  */
-export type GroupVideoAsset = BaseGroupAsset;
+export type GroupVideoAsset = BaseGroupAsset & {
+  asset_type: 'video';
+  requirements?: VideoAssetRequirements;
+};
 /**
  * Audio asset in group
  */
-export type GroupAudioAsset = BaseGroupAsset;
+export type GroupAudioAsset = BaseGroupAsset & {
+  asset_type: 'audio';
+  requirements?: AudioAssetRequirements;
+};
 /**
  * Text asset in group
  */
-export type GroupTextAsset = BaseGroupAsset;
+export type GroupTextAsset = BaseGroupAsset & {
+  asset_type: 'text';
+  requirements?: TextAssetRequirements;
+};
 /**
  * Markdown asset in group
  */
-export type GroupMarkdownAsset = BaseGroupAsset;
+export type GroupMarkdownAsset = BaseGroupAsset & {
+  asset_type: 'markdown';
+  requirements?: MarkdownAssetRequirements;
+};
 /**
  * HTML asset in group
  */
-export type GroupHtmlAsset = BaseGroupAsset;
+export type GroupHtmlAsset = BaseGroupAsset & {
+  asset_type: 'html';
+  requirements?: HTMLAssetRequirements;
+};
 /**
  * CSS asset in group
  */
-export type GroupCssAsset = BaseGroupAsset;
+export type GroupCssAsset = BaseGroupAsset & {
+  asset_type: 'css';
+  requirements?: CSSAssetRequirements;
+};
 /**
  * JavaScript asset in group
  */
-export type GroupJavaScriptAsset = BaseGroupAsset;
+export type GroupJavaScriptAsset = BaseGroupAsset & {
+  asset_type: 'javascript';
+  requirements?: JavaScriptAssetRequirements;
+};
 /**
  * VAST asset in group
  */
-export type GroupVastAsset = BaseGroupAsset;
+export type GroupVastAsset = BaseGroupAsset & {
+  asset_type: 'vast';
+  requirements?: VASTAssetRequirements;
+};
 /**
  * DAAST asset in group
  */
-export type GroupDaastAsset = BaseGroupAsset;
+export type GroupDaastAsset = BaseGroupAsset & {
+  asset_type: 'daast';
+  requirements?: DAASTAssetRequirements;
+};
 /**
  * URL asset in group
  */
-export type GroupUrlAsset = BaseGroupAsset;
+export type GroupUrlAsset = BaseGroupAsset & {
+  asset_type: 'url';
+  requirements?: URLAssetRequirements;
+};
 /**
  * Webhook asset in group
  */
-export type GroupWebhookAsset = BaseGroupAsset;
+export type GroupWebhookAsset = BaseGroupAsset & {
+  asset_type: 'webhook';
+  requirements?: WebhookAssetRequirements;
+};
 /**
  * Standardized macro placeholders for dynamic value substitution in creative tracking URLs. Macros are replaced with actual values at impression time. See docs/creative/universal-macros.mdx for detailed documentation.
  */
@@ -3051,23 +3114,7 @@ export interface Format {
   /**
    * Array of all assets supported for this format. Each asset is identified by its asset_id, which must be used as the key in creative manifests. Use the 'required' boolean on each asset to indicate whether it's mandatory.
    */
-  assets?: (
-    | IndividualImageAsset
-    | IndividualVideoAsset
-    | IndividualAudioAsset
-    | IndividualTextAsset
-    | IndividualMarkdownAsset
-    | IndividualHtmlAsset
-    | IndividualCssAsset
-    | IndividualJavaScriptAsset
-    | IndividualVastAsset
-    | IndividualDaastAsset
-    | IndividualUrlAsset
-    | IndividualWebhookAsset
-    | IndividualBriefAsset
-    | IndividualCatalogAsset
-    | RepeatableGroupAsset
-  )[];
+  assets?: FormatAssetSlot[];
   /**
    * Delivery method specifications (e.g., hosted, VAST, third-party tags)
    */
@@ -3245,20 +3292,7 @@ export interface RepeatableGroupAsset {
   /**
    * Assets within each repetition of this group
    */
-  assets: (
-    | GroupImageAsset
-    | GroupVideoAsset
-    | GroupAudioAsset
-    | GroupTextAsset
-    | GroupMarkdownAsset
-    | GroupHtmlAsset
-    | GroupCssAsset
-    | GroupJavaScriptAsset
-    | GroupVastAsset
-    | GroupDaastAsset
-    | GroupUrlAsset
-    | GroupWebhookAsset
-  )[];
+  assets: GroupAssetSlot[];
 }
 export interface BaseGroupAsset {
   /**
@@ -14985,3 +15019,34 @@ export interface ControllerError {
   ext?: ExtensionObject;
 }
 
+export type IndividualAssetSlot =
+  | IndividualImageAsset
+  | IndividualVideoAsset
+  | IndividualAudioAsset
+  | IndividualTextAsset
+  | IndividualMarkdownAsset
+  | IndividualHtmlAsset
+  | IndividualCssAsset
+  | IndividualJavaScriptAsset
+  | IndividualVastAsset
+  | IndividualDaastAsset
+  | IndividualUrlAsset
+  | IndividualWebhookAsset
+  | IndividualBriefAsset
+  | IndividualCatalogAsset;
+
+export type GroupAssetSlot =
+  | GroupImageAsset
+  | GroupVideoAsset
+  | GroupAudioAsset
+  | GroupTextAsset
+  | GroupMarkdownAsset
+  | GroupHtmlAsset
+  | GroupCssAsset
+  | GroupJavaScriptAsset
+  | GroupVastAsset
+  | GroupDaastAsset
+  | GroupUrlAsset
+  | GroupWebhookAsset;
+
+export type FormatAssetSlot = IndividualAssetSlot | RepeatableGroupAsset;
