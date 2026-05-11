@@ -137,6 +137,7 @@ export type {
   TaskStatus,
   ConversationConfig,
   AdcpErrorInfo,
+  AdcpValidationIssue,
 } from './core/ConversationTypes';
 
 // ====== GOVERNANCE ======
