@@ -491,7 +491,7 @@ function sanitizeAgentText(text: string, max = 500): string {
     // private-use, unassigned) plus the explicit separators / bidi
     // chars that aren't caught by \p{C} but still materially help an
     // attacker against an LLM.
-    .replace(/[\p{C}  ‪-‮⁦-⁩]/gu, '')
+    .replace(/[\p{C}\u2028\u2029\u202A-\u202E\u2066-\u2069]/gu, '')
     .trim();
   return cleaned.length > max ? `${cleaned.slice(0, max)}…` : cleaned;
 }
