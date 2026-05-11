@@ -5,13 +5,9 @@ description: Use when building an AdCP seller, creative, or audience agent again
 
 # Build a Decisioning Platform (v6.0)
 
-> **Status: GA.** v6.0 ships under `@adcp/sdk/server` —
-> `createAdcpServerFromPlatform` + `DecisioningPlatform`. The lower-level
-> `createAdcpServer({ mediaBuy: { ... } })` API remains fully supported
-> as the substrate this framework calls into; reach for it when you need
-> fine control over individual handlers or have custom-shaped tools the
-> platform interface doesn't yet model. The handler-bag skill is at
-> `skills/build-seller-agent/`.
+> **Status: GA.** Ships under `@adcp/sdk/server` —
+> `createAdcpServerFromPlatform` + `DecisioningPlatform`. The handler-bag
+> skill (forking a worked adapter) lives at `skills/build-seller-agent/`.
 
 ## Overview
 
@@ -102,7 +98,7 @@ const platform = {
 const server = createAdcpServerFromPlatform(platform, {
   name: 'My Ad Network',
   version: '1.0.0',
-  // Plus standard createAdcpServer options: idempotency, signedRequests,
+  // Plus standard server options: idempotency, signedRequests,
   // webhooks, validation, etc.
 });
 

@@ -9,15 +9,17 @@ A creative agent accepts assets from buyers, stores or transforms them, and retu
 
 ## Pick your fork target
 
-Three creative archetypes; two have dedicated worked adapters, the third lives in `build-generative-seller-agent` because it's coupled with selling inventory.
+Three creative archetypes. Two have dedicated worked adapters; the third (`creative-generative`) reuses the template adapter and applies brief-to-creative deltas.
 
-| Specialism | Archetype | Fork this | Mock upstream | Storyboard |
-| --- | --- | --- | --- | --- |
-| `creative-ad-server` | Stateful library, pricing + billing (Innovid, Flashtalking, CM360, GAM-creative) | [`hello_creative_adapter_ad_server.ts`](../../examples/hello_creative_adapter_ad_server.ts) | `npx adcp mock-server creative-ad-server` | `creative_ad_server` |
-| `creative-template` | Stateless transform from inline manifest (Celtra, AudioStack, ElevenLabs, Resemble) | [`hello_creative_adapter_template.ts`](../../examples/hello_creative_adapter_template.ts) | `npx adcp mock-server creative-template` | `creative_template` |
-| `creative-generative` | Brief-to-creative generation (AI ad networks coupled with sales) | → `skills/build-generative-seller-agent/` | — | `creative_generative` |
+| Specialism            | Archetype                                                                               | Fork this                                                                                      | Mock upstream                             | Storyboard            |
+| --------------------- | --------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------- | ----------------------------------------- | --------------------- |
+| `creative-ad-server`  | Stateful library, pricing + billing (Innovid, Flashtalking, CM360, GAM-creative)        | [`hello_creative_adapter_ad_server.ts`](../../examples/hello_creative_adapter_ad_server.ts)    | `npx adcp mock-server creative-ad-server` | `creative_ad_server`  |
+| `creative-template`   | Stateless transform from inline manifest (Celtra, AudioStack, ElevenLabs, Resemble)     | [`hello_creative_adapter_template.ts`](../../examples/hello_creative_adapter_template.ts)      | `npx adcp mock-server creative-template`  | `creative_template`   |
+| `creative-generative` | Brief-to-creative generation (standalone generative platform; not coupled with selling) | Same — fork the template adapter and apply the [generative deltas below](#creative-generative) | Same                                      | `creative_generative` |
 
 The `interaction_model` in each specialism's `index.yaml` is the forcing function: `stateful_ad_server`, `stateless_transform`, `stateless_generate`. Decide which one matches your business, then fork the adapter for that row.
+
+> **Coupling generation with selling inventory?** That's the AI-ad-network shape (e.g., generative DSPs that sell programmatic inventory and generate the creative). See [`skills/build-generative-seller-agent/`](../build-generative-seller-agent/SKILL.md) — combine `sales-non-guaranteed` + `creative-generative`.
 
 For exact response shapes, error codes, and optional fields, `docs/llms.txt` is the canonical reference. The fork target stays in sync with the spec because PR #1394's three-gate contract fails CI when it drifts.
 
@@ -29,7 +31,7 @@ For exact response shapes, error codes, and optional fields, `docs/llms.txt` is 
 **Not this skill:**
 
 - Brief-to-creative generation coupled with selling inventory (AI ad network) → `skills/build-generative-seller-agent/`
-- Publisher creative service that pairs with selling — usually a `build-seller-agent` adopter that omits a creative-* specialism claim
+- Publisher creative service that pairs with selling — usually a `build-seller-agent` adopter that omits a creative-\* specialism claim
 
 ## Cross-cutting rules
 
@@ -90,7 +92,20 @@ curl -H 'Authorization: Bearer mock_creative_template_key_do_not_use_in_prod' \
 # Final: { ..., "status": "complete", "output": { "audio_url": "….mp3", "preview_url": "...", "assets": [{ "kind": "audio_url", "mime_type": "audio/mpeg" }] } }
 ```
 
-**`creative-generative`** — generate from `message` + `brand.domain`; honor `quality: draft|production`; support refinement (re-send manifest in). Goes through `skills/build-generative-seller-agent/` because it's coupled with selling inventory.
+### `creative-generative`
+
+Forking [`hello_creative_adapter_template.ts`](../../examples/hello_creative_adapter_template.ts) for a `creative-generative` agent? Apply these deltas — the template adapter already handles the stateless `build_creative` flow, manifest projection, and async render polling. Generative just changes the **input semantics** (brief, not template inputs) and adds brand resolution.
+
+- **`build_creative` accepts `message` + `brand.domain`** — no `template_id`, no slot inputs. Treat `message` as the creative brief and `brand.domain` as the brand identity.
+- **Honor `quality: draft|production`** — drafts are cheap/fast (lower-quality model, no human review); production goes through full safety + brand checks.
+- **Refinement loop** — buyers re-send the prior `creative_manifest` plus a new `message` to iterate. Detect "iterating on this manifest" by manifest-id presence and route to your refine endpoint instead of generate.
+- **Brand resolution via `sync_accounts`** — buyers sync an account with `brand.domain`; treat that domain as resolvable for subsequent `build_creative` calls. Don't hardcode a brand allowlist; storyboards use fictional `.example` TLD brands.
+- **Response shape stays the same** — `{ creative_manifest: { format_id, assets } }`, **not** `{ creative_id, status, preview_url }` (those are `sync_creatives` fields).
+- **Delete the template-input slot validation** in the template adapter's `build_creative` handler — generative agents accept free-form briefs and can't validate slot presence/types up front.
+
+The `creative_generative` storyboard exercises the same async render contract as `creative_template` — `build_creative` returns a render id, the buyer polls until status flips to complete. The template adapter's polling pattern transfers verbatim.
+
+If your platform also sells inventory (AI ad network), claim both `sales-non-guaranteed` + `creative-generative` and see [`../build-generative-seller-agent/`](../build-generative-seller-agent/SKILL.md) for the combined wiring.
 
 ## Validate locally
 

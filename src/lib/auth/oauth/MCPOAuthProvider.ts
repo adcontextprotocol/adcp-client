@@ -52,12 +52,14 @@ export class MCPOAuthProvider implements OAuthClientProvider {
   private readonly storage?: OAuthConfigStorage;
   private readonly flowHandler: OAuthFlowHandler;
   private readonly _clientMetadata: OAuthClientMetadata;
+  private readonly allowHttp: boolean;
 
   constructor(config: OAuthProviderConfig) {
     this.agent = config.agent;
     this.storage = config.storage;
     this.flowHandler = config.flowHandler;
     this._clientMetadata = config.clientMetadata;
+    this.allowHttp = config.allowHttp === true;
   }
 
   /**
@@ -67,7 +69,8 @@ export class MCPOAuthProvider implements OAuthClientProvider {
     agent: AgentConfig,
     flowHandler: OAuthFlowHandler,
     storage?: OAuthConfigStorage,
-    clientMetadataOverrides?: Partial<OAuthClientMetadata>
+    clientMetadataOverrides?: Partial<OAuthClientMetadata>,
+    options?: { allowHttp?: boolean }
   ): MCPOAuthProvider {
     // Build complete client metadata with required fields
     const clientMetadata: OAuthClientMetadata = {
@@ -81,6 +84,7 @@ export class MCPOAuthProvider implements OAuthClientProvider {
       flowHandler,
       storage,
       clientMetadata,
+      allowHttp: options?.allowHttp,
     });
   }
 
@@ -104,6 +108,10 @@ export class MCPOAuthProvider implements OAuthClientProvider {
    * We allow cross-origin resource URLs because agent configs are pre-configured
    * by the user, not discovered from untrusted sources. The authorization server
    * remains the final gatekeeper for token audience validation.
+   *
+   * Non-HTTPS resource URLs are rejected by default. Construct the provider
+   * with `allowHttp: true` to lift that restriction for local development —
+   * mirrors the CLI's `--allow-http` flag.
    */
   async validateResourceURL(serverUrl: string | URL, resource?: string): Promise<URL | undefined> {
     if (!resource) {
@@ -112,7 +120,7 @@ export class MCPOAuthProvider implements OAuthClientProvider {
 
     const resourceURL = new URL(resource);
 
-    if (resourceURL.protocol !== 'https:') {
+    if (resourceURL.protocol !== 'https:' && !this.allowHttp) {
       throw new Error(`Server at ${serverUrl} advertised non-HTTPS resource URL: ${resource}`);
     }
 

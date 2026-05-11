@@ -13,7 +13,18 @@ import { getPropertyIndex } from './property-index';
 import { createLogger, type LogLevel } from '../utils/logger';
 import { LIBRARY_VERSION } from '../version';
 import { validateUserAgent } from '../utils/validate-user-agent';
+import { ssrfSafeFetch, SsrfRefusedError, SSRF_TRANSIENT_CODES, decodeBodyAsJsonOrText } from '../net/ssrf-fetch';
+import { isInternalProbesAllowed } from '../utils/probe-policy';
 import type { Property, AdAgentsJson } from './types';
+
+/**
+ * Cap on a single adagents.json response body. The published advertising
+ * networks we've sampled (CNN, Hearst, etc.) all sit well under 64 KiB;
+ * 256 KiB gives ~4× headroom against a misbehaving publisher serving an
+ * exhaustive list. Lifted to a named constant so future tuning is one
+ * edit, not a magic number scattered across call sites.
+ */
+const MAX_ADAGENTS_BODY_BYTES = 256 * 1024;
 
 export interface AgentInfo {
   agent_url: string;
@@ -256,7 +267,14 @@ export class PropertyCrawler {
     }
 
     try {
-      const response = await fetch(url, {
+      // adcp-client#1633: route through ssrfSafeFetch for DNS-pin / TOCTOU
+      // defense. Each fetchAdAgentsJsonFromUrl call validates its URL via
+      // ssrfSafeFetch's address guards; the recursive `authoritative_location`
+      // follow path below re-validates each redirect target by re-entering
+      // this same function (so DNS-pin defense applies at each hop).
+      const result = await ssrfSafeFetch(url, {
+        maxBodyBytes: MAX_ADAGENTS_BODY_BYTES,
+        allowPrivateIp: isInternalProbesAllowed(),
         headers: {
           // Use standard browser headers to pass CDN bot detection (e.g., Akamai)
           // Some CDNs reject modified User-Agents, so we use a standard Chrome string
@@ -271,11 +289,16 @@ export class PropertyCrawler {
             : `adcp-property-crawler@adcontextprotocol.org (v${LIBRARY_VERSION})`,
         },
       });
-      if (!response.ok) {
-        throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+      if (result.status < 200 || result.status >= 300) {
+        throw new Error(`HTTP ${result.status}`);
       }
 
-      const data = (await response.json()) as AdAgentsJson;
+      const decoded = decodeBodyAsJsonOrText(result.body, result.headers['content-type']);
+      // decodeBodyAsJsonOrText falls back to text on non-JSON content-type or
+      // parse failure; adagents.json is required to be JSON, so re-attempt
+      // parse + surface a clean error if not.
+      const data: AdAgentsJson =
+        typeof decoded === 'string' ? (JSON.parse(decoded) as AdAgentsJson) : (decoded as AdAgentsJson);
 
       // Handle authoritative_location redirect (per AdCP spec)
       // If authorized_agents is present, use it; otherwise follow the redirect
@@ -358,6 +381,14 @@ export class PropertyCrawler {
         }),
       };
     } catch (error) {
+      // adcp-client#1633 review: tag SSRF policy refusals distinctly so a
+      // policy refusal (private/IMDS/etc.) doesn't masquerade as a generic
+      // "fetch failed". The transient codes (DNS / body-cap) keep their
+      // plain wording so the existing `EXPECTED_FAILURE_PATTERNS` matcher
+      // continues to suppress them at debug level.
+      if (error instanceof SsrfRefusedError && !SSRF_TRANSIENT_CODES.has(error.code)) {
+        throw new Error(`Failed to fetch adagents.json: [SSRF refused] ${error.message}`);
+      }
       throw new Error(`Failed to fetch adagents.json: ${error instanceof Error ? error.message : String(error)}`);
     }
   }

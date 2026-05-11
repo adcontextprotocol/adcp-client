@@ -1,7 +1,7 @@
 # Ad Context Protocol (AdCP)
 
-> Generated at: 2026-05-03
-> Library: @adcp/sdk v6.8.0
+> Generated at: 2026-05-08
+> Library: @adcp/sdk v6.11.0
 > AdCP major version: 3
 > Canonical URL: https://adcontextprotocol.github.io/adcp-client/llms.txt
 > Note: the `Library` stamp reflects the package.json version at doc-generation time. The narrative below describes the surface that lands on the next-published minor — including any 6.7 helpers documented here ahead of the release tag.
@@ -1188,12 +1188,12 @@ Run compliance tests with `adcp test <agent> <scenario>`. 24 built-in scenarios:
 
 ### Seeding fixtures for compliance (seller-side)
 
-Group A storyboards seed fixtures via `comply_test_controller.seed_product` (and the other `seed_*` scenarios) before calling the spec tool. Two SDK helpers bridge this to `createAdcpServer`:
+Group A storyboards seed fixtures via `comply_test_controller.seed_product` (and the other `seed_*` scenarios) before calling the spec tool. Two SDK helpers bridge this:
 
 - **`mergeSeedProduct`** (plus `mergeSeedPricingOption`, `mergeSeedCreative`, `mergeSeedPlan`, `mergeSeedMediaBuy`): permissive merge of a sparse storyboard fixture onto the seller's baseline defaults. `undefined`/`null` keep base; arrays replace by default; well-known id-keyed lists (`pricing_options`, `publisher_properties`, `packages`, `assets`, plan `findings`) overlay by id so seeding one entry doesn't drop the rest.
 - **`bridgeFromTestControllerStore(store, productDefaults)`**: wires a `Map<string, unknown>` seed store into `get_products` responses automatically. Sandbox requests merge seeded + handler products (seeded wins collisions); production traffic (no sandbox marker, or a resolved non-sandbox account) skips the bridge.
 
-Wire on `createAdcpServer({ testController: bridgeFromTestControllerStore(store, baseline) })`. See `skills/build-seller-agent/SKILL.md` for the full pattern alongside `createComplyController`.
+Wire on `createAdcpServerFromPlatform(platform, { testController: bridgeFromTestControllerStore(store, baseline) })`. See `skills/build-seller-agent/SKILL.md` for the full pattern alongside `createComplyController`.
 
 ### Anti-façade upstream-traffic recording (`@adcp/sdk/upstream-recorder`)
 

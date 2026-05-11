@@ -8,7 +8,7 @@ Companion to [`SKILL.md`](./SKILL.md). Read this only when you need deployment s
 
 - **Mounting under an existing Express app** (especially alongside OAuth 2.1 Authorization Server routes like `mcpAuthRouter({ provider })`) — use `createExpressAdapter`.
 - **Stdio transport** — for CLI / desktop / local-subprocess agents.
-- **Hand-rolled HTTP** — when even `createExpressAdapter` doesn't fit; `createAdcpServer().connect(transport)` is the raw escape hatch.
+- **Hand-rolled HTTP** — when even `createExpressAdapter` doesn't fit; `createAdcpServerFromPlatform(...).connect(transport)` is the raw escape hatch.
 
 ### Multi-host HTTP
 
@@ -16,16 +16,23 @@ Pass functions for `publicUrl` and `protectedResource`, branch on `ctx.host` in 
 
 ```typescript
 import { UnknownHostError, hostname } from '@adcp/sdk';
-import { verifyBearer } from '@adcp/sdk/server';
-import { serve, createAdcpServer } from '@adcp/sdk/server/legacy/v5';
+import {
+  createAdcpServerFromPlatform,
+  serve,
+  verifyBearer,
+  type DecisioningPlatform,
+} from '@adcp/sdk/server';
 
-// Host → adapter config. Whatever shape suits your deployment (DB, env, static).
-// Cache the CONFIG (not the AdcpServer). serve() still instantiates the
-// server per request today, but a config Map keeps the expensive part
-// (handler bundle, idempotency store, DB pool) at module scope.
-const adapters = new Map<string, { name: string; handlers: MediaBuyHandlers }>([
-  ['snap.agentic-adapters.scope3.com', { name: 'Snap seller', handlers: snapHandlers }],
-  ['meta.agentic-adapters.scope3.com', { name: 'Meta seller', handlers: metaHandlers }],
+declare const snapPlatform: DecisioningPlatform;
+declare const metaPlatform: DecisioningPlatform;
+
+// Host → platform. Whatever shape suits your deployment (DB, env, static).
+// Cache the PLATFORM (not the AdcpServer). serve() still instantiates the
+// server per request today, but a platform Map keeps the expensive part
+// (platform handlers, idempotency store, DB pool) at module scope.
+const adapters = new Map<string, { name: string; platform: DecisioningPlatform }>([
+  ['snap.agentic-adapters.scope3.com', { name: 'Snap seller', platform: snapPlatform }],
+  ['meta.agentic-adapters.scope3.com', { name: 'Meta seller', platform: metaPlatform }],
   // ... one entry per hostname you front
 ]);
 
@@ -40,11 +47,9 @@ serve(
     // UnknownHostError → 404 (generic body, routing table stays off the wire).
     // Any other thrown error still surfaces as 500.
     if (!cfg) throw new UnknownHostError(`No adapter configured for ${ctx.host}`);
-    return createAdcpServer({
+    return createAdcpServerFromPlatform(cfg.platform, {
       name: cfg.name,
       version: '1.0.0',
-      resolveAccount: async (ref, { authInfo }) => lookupAccount(ctx.host, ref, authInfo),
-      mediaBuy: cfg.handlers,
     });
   },
   {
@@ -77,9 +82,9 @@ Each unique host runs its resolver once and the result is cached. Every host adv
 
 **Unknown hosts: throw `UnknownHostError` from the factory.** `serve()` catches it and responds 404 with a generic body (the routing table never crosses the wire). Throwing any other `Error` stays as a 500 so unrelated bugs remain loud.
 
-**Factory runs per request.** `serve()` calls the factory on every incoming request (to avoid cross-request state bleed). By default it closes the returned server at the end of each request — so caching the `AdcpServer` from one call to the next is unsafe without opt-in. Keep the default-path factory cheap: look up a pre-built adapter config from a module-scoped `Map`, and let `createAdcpServer(...)` build a fresh wrapper from that config on every call.
+**Factory runs per request.** `serve()` calls the factory on every incoming request (to avoid cross-request state bleed). By default it closes the returned server at the end of each request — so caching the `AdcpServer` from one call to the next is unsafe without opt-in. Keep the default-path factory cheap: look up a pre-built platform from a module-scoped `Map`, and let `createAdcpServerFromPlatform(...)` build a fresh wrapper from that platform on every call.
 
-**Pass `reuseAgent: true` to cache `AdcpServer` instances per host.** When the tool-registration cost inside `createAdcpServer(...)` is a measurable part of request latency (common in multi-host deployments with many tools per host), flip the flag and cache the returned server in the factory:
+**Pass `reuseAgent: true` to cache `AdcpServer` instances per host.** When the tool-registration cost inside `createAdcpServerFromPlatform(...)` is a measurable part of request latency (common in multi-host deployments with many tools per host), flip the flag and cache the returned server in the factory:
 
 ```typescript
 const agents = new Map<string, AdcpServer>();
@@ -89,11 +94,9 @@ serve(
     if (!agent) {
       const cfg = adapters.get(ctx.host);
       if (!cfg) throw new UnknownHostError(`No adapter for ${ctx.host}`);
-      agent = createAdcpServer({
+      agent = createAdcpServerFromPlatform(cfg.platform, {
         name: cfg.name,
         version: '1.0.0',
-        resolveAccount: cfg.resolveAccount,
-        mediaBuy: cfg.handlers,
       });
       agents.set(ctx.host, agent);
     }
@@ -117,18 +120,19 @@ When your agent is _both_ an OAuth 2.1 AS (issues tokens) and a protected resour
 
 ```typescript
 import express from 'express';
-import { createExpressAdapter, verifyBearer, anyOf, verifyApiKey } from '@adcp/sdk/server';
-import { createAdcpServer } from '@adcp/sdk/server/legacy/v5';
+import {
+  createAdcpServerFromPlatform,
+  createExpressAdapter,
+  verifyBearer,
+  anyOf,
+  verifyApiKey,
+} from '@adcp/sdk/server';
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
 import { mcpAuthRouter } from '@modelcontextprotocol/sdk/server/auth/router.js';
 
-const agent = createAdcpServer({
+const agent = createAdcpServerFromPlatform(snapPlatform, {
   name: 'Snap seller',
   version: '1.0.0',
-  resolveAccount: async (ref, { authInfo }) => lookupAccount(ref, authInfo),
-  mediaBuy: {
-    /* ... */
-  },
 });
 
 const adapter = createExpressAdapter({
@@ -192,7 +196,7 @@ The shape when one Node process fronts N hostnames AND each hostname is also its
 ```typescript
 import express from 'express';
 import {
-  createAdcpServer,
+  createAdcpServerFromPlatform,
   createExpressAdapter,
   verifyBearer,
   resolveHost,
@@ -218,11 +222,9 @@ const app = express();
 // AS routes, and the MCP endpoint.
 const routersByHost = new Map<string, express.Router>();
 for (const [host, cfg] of adapters) {
-  const agent = createAdcpServer({
+  const agent = createAdcpServerFromPlatform(cfg.platform, {
     name: cfg.name,
     version: '1.0.0',
-    resolveAccount: async (ref, { authInfo }) => cfg.lookupAccount(ref, authInfo),
-    mediaBuy: cfg.handlers,
   });
 
   const adapter = createExpressAdapter({
@@ -390,15 +392,11 @@ You own: the `mcpAuthRouter` wiring (provider-specific), the per-request `transp
 
 ```typescript
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
-import { createAdcpServer } from '@adcp/sdk/server/legacy/v5';
+import { createAdcpServerFromPlatform } from '@adcp/sdk/server';
 
-const server = createAdcpServer({
+const server = createAdcpServerFromPlatform(localSellerPlatform, {
   name: 'Local Seller',
   version: '1.0.0',
-  resolveAccount: async ref => lookupAccount(ref),
-  mediaBuy: {
-    /* ... */
-  },
 });
 
 await server.connect(new StdioServerTransport());

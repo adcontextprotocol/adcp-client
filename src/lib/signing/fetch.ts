@@ -14,7 +14,12 @@ export interface SigningFetchOptions extends Omit<SignRequestOptions, 'coverCont
   coverContentDigest?: boolean | CoverContentDigestPredicate;
 }
 
-type FetchLike = (input: string | URL | Request, init?: RequestInit) => Promise<Response>;
+/**
+ * Minimal fetch shape that the signing wrappers compose around. Exported
+ * so external call sites (`src/lib/protocols/a2a.ts:cancelA2ATask`) can
+ * type their upstream wrapper without resorting to casts.
+ */
+export type FetchLike = (input: string | URL | Request, init?: RequestInit) => Promise<Response>;
 
 /**
  * Header names whose wire values are produced by the signer itself. Any

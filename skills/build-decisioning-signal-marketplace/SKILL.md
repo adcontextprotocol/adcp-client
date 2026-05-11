@@ -1,9 +1,9 @@
 ---
 name: build-decisioning-signal-marketplace
-description: Build an AdCP v6.0 (preview) signal-marketplace OR signal-owned decisioning platform — a data provider serving audience signals to buyers. Use ONLY when the user explicitly wants the v6.0 DecisioningPlatform shape; for v5.x handler-style signals agents, use `build-signals-agent` instead.
+description: Build an AdCP signal-marketplace OR signal-owned decisioning platform — a data provider serving audience signals to buyers. Use when the user wants the typed `DecisioningPlatform` shape; for fork-an-adapter starting points, see `build-signals-agent`.
 ---
 
-# Build a Signals Decisioning Platform (v6.0 preview)
+# Build a Signals Decisioning Platform
 
 You're building a **signals data provider** that fits one of two AdCP specialisms:
 
@@ -14,19 +14,19 @@ Both share the same `SignalsPlatform` interface. Pick the specialism that matche
 
 ## When this skill applies
 
-- User wants a signals platform on the **v6.0 DecisioningPlatform** surface (preview, pre-GA)
+- User wants a signals platform on the typed `DecisioningPlatform` surface
 - Specialism: `signal-marketplace` OR `signal-owned`
-- SDK package: `@adcp/sdk` v5.18+ with the `decisioning` preview surface
+- SDK package: `@adcp/sdk`
 
 **Wrong skill if:**
 
-- User wants v5.x handler-style API → `skills/build-signals-agent/`
+- User wants to fork a worked adapter → `skills/build-signals-agent/`
 - User wants creative transforms → `skills/build-decisioning-creative-template/`
 - User wants to sell media inventory → `skills/build-seller-agent/`
 
 ## The whole shape (read this first)
 
-A v6.0 signals platform implements two methods:
+A signals platform implements two methods:
 
 - **`getSignals(req, ctx) → Promise<GetSignalsResponse>`** — sync catalog discovery. Buyer sends filters; you return the matching signals. No async envelope.
 - **`activateSignal(req, ctx) → Promise<ActivateSignalSuccess>`** — sync ack with async lifecycle. Provision the signal onto destination platforms (Snap, Meta, TikTok, etc.); return immediately with `deployments[]` rows in current state (`pending` is valid). Each deployment's eventual `activating` / `deployed` / `failed` flows via `publishStatusChange({ resource_type: 'signal', ... })`.
@@ -228,8 +228,6 @@ console.log(result.structuredContent);
 ```
 
 ## What NOT to do
-
-❌ **Don't import from `@adcp/sdk/server` for the platform shape.** Use `@adcp/sdk/server` for v6.0.
 
 ❌ **Don't try to make activateSignal HITL.** The wire response has no `Submitted` arm. Sync ack + `publishStatusChange` is the correct pattern.
 

@@ -14,6 +14,14 @@
  *   adcp mcp https://agent.example.com/mcp create_media_buy @payload.json --auth $AGENT_TOKEN
  */
 
+// `--allow-http` is the CLI's single switch for local dev loops. The probe
+// policy reads `ADCP_ALLOW_INTERNAL_PROBES` once at module load, so this MUST
+// run before any `require('../dist/lib/...')` below — flipping it later has
+// no effect on `isInternalProbesAllowed()` / `detectProtocol`'s SSRF gate.
+if (process.argv.includes('--allow-http')) {
+  process.env.ADCP_ALLOW_INTERNAL_PROBES = '1';
+}
+
 const { AdCPClient, detectProtocol, usesDeprecatedAssetsField } = require('../dist/lib/index.js');
 const { readFileSync, statSync } = require('fs');
 const path = require('path');
@@ -33,6 +41,12 @@ const {
 const { handleRegistryCommand } = require('./adcp-registry.js');
 const { captureStdoutLogs, writeJsonOutput } = require('./adcp-json-stdout.js');
 const { printStepHints, countHintsInResult } = require('./adcp-step-hints.js');
+const {
+  buildComplianceSummaryMarkdown,
+  buildStoryboardSummaryMarkdown,
+  writeSummaryFile,
+  printSoftFailBlock,
+} = require('./adcp-storyboard-summary.js');
 const { scheduleVersionCheck } = require('./adcp-version-check.js');
 const { formatStoryboardResultsAsJUnit } = require('../dist/lib/testing/storyboard/junit.js');
 const { LIBRARY_VERSION } = require('../dist/lib/version.js');
@@ -426,14 +440,23 @@ async function handleTestCommand(args) {
     authToken = args[authIndex + 1];
   }
 
+  // adcp-client#1612: accept `--transport` as an alias for `--protocol`.
+  // The original symptom report used `--transport a2a` (per A2A SDK
+  // convention), which silently dropped through to auto-detect — auto-detect
+  // returns 'mcp' for any URL whose well-known A2A card path doesn't 200,
+  // so MCP discovery then ran against a non-MCP root URL and burned ~7 min.
+  // Alias is non-breaking; explicit `--protocol` still wins on conflict.
   const protocolIndex = args.indexOf('--protocol');
+  const transportIndex = args.indexOf('--transport');
   let protocolFlag = null;
-  if (protocolIndex !== -1) {
-    if (protocolIndex + 1 >= args.length || args[protocolIndex + 1].startsWith('--')) {
-      console.error('ERROR: --protocol requires a value (mcp or a2a)\n');
+  const flagIndex = protocolIndex !== -1 ? protocolIndex : transportIndex;
+  const flagName = protocolIndex !== -1 ? '--protocol' : '--transport';
+  if (flagIndex !== -1) {
+    if (flagIndex + 1 >= args.length || args[flagIndex + 1].startsWith('--')) {
+      console.error(`ERROR: ${flagName} requires a value (mcp or a2a)\n`);
       process.exit(2);
     }
-    protocolFlag = args[protocolIndex + 1];
+    protocolFlag = args[flagIndex + 1];
   }
 
   const briefIndex = args.indexOf('--brief');
@@ -691,10 +714,14 @@ function parseAgentOptions(args) {
     authToken = args[authIndex + 1];
   }
 
+  // adcp-client#1612: accept `--transport` as an alias for `--protocol`.
+  // See parseStorboardArgs for full rationale.
   const protocolIndex = args.indexOf('--protocol');
+  const transportIndex = args.indexOf('--transport');
   let protocolFlag = null;
-  if (protocolIndex !== -1 && protocolIndex + 1 < args.length && !args[protocolIndex + 1].startsWith('--')) {
-    protocolFlag = args[protocolIndex + 1];
+  const flagIndex = protocolIndex !== -1 ? protocolIndex : transportIndex;
+  if (flagIndex !== -1 && flagIndex + 1 < args.length && !args[flagIndex + 1].startsWith('--')) {
+    protocolFlag = args[flagIndex + 1];
   }
 
   const briefIndex = args.indexOf('--brief');
@@ -779,6 +806,14 @@ function parseAgentOptions(args) {
   // makes the production intent explicit on the wire.
   const noSandbox = args.includes('--no-sandbox');
 
+  // `--asserts-seeded-state` declares that the operator has provisioned
+  // initial test state out-of-band (HTTP admin endpoint, pre-test script,
+  // staging fixture). Storyboards declaring `requires: [seeded_state]`
+  // run instead of skipping with `requirement_unmet`. The runner does
+  // NOT verify the assertion; if state is not actually seeded, scenarios
+  // fail naturally on first stateful step. Spec: adcp-client#1626.
+  const assertsSeededState = args.includes('--asserts-seeded-state');
+
   // Webhook-receiver flags are captured here solely so their values are excluded
   // from `positionalArgs`. The authoritative parse lives in
   // `extractWebhookReceiverOptions(args)` which validates and exits on error.
@@ -831,6 +866,28 @@ function parseAgentOptions(args) {
   // Auth-conflicting keys are dropped here with a warning.
   const { customHeaders, consumedTokens: headerTokens } = parseHeaderFlags(args);
 
+  // --summary-file [PATH]: write a Markdown run summary to a file after the run.
+  // If present without a value, defaults to 'storyboard-result-summary.md'.
+  // Auto-activates when $GITHUB_STEP_SUMMARY is set (GitHub Actions native job summary).
+  const summaryFileIdx = args.indexOf('--summary-file');
+  let summaryFileFlagValue = null;
+  let summaryFile = null;
+  let summaryFileExplicit = false;
+  if (summaryFileIdx !== -1) {
+    summaryFileExplicit = true;
+    if (summaryFileIdx + 1 < args.length && !args[summaryFileIdx + 1].startsWith('--')) {
+      summaryFileFlagValue = args[summaryFileIdx + 1];
+      summaryFile = summaryFileFlagValue;
+    } else {
+      summaryFile = 'storyboard-result-summary.md';
+    }
+  } else if (process.env.GITHUB_STEP_SUMMARY) {
+    summaryFile = process.env.GITHUB_STEP_SUMMARY;
+  }
+
+  // --soft-fail: exit 0 even when storyboards fail (replaces continue-on-error: true pattern).
+  const softFail = args.includes('--soft-fail');
+
   // Filter out flags and their values to find positional args. The `--file=PATH`
   // form is already removed by the `startsWith('--')` check; only the
   // space-separated value needs explicit exclusion. Use explicit nullish check
@@ -854,6 +911,7 @@ function parseAgentOptions(args) {
     formatValue,
     summaryOutputValue,
     fileIndex !== -1 ? file : null,
+    summaryFileFlagValue,
   ].filter(v => v !== null && v !== undefined);
   // `-H` short form does NOT start with `--`, so we filter it (and its KEY=VALUE
   // payload) out of positionals via the explicit `headerTokens` set.
@@ -871,10 +929,14 @@ function parseAgentOptions(args) {
     dryRun,
     allowHttp,
     noSandbox,
+    assertsSeededState,
     positionalArgs,
     localAgent: localAgentValue,
     format: formatValue,
     customHeaders,
+    summaryFile,
+    summaryFileExplicit,
+    softFail,
   };
 }
 
@@ -894,7 +956,10 @@ async function maybeRunInlineOAuth(agentArg, args, { jsonOutput } = {}) {
     const saved = getAgent(agentArg);
     if (!saved) return;
     try {
-      await ensureOAuthTokensForAlias(agentArg, saved.url, { quiet: jsonOutput });
+      await ensureOAuthTokensForAlias(agentArg, saved.url, {
+        quiet: jsonOutput,
+        allowHttp: args.includes('--allow-http'),
+      });
     } catch (err) {
       const hint = `Run: adcp --save-auth ${agentArg} ${saved.url} --oauth to re-register`;
       if (jsonOutput) {
@@ -952,7 +1017,7 @@ async function maybeRunInlineOAuth(agentArg, args, { jsonOutput } = {}) {
  *
  * @returns The updated saved agent record (with oauth_tokens and oauth_client).
  */
-async function ensureOAuthTokensForAlias(alias, url, { quiet = false } = {}) {
+async function ensureOAuthTokensForAlias(alias, url, { quiet = false, allowHttp = false } = {}) {
   const existing = getAgent(alias);
   if (existing && hasValidOAuthTokens(existing)) {
     if (!quiet) console.log(`Using saved OAuth tokens for '${alias}'.`);
@@ -976,7 +1041,7 @@ async function ensureOAuthTokensForAlias(alias, url, { quiet = false } = {}) {
   const { StreamableHTTPClientTransport } = require('@modelcontextprotocol/sdk/client/streamableHttp.js');
   const { UnauthorizedError } = require('@modelcontextprotocol/sdk/client/auth.js');
 
-  const oauthProvider = createCLIOAuthProvider(tempAgent, { quiet });
+  const oauthProvider = createCLIOAuthProvider(tempAgent, { quiet, allowHttp });
   const mcpClient = new MCPClient({ name: 'adcp-cli', version: '1.0.0' });
   const transport = new StreamableHTTPClientTransport(new URL(url), { authProvider: oauthProvider });
 
@@ -1333,6 +1398,7 @@ AGENT MANAGEMENT:
 
 OPTIONS:
   --protocol PROTO  Force protocol: mcp or a2a (default: auto-detect)
+  --transport PROTO  Alias for --protocol (A2A SDK convention)
   --auth TOKEN      Authentication token
   -H, --header K=V  Extra HTTP header on every request (repeatable). Auth wins on conflict.
                     Common use: -H x-adcp-tenant=<id> for tenant routing behind a reverse proxy.
@@ -1367,6 +1433,7 @@ Storyboard-driven testing
 USAGE:
   adcp storyboard list [--json]
   adcp storyboard show <id> [--json]
+  adcp storyboard show --specialism <slug> [--json]
   adcp storyboard run <agent> [id|bundle] [options]
   adcp storyboard run <agent> --file <path.yaml> [options]
   adcp storyboard run --local-agent <module> [id|bundle] [options]
@@ -1375,6 +1442,10 @@ USAGE:
 SUBCOMMANDS:
   list                Enumerate storyboards in the compliance cache
   show <id>           Show storyboard structure (phases, steps)
+  show --specialism <slug>
+                      Resolve which storyboards are graded when an agent claims
+                      a specialism (e.g. sales-guaranteed). Includes protocol
+                      baseline and universal storyboards.
   run <agent> [id]    Run storyboards. With id, run one bundle/storyboard; otherwise
                       the agent's get_adcp_capabilities drives selection.
   step <agent> <id> <step_id>  Run a single step (stateless, LLM-friendly)
@@ -1392,6 +1463,15 @@ RUN OPTIONS (full assessment):
                       fallbacks, brand-domain heuristics, fixture
                       substitutes). Agents that don't recognize the
                       ext.adcp.disable_sandbox field ignore it.
+  --asserts-seeded-state
+                      Declare that initial test state has been
+                      provisioned out-of-band (HTTP admin, pre-test
+                      script, staging fixture). Storyboards declaring
+                      requires: [seeded_state] grade instead of
+                      skipping with requirement_unmet. The runner does
+                      not verify the assertion — scenarios still fail
+                      naturally if state isn't actually present
+                      (#1626).
   --summary-output PATH
                       Write a narrow, schema-stable summary artifact
                       to PATH (JSON: { schema_version, passed, failed,
@@ -1444,6 +1524,7 @@ OPTIONS:
                       has no valid tokens yet. Requires a saved alias
                       (use --save-auth first for raw URLs). MCP only.
   --protocol PROTO    Force protocol: mcp or a2a
+  --transport PROTO   Alias for --protocol (A2A SDK convention)
   --dry-run           Preview steps without executing
   --debug             Debug output
   --invariants SPECS  Comma-separated module specifiers to dynamic-import
@@ -1465,6 +1546,20 @@ OPTIONS:
                       runs. One of: table (default), json, junit. junit
                       emits a JUnit XML report to stdout — each storyboard
                       becomes a testsuite, each step a testcase.
+  --soft-fail         Exit 0 even when storyboards fail. Prints a
+                      STORYBOARD FAILURES (N) block to stderr so failures
+                      are visible without blocking CI. Replaces the
+                      continue-on-error: true pattern. Exit 1 (runner
+                      crash) and 2 (usage error) are not suppressed.
+                      In --json mode the stderr block is suppressed;
+                      failures are present in the JSON output.
+  --summary-file [PATH]
+                      Write a Markdown run summary to PATH after the run.
+                      If PATH is omitted, defaults to
+                      storyboard-result-summary.md in the current directory.
+                      Auto-activates when \$GITHUB_STEP_SUMMARY is set so
+                      the summary appears in the GitHub Actions job summary
+                      tab without an extra upload step.
 
 OUTPUT:
   If you see a \`💡 Hint: …\` line in a failing step, the runner has
@@ -1496,6 +1591,9 @@ EXAMPLES:
     --invariants ./my-invariants.js,@adcp/invariants  # register cross-step invariants
   adcp storyboard list
   adcp storyboard show media_buy_seller
+  adcp storyboard show --specialism sales-guaranteed
+  adcp storyboard run test-mcp --soft-fail              # exit 0 on failures, print summary
+  adcp storyboard run test-mcp --summary-file           # write storyboard-result-summary.md
   adcp storyboard step test-mcp media_buy_seller sync_accounts --json
 `);
     process.exit(0);
@@ -1770,14 +1868,90 @@ async function handleStoryboardList(args) {
 }
 
 async function handleStoryboardShow(args) {
-  const { resolveBundleOrStoryboard, findBundleById, listAllComplianceStoryboards } =
-    await import('../dist/lib/testing/storyboard/index.js');
+  const {
+    resolveBundleOrStoryboard,
+    findBundleById,
+    listAllComplianceStoryboards,
+    loadComplianceIndex,
+    resolveStoryboardsForCapabilities,
+    PROTOCOL_TO_PATH,
+  } = await import('../dist/lib/testing/storyboard/index.js');
   const jsonOutput = args.includes('--json');
-  const positionalArgs = args.filter(a => !a.startsWith('--'));
+
+  // --specialism <slug>: resolve which storyboards are graded for a given specialism claim.
+  const specialismIdx = args.indexOf('--specialism');
+  let specialismSlug = null;
+  if (specialismIdx !== -1 && specialismIdx + 1 < args.length && !args[specialismIdx + 1].startsWith('--')) {
+    specialismSlug = args[specialismIdx + 1];
+  }
+
+  // Exclude --specialism value from positional args to avoid treating it as a storyboard ID.
+  // Guard: only exclude index specialismIdx+1 when --specialism was actually present (specialismIdx !== -1),
+  // otherwise -1+1=0 would silently drop the first positional (the storyboard ID) on plain `show <id>` calls.
+  const positionalArgs = args.filter(
+    (a, i) => !a.startsWith('--') && (specialismSlug === null || i !== specialismIdx + 1)
+  );
   const storyboardId = positionalArgs[0];
 
+  if (specialismSlug) {
+    const index = loadComplianceIndex();
+    const entry = index.specialisms.find(s => s.id === specialismSlug);
+    if (!entry) {
+      const known = index.specialisms.map(s => s.id).join(', ');
+      console.error(`Unknown specialism: ${specialismSlug}`);
+      console.error(`Known specialisms: ${known}`);
+      process.exit(2);
+    }
+    // entry.protocol is kebab-case (e.g. 'media-buy'); supported_protocols uses snake_case.
+    const snakeCaseProtocol = Object.entries(PROTOCOL_TO_PATH).find(([, v]) => v === entry.protocol)?.[0];
+    if (!snakeCaseProtocol) {
+      console.error(
+        `Cannot map specialism protocol "${entry.protocol}" to a supported_protocols value. Compliance cache may be stale.`
+      );
+      process.exit(2);
+    }
+    let resolved;
+    try {
+      resolved = resolveStoryboardsForCapabilities({
+        specialisms: [specialismSlug],
+        supported_protocols: [snakeCaseProtocol],
+      });
+    } catch (err) {
+      console.error(`Failed to resolve specialism "${specialismSlug}": ${err.message}`);
+      process.exit(1);
+    }
+    if (jsonOutput) {
+      await writeJsonOutput({
+        specialism: specialismSlug,
+        protocol: entry.protocol,
+        storyboards: resolved.storyboards.map(s => ({ id: s.id, title: s.title, track: s.track ?? null })),
+        not_applicable: resolved.not_applicable,
+      });
+    } else {
+      console.log(`\nSpecialism: ${specialismSlug}  (protocol: ${entry.protocol})`);
+      console.log(`Resolves to ${resolved.storyboards.length} storyboard(s):`);
+      for (const sb of resolved.storyboards) {
+        const gating = sb.requires_capability
+          ? ` (gated on ${sb.requires_capability.path} = ${sb.requires_capability.equals})`
+          : ' (always graded)';
+        const trackTag = sb.track ? ` [track: ${sb.track}]` : '';
+        console.log(`  - ${sb.id}${trackTag}${gating}`);
+      }
+      if (resolved.not_applicable.length > 0) {
+        console.log(`\n${resolved.not_applicable.length} storyboard(s) not applicable (version gated):`);
+        for (const na of resolved.not_applicable) {
+          console.log(`  ⏭️  ${na.storyboard_id} — ${na.reason}`);
+        }
+      }
+      console.log(`\nNote: also includes universal storyboards and ${entry.protocol} protocol baseline.`);
+    }
+    return;
+  }
+
   if (!storyboardId) {
-    console.error('Usage: adcp storyboard show <id>');
+    console.error(
+      'Usage: adcp storyboard show <id> [--json]\n       adcp storyboard show --specialism <slug> [--json]'
+    );
     process.exit(2);
   }
 
@@ -2054,6 +2228,7 @@ async function handleStoryboardRun(args) {
     }),
     ...(webhookReceiverOpts ?? {}),
     ...(opts.noSandbox && { sandbox: false, disable_sandbox: true }),
+    ...(opts.assertsSeededState && { assertsSeededState: true }),
     ...(mergedRunHeaders && { headers: mergedRunHeaders }),
   };
 
@@ -2065,9 +2240,14 @@ async function handleStoryboardRun(args) {
     if (restoreLogs) restoreLogs();
   }
 
+  if (opts.summaryFile) {
+    writeSummaryFile(opts.summaryFile, buildStoryboardSummaryMarkdown([result], agentUrl, result.overall_passed));
+  }
+
   if (format === 'junit') {
     process.stdout.write(formatStoryboardResultsAsJUnit([result]));
-    process.exit(result.overall_passed ? 0 : 3);
+    if (opts.softFail && !result.overall_passed) printSoftFailBlock([result.storyboard_id], jsonOutput);
+    process.exit(opts.softFail ? 0 : result.overall_passed ? 0 : 3);
   }
 
   if (jsonOutput) {
@@ -2132,7 +2312,8 @@ async function handleStoryboardRun(args) {
     printStrictSummary(result.strict_validation_summary);
   }
 
-  process.exit(result.overall_passed ? 0 : 3);
+  if (opts.softFail && !result.overall_passed) printSoftFailBlock([result.storyboard_id], jsonOutput);
+  process.exit(opts.softFail ? 0 : result.overall_passed ? 0 : 3);
 }
 
 /**
@@ -2877,7 +3058,14 @@ async function handleLocalAgentStoryboardRun(modulePath, args, opts) {
     result = await runAgainstLocalAgent({
       createAgent,
       storyboards: storyboardsSpec,
-      ...(opts.noSandbox && { runStoryboardOptions: { sandbox: false, disable_sandbox: true } }),
+      ...(opts.noSandbox || opts.assertsSeededState
+        ? {
+            runStoryboardOptions: {
+              ...(opts.noSandbox && { sandbox: false, disable_sandbox: true }),
+              ...(opts.assertsSeededState && { assertsSeededState: true }),
+            },
+          }
+        : {}),
       onStoryboardComplete:
         jsonOutput || format === 'junit'
           ? undefined
@@ -2897,13 +3085,32 @@ async function handleLocalAgentStoryboardRun(modulePath, args, opts) {
     if (restoreLogs) restoreLogs();
   }
 
+  if (opts.summaryFile) {
+    writeSummaryFile(
+      opts.summaryFile,
+      buildStoryboardSummaryMarkdown(result.results, result.agent_url, result.overall_passed)
+    );
+  }
+
   if (format === 'junit') {
     process.stdout.write(formatStoryboardResultsAsJUnit(result.results));
-    process.exit(result.overall_passed ? 0 : 3);
+    if (opts.softFail && !result.overall_passed) {
+      printSoftFailBlock(
+        result.results.filter(r => !r.overall_passed).map(r => r.storyboard_id),
+        jsonOutput
+      );
+    }
+    process.exit(opts.softFail ? 0 : result.overall_passed ? 0 : 3);
   }
   if (jsonOutput) {
     await writeJsonOutput(result);
-    process.exit(result.overall_passed ? 0 : 3);
+    if (opts.softFail && !result.overall_passed) {
+      printSoftFailBlock(
+        result.results.filter(r => !r.overall_passed).map(r => r.storyboard_id),
+        jsonOutput
+      );
+    }
+    process.exit(opts.softFail ? 0 : result.overall_passed ? 0 : 3);
   }
 
   // Human-readable summary
@@ -2928,7 +3135,13 @@ async function handleLocalAgentStoryboardRun(modulePath, args, opts) {
     `\n${overallIcon} ${result.passed_count} passed, ${result.failed_count} failed, ${result.skipped_count} skipped across ${result.results.length} storyboard(s)${hintTail}`
   );
   printStrictSummary(aggregateStrictSummaries(result.results.map(r => r.strict_validation_summary)));
-  process.exit(result.overall_passed ? 0 : 3);
+  if (opts.softFail && !result.overall_passed) {
+    printSoftFailBlock(
+      result.results.filter(r => !r.overall_passed).map(r => r.storyboard_id),
+      jsonOutput
+    );
+  }
+  process.exit(opts.softFail ? 0 : result.overall_passed ? 0 : 3);
 }
 
 /**
@@ -3189,6 +3402,7 @@ async function handleMultiInstanceStoryboardRun(args, opts, urls) {
     multi_instance_strategy: strategy,
     ...(webhookReceiverOpts ?? {}),
     ...(opts.noSandbox && { sandbox: false, disable_sandbox: true }),
+    ...(opts.assertsSeededState && { assertsSeededState: true }),
   };
 
   const restoreLogs = jsonOutput ? captureStdoutLogs() : null;
@@ -3271,7 +3485,16 @@ async function handleMultiInstanceStoryboardRun(args, opts, urls) {
     );
   }
 
-  process.exit(hadFailure ? 3 : 0);
+  if (opts.summaryFile && opts.summaryFileExplicit) {
+    console.error(`WARNING: --summary-file is not supported for multi-instance runs; skipping.`);
+  }
+  if (opts.softFail && hadFailure) {
+    printSoftFailBlock(
+      results.filter(r => !r.overall_passed).map(r => r.storyboard_id),
+      jsonOutput
+    );
+  }
+  process.exit(opts.softFail ? 0 : hadFailure ? 3 : 0);
 }
 
 /**
@@ -3438,6 +3661,7 @@ async function handleAgentsRoutedStoryboardRun(args, opts, routing) {
     ...(routing.default_agent ? { default_agent: routing.default_agent } : {}),
     ...(webhookReceiverOpts ?? {}),
     ...(opts.noSandbox && { sandbox: false, disable_sandbox: true }),
+    ...(opts.assertsSeededState && { assertsSeededState: true }),
   };
 
   const restoreLogs = jsonOutput ? captureStdoutLogs() : null;
@@ -3456,7 +3680,13 @@ async function handleAgentsRoutedStoryboardRun(args, opts, routing) {
 
   if (format === 'junit') {
     process.stdout.write(formatStoryboardResultsAsJUnit(results));
-    process.exit(hadFailure ? 3 : 0);
+    if (opts.softFail && hadFailure) {
+      printSoftFailBlock(
+        results.filter(r => !r.overall_passed).map(r => r.storyboard_id),
+        jsonOutput
+      );
+    }
+    process.exit(opts.softFail ? 0 : hadFailure ? 3 : 0);
   }
 
   if (jsonOutput) {
@@ -3533,7 +3763,16 @@ async function handleAgentsRoutedStoryboardRun(args, opts, routing) {
     );
   }
 
-  process.exit(hadFailure ? 3 : 0);
+  if (opts.summaryFile && opts.summaryFileExplicit) {
+    console.error(`WARNING: --summary-file is not supported for agents-map runs; skipping.`);
+  }
+  if (opts.softFail && hadFailure) {
+    printSoftFailBlock(
+      results.filter(r => !r.overall_passed).map(r => r.storyboard_id),
+      jsonOutput
+    );
+  }
+  process.exit(opts.softFail ? 0 : hadFailure ? 3 : 0);
 }
 
 // Shared implementation: run all matching storyboards against an agent
@@ -3621,6 +3860,7 @@ async function runFullAssessment(agentArg, rawArgs, parsedOpts) {
     ...(opts.allowHttp && { allow_http: true }),
     ...(webhookReceiverOpts ?? {}),
     ...(opts.noSandbox && { sandbox: false, disable_sandbox: true }),
+    ...(opts.assertsSeededState && { assertsSeededState: true }),
     ...(mergedAssessmentHeaders && { headers: mergedAssessmentHeaders }),
   };
 
@@ -3698,6 +3938,10 @@ async function runFullAssessment(agentArg, rawArgs, parsedOpts) {
 
     const result = await comply(agentUrl, testOptions);
 
+    if (opts.summaryFile) {
+      writeSummaryFile(opts.summaryFile, buildComplianceSummaryMarkdown(result, agentUrl));
+    }
+
     if (opts.jsonOutput) {
       restoreLogs();
       await writeJsonOutput(formatComplianceResultsJSON(result));
@@ -3718,13 +3962,16 @@ async function runFullAssessment(agentArg, rawArgs, parsedOpts) {
     // exercised its tracks and they passed" is a CI failure. `partial`
     // is preserved as exit 0 because some tracks were silent (wired but
     // unexercised) — that's a reportable observation, not a hard failure.
-    const exitCode =
+    const isFailingExit =
       result.overall_status === 'failing' ||
       result.overall_status === 'unreachable' ||
-      result.overall_status === 'auth_required'
-        ? 3
-        : 0;
-    process.exit(exitCode);
+      result.overall_status === 'auth_required';
+
+    if (opts.softFail && isFailingExit) {
+      const failedNames = result.failures?.map(f => f.storyboard_id).filter((v, i, a) => a.indexOf(v) === i) ?? [];
+      printSoftFailBlock(failedNames, opts.jsonOutput);
+    }
+    process.exit(opts.softFail ? 0 : isFailingExit ? 3 : 0);
   } catch (error) {
     if (restoreLogs) restoreLogs();
     console.error(`\nAssessment failed: ${error.message}`);
@@ -4808,7 +5055,7 @@ credential material — never sync or commit.
       const { StreamableHTTPClientTransport } = require('@modelcontextprotocol/sdk/client/streamableHttp.js');
       const { UnauthorizedError } = require('@modelcontextprotocol/sdk/client/auth.js');
 
-      const oauthProvider = createCLIOAuthProvider(tempAgent);
+      const oauthProvider = createCLIOAuthProvider(tempAgent, { allowHttp: args.includes('--allow-http') });
       const mcpClient = new MCPClient({ name: 'adcp-cli', version: '1.0.0' });
       const createTransport = () => new StreamableHTTPClientTransport(new URL(url), { authProvider: oauthProvider });
 
@@ -4988,8 +5235,23 @@ credential material — never sync or commit.
   // Parse options first
   const authIndex = args.indexOf('--auth');
   let authToken = authIndex !== -1 ? args[authIndex + 1] : process.env.ADCP_AUTH_TOKEN;
+  // adcp-client#1612: accept `--transport` as an alias for `--protocol`.
+  // Hard-fail when the flag is present without a value, matching sites 1
+  // and 2 — security review of #1619 flagged the silent-fallthrough as a
+  // UX asymmetry: `adcp <cmd> --protocol` would auto-detect here while
+  // exiting 2 with a clear error elsewhere.
   const protocolIndex = args.indexOf('--protocol');
-  const protocolFlag = protocolIndex !== -1 ? args[protocolIndex + 1] : null;
+  const transportIndex = args.indexOf('--transport');
+  const flagIndex = protocolIndex !== -1 ? protocolIndex : transportIndex;
+  const flagName = protocolIndex !== -1 ? '--protocol' : '--transport';
+  let protocolFlag = null;
+  if (flagIndex !== -1) {
+    if (flagIndex + 1 >= args.length || args[flagIndex + 1].startsWith('--')) {
+      console.error(`ERROR: ${flagName} requires a value (mcp or a2a)\n`);
+      process.exit(2);
+    }
+    protocolFlag = args[flagIndex + 1];
+  }
   const jsonOutput = args.includes('--json');
   const debug = args.includes('--debug') || process.env.ADCP_DEBUG === 'true';
   const waitForAsync = args.includes('--wait');
@@ -5213,7 +5475,10 @@ credential material — never sync or commit.
         const { StreamableHTTPClientTransport } = require('@modelcontextprotocol/sdk/client/streamableHttp.js');
         const { UnauthorizedError } = require('@modelcontextprotocol/sdk/client/auth.js');
 
-        const oauthProvider = createCLIOAuthProvider(agentConfig, { quiet: jsonOutput });
+        const oauthProvider = createCLIOAuthProvider(agentConfig, {
+          quiet: jsonOutput,
+          allowHttp: args.includes('--allow-http'),
+        });
         const mcpClient = new MCPClient({ name: 'adcp-cli', version: '1.0.0' });
         const createTransport = () =>
           new StreamableHTTPClientTransport(new URL(agentUrl), { authProvider: oauthProvider });
@@ -5343,6 +5608,7 @@ credential material — never sync or commit.
       // Create OAuth provider
       const oauthProvider = createCLIOAuthProvider(agentConfig, {
         quiet: jsonOutput,
+        allowHttp: args.includes('--allow-http'),
       });
 
       // Create MCP client
@@ -5712,7 +5978,10 @@ credential material — never sync or commit.
       const { StreamableHTTPClientTransport } = require('@modelcontextprotocol/sdk/client/streamableHttp.js');
       const { UnauthorizedError } = require('@modelcontextprotocol/sdk/client/auth.js');
 
-      const oauthProvider = createCLIOAuthProvider(agentConfig, { quiet: jsonOutput });
+      const oauthProvider = createCLIOAuthProvider(agentConfig, {
+        quiet: jsonOutput,
+        allowHttp: args.includes('--allow-http'),
+      });
       const mcpClient = new MCPClient({ name: 'adcp-cli', version: '1.0.0' });
       const createTransport = () =>
         new StreamableHTTPClientTransport(new URL(agentUrl), { authProvider: oauthProvider });

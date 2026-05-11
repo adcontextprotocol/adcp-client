@@ -36,6 +36,7 @@ import {
   type CachedBuyerAgentRegistry,
 } from '@adcp/sdk/server';
 import type { GetSignalsResponse, ActivateSignalRequest, ActivateSignalSuccess } from '@adcp/sdk/types';
+import { activationKey, signalId } from '@adcp/sdk';
 import { createUpstreamRecorder, toQueryUpstreamTrafficResponse } from '@adcp/sdk/upstream-recorder';
 import { createHash, randomUUID } from 'node:crypto';
 
@@ -292,11 +293,10 @@ function toAdcpSignal(c: UpstreamCohort): GetSignalsResponse['signals'][number] 
   const coverage = c.total_universe > 0 ? Math.round((c.member_count / c.total_universe) * 100) : 0;
   return {
     signal_agent_segment_id: c.cohort_id,
-    signal_id: {
-      source: 'catalog',
+    signal_id: signalId.catalog({
       data_provider_domain: c.data_provider_domain,
       id: c.data_provider_id,
-    },
+    }),
     name: c.name,
     description: c.description,
     value_type: c.value_type,
@@ -449,18 +449,16 @@ class SignalMarketplaceAdapter implements DecisioningPlatform<Record<string, nev
               client_request_id: `${idempotency}.${i}`,
             });
             if (dest.type === 'agent') {
-              // ActivationKey oneOf — for `type: 'key_value'`, `key` and `value`
-              // sit at the TOP level (not nested under a `key_value` field).
-              // `value` MUST be string. See skills/SHAPE-GOTCHAS.md §1.
+              // `activationKey.keyValue({...})` injects `type: 'key_value'`
+              // and accepts the flat `{ key, value }` shape. SHAPE-GOTCHAS §1.
               return {
                 type: 'agent' as const,
                 agent_url: dest.agent_url,
                 is_live: true,
-                activation_key: {
-                  type: 'key_value' as const,
+                activation_key: activationKey.keyValue({
                   key: 'agent_segment',
                   value: activation.agent_activation_key?.agent_segment ?? activation.activation_id,
-                },
+                }),
                 deployed_at: new Date().toISOString(),
               };
             }
@@ -468,10 +466,9 @@ class SignalMarketplaceAdapter implements DecisioningPlatform<Record<string, nev
               type: 'platform' as const,
               platform: dest.platform,
               is_live: false,
-              activation_key: {
-                type: 'segment_id' as const,
+              activation_key: activationKey.segment({
                 segment_id: activation.segment_id ?? activation.activation_id,
-              },
+              }),
               estimated_activation_duration_minutes: 30,
             };
           })

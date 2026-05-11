@@ -323,3 +323,102 @@ describe('AgentClient auto-retains contextId/taskId across sends', () => {
     }
   });
 });
+
+// ────────────────────────────────────────────────────────────
+// adcp-client#1590 — narrow auto-thread of pendingTaskId
+// ────────────────────────────────────────────────────────────
+//
+// `withSession` only auto-threads the retained server-side taskId when the
+// next call is plausibly a continuation of the SAME task: same skill name
+// AND same effective contextId. Different skill or switched contextId =
+// new work; the retained handle is stale per A2A 0.3.0 §3.4 (Message.taskId
+// continues the parent task). Defense in depth on top of the runner-level
+// reset shipped in #1588 — protects adopters who reuse one AgentClient
+// across logically distinct conversations without an explicit reset.
+describe('AgentClient.withSession narrows pendingTaskId auto-thread (regression for #1590)', () => {
+  const agentConfig = {
+    id: 'test-a2a',
+    name: 'Test A2A',
+    agent_uri: 'https://agent.test',
+    protocol: 'a2a',
+    auth_token_env: 'UNSET_TOKEN',
+  };
+  function newClient() {
+    const { AgentClient } = require('../../dist/lib/index.js');
+    return new AgentClient(agentConfig, { validateFeatures: false });
+  }
+
+  test('different skill in same context does NOT inherit the retained taskId', async () => {
+    // Storyboard A's submitted task leaves pendingTask = (taskId=t-A, ctx-shared, name=create_media_buy).
+    // Storyboard B's first call is `get_products` against the same ctx-shared.
+    // Same context, but `get_products` is brand-new work — auto-threading the
+    // create_media_buy taskId would produce "Task not found" against the seller.
+    const stub = installA2AStub();
+    try {
+      stub.enqueue(taskResponse({ status: 'submitted', contextId: 'ctx-shared', taskId: 'task-A' }));
+      stub.enqueue(taskResponse({ status: 'completed', contextId: 'ctx-shared', taskId: 'task-B' }));
+
+      const client = newClient();
+      await client.executeTask('create_media_buy', {});
+      assert.strictEqual(client.getPendingTaskId(), 'task-A', 'submitted retains the handle');
+      assert.strictEqual(client.getContextId(), 'ctx-shared');
+
+      await client.executeTask('get_products', {});
+
+      assert.strictEqual(stub.captured[1].message.contextId, 'ctx-shared', 'context continuity preserved');
+      assert.strictEqual(
+        stub.captured[1].message.taskId,
+        undefined,
+        'different skill MUST NOT auto-thread the prior task handle'
+      );
+    } finally {
+      stub.restore();
+    }
+  });
+
+  test('same skill in same context DOES inherit the retained taskId (HITL resume)', async () => {
+    // The motivating success case: a task is paused at input-required and the
+    // buyer resumes it with another call to the SAME skill. The retained
+    // handle is the right thing to thread.
+    const stub = installA2AStub();
+    try {
+      stub.enqueue(taskResponse({ status: 'input-required', contextId: 'ctx-hitl', taskId: 'task-hitl' }));
+      stub.enqueue(taskResponse({ status: 'completed', contextId: 'ctx-hitl', taskId: 'task-hitl' }));
+
+      const client = newClient();
+      await client.executeTask('create_media_buy', {});
+      assert.strictEqual(client.getPendingTaskId(), 'task-hitl');
+
+      await client.executeTask('create_media_buy', {});
+
+      assert.strictEqual(stub.captured[1].message.contextId, 'ctx-hitl');
+      assert.strictEqual(
+        stub.captured[1].message.taskId,
+        'task-hitl',
+        'same-skill same-context resume MUST thread the retained handle'
+      );
+    } finally {
+      stub.restore();
+    }
+  });
+
+  test('caller-supplied options.taskId always wins, regardless of skill match', async () => {
+    // Explicit > implicit. A buyer who knows what they're doing can resume
+    // any task on any skill — the SDK's narrowing only governs the *implicit*
+    // auto-thread path.
+    const stub = installA2AStub();
+    try {
+      stub.enqueue(taskResponse({ status: 'submitted', contextId: 'ctx-1', taskId: 'task-orig' }));
+      stub.enqueue(taskResponse({ status: 'completed', contextId: 'ctx-1', taskId: 'task-orig' }));
+
+      const client = newClient();
+      await client.executeTask('create_media_buy', {});
+
+      await client.executeTask('get_products', {}, undefined, { taskId: 'task-orig' });
+
+      assert.strictEqual(stub.captured[1].message.taskId, 'task-orig', 'explicit caller-supplied taskId wins');
+    } finally {
+      stub.restore();
+    }
+  });
+});

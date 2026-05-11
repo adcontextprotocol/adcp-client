@@ -50,6 +50,42 @@ export type SsrfRefusedCode =
   | 'body_exceeds_limit';
 
 /**
+ * SSRF refusal codes that indicate runtime/network conditions rather than
+ * policy refusal. Callers that want to fall back to a "host unreachable" or
+ * "treat as unknown" path on these codes — rather than surfacing the
+ * SsrfRefusedError to their own caller — can intersect against this set:
+ *
+ * ```ts
+ * if (err instanceof SsrfRefusedError && SSRF_TRANSIENT_CODES.has(err.code)) {
+ *   // network condition, not a policy attack — treat as unreachable
+ * } else if (err instanceof SsrfRefusedError) {
+ *   // policy refusal — must propagate; silently downgrading to "unreachable"
+ *   // reintroduces the catch-swallow class flagged in adcp-client#1618 review
+ *   throw err;
+ * }
+ * ```
+ *
+ * - `dns_lookup_failed`, `dns_empty`: name does not resolve. CLI fixtures
+ *   use `*.example.invalid` to provoke these — preserving the runtime-error
+ *   path matches pre-`ssrfSafeFetch` native-fetch behavior.
+ * - `body_exceeds_limit`: response started OK (validated address, scheme,
+ *   etc.) but exceeded the caller's defensive cap. The host is real and
+ *   knows the URL; classifying as "policy attack" would be a misread.
+ *
+ * NOT in this set: `always_blocked_address`, `private_address`,
+ * `scheme_not_allowed`, `non_https_without_opt_in`, `invalid_url`. Those
+ * are policy refusals — silently downgrading them to "unreachable" or
+ * "suspect" reintroduces the SSRF gap the gate was added to close.
+ *
+ * Added in adcp-client#1633.
+ */
+export const SSRF_TRANSIENT_CODES: ReadonlySet<SsrfRefusedCode> = new Set([
+  'dns_lookup_failed',
+  'dns_empty',
+  'body_exceeds_limit',
+]);
+
+/**
  * Thrown when the SSRF guard refuses a request before (or during) the fetch.
  * Network failures after the guard passes are not wrapped in this type —
  * callers that want to distinguish "we refused this" from "the remote broke"

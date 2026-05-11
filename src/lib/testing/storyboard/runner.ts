@@ -25,9 +25,11 @@ import { detectStrictValidationHints } from './strict-validation-hints';
 import {
   runValidations,
   type ValidationContext,
+  type CrossResponseSet,
   type UpstreamTrafficValidationContext,
   type UpstreamTrafficQueryResult,
 } from './validations';
+import { PARALLEL_DISPATCH_CONTRACT, runParallelDispatches, validateParallelDispatchSpec } from './parallel-dispatch';
 import { toJsonPointer } from './path';
 import { redactSecrets } from '../../utils/redact-secrets';
 import { queryUpstreamTraffic, type ControllerScenario, type UpstreamTrafficSuccess } from '../test-controller';
@@ -74,6 +76,7 @@ import type {
   RunnerExtractionRecord,
   RunnerRequestRecord,
   RunnerResponseRecord,
+  RequirementName,
   RunnerSkipReason,
   StepAuthDirective,
   Storyboard,
@@ -120,6 +123,8 @@ const SKIP_DETAILS: Record<RunnerSkipReason, string> = {
   missing_test_controller:
     'Skipped: deterministic_testing phase requires comply_test_controller, which the agent did not advertise.',
   unsatisfied_contract: 'Skipped: test-kit contract is out of scope for this grading run.',
+  requirement_unmet:
+    'Skipped: a requires: tag named a runtime requirement that is not available on this run (see RunnerSkipResult.requirement).',
   peer_branch_taken: 'Skipped: a peer branch in the same any_of branch set already contributed the aggregation flag.',
   peer_substituted: 'Skipped: a same-phase peer step established equivalent state via `provides_state_for`.',
 };
@@ -362,6 +367,27 @@ interface PollEligibleEnvelopeShape {
   task_id: string;
 }
 
+/**
+ * Clear retained A2A session state (`contextId`, `pendingTaskId`) on each
+ * shared client at the start of a storyboard run. AgentClient is documented
+ * as one-instance-per-conversation; `comply()` reuses a single instance
+ * across every storyboard for transport caching, so the runner has to
+ * re-establish the "fresh conversation" boundary per storyboard. Without
+ * this, a stale `pendingTaskId` from a prior storyboard's non-terminal
+ * step rides into this storyboard's first call and the seller surfaces
+ * "Task <uuid> not found". See adcp-client#1585.
+ *
+ * Calls go through a duck-typed `resetContext()` accessor so the helper
+ * stays compatible with adapter-built clients that don't subclass
+ * AgentClient directly.
+ */
+function resetClientSessions(clients: readonly TestClient[]): void {
+  for (const client of clients) {
+    const reset = (client as unknown as { resetContext?: () => void }).resetContext;
+    if (typeof reset === 'function') reset.call(client);
+  }
+}
+
 function isPollEligibleEnvelope(data: unknown): data is PollEligibleEnvelopeShape {
   if (data == null || typeof data !== 'object') return false;
   const obj = data as { status?: unknown; task_id?: unknown };
@@ -451,14 +477,16 @@ async function resolveTaskCompletionOutputs(
 
   const racers: Promise<Winner>[] = [];
 
-  // Poll path. Note: when the outer race resolves first, the SDK's
-  // `pollTaskCompletion` keeps polling internally until it observes a
-  // terminal state. The runner's outer timeout is enough to bound the
-  // *step* duration; the inner loop continuation is a known limitation
-  // pending an AbortSignal addition to the SDK.
+  // Poll path. An AbortSignal tied to the same `timeoutMs` budget is passed
+  // to `pollTaskCompletion` so the inner loop exits as soon as the outer race
+  // timer fires — no orphaned `tasks/get` requests survive the step boundary.
+  // (adcp-client#1612: previously the loop ran indefinitely after the outer
+  // timeout resolved, accumulating background A2A calls that consumed the
+  // full comply() budget.)
   if (canPoll) {
+    const pollSignal = AbortSignal.timeout(timeoutMs);
     racers.push(
-      executor.pollTaskCompletion(agent, taskId, pollIntervalMs).then(
+      executor.pollTaskCompletion(agent, taskId, pollIntervalMs, undefined, pollSignal).then(
         (result: TaskResult): PollWin => ({
           kind: 'poll',
           result,
@@ -830,6 +858,140 @@ function buildCapabilityUnsupportedResult(
 }
 
 /**
+ * Map a `requires:` requirement onto the canonical `RunnerSkipReason` to
+ * emit when that requirement is unmet. `controller` reuses the existing
+ * `missing_test_controller` value so back-compat consumers (skip-cause
+ * aggregators, dashboards keyed on the existing string) keep grouping
+ * controller-driven skips into the same bucket they already track. Other
+ * requirements use the new `requirement_unmet` reason; consumers that
+ * want per-requirement granularity read `RunnerSkipResult.requirement`.
+ *
+ * Spec: adcp-client#1626 (no-rename design — keep existing skip_reason
+ * values stable as the back-compat surface; add `requirement_unmet` only
+ * for requirement names that have no existing canonical reason).
+ */
+const REQUIREMENT_TO_SKIP_REASON: Record<RequirementName, RunnerSkipReason> = {
+  controller: 'missing_test_controller',
+  seeded_state: 'requirement_unmet',
+  real_wire: 'requirement_unmet',
+};
+
+/**
+ * Build a minimal StoryboardResult for a storyboard skipped because a
+ * `requires:` tag named a requirement that isn't available on this run
+ * (e.g. `controller` when the agent doesn't advertise
+ * `comply_test_controller`, or `seeded_state` when the operator didn't
+ * pass `--asserts-seeded-state`). Mirrors `buildCapabilityUnsupportedResult`
+ * but carries the structured `requirement` field so consumers can group
+ * not-applicable scenarios by cause. Spec: adcp-client#1626.
+ */
+function buildRequirementUnmetResult(
+  agentUrls: string[],
+  storyboard: Storyboard,
+  requirement: RequirementName,
+  detail: string
+): StoryboardResult {
+  const reason = REQUIREMENT_TO_SKIP_REASON[requirement];
+  const syntheticStep: StoryboardStepResult = {
+    storyboard_id: storyboard.id,
+    step_id: `requirement_unmet:${requirement}`,
+    phase_id: 'requirement_unmet',
+    title: `Storyboard skipped: requires '${requirement}'`,
+    task: '',
+    passed: true,
+    skipped: true,
+    skip_reason: reason,
+    skip: { reason, detail, requirement },
+    duration_ms: 0,
+    validations: [],
+    context: {},
+    extraction: { path: 'none' },
+  };
+  return {
+    storyboard_id: storyboard.id,
+    storyboard_title: storyboard.title,
+    agent_url: agentUrls[0]!,
+    overall_passed: true,
+    phases: [
+      {
+        phase_id: 'requirement_unmet',
+        phase_title: `Requirement unmet: ${requirement}`,
+        passed: true,
+        steps: [syntheticStep],
+        duration_ms: 0,
+      },
+    ],
+    context: {},
+    total_duration_ms: 0,
+    passed_count: 0,
+    failed_count: 0,
+    skipped_count: 1,
+    tested_at: new Date().toISOString(),
+    strict_validation_summary: {
+      observable: false,
+      checked: 0,
+      passed: 0,
+      failed: 0,
+      strict_only_failures: 0,
+      lenient_also_failed: 0,
+    },
+  };
+}
+
+/**
+ * Resolve a storyboard's `requires:` tags against the runtime environment.
+ * Returns the first unmet requirement (with a human-readable detail) or
+ * `null` when every requirement is available. Spec: adcp-client#1626.
+ *
+ * Detection rules:
+ *   - `controller` — agent advertises `comply_test_controller` (read from
+ *     `options.agentTools`). When `options.agentTools` is undefined the
+ *     gate is a no-op — the caller accepted responsibility for tool
+ *     compatibility by reusing an external client.
+ *   - `seeded_state` — operator passed `assertsSeededState: true`
+ *     (CLI: `--asserts-seeded-state`).
+ *   - `real_wire` — always available; the runner is hitting a real wire
+ *     by definition. The tag is a no-op gate today, reserved for a
+ *     future `--mock-only` mode.
+ */
+function checkRequires(
+  requires: readonly RequirementName[],
+  options: StoryboardRunOptions
+): { requirement: RequirementName; detail: string } | null {
+  for (const requirement of requires) {
+    switch (requirement) {
+      case 'controller': {
+        if (!options.agentTools) continue;
+        if (!options.agentTools.includes('comply_test_controller')) {
+          return {
+            requirement,
+            detail:
+              `Storyboard requires 'controller'; agent does not advertise comply_test_controller. ` +
+              `Agent tools: [${options.agentTools.join(', ')}].`,
+          };
+        }
+        break;
+      }
+      case 'seeded_state': {
+        if (options.assertsSeededState !== true) {
+          return {
+            requirement,
+            detail:
+              "Storyboard requires 'seeded_state'; pass --asserts-seeded-state to declare " +
+              'that initial state has been provisioned out-of-band.',
+          };
+        }
+        break;
+      }
+      case 'real_wire':
+        // Always available — reserved for a future --mock-only mode.
+        break;
+    }
+  }
+  return null;
+}
+
+/**
  * Build a hard-failure StoryboardResult for when agent capability
  * discovery (`get_agent_info` / MCP `tools/list`) failed. Surfacing
  * discovery errors as a hard storyboard failure prevents the silent
@@ -995,6 +1157,10 @@ async function executeStoryboardPass(
       return buildDiscoveryFailedResult(agentUrls, storyboard, failedStep);
     }
     clients = [...routingContext.clients.values()];
+    // See note on the non-routing branch below: per-storyboard session reset
+    // prevents a stale `pendingTaskId` from a prior storyboard's non-terminal
+    // step from auto-threading into this storyboard's first call. (#1585)
+    resetClientSessions(clients);
     // Pick the first agent's profile as the "primary" for downstream code
     // that reads single-profile fields (library_version on per-step result
     // records, raw_capabilities for `requires_capability`). Per-step
@@ -1017,6 +1183,17 @@ async function executeStoryboardPass(
     // Build one client per URL. In single-URL mode `_client` (from comply()) is
     // honored so the shared MCP transport is reused across storyboards.
     clients = agentUrls.map(url => getOrCreateClient(url, options));
+
+    // Drop any retained A2A session ids before this storyboard's first call.
+    // `comply()` shares one client across N storyboards for transport reuse;
+    // AgentClient.retainSession holds onto `pendingTaskId` from non-terminal
+    // responses (`submitted`/`working`/`input-required`) and auto-threads it
+    // into every subsequent `message/send`. Without a per-storyboard reset, a
+    // prior storyboard's stale `task_id` rides into the next storyboard's
+    // first call (typically `get_products`) and the seller correctly
+    // returns "Task <uuid> not found" on a buyer-side reference to a task it
+    // never opened. (#1585)
+    resetClientSessions(clients);
 
     // Discover agent profile against the first instance; all instances are
     // expected to run the same code behind a shared state store, so one probe
@@ -1045,6 +1222,21 @@ async function executeStoryboardPass(
       }
     } else {
       profile = options._profile;
+    }
+  }
+
+  // Evaluate `requires` tags before any phase setup. The runner detects
+  // which requirements are available on this run; an unmet requirement
+  // skips the whole storyboard with `requirement_unmet` rather than
+  // producing a cascade of `missing_test_controller` per-step skips.
+  // Spec: adcp-client#1626. The default (no `requires` field) is
+  // `[real_wire]`, which is always available — untagged storyboards
+  // run unchanged.
+  if (storyboard.requires?.length) {
+    const unmet = checkRequires(storyboard.requires, options);
+    if (unmet) {
+      if (!options._client) await closeConnections(options.protocol);
+      return buildRequirementUnmetResult(agentUrls, storyboard, unmet.requirement, unmet.detail);
     }
   }
 
@@ -1325,6 +1517,10 @@ async function executeStoryboardPass(
   }
 
   for (const phase of storyboard.phases) {
+    // adcp-client#1612: bail at phase boundaries when comply()'s combined
+    // timeout/external signal has aborted. Without this the phase loop runs
+    // to completion regardless of the outer budget.
+    options.signal?.throwIfAborted();
     const phaseStart = Date.now();
     const stepResults: StoryboardStepResult[] = [];
     let phasePassed = true;
@@ -1420,6 +1616,16 @@ async function executeStoryboardPass(
       continue;
     }
 
+    // Reset alias cache at this phase boundary (#1657). $generate:uuid_v4#alias
+    // is designed to be stable within a scenario — the initial call and its
+    // idempotency replay share the same UUID — but aliases must NOT bleed across
+    // phases. Independent test groups that each start with a "setup" step need
+    // fresh idempotency keys; otherwise the seller's idempotency cache replays
+    // stale state from a prior group into the new one. Creating a new object
+    // identity drops the WeakMap entry without losing any $context.* values
+    // (those ride as plain properties on the spread result).
+    context = { ...context };
+
     // Seeding-cascade skip: either the pre-flight seed phase failed (setup
     // break) or the agent doesn't advertise `comply_test_controller`
     // (coverage gap). Both paths emit skipped steps; the reasons differ so
@@ -1465,6 +1671,11 @@ async function executeStoryboardPass(
     }
 
     for (const step of phase.steps) {
+      // adcp-client#1612: per-step abort gate. The dominant comply() cost
+      // on a healthy seller is sequential per-tool calls inside a single
+      // storyboard's phase — without this check the phase runs to completion
+      // even after comply() has already signalled "give up".
+      options.signal?.throwIfAborted();
       // Cascade-skip when the PRM presence probe declared the phase absent.
       if (phaseAbsent) {
         const cascadeResult: StoryboardStepResult = {
@@ -2675,6 +2886,85 @@ async function executeStep(
   let httpResult: HttpProbeResult | undefined;
   let responseRecord: RunnerResponseRecord | undefined;
   let a2aEnvelope: A2ATaskEnvelope | undefined;
+  let crossResponses: CrossResponseSet | undefined;
+
+  // Parallel-dispatch fan-out: when the storyboard step declares
+  // `parallel_dispatch`, the runner fires N concurrent dispatches against
+  // the same agent with the same idempotency_key (default) and grades the
+  // cross-response set instead of a single response. Gated on the
+  // `parallel_dispatch_runner` test-kit contract — runners (or runs) without
+  // it grade the step `not_applicable` so older runners don't fail on
+  // newer storyboard contracts.
+  if (step.parallel_dispatch && !useRawProbe) {
+    const contractsInScope = new Set(options.contracts ?? []);
+    if (!contractsInScope.has(PARALLEL_DISPATCH_CONTRACT)) {
+      const next = getNextStepPreview(step.id, allSteps, context, runState.runnerVars);
+      const detail = `Test-kit contract "${PARALLEL_DISPATCH_CONTRACT}" is not configured on this runner; concurrent-retry grading requires it.`;
+      return {
+        step_id: step.id,
+        phase_id: phaseId,
+        title: step.title,
+        task: step.task,
+        passed: true,
+        skipped: true,
+        skip_reason: 'not_applicable',
+        skip: buildSkip('not_applicable', detail),
+        duration_ms: 0,
+        validations: [],
+        context,
+        next,
+        extraction: { path: 'none' },
+      };
+    }
+    const specError = validateParallelDispatchSpec(step.parallel_dispatch);
+    if (specError) {
+      const next = getNextStepPreview(step.id, allSteps, context, runState.runnerVars);
+      return {
+        step_id: step.id,
+        phase_id: phaseId,
+        title: step.title,
+        task: step.task,
+        passed: false,
+        duration_ms: 0,
+        validations: [
+          {
+            check: 'parallel_dispatch_misconfigured',
+            passed: false,
+            description: specError,
+            json_pointer: null,
+            expected: 'a well-formed parallel_dispatch spec',
+            actual: step.parallel_dispatch,
+            schema_id: null,
+            schema_url: null,
+          },
+        ],
+        context,
+        error: specError,
+        next,
+        extraction: { path: 'none' },
+      };
+    }
+    if (step.parallel_dispatch.mode === 'distributed') {
+      const next = getNextStepPreview(step.id, allSteps, context, runState.runnerVars);
+      const detail =
+        'parallel_dispatch.mode: distributed is not implemented in @adcp/sdk; use process_local for in-process grading.';
+      return {
+        step_id: step.id,
+        phase_id: phaseId,
+        title: step.title,
+        task: step.task,
+        passed: true,
+        skipped: true,
+        skip_reason: 'not_applicable',
+        skip: buildSkip('not_applicable', detail),
+        duration_ms: 0,
+        validations: [],
+        context,
+        next,
+        extraction: { path: 'none' },
+      };
+    }
+  }
 
   // Capture the ISO timestamp immediately before the step's AdCP request
   // dispatch. `upstream_traffic` validations use this as the default
@@ -2732,38 +3022,87 @@ async function executeStep(
     // lands, key the capture off the negotiated transport instead.
     const captureA2a = options.protocol === 'a2a';
     let a2aCaptures: RawHttpCapture[] | undefined;
-    const dispatch = () =>
-      executeStoryboardTask(client, effectiveStep.task, request, {
-        skipIdempotencyAutoInject: testsMissingIdempotencyKey,
+    if (step.parallel_dispatch) {
+      // Fan out N concurrent dispatches via the SDK client. All dispatches
+      // share the runner-minted idempotency_key (default) so the seller
+      // sees one logical request and resolves the race deterministically.
+      //
+      // Known limitation: `dispatchWithBarrier` uses `Promise.race` against a
+      // timer; when the barrier wins, the underlying SDK request is NOT
+      // aborted — it continues to completion against the seller. The runner
+      // reports the dispatch as `timed_out`, but a late-arriving success
+      // can still land on the seller's idempotency cache. Storyboard
+      // authors writing follow-up steps that observe seller state after a
+      // barrier timeout should account for this race.
+      const started = Date.now();
+      crossResponses = await runParallelDispatches(client, effectiveStep.task, request, {
+        spec: step.parallel_dispatch,
+        keyMinter: generateIdempotencyKey,
+        correlationPrefix: step.id,
       });
-    const run = await runStep(step.title, effectiveStep.task, async () => {
-      if (!captureA2a) return dispatch();
-      try {
-        const { result: dispatchResult, captures } = await withRawResponseCapture(dispatch);
-        a2aCaptures = captures;
-        return dispatchResult;
-      } catch (err) {
-        // `withRawResponseCapture` attaches partial captures to the
-        // thrown error so we still get the wire-shape envelope when
-        // the SDK threw mid-parse (e.g. agent emitted malformed JSON).
-        // Bare-throw cases (network errors, no captures attached)
-        // leave `a2aCaptures` undefined and the validator self-skips.
-        const partial = getCapturesFromError(err);
-        if (partial) a2aCaptures = partial;
-        throw err;
-      }
-    });
-    taskResult = run.result;
-    stepResult = run.step;
-    if (captureA2a && a2aCaptures) {
-      a2aEnvelope = parseLastA2aMessageSendCapture(a2aCaptures);
-    }
-    if (taskResult) {
-      responseRecord = {
-        transport: options.protocol === 'a2a' ? 'a2a' : 'mcp',
-        payload: redactSecrets(taskResult.data ?? taskResult.error ?? null),
-        duration_ms: stepResult.duration_ms,
+      const durationMs = Date.now() - started;
+      // Representative TaskResult is ALWAYS `dispatches[0]` — pinning the
+      // representative to a fixed index keeps the aggregation loop's `i=1`
+      // start aligned (every dispatch graded exactly once). Picking the
+      // "best" resolved arm would double-count whichever dispatch won and
+      // skip dispatches[0] from per-response grading entirely.
+      const firstDispatch = crossResponses.dispatches[0];
+      const allTimedOut = crossResponses.dispatches.every(d => d.timed_out);
+      const barrierTimeoutError = 'parallel_dispatch_barrier_timeout: no dispatch resolved within barrier_timeout_ms';
+      taskResult = firstDispatch?.taskResult ?? {
+        success: false,
+        ...(allTimedOut && { error: barrierTimeoutError }),
       };
+      // Pass/fail is derived from the cross-response set rather than any
+      // single arm: the step passes when at least one dispatch resolved
+      // (cross-response validations then grade the race outcome). All-
+      // timed-out is a hard failure regardless of validations.
+      stepResult = {
+        duration_ms: durationMs,
+        passed: !allTimedOut && crossResponses.resolved.length > 0,
+        ...(allTimedOut && { error: barrierTimeoutError }),
+      };
+      if (taskResult) {
+        responseRecord = {
+          transport: options.protocol === 'a2a' ? 'a2a' : 'mcp',
+          payload: redactSecrets(taskResult.data ?? taskResult.error ?? null),
+          duration_ms: durationMs,
+        };
+      }
+    } else {
+      const dispatch = () =>
+        executeStoryboardTask(client, effectiveStep.task, request, {
+          skipIdempotencyAutoInject: testsMissingIdempotencyKey,
+        });
+      const run = await runStep(step.title, effectiveStep.task, async () => {
+        if (!captureA2a) return dispatch();
+        try {
+          const { result: dispatchResult, captures } = await withRawResponseCapture(dispatch);
+          a2aCaptures = captures;
+          return dispatchResult;
+        } catch (err) {
+          // `withRawResponseCapture` attaches partial captures to the
+          // thrown error so we still get the wire-shape envelope when
+          // the SDK threw mid-parse (e.g. agent emitted malformed JSON).
+          // Bare-throw cases (network errors, no captures attached)
+          // leave `a2aCaptures` undefined and the validator self-skips.
+          const partial = getCapturesFromError(err);
+          if (partial) a2aCaptures = partial;
+          throw err;
+        }
+      });
+      taskResult = run.result;
+      stepResult = run.step;
+      if (captureA2a && a2aCaptures) {
+        a2aEnvelope = parseLastA2aMessageSendCapture(a2aCaptures);
+      }
+      if (taskResult) {
+        responseRecord = {
+          transport: options.protocol === 'a2a' ? 'a2a' : 'mcp',
+          payload: redactSecrets(taskResult.data ?? taskResult.error ?? null),
+          duration_ms: stepResult.duration_ms,
+        };
+      }
     }
   }
 
@@ -2812,6 +3151,13 @@ async function executeStep(
   if (step.expect_error) {
     // Step passes when the task fails (returns an error)
     passed = !taskResult?.success || !!stepResult.error;
+  } else if (crossResponses) {
+    // Parallel-dispatch step: pass/fail is driven by the cross-response
+    // set, not the representative arm. The representative is pinned to
+    // `dispatches[0]` (which may itself have failed under the race) so
+    // gating on its `.success` would false-fail steps where later arms
+    // resolved correctly. Validations grade the actual race outcome.
+    passed = stepResult.passed;
   } else {
     passed = stepResult.passed && (taskResult?.success ?? false);
   }
@@ -2862,6 +3208,7 @@ async function executeStep(
       ...(a2aEnvelope && { a2aEnvelope }),
       ...(upstreamTraffic && { upstreamTraffic }),
       ...(step.sample_request && { storyboardStep: { sample_request: step.sample_request } }),
+      ...(crossResponses && { crossResponses }),
       ...(() => {
         // Walk back through the run's captured A2A envelopes and use
         // the most recent prior step's envelope as the comparison
@@ -2882,6 +3229,45 @@ async function executeStep(
       })(),
     };
     validations = runValidations(resolvedValidations, vctx);
+
+    // Parallel-dispatch aggregation: per-response checks (`response_schema`,
+    // `field_present`, `error_code`, etc.) declared by the storyboard MUST
+    // grade against every dispatch's resolved response, not just the
+    // representative one. Re-run each non-cross-response validation against
+    // each dispatch's TaskResult and append the additional results so the
+    // step's overall pass/fail reflects the full fan-out. The first run
+    // (above) already covers dispatch[0]; this loop covers dispatches[1..N].
+    if (crossResponses && crossResponses.dispatches.length > 1) {
+      const perResponseValidations = resolvedValidations.filter(
+        v => v.check !== 'cross_response_field_equal' && v.check !== 'cross_response_count_distinct'
+      );
+      for (let i = 1; i < crossResponses.dispatches.length; i++) {
+        const d = crossResponses.dispatches[i];
+        if (!d || !d.taskResult) continue;
+        const dispatchCtx: ValidationContext = {
+          ...vctx,
+          taskResult: d.taskResult,
+          // Per-dispatch responseRecord stays minimal — the redacted payload
+          // captures enough for failure attribution without bloating success.
+          ...(responseRecord && {
+            response: {
+              ...responseRecord,
+              payload: redactSecrets(d.taskResult.data ?? d.taskResult.error ?? null),
+              duration_ms: d.duration_ms,
+            },
+          }),
+        };
+        // Drop crossResponses on the per-dispatch context so cross-response
+        // checks don't re-fire here (they already ran once above on the
+        // representative dispatch and produced their single result).
+        delete dispatchCtx.crossResponses;
+        const dispatchResults = runValidations(perResponseValidations, dispatchCtx).map(r => ({
+          ...r,
+          description: `[dispatch ${d.correlation_id}] ${r.description}`,
+        }));
+        validations.push(...dispatchResults);
+      }
+    }
   }
 
   // Persist the captured A2A envelope keyed by step id so cross-step

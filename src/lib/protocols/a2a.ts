@@ -3,7 +3,7 @@ const clientModule = require('@a2a-js/sdk/client');
 const A2AClient = clientModule.A2AClient;
 
 import { AsyncLocalStorage } from 'node:async_hooks';
-import { createHash } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import type { PushNotificationConfig } from '../types/tools.generated';
 import type { DebugLogEntry } from '../types/adcp';
 import { AuthenticationRequiredError, is401Error } from '../errors';
@@ -11,6 +11,10 @@ import { discoverOAuthMetadata } from '../auth/oauth/discovery';
 import { withSpan, injectTraceHeaders } from '../observability/tracing';
 import { isAgentCardPath, buildCardUrls } from '../utils/a2a-discovery';
 import { buildAgentSigningFetch, signingContextStorage, type AgentSigningContext } from '../signing/client';
+import { toSignerKey, isInlineSigningConfig, isProviderSigningConfig } from '../signing/agent-fetch';
+import { createSigningFetch, type FetchLike } from '../signing/fetch';
+import { createSigningFetchAsync } from '../signing/fetch-async';
+import type { AgentConfig } from '../types/adcp';
 import { redactIdempotencyKeyInArgs } from '../utils/idempotency';
 import { wrapFetchWithCapture } from './rawResponseCapture';
 import { wrapFetchWithSizeLimit } from './responseSizeLimit';
@@ -61,6 +65,124 @@ function a2aCacheKey(agentUrl: string, authToken?: string, signingCacheKey?: str
 export function closeA2AConnections(): void {
   a2aClientCache.clear();
   pendingA2AClients.clear();
+}
+
+/**
+ * Wall-clock cap on a fire-and-forget cancel. A2A sellers that accept the
+ * TCP connect but never respond would otherwise pin the event loop past the
+ * buyer's abort, which defeats the whole point of fire-and-forget.
+ */
+const CANCEL_TIMEOUT_MS = 5000;
+
+/**
+ * Fire-and-forget A2A tasks/cancel for an in-flight task (A2A 0.3.0 §7.4).
+ *
+ * Sends a raw JSON-RPC 2.0 POST directly to the agent endpoint with the same
+ * auth header shape as `callA2AToolImpl` (Bearer + x-adcp-auth). Does NOT
+ * enter `callContextStorage` — debug-log capture and 401-cache-eviction are
+ * intentionally skipped for best-effort cancellation.
+ *
+ * **Auth-code OAuth gap:** `authToken` is resolved by `getAuthToken(agent)`,
+ * which returns `undefined` for authorization-code-flow sellers (those tokens
+ * are managed by the OAuth provider path in `ProtocolClient.callTool`, not
+ * accessible here). Cancel calls to those sellers go out unauthenticated and
+ * will likely 401 non-fatally.
+ *
+ * **Phase 2 (adcp-client#1617 follow-up):** when `agent.request_signing` is
+ * configured, the cancel POST is signed with the agent's signer key. The
+ * `signingContextStorage` ALS scope around `callA2AToolImpl` does NOT extend
+ * into `pollTaskCompletion` (sibling promise trees), so we can't replay the
+ * captured ALS context — instead we rebuild a one-shot signer fetch from
+ * `agent.request_signing` directly and use it for this single POST. Inline
+ * keys go through `createSigningFetch` (sync); provider-backed configs use
+ * `createSigningFetchAsync`. A `signed-requests` seller that requires
+ * signing on `tasks/cancel` (or applies a uniform "all mutating POSTs must
+ * be signed" policy) now accepts the cancel; one without signing config on
+ * the agent gets the Phase 1 unsigned path.
+ *
+ * The caller is responsible for swallowing errors: cancel failure
+ * (TaskNotCancelable, network error, auth rejection, network timeout) is
+ * non-fatal because the buyer is already abandoning the task.
+ *
+ * @param agent     The agent config (used for URL, auth token, signing).
+ * @param taskId    The server-assigned A2A Task.id to cancel.
+ */
+export async function cancelA2ATask(agent: AgentConfig, taskId: string): Promise<void> {
+  // Defense-in-depth (ad-tech-protocol-expert review of #1640): the cancel
+  // POST is JSON-RPC at the bare A2A endpoint. Calling this on an MCP agent
+  // would POST `tasks/cancel` JSON-RPC at an MCP endpoint and 404. The
+  // single call site (`pollTaskCompletion`) already gates on
+  // `agent.protocol === 'a2a'`; this assertion catches future call sites
+  // that forget the gate.
+  if (agent.protocol !== 'a2a') {
+    return;
+  }
+  const agentUrl = agent.agent_uri;
+  const authToken = agent.auth_token;
+
+  const headers: Record<string, string> = {
+    'content-type': 'application/json',
+    accept: 'application/json',
+  };
+  if (authToken) {
+    headers['Authorization'] = `Bearer ${authToken}`;
+    headers['x-adcp-auth'] = authToken;
+  }
+  // JSON-RPC 2.0 §4.1.3: `id: null` flags the request as a *notification*,
+  // and the server MUST NOT respond. A2A 0.3.0 §7.4 defines `tasks/cancel`
+  // as a request/response method (returns the canceled `Task` or
+  // `TaskNotCancelableError`), so a strict A2A server can legitimately
+  // reject `id: null` as a protocol violation. Use a real id and just drop
+  // the response on the floor — fire-and-forget is the caller's discipline,
+  // not a wire-protocol claim.
+  const body = JSON.stringify({
+    jsonrpc: '2.0',
+    id: randomUUID(),
+    method: 'tasks/cancel',
+    params: { id: taskId },
+  });
+  // Bound the cancel: a hung fetch would orphan-pin the event loop past the
+  // buyer's abort, defeating fire-and-forget. AbortSignal.timeout() is the
+  // standard primitive; the caller's `.catch()` swallows the AbortError.
+  const init: RequestInit = {
+    method: 'POST',
+    headers,
+    body,
+    signal: AbortSignal.timeout(CANCEL_TIMEOUT_MS),
+  };
+
+  // adcp-client#1617 Phase 2: sign the cancel POST when the agent has a
+  // signer configured. We bypass the `buildAgentSigningFetch` capability-
+  // gate path because `tasks/cancel` is an A2A protocol method, not an
+  // AdCP tool — the seller's `request_signing.supported_for` typically
+  // lists AdCP tool names, not protocol-level methods. The right model
+  // here: if the agent claims signing AT ALL, sign every mutating POST
+  // we send to it on the cancel path. Sellers with uniform "must be
+  // signed" policies accept this; sellers that only check signing on
+  // specific AdCP tools simply ignore the extra signature.
+  //
+  // TODO(adcp#4318, adcp-client#1617): when the AdCP spec adds explicit
+  // verifier coverage for A2A protocol methods (likely in 3.1 as a new
+  // `protocol_methods_supported_for` / `protocol_methods_required_for`
+  // field on `request_signing`), narrow this default by reading the
+  // seller's advertised coverage from `getCapability()` and gating on
+  // the `tasks/cancel` membership. The over-sign default stays as the
+  // fallback for spec-silent sellers (3.0.x and earlier).
+  if (agent.request_signing) {
+    const upstream: FetchLike = (input, ini) => fetch(input as RequestInfo, ini);
+    if (isInlineSigningConfig(agent.request_signing)) {
+      const signed = createSigningFetch(upstream, toSignerKey(agent.request_signing));
+      await signed(agentUrl, init);
+      return;
+    }
+    if (isProviderSigningConfig(agent.request_signing)) {
+      const signed = createSigningFetchAsync(upstream, agent.request_signing.provider);
+      await signed(agentUrl, init);
+      return;
+    }
+  }
+
+  await fetch(agentUrl, init);
 }
 
 async function getOrCreateA2AClient(
@@ -204,6 +326,51 @@ function buildFetchImpl(authToken: string | undefined) {
     getCapability: signingContext.getCapability,
   });
   return wrapFetchWithCapture(signingFetch as typeof fetch);
+}
+
+/**
+ * Terminal A2A task states per A2A 0.3.0 §3.4. Only these can carry the
+ * AdCP-mandated artifact + DataPart envelope (per transport-errors §A2A
+ * Binding); intermediate states (`working`, `submitted`, `input-required`,
+ * `auth-required`) carry no completion artifact.
+ */
+const TERMINAL_A2A_STATES = new Set(['completed', 'failed', 'rejected', 'canceled']);
+
+/**
+ * Detect whether a JSON-RPC response carries a spec-compliant terminal-state
+ * Task with at least one artifact containing a structured DataPart payload.
+ * Per AdCP transport-errors §A2A Binding, the artifact's DataPart is the
+ * canonical envelope for both the success arm (`completed`) and the error
+ * arms (`failed` / `rejected` / `canceled`). The criterion intentionally
+ * matches the unwrapper's terminal-state extraction in
+ * `unwrapA2AResponse` — keeping protocol layer and unwrapper in lockstep
+ * across all terminal states, not just the error arms.
+ *
+ * Used to short-circuit the generic "A2A agent returned error" throw when
+ * a non-conformant seller surfaces both a transport-level `result.error`
+ * hint and the canonical artifact envelope side-by-side. The DataPart is
+ * authoritative; the throw would otherwise swallow it.
+ */
+function hasTerminalTaskWithDataArtifact(response: unknown): boolean {
+  if (!response || typeof response !== 'object') return false;
+  const result = (response as { result?: unknown }).result;
+  if (!result || typeof result !== 'object') return false;
+  const r = result as { kind?: unknown; status?: unknown; artifacts?: unknown };
+  if (r.kind !== 'task') return false;
+  const status = r.status as { state?: unknown } | undefined;
+  if (typeof status?.state !== 'string' || !TERMINAL_A2A_STATES.has(status.state)) return false;
+  if (!Array.isArray(r.artifacts) || r.artifacts.length === 0) return false;
+  for (const artifact of r.artifacts) {
+    if (!artifact || typeof artifact !== 'object') continue;
+    const parts = (artifact as { parts?: unknown }).parts;
+    if (!Array.isArray(parts)) continue;
+    for (const part of parts) {
+      if (!part || typeof part !== 'object') continue;
+      const p = part as { kind?: unknown; data?: unknown };
+      if (p.kind === 'data' && p.data && typeof p.data === 'object') return true;
+    }
+  }
+  return false;
 }
 
 /**
@@ -353,9 +520,17 @@ async function callA2AToolImpl(
     });
 
     if (messageResponse?.error || messageResponse?.result?.error) {
-      const errorObj = messageResponse.error || messageResponse.result?.error;
-      const errorMessage = errorObj.message || JSON.stringify(errorObj);
-      throw new Error(`A2A agent returned error: ${errorMessage}`);
+      // adcp-client#1575: when the seller emits a spec-compliant terminal-state
+      // Task carrying an `adcp_error` DataPart (per AdCP transport-errors §A2A
+      // Binding), the structured artifact is canonical — even if the seller
+      // also surfaced a transport-level error string. Pass the response
+      // through so the upstream unwrapper extracts `adcp_error.code` instead
+      // of throwing a generic message that loses the AdCP error envelope.
+      if (!hasTerminalTaskWithDataArtifact(messageResponse)) {
+        const errorObj = messageResponse.error || messageResponse.result?.error;
+        const errorMessage = errorObj.message || JSON.stringify(errorObj);
+        throw new Error(`A2A agent returned error: ${errorMessage}`);
+      }
     }
 
     return messageResponse;

@@ -183,10 +183,11 @@ arrive on `authInfo`."
 Opt in at server construction:
 
 ```ts
-import { createAdcpServer } from '@adcp/sdk/server';
+import { createAdcpServerFromPlatform } from '@adcp/sdk/server';
 
-createAdcpServer({
-  // ...
+createAdcpServerFromPlatform(platform, {
+  name: 'My Agent',
+  version: '1.0.0',
   credentialPolicy: 'authInfo-only',
 });
 ```

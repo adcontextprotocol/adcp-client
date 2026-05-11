@@ -66,7 +66,7 @@ import {
   type DecisioningPlatform,
   type SyncCreativesRow,
 } from '@adcp/sdk/server';
-import { FormatAsset } from '@adcp/sdk';
+import { FormatAsset, buildCreativeReturn, previewCreative, urlRender } from '@adcp/sdk';
 import type {
   BuildCreativeRequest,
   BuildCreativeSuccess,
@@ -511,16 +511,17 @@ class CreativeAdServerAdapter implements DecisioningPlatform<Record<string, neve
       // satisfying creative-manifest.json:14. Each `assets[key]` is a
       // discriminated AssetVariant — `asset_type` selects the matching
       // schema (html requires `content`, etc.).
-      return {
-        creative_manifest: {
+      // `buildCreativeReturn.singleEnveloped({...})` injects the wire-shape
+      // discriminator: takes a flat `manifest` field (renamed to
+      // `creative_manifest` on the wire). SHAPE-GOTCHAS §5.
+      return buildCreativeReturn.singleEnveloped({
+        manifest: {
           format_id: { agent_url: FORMAT_AGENT_URL, id: creative.format_id },
           assets: {
             serving_tag: { asset_type: 'html', content: rendered.tag_html },
           },
         },
-        // CAST: oneOf-emitter — picking variant 0 (single creative_manifest)
-        // of the BuildCreativeResponse oneOf. Adopters keep this cast.
-      } as unknown as BuildCreativeSuccess;
+      });
     },
 
     /**
@@ -553,26 +554,24 @@ class CreativeAdServerAdapter implements DecisioningPlatform<Record<string, neve
         });
       }
       const rendered = await upstream.renderCreative(networkCode, creativeId, {});
-      return {
-        response_type: 'single',
+      // `previewCreative.single({...})` injects
+      // `response_type: 'single'`. SHAPE-GOTCHAS §4.
+      return previewCreative.single({
         previews: [
           {
             preview_id: `prv_${creative.creative_id}`,
             renders: [
-              {
+              urlRender({
                 render_id: `rnd_${creative.creative_id}`,
                 preview_url: rendered.preview_url,
                 role: 'primary',
-              },
+              }),
             ],
             input: { name: 'default' },
           },
         ],
         expires_at: new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString(),
-        // CAST: oneOf-emitter — picking the `single` discriminator branch
-        // of the PreviewCreativeResponse 3-way union (single | batch | variant).
-        // See SHAPE-GOTCHAS §4. Adopters keep this cast.
-      } as unknown as PreviewCreativeResponse;
+      });
     },
 
     listCreativeFormats: async (_req, _ctx): Promise<ListCreativeFormatsResponse> => {

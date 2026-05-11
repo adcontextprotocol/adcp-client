@@ -504,8 +504,29 @@ async function generateZodSchemas() {
     const coreContent = readFileSync(CORE_SOURCE_FILE, 'utf8');
     const toolsContent = readFileSync(TOOLS_SOURCE_FILE, 'utf8');
 
+    // tools.generated.ts imports a handful of *AssetRequirements types from
+    // core.generated.ts (injected by scripts/generate-types.ts so the standalone
+    // file typechecks). Since we concatenate both sources for ts-to-zod, those
+    // imports are redundant — worse, ts-to-zod treats imported names as external
+    // and emits `z.any()` stubs even when the actual interfaces are present in
+    // the combined source. Strip cross-file imports before merging.
+    const toolsWithoutCrossImports = toolsContent.replace(
+      /^import type \{[^}]*\} from ['"]\.\/core\.generated['"];?\n+/gm,
+      ''
+    );
+    // Defensive: if the injector in scripts/generate-types.ts ever changes shape
+    // (different specifier, single-line form, etc.), the strip would silently
+    // no-op and we'd regress back to z.any() stubs. Fail loudly instead.
+    if (toolsWithoutCrossImports.includes("from './core.generated'")) {
+      throw new Error(
+        "generate-zod-from-ts: cross-file `import type { ... } from './core.generated'` " +
+          'survived the strip. Update the regex in this file or the injector in ' +
+          'scripts/generate-types.ts — letting it through degrades the matching schemas to z.any().'
+      );
+    }
+
     // Merge both sources so cross-file type dependencies can be resolved
-    const combinedSource = `${coreContent}\n\n// ====== TOOL TYPES ======\n\n${toolsContent}`;
+    const combinedSource = `${coreContent}\n\n// ====== TOOL TYPES ======\n\n${toolsWithoutCrossImports}`;
 
     console.log('📦 Generating Zod schemas for all types...');
 
@@ -572,6 +593,23 @@ async function generateZodSchemas() {
 
     // Post-process: Add explicit z.ZodType annotations to schemas that trip TS7056.
     zodSchemas = postProcessTS7056Annotations(zodSchemas);
+
+    // Defensive: ts-to-zod emits `const FooSchema = z.any();` stubs when it
+    // can't resolve a referenced type — usually because a cross-file `import
+    // type` declaration leaks past the upstream strip (see #1659). A `z.any()`
+    // stub silently accepts any shape at runtime and erases the per-type Zod
+    // contract downstream consumers rely on. Fail the build so the regression
+    // surfaces here, not in a consumer's test suite.
+    const anyStubs = [...zodSchemas.matchAll(/^const (\w+Schema) = z\.any\(\);$/gm)].map(m => m[1]);
+    if (anyStubs.length > 0) {
+      throw new Error(
+        `generate-zod-from-ts: ${anyStubs.length} schema(s) degenerated to z.any() stubs:\n` +
+          anyStubs.map(n => `  - ${n}`).join('\n') +
+          '\nThis usually means a cross-file `import type` declaration leaked past the strip ' +
+          'in this script. Check that the referenced TypeScript interfaces are inlined in ' +
+          'the combined source, and update the strip regex if a new cross-file import was added.'
+      );
+    }
 
     // Create header with metadata
     const header = `// Generated Zod v4 schemas from TypeScript types

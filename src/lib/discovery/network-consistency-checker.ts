@@ -12,6 +12,8 @@ import { createLogger, type LogLevel } from '../utils/logger';
 import { LIBRARY_VERSION } from '../version';
 import { validateUserAgent } from '../utils/validate-user-agent';
 import { validateAgentUrl } from '../validation';
+import { ssrfSafeFetch, SsrfRefusedError, SSRF_TRANSIENT_CODES, decodeBodyAsJsonOrText } from '../net/ssrf-fetch';
+import { isInternalProbesAllowed } from '../utils/probe-policy';
 import type { AdAgentsJson, AuthorizedAgent, Property } from './types';
 
 // ====== Configuration ======
@@ -368,52 +370,64 @@ export class NetworkConsistencyChecker {
         error: error instanceof Error ? error.message : String(error),
       };
     }
+    // adcp-client#1633 review: share a single AbortController across the
+    // initial probe AND any redirect-follow so the total wall-clock stays
+    // bounded by `this.timeoutMs`. Without this, each ssrfSafeFetch gets a
+    // fresh budget and a malicious redirect chain doubles the wait.
+    const sharedSignal = AbortSignal.timeout(this.timeoutMs);
     try {
-      const controller = new AbortController();
-      const timeout = setTimeout(() => controller.abort(), this.timeoutMs);
-      try {
-        let response = await fetch(agent.url, {
+      // adcp-client#1633: route through ssrfSafeFetch for DNS-pin / TOCTOU
+      // defense. validateAgentUrl above is the literal-hostname gate; the
+      // fetcher below catches DNS-resolved private addresses and rebinds.
+      // Each call DNS-pins independently, so following a redirect via a
+      // second ssrfSafeFetch validates the redirect target against the
+      // address guards too.
+      let result = await ssrfSafeFetch(agent.url, {
+        method: 'HEAD',
+        timeoutMs: this.timeoutMs,
+        allowPrivateIp: isInternalProbesAllowed(),
+        signal: sharedSignal,
+        // Body cap is irrelevant for HEAD but keep small as defense-in-depth
+        // in case the seller incorrectly returns a body on HEAD.
+        maxBodyBytes: 1024,
+        headers: {
+          ...FETCH_HEADERS,
+          'User-Agent': this.userAgentHeader,
+          From: this.fromHeader,
+        },
+      });
+
+      // Follow one redirect with SSRF validation. ssrfSafeFetch sets
+      // `redirect: 'manual'` so 3xx surfaces here with status + Location.
+      if (result.status >= 300 && result.status < 400) {
+        const location = result.headers['location'];
+        if (!location) {
+          return { url: agent.url, reachable: false, error: 'Redirect with no Location header' };
+        }
+        const redirectUrl = new URL(location, agent.url).toString();
+        if (!redirectUrl.startsWith('https://')) {
+          return { url: agent.url, reachable: false, error: 'Redirect to non-HTTPS URL' };
+        }
+        validateAgentUrl(redirectUrl);
+        result = await ssrfSafeFetch(redirectUrl, {
           method: 'HEAD',
-          signal: controller.signal,
-          redirect: 'manual',
+          timeoutMs: this.timeoutMs,
+          allowPrivateIp: isInternalProbesAllowed(),
+          signal: sharedSignal,
+          maxBodyBytes: 1024,
           headers: {
             ...FETCH_HEADERS,
             'User-Agent': this.userAgentHeader,
             From: this.fromHeader,
           },
         });
-
-        // Follow one redirect with SSRF validation
-        if (response.status >= 300 && response.status < 400) {
-          const location = response.headers.get?.('location');
-          if (!location) {
-            return { url: agent.url, reachable: false, error: 'Redirect with no Location header' };
-          }
-          const redirectUrl = new URL(location, agent.url).toString();
-          if (!redirectUrl.startsWith('https://')) {
-            return { url: agent.url, reachable: false, error: 'Redirect to non-HTTPS URL' };
-          }
-          validateAgentUrl(redirectUrl);
-          response = await fetch(redirectUrl, {
-            method: 'HEAD',
-            signal: controller.signal,
-            redirect: 'error',
-            headers: {
-              ...FETCH_HEADERS,
-              'User-Agent': this.userAgentHeader,
-              From: this.fromHeader,
-            },
-          });
-        }
-
-        return {
-          url: agent.url,
-          reachable: response.ok || response.status === 405, // 405 = HEAD rejected but server is alive
-          statusCode: response.status,
-        };
-      } finally {
-        clearTimeout(timeout);
       }
+
+      return {
+        url: agent.url,
+        reachable: (result.status >= 200 && result.status < 300) || result.status === 405, // 405 = HEAD rejected but server is alive
+        statusCode: result.status,
+      };
     } catch (error) {
       return {
         url: agent.url,
@@ -563,12 +577,20 @@ export class NetworkConsistencyChecker {
 
   private async fetchJson<T>(url: string): Promise<T> {
     validateAgentUrl(url);
-    const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), this.timeoutMs);
+    // Shared AbortController: total wall-clock bounded by `this.timeoutMs`
+    // across the initial fetch + any 1-redirect follow. See `probeAgent`
+    // for the same pattern + rationale.
+    const sharedSignal = AbortSignal.timeout(this.timeoutMs);
     try {
-      let response = await fetch(url, {
-        signal: controller.signal,
-        redirect: 'manual',
+      // adcp-client#1633: ssrfSafeFetch handles DNS-pin / TOCTOU / body cap
+      // / scheme guard / redirect: 'manual' in one wrapper. Each ssrfSafeFetch
+      // call DNS-pins independently — the redirect-follow path below
+      // re-validates against the address guards via the second invocation.
+      let result = await ssrfSafeFetch(url, {
+        timeoutMs: this.timeoutMs,
+        allowPrivateIp: isInternalProbesAllowed(),
+        signal: sharedSignal,
+        maxBodyBytes: MAX_RESPONSE_BYTES,
         headers: {
           ...FETCH_HEADERS,
           'User-Agent': this.userAgentHeader,
@@ -576,20 +598,22 @@ export class NetworkConsistencyChecker {
         },
       });
 
-      // Follow one HTTP redirect with SSRF validation
-      if (response.status >= 300 && response.status < 400) {
-        const location = response.headers.get?.('location');
+      // Follow one HTTP redirect with SSRF validation.
+      if (result.status >= 300 && result.status < 400) {
+        const location = result.headers['location'];
         if (!location) {
-          throw new Error(`HTTP ${response.status} redirect with no Location header`);
+          throw new Error(`HTTP ${result.status} redirect with no Location header`);
         }
         const redirectUrl = new URL(location, url).toString();
         if (!redirectUrl.startsWith('https://')) {
           throw new Error('Redirect to non-HTTPS URL not allowed');
         }
         validateAgentUrl(redirectUrl);
-        response = await fetch(redirectUrl, {
-          signal: controller.signal,
-          redirect: 'error',
+        result = await ssrfSafeFetch(redirectUrl, {
+          timeoutMs: this.timeoutMs,
+          allowPrivateIp: isInternalProbesAllowed(),
+          signal: sharedSignal,
+          maxBodyBytes: MAX_RESPONSE_BYTES,
           headers: {
             ...FETCH_HEADERS,
             'User-Agent': this.userAgentHeader,
@@ -598,29 +622,47 @@ export class NetworkConsistencyChecker {
         });
       }
 
-      if (!response.ok) {
-        throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+      if (result.status < 200 || result.status >= 300) {
+        throw new Error(`HTTP ${result.status}`);
       }
-      const contentLength = response.headers.get?.('content-length');
-      if (contentLength && parseInt(contentLength, 10) > MAX_RESPONSE_BYTES) {
-        throw new Error('Response too large');
+      const parsed = decodeBodyAsJsonOrText(result.body, result.headers['content-type']);
+      if (typeof parsed === 'string') {
+        // decodeBodyAsJsonOrText falls back to text on non-JSON or parse-fail.
+        // The callers here (adagents.json) require JSON, so re-attempt parse
+        // and surface a clear error if it's not.
+        try {
+          return JSON.parse(parsed) as T;
+        } catch {
+          throw new Error('Response was not valid JSON');
+        }
       }
-      const text = await response.text();
-      if (Buffer.byteLength(text, 'utf-8') > MAX_RESPONSE_BYTES) {
-        throw new Error('Response too large');
-      }
-      return JSON.parse(text) as T;
+      return parsed as T;
     } catch (error) {
-      if (error instanceof DOMException && error.name === 'AbortError') {
-        throw new Error(`Request timed out after ${this.timeoutMs}ms`);
+      if (error instanceof SsrfRefusedError && error.code === 'body_exceeds_limit') {
+        throw new Error('Response too large');
       }
       throw error;
-    } finally {
-      clearTimeout(timeout);
     }
   }
 
   private sanitizeError(error: unknown): string {
+    // adcp-client#1633 review: SSRF policy refusals must surface distinctly
+    // so operators can tell "host unreachable" apart from "host refused on
+    // policy grounds." Without this carve-out, an attacker-supplied URL
+    // resolving to a private/IMDS address would masquerade as a generic
+    // fetch failure (the catch-swallow class flagged in #1618 review).
+    // The transient codes (DNS / body-cap) still surface as their plain
+    // strings — the user-visible distinction is `[SSRF refused]` in front
+    // of the policy-class messages.
+    if (error instanceof SsrfRefusedError) {
+      if (SSRF_TRANSIENT_CODES.has(error.code)) {
+        // Map transient codes to existing strings the test suite expects.
+        if (error.code === 'dns_lookup_failed' || error.code === 'dns_empty') return 'DNS resolution failed';
+        if (error.code === 'body_exceeds_limit') return 'Response too large';
+      }
+      // Policy refusal: prefix so the report makes the distinction visible.
+      return `[SSRF refused] ${error.message}`;
+    }
     if (error instanceof Error) {
       if (error.name === 'AbortError') return 'Request timed out';
       if (error.message.startsWith('HTTP ')) return error.message;

@@ -1,6 +1,6 @@
 {
   "name": "@adcp/sdk",
-  "version": "6.13.0",
+  "version": "6.19.1",
   "description": "AdCP SDK — client, server, and compliance harnesses for the AdContext Protocol (MCP + A2A)",
   "workspaces": [
     ".",
@@ -361,5 +361,5 @@
     },
     "minimatch": "^10.2.1"
   },
-  "adcp_version": "3.0.6"
+  "adcp_version": "3.0.11"
 }

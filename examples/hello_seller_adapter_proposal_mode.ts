@@ -529,6 +529,13 @@ const platform: DecisioningPlatform<unknown, NetworkMeta> = {
     channels: ['olv', 'ctv', 'display'],
     pricingModels: ['cpm'],
     config: undefined,
+    // Declare the comply_test_controller surface so the conformance runner
+    // grades missing scenarios as `not_applicable` rather than `failed`. The
+    // framework auto-derives the `scenarios` list from the `complyTest`
+    // adapter set wired below.
+    compliance_testing: {
+      scenarios: ['force_media_buy_status', 'simulate_delivery'],
+    },
   },
   accounts,
   proposalManager,
@@ -543,6 +550,21 @@ const proposalStore = new InMemoryProposalStore<GAMLikeRecipe>();
 // Production adopters swap for `PostgresStateStore({ pool })`.
 const stateStore = new InMemoryStateStore();
 const mediaBuyStore = createMediaBuyStore({ store: stateStore });
+
+// ─── TEST-ONLY: in-memory state for comply_test_controller adapters ─────
+// DELETE THESE MAPS BEFORE DEPLOYING (or scope per-tenant if you keep the
+// controller wired in a sandbox tenant). Module-scope shared maps leak
+// state across accounts — that's fine for a worked example whose only
+// caller is the conformance harness, but unacceptable in production.
+// SWAP: scope by `account.id` (or your tenant key) and persist via the
+// same data layer your production handlers read from. The controller
+// and production tools should share one source of truth for state.
+const seededMediaBuys = new Map<string, { status: string; revision: number }>();
+const simulatedDelivery = new Map<
+  string,
+  { impressions: number; clicks: number; reported_spend: { amount: number; currency: string } }
+>();
+// ─── /TEST-ONLY ──────────────────────────────────────────────────────────
 
 serve(
   ({ taskStore }) =>
@@ -559,6 +581,55 @@ serve(
         const acct = ctx.account as Account<NetworkMeta> | undefined;
         return acct?.id ?? 'anonymous';
       },
+      // ─── TEST-ONLY: comply_test_controller wiring ──────────────────────
+      // DELETE THIS BLOCK BEFORE DEPLOYING. The conformance runner uses
+      // `comply_test_controller` to seed media-buy fixtures and force
+      // state transitions across cascade scenarios in the broader
+      // `sales_proposal_mode` storyboard suite (delivery_reporting,
+      // invalid_transitions, pending_creatives_to_start). The
+      // `proposal_finalize` storyboard itself doesn't invoke the
+      // controller, but the surface is wired here for parity with the
+      // other reference seller adapters.
+      //
+      // No `sandboxGate` here — the framework gate inside
+      // `createAdcpServerFromPlatform` admits via the resolved account's
+      // `mode === 'sandbox'`. Production refs flow through the live path
+      // with the field unset (default `'live'`), so the framework gate
+      // refuses dispatch for them.
+      complyTest: {
+        seed: {
+          media_buy: ({ media_buy_id, fixture }) => {
+            const existing = seededMediaBuys.get(media_buy_id);
+            const status = typeof fixture['status'] === 'string' ? (fixture['status'] as string) : 'pending_creatives';
+            seededMediaBuys.set(media_buy_id, { status, revision: existing?.revision ?? 0 });
+          },
+        },
+        force: {
+          media_buy_status: ({ media_buy_id, status, rejection_reason }) => {
+            const buy = seededMediaBuys.get(media_buy_id);
+            const previous = buy?.status ?? 'pending_creatives';
+            seededMediaBuys.set(media_buy_id, { status, revision: (buy?.revision ?? 0) + 1 });
+            void rejection_reason;
+            return { success: true, previous_state: previous, current_state: status };
+          },
+        },
+        simulate: {
+          delivery: ({ media_buy_id, impressions, clicks, reported_spend }) => {
+            const prev = simulatedDelivery.get(media_buy_id) ?? {
+              impressions: 0,
+              clicks: 0,
+              reported_spend: { amount: 0, currency: 'USD' },
+            };
+            simulatedDelivery.set(media_buy_id, {
+              impressions: prev.impressions + (impressions ?? 0),
+              clicks: prev.clicks + (clicks ?? 0),
+              reported_spend: reported_spend ?? prev.reported_spend,
+            });
+            return { success: true, simulated: { media_buy_id, impressions, clicks, reported_spend } };
+          },
+        },
+      },
+      // ─── /TEST-ONLY ──────────────────────────────────────────────────
     }),
   {
     port: PORT,

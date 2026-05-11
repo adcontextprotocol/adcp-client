@@ -452,7 +452,12 @@ function _format_renders_accept_display_render(): void {
 
 // ── NoAccountCtx narrows ctx.account on no-account tools ──
 
-import { defineCreativeBuilderPlatform } from './platform-helpers';
+import { defineCreativeBuilderPlatform, defineCreativeAdServerPlatform } from './platform-helpers';
+import type {
+  ListCreativeFormatsResponse,
+  GetCreativeDeliveryResponse,
+  ListCreativesResponse,
+} from '../../types/tools.generated';
 
 // `previewCreative` handlers must narrow `ctx.account` before reading
 // `ctx_metadata` — the wire schema does not carry an `account` field, so
@@ -481,6 +486,150 @@ function _preview_creative_rejects_unnarrowed_access(): void {
       const _ws: string = ctx.account.ctx_metadata.workspace_id;
       void _ws;
       return {} as PreviewCreativeResponse;
+    },
+  });
+}
+
+// `listCreativeFormats` on `CreativeBuilderPlatform` is a no-account tool.
+// Same dispatch contract as `previewCreative`: wire schema omits `account`,
+// framework dispatches with `ctx.account === undefined` when
+// `accounts.resolve(undefined)` returns null. Regression lock against #1384
+// — a previous version of `CreativeBuilderPlatform` carried two declarations
+// for `listCreativeFormats` (one `NoAccountCtx`, one `Ctx`); TS overload
+// resolution kept the narrow at the implementation site, but the duplicate
+// was a footgun for adopters and a tripwire for future refactors. Removing
+// the duplicate and locking the narrow here.
+function _builder_list_creative_formats_requires_account_narrow(): void {
+  defineCreativeBuilderPlatform<{ catalog_id: string }>({
+    buildCreative: async () => ({}) as never,
+    listCreativeFormats: async (_req, ctx) => {
+      if (ctx.account == null) {
+        return {} as ListCreativeFormatsResponse;
+      }
+      const _catalog: string = ctx.account.ctx_metadata.catalog_id;
+      void _catalog;
+      return {} as ListCreativeFormatsResponse;
+    },
+  });
+}
+
+function _builder_list_creative_formats_rejects_unnarrowed_access(): void {
+  defineCreativeBuilderPlatform<{ catalog_id: string }>({
+    buildCreative: async () => ({}) as never,
+    listCreativeFormats: async (_req, ctx) => {
+      // @ts-expect-error — ctx.account is `Account | undefined`; reading without narrowing fails.
+      const _catalog: string = ctx.account.ctx_metadata.catalog_id;
+      void _catalog;
+      return {} as ListCreativeFormatsResponse;
+    },
+  });
+}
+
+// Same lock for `CreativeAdServerPlatform.listCreativeFormats` — the
+// ad-server interface carried the same duplicate-declaration pattern
+// before #1384. Lock the narrow.
+function _ad_server_list_creative_formats_requires_account_narrow(): void {
+  defineCreativeAdServerPlatform<{ catalog_id: string }>({
+    buildCreative: async () => ({}) as never,
+    previewCreative: async () => ({}) as PreviewCreativeResponse,
+    listCreatives: async () => ({}) as ListCreativesResponse,
+    getCreativeDelivery: async () => ({}) as GetCreativeDeliveryResponse,
+    listCreativeFormats: async (_req, ctx) => {
+      if (ctx.account == null) {
+        return {} as ListCreativeFormatsResponse;
+      }
+      const _catalog: string = ctx.account.ctx_metadata.catalog_id;
+      void _catalog;
+      return {} as ListCreativeFormatsResponse;
+    },
+  });
+}
+
+// ── Discriminator-injecting builders are non-overridable (#1386) ──
+
+import { activationKey, segmentIdActivationKey, keyValueActivationKey } from '../../utils/activation-key-builders';
+import { signalId, catalogSignalId, agentSignalId } from '../../utils/signal-id-builders';
+import { buildCreativeReturn, singleEnvelopedBuildCreativeReturn } from '../../utils/build-creative-return-builders';
+import { previewCreative, singlePreviewCreativeResponse } from '../../utils/preview-creative-builders';
+import {
+  mediaBuyDeliveryNotification,
+  scheduledMediaBuyDeliveryNotification,
+} from '../../utils/media-buy-delivery-notification-builders';
+import type { ActivationKey, SignalID, CreativeManifest } from '../../types/core.generated';
+
+function _activation_key_factories_inject_discriminator(): void {
+  const seg: ActivationKey = activationKey.segment({ segment_id: 'plat_seg_xyz' });
+  const kv: ActivationKey = activationKey.keyValue({ key: 'segment', value: 'abc123' });
+  void seg;
+  void kv;
+  // @ts-expect-error — `type` is omitted from the parameter type; passing it must fail.
+  segmentIdActivationKey({ type: 'key_value', segment_id: 'x' });
+  // @ts-expect-error — same: cannot smuggle a conflicting discriminator via fields.
+  keyValueActivationKey({ type: 'segment_id', key: 'k', value: 'v' });
+}
+
+function _signal_id_factories_inject_discriminator(): void {
+  const cat: SignalID = signalId.catalog({ data_provider_domain: 'example.com', id: 'seg' });
+  const agt: SignalID = signalId.agent({ agent_url: 'https://x/.well-known/adcp/signals', id: 'seg' });
+  void cat;
+  void agt;
+  // @ts-expect-error — `source` is omitted from the parameter type.
+  catalogSignalId({ source: 'agent', data_provider_domain: 'x', id: 'y' });
+  // @ts-expect-error — same: agent factory rejects a `source: 'catalog'`.
+  agentSignalId({ source: 'catalog', agent_url: 'https://x', id: 'y' });
+}
+
+function _preview_creative_factories_inject_discriminator(): void {
+  const single = previewCreative.single({
+    previews: [{ preview_id: 'p', renders: [], input: { name: 'default' } }],
+    expires_at: '2026-05-03T00:00:00Z',
+  });
+  void single;
+  singlePreviewCreativeResponse({
+    // @ts-expect-error — `response_type` is omitted from the parameter type.
+    response_type: 'batch',
+    previews: [],
+    expires_at: '2026-05-03T00:00:00Z',
+  });
+}
+
+function _build_creative_return_factories_pin_arm(): void {
+  const m: CreativeManifest = {} as CreativeManifest;
+  const bare = buildCreativeReturn.single(m);
+  const enveloped = buildCreativeReturn.singleEnveloped({ manifest: m, sandbox: true });
+  void bare;
+  void enveloped;
+  // @ts-expect-error — `creative_manifest` is the wire field, not the helper input.
+  singleEnvelopedBuildCreativeReturn({ creative_manifest: m });
+}
+
+function _media_buy_delivery_notification_factories_inject_discriminator(): void {
+  const scheduled = mediaBuyDeliveryNotification.scheduled({
+    reporting_period: { start: '2026-05-01T00:00:00Z', end: '2026-05-02T00:00:00Z' },
+    currency: 'USD',
+    media_buy_deliveries: [],
+  });
+  void scheduled;
+  scheduledMediaBuyDeliveryNotification({
+    // @ts-expect-error — `notification_type` is omitted from the parameter type.
+    notification_type: 'final',
+    reporting_period: { start: '2026-05-01T00:00:00Z', end: '2026-05-02T00:00:00Z' },
+    currency: 'USD',
+    media_buy_deliveries: [],
+  });
+}
+
+function _ad_server_list_creative_formats_rejects_unnarrowed_access(): void {
+  defineCreativeAdServerPlatform<{ catalog_id: string }>({
+    buildCreative: async () => ({}) as never,
+    previewCreative: async () => ({}) as PreviewCreativeResponse,
+    listCreatives: async () => ({}) as ListCreativesResponse,
+    getCreativeDelivery: async () => ({}) as GetCreativeDeliveryResponse,
+    listCreativeFormats: async (_req, ctx) => {
+      // @ts-expect-error — ctx.account is `Account | undefined`; reading without narrowing fails.
+      const _catalog: string = ctx.account.ctx_metadata.catalog_id;
+      void _catalog;
+      return {} as ListCreativeFormatsResponse;
     },
   });
 }
@@ -529,4 +678,13 @@ export const _references = [
   _format_renders_accept_display_render,
   _preview_creative_requires_account_narrow,
   _preview_creative_rejects_unnarrowed_access,
+  _builder_list_creative_formats_requires_account_narrow,
+  _builder_list_creative_formats_rejects_unnarrowed_access,
+  _ad_server_list_creative_formats_requires_account_narrow,
+  _ad_server_list_creative_formats_rejects_unnarrowed_access,
+  _activation_key_factories_inject_discriminator,
+  _signal_id_factories_inject_discriminator,
+  _preview_creative_factories_inject_discriminator,
+  _build_creative_return_factories_pin_arm,
+  _media_buy_delivery_notification_factories_inject_discriminator,
 ] as const;

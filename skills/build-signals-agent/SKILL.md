@@ -9,25 +9,14 @@ A signals agent serves audience and contextual targeting segments to buyer agent
 
 ## Pick your fork target
 
-| Specialism | Archetype | Fork this | Mock upstream | Storyboard |
-| --- | --- | --- | --- | --- |
-| `signal-marketplace` | Multi-provider data marketplace (Oracle Data Cloud, LiveRamp, third-party data) | [`hello_signals_adapter_marketplace.ts`](../../examples/hello_signals_adapter_marketplace.ts) | `npx adcp mock-server signal-marketplace` | `signal_marketplace` |
-| `signal-owned` | First-party / single-provider data (CDP, identity provider, contextual) | Fork the marketplace adapter; see [deletion list below](#what-to-delete-if-youre-single-specialism-signal-owned) | — | `signal_owned` |
+| Specialism           | Archetype                                                                       | Fork this                                                                                            | Mock upstream                             | Storyboard           |
+| -------------------- | ------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------- | ----------------------------------------- | -------------------- |
+| `signal-marketplace` | Multi-provider data marketplace (Oracle Data Cloud, LiveRamp, third-party data) | [`hello_signals_adapter_marketplace.ts`](../../examples/hello_signals_adapter_marketplace.ts)        | `npx adcp mock-server signal-marketplace` | `signal_marketplace` |
+| `signal-owned`       | First-party / single-provider data (CDP, identity provider, contextual)         | Same — fork the marketplace adapter and apply the [single-provider deltas below](#specialism-deltas) | Same                                      | `signal_owned`       |
 
-Both specialisms share the same tool surface (`get_signals`, `activate_signal`, `list_accounts`); the difference is whether you serve segments from multiple `data_provider_domain` values or one. A `signal-owned` adapter is the marketplace adapter with the multi-provider directory simplified to a single seed.
+Both specialisms share the same tool surface (`get_signals`, `activate_signal`, `list_accounts`); the difference is whether you serve segments from multiple `data_provider_domain` values or one.
 
-### What to delete if you're single-specialism `signal-owned`
-
-**Forking the marketplace adapter for a `signal-owned` agent? Delete or replace these seams** — leaning on stable symbol names rather than line numbers (the adapter evolves; greppable identifiers don't):
-
-- Replace the multi-provider seed (the `UpstreamCohort` array seeded with multiple `data_provider_domain` / `data_provider_id` / `data_provider_name` triples) with your single-provider catalog. Every cohort gets the same `data_provider_domain` (your domain) and `data_provider_name` (your brand).
-- Strip the marketplace-discovery code paths in `getSignals` that filter `signals[]` by `(data_provider_domain, data_provider_id)` pairs — single-provider adopters either return everything or filter on signal id alone.
-- Set `signal_type: 'owned'` (not `'marketplace'`) in the `toAdcpSignal` projection. See [SHAPE-GOTCHAS §7](../SHAPE-GOTCHAS.md#7-signal_type-marketplace-vs-owned-vs-custom) for the `marketplace`/`owned`/`custom` decision table.
-- Drop the marketplace governance sub-scenario in your storyboard run if you don't model multi-provider consent flows — `signal_owned` storyboard is simpler.
-
-**Keep**: the `accounts` / `createTenantStore` block (single-tenant adapters pass one tenant entry), `agentRegistry`, the `signals` SignalsPlatform block (`getSignals`, `activateSignal`, `listAccounts`), platform vs agent activation polling logic, `forceDeploymentStatus` for compliance-test determinism.
-
-For exact response shapes, error codes, and optional fields, `docs/llms.txt` is the canonical reference. The fork target stays in sync with the spec because PR #1394's three-gate contract fails CI when it drifts.
+For exact response shapes, error codes, and optional fields, [`docs/llms.txt`](../../docs/llms.txt) is the canonical reference. The fork target stays in sync with the spec because PR #1394's three-gate contract fails CI when it drifts. See [SHAPE-GOTCHAS.md](../SHAPE-GOTCHAS.md) — particularly [§1](../SHAPE-GOTCHAS.md#1-activationkey-oneof--keyvalue-are-top-level-not-nested) (flat `activation_key.key/value`), [§2](../SHAPE-GOTCHAS.md#2-signal_ids-is-signal_id-provenance-objects-not-string) (`signal_ids` is `SignalID[]`, not `string[]`), and [§7](../SHAPE-GOTCHAS.md#7-signal_type-marketplace-vs-owned-vs-custom) (`marketplace` / `owned` / `custom` decision).
 
 ## When to use this skill
 
@@ -61,11 +50,23 @@ Platform activations (`type: 'platform'`) take minutes-to-hours to propagate to 
 
 Buyers fetch `https://{domain}/adagents.json` out-of-band to verify the provider. Use real domains even in demos, not `example.com`. For marketplace adopters, seed ≥2 different `data_provider_domain` values so the multi-provider nature is visible to the storyboard.
 
-## Specialism deltas at a glance
+## Specialism deltas
 
-**`signal-marketplace`** — multi-provider directory (`signals[].data_provider_domain` varies), platform-activation polling pattern, marketplace governance sub-scenario in the storyboard exercises consent flows.
+### `signal-marketplace` (the baseline fork target)
 
-**`signal-owned`** — single `data_provider_domain` across all signals. `value_type` drives targeting semantics: `binary` (in/out), `categorical` (with `allowed_values: [...]`), `numeric` (with `min`, `max`, optional `units`). For the `signal_type` value (`marketplace`/`owned`/`custom`) decision, see [SHAPE-GOTCHAS §7](../SHAPE-GOTCHAS.md#7-signal_type-marketplace-vs-owned-vs-custom).
+Multi-provider directory: `signals[].data_provider_domain` varies across cohorts. Platform-activation polling pattern is fully exercised. The marketplace governance sub-scenario in the storyboard exercises consent flows across providers; if you can't model multi-provider consent yet, surface `INVALID_REQUEST` rather than silently fall through. Use `signal_type: 'marketplace'` only when `data_provider_domain` resolves to a real `adagents.json`.
+
+### `signal-owned` (single-provider)
+
+Forking the marketplace adapter for a `signal-owned` agent? Apply these deltas — leaning on stable symbol names rather than line numbers (the adapter evolves; greppable identifiers don't):
+
+- **Replace the multi-provider seed.** The adapter ships an `UpstreamCohort` array seeded with multiple `data_provider_domain` / `data_provider_id` / `data_provider_name` triples. Replace with your single-provider catalog: every cohort gets the same `data_provider_domain` (your domain) and `data_provider_name` (your brand).
+- **Strip marketplace-discovery filters in `getSignals`** that filter `signals[]` by `(data_provider_domain, data_provider_id)` pairs — single-provider adopters either return everything or filter on signal id alone.
+- **Set `signal_type: 'owned'`** (not `'marketplace'`) in the `toAdcpSignal` projection. See [SHAPE-GOTCHAS §7](../SHAPE-GOTCHAS.md#7-signal_type-marketplace-vs-owned-vs-custom) for the decision table — `owned` is the default for first-party data agents.
+- **Drop the marketplace governance sub-scenario** from your storyboard run if you don't model multi-provider consent flows. The `signal_owned` storyboard is simpler.
+- **`value_type` drives targeting semantics** for owned segments: `binary` (in/out), `categorical` (with `allowed_values: [...]`), `numeric` (with `min`, `max`, optional `units`).
+
+**Keep**: the `accounts` / `createTenantStore` block (single-tenant adapters pass one tenant entry), `agentRegistry`, the `signals` `SignalsPlatform` block (`getSignals`, `activateSignal`, `listAccounts`), platform-vs-agent activation polling logic, `forceDeploymentStatus` for compliance-test determinism.
 
 ## Validate locally
 

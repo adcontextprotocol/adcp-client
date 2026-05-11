@@ -10,11 +10,30 @@
  *   - `buildComplianceSummary`        → ComplianceSummaryArtifact (the JSON contract)
  *   - `formatComplianceSummaryText`   → stderr block with greppable `STORYBOARD-FAIL` prefix
  *   - `formatComplianceSummaryMarkdown` → table for $GITHUB_STEP_SUMMARY
+ *
+ * The `skip_causes` field on `ComplianceSummaryArtifact` is an additive v1
+ * extension — treat unknown fields as ignorable per schema_version semantics.
+ * Crash-path summaries built by `buildCrashSummary` omit `skip_causes`
+ * because the runner never reached the storyboard execution phase.
  */
 
 import type { ComplianceFailure, ComplianceResult, ComplianceTrack, OverallStatus } from './types';
+import { DETAILED_SKIP_TO_CANONICAL, type RunnerDetailedSkipReason } from '../storyboard/types';
 
 const SUMMARY_SCHEMA_VERSION = 1;
+
+/**
+ * A grouped skip-cause entry for the always-on summary block.
+ * Only actionable causes are included — internal runner routing skips
+ * (peer_branch_taken, not_applicable, etc.) are filtered out.
+ */
+export interface ComplianceSummarySkipCause {
+  cause: string;
+  count: number;
+  detail: string;
+  /** Scenario IDs affected (capped at SKIP_CAUSE_AFFECTED_LIMIT; remainder noted in text output). */
+  affected: string[];
+}
 
 /**
  * Stable, schema-versioned summary. Adopters depending on this shape should
@@ -33,6 +52,8 @@ export interface ComplianceSummaryArtifact {
   tested_at: string;
   storyboards_executed: string[];
   failures: ComplianceSummaryFailure[];
+  /** Actionable skip causes grouped by reason. Present only when skipped > 0. */
+  skip_causes?: ComplianceSummarySkipCause[];
 }
 
 /**
@@ -59,6 +80,7 @@ export interface BuildSummaryOptions {
 }
 
 export function buildComplianceSummary(result: ComplianceResult, opts: BuildSummaryOptions): ComplianceSummaryArtifact {
+  const skipCauses = buildSkipCauses(result);
   return {
     schema_version: SUMMARY_SCHEMA_VERSION,
     agent_url: result.agent_url,
@@ -72,6 +94,7 @@ export function buildComplianceSummary(result: ComplianceResult, opts: BuildSumm
     tested_at: result.tested_at,
     storyboards_executed: result.storyboards_executed ?? [],
     failures: (result.failures ?? []).map(toSummaryFailure),
+    ...(skipCauses.length > 0 ? { skip_causes: skipCauses } : {}),
   };
 }
 
@@ -105,6 +128,150 @@ function truncate(s: string, max: number): string {
   return s.length > max ? `${s.slice(0, max - 1)}…` : s;
 }
 
+// ────────────────────────────────────────────────────────────────────────────
+// Skip-cause aggregation
+// ────────────────────────────────────────────────────────────────────────────
+
+const SKIP_CAUSE_AFFECTED_LIMIT = 5;
+
+// Actionable canonical reasons — gaps the adopter can close. Internal
+// runner-routing reasons (peer_branch_taken, not_applicable, …) are excluded
+// because they are expected behavior, not agent deficiencies. Detailed
+// skip reasons (e.g. `controller_seeding_failed`, `capability_unsupported`,
+// `requirement_unmet` per adcp-client#1626) are normalized via
+// `DETAILED_SKIP_TO_CANONICAL` before this lookup; the runner writes
+// detailed forms to `step.skip_reason` directly per types.ts so consumers
+// of `step.skip_reason` see the more specific value.
+const ACTIONABLE_CANONICAL_REASONS = new Set<string>([
+  'missing_tool',
+  'missing_test_controller',
+  'prerequisite_failed',
+  'unsatisfied_contract',
+  'no_phases',
+  'requirement_unmet',
+]);
+
+/**
+ * True when the skip reason is something the adopter can act on.
+ * Accepts both canonical `RunnerSkipReason` and detailed
+ * `RunnerDetailedSkipReason` strings — detailed forms are mapped to their
+ * canonical equivalent before the actionability check, so e.g.
+ * `controller_seeding_failed` (detailed) → `prerequisite_failed`
+ * (canonical, actionable) is correctly surfaced rather than silently
+ * dropped.
+ */
+function isActionableSkipReason(reason: string): boolean {
+  if (ACTIONABLE_CANONICAL_REASONS.has(reason)) return true;
+  const canonical = DETAILED_SKIP_TO_CANONICAL[reason as RunnerDetailedSkipReason];
+  return canonical !== undefined && ACTIONABLE_CANONICAL_REASONS.has(canonical);
+}
+
+function extractMissingToolNames(warning: string): string[] {
+  // Step-level: `Agent did not advertise tool "sync_accounts"; agent tools: [...]`
+  const stepMatch = warning.match(/Agent did not advertise tool "([^"]+)"/i);
+  if (stepMatch) return [stepMatch[1]!];
+  // Storyboard-level: `agent does not advertise any of [sync_accounts, list_accounts]`
+  // Each tool is a separate gap — emit one cause per tool so dashboards see
+  // the full list, not a single comma-joined "tool name".
+  const sbMatch = warning.match(/agent does not advertise any of \[([^\]]+)\]/i);
+  if (sbMatch) {
+    return sbMatch[1]!
+      .split(/,\s*/)
+      .map(t => t.trim())
+      .filter(Boolean);
+  }
+  return [];
+}
+
+function skipCauseDetail(reason: string): string {
+  switch (reason) {
+    case 'missing_test_controller':
+      return "agent doesn't expose comply_test_controller";
+    case 'missing_tool':
+      return "agent doesn't advertise tool";
+    case 'prerequisite_failed':
+      return 'prerequisite step did not pass';
+    case 'unsatisfied_contract':
+      return 'test-kit contract out of scope';
+    case 'no_phases':
+      return 'storyboard has no executable phases';
+    case 'requirement_unmet':
+      return 'storyboard requires a runtime that is not available on this run';
+    case 'controller_seeding_failed':
+      return 'pre-flight controller seeding failed';
+    case 'capability_unsupported':
+      return 'agent self-declared capability unsupported';
+    default:
+      return reason;
+  }
+}
+
+function buildSkipCauses(result: ComplianceResult): ComplianceSummarySkipCause[] {
+  const causeMap = new Map<string, { count: number; detail: string; affectedSet: Set<string> }>();
+
+  const recordCause = (causeKey: string, baseReason: string, scenarioId: string) => {
+    if (!causeMap.has(causeKey)) {
+      causeMap.set(causeKey, {
+        count: 0,
+        detail: skipCauseDetail(baseReason),
+        affectedSet: new Set(),
+      });
+    }
+    const entry = causeMap.get(causeKey)!;
+    entry.count++;
+    entry.affectedSet.add(scenarioId);
+  };
+
+  for (const track of result.tracks) {
+    for (const scenario of track.scenarios) {
+      const scenarioId = String(scenario.scenario);
+      for (const step of scenario.steps ?? []) {
+        if (!step.skipped || !step.skip_reason) continue;
+        if (!isActionableSkipReason(step.skip_reason)) continue;
+
+        // missing_tool: sub-group by tool name. Storyboard-level matches
+        // can carry multiple tools (one cause per tool); step-level matches
+        // are always single-tool. extractMissingToolNames returns [] when
+        // the warning text doesn't match either pattern, in which case we
+        // fall through to the un-grouped reason.
+        if (step.skip_reason === 'missing_tool' && step.warnings?.[0]) {
+          const toolNames = extractMissingToolNames(step.warnings[0]);
+          if (toolNames.length > 0) {
+            for (const toolName of toolNames) {
+              recordCause(`missing_tool: ${toolName}`, 'missing_tool', scenarioId);
+            }
+            continue;
+          }
+        }
+
+        // requirement_unmet: sub-group by the unmet requirement name
+        // (adcp-client#1626). The runner emits `step.skip.requirement`
+        // which `toComplianceStep` propagates as `step.requirement` on
+        // the flattened `TestStepResult`, so per-requirement aggregation
+        // works without parsing the warning text.
+        if (step.skip_reason === 'requirement_unmet' && step.requirement) {
+          recordCause(`requirement_unmet: ${step.requirement}`, 'requirement_unmet', scenarioId);
+          continue;
+        }
+
+        recordCause(step.skip_reason, step.skip_reason, scenarioId);
+      }
+    }
+  }
+
+  return Array.from(causeMap.entries())
+    .sort((a, b) => b[1].count - a[1].count)
+    .map(([cause, { count, detail, affectedSet }]) => ({
+      cause,
+      count,
+      detail,
+      // Cap at aggregator level so JSON consumers see the same bound the
+      // text/markdown renderers honor — keeps the JSON contract truthful
+      // about the cap documented on `ComplianceSummarySkipCause.affected`.
+      affected: Array.from(affectedSet).slice(0, SKIP_CAUSE_AFFECTED_LIMIT),
+    }));
+}
+
 /**
  * Hard-failure statuses — runs that should never look green to CI. `partial`
  * is intentionally not in this set: it means some tracks ran silent (wired
@@ -131,6 +298,26 @@ export function formatComplianceSummaryText(s: ComplianceSummaryArtifact): strin
   lines.push(`SDK:       @adcp/sdk ${s.sdk_version} (AdCP ${s.adcp_version})`);
   lines.push(`Status:    ${s.overall_status}`);
   lines.push(`Steps:     ${s.passed} passed, ${s.failed} failed, ${s.skipped} skipped`);
+  if (s.skip_causes?.length) {
+    const countWidth = String(Math.max(...s.skip_causes.map(c => c.count))).length;
+    // "    [" + countWidth chars + "] " — derived so Affected: aligns under the cause text
+    const affectedIndent = ' '.repeat(4 + 1 + countWidth + 1 + 1);
+    lines.push(`  Skip causes:`);
+    for (const cause of s.skip_causes) {
+      const count = String(cause.count).padStart(countWidth);
+      lines.push(`    [${count}] ${cause.cause} — ${cause.detail}`);
+      // Overflow is the difference between the total count for this cause
+      // and how many distinct scenario IDs we kept after the aggregator's
+      // SKIP_CAUSE_AFFECTED_LIMIT cap. The slice here is defensive — the
+      // aggregator already caps, but if a future caller hands us an
+      // uncapped artifact (e.g. JSON re-input from an older runner), we
+      // still bound the visible list.
+      const visible = cause.affected.slice(0, SKIP_CAUSE_AFFECTED_LIMIT);
+      const overflow = cause.count - visible.length;
+      const affectedText = overflow > 0 ? `${visible.join(', ')}, … ${overflow} more` : visible.join(', ');
+      lines.push(`${affectedIndent}Affected: ${affectedText}`);
+    }
+  }
   lines.push(`Duration:  ${(s.total_duration_ms / 1000).toFixed(1)}s`);
   lines.push('');
 
@@ -186,6 +373,31 @@ export function formatComplianceSummaryMarkdown(s: ComplianceSummaryArtifact): s
     for (const f of s.failures) {
       lines.push(`| \`${f.track}\` | \`${f.storyboard_id}\` | \`${f.step_id}\` | ${escapeTableCell(f.reason)} |`);
     }
+    lines.push('');
+  }
+
+  if (s.skip_causes?.length) {
+    const total = s.skip_causes.reduce((n, c) => n + c.count, 0);
+    lines.push(`<details>`);
+    lines.push(
+      `<summary>Skip causes (${s.skip_causes.length} cause${s.skip_causes.length === 1 ? '' : 's'}, ${total} skipped step${total === 1 ? '' : 's'})</summary>`
+    );
+    lines.push('');
+    lines.push('| Count | Cause | Detail | Affected |');
+    lines.push('| --- | --- | --- | --- |');
+    for (const cause of s.skip_causes) {
+      const visible = cause.affected.slice(0, SKIP_CAUSE_AFFECTED_LIMIT);
+      const overflow = cause.count - visible.length;
+      const affectedText =
+        overflow > 0
+          ? `${visible.map(escapeTableCell).join(', ')}, … ${overflow} more`
+          : visible.map(escapeTableCell).join(', ');
+      lines.push(
+        `| ${cause.count} | \`${escapeTableCell(cause.cause)}\` | ${escapeTableCell(cause.detail)} | ${affectedText} |`
+      );
+    }
+    lines.push('');
+    lines.push('</details>');
     lines.push('');
   }
 

@@ -510,15 +510,70 @@ function rankH1(agentUrl: string, prmStep?: DiagnosisStep): Hypothesis {
   if (normAdvertised === normAgent) {
     base.verdict = 'ruled_out';
     base.summary = `Advertised resource matches agent URL (${advertised})`;
-  } else {
-    base.verdict = 'likely';
-    base.summary = `Advertised resource "${advertised}" does not match agent URL "${agentUrl}"`;
+    return base;
+  }
+
+  // RFC 9728 §2 + §3.2 — `resource` is the canonical resource identifier the
+  // AS binds tokens to (the `aud` claim target per RFC 9068 §3), not the
+  // request URI. RFC 8707 §2 requires only an absolute URI with optional path
+  // component, so a parent-path resource ID covering the agent's sub-path is
+  // spec-correct, not a mismatch.
+  const advertisedOrigin = originForCompare(advertised);
+  const agentOrigin = originForCompare(agentUrl);
+
+  // Unparseable resource (e.g. AS returned an opaque URN like `urn:foo`). We
+  // can't classify origin/path containment without parsing, and falling
+  // through would misleadingly evaluate `isPathPrefix` against raw strings.
+  // Surface as `possible` so the operator sees the actual advertisement
+  // without us inventing a fix hint we can't justify.
+  if (!advertisedOrigin) {
+    base.verdict = 'possible';
+    base.summary = `Advertised resource is not a parseable URL: "${advertised}"`;
     base.evidence = [
       `PRM resource: ${advertised}`,
       `Agent URL: ${agentUrl}`,
-      'Fix: align the agent server config so `.well-known/oauth-protected-resource` advertises the same origin+path as the agent endpoint itself.',
+      'RFC 8707 §2 requires `resource` to be an absolute URI. Check the AS configuration if this should be a URL identifier.',
     ];
+    return base;
   }
+
+  if (agentOrigin && advertisedOrigin !== agentOrigin) {
+    base.verdict = 'likely';
+    base.summary = `Advertised resource origin "${advertisedOrigin}" does not match agent origin "${agentOrigin}"`;
+    base.evidence = [
+      `PRM resource: ${advertised}`,
+      `Agent URL: ${agentUrl}`,
+      "Fix: point the agent at the same origin (scheme+host+port) the PRM advertises, or fix the PRM `resource` to advertise the agent's own origin.",
+    ];
+    return base;
+  }
+
+  if (isUrlPrefix(normAdvertised, normAgent)) {
+    // Agent endpoint is a sub-path under the advertised resource identifier.
+    // RFC 9728 §3.2 leaves this open; RFC 9068 §3 + RFC 8707 §2 together
+    // make it the canonical pattern for a single resource server fronting
+    // multiple endpoints under a shared `aud` identifier.
+    base.verdict = 'ruled_out';
+    base.summary = `Agent URL is a sub-path under advertised resource identifier (spec-correct per RFC 9728 §2/§3.2)`;
+    base.evidence = [
+      `PRM resource: ${advertised}`,
+      `Agent URL: ${agentUrl}`,
+      `The AS will issue tokens with \`aud=${advertised}\`; the agent at \`${agentUrl}\` validates that aud against its own resource identifier, not the request URI. This is the intended pattern for a single resource server fronting multiple endpoints.`,
+    ];
+    return base;
+  }
+
+  // Same origin, agent is not a sub-path of advertised resource. The AS may
+  // legitimately host multiple resource identifiers on the same origin, each
+  // covering a disjoint set of endpoints; without inspecting AS aud-binding
+  // policy we can't tell whether this is intended or a misconfiguration.
+  base.verdict = 'possible';
+  base.summary = `Advertised resource "${advertised}" does not contain agent URL "${agentUrl}" as a sub-path (both on origin ${agentOrigin ?? '(unknown)'})`;
+  base.evidence = [
+    `PRM resource: ${advertised}`,
+    `Agent URL: ${agentUrl}`,
+    'If the AS binds tokens with `aud=<advertised resource>`, this agent endpoint may be outside that audience — confirm the AS aud-binding policy or that the operator advertised the correct resource identifier for this endpoint.',
+  ];
   return base;
 }
 
@@ -801,6 +856,38 @@ function normalizeForCompare(value: string): string {
   } catch {
     return value;
   }
+}
+
+/**
+ * Scheme + lowercased host + non-default port. Returns `null` when the input
+ * has no host (e.g. `urn:foo`, `mailto:bar@x`) or fails to parse. RFC 8707 §2
+ * allows any absolute URI as `resource`, but origin-based comparisons only
+ * make sense for hierarchical http(s)-style URLs.
+ */
+function originForCompare(value: string): string | null {
+  try {
+    const u = new URL(value);
+    if (!u.hostname) return null;
+    const port = u.port && !isDefaultPort(u.protocol, u.port) ? `:${u.port}` : '';
+    return `${u.protocol.toLowerCase()}//${u.hostname.toLowerCase()}${port}`;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Whether `candidate` is `prefix` itself or a strict URL descendant (same
+ * scheme+host+port plus a path segment under `prefix`'s path). Inputs come
+ * from {@link normalizeForCompare}; trailing slashes are stripped for paths
+ * longer than `/`, but the root path `/` is preserved. We require a `/`
+ * boundary after the prefix so `.../foo` does not match `.../foobar/...`.
+ * Path comparison is case-sensitive per RFC 3986 §6.2.2.1; only scheme/host
+ * are lowercased upstream in {@link normalizeForCompare}.
+ */
+function isUrlPrefix(prefix: string, candidate: string): boolean {
+  if (prefix === candidate) return true;
+  const trimmed = prefix.endsWith('/') ? prefix.slice(0, -1) : prefix;
+  return candidate.startsWith(trimmed + '/');
 }
 
 function isDefaultPort(scheme: string, port: string): boolean {

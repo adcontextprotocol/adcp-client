@@ -8,7 +8,8 @@
 
 import { readFileSync } from 'fs';
 import { parse } from 'yaml';
-import type { Storyboard } from './types';
+import type { RequirementName, Storyboard } from './types';
+import { KNOWN_REQUIREMENTS } from './types';
 import { MUTATING_TASKS } from '../../utils/idempotency';
 
 /**
@@ -58,6 +59,7 @@ export function loadStoryboardFile(filePath: string): Storyboard {
  * `contributes_to`) and is idempotent on already-validated inputs.
  */
 export function validateStoryboardShape(storyboard: Storyboard): void {
+  validateRequires(storyboard);
   validatePhaseDependsOn(storyboard);
   for (const phase of storyboard.phases) {
     validateBranchSet(storyboard.id, phase);
@@ -108,6 +110,42 @@ function validatePhaseDependsOn(storyboard: Storyboard): void {
       }
     }
     phaseIdsSeen.add(phase.id);
+  }
+}
+
+/**
+ * Authoring-time validation for `Storyboard.requires` (#1626). The field is
+ * a closed enumeration over `RequirementName` so typos and stale tags fail
+ * loud rather than silently dropping coverage:
+ *
+ *   - `requires: []` is rejected — an empty array reads as "no
+ *     requirements," which is the same as omitting the field; failing
+ *     load forces the author to omit it explicitly.
+ *   - Each entry must be a known `RequirementName` (see
+ *     `KNOWN_REQUIREMENTS`). Unknown values fail load with the offending
+ *     name and the full set of recognised values.
+ *
+ * Future SDK versions may grow `KNOWN_REQUIREMENTS`; storyboards built
+ * against an older SDK that name a requirement the runner doesn't know
+ * about would silently skip every run, so we fail-load instead.
+ */
+function validateRequires(storyboard: Storyboard): void {
+  if (storyboard.requires === undefined) return;
+  if (!Array.isArray(storyboard.requires)) {
+    throw new Error(
+      `[${storyboard.id}] requires: must be an array of requirement names (got ${typeof storyboard.requires})`
+    );
+  }
+  if (storyboard.requires.length === 0) {
+    throw new Error(`[${storyboard.id}] requires: [] is not allowed — omit the field to use the default ([real_wire])`);
+  }
+  for (const name of storyboard.requires) {
+    if (typeof name !== 'string' || !KNOWN_REQUIREMENTS.has(name as RequirementName)) {
+      const known = [...KNOWN_REQUIREMENTS].sort().join(', ');
+      throw new Error(
+        `[${storyboard.id}] requires: unknown requirement '${String(name)}' — recognised values are [${known}]`
+      );
+    }
   }
 }
 

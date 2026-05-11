@@ -541,6 +541,131 @@ describe('Response Unwrapper', () => {
       );
     });
 
+    test('should unwrap A2A failed task carrying adcp_error DataPart', () => {
+      // Per AdCP transport-errors §A2A Binding: a failed task carries an
+      // artifact with a DataPart containing `adcp_error` plus a TextPart
+      // for human/LLM consumption. The unwrapper must surface the DataPart
+      // so storyboard validators (`error_code`, `field_value`) can read
+      // `adcp_error.code` / `context.correlation_id` from the unwrapped
+      // payload instead of falling back to `Task.status.state`.
+      const a2aFailedResponse = {
+        jsonrpc: '2.0',
+        result: {
+          kind: 'task',
+          status: { state: 'failed' },
+          artifacts: [
+            {
+              parts: [
+                {
+                  kind: 'data',
+                  data: {
+                    context: { correlation_id: 'invalid_transitions--update_unknown_media_buy' },
+                    adcp_error: {
+                      code: 'MEDIA_BUY_NOT_FOUND',
+                      message: "Media buy 'does-not-exist' not found.",
+                      recovery: 'correctable',
+                    },
+                  },
+                },
+                { kind: 'text', text: "Media buy 'does-not-exist' not found." },
+              ],
+            },
+          ],
+        },
+      };
+
+      const result = unwrapProtocolResponse(a2aFailedResponse, undefined, 'a2a');
+
+      assert.ok(result.adcp_error, 'should surface adcp_error from DataPart');
+      assert.strictEqual(result.adcp_error.code, 'MEDIA_BUY_NOT_FOUND');
+      assert.strictEqual(result.adcp_error.recovery, 'correctable');
+      assert.ok(result.context, 'should surface context from DataPart');
+      assert.strictEqual(result.context.correlation_id, 'invalid_transitions--update_unknown_media_buy');
+      // TextPart joined onto _message for human/LLM consumption
+      assert.ok(result._message?.includes('not found'));
+    });
+
+    // Sibling of adcp-client#1575 at the unwrap layer. When a non-conformant
+    // seller surfaces both a top-level JSON-RPC error AND a terminal-state Task
+    // with a structured DataPart artifact, the artifact is canonical per AdCP
+    // transport-errors §A2A Binding. Mirrors the protocol-layer guard added in
+    // PR #1577 so direct callers (storyboard fixtures, cached responses,
+    // webhook normalize paths) inherit the same defensive behavior.
+    test('should prefer DataPart artifact over top-level JSON-RPC error', () => {
+      const dualSignalResponse = {
+        jsonrpc: '2.0',
+        // Transport-level hint — would short-circuit pre-fix.
+        error: { code: -32000, message: 'Task is in terminal state: 3' },
+        // Canonical envelope — must win.
+        result: {
+          kind: 'task',
+          status: { state: 'failed' },
+          artifacts: [
+            {
+              parts: [
+                {
+                  kind: 'data',
+                  data: {
+                    adcp_error: { code: 'TERMS_REJECTED', message: 'rejected', recovery: 'correctable' },
+                    context: { correlation_id: 'corr-1575-sibling' },
+                  },
+                },
+              ],
+            },
+          ],
+        },
+      };
+
+      const result = unwrapProtocolResponse(dualSignalResponse, undefined, 'a2a');
+
+      assert.strictEqual(result.adcp_error.code, 'TERMS_REJECTED');
+      assert.strictEqual(result.adcp_error.recovery, 'correctable');
+      assert.strictEqual(result.context.correlation_id, 'corr-1575-sibling');
+      // Errors[] from the JSON-RPC short-circuit must NOT be present.
+      assert.strictEqual(result.errors, undefined);
+    });
+
+    // Negative: top-level JSON-RPC error WITHOUT a structured artifact must
+    // still go through the errors[] short-circuit. Defends the guard's
+    // discriminator (kind === 'task' + terminal state + DataPart) against
+    // accidental over-broadening.
+    test('should keep errors[] short-circuit when no terminal-Task artifact present', () => {
+      const errorOnlyResponse = {
+        jsonrpc: '2.0',
+        error: { code: -32602, message: 'Invalid params', data: { field: 'x' } },
+      };
+
+      const result = unwrapProtocolResponse(errorOnlyResponse, undefined, 'a2a');
+
+      assert.ok(Array.isArray(result.errors));
+      assert.strictEqual(result.errors[0].code, '-32602');
+      assert.strictEqual(result.errors[0].message, 'Invalid params');
+    });
+
+    test('should unwrap A2A rejected task with DataPart payload', () => {
+      const a2aRejectedResponse = {
+        result: {
+          kind: 'task',
+          status: { state: 'rejected' },
+          artifacts: [
+            {
+              parts: [
+                {
+                  kind: 'data',
+                  data: {
+                    adcp_error: { code: 'POLICY_VIOLATION', message: 'rejected by policy' },
+                  },
+                },
+              ],
+            },
+          ],
+        },
+      };
+
+      const result = unwrapProtocolResponse(a2aRejectedResponse, undefined, 'a2a');
+      assert.strictEqual(result.adcp_error.code, 'POLICY_VIOLATION');
+    });
+
     test('should include text snippet in error for unparseable MCP JSON', () => {
       const mcpResponse = {
         content: [{ type: 'text', text: 'This is not JSON, just plain text that should be included in error' }],

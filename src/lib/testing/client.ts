@@ -18,6 +18,8 @@ import type {
 import type { TestOptions, TestStepResult, AgentProfile, TaskResult, Logger } from './types';
 import { TOOL_RESPONSE_SCHEMAS } from '../utils/response-schemas';
 import { parseCapabilitiesResponse } from '../utils/capabilities';
+import { classifyProbeUrl } from '../utils/probe-policy';
+import { SsrfRefusedError } from '../net/ssrf-fetch';
 
 /**
  * Extract a principal identifier from TestOptions auth.
@@ -96,6 +98,27 @@ export function getLogger(): Logger {
  * Create a test client for an agent
  */
 export function createTestClient(agentUrl: string, protocol: 'mcp' | 'a2a' = 'mcp', options: TestOptions = {}) {
+  // adcp-client#1618: SSRF policy gate at client construction. Once the
+  // TestClient exists, every transport call inherits its agent URI; guarding
+  // once here covers the entire client lifecycle, including downstream
+  // `discoverAgentProfile` fetches (`getAgentInfo`, `getAdcpCapabilities`).
+  // Throws synchronously — `SsrfRefusedError` is the documented refusal
+  // type and operators see a clear hostname-only message (no resolved IP
+  // in the user-visible text; see `probe-policy.ts` rationale).
+  const policy = classifyProbeUrl(agentUrl);
+  if (!policy.allowed) {
+    // `classifyProbeUrl` already returned `{ allowed: true }` for any URL
+    // that fails `new URL(...)`, so reaching the !allowed branch implies the
+    // URL parses cleanly. Reparse only to extract the bare hostname for the
+    // SsrfRefusedError meta.
+    const hostname = new URL(agentUrl).hostname.replace(/^\[|\]$/g, '');
+    throw new SsrfRefusedError(
+      policy.code === 'always_blocked' ? 'always_blocked_address' : 'private_address',
+      policy.reason,
+      { url: agentUrl, hostname }
+    );
+  }
+
   const headers: Record<string, string> = {};
 
   if (options.test_session_id) {
@@ -189,6 +212,54 @@ export async function getOrDiscoverProfile(
 /**
  * Run a single test step with timing
  */
+/**
+ * Race a promise against an AbortSignal. Adopted by `discoverAgentProfile`
+ * so the comply pipeline's timeout actually bounds discovery wall-clock —
+ * the underlying transport's `getAgentInfo()` doesn't accept a signal
+ * (public API), so we resolve the wrapper promise on abort and let the
+ * orphaned in-flight request finish on its own. (adcp-client#1612)
+ *
+ * Throws the signal's reason on abort.
+ *
+ * **SECURITY (security-reviewer follow-up on #1612):** the orphaned
+ * promise's `.then` handlers below stay attached until the underlying
+ * transport call settles. The resolved value `v` carries an authenticated
+ * agent response — `getAgentInfo()` and `getAdcpCapabilities()` round-trip
+ * through the bearer-token transport, so the promise body holds the wire
+ * response in memory until GC'd. **Do not log `v` from inside this
+ * resolver** (or any future `console.error` / telemetry hook on the
+ * orphaned path) — the buyer has already moved on past the abort, and
+ * logging here would leak agent-side data after the caller stopped
+ * trusting it. The early `resolve(v)` is intentionally a no-op on the
+ * already-rejected race-promise; `v` becomes unreferenced and GC-eligible
+ * the moment this `.then` returns.
+ */
+function raceWithSignal<T>(promise: Promise<T>, signal?: AbortSignal): Promise<T> {
+  if (!signal) return promise;
+  if (signal.aborted) {
+    return Promise.reject(signal.reason ?? new Error('aborted'));
+  }
+  return new Promise<T>((resolve, reject) => {
+    const onAbort = () => reject(signal.reason ?? new Error('aborted'));
+    signal.addEventListener('abort', onAbort, { once: true });
+    promise.then(
+      v => {
+        signal.removeEventListener('abort', onAbort);
+        // INTENTIONAL: no-op on an already-rejected race-promise. Do NOT
+        // log `v` here — see security note in the JSDoc above.
+        resolve(v);
+      },
+      e => {
+        signal.removeEventListener('abort', onAbort);
+        // INTENTIONAL: no-op on an already-rejected race-promise. Do NOT
+        // log `e` here either — `Error.message` from a transport rejection
+        // can carry an echoed response body, see security note above.
+        reject(e);
+      }
+    );
+  });
+}
+
 export async function runStep<T>(
   stepName: string,
   taskName: string | undefined,
@@ -228,12 +299,19 @@ export async function runStep<T>(
  * When the agent exposes `get_adcp_capabilities`, its response populates
  * `supported_protocols` + `specialisms` on the profile so the compliance
  * runner can select domain and specialism bundles.
+ *
+ * Pass `signal` (typically comply()'s combined timeout/external signal) to
+ * bound discovery latency. Without it, an unhealthy agent whose well-known
+ * card path returns 503-with-30s-tail or whose MCP transport silently
+ * retries against a non-MCP root can stretch a single `getAgentInfo` call
+ * past comply()'s timeout — the wall-clock symptom in adcp-client#1612.
  */
 export async function discoverAgentProfile(
-  client: TestClient
+  client: TestClient,
+  signal?: AbortSignal
 ): Promise<{ profile: AgentProfile; step: TestStepResult }> {
   const { result: agentInfo, step } = await runStep('Discover agent capabilities', 'getAgentInfo', () =>
-    client.getAgentInfo()
+    raceWithSignal(client.getAgentInfo(), signal)
   );
 
   const profile: AgentProfile = {
@@ -255,7 +333,7 @@ export async function discoverAgentProfile(
 
   if (profile.tools.includes('get_adcp_capabilities')) {
     try {
-      const caps = (await client.getAdcpCapabilities({})) as TaskResult;
+      const caps = (await raceWithSignal(client.getAdcpCapabilities({}), signal)) as TaskResult;
       if (caps?.success && caps?.data) {
         profile.raw_capabilities = caps.data;
         const parsed = parseCapabilitiesResponse(caps.data);

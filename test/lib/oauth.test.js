@@ -572,6 +572,22 @@ describe('MCPOAuthProvider', () => {
     );
   });
 
+  test('validateResourceURL accepts non-HTTPS resource URLs when allowHttp is set', async () => {
+    const provider = new MCPOAuthProvider({
+      agent,
+      flowHandler: mockFlowHandler,
+      clientMetadata: {
+        ...DEFAULT_CLIENT_METADATA,
+        redirect_uris: ['http://localhost:8766/callback'],
+      },
+      allowHttp: true,
+    });
+
+    const result = await provider.validateResourceURL('http://localhost:3000/figma/mcp', 'http://localhost:3000/figma');
+    assert.ok(result instanceof URL);
+    assert.strictEqual(result.toString(), 'http://localhost:3000/figma');
+  });
+
   test('validateResourceURL rejects invalid URL strings', async () => {
     const provider = new MCPOAuthProvider({
       agent,

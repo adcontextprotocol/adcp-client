@@ -1,5 +1,5 @@
 // Generated Zod v4 schemas from TypeScript types
-// Generated at: 2026-05-03T20:22:15.243Z
+// Generated at: 2026-05-11T08:48:10.724Z
 // Sources:
 //   - core.generated.ts (core types)
 //   - tools.generated.ts (tool types)
@@ -3904,6 +3904,66 @@ export const PropertyListChangedWebhookSchema = z.object({
     ext: ExtensionObjectSchema.optional()
 }).passthrough();
 
+export const GroupImageAssetSchema = BaseGroupAssetSchema.and(z.object({
+    asset_type: z.literal("image"),
+    requirements: ImageAssetRequirementsSchema.optional()
+}).passthrough());
+
+export const GroupVideoAssetSchema = BaseGroupAssetSchema.and(z.object({
+    asset_type: z.literal("video"),
+    requirements: VideoAssetRequirementsSchema.optional()
+}).passthrough());
+
+export const GroupAudioAssetSchema = BaseGroupAssetSchema.and(z.object({
+    asset_type: z.literal("audio"),
+    requirements: AudioAssetRequirementsSchema.optional()
+}).passthrough());
+
+export const GroupTextAssetSchema = BaseGroupAssetSchema.and(z.object({
+    asset_type: z.literal("text"),
+    requirements: TextAssetRequirementsSchema.optional()
+}).passthrough());
+
+export const GroupMarkdownAssetSchema = BaseGroupAssetSchema.and(z.object({
+    asset_type: z.literal("markdown"),
+    requirements: MarkdownAssetRequirementsSchema.optional()
+}).passthrough());
+
+export const GroupHtmlAssetSchema = BaseGroupAssetSchema.and(z.object({
+    asset_type: z.literal("html"),
+    requirements: HTMLAssetRequirementsSchema.optional()
+}).passthrough());
+
+export const GroupCssAssetSchema = BaseGroupAssetSchema.and(z.object({
+    asset_type: z.literal("css"),
+    requirements: CSSAssetRequirementsSchema.optional()
+}).passthrough());
+
+export const GroupJavaScriptAssetSchema = BaseGroupAssetSchema.and(z.object({
+    asset_type: z.literal("javascript"),
+    requirements: JavaScriptAssetRequirementsSchema.optional()
+}).passthrough());
+
+export const GroupVastAssetSchema = BaseGroupAssetSchema.and(z.object({
+    asset_type: z.literal("vast"),
+    requirements: VASTAssetRequirementsSchema.optional()
+}).passthrough());
+
+export const GroupDaastAssetSchema = BaseGroupAssetSchema.and(z.object({
+    asset_type: z.literal("daast"),
+    requirements: DAASTAssetRequirementsSchema.optional()
+}).passthrough());
+
+export const GroupUrlAssetSchema = BaseGroupAssetSchema.and(z.object({
+    asset_type: z.literal("url"),
+    requirements: URLAssetRequirementsSchema.optional()
+}).passthrough());
+
+export const GroupWebhookAssetSchema = BaseGroupAssetSchema.and(z.object({
+    asset_type: z.literal("webhook"),
+    requirements: WebhookAssetRequirementsSchema.optional()
+}).passthrough());
+
 export const ProductFiltersSchema = z.object({
     delivery_type: DeliveryTypeSchema.optional(),
     exclusivity: ExclusivitySchema.optional(),
@@ -4035,47 +4095,58 @@ export const BaseIndividualAssetSchema = z.object({
 }).passthrough();
 
 export const IndividualVideoAssetSchema = BaseIndividualAssetSchema.and(z.object({
-    asset_type: z.literal("video")
+    asset_type: z.literal("video"),
+    requirements: VideoAssetRequirementsSchema.optional()
 }).passthrough());
 
 export const IndividualAudioAssetSchema = BaseIndividualAssetSchema.and(z.object({
-    asset_type: z.literal("audio")
+    asset_type: z.literal("audio"),
+    requirements: AudioAssetRequirementsSchema.optional()
 }).passthrough());
 
 export const IndividualTextAssetSchema = BaseIndividualAssetSchema.and(z.object({
-    asset_type: z.literal("text")
+    asset_type: z.literal("text"),
+    requirements: TextAssetRequirementsSchema.optional()
 }).passthrough());
 
 export const IndividualMarkdownAssetSchema = BaseIndividualAssetSchema.and(z.object({
-    asset_type: z.literal("markdown")
+    asset_type: z.literal("markdown"),
+    requirements: MarkdownAssetRequirementsSchema.optional()
 }).passthrough());
 
 export const IndividualHtmlAssetSchema = BaseIndividualAssetSchema.and(z.object({
-    asset_type: z.literal("html")
+    asset_type: z.literal("html"),
+    requirements: HTMLAssetRequirementsSchema.optional()
 }).passthrough());
 
 export const IndividualCssAssetSchema = BaseIndividualAssetSchema.and(z.object({
-    asset_type: z.literal("css")
+    asset_type: z.literal("css"),
+    requirements: CSSAssetRequirementsSchema.optional()
 }).passthrough());
 
 export const IndividualJavaScriptAssetSchema = BaseIndividualAssetSchema.and(z.object({
-    asset_type: z.literal("javascript")
+    asset_type: z.literal("javascript"),
+    requirements: JavaScriptAssetRequirementsSchema.optional()
 }).passthrough());
 
 export const IndividualVastAssetSchema = BaseIndividualAssetSchema.and(z.object({
-    asset_type: z.literal("vast")
+    asset_type: z.literal("vast"),
+    requirements: VASTAssetRequirementsSchema.optional()
 }).passthrough());
 
 export const IndividualDaastAssetSchema = BaseIndividualAssetSchema.and(z.object({
-    asset_type: z.literal("daast")
+    asset_type: z.literal("daast"),
+    requirements: DAASTAssetRequirementsSchema.optional()
 }).passthrough());
 
 export const IndividualUrlAssetSchema = BaseIndividualAssetSchema.and(z.object({
-    asset_type: z.literal("url")
+    asset_type: z.literal("url"),
+    requirements: URLAssetRequirementsSchema.optional()
 }).passthrough());
 
 export const IndividualWebhookAssetSchema = BaseIndividualAssetSchema.and(z.object({
-    asset_type: z.literal("webhook")
+    asset_type: z.literal("webhook"),
+    requirements: WebhookAssetRequirementsSchema.optional()
 }).passthrough());
 
 export const IndividualBriefAssetSchema = BaseIndividualAssetSchema.and(z.object({
@@ -4086,47 +4157,11 @@ export const IndividualCatalogAssetSchema = BaseIndividualAssetSchema.and(z.obje
     asset_type: z.literal("catalog")
 }).passthrough());
 
-export const GroupImageAssetSchema = BaseGroupAssetSchema;
-
-export const GroupVideoAssetSchema = BaseGroupAssetSchema;
-
-export const GroupAudioAssetSchema = BaseGroupAssetSchema;
-
-export const GroupTextAssetSchema = BaseGroupAssetSchema;
-
-export const GroupMarkdownAssetSchema = BaseGroupAssetSchema;
-
-export const GroupHtmlAssetSchema = BaseGroupAssetSchema;
-
-export const GroupCssAssetSchema = BaseGroupAssetSchema;
-
-export const GroupJavaScriptAssetSchema = BaseGroupAssetSchema;
-
-export const GroupVastAssetSchema = BaseGroupAssetSchema;
-
-export const GroupDaastAssetSchema = BaseGroupAssetSchema;
-
-export const GroupUrlAssetSchema = BaseGroupAssetSchema;
-
-export const GroupWebhookAssetSchema = BaseGroupAssetSchema;
-
 export const VendorPricingOptionSchema = z.object({
     pricing_option_id: z.string()
 }).passthrough().and(VendorPricingSchema);
 
-export const IndividualImageAssetSchema = BaseIndividualAssetSchema.and(z.object({
-    asset_type: z.literal("image")
-}).passthrough());
-
-export const RepeatableGroupAssetSchema = z.object({
-    item_type: z.literal("repeatable_group"),
-    asset_group_id: z.string(),
-    required: z.boolean(),
-    min_count: z.number(),
-    max_count: z.number(),
-    selection_mode: z.union([z.literal("sequential"), z.literal("optimize")]).optional(),
-    assets: z.array(z.union([GroupImageAssetSchema, GroupVideoAssetSchema, GroupAudioAssetSchema, GroupTextAssetSchema, GroupMarkdownAssetSchema, GroupHtmlAssetSchema, GroupCssAssetSchema, GroupJavaScriptAssetSchema, GroupVastAssetSchema, GroupDaastAssetSchema, GroupUrlAssetSchema, GroupWebhookAssetSchema]))
-}).passthrough();
+export const GroupAssetSlotSchema = z.union([GroupImageAssetSchema, GroupVideoAssetSchema, GroupAudioAssetSchema, GroupTextAssetSchema, GroupMarkdownAssetSchema, GroupHtmlAssetSchema, GroupCssAssetSchema, GroupJavaScriptAssetSchema, GroupVastAssetSchema, GroupDaastAssetSchema, GroupUrlAssetSchema, GroupWebhookAssetSchema]);
 
 export const CreativeBriefSchema = z.object({
     name: z.string(),
@@ -5551,6 +5586,23 @@ export const ControllerErrorSchema = z.object({
     ext: ExtensionObjectSchema.optional()
 }).passthrough();
 
+export const IndividualImageAssetSchema = BaseIndividualAssetSchema.and(z.object({
+    asset_type: z.literal("image"),
+    requirements: ImageAssetRequirementsSchema.optional()
+}).passthrough());
+
+export const IndividualAssetSlotSchema = z.union([IndividualImageAssetSchema, IndividualVideoAssetSchema, IndividualAudioAssetSchema, IndividualTextAssetSchema, IndividualMarkdownAssetSchema, IndividualHtmlAssetSchema, IndividualCssAssetSchema, IndividualJavaScriptAssetSchema, IndividualVastAssetSchema, IndividualDaastAssetSchema, IndividualUrlAssetSchema, IndividualWebhookAssetSchema, IndividualBriefAssetSchema, IndividualCatalogAssetSchema]);
+
+export const RepeatableGroupAssetSchema = z.object({
+    item_type: z.literal("repeatable_group"),
+    asset_group_id: z.string(),
+    required: z.boolean(),
+    min_count: z.number(),
+    max_count: z.number(),
+    selection_mode: z.union([z.literal("sequential"), z.literal("optimize")]).optional(),
+    assets: z.array(GroupAssetSlotSchema)
+}).passthrough();
+
 export const MediaBuySchema = z.object({
     media_buy_id: z.string(),
     account: AccountSchema.optional(),
@@ -6251,57 +6303,7 @@ export const CollectionSchema = z.object({
     ext: ExtensionObjectSchema.optional()
 }).passthrough();
 
-export const FormatSchema = z.object({
-    format_id: FormatReferenceStructuredObjectSchema,
-    name: z.string(),
-    description: z.string().optional(),
-    example_url: z.string().optional(),
-    accepts_parameters: z.array(FormatIDParameterSchema).optional(),
-    renders: z.array(z.union([z.object({
-            role: z.string(),
-            dimensions: z.object({
-                width: z.number().optional(),
-                height: z.number().optional(),
-                min_width: z.number().optional(),
-                min_height: z.number().optional(),
-                max_width: z.number().optional(),
-                max_height: z.number().optional(),
-                unit: DimensionUnitSchema.optional(),
-                responsive: z.object({
-                    width: z.boolean(),
-                    height: z.boolean()
-                }).passthrough().optional(),
-                aspect_ratio: z.string().optional()
-            }).passthrough()
-        }).passthrough(), z.object({
-            role: z.string(),
-            parameters_from_format_id: z.literal(true)
-        }).passthrough()])).optional(),
-    assets: z.array(z.union([IndividualImageAssetSchema, IndividualVideoAssetSchema, IndividualAudioAssetSchema, IndividualTextAssetSchema, IndividualMarkdownAssetSchema, IndividualHtmlAssetSchema, IndividualCssAssetSchema, IndividualJavaScriptAssetSchema, IndividualVastAssetSchema, IndividualDaastAssetSchema, IndividualUrlAssetSchema, IndividualWebhookAssetSchema, IndividualBriefAssetSchema, IndividualCatalogAssetSchema, RepeatableGroupAssetSchema])).optional(),
-    delivery: z.object({}).passthrough().optional(),
-    supported_macros: z.array(z.union([UniversalMacroSchema, z.string()])).optional(),
-    input_format_ids: z.array(FormatReferenceStructuredObjectSchema).optional(),
-    output_format_ids: z.array(FormatReferenceStructuredObjectSchema).optional(),
-    format_card: z.object({
-        format_id: FormatReferenceStructuredObjectSchema,
-        manifest: z.object({}).passthrough()
-    }).passthrough().optional(),
-    accessibility: z.object({
-        wcag_level: WCAGLevelSchema,
-        requires_accessible_assets: z.boolean().optional()
-    }).passthrough().optional(),
-    supported_disclosure_positions: z.array(DisclosurePositionSchema).optional(),
-    disclosure_capabilities: z.array(z.object({
-        position: DisclosurePositionSchema,
-        persistence: z.array(DisclosurePersistenceSchema)
-    }).passthrough()).optional(),
-    format_card_detailed: z.object({
-        format_id: FormatReferenceStructuredObjectSchema,
-        manifest: z.object({}).passthrough()
-    }).passthrough().optional(),
-    reported_metrics: z.array(AvailableMetricSchema).optional(),
-    pricing_options: z.array(VendorPricingOptionSchema).optional()
-}).passthrough();
+export const FormatAssetSlotSchema = z.union([IndividualAssetSlotSchema, RepeatableGroupAssetSchema]);
 
 export const CatalogRequirementsSchema = z.object({
     catalog_type: CatalogTypeSchema,
@@ -6380,18 +6382,56 @@ export const GetProductsResponseSchema = z.object({
     ext: ExtensionObjectSchema.optional()
 }).passthrough();
 
-export const ListCreativeFormatsResponseSchema = z.object({
-    formats: z.array(FormatSchema),
-    creative_agents: z.array(z.object({
-        agent_url: z.string(),
-        agent_name: z.string().optional(),
-        capabilities: z.array(CreativeAgentCapabilitySchema).optional()
+export const FormatSchema = z.object({
+    format_id: FormatReferenceStructuredObjectSchema,
+    name: z.string(),
+    description: z.string().optional(),
+    example_url: z.string().optional(),
+    accepts_parameters: z.array(FormatIDParameterSchema).optional(),
+    renders: z.array(z.union([z.object({
+            role: z.string(),
+            dimensions: z.object({
+                width: z.number().optional(),
+                height: z.number().optional(),
+                min_width: z.number().optional(),
+                min_height: z.number().optional(),
+                max_width: z.number().optional(),
+                max_height: z.number().optional(),
+                unit: DimensionUnitSchema.optional(),
+                responsive: z.object({
+                    width: z.boolean(),
+                    height: z.boolean()
+                }).passthrough().optional(),
+                aspect_ratio: z.string().optional()
+            }).passthrough()
+        }).passthrough(), z.object({
+            role: z.string(),
+            parameters_from_format_id: z.literal(true)
+        }).passthrough()])).optional(),
+    assets: z.array(FormatAssetSlotSchema).optional(),
+    delivery: z.object({}).passthrough().optional(),
+    supported_macros: z.array(z.union([UniversalMacroSchema, z.string()])).optional(),
+    input_format_ids: z.array(FormatReferenceStructuredObjectSchema).optional(),
+    output_format_ids: z.array(FormatReferenceStructuredObjectSchema).optional(),
+    format_card: z.object({
+        format_id: FormatReferenceStructuredObjectSchema,
+        manifest: z.object({}).passthrough()
+    }).passthrough().optional(),
+    accessibility: z.object({
+        wcag_level: WCAGLevelSchema,
+        requires_accessible_assets: z.boolean().optional()
+    }).passthrough().optional(),
+    supported_disclosure_positions: z.array(DisclosurePositionSchema).optional(),
+    disclosure_capabilities: z.array(z.object({
+        position: DisclosurePositionSchema,
+        persistence: z.array(DisclosurePersistenceSchema)
     }).passthrough()).optional(),
-    errors: z.array(ErrorSchema).optional(),
-    pagination: PaginationResponseSchema.optional(),
-    sandbox: z.boolean().optional(),
-    context: ContextObjectSchema.optional(),
-    ext: ExtensionObjectSchema.optional()
+    format_card_detailed: z.object({
+        format_id: FormatReferenceStructuredObjectSchema,
+        manifest: z.object({}).passthrough()
+    }).passthrough().optional(),
+    reported_metrics: z.array(AvailableMetricSchema).optional(),
+    pricing_options: z.array(VendorPricingOptionSchema).optional()
 }).passthrough();
 
 export const CreateMediaBuyRequestSchema = z.object({
@@ -6576,6 +6616,20 @@ export const ValidatePropertyDeliveryResponseSchema = z.object({
     results: z.array(ValidationResultSchema),
     validated_at: z.string(),
     list_resolved_at: z.string().optional(),
+    context: ContextObjectSchema.optional(),
+    ext: ExtensionObjectSchema.optional()
+}).passthrough();
+
+export const ListCreativeFormatsResponseSchema = z.object({
+    formats: z.array(FormatSchema),
+    creative_agents: z.array(z.object({
+        agent_url: z.string(),
+        agent_name: z.string().optional(),
+        capabilities: z.array(CreativeAgentCapabilitySchema).optional()
+    }).passthrough()).optional(),
+    errors: z.array(ErrorSchema).optional(),
+    pagination: PaginationResponseSchema.optional(),
+    sandbox: z.boolean().optional(),
     context: ContextObjectSchema.optional(),
     ext: ExtensionObjectSchema.optional()
 }).passthrough();
