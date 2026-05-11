@@ -752,6 +752,7 @@ function extractFailures(
           step_title: step.title,
           task: step.task,
           error: step.error,
+          ...(step.adcp_error && { adcp_error: step.adcp_error }),
           expected,
           fix_command: `adcp storyboard step ${agentRef} ${result.storyboard_id} ${step.step_id} --json`,
           ...(validationSummary && { validation: validationSummary }),
