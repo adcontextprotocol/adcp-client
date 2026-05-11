@@ -3305,6 +3305,7 @@ async function executeStep(
         context_provenance: Object.fromEntries(runState.contextProvenance),
       }),
     error: step.expect_error ? undefined : truncateError(stepResult.error || taskResult?.error),
+    ...(!step.expect_error && taskResult?.adcp_error && { adcp_error: taskResult.adcp_error }),
     next,
     request: requestRecord,
     ...(responseRecord && { response_record: responseRecord }),
