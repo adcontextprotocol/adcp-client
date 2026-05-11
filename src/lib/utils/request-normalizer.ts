@@ -131,7 +131,8 @@ export function normalizeRequestParams(
       undefined,
       'create_media_buy: account is required. ' +
         'Pass account as { account_id } or { brand, operator, sandbox? }. ' +
-        'Use list_accounts to discover an existing account_id, or sync_accounts to register one.'
+        'Use list_accounts to discover an existing account_id; ' +
+        'implicit-account sellers also support sync_accounts to register a new one.'
     );
   }
 
