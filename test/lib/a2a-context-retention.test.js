@@ -359,7 +359,7 @@ describe('AgentClient.withSession narrows pendingTaskId auto-thread (regression 
       stub.enqueue(taskResponse({ status: 'completed', contextId: 'ctx-shared', taskId: 'task-B' }));
 
       const client = newClient();
-      await client.executeTask('create_media_buy', {});
+      await client.executeTask('create_media_buy', { account: { account_id: 'test-acc' } });
       assert.strictEqual(client.getPendingTaskId(), 'task-A', 'submitted retains the handle');
       assert.strictEqual(client.getContextId(), 'ctx-shared');
 
@@ -386,10 +386,10 @@ describe('AgentClient.withSession narrows pendingTaskId auto-thread (regression 
       stub.enqueue(taskResponse({ status: 'completed', contextId: 'ctx-hitl', taskId: 'task-hitl' }));
 
       const client = newClient();
-      await client.executeTask('create_media_buy', {});
+      await client.executeTask('create_media_buy', { account: { account_id: 'test-acc' } });
       assert.strictEqual(client.getPendingTaskId(), 'task-hitl');
 
-      await client.executeTask('create_media_buy', {});
+      await client.executeTask('create_media_buy', { account: { account_id: 'test-acc' } });
 
       assert.strictEqual(stub.captured[1].message.contextId, 'ctx-hitl');
       assert.strictEqual(
@@ -412,7 +412,7 @@ describe('AgentClient.withSession narrows pendingTaskId auto-thread (regression 
       stub.enqueue(taskResponse({ status: 'completed', contextId: 'ctx-1', taskId: 'task-orig' }));
 
       const client = newClient();
-      await client.executeTask('create_media_buy', {});
+      await client.executeTask('create_media_buy', { account: { account_id: 'test-acc' } });
 
       await client.executeTask('get_products', {}, undefined, { taskId: 'task-orig' });
 

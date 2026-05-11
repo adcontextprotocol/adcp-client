@@ -1307,10 +1307,15 @@ const { resetWarnings } = require('../../dist/lib/utils/deprecation.js');
 const UUID_V4_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
 describe('normalizeRequestParams: idempotency_key auto-inject (MUTATING_TASKS coverage)', () => {
+  // create_media_buy now requires account; provide a minimal fixture when the
+  // task under test is create_media_buy so the iterator doesn't trip the
+  // (separately tested) account-required validation.
+  const baseParamsFor = task => (task === 'create_media_buy' ? { account: { account_id: 'test-acc' } } : {});
+
   test('every MUTATING_TASKS member gets a UUID v4 when the caller omits idempotency_key', () => {
     assert.ok(MUTATING_TASKS.size >= 20, `MUTATING_TASKS set looks empty (${MUTATING_TASKS.size})`);
     for (const task of MUTATING_TASKS) {
-      const result = normalizeRequestParams(task, {});
+      const result = normalizeRequestParams(task, baseParamsFor(task));
       assert.match(
         String(result?.idempotency_key),
         UUID_V4_PATTERN,
@@ -1331,17 +1336,27 @@ describe('normalizeRequestParams: idempotency_key auto-inject (MUTATING_TASKS co
   });
 
   test('preserves a caller-supplied idempotency_key (BYOK)', () => {
-    const result = normalizeRequestParams('create_media_buy', { idempotency_key: 'byok-1234567890abcdef' });
+    const result = normalizeRequestParams('create_media_buy', {
+      account: { account_id: 'test-acc' },
+      idempotency_key: 'byok-1234567890abcdef',
+    });
     assert.strictEqual(result?.idempotency_key, 'byok-1234567890abcdef');
   });
 
   test('treats empty-string idempotency_key as unset and injects a fresh UUID', () => {
-    const result = normalizeRequestParams('create_media_buy', { idempotency_key: '' });
+    const result = normalizeRequestParams('create_media_buy', {
+      account: { account_id: 'test-acc' },
+      idempotency_key: '',
+    });
     assert.match(String(result?.idempotency_key), UUID_V4_PATTERN);
   });
 
   test('skipIdempotencyAutoInject=true leaves the field absent so compliance scenarios can exercise missing-key rejection', () => {
-    const result = normalizeRequestParams('create_media_buy', {}, { skipIdempotencyAutoInject: true });
+    const result = normalizeRequestParams(
+      'create_media_buy',
+      { account: { account_id: 'test-acc' } },
+      { skipIdempotencyAutoInject: true }
+    );
     assert.strictEqual(result?.idempotency_key, undefined);
   });
 });
@@ -1376,7 +1391,10 @@ describe('Request Parameter Normalization', () => {
 
     test('should not convert non-string account_id', () => {
       resetWarnings();
-      const result = normalizeRequestParams('create_media_buy', {
+      // Use a non-mutating task here: when account_id is non-string the shim
+      // skips and `account` stays undefined, which is fine for read-only tools
+      // but would trip the create_media_buy account-required validation.
+      const result = normalizeRequestParams('get_media_buys', {
         account_id: 123,
         buyer_ref: 'ref-1',
       });
@@ -1398,6 +1416,7 @@ describe('Request Parameter Normalization', () => {
     test('should rename campaign_ref to buyer_campaign_ref', () => {
       resetWarnings();
       const result = normalizeRequestParams('create_media_buy', {
+        account: { account_id: 'acc-1' },
         campaign_ref: 'camp_Q2',
         buyer_ref: 'buyer-1',
       });
@@ -1590,6 +1609,7 @@ describe('Request Parameter Normalization', () => {
     test('should not strip removed fields for other tools', () => {
       resetWarnings();
       const result = normalizeRequestParams('create_media_buy', {
+        account: { account_id: 'acc-1' },
         feedback: 'some_data',
       });
 
@@ -1680,6 +1700,7 @@ describe('Request Parameter Normalization', () => {
     test('should derive brand from brand_manifest for create_media_buy', () => {
       resetWarnings();
       const result = normalizeRequestParams('create_media_buy', {
+        account: { account_id: 'acc-1' },
         buyer_ref: 'buyer-1',
         brand_manifest: 'https://acme.com',
         packages: [],
@@ -1712,19 +1733,27 @@ describe('Request Parameter Normalization', () => {
     });
   });
 
-  describe('account inference from brand (create_media_buy)', () => {
-    test('should infer account from brand when account is missing', () => {
-      resetWarnings();
-      const result = normalizeRequestParams('create_media_buy', {
-        buyer_ref: 'buyer-1',
-        brand: { name: 'Acme', domain: 'acme.com' },
-        packages: [],
-      });
+  describe('account validation (create_media_buy)', () => {
+    // The v2 shim that inferred account.operator from brand.domain was removed
+    // with the v2 sunset (April 2026). create_media_buy now requires account
+    // explicitly; the normalizer throws ValidationError when it is missing.
+    const { ADCPValidationError } = require('../../dist/lib/index.js');
 
-      assert.deepStrictEqual(result.account, {
-        brand: { name: 'Acme', domain: 'acme.com' },
-        operator: 'acme.com',
-      });
+    test('should throw ValidationError when account is missing', () => {
+      resetWarnings();
+      assert.throws(
+        () =>
+          normalizeRequestParams('create_media_buy', {
+            buyer_ref: 'buyer-1',
+            brand: { name: 'Acme', domain: 'acme.com' },
+            packages: [],
+          }),
+        err => {
+          assert.ok(err instanceof ADCPValidationError, `expected ADCPValidationError, got ${err.constructor.name}`);
+          assert.ok(err.message.includes('account'), 'error message should mention account');
+          return true;
+        }
+      );
     });
 
     test('should not overwrite existing account', () => {
@@ -1739,17 +1768,22 @@ describe('Request Parameter Normalization', () => {
       assert.deepStrictEqual(result.account, { account_id: 'acct_existing' });
     });
 
-    test('should not infer account when brand is missing', () => {
+    test('should throw ValidationError when both account and brand are missing', () => {
       resetWarnings();
-      const result = normalizeRequestParams('create_media_buy', {
-        buyer_ref: 'buyer-1',
-        packages: [],
-      });
-
-      assert.strictEqual(result.account, undefined);
+      assert.throws(
+        () =>
+          normalizeRequestParams('create_media_buy', {
+            buyer_ref: 'buyer-1',
+            packages: [],
+          }),
+        err => {
+          assert.ok(err instanceof ADCPValidationError, `expected ADCPValidationError, got ${err.constructor.name}`);
+          return true;
+        }
+      );
     });
 
-    test('should not infer account for other task types', () => {
+    test('should not require account for other task types', () => {
       resetWarnings();
       const result = normalizeRequestParams('get_products', {
         brand: { name: 'Acme', domain: 'acme.com' },
@@ -1759,40 +1793,38 @@ describe('Request Parameter Normalization', () => {
       assert.strictEqual(result.account, undefined);
     });
 
-    test('should not infer account when brand has no domain', () => {
+    test('should throw when account is missing even if brand has no domain', () => {
       resetWarnings();
-      const result = normalizeRequestParams('create_media_buy', {
-        buyer_ref: 'buyer-1',
-        brand: { name: 'Acme' },
-        packages: [],
-      });
-
-      assert.strictEqual(result.account, undefined);
+      assert.throws(
+        () =>
+          normalizeRequestParams('create_media_buy', {
+            buyer_ref: 'buyer-1',
+            brand: { name: 'Acme' },
+            packages: [],
+          }),
+        err => {
+          assert.ok(err instanceof ADCPValidationError, `expected ADCPValidationError, got ${err.constructor.name}`);
+          return true;
+        }
+      );
     });
 
-    test('inferred account should not include sandbox field', () => {
+    test('should throw when account is missing even if brand_manifest is provided', () => {
       resetWarnings();
-      const result = normalizeRequestParams('create_media_buy', {
-        buyer_ref: 'buyer-1',
-        brand: { name: 'Acme', domain: 'acme.com' },
-        packages: [],
-      });
-
-      assert.strictEqual(result.account.sandbox, undefined);
-    });
-
-    test('should infer account from brand derived from brand_manifest', () => {
-      resetWarnings();
-      const result = normalizeRequestParams('create_media_buy', {
-        buyer_ref: 'buyer-1',
-        brand_manifest: 'https://acme.com',
-        packages: [],
-      });
-
-      assert.deepStrictEqual(result.account, {
-        brand: { domain: 'acme.com' },
-        operator: 'acme.com',
-      });
+      // Regression: previously this branch fabricated account.operator from
+      // brand_manifest URL. The shim is gone; the call must throw.
+      assert.throws(
+        () =>
+          normalizeRequestParams('create_media_buy', {
+            buyer_ref: 'buyer-1',
+            brand_manifest: 'https://acme.com',
+            packages: [],
+          }),
+        err => {
+          assert.ok(err instanceof ADCPValidationError, `expected ADCPValidationError, got ${err.constructor.name}`);
+          return true;
+        }
+      );
     });
   });
 });

@@ -159,6 +159,7 @@ describe('AgentClient.fromMCPClient — in-process transport', () => {
     // we'd be asserting against `captured` from a prior tool call, so let any
     // unexpected throw fail the test rather than swallowing it.
     const result = await agent.createMediaBuy({
+      account: { account_id: 'test-acc' },
       brand: { domain: 'test.example' },
       product_id: 'prod-1',
       line_items: [],
@@ -186,6 +187,7 @@ describe('AgentClient.fromMCPClient — in-process transport', () => {
     });
 
     const result = await agent.createMediaBuy({
+      account: { account_id: 'test-acc' },
       brand: { domain: 'test.example' },
       product_id: 'prod-1',
       line_items: [],
