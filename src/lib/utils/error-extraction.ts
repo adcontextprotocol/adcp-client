@@ -11,6 +11,7 @@ import {
   type StandardErrorCode,
   type ErrorRecovery,
 } from '../types/error-codes';
+import type { AdcpErrorInfo, AdcpValidationIssue } from '../core/ConversationTypes';
 
 export interface ExtractedAdcpError {
   code: string;
@@ -20,6 +21,7 @@ export interface ExtractedAdcpError {
   suggestion?: string;
   retry_after?: number;
   details?: Record<string, unknown>;
+  issues?: AdcpValidationIssue[];
   /** Where the error was found in the response */
   source: 'structuredContent' | 'text_json' | 'text_pattern';
   /** The compliance level this delivery achieves */
@@ -155,6 +157,26 @@ export function getExpectedAction(recovery: ErrorRecovery): 'retry' | 'fix_reque
 
 // --- Internal helpers ---
 
+/**
+ * Map a raw wire `issues[]` array to `AdcpValidationIssue[]`.
+ * Returns `undefined` when input is absent, not an array, or all items are malformed
+ * (missing required `pointer` / `message` / `keyword` string fields).
+ */
+function mapValidationIssues(raw: unknown): AdcpValidationIssue[] | undefined {
+  if (!Array.isArray(raw)) return undefined;
+  const mapped = raw
+    .filter(
+      (i: any) => typeof i?.pointer === 'string' && typeof i?.message === 'string' && typeof i?.keyword === 'string'
+    )
+    .map((i: any) => ({
+      pointer: i.pointer as string,
+      message: i.message as string,
+      keyword: i.keyword as string,
+      ...(typeof i.schemaPath === 'string' ? { schemaPath: i.schemaPath } : {}),
+    }));
+  return mapped.length > 0 ? mapped : undefined;
+}
+
 function buildExtracted(
   obj: any,
   source: ExtractedAdcpError['source'],
@@ -172,6 +194,8 @@ function buildExtracted(
   if (obj.suggestion != null) result.suggestion = obj.suggestion;
   if (obj.retry_after != null) result.retry_after = obj.retry_after;
   if (obj.details != null) result.details = obj.details;
+  const mappedIssues = mapValidationIssues(obj.issues);
+  if (mappedIssues) result.issues = mappedIssues;
   return result;
 }
 
@@ -211,8 +235,6 @@ function matchStandardCode(text: string): StandardErrorCode | null {
 
 // --- TaskResult-level helpers ---
 
-import type { AdcpErrorInfo } from '../core/ConversationTypes';
-
 /**
  * Extract normalized AdcpErrorInfo from unwrapped response data.
  * Handles both `{ adcp_error: {...} }` and `{ errors: [...] }` shapes.
@@ -232,10 +254,15 @@ export function extractAdcpErrorInfo(data: any): AdcpErrorInfo | undefined {
       info.retryAfterMs = ae.retry_after * 1000;
     }
     if (ae.details != null) info.details = ae.details;
+    const mappedIssues = mapValidationIssues(ae.issues);
+    if (mappedIssues) info.issues = mappedIssues;
     if (ae.synthetic) info.synthetic = true;
     return info;
   }
 
+  // Legacy `{ errors: [...] }` envelope — L1 compat only. Extracts code/message/recovery
+  // from errors[0]; does not forward issues[], field, suggestion, or details since this
+  // path is only reached for non-standard envelopes that are unlikely to carry issues[].
   if (Array.isArray(data.errors) && data.errors.length > 0) {
     const first = data.errors[0];
     if (typeof first.code === 'string') {

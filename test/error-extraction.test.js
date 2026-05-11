@@ -190,6 +190,47 @@ describe('extractAdcpErrorFromMcp', () => {
     assert.strictEqual(result.code, 'PRODUCT_NOT_FOUND');
     assert.strictEqual(result.source, 'structuredContent');
   });
+
+  // adcp-client#1694: structured issues[] forwarded on the L3 extraction path
+  it('forwards well-formed issues[] from structuredContent (L3)', () => {
+    const response = {
+      isError: true,
+      content: [{ type: 'text', text: 'error' }],
+      structuredContent: {
+        adcp_error: {
+          code: 'VALIDATION_ERROR',
+          message: 'Validation failed',
+          issues: [{ pointer: '/packages/0/budget', message: 'must be number', keyword: 'type' }],
+        },
+      },
+    };
+    const result = extractAdcpErrorFromMcp(response);
+    assert.ok(result);
+    assert.ok(Array.isArray(result.issues));
+    assert.strictEqual(result.issues.length, 1);
+    assert.strictEqual(result.issues[0].pointer, '/packages/0/budget');
+    assert.strictEqual(result.issues[0].keyword, 'type');
+  });
+
+  it('drops malformed issues[] items on the L3 path', () => {
+    const response = {
+      isError: true,
+      content: [{ type: 'text', text: 'error' }],
+      structuredContent: {
+        adcp_error: {
+          code: 'VALIDATION_ERROR',
+          message: 'mixed',
+          issues: [
+            { pointer: '/ok', message: 'kept', keyword: 'required' },
+            { pointer: 1, message: 'numeric-pointer-dropped', keyword: 'type' },
+          ],
+        },
+      },
+    };
+    const result = extractAdcpErrorFromMcp(response);
+    assert.ok(result);
+    assert.strictEqual(result.issues.length, 1);
+  });
 });
 
 describe('extractAdcpErrorFromTransport', () => {
@@ -320,6 +361,102 @@ describe('extractAdcpErrorInfo', () => {
 
   it('returns undefined for non-error data', () => {
     assert.strictEqual(extractAdcpErrorInfo({ products: [] }), undefined);
+  });
+
+  // adcp-client#1694: structured issues[] forwarded as first-class field
+  it('forwards well-formed issues[] from adcp_error', () => {
+    const data = {
+      adcp_error: {
+        code: 'VALIDATION_ERROR',
+        message: 'Validation failed',
+        recovery: 'correctable',
+        issues: [
+          {
+            pointer: '/packages/0/targeting',
+            message: 'must NOT have additional properties',
+            keyword: 'additionalProperties',
+          },
+          {
+            pointer: '/start_time',
+            message: "must match format 'date-time'",
+            keyword: 'format',
+            schemaPath: '#/properties/start_time/format',
+          },
+        ],
+      },
+    };
+    const info = extractAdcpErrorInfo(data);
+    assert.ok(info);
+    assert.ok(Array.isArray(info.issues));
+    assert.strictEqual(info.issues.length, 2);
+    assert.deepStrictEqual(info.issues[0], {
+      pointer: '/packages/0/targeting',
+      message: 'must NOT have additional properties',
+      keyword: 'additionalProperties',
+    });
+    // schemaPath preserved when present
+    assert.strictEqual(info.issues[1].schemaPath, '#/properties/start_time/format');
+  });
+
+  it('drops malformed issues[] items (missing required fields)', () => {
+    const data = {
+      adcp_error: {
+        code: 'VALIDATION_ERROR',
+        message: 'mixed',
+        issues: [
+          { pointer: '/ok', message: 'kept', keyword: 'type' },
+          { pointer: '/missing_keyword', message: 'dropped' }, // missing keyword
+          { message: 'no pointer', keyword: 'required' }, // missing pointer
+          { pointer: '/wrong_types', message: 1, keyword: 'enum' }, // non-string message
+        ],
+      },
+    };
+    const info = extractAdcpErrorInfo(data);
+    assert.ok(info);
+    assert.strictEqual(info.issues.length, 1, 'only the well-formed item survives');
+    assert.strictEqual(info.issues[0].pointer, '/ok');
+  });
+
+  it('omits issues when all items are malformed (no empty array on the field)', () => {
+    const data = {
+      adcp_error: {
+        code: 'VALIDATION_ERROR',
+        message: 'all bad',
+        issues: [{ pointer: 1 }, { message: 'x' }],
+      },
+    };
+    const info = extractAdcpErrorInfo(data);
+    assert.ok(info);
+    assert.strictEqual(info.issues, undefined, 'empty after filtering → field absent, not []');
+  });
+
+  it('omits issues when the wire field is absent', () => {
+    const data = { adcp_error: { code: 'INVALID_REQUEST', message: 'plain' } };
+    const info = extractAdcpErrorInfo(data);
+    assert.ok(info);
+    assert.strictEqual(info.issues, undefined);
+  });
+
+  it('omits issues when the wire field is not an array', () => {
+    const data = { adcp_error: { code: 'INVALID_REQUEST', message: 'plain', issues: 'not-an-array' } };
+    const info = extractAdcpErrorInfo(data);
+    assert.ok(info);
+    assert.strictEqual(info.issues, undefined);
+  });
+
+  it('keeps details when issues is also present (orthogonal fields)', () => {
+    const data = {
+      adcp_error: {
+        code: 'VALIDATION_ERROR',
+        message: 'both',
+        details: { retry_hint: 'fix and resubmit' },
+        issues: [{ pointer: '/x', message: 'y', keyword: 'type' }],
+      },
+    };
+    const info = extractAdcpErrorInfo(data);
+    assert.ok(info);
+    assert.deepStrictEqual(info.details, { retry_hint: 'fix and resubmit' });
+    assert.strictEqual(info.issues.length, 1);
   });
 });
 
