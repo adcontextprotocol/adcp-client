@@ -504,8 +504,19 @@ async function generateZodSchemas() {
     const coreContent = readFileSync(CORE_SOURCE_FILE, 'utf8');
     const toolsContent = readFileSync(TOOLS_SOURCE_FILE, 'utf8');
 
+    // tools.generated.ts imports a handful of *AssetRequirements types from
+    // core.generated.ts (injected by scripts/generate-types.ts so the standalone
+    // file typechecks). Since we concatenate both sources for ts-to-zod, those
+    // imports are redundant — worse, ts-to-zod treats imported names as external
+    // and emits `z.any()` stubs even when the actual interfaces are present in
+    // the combined source. Strip cross-file imports before merging.
+    const toolsWithoutCrossImports = toolsContent.replace(
+      /^import type \{[^}]*\} from ['"]\.\/core\.generated['"];?\n+/gm,
+      ''
+    );
+
     // Merge both sources so cross-file type dependencies can be resolved
-    const combinedSource = `${coreContent}\n\n// ====== TOOL TYPES ======\n\n${toolsContent}`;
+    const combinedSource = `${coreContent}\n\n// ====== TOOL TYPES ======\n\n${toolsWithoutCrossImports}`;
 
     console.log('📦 Generating Zod schemas for all types...');
 
