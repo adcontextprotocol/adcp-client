@@ -3938,86 +3938,88 @@ function buildCreativeHandlers<P extends DecisioningPlatform<any, any>>(
       );
     },
 
-    syncCreatives: async (params, ctx) => {
-      const reqCtx = ctxFor(ctx);
-      const creatives = params.creatives ?? [];
-      if (!creative.syncCreatives) {
-        return adcpError('UNSUPPORTED_FEATURE', {
-          message: 'sync_creatives not supported by this creative platform',
-        });
-      }
-      return projectSync(
-        async () => {
-          const push = extractPushConfig(params, logger, { allowPrivateWebhookUrls: pushOpts.allowPrivateWebhookUrls });
-          const result = await creative.syncCreatives!(creatives, reqCtx);
-          return routeIfHandoff(
-            taskRegistry,
-            {
-              tool: 'sync_creatives',
-              accountId: reqCtx.account.id,
-              pushNotificationUrl: push.url,
-              pushNotificationToken: push.token,
-              emitWebhook: taskWebhookEmit ?? ctx.emitWebhook,
-              autoEmitCompletion: pushOpts.autoEmitCompletionWebhooks,
-              observability,
-              logger,
+    // Only register sync_creatives when the platform actually implements it.
+    // Unconditionally returning UNSUPPORTED_FEATURE would advertise the tool in
+    // tools/list and trigger the buyer retry-policy (two wasted round-trips) for
+    // platforms that never supported it. Mirrors the conditional pattern used by
+    // buildAccountHandlers — see comment at line 4544.
+    ...(creative.syncCreatives != null && {
+      syncCreatives: async (params, ctx) => {
+        const reqCtx = ctxFor(ctx);
+        const creatives = params.creatives ?? [];
+        return projectSync(
+          async () => {
+            const push = extractPushConfig(params, logger, {
+              allowPrivateWebhookUrls: pushOpts.allowPrivateWebhookUrls,
+            });
+            const result = await creative.syncCreatives!(creatives, reqCtx);
+            return routeIfHandoff(
+              taskRegistry,
+              {
+                tool: 'sync_creatives',
+                accountId: reqCtx.account.id,
+                pushNotificationUrl: push.url,
+                pushNotificationToken: push.token,
+                emitWebhook: taskWebhookEmit ?? ctx.emitWebhook,
+                autoEmitCompletion: pushOpts.autoEmitCompletionWebhooks,
+                observability,
+                logger,
+              },
+              result,
+              rows => ({ creatives: rows.map(normalizeRowErrors) })
+            );
+          },
+          r => r
+        );
+      },
+    }),
+
+    // Ad-server-specialism methods. Only CreativeAdServerPlatform declares
+    // listCreatives and getCreativeDelivery. Registering unconditional stubs
+    // would advertise these tools in tools/list for CreativeBuilderPlatform
+    // adopters, misleading buyer agents and triggering UNSUPPORTED_FEATURE on
+    // every call. Only emit handlers when the platform method is present.
+    ...('listCreatives' in creative &&
+      (creative as CreativeAdServerPlatform).listCreatives != null && {
+        listCreatives: async (params, ctx) => {
+          const reqCtx = ctxFor(ctx);
+          return projectSync(
+            async () => {
+              const result = await (creative as CreativeAdServerPlatform).listCreatives(params, reqCtx);
+              warnIfTruncatedMultiIdResponse(
+                'listCreatives',
+                'creative_ids',
+                (params as { creative_ids?: readonly string[] }).creative_ids,
+                (result as { creatives?: readonly unknown[] })?.creatives,
+                logger
+              );
+              return result;
             },
-            result,
-            rows => ({ creatives: rows.map(normalizeRowErrors) })
+            r => r
           );
         },
-        r => r
-      );
-    },
+      }),
 
-    // Ad-server-specialism methods. Only the CreativeAdServerPlatform variant
-    // implements these; framework returns UNSUPPORTED_FEATURE for the other
-    // archetypes (template, generative).
-    listCreatives: async (params, ctx) => {
-      if (!('listCreatives' in creative)) {
-        return adcpError('UNSUPPORTED_FEATURE', {
-          message: 'list_creatives not supported by this platform',
-        });
-      }
-      const reqCtx = ctxFor(ctx);
-      return projectSync(
-        async () => {
-          const result = await (creative as CreativeAdServerPlatform).listCreatives(params, reqCtx);
-          warnIfTruncatedMultiIdResponse(
-            'listCreatives',
-            'creative_ids',
-            (params as { creative_ids?: readonly string[] }).creative_ids,
-            (result as { creatives?: readonly unknown[] })?.creatives,
-            logger
+    ...('getCreativeDelivery' in creative &&
+      (creative as CreativeAdServerPlatform).getCreativeDelivery != null && {
+        getCreativeDelivery: async (params, ctx) => {
+          const reqCtx = ctxFor(ctx);
+          return projectSync(
+            async () => {
+              const result = await (creative as CreativeAdServerPlatform).getCreativeDelivery(params, reqCtx);
+              warnIfTruncatedMultiIdResponse(
+                'getCreativeDelivery',
+                'creative_ids',
+                (params as { creative_ids?: readonly string[] }).creative_ids,
+                (result as { creative_deliveries?: readonly unknown[] })?.creative_deliveries,
+                logger
+              );
+              return result;
+            },
+            r => r
           );
-          return result;
         },
-        r => r
-      );
-    },
-
-    getCreativeDelivery: async (params, ctx) => {
-      if (!('getCreativeDelivery' in creative)) {
-        return adcpError('UNSUPPORTED_FEATURE', {
-          message: 'get_creative_delivery not supported by this platform',
-        });
-      }
-      const reqCtx = ctxFor(ctx);
-      return projectSync(
-        async () => {
-          const result = await (creative as CreativeAdServerPlatform).getCreativeDelivery(params, reqCtx);
-          warnIfTruncatedMultiIdResponse(
-            'getCreativeDelivery',
-            'creative_ids',
-            (params as { creative_ids?: readonly string[] }).creative_ids,
-            (result as { creative_deliveries?: readonly unknown[] })?.creative_deliveries,
-            logger
-          );
-          return result;
-        },
-        r => r
-      );
-    },
+      }),
   };
 }
 
