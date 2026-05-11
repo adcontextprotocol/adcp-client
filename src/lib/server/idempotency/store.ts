@@ -161,6 +161,14 @@ export type IdempotencyCheckResult =
   | {
       /** A parallel request is currently executing the same key — the caller should retry the check. */
       kind: 'in-flight';
+      /**
+       * Suggested retry delay in seconds, derived from how long the first
+       * request has been running. The middleware surfaces this as the
+       * `retry_after` hint on the `IDEMPOTENCY_IN_FLIGHT` response so a
+       * buyer's transient-retry doesn't slam back instantly when the first
+       * call is long-running. Always `>= 1`.
+       */
+      retryAfterSeconds: number;
     }
   | {
       /** No prior execution for this key — caller should run the handler and save. */
@@ -319,6 +327,29 @@ const TRANSIENT_ERROR_TTL_SECONDS = 10;
  * valid cached response).
  */
 const IN_FLIGHT_HASH = '__adcp_in_flight__';
+/**
+ * Soft cap on the retry hint surfaced to buyers on the in-flight branch.
+ * Even if the first request still has 100s left on its claim, telling a
+ * buyer to wait 100s is worse than the spec's "retry shortly" intent. 5s
+ * is a balance — long enough to amortize a slow handler's tail latency,
+ * short enough that a healthy seller's fast handlers don't stall buyer
+ * retries.
+ */
+const IN_FLIGHT_RETRY_HINT_CAP_SECONDS = 5;
+
+/**
+ * Derive the buyer-facing `retry_after` hint from how long the first
+ * request has been running. Elapsed since claim = `IN_FLIGHT_TTL_SECONDS - (expiresAt - now)`.
+ * We assume the first call is roughly halfway done and suggest the buyer
+ * retry after an additional `elapsed` seconds, capped at
+ * `IN_FLIGHT_RETRY_HINT_CAP_SECONDS`. Always clamped to `>= 1`.
+ */
+function inFlightRetryAfter(expiresAt: number, nowSeconds: number): number {
+  const remaining = expiresAt - nowSeconds;
+  const elapsed = IN_FLIGHT_TTL_SECONDS - remaining;
+  const hint = Math.max(1, Math.min(IN_FLIGHT_RETRY_HINT_CAP_SECONDS, Math.ceil(elapsed)));
+  return hint;
+}
 
 /**
  * Create an idempotency store bound to a specific backend and replay window.
@@ -359,7 +390,7 @@ export function createIdempotencyStore(config: IdempotencyStoreConfig): Idempote
           return { kind: 'expired' };
         }
         if (cached.payloadHash === IN_FLIGHT_HASH) {
-          return { kind: 'in-flight' };
+          return { kind: 'in-flight', retryAfterSeconds: inFlightRetryAfter(cached.expiresAt, nowSeconds) };
         }
         if (cached.payloadHash !== payloadHash) {
           return { kind: 'conflict' };
@@ -381,8 +412,11 @@ export function createIdempotencyStore(config: IdempotencyStoreConfig): Idempote
       if (!claimed) {
         // Someone beat us to the claim — re-read to find out what they did.
         const recheck = await backend.get(scopedKey);
-        if (!recheck) return { kind: 'in-flight' };
-        if (recheck.payloadHash === IN_FLIGHT_HASH) return { kind: 'in-flight' };
+        const nowSeconds = Math.floor(Date.now() / 1000);
+        if (!recheck) return { kind: 'in-flight', retryAfterSeconds: 1 };
+        if (recheck.payloadHash === IN_FLIGHT_HASH) {
+          return { kind: 'in-flight', retryAfterSeconds: inFlightRetryAfter(recheck.expiresAt, nowSeconds) };
+        }
         if (recheck.payloadHash !== payloadHash) return { kind: 'conflict' };
         return { kind: 'replay', response: recheck.response };
       }
