@@ -2865,7 +2865,9 @@ async function executeStep(
   // match the options. Enforcing this here (after builder + sample_request)
   // prevents session-key divergence across create/get/update/delete steps
   // when individual builders or sample_request YAML omit brand.
-  request = applyBrandInvariant(request, options, effectiveStep.task);
+  // `step.omit_account` suppresses account synthesis for schema_validation
+  // steps that deliberately test the seller's missing-account rejection path.
+  request = applyBrandInvariant(request, options, effectiveStep.task, { omit_account: step.omit_account });
 
   // Per-run sandbox-bypass hint (#841). When the operator passes
   // `--no-sandbox` (or sets `disable_sandbox: true` programmatically), the
@@ -2950,17 +2952,27 @@ async function executeStep(
   // layers agree; see `applyIdempotencyInvariant` for the runner-level skip.
   const testsMissingIdempotencyKey = step.omit_idempotency_key === true && isMutatingTask(effectiveStep.task);
 
-  // Defense-in-depth for the missing-key vector: when a mutating step sets
-  // `omit_idempotency_key: true` and `step.auth` is unset, route via
-  // `rawMcpProbe` anyway so no SDK-layer normalization can slip a key onto the
-  // wire. The SDK's `skipIdempotencyAutoInject` plumbing already honors this
-  // flag, but the raw-HTTP path removes the escape hatch entirely. A2A and
-  // oauth stay on the SDK path — their dispatch can't be replicated here
-  // (A2A uses a different envelope; oauth needs refresh semantics).
+  // Analogous to `testsMissingIdempotencyKey`: when a step sets
+  // `omit_account: true` the runner has already suppressed account synthesis
+  // in `applyBrandInvariant` (above — ordering is load-bearing: this must
+  // come after `applyBrandInvariant` so the comment "above" stays accurate
+  // if either block is reordered). Track the flag here so the raw-probe
+  // defense-in-depth path is also triggered and no SDK-layer normalization
+  // can silently re-inject an account before the wire call.
+  const testsMissingAccount = step.omit_account === true && effectiveStep.task === 'create_media_buy';
+
+  // Defense-in-depth for the missing-field vectors: when a step sets
+  // `omit_idempotency_key: true` or `omit_account: true` and `step.auth` is
+  // unset, route via `rawMcpProbe` anyway so no SDK-layer normalization can
+  // slip the missing field onto the wire. The SDK's `skipIdempotencyAutoInject`
+  // / `skipAccountValidation` plumbing already honors these flags, but the
+  // raw-HTTP path removes the escape hatch entirely. A2A and oauth stay on
+  // the SDK path — their dispatch can't be replicated here (A2A uses a
+  // different envelope; oauth needs refresh semantics).
   const rawProbeHeaders: Record<string, string> | undefined =
     step.auth !== undefined
       ? authHeadersForStep(step.auth, options)
-      : testsMissingIdempotencyKey && options.protocol !== 'a2a'
+      : (testsMissingIdempotencyKey || testsMissingAccount) && options.protocol !== 'a2a'
         ? defaultAuthHeadersForRawProbe(options)
         : undefined;
   const useRawProbe = rawProbeHeaders !== undefined;
@@ -3157,6 +3169,7 @@ async function executeStep(
       const dispatch = () =>
         executeStoryboardTask(client, effectiveStep.task, request, {
           skipIdempotencyAutoInject: testsMissingIdempotencyKey,
+          skipAccountValidation: testsMissingAccount,
         });
       const run = await runStep(step.title, effectiveStep.task, async () => {
         if (!captureA2a) return dispatch();
@@ -3993,7 +4006,8 @@ function evalContributesIf(expr: string | undefined, priorStepResults: Map<strin
 export function applyBrandInvariant(
   request: Record<string, unknown>,
   options: StoryboardRunOptions,
-  taskName?: string
+  taskName?: string,
+  stepFlags?: { omit_account?: boolean }
 ): Record<string, unknown> {
   // Only force the invariant when the caller has actually supplied a brand.
   // Storyboards that don't exercise brand-scoped tools (e.g. security
@@ -4010,6 +4024,13 @@ export function applyBrandInvariant(
 
   const result: Record<string, unknown> = { ...request };
   if (topBrandOk) result.brand = brand;
+
+  // When a storyboard step sets `omit_account: true` it is deliberately
+  // testing the seller's missing-account rejection path. Skip all account
+  // synthesis — both the natural-key-merge branch (existing account on the
+  // request) and the synthetic-construction branch (no account on the
+  // request) — so the request reaches the wire exactly as authored.
+  if (stepFlags?.omit_account) return result;
 
   if ('account' in request) {
     // Caller sent an account — merge brand in only when it's a plain object

@@ -158,6 +158,17 @@ export interface TaskOptions {
    */
   skipIdempotencyAutoInject?: boolean;
   /**
+   * INTERNAL — compliance-test-only escape hatch.
+   *
+   * Suppresses the client's `account`-required validation on
+   * `create_media_buy` requests. The sole caller is the storyboard runner,
+   * which needs to exercise servers' missing-account validation without the
+   * SDK throwing client-side before the wire call.
+   *
+   * @internal Do not set in production buyer code.
+   */
+  skipAccountValidation?: boolean;
+  /**
    * Transport-level safeguards for this call. Overrides the matching field
    * on the client constructor's `transport` option. Use to lift or tighten
    * `maxResponseBytes` per call when an agent legitimately publishes large
