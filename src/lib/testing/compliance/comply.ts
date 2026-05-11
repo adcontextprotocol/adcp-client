@@ -933,7 +933,7 @@ async function complyImpl(agentUrl: string, options: ComplyOptions): Promise<Com
         if (missing.length > 0) {
           notApplicable.push({
             storyboard_id: sb.id,
-            storyboard_title: sb.title ?? sb.index_title ?? sb.id,
+            storyboard_title: sb.title,
             track: sb.track,
             reason: `missing required_tools: ${missing.join(', ')}`,
           });
