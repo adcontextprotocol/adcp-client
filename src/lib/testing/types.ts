@@ -342,6 +342,8 @@ export interface TaskResult {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any -- response shape varies by tool; typed per-access in scenarios
   data?: any;
   error?: string;
+  /** Structured AdCP error forwarded from the transport layer. Mirrors `TaskResultFailure.adcpError`. */
+  adcp_error?: import('../core/ConversationTypes').AdcpErrorInfo;
   /**
    * Internal: which MCP extraction path produced `data`. Set by the response
    * unwrapper and the raw MCP probe so the storyboard runner can surface it
