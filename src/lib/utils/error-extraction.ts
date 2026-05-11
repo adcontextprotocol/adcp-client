@@ -166,8 +166,7 @@ function mapValidationIssues(raw: unknown): AdcpValidationIssue[] | undefined {
   if (!Array.isArray(raw)) return undefined;
   const mapped = raw
     .filter(
-      (i: any) =>
-        typeof i?.pointer === 'string' && typeof i?.message === 'string' && typeof i?.keyword === 'string'
+      (i: any) => typeof i?.pointer === 'string' && typeof i?.message === 'string' && typeof i?.keyword === 'string'
     )
     .map((i: any) => ({
       pointer: i.pointer as string,
