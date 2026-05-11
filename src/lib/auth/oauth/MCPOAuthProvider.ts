@@ -126,6 +126,8 @@ export class MCPOAuthProvider implements OAuthClientProvider {
     }
 
     const host = resourceURL.hostname;
+    // URL.hostname returns '[::1]' (with brackets) for IPv6 loopback literals;
+    // bare '::1' is unreachable after new URL() normalization.
     const isLoopback = host === 'localhost' || host === '127.0.0.1' || host === '[::1]';
     if (isLoopback || this.allowHttp) {
       return resourceURL;
