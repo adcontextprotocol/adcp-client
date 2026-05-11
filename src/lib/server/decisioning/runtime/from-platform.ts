@@ -3942,7 +3942,7 @@ function buildCreativeHandlers<P extends DecisioningPlatform<any, any>>(
     // Unconditionally returning UNSUPPORTED_FEATURE would advertise the tool in
     // tools/list and trigger the buyer retry-policy (two wasted round-trips) for
     // platforms that never supported it. Mirrors the conditional pattern used by
-    // buildAccountHandlers — see comment at line 4543.
+    // buildAccountHandlers — see comment at line 4544.
     ...(creative.syncCreatives != null && {
       syncCreatives: async (params, ctx) => {
         const reqCtx = ctxFor(ctx);
