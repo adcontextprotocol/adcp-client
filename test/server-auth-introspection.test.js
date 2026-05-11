@@ -429,9 +429,10 @@ describe('verifyIntrospection — cache', () => {
   });
 
   it('caps positive TTL at the token`s own remaining lifetime', async () => {
-    // Token expires in 1 second; configured TTL is 1 hour. Cache entry
-    // must respect the 1-second cap.
-    response = { active: true, sub: 'u', exp: Math.floor(Date.now() / 1000) + 1 };
+    // Token expires in 2 seconds; configured TTL is 1 hour. Cache entry
+    // must respect the 2-second cap. Using +2 (not +1) guarantees the
+    // remaining lifetime is always ≥1 s regardless of sub-second clock offset.
+    response = { active: true, sub: 'u', exp: Math.floor(Date.now() / 1000) + 2 };
     const auth = verifyIntrospection({
       introspectionUrl: upstream.url,
       clientId: 'c',
@@ -444,7 +445,7 @@ describe('verifyIntrospection — cache', () => {
     await auth({ headers: { authorization: 'Bearer tok-short' } });
     assert.strictEqual(callCount, 1);
     // Wait past expiry + a little slack. Next call re-introspects.
-    await new Promise(r => setTimeout(r, 1200));
+    await new Promise(r => setTimeout(r, 2500));
     await auth({ headers: { authorization: 'Bearer tok-short' } });
     assert.strictEqual(callCount, 2, 'cache entry should have expired with the token');
   });
