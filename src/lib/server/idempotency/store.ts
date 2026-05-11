@@ -161,6 +161,12 @@ export type IdempotencyCheckResult =
   | {
       /** A parallel request is currently executing the same key — the caller should retry the check. */
       kind: 'in-flight';
+      /**
+       * Unix timestamp (seconds) at which the in-flight claim expires. Present when the
+       * store has the cached entry; use to compute `retry_after` for `IDEMPOTENCY_IN_FLIGHT`.
+       * Absent on the lost-race re-check path when the backend returns null.
+       */
+      expiresAt?: number;
     }
   | {
       /** No prior execution for this key — caller should run the handler and save. */
@@ -359,7 +365,7 @@ export function createIdempotencyStore(config: IdempotencyStoreConfig): Idempote
           return { kind: 'expired' };
         }
         if (cached.payloadHash === IN_FLIGHT_HASH) {
-          return { kind: 'in-flight' };
+          return { kind: 'in-flight', expiresAt: cached.expiresAt };
         }
         if (cached.payloadHash !== payloadHash) {
           return { kind: 'conflict' };
@@ -381,8 +387,9 @@ export function createIdempotencyStore(config: IdempotencyStoreConfig): Idempote
       if (!claimed) {
         // Someone beat us to the claim — re-read to find out what they did.
         const recheck = await backend.get(scopedKey);
+        // Entry evicted between putIfAbsent and get — expiresAt unknowable; middleware uses fallback.
         if (!recheck) return { kind: 'in-flight' };
-        if (recheck.payloadHash === IN_FLIGHT_HASH) return { kind: 'in-flight' };
+        if (recheck.payloadHash === IN_FLIGHT_HASH) return { kind: 'in-flight', expiresAt: recheck.expiresAt };
         if (recheck.payloadHash !== payloadHash) return { kind: 'conflict' };
         return { kind: 'replay', response: recheck.response };
       }

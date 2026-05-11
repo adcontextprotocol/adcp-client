@@ -3799,15 +3799,20 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
             }
             if (checkResult.kind === 'in-flight') {
               // A parallel request is currently executing this same key.
-              // Tell the client to retry — returning SERVICE_UNAVAILABLE
-              // with a short retry_after is transient-classified and the
-              // buyer SDK auto-retries. Eventually the other request
-              // completes and this retry either replays the cached
-              // response or hits IDEMPOTENCY_CONFLICT.
+              // Return IDEMPOTENCY_IN_FLIGHT (AdCP rule 9 / spec §idempotency) so buyers can
+              // distinguish a concurrency rejection from a generic server failure. recovery:
+              // 'transient' is explicit because IDEMPOTENCY_IN_FLIGHT is held for AdCP 3.1 and
+              // not in ErrorCodeValues yet — adcpError() would otherwise default unknown codes to
+              // 'terminal'. retry_after is derived from the in-flight claim's expiresAt so the
+              // hint decays toward the actual expected completion; fallback to 5s when expiresAt
+              // is absent (entry evicted between store reads on the lost-race re-check path).
+              const retryAfter =
+                checkResult.expiresAt != null ? Math.max(1, checkResult.expiresAt - Math.floor(Date.now() / 1000)) : 5;
               return finalize(
-                adcpError('SERVICE_UNAVAILABLE', {
+                adcpError('IDEMPOTENCY_IN_FLIGHT', {
                   message: 'A parallel request with the same idempotency_key is still in flight. Retry shortly.',
-                  retry_after: 1,
+                  recovery: 'transient',
+                  retry_after: retryAfter,
                 })
               );
             }
