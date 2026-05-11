@@ -915,6 +915,26 @@ async function complyImpl(agentUrl: string, options: ComplyOptions): Promise<Com
     }
     const applicableStoryboards = expandScenarios(initialStoryboards);
 
+    // Storyboards whose required_tools are absent from the agent's discovered
+    // toolset are not-applicable — the agent doesn't claim the specialism being
+    // tested. Running them produces cascading skips that pull the track to
+    // `partial`, which is a false signal for AAO badge grading (adcp-client#1680).
+    const discoveredToolNames = new Set(profile.tools);
+    const runnableStoryboards: Storyboard[] = [];
+    for (const sb of applicableStoryboards) {
+      const missing = (sb.required_tools ?? []).filter(t => !discoveredToolNames.has(t));
+      if (missing.length > 0) {
+        notApplicable.push({
+          storyboard_id: sb.id,
+          storyboard_title: sb.title ?? sb.index_title ?? sb.id,
+          track: sb.track,
+          reason: `missing required_tools: ${missing.join(', ')}`,
+        });
+      } else {
+        runnableStoryboards.push(sb);
+      }
+    }
+
     // Run storyboards
     const storyboardResults: StoryboardResult[] = [];
     const runOptions: StoryboardRunOptions = {
@@ -924,7 +944,7 @@ async function complyImpl(agentUrl: string, options: ComplyOptions): Promise<Com
       ...(contracts !== undefined && { contracts }),
     };
 
-    for (const sb of applicableStoryboards) {
+    for (const sb of runnableStoryboards) {
       signal?.throwIfAborted();
       const result = await runStoryboard(agentUrl, sb, runOptions);
       storyboardResults.push(result);
@@ -940,13 +960,13 @@ async function complyImpl(agentUrl: string, options: ComplyOptions): Promise<Com
     }
 
     // Group results by track and build TrackResults
-    const grouped = groupByTrack(storyboardResults, applicableStoryboards, notApplicable);
+    const grouped = groupByTrack(storyboardResults, runnableStoryboards, notApplicable);
     const trackResults: TrackResult[] = [];
 
     // Tracks represented by the selected storyboards (used for deciding which rows to emit).
     // Includes not-applicable entries so a version-gated track still gets a row.
     const poolTrackSet = new Set<ComplianceTrack>();
-    for (const sb of applicableStoryboards) {
+    for (const sb of runnableStoryboards) {
       if (sb.track) poolTrackSet.add(sb.track as ComplianceTrack);
     }
     for (const na of notApplicable) {
@@ -995,7 +1015,7 @@ async function complyImpl(agentUrl: string, options: ComplyOptions): Promise<Com
     const overallStatus = computeOverallStatus(summary);
 
     const agentRef = options.agent_alias || agentUrl;
-    const failures = extractFailures(storyboardResults, applicableStoryboards, agentRef);
+    const failures = extractFailures(storyboardResults, runnableStoryboards, agentRef);
 
     return {
       agent_url: agentUrl,
@@ -1007,7 +1027,7 @@ async function complyImpl(agentUrl: string, options: ComplyOptions): Promise<Com
       summary,
       observations: allObservations,
       failures: failures.length > 0 ? failures : undefined,
-      storyboards_executed: applicableStoryboards.map(sb => sb.id),
+      storyboards_executed: runnableStoryboards.map(sb => sb.id),
       controller_detected: controllerDetection.detected,
       controller_scenarios: controllerDetection.detected ? controllerDetection.scenarios : undefined,
       tested_at: new Date().toISOString(),
