@@ -915,24 +915,33 @@ async function complyImpl(agentUrl: string, options: ComplyOptions): Promise<Com
     }
     const applicableStoryboards = expandScenarios(initialStoryboards);
 
-    // Storyboards whose required_tools are absent from the agent's discovered
-    // toolset are not-applicable — the agent doesn't claim the specialism being
-    // tested. Running them produces cascading skips that pull the track to
-    // `partial`, which is a false signal for AAO badge grading (adcp-client#1680).
-    const discoveredToolNames = new Set(profile.tools);
-    const runnableStoryboards: Storyboard[] = [];
-    for (const sb of applicableStoryboards) {
-      const missing = (sb.required_tools ?? []).filter(t => !discoveredToolNames.has(t));
-      if (missing.length > 0) {
-        notApplicable.push({
-          storyboard_id: sb.id,
-          storyboard_title: sb.title ?? sb.index_title ?? sb.id,
-          track: sb.track,
-          reason: `missing required_tools: ${missing.join(', ')}`,
-        });
-      } else {
-        runnableStoryboards.push(sb);
+    // For capability-resolved runs, exclude storyboards and injected scenarios whose
+    // required_tools are absent from the agent's discovered toolset. These are
+    // not-applicable — the agent doesn't claim the specialism being tested. Running
+    // them produces cascading skips that pull the track to `partial`, which is a false
+    // signal for AAO badge grading (adcp-client#1680).
+    // Explicit storyboard IDs (options.storyboards) bypass this filter — they are an
+    // operator override and should run regardless of required_tools.
+    let runnableStoryboards: Storyboard[];
+    if (explicitStoryboards?.length) {
+      runnableStoryboards = applicableStoryboards;
+    } else {
+      const discoveredToolNames = new Set(profile.tools);
+      const filtered: Storyboard[] = [];
+      for (const sb of applicableStoryboards) {
+        const missing = (sb.required_tools ?? []).filter(t => !discoveredToolNames.has(t));
+        if (missing.length > 0) {
+          notApplicable.push({
+            storyboard_id: sb.id,
+            storyboard_title: sb.title ?? sb.index_title ?? sb.id,
+            track: sb.track,
+            reason: `missing required_tools: ${missing.join(', ')}`,
+          });
+        } else {
+          filtered.push(sb);
+        }
       }
+      runnableStoryboards = filtered;
     }
 
     // Run storyboards
@@ -1028,6 +1037,7 @@ async function complyImpl(agentUrl: string, options: ComplyOptions): Promise<Com
       observations: allObservations,
       failures: failures.length > 0 ? failures : undefined,
       storyboards_executed: runnableStoryboards.map(sb => sb.id),
+      ...(notApplicable.length > 0 && { storyboards_not_applicable: notApplicable.map(na => na.storyboard_id) }),
       controller_detected: controllerDetection.detected,
       controller_scenarios: controllerDetection.detected ? controllerDetection.scenarios : undefined,
       tested_at: new Date().toISOString(),

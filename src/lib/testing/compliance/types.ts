@@ -112,6 +112,8 @@ export interface ComplianceResult {
   failures?: ComplianceFailure[];
   /** Storyboard IDs that were resolved and executed */
   storyboards_executed?: string[];
+  /** Storyboard IDs graded not-applicable (version-gated or missing required_tools) */
+  storyboards_not_applicable?: string[];
   /** Whether the seller exposes comply_test_controller */
   controller_detected?: boolean;
   /** Scenarios the seller's test controller supports */
