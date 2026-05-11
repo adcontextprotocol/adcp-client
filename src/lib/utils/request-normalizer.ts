@@ -7,6 +7,7 @@
  */
 
 import { brandManifestToBrandReference, promotedProductsToCatalog } from '../types/compat';
+import { ValidationError } from '../errors/index';
 import { warnOnce } from './deprecation';
 import { MUTATING_TASKS, generateIdempotencyKey } from './idempotency';
 
@@ -115,20 +116,23 @@ export function normalizeRequestParams(
     }
   }
 
-  // ── account inference (create_media_buy) ──
-  // Derive account from brand when not provided so callers that pre-date
-  // the required account field keep working.
-  // sandbox is intentionally omitted: the normalizer cannot infer sandbox
-  // intent from brand alone. Callers that need sandbox must provide account explicitly.
-  if (taskType === 'create_media_buy' && !normalized.account && normalized.brand?.domain) {
-    warnOnce(
-      'account_from_brand',
-      'create_media_buy: account is required. Inferring from brand for backward compatibility.'
+  // ── account validation (create_media_buy) ──
+  // account is required per AdCP 3.0 spec. The v2 shim that inferred
+  // operator = brand.domain was removed with the v2 sunset (April 2026):
+  // the fabricated operator value was semantically wrong for any caller
+  // with a buying-side intermediary, and it caused the compliance harness
+  // to issue badges against requests with fabricated account data.
+  // Callers must pass account as { account_id } or { brand, operator, sandbox? }.
+  // Use list_accounts to discover an existing account_id, or sync_accounts
+  // to register a new natural-key account.
+  if (taskType === 'create_media_buy' && !normalized.account) {
+    throw new ValidationError(
+      'account',
+      undefined,
+      'create_media_buy: account is required. ' +
+        'Pass account as { account_id } or { brand, operator, sandbox? }. ' +
+        'Use list_accounts to discover an existing account_id, or sync_accounts to register one.'
     );
-    normalized.account = {
-      brand: normalized.brand,
-      operator: normalized.brand.domain,
-    };
   }
 
   // ── context.buyer_ref → buyer_ref (create_media_buy, update_media_buy) ──
