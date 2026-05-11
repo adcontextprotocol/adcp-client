@@ -25,9 +25,11 @@ import { detectStrictValidationHints } from './strict-validation-hints';
 import {
   runValidations,
   type ValidationContext,
+  type CrossResponseSet,
   type UpstreamTrafficValidationContext,
   type UpstreamTrafficQueryResult,
 } from './validations';
+import { PARALLEL_DISPATCH_CONTRACT, runParallelDispatches, validateParallelDispatchSpec } from './parallel-dispatch';
 import { toJsonPointer } from './path';
 import { redactSecrets } from '../../utils/redact-secrets';
 import { queryUpstreamTraffic, type ControllerScenario, type UpstreamTrafficSuccess } from '../test-controller';
@@ -2967,6 +2969,85 @@ async function executeStep(
   let httpResult: HttpProbeResult | undefined;
   let responseRecord: RunnerResponseRecord | undefined;
   let a2aEnvelope: A2ATaskEnvelope | undefined;
+  let crossResponses: CrossResponseSet | undefined;
+
+  // Parallel-dispatch fan-out: when the storyboard step declares
+  // `parallel_dispatch`, the runner fires N concurrent dispatches against
+  // the same agent with the same idempotency_key (default) and grades the
+  // cross-response set instead of a single response. Gated on the
+  // `parallel_dispatch_runner` test-kit contract — runners (or runs) without
+  // it grade the step `not_applicable` so older runners don't fail on
+  // newer storyboard contracts.
+  if (step.parallel_dispatch && !useRawProbe) {
+    const contractsInScope = new Set(options.contracts ?? []);
+    if (!contractsInScope.has(PARALLEL_DISPATCH_CONTRACT)) {
+      const next = getNextStepPreview(step.id, allSteps, context, runState.runnerVars);
+      const detail = `Test-kit contract "${PARALLEL_DISPATCH_CONTRACT}" is not configured on this runner; concurrent-retry grading requires it.`;
+      return {
+        step_id: step.id,
+        phase_id: phaseId,
+        title: step.title,
+        task: step.task,
+        passed: true,
+        skipped: true,
+        skip_reason: 'not_applicable',
+        skip: buildSkip('not_applicable', detail),
+        duration_ms: 0,
+        validations: [],
+        context,
+        next,
+        extraction: { path: 'none' },
+      };
+    }
+    const specError = validateParallelDispatchSpec(step.parallel_dispatch);
+    if (specError) {
+      const next = getNextStepPreview(step.id, allSteps, context, runState.runnerVars);
+      return {
+        step_id: step.id,
+        phase_id: phaseId,
+        title: step.title,
+        task: step.task,
+        passed: false,
+        duration_ms: 0,
+        validations: [
+          {
+            check: 'parallel_dispatch_misconfigured',
+            passed: false,
+            description: specError,
+            json_pointer: null,
+            expected: 'a well-formed parallel_dispatch spec',
+            actual: step.parallel_dispatch,
+            schema_id: null,
+            schema_url: null,
+          },
+        ],
+        context,
+        error: specError,
+        next,
+        extraction: { path: 'none' },
+      };
+    }
+    if (step.parallel_dispatch.mode === 'distributed') {
+      const next = getNextStepPreview(step.id, allSteps, context, runState.runnerVars);
+      const detail =
+        'parallel_dispatch.mode: distributed is not implemented in @adcp/sdk; use process_local for in-process grading.';
+      return {
+        step_id: step.id,
+        phase_id: phaseId,
+        title: step.title,
+        task: step.task,
+        passed: true,
+        skipped: true,
+        skip_reason: 'not_applicable',
+        skip: buildSkip('not_applicable', detail),
+        duration_ms: 0,
+        validations: [],
+        context,
+        next,
+        extraction: { path: 'none' },
+      };
+    }
+  }
 
   // Capture the ISO timestamp immediately before the step's AdCP request
   // dispatch. `upstream_traffic` validations use this as the default
@@ -3024,38 +3105,87 @@ async function executeStep(
     // lands, key the capture off the negotiated transport instead.
     const captureA2a = options.protocol === 'a2a';
     let a2aCaptures: RawHttpCapture[] | undefined;
-    const dispatch = () =>
-      executeStoryboardTask(client, effectiveStep.task, request, {
-        skipIdempotencyAutoInject: testsMissingIdempotencyKey,
+    if (step.parallel_dispatch) {
+      // Fan out N concurrent dispatches via the SDK client. All dispatches
+      // share the runner-minted idempotency_key (default) so the seller
+      // sees one logical request and resolves the race deterministically.
+      //
+      // Known limitation: `dispatchWithBarrier` uses `Promise.race` against a
+      // timer; when the barrier wins, the underlying SDK request is NOT
+      // aborted — it continues to completion against the seller. The runner
+      // reports the dispatch as `timed_out`, but a late-arriving success
+      // can still land on the seller's idempotency cache. Storyboard
+      // authors writing follow-up steps that observe seller state after a
+      // barrier timeout should account for this race.
+      const started = Date.now();
+      crossResponses = await runParallelDispatches(client, effectiveStep.task, request, {
+        spec: step.parallel_dispatch,
+        keyMinter: generateIdempotencyKey,
+        correlationPrefix: step.id,
       });
-    const run = await runStep(step.title, effectiveStep.task, async () => {
-      if (!captureA2a) return dispatch();
-      try {
-        const { result: dispatchResult, captures } = await withRawResponseCapture(dispatch);
-        a2aCaptures = captures;
-        return dispatchResult;
-      } catch (err) {
-        // `withRawResponseCapture` attaches partial captures to the
-        // thrown error so we still get the wire-shape envelope when
-        // the SDK threw mid-parse (e.g. agent emitted malformed JSON).
-        // Bare-throw cases (network errors, no captures attached)
-        // leave `a2aCaptures` undefined and the validator self-skips.
-        const partial = getCapturesFromError(err);
-        if (partial) a2aCaptures = partial;
-        throw err;
-      }
-    });
-    taskResult = run.result;
-    stepResult = run.step;
-    if (captureA2a && a2aCaptures) {
-      a2aEnvelope = parseLastA2aMessageSendCapture(a2aCaptures);
-    }
-    if (taskResult) {
-      responseRecord = {
-        transport: options.protocol === 'a2a' ? 'a2a' : 'mcp',
-        payload: redactSecrets(taskResult.data ?? taskResult.error ?? null),
-        duration_ms: stepResult.duration_ms,
+      const durationMs = Date.now() - started;
+      // Representative TaskResult is ALWAYS `dispatches[0]` — pinning the
+      // representative to a fixed index keeps the aggregation loop's `i=1`
+      // start aligned (every dispatch graded exactly once). Picking the
+      // "best" resolved arm would double-count whichever dispatch won and
+      // skip dispatches[0] from per-response grading entirely.
+      const firstDispatch = crossResponses.dispatches[0];
+      const allTimedOut = crossResponses.dispatches.every(d => d.timed_out);
+      const barrierTimeoutError = 'parallel_dispatch_barrier_timeout: no dispatch resolved within barrier_timeout_ms';
+      taskResult = firstDispatch?.taskResult ?? {
+        success: false,
+        ...(allTimedOut && { error: barrierTimeoutError }),
       };
+      // Pass/fail is derived from the cross-response set rather than any
+      // single arm: the step passes when at least one dispatch resolved
+      // (cross-response validations then grade the race outcome). All-
+      // timed-out is a hard failure regardless of validations.
+      stepResult = {
+        duration_ms: durationMs,
+        passed: !allTimedOut && crossResponses.resolved.length > 0,
+        ...(allTimedOut && { error: barrierTimeoutError }),
+      };
+      if (taskResult) {
+        responseRecord = {
+          transport: options.protocol === 'a2a' ? 'a2a' : 'mcp',
+          payload: redactSecrets(taskResult.data ?? taskResult.error ?? null),
+          duration_ms: durationMs,
+        };
+      }
+    } else {
+      const dispatch = () =>
+        executeStoryboardTask(client, effectiveStep.task, request, {
+          skipIdempotencyAutoInject: testsMissingIdempotencyKey,
+        });
+      const run = await runStep(step.title, effectiveStep.task, async () => {
+        if (!captureA2a) return dispatch();
+        try {
+          const { result: dispatchResult, captures } = await withRawResponseCapture(dispatch);
+          a2aCaptures = captures;
+          return dispatchResult;
+        } catch (err) {
+          // `withRawResponseCapture` attaches partial captures to the
+          // thrown error so we still get the wire-shape envelope when
+          // the SDK threw mid-parse (e.g. agent emitted malformed JSON).
+          // Bare-throw cases (network errors, no captures attached)
+          // leave `a2aCaptures` undefined and the validator self-skips.
+          const partial = getCapturesFromError(err);
+          if (partial) a2aCaptures = partial;
+          throw err;
+        }
+      });
+      taskResult = run.result;
+      stepResult = run.step;
+      if (captureA2a && a2aCaptures) {
+        a2aEnvelope = parseLastA2aMessageSendCapture(a2aCaptures);
+      }
+      if (taskResult) {
+        responseRecord = {
+          transport: options.protocol === 'a2a' ? 'a2a' : 'mcp',
+          payload: redactSecrets(taskResult.data ?? taskResult.error ?? null),
+          duration_ms: stepResult.duration_ms,
+        };
+      }
     }
   }
 
@@ -3104,6 +3234,13 @@ async function executeStep(
   if (step.expect_error) {
     // Step passes when the task fails (returns an error)
     passed = !taskResult?.success || !!stepResult.error;
+  } else if (crossResponses) {
+    // Parallel-dispatch step: pass/fail is driven by the cross-response
+    // set, not the representative arm. The representative is pinned to
+    // `dispatches[0]` (which may itself have failed under the race) so
+    // gating on its `.success` would false-fail steps where later arms
+    // resolved correctly. Validations grade the actual race outcome.
+    passed = stepResult.passed;
   } else {
     passed = stepResult.passed && (taskResult?.success ?? false);
   }
@@ -3154,6 +3291,7 @@ async function executeStep(
       ...(a2aEnvelope && { a2aEnvelope }),
       ...(upstreamTraffic && { upstreamTraffic }),
       ...(step.sample_request && { storyboardStep: { sample_request: step.sample_request } }),
+      ...(crossResponses && { crossResponses }),
       ...(() => {
         // Walk back through the run's captured A2A envelopes and use
         // the most recent prior step's envelope as the comparison
@@ -3174,6 +3312,45 @@ async function executeStep(
       })(),
     };
     validations = runValidations(resolvedValidations, vctx);
+
+    // Parallel-dispatch aggregation: per-response checks (`response_schema`,
+    // `field_present`, `error_code`, etc.) declared by the storyboard MUST
+    // grade against every dispatch's resolved response, not just the
+    // representative one. Re-run each non-cross-response validation against
+    // each dispatch's TaskResult and append the additional results so the
+    // step's overall pass/fail reflects the full fan-out. The first run
+    // (above) already covers dispatch[0]; this loop covers dispatches[1..N].
+    if (crossResponses && crossResponses.dispatches.length > 1) {
+      const perResponseValidations = resolvedValidations.filter(
+        v => v.check !== 'cross_response_field_equal' && v.check !== 'cross_response_count_distinct'
+      );
+      for (let i = 1; i < crossResponses.dispatches.length; i++) {
+        const d = crossResponses.dispatches[i];
+        if (!d || !d.taskResult) continue;
+        const dispatchCtx: ValidationContext = {
+          ...vctx,
+          taskResult: d.taskResult,
+          // Per-dispatch responseRecord stays minimal — the redacted payload
+          // captures enough for failure attribution without bloating success.
+          ...(responseRecord && {
+            response: {
+              ...responseRecord,
+              payload: redactSecrets(d.taskResult.data ?? d.taskResult.error ?? null),
+              duration_ms: d.duration_ms,
+            },
+          }),
+        };
+        // Drop crossResponses on the per-dispatch context so cross-response
+        // checks don't re-fire here (they already ran once above on the
+        // representative dispatch and produced their single result).
+        delete dispatchCtx.crossResponses;
+        const dispatchResults = runValidations(perResponseValidations, dispatchCtx).map(r => ({
+          ...r,
+          description: `[dispatch ${d.correlation_id}] ${r.description}`,
+        }));
+        validations.push(...dispatchResults);
+      }
+    }
   }
 
   // Persist the captured A2A envelope keyed by step id so cross-step

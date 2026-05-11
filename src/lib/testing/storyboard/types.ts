@@ -531,6 +531,17 @@ export interface StoryboardStep {
   expect_min_deliveries?: number;
   /** Signature-tag sanity check for `expect_webhook_signature_valid`. Default `adcp/webhook-signing/v1`. */
   require_tag?: string;
+  /**
+   * Fan-out spec for parallel-dispatch steps. When set, the runner fires
+   * `count` concurrent dispatches of this step (single-process,
+   * `Promise.all`) against the same agent, then aggregates per-response
+   * checks across the resolved set and grades the `cross_response_*`
+   * checks declared in `validations`. Requires the
+   * `parallel_dispatch_runner` test-kit contract to be in scope — runners
+   * (or runs) without it grade the step `not_applicable`. See
+   * {@link ParallelDispatchSpec}.
+   */
+  parallel_dispatch?: ParallelDispatchSpec;
 }
 
 export type StoryboardValidationCheck =
@@ -609,7 +620,77 @@ export type StoryboardValidationCheck =
    * runner-output-contract.yaml v2.0.0, storyboard-schema.yaml >
    * "upstream_traffic".
    */
-  | 'upstream_traffic';
+  | 'upstream_traffic'
+  /**
+   * Cross-response: every resolved response from a `parallel_dispatch` step
+   * carries the same value at the named `path`. Used to assert
+   * first-insert-wins on a concurrent retry — two parallel `create_media_buy`
+   * calls with the same `idempotency_key` must resolve to the same
+   * `media_buy_id`. Fails when any two resolved responses disagree, or when
+   * fewer than 2 dispatches resolved successfully. Spec:
+   * test-kits/parallel-dispatch-runner.yaml; adcp#4435 (rule 9 / rule 10).
+   */
+  | 'cross_response_field_equal'
+  /**
+   * Cross-response: the cardinality of distinct values at `path` across all
+   * resolved responses from a `parallel_dispatch` step is in
+   * `allowed_values`. Used to assert "exactly one resource was created" —
+   * `allowed_values: [1]` with `path: media_buy_id` catches a seller that
+   * raced the INSERT and created two resources from one logical create.
+   * Fails when the distinct count is outside `allowed_values`, or when no
+   * dispatch resolved successfully. Spec:
+   * test-kits/parallel-dispatch-runner.yaml.
+   */
+  | 'cross_response_count_distinct';
+
+/**
+ * Configuration for a step that fans out to N concurrent dispatches against
+ * the same agent, returning the cross-response set for assertion. Drives the
+ * `concurrent_retry` phase of the idempotency storyboard (rule 9 /
+ * first-insert-wins), where two `create_media_buy` calls with the same
+ * `idempotency_key` race the seller's INSERT and must resolve to one
+ * resource.
+ *
+ * Modes:
+ *   - `process_local` (default): fire all dispatches via `Promise.all`
+ *     through the SDK's batch primitive before awaiting any response.
+ *     Single-process, event-loop concurrent — sufficient to exercise the
+ *     seller's INSERT race per the contract YAML's
+ *     `not_required_to_synthesize_packet_schedule` note.
+ *   - `distributed` (future): barrier-synced workers across processes for
+ *     true network-level concurrency. Defers to a later spec phase; runners
+ *     that do not implement it grade the step `not_applicable`.
+ *
+ * Spec source: `test-kits/parallel-dispatch-runner.yaml`.
+ */
+export interface ParallelDispatchSpec {
+  /**
+   * How many parallel dispatches to fire. Per spec, `count_min: 2`,
+   * `count_max: 10`. Values outside that range are rejected at run time as a
+   * `parallel_dispatch_misconfigured` step error rather than silently clamped.
+   */
+  count: number;
+  /**
+   * When `true` (default), every dispatch shares the same fresh
+   * `idempotency_key` (the runner mints one UUID and reuses it across the
+   * fan-out). When `false`, every dispatch gets its own fresh key — useful
+   * for soak tests that need parallelism without the race semantics.
+   */
+  same_idempotency_key?: boolean;
+  /**
+   * Maximum total wall-clock time, in milliseconds, the runner waits for all
+   * dispatches to resolve (including any IDEMPOTENCY_IN_FLIGHT retries).
+   * Defaults to `5000`. A dispatch that doesn't terminate within the budget
+   * is marked timed-out; the step grades the surviving set and reports
+   * `parallel_dispatch_barrier_timeout` for the missing arms.
+   */
+  barrier_timeout_ms?: number;
+  /**
+   * Dispatch coordination mode (see interface JSDoc). Defaults to
+   * `'process_local'`.
+   */
+  mode?: 'process_local' | 'distributed';
+}
 
 /**
  * Path/value match predicate for `upstream_traffic.payload_must_contain`.
