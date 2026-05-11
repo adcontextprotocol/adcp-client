@@ -1,5 +1,58 @@
 # Changelog
 
+## 6.19.1
+
+### Patch Changes
+
+- ca63b64: Bump AdCP pin to 3.0.11. Pulls in adcontextprotocol/adcp#4365 (3.0.11 release): collapses the `key_reuse_conflict` phase of `universal/idempotency.yaml` into `replay_same_payload` as a fourth step so the shared `$generate:uuid_v4#replay_key` alias stays within a single phase. This is the companion storyboard restructure for the runner-side phase-boundary alias reset shipped in 6.20.0 (#1658 / closes #1657): with the reset in place, a separate phase would mint a fresh UUID and the seller would treat the conflict step as a new request, masking the IDEMPOTENCY_CONFLICT assertion. No schema shape changes; regen diff is metadata only (adcp_version strings + entity-hydration source version comment).
+- 9ebb11f: fix(cli): make `--allow-http` work end-to-end for local dev loops
+
+  Two paths previously ignored `--allow-http` and broke connections to `http://localhost` agents:
+  - `MCPOAuthProvider.validateResourceURL` rejected non-HTTPS RFC 9728 resource URLs unconditionally (`Server at http://localhost:.../mcp advertised non-HTTPS resource URL: http://...`). The provider now accepts an `allowHttp` option that lifts the HTTPS check, and the CLI threads `--allow-http` through to `createCLIOAuthProvider` / `ensureOAuthTokensForAlias`.
+  - `detectProtocol` refused to probe `http://` agent cards because the probe policy reads `ADCP_ALLOW_INTERNAL_PROBES` once at module load (`Failed to detect protocol: Refusing to fetch non-HTTPS URL: http://localhost:.../.well-known/agent.json`). The CLI now sets that env var before any library require when `--allow-http` is in argv, so the existing well-tested gate widens consistently.
+
+  Default behavior is unchanged: HTTPS is required unless the caller explicitly opts in.
+
+- e1ca951: fix(diagnose-auth): downgrade H1 for spec-correct parent-path resource identifiers (#1666)
+
+  `adcp diagnose-auth` H1 ("Resource URL mismatch between well-known and agent host") previously fired as `[likely]` whenever the PRM `resource` didn't string-equal the agent URL. Per **RFC 9728 §2 + §3.2** the `resource` value is the canonical resource identifier the AS binds tokens to (the **RFC 9068 §3** `aud` claim target), not the request URI — and **RFC 8707 §2** allows any absolute URI with an optional path component. A parent-path resource identifier covering multiple endpoints is the canonical pattern, not a bug. H1 now distinguishes four cases:
+  - **origin mismatch** (different scheme/host/port) → still `likely` (real bug).
+  - **agent URL is a sub-path under the advertised resource identifier** → `ruled_out` with an explanation that this is the intended pattern (e.g. PRM `resource=http://localhost:3000/figma` for an agent at `http://localhost:3000/figma/mcp`).
+  - **same origin, agent path is a sibling/disjoint segment** → `possible` with non-prescriptive evidence (the AS may legitimately host multiple resource identifiers on the same origin; we can't tell without inspecting AS aud-binding policy).
+  - **`resource` is not a parseable URL** (e.g. opaque URN) → `possible` with a pointer to RFC 8707 §2's absolute-URI requirement.
+
+  Exact match continues to be `ruled_out`. Surfaced during PR #1665 verification against a figma seller agent whose RFC-9728-compliant PRM was flagged as a likely issue.
+
+- 2bf4da5: fix: reset alias cache at phase boundaries in storyboard runner (#1657)
+
+  `$generate:uuid_v4#alias` placeholders now produce fresh UUIDs at each phase boundary instead of leaking the same cached UUID across phases. Independent setup phases that share an alias name (e.g., two phases both using `#setup`) previously received the same UUID, causing sellers to return stale state from their idempotency cache on the second phase. The fix creates a new context object identity at each phase entry (after the `shouldSkipPhase` skip), dropping the WeakMap-keyed alias cache while preserving all `$context.*` values as plain spread properties.
+
+- 94fc0e5: Fix(types): restore typed Zod for per-asset-type `*AssetRequirementsSchema`
+
+  Regression in 6.19.0 (introduced by #1654): the 12 `*AssetRequirementsSchema`
+  exports (`ImageAssetRequirementsSchema`, `TextAssetRequirementsSchema`, …) and
+  the parent `AssetRequirementsSchema` union were emitted as `z.any()` stubs, and
+  the `requirements` field on every `Individual*AssetSchema` / `Group*AssetSchema`
+  slot collapsed to `z.optional(z.any())`. TypeScript types were unaffected.
+
+  Root cause: #1654's codegen post-processor injects
+  `import type { ImageAssetRequirements, … } from './core.generated';` at the top
+  of `tools.generated.ts` so the file typechecks standalone. The Zod codegen step
+  concatenates `core.generated.ts` + `tools.generated.ts` and passes the combined
+  source to `ts-to-zod`, but `ts-to-zod` still parses the cross-file `import type`
+  block and treats those names as external — emitting `z.any()` stubs even though
+  the actual interfaces are present in the same source.
+
+  Fix: strip cross-file `import type { … } from './core.generated';` declarations
+  from `tools.generated.ts` before merging into the combined source. The types
+  are already inlined from `core.generated.ts`, so the import is redundant.
+
+  Restores field-level runtime validation on `Individual*AssetSchema.requirements`
+  and re-exports the typed per-asset-type requirements schemas that consumers
+  like agentic-api had imported in 6.18. Added a regression test in
+  `test/lib/zod-schemas.test.js` that asserts the schemas reject wrong-typed
+  fields (a `z.any()` regression would silently accept them).
+
 ## 6.19.0
 
 ### Minor Changes
