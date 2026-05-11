@@ -887,4 +887,39 @@ describe('Zod Schema Validation', () => {
     const valid = geo.safeParse({ metro: { NYC: true } });
     assert.ok(valid.success, 'metro record should accept boolean values');
   });
+
+  test('per-asset-type requirements schemas are typed (not z.any)', async () => {
+    if (!schemas) {
+      schemas = await import('../../dist/lib/types/schemas.generated.js');
+    }
+
+    // Regression guard for #1659: ts-to-zod was emitting z.any() stubs for the 12
+    // *AssetRequirementsSchema exports when tools.generated.ts referenced them via
+    // a cross-file `import type` block. Verify both that the exports exist and that
+    // they actually validate the field-level shape (z.any() would pass anything).
+    const exports = [
+      ['ImageAssetRequirementsSchema', 'max_animation_duration_ms', 'aspect_ratio'],
+      ['VideoAssetRequirementsSchema', 'max_duration_ms', 'frame_rates'],
+      ['TextAssetRequirementsSchema', 'max_length', 'prohibited_terms'],
+    ];
+
+    for (const [name, knownField] of exports) {
+      const schema = schemas[name];
+      assert.ok(schema, `${name} should be exported`);
+      // z.any() would accept a wrong-shape value. A typed object schema rejects it.
+      const wrongShape = schema.safeParse({ [knownField]: { not: 'the right type' } });
+      assert.ok(
+        !wrongShape.success,
+        `${name} should reject wrong-typed ${knownField}; if this passes, the schema is z.any()`
+      );
+    }
+
+    // AssetRequirementsSchema must be a real union of the 12 typed schemas — not
+    // a union of z.any() (which would degenerate to z.any() and validate any value
+    // including a primitive). passthrough means stray keys are accepted, so we
+    // probe with a non-object value instead.
+    assert.ok(schemas.AssetRequirementsSchema, 'AssetRequirementsSchema should be exported');
+    const bogus = schemas.AssetRequirementsSchema.safeParse('not-an-object');
+    assert.ok(!bogus.success, 'AssetRequirementsSchema should reject non-object values');
+  });
 });
