@@ -67,6 +67,7 @@ export function validateStoryboardShape(storyboard: Storyboard): void {
     for (const step of phase.steps) {
       resolveContributesShorthand(storyboard.id, phase, step);
       validateFixtureForMutatingStep(storyboard.id, phase, step);
+      validateOmitFlagCoherence(storyboard.id, phase, step);
       validateContextOutputs(storyboard.id, phase, step);
       validatePeerSubstitutesFor(storyboard.id, phase, step);
     }
@@ -180,6 +181,29 @@ function validateFixtureForMutatingStep(
       `write payloads. Author sample_request in the step or, for intentionally malformed ` +
       `payloads, set expect_error: true.`
   );
+}
+
+/**
+ * `omit_account: true` must be paired with `expect_error: true`.
+ *
+ * An accountless `create_media_buy` will always be rejected by a spec-compliant
+ * seller; a step that sets `omit_account` without `expect_error` will be graded
+ * as a failure (not a controlled negative test), producing a misleading
+ * compliance result. Fail loud at parse time so the author sees the problem
+ * during storyboard load, not at run time.
+ */
+function validateOmitFlagCoherence(
+  storyboardId: string,
+  phase: Storyboard['phases'][number],
+  step: Storyboard['phases'][number]['steps'][number]
+): void {
+  if (step.omit_account && step.expect_error !== true) {
+    throw new Error(
+      `[${storyboardId}] phase '${phase.id}' step '${step.id}': ` +
+        `omit_account: true requires expect_error: true — an accountless ` +
+        `create_media_buy will always be rejected by a spec-compliant seller.`
+    );
+  }
 }
 
 /**

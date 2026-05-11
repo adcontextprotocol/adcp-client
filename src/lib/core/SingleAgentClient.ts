@@ -1187,9 +1187,11 @@ export class SingleAgentClient {
 
     // Validate request params against schema. When compliance testing has
     // asked us to suppress idempotency auto-injection or account validation,
-    // also skip the client-side required-field check — the whole point of
-    // the test is to send a missing-field request through and observe the
-    // server's response.
+    // skip the entire Zod schema parse — the required field is intentionally
+    // absent and Zod would fail on it too. This matches the pre-existing
+    // `skipIdempotencyAutoInject` behavior and is acceptable because both
+    // flags are @internal and only set by the storyboard runner for
+    // schema_validation steps.
     if (!options?.skipIdempotencyAutoInject && !options?.skipAccountValidation) {
       this.validateRequest(taskType, normalizedParams);
     }
@@ -1212,8 +1214,9 @@ export class SingleAgentClient {
 
     // Schema-driven pre-send validation runs on the unadapted v3 shape so
     // wire-format adapters (e.g. adaptGetProductsRequestForV2) don't strip
-    // v3-only fields out from under the v3 bundled schema. Skip when the
-    // caller has suppressed required-field validation for compliance testing.
+    // v3-only fields out from under the v3 bundled schema. Skip the entire
+    // Zod parse when compliance testing has suppressed required-field
+    // validation — the missing field is intentional and Zod would reject it.
     if (!options?.skipIdempotencyAutoInject && !options?.skipAccountValidation) {
       this.executor.validateRequest(taskType, normalizedParams);
     }
@@ -2203,8 +2206,9 @@ export class SingleAgentClient {
 
       // Schema-driven pre-send validation runs on the unadapted v3 shape so
       // wire-format adapters (e.g. adaptGetProductsRequestForV2) don't strip
-      // v3-only fields out from under the v3 bundled schema. Skip when the
-      // caller has suppressed required-field validation for compliance testing.
+      // v3-only fields out from under the v3 bundled schema. Skip the entire
+      // Zod parse when compliance testing has suppressed required-field
+      // validation — the missing field is intentional and Zod would reject it.
       if (!options?.skipIdempotencyAutoInject && !options?.skipAccountValidation) {
         this.executor.validateRequest(taskName, normalizedParams);
       }

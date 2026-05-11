@@ -2954,7 +2954,9 @@ async function executeStep(
 
   // Analogous to `testsMissingIdempotencyKey`: when a step sets
   // `omit_account: true` the runner has already suppressed account synthesis
-  // in `applyBrandInvariant` (above). Track the flag here so the raw-probe
+  // in `applyBrandInvariant` (above — ordering is load-bearing: this must
+  // come after `applyBrandInvariant` so the comment "above" stays accurate
+  // if either block is reordered). Track the flag here so the raw-probe
   // defense-in-depth path is also triggered and no SDK-layer normalization
   // can silently re-inject an account before the wire call.
   const testsMissingAccount = step.omit_account === true && effectiveStep.task === 'create_media_buy';

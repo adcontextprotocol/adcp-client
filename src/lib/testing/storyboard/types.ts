@@ -472,7 +472,18 @@ export interface StoryboardStep {
    * exactly as authored in `sample_request`.
    *
    * Only applicable to `create_media_buy` (the sole tool where `account` is
-   * required by `normalizeRequestParams`). No-op on other task types.
+   * required by `normalizeRequestParams`). Setting it on any other task type
+   * has no effect and is ignored.
+   *
+   * **Caveat:** this flag does not suppress `account` enrichment performed by
+   * `request-builder.ts` for tasks such as `update_media_buy`. If a future
+   * storyboard step needs to test missing-account rejection on a
+   * request-builder-enriched task, the builder will also need updating.
+   *
+   * Must be paired with `expect_error: true` — the loader rejects steps that
+   * set `omit_account: true` without the flag, because an accountless
+   * `create_media_buy` will always fail and a missing `expect_error` produces
+   * a misleading compliance result.
    *
    * Default (false) matches buyer-agent behavior: every `create_media_buy`
    * request carries an `account` so handlers under test run against the
