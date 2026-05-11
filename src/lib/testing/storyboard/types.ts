@@ -1445,6 +1445,74 @@ export interface SchemaValidationError {
 }
 
 // ────────────────────────────────────────────────────────────
+// Runner notices
+// ────────────────────────────────────────────────────────────
+
+/**
+ * Stable machine-readable identifiers for runner notices. Adding a new value
+ * here is a wire-surface change — coordinate with the upstream spec or open
+ * an issue before extending. Keep in sync with the `RunnerNotice.code` field.
+ *
+ * Spec: adcp-client#1704.
+ */
+export type NoticeCode =
+  /** Agent lacks `request_signing.supported: true`; signing becomes required in AdCP 4.0. */
+  | 'request_signing_required_in_4_0'
+  /** Agent advertises `webhook_signing.legacy_hmac_fallback: true`; removed in AdCP 4.0. */
+  | 'legacy_hmac_fallback_removed_in_4_0';
+
+/**
+ * Severity of a runner notice. Deliberately separate from `ObservationSeverity`
+ * (which grades behavioral quality). Notices describe the agent's _protocol
+ * compliance trajectory_ — a different axis: something is fine today but the
+ * spec already signals a future state change.
+ *
+ * - `info` — purely informational; no action required now.
+ * - `deprecation` — SHOULD migrate; the field/claim is deprecated in the current
+ *   spec version.
+ * - `future_required` — behavior is optional today but will be mandatory in a
+ *   named future AdCP version (see `effective_adcp_version`).
+ */
+export type NoticeSeverity = 'info' | 'deprecation' | 'future_required';
+
+/**
+ * A structured advisory produced by the runner for a specific storyboard run.
+ * Notices describe protocol compliance trajectory (deprecations, upcoming
+ * requirements) rather than behavioral quality (which is `AdvisoryObservation`'s
+ * domain). Intended for CI gates and dashboards that need machine-readable badges
+ * like "DEPRECATION" or "FUTURE-REQUIRED" without parsing prose strings.
+ *
+ * `ComplianceResult.notices` aggregates these across all storyboard runs,
+ * deduplicated by `code`.
+ *
+ * Spec: adcp-client#1704.
+ */
+export interface RunnerNotice {
+  severity: NoticeSeverity;
+  /** Stable machine-readable identifier. Dashboards key on this for badge routing. */
+  code: NoticeCode;
+  /** Human-readable explanation; first 200 chars suitable for tabular rendering. */
+  message: string;
+  /**
+   * AdCP protocol version at which the behavior becomes mandatory (for
+   * `future_required`) or was formally removed (for `deprecation`).
+   * e.g. `'4.0'`. Absent when not version-bounded.
+   */
+  effective_adcp_version?: string;
+  /**
+   * When relevant, the structured requirement name (matches
+   * `RunnerSkipResult.requirement`).
+   */
+  requirement?: RequirementName;
+  /**
+   * Dot-path into the agent's capability response that motivated the notice
+   * (e.g. `request_signing.supported`). Use as a human-readable pointer only;
+   * not guaranteed to resolve via JSON Pointer.
+   */
+  capability_path?: string;
+}
+
+// ────────────────────────────────────────────────────────────
 // Results
 // ────────────────────────────────────────────────────────────
 
@@ -2014,6 +2082,16 @@ export interface StoryboardResult {
    * `observable: false` and zeroed counters.
    */
   strict_validation_summary?: StrictValidationSummary;
+  /**
+   * Structured protocol-compliance advisories produced for this storyboard
+   * run. Each notice carries a stable `code` (machine-readable, suitable for
+   * CI badge routing) and a `severity` (`deprecation` | `future_required`).
+   * Always present; empty array when no notices were triggered.
+   *
+   * `ComplianceResult.notices` aggregates across all storyboard runs,
+   * deduplicated by `code`. Spec: adcp-client#1704.
+   */
+  notices: RunnerNotice[];
 }
 
 export interface StrictValidationSummary {

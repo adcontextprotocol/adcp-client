@@ -78,6 +78,7 @@ import type {
   RunnerResponseRecord,
   RequirementName,
   RunnerSkipReason,
+  RunnerNotice,
   StepAuthDirective,
   Storyboard,
   StoryboardStep,
@@ -855,6 +856,7 @@ function buildCapabilityUnsupportedResult(
       strict_only_failures: 0,
       lenient_also_failed: 0,
     },
+    notices: [],
   };
 }
 
@@ -937,6 +939,7 @@ function buildRequirementUnmetResult(
       strict_only_failures: 0,
       lenient_also_failed: 0,
     },
+    notices: [],
   };
 }
 
@@ -1122,6 +1125,7 @@ export function buildDiscoveryFailedResult(
       strict_only_failures: 0,
       lenient_also_failed: 0,
     },
+    notices: [],
   };
 }
 
@@ -1184,7 +1188,83 @@ function buildRequiredToolsMissingResult(
       strict_only_failures: 0,
       lenient_also_failed: 0,
     },
+    notices: [],
   };
+}
+
+/**
+ * Collect protocol-compliance notices for a storyboard run based on the
+ * agent's declared capabilities. Returns an empty array when rawCaps is
+ * absent (standalone runner without pre-fetched profile).
+ *
+ * Currently emits two spec-grounded notices (adcp-client#1704):
+ *
+ * - `request_signing_required_in_4_0`: `request_signing.supported` is absent
+ *   or false on the signed_requests storyboard. Signing is required for
+ *   spend-committing operations in AdCP 4.0.
+ *
+ * - `legacy_hmac_fallback_removed_in_4_0`: agent claims
+ *   `webhook_signing.legacy_hmac_fallback: true`, which is removed in 4.0.
+ *
+ * Note: a third notice (`signed_requests_specialism_deprecated`) is deferred
+ * pending upstream deprecation of the `'signed-requests'` specialism value in
+ * adcontextprotocol/adcp#4418 — the value is still active in the spec.
+ */
+function collectCapabilityNotices(storyboard: Storyboard, rawCaps: unknown): RunnerNotice[] {
+  const notices: RunnerNotice[] = [];
+  if (!rawCaps || typeof rawCaps !== 'object') return notices;
+  const caps = rawCaps as Record<string, unknown>;
+
+  // Notice: request_signing required in AdCP 4.0.
+  // Fired when this is the signed_requests storyboard and the agent hasn't
+  // declared request_signing support. The storyboard is identified by id OR
+  // by the presence of a request_signing_probe step (mirrors the implicit-
+  // require detection in detectImplicitRequires for PR #1703's gate).
+  const isSignedRequestsStoryboard =
+    storyboard.id === 'signed_requests' ||
+    storyboard.phases.some(p => p.steps.some(s => s.task === 'request_signing_probe'));
+  if (isSignedRequestsStoryboard) {
+    const requestSigning = caps['request_signing'] as Record<string, unknown> | undefined;
+    if (requestSigning?.['supported'] !== true) {
+      notices.push({
+        severity: 'future_required',
+        code: 'request_signing_required_in_4_0',
+        message:
+          'RFC 9421 request signing (`request_signing.supported: true`) is not advertised ' +
+          'but will be required for spend-committing operations in AdCP 4.0.',
+        effective_adcp_version: '4.0',
+        capability_path: 'request_signing.supported',
+      });
+    }
+  }
+
+  // Notice: legacy_hmac_fallback removed in AdCP 4.0.
+  // Scoped to webhook-related storyboards (id matches /webhook/i or the storyboard
+  // contains webhook assertion steps) — the flag only affects webhook delivery paths
+  // and emitting it on unrelated storyboards would be a scope mismatch.
+  const WEBHOOK_STEP_TASKS = new Set([
+    'expect_webhook',
+    'expect_webhook_retry_keys_stable',
+    'expect_webhook_signature_valid',
+  ]);
+  const isWebhookRelatedStoryboard =
+    /webhook/i.test(storyboard.id) || storyboard.phases.some(p => p.steps.some(s => WEBHOOK_STEP_TASKS.has(s.task)));
+  if (isWebhookRelatedStoryboard) {
+    const webhookSigning = caps['webhook_signing'] as Record<string, unknown> | undefined;
+    if (webhookSigning?.['legacy_hmac_fallback'] === true) {
+      notices.push({
+        severity: 'deprecation',
+        code: 'legacy_hmac_fallback_removed_in_4_0',
+        message:
+          '`webhook_signing.legacy_hmac_fallback: true` is deprecated and removed in AdCP 4.0. ' +
+          'Migrate webhook signature verification to RFC 9421.',
+        effective_adcp_version: '4.0',
+        capability_path: 'webhook_signing.legacy_hmac_fallback',
+      });
+    }
+  }
+
+  return notices;
 }
 
 /**
@@ -1313,6 +1393,13 @@ async function executeStoryboardPass(
   // implicit gate, storyboards that name the receiver but run without
   // one would silently ship literal mustache tokens on the wire and
   // get rejected by 3.0-strict sellers as `INVALID_REQUEST: relative URL`.
+  // Pre-flight notice collection. Uses options._profile (set by the comply()
+  // pipeline before calling runStoryboard) so the notices are available on
+  // early-return results (requirement-unmet, capability-unsupported). In the
+  // standalone runner path options._profile may be undefined; notices will be
+  // collected again from the fully-fetched profile at result-build time.
+  const preflightNotices = collectCapabilityNotices(storyboard, options._profile?.raw_capabilities);
+
   const declared = storyboard.requires ?? [];
   const implicit = detectImplicitRequires(storyboard);
   const allRequires = [...declared, ...implicit.filter(r => !declared.includes(r))];
@@ -1320,7 +1407,10 @@ async function executeStoryboardPass(
     const unmet = checkRequires(allRequires, options);
     if (unmet) {
       if (!options._client) await closeConnections(options.protocol);
-      return buildRequirementUnmetResult(agentUrls, storyboard, unmet.requirement, unmet.detail);
+      return {
+        ...buildRequirementUnmetResult(agentUrls, storyboard, unmet.requirement, unmet.detail),
+        notices: preflightNotices,
+      };
     }
   }
 
@@ -1347,7 +1437,7 @@ async function executeStoryboardPass(
           `Capability predicate \`${path} === ${JSON.stringify(equals)}\` not satisfied: ` +
           `agent declared ${JSON.stringify(actual)}.`;
         if (!options._client) await closeConnections(options.protocol);
-        return buildCapabilityUnsupportedResult(agentUrls, storyboard, detail);
+        return { ...buildCapabilityUnsupportedResult(agentUrls, storyboard, detail), notices: preflightNotices };
       }
     }
   }
@@ -1367,11 +1457,14 @@ async function executeStoryboardPass(
     const hasAnyRequired = storyboard.required_tools.some(t => options.agentTools!.includes(t));
     if (!hasAnyRequired) {
       if (!options._client) await closeConnections(options.protocol);
-      return buildRequiredToolsMissingResult(
-        agentUrls,
-        storyboard,
-        `agent does not advertise any of [${storyboard.required_tools.join(', ')}]`
-      );
+      return {
+        ...buildRequiredToolsMissingResult(
+          agentUrls,
+          storyboard,
+          `agent does not advertise any of [${storyboard.required_tools.join(', ')}]`
+        ),
+        notices: preflightNotices,
+      };
     }
   }
 
@@ -2286,6 +2379,10 @@ async function executeStoryboardPass(
   const schemasUsed = collectSchemasUsed(phaseResults);
   const strictSummary = summarizeStrictValidation(phaseResults);
   const validationsNotApplicable = countValidationsNotApplicable(phaseResults);
+  // Use the fully-fetched profile for notice detection; fall back to pre-flight
+  // notices (which used options._profile) when profile was not re-fetched in
+  // this pass (standalone runner with options._profile pre-set skips the fetch).
+  const notices = collectCapabilityNotices(storyboard, profile?.raw_capabilities ?? options._profile?.raw_capabilities);
   const result: StoryboardResult = {
     storyboard_id: storyboard.id,
     storyboard_title: storyboard.title,
@@ -2308,6 +2405,7 @@ async function executeStoryboardPass(
     ...(schemasUsed.length > 0 ? { schemas_used: schemasUsed } : {}),
     ...(assertionResults.length > 0 ? { assertions: assertionResults } : {}),
     strict_validation_summary: strictSummary,
+    notices,
   };
 
   // Close protocol connections when the runner created its own client. The
@@ -2394,6 +2492,8 @@ async function runMultiPass(
   // readers see a per-pass timeline; de-duplicating would hide a real
   // "passed on pass 1, failed on pass 2" divergence.
   const assertionsAgg = passResults.flatMap(r => r.assertions ?? []);
+  // Notices are identical across passes (same agent, same capabilities); deduplicate by code.
+  const noticesDedup = [...new Map(passResults.flatMap(r => r.notices).map(n => [n.code, n])).values()];
 
   return {
     storyboard_id: storyboard.id,
@@ -2413,6 +2513,7 @@ async function runMultiPass(
     tested_at: new Date().toISOString(),
     ...(schemasDedup.length > 0 ? { schemas_used: schemasDedup } : {}),
     ...(assertionsAgg.length > 0 ? { assertions: assertionsAgg } : {}),
+    notices: noticesDedup,
   };
 }
 

@@ -4,6 +4,7 @@
 
 import type { AgentProfile, TestResult, TestScenario } from '../types';
 import type { AdcpErrorInfo } from '../../core/ConversationTypes';
+import type { RunnerNotice } from '../storyboard/types';
 
 // ============================================================
 // COMPLY: Capability Tracks
@@ -142,6 +143,14 @@ export interface ComplianceResult {
   controller_scenarios?: string[];
   tested_at: string;
   total_duration_ms: number;
+  /**
+   * Protocol-compliance advisories aggregated across all storyboard runs,
+   * deduplicated by `code`. Absent when no notices were triggered. For
+   * per-storyboard notices see `StoryboardResult.notices`.
+   *
+   * Spec: adcp-client#1704.
+   */
+  notices?: RunnerNotice[];
 }
 
 export interface ComplianceSummary {
