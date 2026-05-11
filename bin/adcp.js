@@ -14,6 +14,14 @@
  *   adcp mcp https://agent.example.com/mcp create_media_buy @payload.json --auth $AGENT_TOKEN
  */
 
+// `--allow-http` is the CLI's single switch for local dev loops. The probe
+// policy reads `ADCP_ALLOW_INTERNAL_PROBES` once at module load, so this MUST
+// run before any `require('../dist/lib/...')` below — flipping it later has
+// no effect on `isInternalProbesAllowed()` / `detectProtocol`'s SSRF gate.
+if (process.argv.includes('--allow-http')) {
+  process.env.ADCP_ALLOW_INTERNAL_PROBES = '1';
+}
+
 const { AdCPClient, detectProtocol, usesDeprecatedAssetsField } = require('../dist/lib/index.js');
 const { readFileSync, statSync } = require('fs');
 const path = require('path');
@@ -948,7 +956,10 @@ async function maybeRunInlineOAuth(agentArg, args, { jsonOutput } = {}) {
     const saved = getAgent(agentArg);
     if (!saved) return;
     try {
-      await ensureOAuthTokensForAlias(agentArg, saved.url, { quiet: jsonOutput });
+      await ensureOAuthTokensForAlias(agentArg, saved.url, {
+        quiet: jsonOutput,
+        allowHttp: args.includes('--allow-http'),
+      });
     } catch (err) {
       const hint = `Run: adcp --save-auth ${agentArg} ${saved.url} --oauth to re-register`;
       if (jsonOutput) {
@@ -1006,7 +1017,7 @@ async function maybeRunInlineOAuth(agentArg, args, { jsonOutput } = {}) {
  *
  * @returns The updated saved agent record (with oauth_tokens and oauth_client).
  */
-async function ensureOAuthTokensForAlias(alias, url, { quiet = false } = {}) {
+async function ensureOAuthTokensForAlias(alias, url, { quiet = false, allowHttp = false } = {}) {
   const existing = getAgent(alias);
   if (existing && hasValidOAuthTokens(existing)) {
     if (!quiet) console.log(`Using saved OAuth tokens for '${alias}'.`);
@@ -1030,7 +1041,7 @@ async function ensureOAuthTokensForAlias(alias, url, { quiet = false } = {}) {
   const { StreamableHTTPClientTransport } = require('@modelcontextprotocol/sdk/client/streamableHttp.js');
   const { UnauthorizedError } = require('@modelcontextprotocol/sdk/client/auth.js');
 
-  const oauthProvider = createCLIOAuthProvider(tempAgent, { quiet });
+  const oauthProvider = createCLIOAuthProvider(tempAgent, { quiet, allowHttp });
   const mcpClient = new MCPClient({ name: 'adcp-cli', version: '1.0.0' });
   const transport = new StreamableHTTPClientTransport(new URL(url), { authProvider: oauthProvider });
 
@@ -5044,7 +5055,7 @@ credential material — never sync or commit.
       const { StreamableHTTPClientTransport } = require('@modelcontextprotocol/sdk/client/streamableHttp.js');
       const { UnauthorizedError } = require('@modelcontextprotocol/sdk/client/auth.js');
 
-      const oauthProvider = createCLIOAuthProvider(tempAgent);
+      const oauthProvider = createCLIOAuthProvider(tempAgent, { allowHttp: args.includes('--allow-http') });
       const mcpClient = new MCPClient({ name: 'adcp-cli', version: '1.0.0' });
       const createTransport = () => new StreamableHTTPClientTransport(new URL(url), { authProvider: oauthProvider });
 
@@ -5464,7 +5475,10 @@ credential material — never sync or commit.
         const { StreamableHTTPClientTransport } = require('@modelcontextprotocol/sdk/client/streamableHttp.js');
         const { UnauthorizedError } = require('@modelcontextprotocol/sdk/client/auth.js');
 
-        const oauthProvider = createCLIOAuthProvider(agentConfig, { quiet: jsonOutput });
+        const oauthProvider = createCLIOAuthProvider(agentConfig, {
+          quiet: jsonOutput,
+          allowHttp: args.includes('--allow-http'),
+        });
         const mcpClient = new MCPClient({ name: 'adcp-cli', version: '1.0.0' });
         const createTransport = () =>
           new StreamableHTTPClientTransport(new URL(agentUrl), { authProvider: oauthProvider });
@@ -5594,6 +5608,7 @@ credential material — never sync or commit.
       // Create OAuth provider
       const oauthProvider = createCLIOAuthProvider(agentConfig, {
         quiet: jsonOutput,
+        allowHttp: args.includes('--allow-http'),
       });
 
       // Create MCP client
@@ -5963,7 +5978,10 @@ credential material — never sync or commit.
       const { StreamableHTTPClientTransport } = require('@modelcontextprotocol/sdk/client/streamableHttp.js');
       const { UnauthorizedError } = require('@modelcontextprotocol/sdk/client/auth.js');
 
-      const oauthProvider = createCLIOAuthProvider(agentConfig, { quiet: jsonOutput });
+      const oauthProvider = createCLIOAuthProvider(agentConfig, {
+        quiet: jsonOutput,
+        allowHttp: args.includes('--allow-http'),
+      });
       const mcpClient = new MCPClient({ name: 'adcp-cli', version: '1.0.0' });
       const createTransport = () =>
         new StreamableHTTPClientTransport(new URL(agentUrl), { authProvider: oauthProvider });
