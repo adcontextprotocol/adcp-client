@@ -96,6 +96,14 @@ export interface OAuthProviderConfig {
 
   /** OAuth client metadata (required - use DEFAULT_CLIENT_METADATA as base) */
   clientMetadata: OAuthClientMetadata;
+
+  /**
+   * Allow HTTP resource URLs for non-loopback hosts. Loopback hosts
+   * (localhost, 127.0.0.1, [::1]) are always allowed regardless of this
+   * flag. This mirrors the `allowPrivateIp` option in ClientCredentialsFlow.
+   * Set to true when the CLI `--allow-http` flag is present.
+   */
+  allowHttp?: boolean;
 }
 
 /**

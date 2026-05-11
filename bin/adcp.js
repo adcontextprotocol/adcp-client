@@ -944,11 +944,13 @@ async function maybeRunInlineOAuth(agentArg, args, { jsonOutput } = {}) {
   if (!args.includes('--oauth')) return;
   if (!agentArg) return;
 
+  const allowHttp = args.includes('--allow-http');
+
   if (isAlias(agentArg)) {
     const saved = getAgent(agentArg);
     if (!saved) return;
     try {
-      await ensureOAuthTokensForAlias(agentArg, saved.url, { quiet: jsonOutput });
+      await ensureOAuthTokensForAlias(agentArg, saved.url, { quiet: jsonOutput, allowHttp });
     } catch (err) {
       const hint = `Run: adcp --save-auth ${agentArg} ${saved.url} --oauth to re-register`;
       if (jsonOutput) {
@@ -1006,7 +1008,7 @@ async function maybeRunInlineOAuth(agentArg, args, { jsonOutput } = {}) {
  *
  * @returns The updated saved agent record (with oauth_tokens and oauth_client).
  */
-async function ensureOAuthTokensForAlias(alias, url, { quiet = false } = {}) {
+async function ensureOAuthTokensForAlias(alias, url, { quiet = false, allowHttp = false } = {}) {
   const existing = getAgent(alias);
   if (existing && hasValidOAuthTokens(existing)) {
     if (!quiet) console.log(`Using saved OAuth tokens for '${alias}'.`);
@@ -1030,7 +1032,7 @@ async function ensureOAuthTokensForAlias(alias, url, { quiet = false } = {}) {
   const { StreamableHTTPClientTransport } = require('@modelcontextprotocol/sdk/client/streamableHttp.js');
   const { UnauthorizedError } = require('@modelcontextprotocol/sdk/client/auth.js');
 
-  const oauthProvider = createCLIOAuthProvider(tempAgent, { quiet });
+  const oauthProvider = createCLIOAuthProvider(tempAgent, { quiet, allowHttp });
   const mcpClient = new MCPClient({ name: 'adcp-cli', version: '1.0.0' });
   const transport = new StreamableHTTPClientTransport(new URL(url), { authProvider: oauthProvider });
 
@@ -1396,6 +1398,7 @@ OPTIONS:
   --wait            Wait for async/webhook responses
   --json            Raw JSON output
   --debug           Debug output
+  --allow-http      Allow http:// and private-IP targets (dev loops only)
   --allow-v2        Suppress the v2-sunset warning (unsupported since 2026-04-20)
   --help, -h        Show help
 
@@ -5044,7 +5047,7 @@ credential material — never sync or commit.
       const { StreamableHTTPClientTransport } = require('@modelcontextprotocol/sdk/client/streamableHttp.js');
       const { UnauthorizedError } = require('@modelcontextprotocol/sdk/client/auth.js');
 
-      const oauthProvider = createCLIOAuthProvider(tempAgent);
+      const oauthProvider = createCLIOAuthProvider(tempAgent, { allowHttp: args.includes('--allow-http') });
       const mcpClient = new MCPClient({ name: 'adcp-cli', version: '1.0.0' });
       const createTransport = () => new StreamableHTTPClientTransport(new URL(url), { authProvider: oauthProvider });
 
@@ -5251,6 +5254,7 @@ credential material — never sync or commit.
   const { customHeaders: cliHeaders, consumedTokens: headerTokens } = parseHeaderFlags(args);
   const useOAuth = args.includes('--oauth');
   const clearOAuth = args.includes('--clear-oauth');
+  const allowHttp = args.includes('--allow-http');
 
   // Validate protocol flag if provided
   if (protocolFlag && protocolFlag !== 'mcp' && protocolFlag !== 'a2a') {
@@ -5464,7 +5468,7 @@ credential material — never sync or commit.
         const { StreamableHTTPClientTransport } = require('@modelcontextprotocol/sdk/client/streamableHttp.js');
         const { UnauthorizedError } = require('@modelcontextprotocol/sdk/client/auth.js');
 
-        const oauthProvider = createCLIOAuthProvider(agentConfig, { quiet: jsonOutput });
+        const oauthProvider = createCLIOAuthProvider(agentConfig, { quiet: jsonOutput, allowHttp });
         const mcpClient = new MCPClient({ name: 'adcp-cli', version: '1.0.0' });
         const createTransport = () =>
           new StreamableHTTPClientTransport(new URL(agentUrl), { authProvider: oauthProvider });
@@ -5594,6 +5598,7 @@ credential material — never sync or commit.
       // Create OAuth provider
       const oauthProvider = createCLIOAuthProvider(agentConfig, {
         quiet: jsonOutput,
+        allowHttp,
       });
 
       // Create MCP client
@@ -5963,7 +5968,7 @@ credential material — never sync or commit.
       const { StreamableHTTPClientTransport } = require('@modelcontextprotocol/sdk/client/streamableHttp.js');
       const { UnauthorizedError } = require('@modelcontextprotocol/sdk/client/auth.js');
 
-      const oauthProvider = createCLIOAuthProvider(agentConfig, { quiet: jsonOutput });
+      const oauthProvider = createCLIOAuthProvider(agentConfig, { quiet: jsonOutput, allowHttp });
       const mcpClient = new MCPClient({ name: 'adcp-cli', version: '1.0.0' });
       const createTransport = () =>
         new StreamableHTTPClientTransport(new URL(agentUrl), { authProvider: oauthProvider });

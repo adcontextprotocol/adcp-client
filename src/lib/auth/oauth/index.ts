@@ -146,6 +146,8 @@ export function createCLIOAuthProvider(
     quiet?: boolean;
     /** Storage for persisting agent config */
     storage?: OAuthConfigStorage;
+    /** Allow HTTP resource URLs for non-loopback hosts (CLI: --allow-http) */
+    allowHttp?: boolean;
   }
 ): MCPOAuthProvider {
   const flowConfig: CLIFlowHandlerConfig = {
@@ -167,6 +169,7 @@ export function createCLIOAuthProvider(
     flowHandler,
     storage: options?.storage,
     clientMetadata,
+    allowHttp: options?.allowHttp,
   });
 }
 
@@ -189,6 +192,8 @@ export function createNonInteractiveOAuthProvider(
     clientMetadata?: Partial<OAuthClientMetadata>;
     /** Storage for persisting refreshed tokens back to disk. */
     storage?: OAuthConfigStorage;
+    /** Allow HTTP resource URLs for non-loopback hosts. */
+    allowHttp?: boolean;
   }
 ): MCPOAuthProvider {
   const { NonInteractiveFlowHandler } = require('./NonInteractiveFlowHandler');
@@ -205,6 +210,7 @@ export function createNonInteractiveOAuthProvider(
     flowHandler,
     storage: options?.storage,
     clientMetadata,
+    allowHttp: options?.allowHttp,
   });
 }
 

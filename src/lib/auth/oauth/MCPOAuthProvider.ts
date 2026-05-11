@@ -52,12 +52,14 @@ export class MCPOAuthProvider implements OAuthClientProvider {
   private readonly storage?: OAuthConfigStorage;
   private readonly flowHandler: OAuthFlowHandler;
   private readonly _clientMetadata: OAuthClientMetadata;
+  private readonly allowHttp: boolean;
 
   constructor(config: OAuthProviderConfig) {
     this.agent = config.agent;
     this.storage = config.storage;
     this.flowHandler = config.flowHandler;
     this._clientMetadata = config.clientMetadata;
+    this.allowHttp = config.allowHttp ?? false;
   }
 
   /**
@@ -67,7 +69,8 @@ export class MCPOAuthProvider implements OAuthClientProvider {
     agent: AgentConfig,
     flowHandler: OAuthFlowHandler,
     storage?: OAuthConfigStorage,
-    clientMetadataOverrides?: Partial<OAuthClientMetadata>
+    clientMetadataOverrides?: Partial<OAuthClientMetadata>,
+    allowHttp?: boolean
   ): MCPOAuthProvider {
     // Build complete client metadata with required fields
     const clientMetadata: OAuthClientMetadata = {
@@ -81,6 +84,7 @@ export class MCPOAuthProvider implements OAuthClientProvider {
       flowHandler,
       storage,
       clientMetadata,
+      allowHttp,
     });
   }
 
@@ -104,6 +108,11 @@ export class MCPOAuthProvider implements OAuthClientProvider {
    * We allow cross-origin resource URLs because agent configs are pre-configured
    * by the user, not discovered from untrusted sources. The authorization server
    * remains the final gatekeeper for token audience validation.
+   *
+   * HTTP is allowed for loopback hosts (localhost, 127.0.0.1, [::1]) matching
+   * the RFC 6749 §3.1.2.1 loopback carve-out and the ClientCredentialsFlow
+   * precedent. For non-loopback HTTP, pass `allowHttp: true` in the config
+   * (CLI: `--allow-http`).
    */
   async validateResourceURL(serverUrl: string | URL, resource?: string): Promise<URL | undefined> {
     if (!resource) {
@@ -112,11 +121,20 @@ export class MCPOAuthProvider implements OAuthClientProvider {
 
     const resourceURL = new URL(resource);
 
-    if (resourceURL.protocol !== 'https:') {
-      throw new Error(`Server at ${serverUrl} advertised non-HTTPS resource URL: ${resource}`);
+    if (resourceURL.protocol === 'https:') {
+      return resourceURL;
     }
 
-    return resourceURL;
+    const host = resourceURL.hostname;
+    const isLoopback = host === 'localhost' || host === '127.0.0.1' || host === '[::1]';
+    if (isLoopback || this.allowHttp) {
+      return resourceURL;
+    }
+
+    throw new Error(
+      `Server at ${serverUrl} advertised non-HTTPS resource URL: ${resource}` +
+        ` — pass --allow-http for non-loopback HTTP targets`
+    );
   }
 
   /**
