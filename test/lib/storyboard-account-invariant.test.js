@@ -290,3 +290,36 @@ describe('runStoryboard: omit_account wire-level behavior', () => {
     }
   });
 });
+
+describe('loader: omit_account co-requirement', () => {
+  const { parseStoryboard } = require('../../dist/lib/testing/storyboard/loader.js');
+
+  it('throws at parse time when omit_account: true is set without expect_error: true', () => {
+    const yaml = `
+id: omit_account_missing_expect_error
+version: "1.0.0"
+title: bad — omit_account without expect_error
+category: test
+summary: ""
+narrative: ""
+agent:
+  interaction_model: sync
+  capabilities: []
+caller:
+  role: buyer_agent
+phases:
+  - id: p1
+    title: P
+    steps:
+      - id: s1
+        task: create_media_buy
+        omit_account: true
+        sample_request: { packages: [] }
+`;
+    assert.throws(
+      () => parseStoryboard(yaml),
+      /omit_account: true requires expect_error: true/,
+      'co-requirement violation must fail at parse time, not run time'
+    );
+  });
+});
