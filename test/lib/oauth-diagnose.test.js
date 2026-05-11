@@ -91,7 +91,7 @@ function jsonRes(res, status, body, extraHeaders = {}) {
 // ---------------------------------------------------------------------------
 
 describe('runAuthDiagnosis: H1 resource URL mismatch', () => {
-  test('flags H1 when PRM advertises a different resource URL', async () => {
+  test('flags H1 likely when PRM resource is on a different origin', async () => {
     setHandlers({
       '/.well-known/oauth-protected-resource/mcp': (req, res) =>
         jsonRes(res, 200, {
@@ -113,10 +113,10 @@ describe('runAuthDiagnosis: H1 resource URL mismatch', () => {
 
     const h1 = report.hypotheses.find(h => h.id === 'H1');
     assert.strictEqual(h1.verdict, 'likely');
-    assert.match(h1.summary, /does not match agent URL/);
+    assert.match(h1.summary, /origin/);
   });
 
-  test('rules out H1 when PRM resource matches agent URL', async () => {
+  test('rules out H1 when PRM resource matches agent URL exactly', async () => {
     setHandlers({
       '/.well-known/oauth-protected-resource/mcp': (req, res) =>
         jsonRes(res, 200, { resource: agentUrl(), authorization_servers: [issuer()] }),
@@ -135,6 +135,106 @@ describe('runAuthDiagnosis: H1 resource URL mismatch', () => {
 
     const h1 = report.hypotheses.find(h => h.id === 'H1');
     assert.strictEqual(h1.verdict, 'ruled_out');
+  });
+
+  test('rules out H1 when agent URL is a sub-path under the advertised resource identifier (RFC 9728 §3.3)', async () => {
+    // PRM advertises the parent path as the canonical resource identifier;
+    // agent endpoint lives at a sub-path under it. This is the figma-style
+    // configuration and is spec-correct per RFC 9728 §3.3.
+    const resourceId = `http://127.0.0.1:${state.port}`;
+    setHandlers({
+      '/.well-known/oauth-protected-resource/mcp': (req, res) =>
+        jsonRes(res, 200, { resource: resourceId, authorization_servers: [issuer()] }),
+      '/.well-known/oauth-authorization-server': (req, res) => jsonRes(res, 200, { token_endpoint: tokenEndpoint() }),
+      '/mcp': (req, res) => {
+        res.statusCode = 401;
+        res.setHeader('www-authenticate', 'Bearer error="invalid_token"');
+        res.end();
+      },
+    });
+
+    const report = await runAuthDiagnosis(
+      { id: 'test', name: 'test', agent_uri: agentUrl(), protocol: 'mcp' },
+      { allowPrivateIp: true, skipToolCall: true }
+    );
+
+    const h1 = report.hypotheses.find(h => h.id === 'H1');
+    assert.strictEqual(h1.verdict, 'ruled_out');
+    assert.match(h1.summary, /sub-path/);
+    assert.match(h1.summary, /RFC 9728/);
+  });
+
+  test('rules out H1 when advertised resource has a trailing slash (e.g. http://host/figma/)', async () => {
+    // `normalizeForCompare` strips trailing slashes for paths longer than `/`,
+    // so `/figma/` and `/figma` both end up as `/figma`. Both should still
+    // recognize the agent's `/mcp` sub-path as a descendant.
+    const resourceWithSlash = `http://127.0.0.1:${state.port}/`;
+    setHandlers({
+      '/.well-known/oauth-protected-resource/mcp': (req, res) =>
+        jsonRes(res, 200, { resource: resourceWithSlash, authorization_servers: [issuer()] }),
+      '/.well-known/oauth-authorization-server': (req, res) => jsonRes(res, 200, { token_endpoint: tokenEndpoint() }),
+      '/mcp': (req, res) => {
+        res.statusCode = 401;
+        res.setHeader('www-authenticate', 'Bearer error="invalid_token"');
+        res.end();
+      },
+    });
+
+    const report = await runAuthDiagnosis(
+      { id: 'test', name: 'test', agent_uri: agentUrl(), protocol: 'mcp' },
+      { allowPrivateIp: true, skipToolCall: true }
+    );
+
+    const h1 = report.hypotheses.find(h => h.id === 'H1');
+    assert.strictEqual(h1.verdict, 'ruled_out');
+  });
+
+  test('flags H1 possible when advertised resource is not a parseable URL', async () => {
+    setHandlers({
+      '/.well-known/oauth-protected-resource/mcp': (req, res) =>
+        jsonRes(res, 200, { resource: 'urn:example:opaque', authorization_servers: [issuer()] }),
+      '/.well-known/oauth-authorization-server': (req, res) => jsonRes(res, 200, { token_endpoint: tokenEndpoint() }),
+      '/mcp': (req, res) => {
+        res.statusCode = 401;
+        res.setHeader('www-authenticate', 'Bearer error="invalid_token"');
+        res.end();
+      },
+    });
+
+    const report = await runAuthDiagnosis(
+      { id: 'test', name: 'test', agent_uri: agentUrl(), protocol: 'mcp' },
+      { allowPrivateIp: true, skipToolCall: true }
+    );
+
+    const h1 = report.hypotheses.find(h => h.id === 'H1');
+    assert.strictEqual(h1.verdict, 'possible');
+    assert.match(h1.summary, /not a parseable URL/);
+  });
+
+  test('flags H1 possible when agent URL is a sibling sub-path on the same origin', async () => {
+    // Same origin, but the agent's path is not under the advertised resource
+    // identifier — could be intentional (separate resource on same origin) or
+    // a misconfiguration. Downgrade to `possible`, not `likely`.
+    const siblingResource = `http://127.0.0.1:${state.port}/other`;
+    setHandlers({
+      '/.well-known/oauth-protected-resource/mcp': (req, res) =>
+        jsonRes(res, 200, { resource: siblingResource, authorization_servers: [issuer()] }),
+      '/.well-known/oauth-authorization-server': (req, res) => jsonRes(res, 200, { token_endpoint: tokenEndpoint() }),
+      '/mcp': (req, res) => {
+        res.statusCode = 401;
+        res.setHeader('www-authenticate', 'Bearer error="invalid_token"');
+        res.end();
+      },
+    });
+
+    const report = await runAuthDiagnosis(
+      { id: 'test', name: 'test', agent_uri: agentUrl(), protocol: 'mcp' },
+      { allowPrivateIp: true, skipToolCall: true }
+    );
+
+    const h1 = report.hypotheses.find(h => h.id === 'H1');
+    assert.strictEqual(h1.verdict, 'possible');
+    assert.match(h1.summary, /does not contain agent URL.*as a sub-path/);
   });
 });
 
