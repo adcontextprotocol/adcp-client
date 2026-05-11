@@ -103,6 +103,46 @@ export interface ValidationContext {
    * `buyer_identifier_echo: true` is asserted.
    */
   storyboardStep?: { sample_request?: Record<string, unknown> };
+  /**
+   * Resolved set of dispatch outcomes for a `parallel_dispatch` step.
+   * Populated only when the runner fanned out N concurrent requests through
+   * the `parallel_dispatch_runner` contract. `cross_response_field_equal`
+   * and `cross_response_count_distinct` read this to grade against the
+   * cross-response set; single-dispatch steps leave it undefined and those
+   * two checks grade `not_applicable`.
+   */
+  crossResponses?: CrossResponseSet;
+}
+
+/**
+ * Aggregated cross-response data for `cross_response_*` validations on a
+ * `parallel_dispatch` step. Carries per-dispatch outcomes plus a derived
+ * `resolved` list of `TaskResult`s for paths that succeeded (after any
+ * in-flight retry resolution). The cross-response checks operate against
+ * `resolved`; per-response checks operate against the individual entries
+ * via the dispatcher's aggregation pass.
+ */
+export interface CrossResponseSet {
+  /** Every dispatch's terminal outcome, in fan-out order. */
+  dispatches: CrossResponseDispatch[];
+  /** Resolved task results for dispatches that terminated successfully. */
+  resolved: TaskResult[];
+}
+
+/**
+ * One dispatch's terminal record after any in-flight retry loop.
+ */
+export interface CrossResponseDispatch {
+  /** Per-dispatch correlation_id the runner attached. Excluded from the canonical hash. */
+  correlation_id: string;
+  /** Terminal task result, when the dispatch resolved within the barrier window. */
+  taskResult?: TaskResult;
+  /** Terminal error string, when the dispatch failed at the wire layer. */
+  error?: string;
+  /** True when the barrier window expired before the dispatch terminated. */
+  timed_out?: boolean;
+  /** Per-dispatch wall-clock duration in milliseconds. */
+  duration_ms: number;
 }
 
 /**
@@ -225,6 +265,10 @@ function runValidation(validation: StoryboardValidation, ctx: ValidationContext)
       return validateFieldEqualsContext(validation, ctx);
     case 'upstream_traffic':
       return validateUpstreamTraffic(validation, ctx);
+    case 'cross_response_field_equal':
+      return validateCrossResponseFieldEqual(validation, ctx);
+    case 'cross_response_count_distinct':
+      return validateCrossResponseCountDistinct(validation, ctx);
     default:
       // Forward-compat default per runner-output-contract.yaml v2.0.0:
       // when the runner does not implement an authored check kind (e.g. a
@@ -2662,6 +2706,149 @@ function deepEqual(a: unknown, b: unknown): boolean {
     if (!deepEqual(ao[k], bo[k])) return false;
   }
   return true;
+}
+
+/**
+ * Cross-response: every resolved dispatch carries the same value at `path`.
+ * Spec: test-kits/parallel-dispatch-runner.yaml (rule 9 / first-insert-wins).
+ *
+ * Grading rules:
+ *   - `ctx.crossResponses` absent → not_applicable (single-dispatch step).
+ *   - Fewer than 2 dispatches resolved → fail (the assertion requires a
+ *     cross-response comparison; one survivor doesn't prove the seller
+ *     deterministically resolved the race).
+ *   - All resolved values equal → pass.
+ *   - Any disagreement → fail; the result lists the distinct values observed
+ *     so reviewers can spot the duplicate-resource case at a glance.
+ */
+function validateCrossResponseFieldEqual(validation: StoryboardValidation, ctx: ValidationContext): ValidationResult {
+  const cr = ctx.crossResponses;
+  const path = validation.path ?? '';
+  if (!cr) {
+    return {
+      check: validation.check,
+      passed: true,
+      not_applicable: true,
+      description: validation.description,
+      note: 'step has no parallel_dispatch fan-out; cross-response checks grade not_applicable on single-dispatch steps',
+      json_pointer: toJsonPointer(path),
+    };
+  }
+  if (cr.resolved.length < 2) {
+    return {
+      check: validation.check,
+      passed: false,
+      description: validation.description,
+      json_pointer: toJsonPointer(path),
+      expected: 'at least 2 resolved dispatches with equal values at the path',
+      actual: `${cr.resolved.length} dispatch(es) resolved out of ${cr.dispatches.length}`,
+      schema_id: null,
+      schema_url: null,
+    };
+  }
+  const values = cr.resolved.map(tr => resolvePath(tr.data as Record<string, unknown> | undefined, path));
+  const first = values[0];
+  const allEqual = values.every(v => deepEqual(v, first));
+  if (allEqual) {
+    return {
+      check: validation.check,
+      passed: true,
+      description: validation.description,
+      json_pointer: toJsonPointer(path),
+      actual: first,
+    };
+  }
+  return {
+    check: validation.check,
+    passed: false,
+    description: validation.description,
+    json_pointer: toJsonPointer(path),
+    expected: 'all resolved dispatches return the same value at the path',
+    actual: values,
+    schema_id: null,
+    schema_url: null,
+  };
+}
+
+/**
+ * Cross-response: the cardinality of distinct values at `path` across all
+ * resolved dispatches is in `allowed_values`. Spec:
+ * test-kits/parallel-dispatch-runner.yaml.
+ *
+ * Grading rules:
+ *   - `ctx.crossResponses` absent → not_applicable.
+ *   - No dispatch resolved → fail.
+ *   - `allowed_values` missing or non-array → fail (authoring error).
+ *   - Distinct count ∈ allowed_values → pass.
+ *   - Otherwise → fail.
+ */
+function validateCrossResponseCountDistinct(
+  validation: StoryboardValidation,
+  ctx: ValidationContext
+): ValidationResult {
+  const cr = ctx.crossResponses;
+  const path = validation.path ?? '';
+  if (!cr) {
+    return {
+      check: validation.check,
+      passed: true,
+      not_applicable: true,
+      description: validation.description,
+      note: 'step has no parallel_dispatch fan-out; cross-response checks grade not_applicable on single-dispatch steps',
+      json_pointer: toJsonPointer(path),
+    };
+  }
+  if (!Array.isArray(validation.allowed_values) || validation.allowed_values.length === 0) {
+    return {
+      check: validation.check,
+      passed: false,
+      description: validation.description,
+      json_pointer: toJsonPointer(path),
+      expected: 'allowed_values: [<integer>, ...] declaring acceptable distinct counts',
+      actual: validation.allowed_values,
+      schema_id: null,
+      schema_url: null,
+    };
+  }
+  if (cr.resolved.length === 0) {
+    return {
+      check: validation.check,
+      passed: false,
+      description: validation.description,
+      json_pointer: toJsonPointer(path),
+      expected: 'at least one resolved dispatch',
+      actual: `0 / ${cr.dispatches.length} dispatches resolved`,
+      schema_id: null,
+      schema_url: null,
+    };
+  }
+  const distinct = new Set<string>();
+  for (const tr of cr.resolved) {
+    const v = resolvePath(tr.data as Record<string, unknown> | undefined, path);
+    if (v === undefined || v === null) continue;
+    distinct.add(JSON.stringify(v));
+  }
+  const distinctCount = distinct.size;
+  const allowed = validation.allowed_values as number[];
+  if (allowed.includes(distinctCount)) {
+    return {
+      check: validation.check,
+      passed: true,
+      description: validation.description,
+      json_pointer: toJsonPointer(path),
+      actual: distinctCount,
+    };
+  }
+  return {
+    check: validation.check,
+    passed: false,
+    description: validation.description,
+    json_pointer: toJsonPointer(path),
+    expected: `distinct count ∈ ${JSON.stringify(allowed)}`,
+    actual: distinctCount,
+    schema_id: null,
+    schema_url: null,
+  };
 }
 
 // resolvePath re-exported from ./path for backwards compat
