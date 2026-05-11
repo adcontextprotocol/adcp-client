@@ -71,6 +71,31 @@ A core dump or `util.inspect(framework)` walks every reachable property,
 including `ctx_metadata` on cached `Account` objects. Tokens at rest in
 process memory are recoverable.
 
+### 4. Compliance failure envelopes (`adcp_error`)
+
+When a storyboard step fails, the SDK forwards the seller's structured
+`adcp_error` into `ComplianceResult.failures[].adcp_error`. That field
+is read by AAO graders, compliance dashboards, and any LLM
+self-correction loop consuming the result JSON — and it persists in
+grader archives longer than the originating request.
+
+The spec-defined fields are safe: `code` (an enum), `field` (a schema
+path), and structured validation issues carry no adopter secrets by
+construction.
+
+**Do not** interpolate the following into `message` or `details`:
+
+- Bearer tokens or request-signing material (e.g. `"upstream rejected: Bearer <tok>"`)
+- Internal account IDs that cross tenant boundaries
+- Proprietary path fragments or hostnames from internal infrastructure
+
+Keep `message` and `details` to spec-defined codes and field paths. For
+richer internal context, write to your tenant-isolated log sink (see
+[§ Info-level structured logs](#2-info-level-structured-logs) above) —
+not the error envelope. See
+[Sanitizing error details with `pickSafeDetails`](../../skills/build-decisioning-platform/advanced/REFERENCE.md#sanitizing-error-details-with-picksafedetails)
+for the explicit-allowlist pattern that keeps `details` wire-safe.
+
 ## Recommended pattern: re-derive bearers per request
 
 Don't embed the bearer in `ctx_metadata`. Re-derive it in each tool

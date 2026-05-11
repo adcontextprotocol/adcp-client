@@ -366,6 +366,8 @@ try {
 
 What gets dropped silently: any key not in the allowlist (no warning — the design assumes the allowlist is the contract); functions / Symbols / Date / RegExp / class instances; nested objects beyond `maxDepth`; results exceeding `maxSizeBytes`. Returns `undefined` (not `{}`) when nothing survives, so the spread into `details: ...` is a no-op rather than emitting an empty block.
 
+`message` and `details` are also forwarded to `ComplianceResult.failures[].adcp_error` when a storyboard step fails — grader-visible and archived beyond the request lifetime. Always apply `pickSafeDetails` (and write a safe literal string to `message`) before throwing; the same leak class applies to compliance records as to live buyer responses. See [`docs/guides/CTX-METADATA-SAFETY.md § Compliance failure envelopes`](../../../../docs/guides/CTX-METADATA-SAFETY.md#4-compliance-failure-envelopes-adcp_error) for the full list of what to avoid.
+
 ### Wire-shape normalizer for `errors[]`
 
 The wire spec for tools that surface partial-batch failures (`sync_creatives`, `sync_audiences`, `sync_accounts`, `report_usage`) requires `errors: Error[]` with the canonical `{ code, message, recovery? ... }` shape. Adopters often have errors in ad-hoc shapes — bare strings, native `Error` instances, vendor-specific objects. The framework applies `normalizeErrors` automatically at the `sync_creatives` projection seam (sales + creative dispatch); for adopter code that constructs `errors[]` directly (in custom handlers, or in tools where the framework doesn't auto-normalize yet), the helper is exported at `@adcp/sdk/server`:

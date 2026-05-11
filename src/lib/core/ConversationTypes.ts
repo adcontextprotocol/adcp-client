@@ -288,7 +288,7 @@ export interface SubmittedContinuation<T> {
 export interface AdcpErrorInfo {
   /** AdCP error code (e.g., 'RATE_LIMITED', 'PRODUCT_NOT_FOUND') */
   code: string;
-  /** Human-readable error message */
+  /** Human-readable error message. **Sellers:** do not embed tokens, account IDs, or internal paths — this field is forwarded to `ComplianceResult.failures[].adcp_error` and is grader-visible beyond the request lifetime. */
   message: string;
   /** Recovery classification: retry, fix the request, or give up */
   recovery?: 'transient' | 'correctable' | 'terminal';
@@ -300,7 +300,7 @@ export interface AdcpErrorInfo {
   retry_after?: number;
   /** Milliseconds to wait before retrying — convenience conversion of `retry_after * 1000`. */
   retryAfterMs?: number;
-  /** Additional error details. Untrusted agent-controlled content — sanitize before rendering. */
+  /** Additional error details. Untrusted agent-controlled content — sanitize before rendering. **Sellers:** do not embed tokens, account IDs, or internal paths — this field is forwarded to `ComplianceResult.failures[].adcp_error` and is grader-visible beyond the request lifetime. */
   details?: Record<string, unknown>;
   /** True when the SDK inferred this error from unstructured text (L1 compliance) */
   synthetic?: boolean;
