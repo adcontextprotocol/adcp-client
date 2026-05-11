@@ -875,6 +875,7 @@ const REQUIREMENT_TO_SKIP_REASON: Record<RequirementName, RunnerSkipReason> = {
   controller: 'missing_test_controller',
   seeded_state: 'requirement_unmet',
   real_wire: 'requirement_unmet',
+  webhook_receiver: 'requirement_unmet',
 };
 
 /**
@@ -954,6 +955,10 @@ function buildRequirementUnmetResult(
  *   - `real_wire` — always available; the runner is hitting a real wire
  *     by definition. The tag is a no-op gate today, reserved for a
  *     future `--mock-only` mode.
+ *   - `webhook_receiver` — operator supplied `options.webhook_receiver`.
+ *     Autodetected from step `sample_request` token presence (see
+ *     `detectImplicitRequires`); authors don't write this tag manually.
+ *     Spec: adcp-client#1678.
  */
 function checkRequires(
   requires: readonly RequirementName[],
@@ -987,9 +992,75 @@ function checkRequires(
       case 'real_wire':
         // Always available — reserved for a future --mock-only mode.
         break;
+      case 'webhook_receiver': {
+        if (options.webhook_receiver === undefined) {
+          return {
+            requirement,
+            detail:
+              'Storyboard references `{{runner.webhook_url:…}}` or `{{runner.webhook_base}}` but no ' +
+              'webhook receiver is configured. Pass `webhook_receiver` in StoryboardRunOptions ' +
+              '(or `--webhook-receiver` on the CLI) to host a receiver, or omit this storyboard. ' +
+              'Required by the webhook-emission universal: ' +
+              'compliance/{version}/universal/webhook-emission.yaml grades not_applicable when ' +
+              'no receiver is configured (prerequisites section).',
+          };
+        }
+        break;
+      }
     }
   }
   return null;
+}
+
+/**
+ * Webhook-token regex used to autodetect the implicit `webhook_receiver`
+ * requirement. Matches `{{runner.webhook_url:<step_id>}}` and the bare
+ * `{{runner.webhook_base}}`. Same shape as the `MUSTACHE_TOKEN_RE` in
+ * context.ts but scoped to the two webhook-bearing tokens — we only care
+ * whether the storyboard needs a receiver, not what substitution it
+ * would produce. Single `[^{}]+` body avoids the polynomial-redos
+ * backtrack pattern flagged by CodeQL alert #49.
+ */
+const WEBHOOK_TOKEN_RE = /\{\{runner\.(?:webhook_url:[A-Za-z0-9_]+|webhook_base)\}\}/;
+
+/**
+ * Recursively scan a JSON-like value for any webhook receiver token. The
+ * scan only touches strings; objects and arrays are walked structurally
+ * so deeply-nested `push_notification_config.url` entries (or any other
+ * authoring pattern) are discovered without a hard-coded field list.
+ */
+function valueContainsWebhookToken(value: unknown): boolean {
+  if (typeof value === 'string') {
+    return WEBHOOK_TOKEN_RE.test(value);
+  }
+  if (Array.isArray(value)) {
+    return value.some(valueContainsWebhookToken);
+  }
+  if (value !== null && typeof value === 'object') {
+    return Object.values(value as Record<string, unknown>).some(valueContainsWebhookToken);
+  }
+  return false;
+}
+
+/**
+ * Return the implicit requirements a storyboard needs based on its
+ * structure (not its declared `requires:` list). Today: only
+ * `'webhook_receiver'`, autodetected from `{{runner.webhook_url:…}}` /
+ * `{{runner.webhook_base}}` token presence inside any step's
+ * `sample_request`. Token presence is the authoring contract — a
+ * storyboard that names the runner's webhook receiver cannot run
+ * without one — so authors don't need to remember to add
+ * `requires: [webhook_receiver]` separately. Spec: adcp-client#1678.
+ */
+function detectImplicitRequires(storyboard: Storyboard): RequirementName[] {
+  for (const phase of storyboard.phases) {
+    for (const step of phase.steps) {
+      if (step.sample_request && valueContainsWebhookToken(step.sample_request)) {
+        return ['webhook_receiver'];
+      }
+    }
+  }
+  return [];
 }
 
 /**
@@ -1233,8 +1304,20 @@ async function executeStoryboardPass(
   // Spec: adcp-client#1626. The default (no `requires` field) is
   // `[real_wire]`, which is always available — untagged storyboards
   // run unchanged.
-  if (storyboard.requires?.length) {
-    const unmet = checkRequires(storyboard.requires, options);
+  //
+  // Implicit requirements (adcp-client#1678) are unioned with the
+  // declared list: today this means `'webhook_receiver'` is added when
+  // any step's `sample_request` references `{{runner.webhook_url:…}}`
+  // or `{{runner.webhook_base}}`. Authors do not need to retag those
+  // storyboards — the token presence is the declaration. Without the
+  // implicit gate, storyboards that name the receiver but run without
+  // one would silently ship literal mustache tokens on the wire and
+  // get rejected by 3.0-strict sellers as `INVALID_REQUEST: relative URL`.
+  const declared = storyboard.requires ?? [];
+  const implicit = detectImplicitRequires(storyboard);
+  const allRequires = [...declared, ...implicit.filter(r => !declared.includes(r))];
+  if (allRequires.length) {
+    const unmet = checkRequires(allRequires, options);
     if (unmet) {
       if (!options._client) await closeConnections(options.protocol);
       return buildRequirementUnmetResult(agentUrls, storyboard, unmet.requirement, unmet.detail);

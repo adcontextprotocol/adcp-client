@@ -58,6 +58,14 @@ export interface Storyboard {
    *   - `real_wire` — always available. Tag scenarios that observe
    *     production behavior with this when you want them excluded from
    *     a future `--mock-only` mode; today the tag is a no-op gate.
+   *   - `webhook_receiver` — the runner must be configured with a
+   *     webhook receiver (`StoryboardRunOptions.webhook_receiver`).
+   *     Autodetected from token presence: any step whose
+   *     `sample_request` (or nested fields) references
+   *     `{{runner.webhook_url:<step_id>}}` or `{{runner.webhook_base}}`
+   *     declares this requirement implicitly. Authors do not need to
+   *     write `requires: [webhook_receiver]` — the tokens are
+   *     self-describing.
    *
    * Default when the field is absent: `[real_wire]` (storyboard runs
    * everywhere — matches existing pre-tagging behavior). Tagging is
@@ -1377,7 +1385,7 @@ export interface RunnerSkipResult {
  *
  * Spec: adcp-client#1626.
  */
-export type RequirementName = 'controller' | 'seeded_state' | 'real_wire';
+export type RequirementName = 'controller' | 'seeded_state' | 'real_wire' | 'webhook_receiver';
 
 /**
  * Closed enumeration of every known requirement. Used by the loader to
@@ -1390,6 +1398,7 @@ export const KNOWN_REQUIREMENTS: ReadonlySet<RequirementName> = new Set([
   'controller',
   'seeded_state',
   'real_wire',
+  'webhook_receiver',
 ] as const satisfies readonly RequirementName[]);
 
 /**
