@@ -1,5 +1,147 @@
 # Changelog
 
+## 7.0.0
+
+### Major Changes
+
+- e93306c: feat(conform)!: split `storyboards_missing_tools` from `storyboards_not_applicable` in `ComplianceResult`
+
+  **Breaking change**: `ComplianceResult.storyboards_not_applicable[]` previously included both version-gated and missing-tool coverage gaps. It now contains only version-gated entries. Consumers that check `(result.storyboards_not_applicable ?? []).length === 0` to assert zero coverage gaps must also check `storyboards_missing_tools`.
+
+  `ComplianceResult.storyboards_not_applicable[]` previously conflated two coverage-gap reasons that the AdCP spec's `runner-output-contract.yaml` (L249-300) keeps distinct:
+  - **`not_applicable`** — the agent didn't declare the protocol the storyboard tests (version-gating path).
+  - **`missing_tool`** — the agent declared the protocol but a required tool was absent from the discovered toolset (introduced by PR #1682).
+
+  Both cases are now surfaced separately:
+
+  ```ts
+  interface ComplianceResult {
+    storyboards_not_applicable?: string[]; // version-gated (protocol not declared)
+    storyboards_missing_tools?: string[]; // protocol declared, required_tool absent
+  }
+  ```
+
+  `storyboards_not_applicable` keeps its current semantics but now only contains version-gated entries. `storyboards_missing_tools` is new. The combined set is `[...storyboards_not_applicable, ...storyboards_missing_tools]` — the total coverage gap is unchanged.
+
+  **Migration**: Update any consumer that relied on `storyboards_not_applicable` alone to detect missing-tool coverage gaps to also check `storyboards_missing_tools`. Per-storyboard tool names (i.e. which tools were missing) are available in `ComplianceSummaryArtifact.skip_causes`; `storyboards_missing_tools` is a plain `string[]` of storyboard IDs for symmetry with `storyboards_not_applicable`.
+
+  **Naming note**: The spec's `RunnerSkipReason` enum uses the singular `missing_tool`; this field uses the plural `storyboards_missing_tools` to match the `storyboards_*` naming convention.
+
+  Closes #1695.
+
+### Minor Changes
+
+- 7f21587: feat(client): add `issues[]` as first-class field on `AdcpErrorInfo` (per core/error.json 3.0 GA)
+
+  `AdcpErrorInfo` now carries `issues?: AdcpValidationIssue[]`, populated from the seller's
+  `VALIDATION_ERROR` envelope when present. Previously the `issues[]` array landed in the
+  free-form `details` field, forcing consumers to read `details.validation_errors` as a
+  convention rather than a typed API.
+
+  Each `AdcpValidationIssue` carries `pointer` (RFC 6901 JSON Pointer to the offending field),
+  `message` (human-readable), `keyword` (JSON Schema keyword: `'required'`, `'type'`, `'enum'`,
+  etc. — the key field for LLM self-correction), and optional `schemaPath`. Only items that
+  satisfy the required-field shape are forwarded; malformed wire items are silently dropped.
+
+  `ExtractedAdcpError` (returned by `extractAdcpErrorFromMcp` / `extractAdcpErrorFromTransport`)
+  also gains `issues?: AdcpValidationIssue[]` for callers using the transport-level helpers
+  directly. `AdcpValidationIssue` is exported from the package root.
+
+  Closes #1694.
+
+- f92d9d9: fix(comply): forward structured adcp_error detail from failed storyboard steps
+
+  `ComplianceResult` now surfaces `adcp_error?: AdcpErrorInfo` alongside the existing
+  `error?: string` on `ComplianceFailure` and `StoryboardStepResult`. Previously,
+  the structured error envelope (code, field, validation_errors) returned by the
+  agent was silently dropped at the `executeStoryboardTask` boundary — only the
+  human-readable string was forwarded.
+
+  Consumers (dashboards, LLM self-correction loops) can now read `failure.adcp_error.field`
+  and `failure.adcp_error.details.validation_errors` directly instead of re-running the
+  failing step to obtain the wire-level detail. Fixes #1679.
+
+- 8258e1c: Add `omit_account` escape hatch to `StoryboardStep` for schema_validation conformance (#1696).
+
+  Follow-up to #1683 which removed the `account_from_brand` fabrication shim: storyboard steps that deliberately test seller-side missing-account rejection could no longer reach the seller because the SDK's client-side `ValidationError` short-circuited before the wire call.
+
+  `omit_account?: boolean` on `StoryboardStep` mirrors the existing `omit_idempotency_key` pattern:
+  - The runner's `applyBrandInvariant` skips both the synthetic-account-construction branch and the natural-key-merge branch for the step.
+  - The SDK's `normalizeRequestParams` and `validateRequest` skip the `account`-required check (`skipAccountValidation` option on `TaskOptions`).
+  - For non-A2A runs, the raw-probe defense-in-depth path is triggered so no SDK normalization layer can silently re-inject an account before the wire call.
+
+  Without this escape hatch, conformance cannot grade "does the seller reject a missing-account `create_media_buy`?" because the client-side throw hides the spec contract from the grader.
+
+- 8fbae3f: Add the `parallel_dispatch_runner` test-kit contract and swap the in-flight branch to `IDEMPOTENCY_IN_FLIGHT` (#1686, #1687).
+
+  **Storyboard runner** (#1686):
+  - New `parallel_dispatch` step field: fans out N concurrent dispatches against the same agent (process_local mode, via `Promise.all`) and grades the cross-response set. Drives the AdCP 3.1 concurrent-retry phase of the idempotency storyboard (rule 9 / first-insert-wins).
+  - Two new check kinds:
+    - `cross_response_field_equal { path }` — every resolved dispatch carries the same value at the named path.
+    - `cross_response_count_distinct { path, allowed_values }` — distinct cardinality across resolved dispatches is in `allowed_values`. Use `allowed_values: [1]` to assert "exactly one resource created" on a race.
+  - In-flight retry resolution: dispatches that return `IDEMPOTENCY_IN_FLIGHT` or legacy `SERVICE_UNAVAILABLE` retry with the same `idempotency_key` after the seller's `retry_after` hint elapses, up to the per-dispatch retry budget and the outer `barrier_timeout_ms` (default 5000 ms).
+  - Per-response checks (`response_schema`, `field_present`, `error_code`, …) run once per dispatch and aggregate. Cross-response checks run once with the resolved set.
+  - The step grades `not_applicable` when the `parallel_dispatch_runner` contract is not in `options.contracts`, when `mode: distributed` is requested (out of scope for this SDK), or on a single-dispatch step that accidentally declared a `cross_response_*` check.
+  - Forward-compat unknown check kinds continue to grade `not_applicable` per the existing runner-output-contract behavior.
+
+  **Server middleware** (#1687):
+  - The idempotency middleware's in-flight branch now returns `IDEMPOTENCY_IN_FLIGHT` (AdCP 3.1 wire code) instead of `SERVICE_UNAVAILABLE`, with `recovery: transient`. Buyer SDKs that auto-retry transient + `retry_after` are unchanged.
+  - `retry_after` is derived from the in-flight claim's age rather than hardcoded `1` — short hint for fresh claims, longer for slow handlers, capped at 5 s so a long-running handler doesn't stall buyer retries past the outer barrier.
+  - The `IdempotencyCheckResult.kind === 'in-flight'` variant now carries `retryAfterSeconds` so custom store implementations can drive the same hint.
+
+  **Test impact**: `server-idempotency` tests updated to expect `IDEMPOTENCY_IN_FLIGHT` on parallel-retry paths. New `storyboard-parallel-dispatch` test covers the cross-response validators, the in-flight retry loop, barrier timeout, and `same_idempotency_key` opt-out.
+
+- b5774ba: Remove deprecated `account_from_brand` shim in `normalizeRequestParams` (#1676).
+
+  The shim silently fabricated `account.operator = brand.domain` when a `create_media_buy` call omitted `account`. This was semantically wrong for any caller with a buying-side intermediary, and caused compliance badges to certify requests with invented data rather than caller-supplied account semantics. With AdCP 3.0 GA (April 2026) sunsetting v2 support, the back-compat rationale no longer applies.
+
+  **Behavior change (two cases):**
+  1. `create_media_buy` with `brand.domain` but no `account` — previously fabricated `{ brand, operator: brand.domain }` (wrong for non-direct topologies); now throws `ValidationError`.
+  2. `create_media_buy` with neither `account` nor `brand` — previously fell through to seller-side schema rejection; now throws `ValidationError` client-side.
+
+  `create_media_buy` calls that omit `account` now throw `ValidationError` (exported as `ADCPValidationError`) with field `account`. Use `list_accounts` to discover an existing `account_id`, or `sync_accounts` to register a natural-key account (implicit-account sellers only).
+
+- 17d1c9a: fix(comply): autodetect `webhook_receiver` requirement from storyboard token presence
+
+  `comply()` was shipping the literal mustache token `{{runner.webhook_url:<step_id>}}` on the wire whenever a webhook-emitting storyboard ran without a configured receiver. 3.0-strict sellers reject the resulting payload as `INVALID_REQUEST: Input should be a valid URL, relative URL without a base`, cascading 5 distinct first-step failures across `webhook_emission/*` and `idempotency/replay_same_payload`.
+
+  This PR adds `'webhook_receiver'` to `RequirementName` and `KNOWN_REQUIREMENTS`, maps it to `requirement_unmet` in the runner's skip-reason table, and adds a structural pre-pass (`detectImplicitRequires`) that scans every step's `sample_request` for `{{runner.webhook_url:…}}` or `{{runner.webhook_base}}` tokens. When any are found and `options.webhook_receiver` is unset, the storyboard grades `not_applicable` with `skip.requirement: 'webhook_receiver'` — matching the spec contract at `compliance/{version}/universal/webhook-emission.yaml` (L34, L62–70, L331–332).
+
+  **Authoring impact:** none. Storyboard authors do not need to add `requires: [webhook_receiver]` — the token presence is the declaration. Existing storyboards that reference the runner's webhook URL automatically inherit the gate.
+
+  **Behavior change:** runs that previously failed with `INVALID_REQUEST` from a strict seller now grade `not_applicable` and surface `requirement_unmet:webhook_receiver` in the structured skip block. Runs that already configure `webhook_receiver` are unchanged.
+
+  Fixes #1678. Part of the coordinated stance at #1685.
+
+### Patch Changes
+
+- d6eefb3: docs(AdcpErrorInfo): warn sellers that message/details are grader-visible via ComplianceResult
+
+  `AdcpErrorInfo.message` and `AdcpErrorInfo.details` JSDoc now note that these
+  fields are forwarded into `ComplianceResult.failures[].adcp_error` and are
+  grader-visible beyond the request lifetime. Sellers should not embed bearer
+  tokens, account IDs, or internal paths in these fields. Fixes #1697.
+
+- 7130dc4: fix(creative): `CreativeBuilderPlatform` no longer advertises `list_creatives`, `get_creative_delivery`, or `sync_creatives` in `tools/list` when those methods are absent from the platform implementation.
+
+  Previously, `buildCreativeHandlers` unconditionally attached handler stubs for these three tools regardless of platform archetype, causing them to appear in `tools/list` for every creative agent — including stateless builder/transform agents that never had these methods. Buyer agents would call them, receive `UNSUPPORTED_FEATURE`, and burn retry attempts against tools that were never callable. The fix conditionalises handler registration on method presence, matching the pattern already used by `buildAccountHandlers`.
+
+- 1ceacb2: fix(conformance): grade storyboards not_applicable when required_tools are missing from agent toolset
+
+  `comply()` was attempting every capability-resolved storyboard even when the agent's discovered toolset was missing one or more tools declared in the storyboard's `required_tools` field. The cascading step-level skips caused the storyboard to grade `partial`, which propagated to the track as a false failure — particularly visible for governance storyboards run against non-governance agents.
+
+  Fix: before running each storyboard, check its `required_tools` against the agent's discovered tools. If any are missing, push the storyboard to `notApplicable` (with reason `missing required_tools: <list>`) and skip execution. The `not_applicable` synthetic result keeps the track row accurate and carries `overall_passed: true`, consistent with the existing version-gating behavior.
+
+  Also corrects `storyboards_executed`, `groupByTrack`, and `extractFailures` to reference the filtered runnable set rather than the full expanded set.
+
+- 7b556bb: fix(normalizer): throw ValidationError on pre-3.0 PackageRequest shapes instead of silently passing them through
+
+  `normalizePackageParams` now throws `ValidationError` (code: `VALIDATION_ERROR`) when it encounters `packages[].product_ids` (plural array, pre-3.0) or `packages[].budget` as an object (pre-3.0 `{ total, currency }` shape). Both shapes cannot be translated to AdCP 3.0 equivalents without data loss (`product_ids[]→product_id`: which id wins? `budget:object→number`: which currency?). Previously they silently reached 3.0-strict sellers and caused `INVALID_REQUEST` rejections. Now callers get an early, actionable error at the client boundary.
+
+  Also fixes a TypeScript-only cast in `request-builder.ts` (`baseSample.budget as number | undefined`) that did not guard at runtime — replaced with `typeof baseSample.budget === 'number'` check so storyboard fixtures with object budgets are correctly dropped in favour of discovery-derived values.
+
+  v2 sunset policy: v2 unsupported as of 3.0 GA (April 2026); no translation obligation.
+
 ## 6.19.1
 
 ### Patch Changes
