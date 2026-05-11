@@ -6,6 +6,7 @@
  * deprecation warning via warnOnce().
  */
 
+import { ValidationError } from '../errors';
 import { brandManifestToBrandReference, promotedProductsToCatalog } from '../types/compat';
 import { warnOnce } from './deprecation';
 import { MUTATING_TASKS, generateIdempotencyKey } from './idempotency';
@@ -22,6 +23,25 @@ export function normalizePackageParams(pkg: any): any {
   if (!pkg || typeof pkg !== 'object') return pkg;
 
   const normalized = { ...pkg };
+
+  // Fail-closed on pre-3.0 shapes that cannot be translated without data loss.
+  // product_ids[] → product_id: which id wins? No safe answer.
+  // budget: {total, currency} → budget: number: which currency? No safe answer.
+  // v2 sunset: unsupported as of 3.0 GA (April 2026).
+  if (Array.isArray(normalized.product_ids)) {
+    throw new ValidationError(
+      'packages[].product_ids',
+      normalized.product_ids,
+      'pre-3.0 shape not supported in AdCP 3.0. Use product_id (singular string) instead.'
+    );
+  }
+  if (normalized.budget !== undefined && typeof normalized.budget === 'object' && normalized.budget !== null) {
+    throw new ValidationError(
+      'packages[].budget',
+      normalized.budget,
+      'pre-3.0 shape not supported in AdCP 3.0. Use budget as a number instead.'
+    );
+  }
 
   // context.buyer_ref → buyer_ref (backward compat for pre-4.15 AdCP servers)
   // AdCP 4.15 moved buyer_ref into context, but older servers still require it
