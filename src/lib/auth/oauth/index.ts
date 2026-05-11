@@ -146,6 +146,11 @@ export function createCLIOAuthProvider(
     quiet?: boolean;
     /** Storage for persisting agent config */
     storage?: OAuthConfigStorage;
+    /**
+     * Allow non-HTTPS resource URLs advertised in RFC 9728 protected-resource
+     * metadata. Mirrors the CLI's `--allow-http` flag. Defaults to `false`.
+     */
+    allowHttp?: boolean;
   }
 ): MCPOAuthProvider {
   const flowConfig: CLIFlowHandlerConfig = {
@@ -167,6 +172,7 @@ export function createCLIOAuthProvider(
     flowHandler,
     storage: options?.storage,
     clientMetadata,
+    allowHttp: options?.allowHttp,
   });
 }
 
@@ -189,6 +195,11 @@ export function createNonInteractiveOAuthProvider(
     clientMetadata?: Partial<OAuthClientMetadata>;
     /** Storage for persisting refreshed tokens back to disk. */
     storage?: OAuthConfigStorage;
+    /**
+     * Allow non-HTTPS resource URLs advertised in RFC 9728 protected-resource
+     * metadata. Mirrors the CLI's `--allow-http` flag. Defaults to `false`.
+     */
+    allowHttp?: boolean;
   }
 ): MCPOAuthProvider {
   const { NonInteractiveFlowHandler } = require('./NonInteractiveFlowHandler');
@@ -205,6 +216,7 @@ export function createNonInteractiveOAuthProvider(
     flowHandler,
     storage: options?.storage,
     clientMetadata,
+    allowHttp: options?.allowHttp,
   });
 }
 

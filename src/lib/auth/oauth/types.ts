@@ -96,6 +96,21 @@ export interface OAuthProviderConfig {
 
   /** OAuth client metadata (required - use DEFAULT_CLIENT_METADATA as base) */
   clientMetadata: OAuthClientMetadata;
+
+  /**
+   * Allow non-HTTPS resource URLs in RFC 9728 protected-resource metadata.
+   * Mirrors the CLI's `--allow-http` flag and matches the operator-driven
+   * trust model used elsewhere in the SDK (`ssrfSafeFetch.allowPrivateIp`,
+   * the agent-entry URL validators). Defaults to `false`.
+   *
+   * Scope: relaxes only the HTTPS-only check on the PRM `resource` value.
+   * Does NOT widen network-layer SSRF posture (that knob is
+   * `ADCP_ALLOW_INTERNAL_PROBES` at module load, fed by the CLI). Intended
+   * for local dev loops; do not enable when talking to remote authorization
+   * servers — the AS remains the audience gatekeeper, but a non-HTTPS
+   * resource URL implies the transport itself is unauthenticated.
+   */
+  allowHttp?: boolean;
 }
 
 /**
