@@ -3,6 +3,7 @@
  */
 
 import type { AgentProfile, TestResult, TestScenario } from '../types';
+import type { AdcpErrorInfo } from '../../core/ConversationTypes';
 
 // ============================================================
 // COMPLY: Capability Tracks
@@ -80,7 +81,7 @@ export interface ComplianceFailure {
    * machine-readable self-correction (the `field` and `details.validation_errors`
    * sub-fields identify the exact fault address without re-running the step).
    */
-  adcp_error?: import('../../core/ConversationTypes').AdcpErrorInfo;
+  adcp_error?: AdcpErrorInfo;
   /** Human-readable expected behavior (from storyboard YAML). */
   expected?: string;
   /** CLI command to re-run just this step for debugging */

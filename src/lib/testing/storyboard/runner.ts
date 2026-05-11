@@ -310,6 +310,7 @@ function applyBranchSetGrading(
       step.skip_reason = 'peer_branch_taken';
       step.skip = { reason: 'peer_branch_taken', detail };
       delete step.error;
+      delete step.adcp_error;
       skippedDelta++;
       regraded = true;
     }
