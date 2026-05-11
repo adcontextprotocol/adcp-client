@@ -6,6 +6,7 @@
  * deprecation warning via warnOnce().
  */
 
+import { ValidationError } from '../errors';
 import { brandManifestToBrandReference, promotedProductsToCatalog } from '../types/compat';
 import { ValidationError } from '../errors/index';
 import { warnOnce } from './deprecation';
@@ -23,6 +24,34 @@ export function normalizePackageParams(pkg: any): any {
   if (!pkg || typeof pkg !== 'object') return pkg;
 
   const normalized = { ...pkg };
+
+  // Fail-closed on pre-3.0 shapes that cannot be translated without data loss.
+  // product_ids[] → product_id: which id wins? No safe answer.
+  // budget: {total, currency} → budget: number: which currency? No safe answer.
+  // v2 sunset: unsupported as of 3.0 GA (April 2026).
+  //
+  // Intentional asymmetry vs get_products.product_ids (lines below), which uses
+  // warnOnce+delete because that field is a query filter that can simply be dropped.
+  // PackageRequest.product_id and .budget are required identifiers — dropping them
+  // produces a different invalid request; throwing early is strictly better.
+  //
+  // This error is thrown at the client boundary before any network call and must not
+  // be forwarded on the wire. It uses ValidationError (VALIDATION_ERROR) as the
+  // nearest semantic fit in the client error hierarchy.
+  if (Array.isArray(normalized.product_ids) && normalized.product_ids.length > 0) {
+    throw new ValidationError(
+      'packages[].product_ids',
+      normalized.product_ids,
+      'pre-3.0 shape not supported in AdCP 3.0. Use product_id (singular string) instead.'
+    );
+  }
+  if (normalized.budget !== null && typeof normalized.budget === 'object') {
+    throw new ValidationError(
+      'packages[].budget',
+      normalized.budget,
+      'pre-3.0 shape not supported in AdCP 3.0. Use budget as a number instead.'
+    );
+  }
 
   // context.buyer_ref → buyer_ref (backward compat for pre-4.15 AdCP servers)
   // AdCP 4.15 moved buyer_ref into context, but older servers still require it
