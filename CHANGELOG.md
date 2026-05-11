@@ -1,5 +1,53 @@
 # Changelog
 
+## 6.19.0
+
+### Minor Changes
+
+- 29e76a9: feat(types): tighten `Format.assets` typing and emit named slot unions + Zod schemas
+
+  Closes adcontextprotocol/adcp-client#1652.
+
+  The codegen post-processor that restored the `asset_type` discriminator on `Individual*Asset` slot types (#1498) now also:
+  - Imports the `*AssetRequirements` types into `tools.generated.ts` from `core.generated.ts`, so the per-slot `requirements?:` field is preserved on every `IndividualImageAsset` / `IndividualVideoAsset` / … exported from the tools surface (previously missing — a downstream cast pattern).
+  - Restores the same `asset_type` + `requirements` discriminator on the 12 `Group*Asset` shapes inside `RepeatableGroupAsset.assets[]`.
+  - Emits named `IndividualAssetSlot`, `GroupAssetSlot`, and `FormatAssetSlot` unions in both `core.generated.ts` and `tools.generated.ts`, and tightens `Format.assets?: FormatAssetSlot[]` and `RepeatableGroupAsset.assets: GroupAssetSlot[]` to reference them.
+  - ts-to-zod picks up the named unions, so the generated schemas now include `IndividualAssetSlotSchema`, `GroupAssetSlotSchema`, `FormatAssetSlotSchema`, and per-type `IndividualImageAssetSchema { asset_type, requirements }` / `GroupImageAssetSchema { asset_type, requirements }` carrying the requirements branch.
+
+  Consumer impact:
+  - `Format.assets[i]` narrows correctly: `slot.asset_type === 'image'` now gives `slot.requirements: ImageAssetRequirements | undefined` for free. The cast pattern from #1652's worked example goes away.
+  - New runtime-validation entry points: import `IndividualAssetSlotSchema`, `GroupAssetSlotSchema`, or `FormatAssetSlotSchema` from `@adcp/sdk` instead of forking a local `z.union([...])` over the per-type schemas.
+  - The hand-authored `src/lib/types/format-asset-slots.ts` shim is reduced to thin `*Slot` aliases over the codegen names. Consumers importing `IndividualImageAssetSlot` etc. continue to work; the underlying type is now identical to the spec-derived `IndividualImageAsset`. **Optionality note:** the prior hand-authored shim modeled `requirements` as required on the `*Slot` types; it is now optional (`?:`) to match the spec, where the field appears in `properties` but never in `required`. Adopters that destructured `slot.requirements` and treated the value as defined will need to handle `undefined` or assert.
+  - Two no-op group builders (`briefGroupAsset`, `catalogGroupAsset`) are removed from `@adcp/sdk`'s public exports. The spec doesn't include `brief` or `catalog` in `RepeatableGroupAsset.assets[].oneOf`, so calling these always produced an object that would fail wire-schema validation. Treated as a bug-fix removal under the minor bump rather than a breaking contract change. The 12 valid `*GroupAsset` builders (and their `FormatAsset.group*` namespace entries) are unchanged.
+
+### Patch Changes
+
+- 126dd1e: chore: bump AdCP pin to 3.0.10
+
+  Picks up adcontextprotocol/adcp v3.0.10 — a storyboard-only patch that converts the 12 remaining static `idempotency_key` literals across error, governance, signal, schema-validation, and creative-ad-server compliance scenarios to `$generate:uuid_v4#<alias>` form. Closes the static-key sweep for the 3.0.x line so storyboard re-runs against any spec-compliant seller no longer collide with the seller's idempotency cache after deploys.
+
+  No schema shape changes. Regen diff is metadata only (`adcp_version` strings + the entity-hydration map's source-version comment).
+
+- 0c41b3a: fix(storyboard): proposal-mode enricher respects fixture's explicit `packages` over auto-captured `context.proposal_id`
+
+  PR #1603 introduced proposal-mode in the `create_media_buy` request enricher by reading `context.proposal_id`. `context.proposal_id` is auto-captured by `context.ts::get_products()` from any prior `get_products` response that returned `proposals[0].proposal_id` — which is essentially every brief flow against a seller that supports proposal-mode discovery.
+
+  The enricher fell back to `context.proposal_id` whenever the fixture didn't explicitly set `proposal_id`. That meant a storyboard authoring `packages` directly in `sample_request` would still have its packages dropped in favor of the auto-captured proposal — forcing every sales storyboard whose brief returned proposals through the seller's strict proposal-lifecycle validation.
+
+  Concrete impact (surfaced when consuming sellers like `test-agent.adcontextprotocol.org` that enforce proposal-status / IO-acceptance / total_budget rules on `proposal_id`-shaped requests): `sales_guaranteed`, `sales_non_guaranteed`, `schema_validation`, `media_buy_seller/*`, `creative_generative/seller`, and similar package-mode storyboards regressed below their step floors with `PROPOSAL_NOT_COMMITTED` errors.
+
+  Fix: the enricher now reads `context.proposal_id` only when the fixture authors NEITHER `proposal_id` NOR `packages`. Fixture intent wins:
+
+  | Fixture                          | Mode chosen                                                        |
+  | -------------------------------- | ------------------------------------------------------------------ |
+  | `proposal_id` set                | proposal-mode                                                      |
+  | `packages` set, no `proposal_id` | package-mode (was: incorrectly proposal-mode via context fallback) |
+  | neither                          | proposal-mode if `context.proposal_id` set; otherwise package-mode |
+
+  Tests added for all four cases; existing `hello_seller_adapter_proposal_mode` integration coverage continues to pass (proposal-mode storyboards explicitly author `proposal_id`).
+
+  Patch-eligible per the additive-fix rule: behavior aligns with the original PR #1603 intent (proposal-mode for proposal-mode storyboards), only narrows the over-applied fallback that was masking the proposal-validation path entirely.
+
 ## 6.18.0
 
 ### Minor Changes
