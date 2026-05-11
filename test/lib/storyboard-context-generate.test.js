@@ -83,6 +83,37 @@ describe('$generate:uuid_v4 placeholder resolution', () => {
 
     assert.notStrictEqual(a.idempotency_key, b.idempotency_key);
   });
+
+  it('phase-boundary reset: alias does not bleed from phase 1 setup into phase 2 setup (#1657)', () => {
+    // Regression guard for adcp-client#1657. When a storyboard has multiple
+    // "setup" phases (each creating a fresh resource), both phases use the
+    // same alias name. Without a phase-boundary reset the second setup
+    // reuses the first's UUID, hitting the seller's idempotency cache and
+    // returning stale state.
+    //
+    // The runner resets by doing `context = { ...context }` at each phase
+    // start — no forwardAliasCache, so alias cache drops while $context.*
+    // values (media_buy_id, account_id, etc.) are preserved as plain properties.
+    const phase1Context = {};
+    const setup1 = injectContext({ idempotency_key: '$generate:uuid_v4#setup' }, phase1Context);
+
+    // Simulate step roll within phase 1 (alias persists — replay pair works).
+    const phase1Step2 = { ...phase1Context };
+    forwardAliasCache(phase1Context, phase1Step2);
+    const replay1 = injectContext({ idempotency_key: '$generate:uuid_v4#setup' }, phase1Step2);
+    assert.strictEqual(setup1.idempotency_key, replay1.idempotency_key, 'within-phase replay must reuse same UUID');
+
+    // Phase boundary: runner does `context = { ...context }` without forwardAliasCache.
+    const phase2Context = { ...phase1Context };
+    // Deliberately NO forwardAliasCache — this is the fix.
+    const setup2 = injectContext({ idempotency_key: '$generate:uuid_v4#setup' }, phase2Context);
+
+    assert.notStrictEqual(
+      setup1.idempotency_key,
+      setup2.idempotency_key,
+      'cross-phase setup must get fresh UUID to avoid seller idempotency cache hit'
+    );
+  });
 });
 
 describe('$generate:opaque_id placeholder resolution', () => {

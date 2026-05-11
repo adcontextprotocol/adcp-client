@@ -1614,6 +1614,16 @@ async function executeStoryboardPass(
       continue;
     }
 
+    // Reset alias cache at this phase boundary (#1657). $generate:uuid_v4#alias
+    // is designed to be stable within a scenario — the initial call and its
+    // idempotency replay share the same UUID — but aliases must NOT bleed across
+    // phases. Independent test groups that each start with a "setup" step need
+    // fresh idempotency keys; otherwise the seller's idempotency cache replays
+    // stale state from a prior group into the new one. Creating a new object
+    // identity drops the WeakMap entry without losing any $context.* values
+    // (those ride as plain properties on the spread result).
+    context = { ...context };
+
     // Seeding-cascade skip: either the pre-flight seed phase failed (setup
     // break) or the agent doesn't advertise `comply_test_controller`
     // (coverage gap). Both paths emit skipped steps; the reasons differ so
