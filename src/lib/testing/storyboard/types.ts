@@ -461,6 +461,27 @@ export interface StoryboardStep {
    * rather than short-circuiting on `INVALID_REQUEST: idempotency_key`.
    */
   omit_idempotency_key?: boolean;
+  /**
+   * When true, suppress the runner's `account` auto-injection on a
+   * `create_media_buy` step so the storyboard can exercise the server's
+   * missing-account rejection path. Without this flag the runner's
+   * `applyBrandInvariant` synthesises an `account` field before the wire
+   * call (both the natural-key-merge branch and the synthetic-construction
+   * branch), and the SDK's client-side normalizer also throws before the
+   * wire call — both layers are suppressed so the seller sees the request
+   * exactly as authored in `sample_request`.
+   *
+   * Only applicable to `create_media_buy` (the sole tool where `account` is
+   * required by `normalizeRequestParams`). No-op on other task types.
+   *
+   * Default (false) matches buyer-agent behavior: every `create_media_buy`
+   * request carries an `account` so handlers under test run against the
+   * actual error path the storyboard names rather than short-circuiting on
+   * `INVALID_REQUEST: account`.
+   *
+   * @internal Do not set in production buyer code.
+   */
+  omit_account?: boolean;
   /** Tool name required for this step to run. Skipped if agent lacks it. */
   requires_tool?: string;
   /** Explicit context extraction rules (supplements convention-based extractors) */

@@ -89,7 +89,7 @@ export function normalizePackageParams(pkg: any): any {
 export function normalizeRequestParams(
   taskType: string,
   params: any,
-  opts: { skipIdempotencyAutoInject?: boolean } = {}
+  opts: { skipIdempotencyAutoInject?: boolean; skipAccountValidation?: boolean } = {}
 ): any {
   if (!params) {
     return params;
@@ -154,7 +154,7 @@ export function normalizeRequestParams(
   // Callers must pass account as { account_id } or { brand, operator, sandbox? }.
   // Use list_accounts to discover an existing account_id, or sync_accounts
   // to register a new natural-key account.
-  if (taskType === 'create_media_buy' && !normalized.account) {
+  if (taskType === 'create_media_buy' && !normalized.account && !opts.skipAccountValidation) {
     throw new ValidationError(
       'account',
       undefined,
