@@ -28,14 +28,23 @@ export function normalizePackageParams(pkg: any): any {
   // product_ids[] → product_id: which id wins? No safe answer.
   // budget: {total, currency} → budget: number: which currency? No safe answer.
   // v2 sunset: unsupported as of 3.0 GA (April 2026).
-  if (Array.isArray(normalized.product_ids)) {
+  //
+  // Intentional asymmetry vs get_products.product_ids (lines below), which uses
+  // warnOnce+delete because that field is a query filter that can simply be dropped.
+  // PackageRequest.product_id and .budget are required identifiers — dropping them
+  // produces a different invalid request; throwing early is strictly better.
+  //
+  // This error is thrown at the client boundary before any network call and must not
+  // be forwarded on the wire. It uses ValidationError (VALIDATION_ERROR) as the
+  // nearest semantic fit in the client error hierarchy.
+  if (Array.isArray(normalized.product_ids) && normalized.product_ids.length > 0) {
     throw new ValidationError(
       'packages[].product_ids',
       normalized.product_ids,
       'pre-3.0 shape not supported in AdCP 3.0. Use product_id (singular string) instead.'
     );
   }
-  if (normalized.budget !== undefined && typeof normalized.budget === 'object' && normalized.budget !== null) {
+  if (normalized.budget !== null && typeof normalized.budget === 'object') {
     throw new ValidationError(
       'packages[].budget',
       normalized.budget,

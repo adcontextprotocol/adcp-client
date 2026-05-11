@@ -63,6 +63,12 @@ describe('normalizePackageParams — pre-3.0 fail-closed guards', () => {
     assert.strictEqual(result.pricing_option_id, 'po-1');
   });
 
+  it('does not throw for empty product_ids[] (no ambiguity — nothing to pick)', () => {
+    assert.doesNotThrow(() =>
+      normalizePackageParams({ product_ids: [], product_id: 'prod-1', pricing_option_id: 'po-1', budget: 1000 })
+    );
+  });
+
   it('passes through null/non-object without throwing', () => {
     assert.strictEqual(normalizePackageParams(null), null);
     assert.strictEqual(normalizePackageParams(undefined), undefined);
