@@ -1094,6 +1094,95 @@ describe('security_baseline: unconditional PRM enforcement (#677)', () => {
       await agent.close();
     }
   });
+
+  // ────────────────────────────────────────────────────────────
+  // adcp-client#1702: pre-emptive oauth_discovery cascade-skip
+  //
+  // The PRM 404 cascade (#677) is reactive — it triggers after the
+  // probe fires. Bearer-only agents that don't return a clean 404 on
+  // the well-known path (200-HTML, 405, 5xx, redirect — the
+  // Wonderstruck shape) fall through to validation failures, producing
+  // 5 false negatives inside an `optional: true` phase. The runner now
+  // pre-empts: when the agent's `get_adcp_capabilities` response lacks
+  // `account.authorization_endpoint`, oauth_discovery cascade-skips
+  // before any PRM call is made.
+  // ────────────────────────────────────────────────────────────
+
+  it('caps without authorization_endpoint + non-404 PRM → oauth_discovery pre-emptively skipped (#1702)', async () => {
+    // Wonderstruck-shape repro: PRM returns 200 with HTML, not 404.
+    // Without #1702 the runner would probe, fail validation, and report
+    // ~5 false negatives. With #1702, oauth_discovery cascade-skips
+    // because the agent never advertised OAuth in capabilities.
+    const agent = createAuthTestAgent({
+      prm: { status: 200, body: '<html>not metadata</html>' },
+    });
+    const agentUrl = await agent.listen();
+    try {
+      const result = await runStoryboard(agentUrl, loadSecurityBaseline(), {
+        ...runOpts(API_KEY_KIT),
+        _profile: {
+          name: 'Bearer-only agent',
+          tools: ['list_creatives'],
+          raw_capabilities: {}, // no account.authorization_endpoint
+        },
+      });
+      assert.strictEqual(result.overall_passed, true, 'api_key path carries the storyboard');
+
+      const oauthPhase = result.phases.find(p => p.phase_id === 'oauth_discovery');
+      assert.ok(oauthPhase, 'oauth_discovery phase present');
+      assert.strictEqual(oauthPhase.passed, true, 'oauth_discovery vacuously passed (pre-empted)');
+      for (const s of oauthPhase.steps) {
+        assert.strictEqual(s.skipped, true, `${s.step_id} should be skipped, not probed`);
+        assert.strictEqual(s.skip_reason, 'oauth_not_advertised');
+      }
+
+      // unauth_rejection MUST still run — it's universal and not gated by
+      // the oauth pre-emption. Reaching this phase at all is what
+      // distinguishes a phase-level skip from a whole-storyboard skip.
+      const unauthPhase = result.phases.find(p => p.phase_id === 'unauth_rejection');
+      assert.ok(unauthPhase, 'unauth_rejection phase present');
+      assert.strictEqual(
+        unauthPhase.steps.some(s => s.skipped),
+        false,
+        'unauth_rejection steps must execute — the whole storyboard is not skipped'
+      );
+    } finally {
+      await agent.close();
+    }
+  });
+
+  it('caps WITH authorization_endpoint → oauth_discovery still runs even on non-404 PRM (#1702)', async () => {
+    // Agent advertised OAuth in capabilities, so the pre-empt does NOT
+    // fire. The reactive cascade (404) doesn't fire either (PRM is 500).
+    // OAuth discovery probes the endpoint, validations fail, and the
+    // optional phase swallows the failure (#677 hardening still applies
+    // separately when PRM returns 2xx).
+    const agent = createAuthTestAgent({ prm: { status: 500, body: 'oops' } });
+    const agentUrl = await agent.listen();
+    try {
+      const result = await runStoryboard(agentUrl, loadSecurityBaseline(), {
+        ...runOpts(API_KEY_KIT),
+        _profile: {
+          name: 'OAuth-capable agent',
+          tools: ['list_creatives'],
+          raw_capabilities: {
+            account: { authorization_endpoint: 'https://auth.example.com/oauth/authorize' },
+          },
+        },
+      });
+
+      const oauthPhase = result.phases.find(p => p.phase_id === 'oauth_discovery');
+      assert.ok(oauthPhase, 'oauth_discovery phase present');
+      const skippedSteps = oauthPhase.steps.filter(s => s.skipped && s.skip_reason === 'oauth_not_advertised');
+      assert.strictEqual(
+        skippedSteps.length,
+        0,
+        'pre-empt must not fire when capabilities advertise an authorization_endpoint'
+      );
+    } finally {
+      await agent.close();
+    }
+  });
 });
 
 describe('comply() HTTPS enforcement', () => {

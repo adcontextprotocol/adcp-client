@@ -411,3 +411,152 @@ phases:
     assert.deepEqual(parsed.requires, ['webhook_receiver']);
   });
 });
+
+// ────────────────────────────────────────────────────────────
+// adcp-client#1702: implicit request_signer requirement
+// ────────────────────────────────────────────────────────────
+//
+// The signed-requests universal storyboard is capability-gated:
+// `compliance/{version}/universal/signed-requests.yaml` declares that
+// "Agents that do not advertise support are not tested against this
+// storyboard — absence of advertisement is not a failure". The runner
+// enforces that gate by autodetecting `request_signer` on any
+// storyboard whose id is `signed_requests` or that contains a
+// `request_signing_probe` step, and skipping with `not_applicable`
+// when the agent's `get_adcp_capabilities` response lacks
+// `request_signing.supported: true`.
+
+function buildSignedRequestsStoryboard(overrides = {}) {
+  return buildStoryboard({
+    id: 'signed_requests',
+    phases: [
+      {
+        id: 'capability_discovery',
+        title: 'Capability discovery',
+        steps: [
+          {
+            id: 'get_capabilities',
+            title: 'Verify the agent declares request_signing.supported',
+            task: 'get_adcp_capabilities',
+          },
+        ],
+      },
+      {
+        id: 'positive_vectors',
+        title: 'Positive vectors',
+        steps: [
+          {
+            id: 'positive-001-basic-post',
+            title: 'positive 001',
+            task: 'request_signing_probe',
+          },
+        ],
+      },
+    ],
+    ...overrides,
+  });
+}
+
+const profileWithoutRequestSigning = {
+  name: 'Bearer-only agent',
+  tools: ['get_adcp_capabilities', 'get_products'],
+  raw_capabilities: {}, // no request_signing block
+};
+
+const profileWithRequestSigningFalse = {
+  name: 'Agent declaring request_signing.supported: false',
+  tools: ['get_adcp_capabilities', 'get_products'],
+  raw_capabilities: { request_signing: { supported: false } },
+};
+
+const profileWithRequestSigning = {
+  name: 'Signing-verifier agent',
+  tools: ['get_adcp_capabilities', 'get_products'],
+  raw_capabilities: { request_signing: { supported: true } },
+};
+
+describe('Storyboard.requires gate (#1702): implicit request_signer', () => {
+  test('signed_requests storyboard skips when agent omits request_signing block', async () => {
+    const sb = buildSignedRequestsStoryboard();
+    const result = await runStoryboard('http://fake-local-99999', sb, {
+      _profile: profileWithoutRequestSigning,
+      agentTools: profileWithoutRequestSigning.tools,
+    });
+
+    assert.equal(result.overall_passed, true, 'capability-gated skip is not a failure');
+    assert.equal(result.skipped_count, 1);
+    assert.equal(result.failed_count, 0);
+
+    const step = result.phases[0].steps[0];
+    assert.equal(step.skipped, true);
+    assert.equal(step.skip_reason, 'not_applicable');
+    assert.equal(step.skip.reason, 'not_applicable');
+    assert.equal(step.skip.requirement, 'request_signer');
+    assert.match(step.skip.detail, /request_signing\.supported: true/);
+  });
+
+  test('signed_requests storyboard skips when agent declares request_signing.supported: false', async () => {
+    const sb = buildSignedRequestsStoryboard();
+    const result = await runStoryboard('http://fake-local-99999', sb, {
+      _profile: profileWithRequestSigningFalse,
+      agentTools: profileWithRequestSigningFalse.tools,
+    });
+
+    const step = result.phases[0].steps[0];
+    assert.equal(step.skip.requirement, 'request_signer', 'false is treated the same as absent');
+    assert.match(step.skip.detail, /false/);
+  });
+
+  test('signed_requests storyboard runs when agent declares request_signing.supported: true', async () => {
+    const sb = buildSignedRequestsStoryboard();
+    const result = await runStoryboard('http://fake-local-99999', sb, {
+      _profile: profileWithRequestSigning,
+      agentTools: profileWithRequestSigning.tools,
+    });
+
+    const phaseIds = result.phases.map(p => p.phase_id);
+    assert.ok(
+      !phaseIds.includes('requirement_unmet'),
+      'gate must not synthesize requirement_unmet when capability is advertised'
+    );
+  });
+
+  test('non-signed_requests storyboard with a request_signing_probe step also triggers the gate', async () => {
+    // Autodetect by step.task, not just storyboard.id, so a future
+    // storyboard that embeds signing probes inherits the gate.
+    const sb = buildStoryboard({
+      id: 'embedded_signing_test',
+      phases: [
+        {
+          id: 'p1',
+          title: 'Signing probe inside a non-signed_requests storyboard',
+          steps: [
+            {
+              id: 'positive-001-basic-post',
+              title: 'embed',
+              task: 'request_signing_probe',
+            },
+          ],
+        },
+      ],
+    });
+    const result = await runStoryboard('http://fake-local-99999', sb, {
+      _profile: profileWithoutRequestSigning,
+      agentTools: profileWithoutRequestSigning.tools,
+    });
+
+    const step = result.phases[0].steps[0];
+    assert.equal(step.skip.requirement, 'request_signer');
+  });
+
+  test('storyboards with NO signing surface are unaffected by the autodetect gate', async () => {
+    const sb = buildStoryboard(); // no signed_requests id, no request_signing_probe step
+    const result = await runStoryboard('http://fake-local-99999', sb, {
+      _profile: profileWithoutRequestSigning,
+      agentTools: profileWithoutRequestSigning.tools,
+    });
+
+    const phaseIds = result.phases.map(p => p.phase_id);
+    assert.ok(!phaseIds.includes('requirement_unmet'), 'no autodetect on unrelated storyboards');
+  });
+});
