@@ -366,7 +366,7 @@ try {
 
 What gets dropped silently: any key not in the allowlist (no warning — the design assumes the allowlist is the contract); functions / Symbols / Date / RegExp / class instances; nested objects beyond `maxDepth`; results exceeding `maxSizeBytes`. Returns `undefined` (not `{}`) when nothing survives, so the spread into `details: ...` is a no-op rather than emitting an empty block.
 
-`message` and `details` are also forwarded to `ComplianceResult.failures[].adcp_error` when a storyboard step fails — grader-visible and archived beyond the request lifetime. Always apply `pickSafeDetails` (and write a safe literal string to `message`) before throwing; the same leak class applies to compliance records as to live buyer responses. See [`docs/guides/CTX-METADATA-SAFETY.md § Compliance failure envelopes`](../../../../docs/guides/CTX-METADATA-SAFETY.md#4-compliance-failure-envelopes-adcp_error) for the full list of what to avoid.
+`message` and `details` are also forwarded to `ComplianceResult.failures[].adcp_error` when a storyboard step fails — grader-visible and archived beyond the request lifetime. Always apply `pickSafeDetails` (and write a safe literal string to `message`) before throwing; the same leak class applies to compliance records as to live buyer responses. See [`docs/guides/CTX-METADATA-SAFETY.md § Compliance failure envelopes`](../../../docs/guides/CTX-METADATA-SAFETY.md#4-compliance-failure-envelopes-adcp_error) for the full list of what to avoid.
 
 ### Wire-shape normalizer for `errors[]`
 
