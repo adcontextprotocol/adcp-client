@@ -1,0 +1,1 @@
+test: \\u2028 should be backslash-u2028 in file
