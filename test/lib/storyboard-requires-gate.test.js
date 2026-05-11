@@ -256,3 +256,158 @@ phases:
     assert.equal(parsed.requires, undefined);
   });
 });
+
+// ────────────────────────────────────────────────────────────
+// adcp-client#1678: implicit webhook_receiver requirement
+// ────────────────────────────────────────────────────────────
+//
+// Storyboards that reference `{{runner.webhook_url:<step_id>}}` or
+// `{{runner.webhook_base}}` in any step's `sample_request` need a
+// webhook receiver to expand the tokens. Without one, the expander
+// would ship literal mustache strings on the wire — rejected by
+// 3.0-strict sellers as `INVALID_REQUEST: relative URL without a
+// base`. The runner autodetects the requirement from token presence
+// (no separate `requires: [webhook_receiver]` declaration needed) and
+// grades the storyboard not_applicable when the operator did not
+// configure a receiver.
+
+function buildWebhookStoryboard(overrides = {}) {
+  return buildStoryboard({
+    phases: [
+      {
+        id: 'p1',
+        title: 'Trigger webhook',
+        steps: [
+          {
+            id: 'trigger_webhook',
+            title: 'Trigger an operation that emits a webhook',
+            task: 'create_media_buy',
+            sample_request: {
+              push_notification_config: {
+                url: '{{runner.webhook_url:trigger_webhook}}',
+              },
+              idempotency_key: 'webhook-test-key',
+            },
+          },
+        ],
+      },
+    ],
+    ...overrides,
+  });
+}
+
+describe('Storyboard.requires gate (#1678): implicit webhook_receiver', () => {
+  test('storyboards referencing {{runner.webhook_url:…}} skip when no receiver configured', async () => {
+    const sb = buildWebhookStoryboard();
+    const result = await runStoryboard('http://fake-local-99999', sb, {
+      _profile: profileWithoutController,
+      agentTools: profileWithoutController.tools,
+    });
+
+    assert.equal(result.overall_passed, true, 'requires-unmet is not a failure');
+    assert.equal(result.skipped_count, 1);
+    assert.equal(result.failed_count, 0);
+
+    const step = result.phases[0].steps[0];
+    assert.equal(step.skipped, true);
+    assert.equal(step.skip_reason, 'requirement_unmet');
+    assert.equal(step.skip.requirement, 'webhook_receiver');
+    assert.match(step.skip.detail, /webhook receiver is configured/);
+  });
+
+  test('storyboards referencing {{runner.webhook_base}} also trigger the gate', async () => {
+    const sb = buildWebhookStoryboard({
+      phases: [
+        {
+          id: 'p1',
+          title: 'Compose a webhook URL',
+          steps: [
+            {
+              id: 'inspect_base',
+              title: 'A step that interpolates webhook_base',
+              task: 'create_media_buy',
+              sample_request: {
+                meta: { reply_to: '{{runner.webhook_base}}/custom-path' },
+              },
+            },
+          ],
+        },
+      ],
+    });
+    const result = await runStoryboard('http://fake-local-99999', sb, {
+      _profile: profileWithoutController,
+      agentTools: profileWithoutController.tools,
+    });
+
+    const step = result.phases[0].steps[0];
+    assert.equal(step.skip.requirement, 'webhook_receiver');
+  });
+
+  test('storyboards with NO webhook tokens are unaffected by the autodetect gate', async () => {
+    const sb = buildStoryboard(); // no webhook tokens anywhere
+    const result = await runStoryboard('http://fake-local-99999', sb, {
+      _profile: profileWithoutController,
+      agentTools: profileWithoutController.tools,
+    });
+
+    // Gate did not synthesize requirement_unmet — storyboard proceeded to
+    // phases (and may have failed for transport reasons against the fake URL,
+    // but that's not what we're measuring here).
+    const phaseIds = result.phases.map(p => p.phase_id);
+    assert.ok(
+      !phaseIds.includes('requirement_unmet'),
+      'gate must not synthesize requirement_unmet when no webhook tokens are present'
+    );
+  });
+
+  test('storyboards referencing webhook tokens nested in deep objects still trigger', async () => {
+    const sb = buildStoryboard({
+      phases: [
+        {
+          id: 'p1',
+          title: 'Deeply-nested token',
+          steps: [
+            {
+              id: 'deep',
+              title: 'A step burying the token under arrays and objects',
+              task: 'create_media_buy',
+              sample_request: {
+                a: { b: { c: [{ d: '{{runner.webhook_url:deep}}' }] } },
+              },
+            },
+          ],
+        },
+      ],
+    });
+    const result = await runStoryboard('http://fake-local-99999', sb, {
+      _profile: profileWithoutController,
+      agentTools: profileWithoutController.tools,
+    });
+
+    const step = result.phases[0].steps[0];
+    assert.equal(step.skip.requirement, 'webhook_receiver', 'recursive scan finds nested tokens');
+  });
+
+  test('declared requires: [webhook_receiver] resolves the same way (loader allows the name)', () => {
+    const yaml = `
+id: ok_webhook_declared
+version: "1.0.0"
+title: explicit webhook_receiver tag
+category: test
+summary: ""
+narrative: ""
+requires: [webhook_receiver]
+agent:
+  interaction_model: sync
+  capabilities: []
+caller:
+  role: buyer_agent
+phases:
+  - id: p1
+    title: P
+    steps: []
+`;
+    const parsed = parseStoryboard(yaml);
+    assert.deepEqual(parsed.requires, ['webhook_receiver']);
+  });
+});

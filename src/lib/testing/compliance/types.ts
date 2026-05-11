@@ -3,6 +3,7 @@
  */
 
 import type { AgentProfile, TestResult, TestScenario } from '../types';
+import type { AdcpErrorInfo } from '../../core/ConversationTypes';
 
 // ============================================================
 // COMPLY: Capability Tracks
@@ -73,6 +74,14 @@ export interface ComplianceFailure {
   step_title: string;
   task: string;
   error?: string;
+  /**
+   * Structured AdCP error from the transport layer. Present when the agent
+   * returned a structured `adcp_error` envelope (code, field, details).
+   * Complements the human-readable `error` string — use this field for
+   * machine-readable self-correction (the `field` and `details.validation_errors`
+   * sub-fields identify the exact fault address without re-running the step).
+   */
+  adcp_error?: AdcpErrorInfo;
   /** Human-readable expected behavior (from storyboard YAML). */
   expected?: string;
   /** CLI command to re-run just this step for debugging */
@@ -112,6 +121,21 @@ export interface ComplianceResult {
   failures?: ComplianceFailure[];
   /** Storyboard IDs that were resolved and executed */
   storyboards_executed?: string[];
+  /** Storyboard IDs graded not-applicable because the agent's declared major version predates the storyboard */
+  storyboards_not_applicable?: string[];
+  /**
+   * Storyboard IDs graded not-applicable because the agent declared the protocol
+   * but a required tool was absent from the discovered toolset.
+   *
+   * Contains only storyboard IDs. For the per-storyboard list of which tools were
+   * missing, see `ComplianceSummaryArtifact.skip_causes`.
+   *
+   * **Gap detection**: the total coverage gap is
+   * `[...storyboards_not_applicable, ...storyboards_missing_tools]`. Consumers
+   * previously relying on `storyboards_not_applicable.length === 0` to assert
+   * zero gaps must also check this field.
+   */
+  storyboards_missing_tools?: string[];
   /** Whether the seller exposes comply_test_controller */
   controller_detected?: boolean;
   /** Scenarios the seller's test controller supports */

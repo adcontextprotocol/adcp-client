@@ -1166,6 +1166,7 @@ export class SingleAgentClient {
     // Normalize params for backwards compatibility before validation
     let normalizedParams = normalizeRequestParams(taskType, params, {
       skipIdempotencyAutoInject: options?.skipIdempotencyAutoInject,
+      skipAccountValidation: options?.skipAccountValidation,
     });
 
     // Inject an idempotency_key for mutating tools before schema validation
@@ -1185,10 +1186,13 @@ export class SingleAgentClient {
     }
 
     // Validate request params against schema. When compliance testing has
-    // asked us to suppress idempotency auto-injection, also skip the
-    // client-side required-field check — the whole point of the test is to
-    // send a missing-key request through and observe the server's response.
-    if (!options?.skipIdempotencyAutoInject) {
+    // asked us to suppress idempotency auto-injection or account validation,
+    // skip the entire Zod schema parse — the required field is intentionally
+    // absent and Zod would fail on it too. This matches the pre-existing
+    // `skipIdempotencyAutoInject` behavior and is acceptable because both
+    // flags are @internal and only set by the storyboard runner for
+    // schema_validation steps.
+    if (!options?.skipIdempotencyAutoInject && !options?.skipAccountValidation) {
       this.validateRequest(taskType, normalizedParams);
     }
 
@@ -1210,8 +1214,12 @@ export class SingleAgentClient {
 
     // Schema-driven pre-send validation runs on the unadapted v3 shape so
     // wire-format adapters (e.g. adaptGetProductsRequestForV2) don't strip
-    // v3-only fields out from under the v3 bundled schema.
-    this.executor.validateRequest(taskType, normalizedParams);
+    // v3-only fields out from under the v3 bundled schema. Skip the entire
+    // Zod parse when compliance testing has suppressed required-field
+    // validation — the missing field is intentional and Zod would reject it.
+    if (!options?.skipIdempotencyAutoInject && !options?.skipAccountValidation) {
+      this.executor.validateRequest(taskType, normalizedParams);
+    }
 
     // Adapt request for v2 servers if needed
     const serverVersion = await this.detectServerVersion();
@@ -2188,6 +2196,7 @@ export class SingleAgentClient {
     try {
       const normalizedParams = normalizeRequestParams(taskName, params, {
         skipIdempotencyAutoInject: options?.skipIdempotencyAutoInject,
+        skipAccountValidation: options?.skipAccountValidation,
       });
       await this.validateTaskFeatures(taskName);
       if (this.config.requireV3ForMutations && isMutatingTask(taskName)) {
@@ -2197,8 +2206,12 @@ export class SingleAgentClient {
 
       // Schema-driven pre-send validation runs on the unadapted v3 shape so
       // wire-format adapters (e.g. adaptGetProductsRequestForV2) don't strip
-      // v3-only fields out from under the v3 bundled schema.
-      this.executor.validateRequest(taskName, normalizedParams);
+      // v3-only fields out from under the v3 bundled schema. Skip the entire
+      // Zod parse when compliance testing has suppressed required-field
+      // validation — the missing field is intentional and Zod would reject it.
+      if (!options?.skipIdempotencyAutoInject && !options?.skipAccountValidation) {
+        this.executor.validateRequest(taskName, normalizedParams);
+      }
 
       // Adapt request for the server's protocol version (e.g. strip v3-only
       // fields like buying_mode when talking to v2 agents).

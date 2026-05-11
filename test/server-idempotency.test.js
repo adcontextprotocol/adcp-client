@@ -345,11 +345,18 @@ describe('createAdcpServer with idempotency', () => {
     const results = await Promise.all(Array.from({ length: 5 }, () => callTool(server, 'create_media_buy', req)));
 
     assert.equal(calls, 1, 'handler must run exactly once under concurrent retry');
-    // Winners: one got a fresh response, others got SERVICE_UNAVAILABLE (in-flight)
+    // Winners: one got a fresh response, others got IDEMPOTENCY_IN_FLIGHT
     const winners = results.filter(r => r.media_buy_id);
-    const inFlights = results.filter(r => r.adcp_error?.code === 'SERVICE_UNAVAILABLE');
+    const inFlights = results.filter(r => r.adcp_error?.code === 'IDEMPOTENCY_IN_FLIGHT');
     assert.ok(winners.length >= 1, 'at least one call must return the fresh response');
     assert.equal(winners.length + inFlights.length, 5);
+    for (const f of inFlights) {
+      assert.equal(f.adcp_error.recovery, 'transient', 'in-flight branch must be transient');
+      assert.ok(
+        typeof f.adcp_error.retry_after === 'number' && f.adcp_error.retry_after >= 1,
+        'in-flight branch must carry a retry_after hint'
+      );
+    }
   });
 
   it('strict-mode VALIDATION_ERROR short-circuits retry storm on same key + payload', async () => {
@@ -423,7 +430,7 @@ describe('createAdcpServer with idempotency', () => {
   it('strict-mode parallel retries of a drifted handler see in-flight, not re-execution', async () => {
     // Concurrency guard: while call A is still inside the handler
     // producing the drifted response, a parallel call B with the same
-    // key + payload must hit the IN_FLIGHT claim (SERVICE_UNAVAILABLE)
+    // key + payload must hit the IN_FLIGHT claim (IDEMPOTENCY_IN_FLIGHT)
     // rather than re-entering the handler. Once A completes and writes
     // the transient-error entry, a subsequent retry hits the cached
     // VALIDATION_ERROR — not the handler.
@@ -457,7 +464,7 @@ describe('createAdcpServer with idempotency', () => {
     await new Promise(r => setImmediate(r));
     const b = await callTool(server, 'create_media_buy', req);
 
-    assert.equal(b.adcp_error?.code, 'SERVICE_UNAVAILABLE', 'parallel retry must see in-flight, not re-execute');
+    assert.equal(b.adcp_error?.code, 'IDEMPOTENCY_IN_FLIGHT', 'parallel retry must see in-flight, not re-execute');
     assert.equal(calls, 1, 'handler must not re-execute for parallel retry');
 
     releaseHandler();

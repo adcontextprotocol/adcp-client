@@ -276,7 +276,7 @@ const REQUEST_ENRICHERS: Record<string, RequestEnricher> = {
       ...baseSample,
       product_id: fixtureProductId ?? product?.product_id ?? context.product_id ?? 'test-product',
       budget:
-        (baseSample.budget as number | undefined) ??
+        (typeof baseSample.budget === 'number' ? baseSample.budget : undefined) ??
         options.budget ??
         Math.max(1000, (pricingOption?.min_spend_per_package as number) ?? 1000),
       pricing_option_id:

@@ -6,6 +6,7 @@
  * deprecation warning via warnOnce().
  */
 
+import { ValidationError } from '../errors';
 import { brandManifestToBrandReference, promotedProductsToCatalog } from '../types/compat';
 import { warnOnce } from './deprecation';
 import { MUTATING_TASKS, generateIdempotencyKey } from './idempotency';
@@ -22,6 +23,34 @@ export function normalizePackageParams(pkg: any): any {
   if (!pkg || typeof pkg !== 'object') return pkg;
 
   const normalized = { ...pkg };
+
+  // Fail-closed on pre-3.0 shapes that cannot be translated without data loss.
+  // product_ids[] → product_id: which id wins? No safe answer.
+  // budget: {total, currency} → budget: number: which currency? No safe answer.
+  // v2 sunset: unsupported as of 3.0 GA (April 2026).
+  //
+  // Intentional asymmetry vs get_products.product_ids (lines below), which uses
+  // warnOnce+delete because that field is a query filter that can simply be dropped.
+  // PackageRequest.product_id and .budget are required identifiers — dropping them
+  // produces a different invalid request; throwing early is strictly better.
+  //
+  // This error is thrown at the client boundary before any network call and must not
+  // be forwarded on the wire. It uses ValidationError (VALIDATION_ERROR) as the
+  // nearest semantic fit in the client error hierarchy.
+  if (Array.isArray(normalized.product_ids) && normalized.product_ids.length > 0) {
+    throw new ValidationError(
+      'packages[].product_ids',
+      normalized.product_ids,
+      'pre-3.0 shape not supported in AdCP 3.0. Use product_id (singular string) instead.'
+    );
+  }
+  if (normalized.budget !== null && typeof normalized.budget === 'object') {
+    throw new ValidationError(
+      'packages[].budget',
+      normalized.budget,
+      'pre-3.0 shape not supported in AdCP 3.0. Use budget as a number instead.'
+    );
+  }
 
   // context.buyer_ref → buyer_ref (backward compat for pre-4.15 AdCP servers)
   // AdCP 4.15 moved buyer_ref into context, but older servers still require it
@@ -59,7 +88,7 @@ export function normalizePackageParams(pkg: any): any {
 export function normalizeRequestParams(
   taskType: string,
   params: any,
-  opts: { skipIdempotencyAutoInject?: boolean } = {}
+  opts: { skipIdempotencyAutoInject?: boolean; skipAccountValidation?: boolean } = {}
 ): any {
   if (!params) {
     return params;
@@ -115,20 +144,24 @@ export function normalizeRequestParams(
     }
   }
 
-  // ── account inference (create_media_buy) ──
-  // Derive account from brand when not provided so callers that pre-date
-  // the required account field keep working.
-  // sandbox is intentionally omitted: the normalizer cannot infer sandbox
-  // intent from brand alone. Callers that need sandbox must provide account explicitly.
-  if (taskType === 'create_media_buy' && !normalized.account && normalized.brand?.domain) {
-    warnOnce(
-      'account_from_brand',
-      'create_media_buy: account is required. Inferring from brand for backward compatibility.'
+  // ── account validation (create_media_buy) ──
+  // account is required per AdCP 3.0 spec. The v2 shim that inferred
+  // operator = brand.domain was removed with the v2 sunset (April 2026):
+  // the fabricated operator value was semantically wrong for any caller
+  // with a buying-side intermediary, and it caused the compliance harness
+  // to issue badges against requests with fabricated account data.
+  // Callers must pass account as { account_id } or { brand, operator, sandbox? }.
+  // Use list_accounts to discover an existing account_id, or sync_accounts
+  // to register a new natural-key account.
+  if (taskType === 'create_media_buy' && !normalized.account && !opts.skipAccountValidation) {
+    throw new ValidationError(
+      'account',
+      undefined,
+      'create_media_buy: account is required. ' +
+        'Pass account as { account_id } or { brand, operator, sandbox? }. ' +
+        'Use list_accounts to discover an existing account_id; ' +
+        'implicit-account sellers also support sync_accounts to register a new one.'
     );
-    normalized.account = {
-      brand: normalized.brand,
-      operator: normalized.brand.domain,
-    };
   }
 
   // ── context.buyer_ref → buyer_ref (create_media_buy, update_media_buy) ──

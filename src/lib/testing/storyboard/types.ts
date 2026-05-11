@@ -58,6 +58,14 @@ export interface Storyboard {
    *   - `real_wire` — always available. Tag scenarios that observe
    *     production behavior with this when you want them excluded from
    *     a future `--mock-only` mode; today the tag is a no-op gate.
+   *   - `webhook_receiver` — the runner must be configured with a
+   *     webhook receiver (`StoryboardRunOptions.webhook_receiver`).
+   *     Autodetected from token presence: any step whose
+   *     `sample_request` (or nested fields) references
+   *     `{{runner.webhook_url:<step_id>}}` or `{{runner.webhook_base}}`
+   *     declares this requirement implicitly. Authors do not need to
+   *     write `requires: [webhook_receiver]` — the tokens are
+   *     self-describing.
    *
    * Default when the field is absent: `[real_wire]` (storyboard runs
    * everywhere — matches existing pre-tagging behavior). Tagging is
@@ -453,6 +461,38 @@ export interface StoryboardStep {
    * rather than short-circuiting on `INVALID_REQUEST: idempotency_key`.
    */
   omit_idempotency_key?: boolean;
+  /**
+   * When true, suppress the runner's `account` auto-injection on a
+   * `create_media_buy` step so the storyboard can exercise the server's
+   * missing-account rejection path. Without this flag the runner's
+   * `applyBrandInvariant` synthesises an `account` field before the wire
+   * call (both the natural-key-merge branch and the synthetic-construction
+   * branch), and the SDK's client-side normalizer also throws before the
+   * wire call — both layers are suppressed so the seller sees the request
+   * exactly as authored in `sample_request`.
+   *
+   * Only applicable to `create_media_buy` (the sole tool where `account` is
+   * required by `normalizeRequestParams`). Setting it on any other task type
+   * has no effect and is ignored.
+   *
+   * **Caveat:** this flag does not suppress `account` enrichment performed by
+   * `request-builder.ts` for tasks such as `update_media_buy`. If a future
+   * storyboard step needs to test missing-account rejection on a
+   * request-builder-enriched task, the builder will also need updating.
+   *
+   * Must be paired with `expect_error: true` — the loader rejects steps that
+   * set `omit_account: true` without the flag, because an accountless
+   * `create_media_buy` will always fail and a missing `expect_error` produces
+   * a misleading compliance result.
+   *
+   * Default (false) matches buyer-agent behavior: every `create_media_buy`
+   * request carries an `account` so handlers under test run against the
+   * actual error path the storyboard names rather than short-circuiting on
+   * `INVALID_REQUEST: account`.
+   *
+   * @internal Do not set in production buyer code.
+   */
+  omit_account?: boolean;
   /** Tool name required for this step to run. Skipped if agent lacks it. */
   requires_tool?: string;
   /** Explicit context extraction rules (supplements convention-based extractors) */
@@ -523,6 +563,17 @@ export interface StoryboardStep {
   expect_min_deliveries?: number;
   /** Signature-tag sanity check for `expect_webhook_signature_valid`. Default `adcp/webhook-signing/v1`. */
   require_tag?: string;
+  /**
+   * Fan-out spec for parallel-dispatch steps. When set, the runner fires
+   * `count` concurrent dispatches of this step (single-process,
+   * `Promise.all`) against the same agent, then aggregates per-response
+   * checks across the resolved set and grades the `cross_response_*`
+   * checks declared in `validations`. Requires the
+   * `parallel_dispatch_runner` test-kit contract to be in scope — runners
+   * (or runs) without it grade the step `not_applicable`. See
+   * {@link ParallelDispatchSpec}.
+   */
+  parallel_dispatch?: ParallelDispatchSpec;
 }
 
 export type StoryboardValidationCheck =
@@ -601,7 +652,77 @@ export type StoryboardValidationCheck =
    * runner-output-contract.yaml v2.0.0, storyboard-schema.yaml >
    * "upstream_traffic".
    */
-  | 'upstream_traffic';
+  | 'upstream_traffic'
+  /**
+   * Cross-response: every resolved response from a `parallel_dispatch` step
+   * carries the same value at the named `path`. Used to assert
+   * first-insert-wins on a concurrent retry — two parallel `create_media_buy`
+   * calls with the same `idempotency_key` must resolve to the same
+   * `media_buy_id`. Fails when any two resolved responses disagree, or when
+   * fewer than 2 dispatches resolved successfully. Spec:
+   * test-kits/parallel-dispatch-runner.yaml; adcp#4435 (rule 9 / rule 10).
+   */
+  | 'cross_response_field_equal'
+  /**
+   * Cross-response: the cardinality of distinct values at `path` across all
+   * resolved responses from a `parallel_dispatch` step is in
+   * `allowed_values`. Used to assert "exactly one resource was created" —
+   * `allowed_values: [1]` with `path: media_buy_id` catches a seller that
+   * raced the INSERT and created two resources from one logical create.
+   * Fails when the distinct count is outside `allowed_values`, or when no
+   * dispatch resolved successfully. Spec:
+   * test-kits/parallel-dispatch-runner.yaml.
+   */
+  | 'cross_response_count_distinct';
+
+/**
+ * Configuration for a step that fans out to N concurrent dispatches against
+ * the same agent, returning the cross-response set for assertion. Drives the
+ * `concurrent_retry` phase of the idempotency storyboard (rule 9 /
+ * first-insert-wins), where two `create_media_buy` calls with the same
+ * `idempotency_key` race the seller's INSERT and must resolve to one
+ * resource.
+ *
+ * Modes:
+ *   - `process_local` (default): fire all dispatches via `Promise.all`
+ *     through the SDK's batch primitive before awaiting any response.
+ *     Single-process, event-loop concurrent — sufficient to exercise the
+ *     seller's INSERT race per the contract YAML's
+ *     `not_required_to_synthesize_packet_schedule` note.
+ *   - `distributed` (future): barrier-synced workers across processes for
+ *     true network-level concurrency. Defers to a later spec phase; runners
+ *     that do not implement it grade the step `not_applicable`.
+ *
+ * Spec source: `test-kits/parallel-dispatch-runner.yaml`.
+ */
+export interface ParallelDispatchSpec {
+  /**
+   * How many parallel dispatches to fire. Per spec, `count_min: 2`,
+   * `count_max: 10`. Values outside that range are rejected at run time as a
+   * `parallel_dispatch_misconfigured` step error rather than silently clamped.
+   */
+  count: number;
+  /**
+   * When `true` (default), every dispatch shares the same fresh
+   * `idempotency_key` (the runner mints one UUID and reuses it across the
+   * fan-out). When `false`, every dispatch gets its own fresh key — useful
+   * for soak tests that need parallelism without the race semantics.
+   */
+  same_idempotency_key?: boolean;
+  /**
+   * Maximum total wall-clock time, in milliseconds, the runner waits for all
+   * dispatches to resolve (including any IDEMPOTENCY_IN_FLIGHT retries).
+   * Defaults to `5000`. A dispatch that doesn't terminate within the budget
+   * is marked timed-out; the step grades the surviving set and reports
+   * `parallel_dispatch_barrier_timeout` for the missing arms.
+   */
+  barrier_timeout_ms?: number;
+  /**
+   * Dispatch coordination mode (see interface JSDoc). Defaults to
+   * `'process_local'`.
+   */
+  mode?: 'process_local' | 'distributed';
+}
 
 /**
  * Path/value match predicate for `upstream_traffic.payload_must_contain`.
@@ -1296,7 +1417,7 @@ export interface RunnerSkipResult {
  *
  * Spec: adcp-client#1626.
  */
-export type RequirementName = 'controller' | 'seeded_state' | 'real_wire';
+export type RequirementName = 'controller' | 'seeded_state' | 'real_wire' | 'webhook_receiver';
 
 /**
  * Closed enumeration of every known requirement. Used by the loader to
@@ -1309,6 +1430,7 @@ export const KNOWN_REQUIREMENTS: ReadonlySet<RequirementName> = new Set([
   'controller',
   'seeded_state',
   'real_wire',
+  'webhook_receiver',
 ] as const satisfies readonly RequirementName[]);
 
 /**
@@ -1469,6 +1591,14 @@ export interface StoryboardStepResult {
    */
   context_provenance?: Record<string, ContextProvenanceEntry>;
   error?: string;
+  /**
+   * Structured AdCP error forwarded from the transport layer when the step failed.
+   * Carries `code`, `field`, and `details.validation_errors` so dashboards and
+   * LLM self-correction loops can identify the exact fault address without
+   * re-running the step. Present only when the underlying task returned a
+   * structured `adcp_error` envelope; absent for transport-level failures.
+   */
+  adcp_error?: import('../../core/ConversationTypes').AdcpErrorInfo;
   /** Preview of the next step (for LLM consumption) */
   next?: StoryboardStepPreview;
   /** Agent URL that served this step (multi-instance mode). Absent in single-URL mode. */

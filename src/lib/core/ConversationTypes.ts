@@ -158,6 +158,17 @@ export interface TaskOptions {
    */
   skipIdempotencyAutoInject?: boolean;
   /**
+   * INTERNAL — compliance-test-only escape hatch.
+   *
+   * Suppresses the client's `account`-required validation on
+   * `create_media_buy` requests. The sole caller is the storyboard runner,
+   * which needs to exercise servers' missing-account validation without the
+   * SDK throwing client-side before the wire call.
+   *
+   * @internal Do not set in production buyer code.
+   */
+  skipAccountValidation?: boolean;
+  /**
    * Transport-level safeguards for this call. Overrides the matching field
    * on the client constructor's `transport` option. Use to lift or tighten
    * `maxResponseBytes` per call when an agent legitimately publishes large
@@ -282,13 +293,37 @@ export interface SubmittedContinuation<T> {
 }
 
 /**
+ * A single validation failure from an AdCP VALIDATION_ERROR response.
+ *
+ * `pointer` uses RFC 6901 JSON Pointer format (e.g. `/packages/0/targeting`),
+ * which differs from the top-level `AdcpErrorInfo.field` that uses JSONPath-lite
+ * (`packages[0].targeting`). For LLM self-correction: read `keyword` first —
+ * `'required'` means add the missing field, `'enum'` means pick a valid value,
+ * `'type'` means fix the value type.
+ */
+export interface AdcpValidationIssue {
+  /** RFC 6901 JSON Pointer to the offending field (e.g. `/packages/0/targeting`). */
+  pointer: string;
+  /** Human-readable reason this field was rejected. */
+  message: string;
+  /** JSON Schema keyword that caused rejection (e.g. `'required'`, `'type'`, `'enum'`). */
+  keyword: string;
+  /**
+   * Path inside the schema that rejected the payload. Sellers SHOULD NOT emit on
+   * production endpoints — it leaks oneOf branch selection and is a fingerprinting
+   * oracle for adversarial callers. May appear in dev/sandbox mode.
+   */
+  schemaPath?: string;
+}
+
+/**
  * Structured AdCP error information extracted from a failed task response.
  * Present on `TaskResult.adcpError` when the agent returns a recognized error.
  */
 export interface AdcpErrorInfo {
   /** AdCP error code (e.g., 'RATE_LIMITED', 'PRODUCT_NOT_FOUND') */
   code: string;
-  /** Human-readable error message */
+  /** Human-readable error message. **Sellers:** do not embed tokens, account IDs, or internal paths — this field is forwarded to `ComplianceResult.failures[].adcp_error` and is grader-visible beyond the request lifetime. */
   message: string;
   /** Recovery classification: retry, fix the request, or give up */
   recovery?: 'transient' | 'correctable' | 'terminal';
@@ -300,8 +335,16 @@ export interface AdcpErrorInfo {
   retry_after?: number;
   /** Milliseconds to wait before retrying — convenience conversion of `retry_after * 1000`. */
   retryAfterMs?: number;
-  /** Additional error details. Untrusted agent-controlled content — sanitize before rendering. */
+  /** Additional error details. Untrusted agent-controlled content — sanitize before rendering. **Sellers:** do not embed tokens, account IDs, or internal paths — this field is forwarded to `ComplianceResult.failures[].adcp_error` and is grader-visible beyond the request lifetime. */
   details?: Record<string, unknown>;
+  /**
+   * Structured validation failures. Present on `VALIDATION_ERROR` when the seller
+   * identifies multiple offending fields. Each item's `pointer` is RFC 6901 format
+   * (e.g. `/packages/0/targeting`) — differs from the top-level `field` which uses
+   * JSONPath-lite. For LLM self-correction, read `keyword` first: `'required'` → add
+   * the field, `'enum'` → pick a valid value, `'type'` → fix the value type.
+   */
+  issues?: AdcpValidationIssue[];
   /** True when the SDK inferred this error from unstructured text (L1 compliance) */
   synthetic?: boolean;
 }

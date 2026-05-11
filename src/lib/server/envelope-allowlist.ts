@@ -106,6 +106,23 @@ export const ERROR_ENVELOPE_FIELD_ALLOWLIST: Readonly<Record<string, ReadonlySet
  */
 export const ADCP_ERROR_FIELD_ALLOWLIST: Readonly<Record<string, ReadonlySet<string>>> = Object.freeze({
   IDEMPOTENCY_CONFLICT: new Set(['code', 'message', 'status', 'correlation_id', 'request_id', 'operation_id']),
+  // `IDEMPOTENCY_IN_FLIGHT` (AdCP 3.1) carries `recovery: transient` plus a
+  // store-derived `retry_after` so transient-aware buyer SDKs can replay
+  // shortly. Allowlist registration is defense-in-depth — `adcpError()` at
+  // the in-flight call site only assembles framework-controlled keys today,
+  // but the registration forces any future caller that tries to attach
+  // payload fingerprints onto the in-flight envelope to land here in code
+  // review first.
+  IDEMPOTENCY_IN_FLIGHT: new Set([
+    'code',
+    'message',
+    'recovery',
+    'retry_after',
+    'status',
+    'correlation_id',
+    'request_id',
+    'operation_id',
+  ]),
 });
 
 /**

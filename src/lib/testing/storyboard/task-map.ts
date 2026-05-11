@@ -82,13 +82,19 @@ export async function executeStoryboardTask(
   client: any,
   taskName: string,
   params: Record<string, unknown>,
-  opts: { skipIdempotencyAutoInject?: boolean } = {}
+  opts: { skipIdempotencyAutoInject?: boolean; skipAccountValidation?: boolean } = {}
 ): Promise<TaskResult> {
   const methodName = Object.hasOwn(TASK_TO_METHOD, taskName) ? TASK_TO_METHOD[taskName] : undefined;
 
   // Only pass TaskOptions when a flag is actually set — avoids changing
   // behavior for the common path that relies on method defaults.
-  const taskOptions = opts.skipIdempotencyAutoInject ? { skipIdempotencyAutoInject: true } : undefined;
+  const taskOptions =
+    opts.skipIdempotencyAutoInject || opts.skipAccountValidation
+      ? {
+          ...(opts.skipIdempotencyAutoInject && { skipIdempotencyAutoInject: true }),
+          ...(opts.skipAccountValidation && { skipAccountValidation: true }),
+        }
+      : undefined;
 
   let result;
   const invoke = async () => {
@@ -142,6 +148,7 @@ export async function executeStoryboardTask(
     success: result.success ?? true,
     data: result.data,
     error: result.error,
+    ...(result.adcpError && { adcp_error: result.adcpError }),
     ...(extractionPath !== undefined && { _extraction_path: extractionPath }),
   };
 }
