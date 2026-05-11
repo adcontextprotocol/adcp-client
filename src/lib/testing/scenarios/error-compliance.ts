@@ -13,6 +13,14 @@ import { extractAdcpErrorFromMcp, resolveRecovery } from '../../utils/error-extr
 import type { ExtractedAdcpError } from '../../utils/error-extraction';
 import { isStandardErrorCode } from '../../types/error-codes';
 
+/**
+ * AdCP spec-defined codes that are held for a future wire version and therefore
+ * absent from ErrorCodeValues in the current generated enum, but are explicitly
+ * sanctioned by the spec and must not require the X_ vendor prefix.
+ * Remove a code from this set once it lands in ErrorCodeValues via schema codegen.
+ */
+const SPEC_RESERVED_PENDING_CODES = new Set(['IDEMPOTENCY_IN_FLIGHT']);
+
 /** Raw MCP CallToolResult shape */
 interface RawMcpResponse {
   isError?: boolean;
@@ -294,7 +302,11 @@ export async function testErrorStructure(
     }
 
     // Code is standard?
-    if (!isStandardErrorCode(extracted.code) && !extracted.code.startsWith('X_')) {
+    if (
+      !isStandardErrorCode(extracted.code) &&
+      !extracted.code.startsWith('X_') &&
+      !SPEC_RESERVED_PENDING_CODES.has(extracted.code)
+    ) {
       issues.push(`Non-standard code '${extracted.code}' should use X_ vendor prefix`);
     }
 

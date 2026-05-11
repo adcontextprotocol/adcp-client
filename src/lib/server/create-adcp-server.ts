@@ -3807,7 +3807,9 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
               // hint decays toward the actual expected completion; fallback to 5s when expiresAt
               // is absent (entry evicted between store reads on the lost-race re-check path).
               const retryAfter =
-                checkResult.expiresAt != null ? Math.max(1, checkResult.expiresAt - Math.floor(Date.now() / 1000)) : 5;
+                checkResult.expiresAt != null
+                  ? Math.min(30, Math.max(1, checkResult.expiresAt - Math.floor(Date.now() / 1000)))
+                  : 5;
               return finalize(
                 adcpError('IDEMPOTENCY_IN_FLIGHT', {
                   message: 'A parallel request with the same idempotency_key is still in flight. Retry shortly.',
