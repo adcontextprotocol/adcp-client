@@ -82,6 +82,7 @@ describe('normalizeRequestParams — pre-3.0 package shapes propagate through cr
       () =>
         normalizeRequestParams('create_media_buy', {
           idempotency_key: 'test-key',
+          account: { account_id: 'test-acc' },
           packages: [{ product_ids: ['prod-1'], pricing_option_id: 'po-1', budget: 1000 }],
         }),
       err => {
@@ -97,6 +98,7 @@ describe('normalizeRequestParams — pre-3.0 package shapes propagate through cr
       () =>
         normalizeRequestParams('create_media_buy', {
           idempotency_key: 'test-key',
+          account: { account_id: 'test-acc' },
           packages: [{ product_id: 'prod-1', pricing_option_id: 'po-1', budget: { total: 1000, currency: 'USD' } }],
         }),
       err => {
