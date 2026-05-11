@@ -1559,6 +1559,14 @@ export interface StoryboardStepResult {
    */
   context_provenance?: Record<string, ContextProvenanceEntry>;
   error?: string;
+  /**
+   * Structured AdCP error forwarded from the transport layer when the step failed.
+   * Carries `code`, `field`, and `details.validation_errors` so dashboards and
+   * LLM self-correction loops can identify the exact fault address without
+   * re-running the step. Present only when the underlying task returned a
+   * structured `adcp_error` envelope; absent for transport-level failures.
+   */
+  adcp_error?: import('../../core/ConversationTypes').AdcpErrorInfo;
   /** Preview of the next step (for LLM consumption) */
   next?: StoryboardStepPreview;
   /** Agent URL that served this step (multi-instance mode). Absent in single-URL mode. */

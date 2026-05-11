@@ -312,6 +312,7 @@ function applyBranchSetGrading(
       step.skip_reason = 'peer_branch_taken';
       step.skip = { reason: 'peer_branch_taken', detail };
       delete step.error;
+      delete step.adcp_error;
       skippedDelta++;
       regraded = true;
     }
@@ -3565,6 +3566,7 @@ async function executeStep(
         context_provenance: Object.fromEntries(runState.contextProvenance),
       }),
     error: step.expect_error ? undefined : truncateError(stepResult.error || taskResult?.error),
+    ...(!step.expect_error && taskResult?.adcp_error && { adcp_error: taskResult.adcp_error }),
     next,
     request: requestRecord,
     ...(responseRecord && { response_record: responseRecord }),
