@@ -19,10 +19,7 @@ const { describe, test, it } = require('node:test');
 const assert = require('node:assert');
 const http = require('http');
 
-const {
-  applyBrandInvariant,
-  runStoryboard,
-} = require('../../dist/lib/testing/storyboard/runner.js');
+const { applyBrandInvariant, runStoryboard } = require('../../dist/lib/testing/storyboard/runner.js');
 
 // ────────────────────────────────────────────────────────────
 // Unit: applyBrandInvariant omit_account flag
@@ -287,11 +284,7 @@ describe('runStoryboard: omit_account wire-level behavior', () => {
         undefined,
         'SDK-layer normalization must not inject account when omit_account=true'
       );
-      assert.strictEqual(
-        seen[0].authorization,
-        'Bearer tok-1696',
-        'raw probe must forward the bearer token'
-      );
+      assert.strictEqual(seen[0].authorization, 'Bearer tok-1696', 'raw probe must forward the bearer token');
     } finally {
       server.close();
     }
