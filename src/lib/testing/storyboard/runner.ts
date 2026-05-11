@@ -1039,7 +1039,11 @@ function checkRequires(
             'support are not tested against this storyboard — absence of advertisement is not a ' +
             'failure, it is a declaration that the agent does not offer verified signed requests." ' +
             'To opt in, advertise `request_signing.supported: true` and pre-register the runner ' +
-            'compliance test keypair per test-kits/signed-requests-runner.yaml.',
+            'compliance test keypair per test-kits/signed-requests-runner.yaml. ' +
+            'Forward-readiness: optional in AdCP 3.0; the schema (request_signing block description) ' +
+            'declares request signing required for spend-committing operations in AdCP 4.0. Sellers ' +
+            'that intend to support spend-committing tools SHOULD advertise the capability and ' +
+            'register the test keypair before the 4.0 cut to avoid a hard compliance failure then.',
         };
       }
     }

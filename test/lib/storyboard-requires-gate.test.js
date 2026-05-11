@@ -493,6 +493,10 @@ describe('Storyboard.requires gate (#1702): implicit request_signer', () => {
     assert.equal(step.skip.reason, 'not_applicable');
     assert.equal(step.skip.requirement, 'request_signer');
     assert.match(step.skip.detail, /request_signing\.supported: true/);
+    // Forward-readiness signal — schema declares request_signing required in
+    // AdCP 4.0 for spend-committing operations. Until structured notices
+    // land (adcp-client follow-up), the warning rides in `skip.detail`.
+    assert.match(step.skip.detail, /4\.0/, 'detail surfaces the 4.0 forward-readiness signal');
   });
 
   test('signed_requests storyboard skips when agent declares request_signing.supported: false', async () => {
