@@ -8,7 +8,6 @@
 
 import { ValidationError } from '../errors';
 import { brandManifestToBrandReference, promotedProductsToCatalog } from '../types/compat';
-import { ValidationError } from '../errors/index';
 import { warnOnce } from './deprecation';
 import { MUTATING_TASKS, generateIdempotencyKey } from './idempotency';
 
