@@ -507,16 +507,19 @@ function rankH1(agentUrl: string, prmStep?: DiagnosisStep): Hypothesis {
 
   const normAdvertised = normalizeForCompare(advertised);
   const normAgent = normalizeForCompare(agentUrl);
-  if (normAdvertised === normAgent) {
+  if (isResourceCompatibleWithAgent(normAdvertised, normAgent)) {
     base.verdict = 'ruled_out';
-    base.summary = `Advertised resource matches agent URL (${advertised})`;
+    base.summary =
+      normAgent === normAdvertised
+        ? `Advertised resource matches agent URL (${advertised})`
+        : `Advertised resource is a parent-path identifier that covers the agent URL — valid per RFC 9728 §3.3 (${advertised})`;
   } else {
     base.verdict = 'likely';
     base.summary = `Advertised resource "${advertised}" does not match agent URL "${agentUrl}"`;
     base.evidence = [
       `PRM resource: ${advertised}`,
       `Agent URL: ${agentUrl}`,
-      'Fix: align the agent server config so `.well-known/oauth-protected-resource` advertises the same origin+path as the agent endpoint itself.',
+      'Fix: the PRM `resource` value must match what the AS emits as the `aud` claim. Use either the exact agent URL or a parent-path identifier that covers it (RFC 9728 §3.3). A different origin or divergent path means the AS and resource server disagree on the audience.',
     ];
   }
   return base;
@@ -642,7 +645,8 @@ function rankH5(
       : undefined;
   const expected = prmResource ?? agentUrl;
   const prmDiffersFromAgent =
-    prmResource !== undefined && normalizeForCompare(prmResource) !== normalizeForCompare(agentUrl);
+    prmResource !== undefined &&
+    !isResourceCompatibleWithAgent(normalizeForCompare(prmResource), normalizeForCompare(agentUrl));
   const result = validateTokenAudience(jwtFromDecoded(currentDecoded), expected);
   if (result.ok) {
     base.verdict = 'ruled_out';
@@ -790,6 +794,19 @@ function redactTokenMaterial(capture: HttpCapture): HttpCapture {
     }
   }
   return { ...capture, body: redacted };
+}
+
+/**
+ * Returns true when `normResource` is a valid RFC 9728 §3.3 resource identifier
+ * for `normAgent`: exact match, or `normResource` is a parent-path of `normAgent`.
+ * Both arguments must already be passed through `normalizeForCompare`.
+ */
+function isResourceCompatibleWithAgent(normResource: string, normAgent: string): boolean {
+  // normalizeForCompare keeps the trailing "/" only for root-path URLs
+  // (pathname === "/"). Using a resourceBase that always ends with "/" correctly
+  // handles both root ("/") and non-root ("/foo") cases without double-slashing.
+  const resourceBase = normResource.endsWith('/') ? normResource : normResource + '/';
+  return normAgent === normResource || normAgent.startsWith(resourceBase);
 }
 
 function normalizeForCompare(value: string): string {

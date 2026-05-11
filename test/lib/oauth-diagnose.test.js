@@ -136,6 +136,33 @@ describe('runAuthDiagnosis: H1 resource URL mismatch', () => {
     const h1 = report.hypotheses.find(h => h.id === 'H1');
     assert.strictEqual(h1.verdict, 'ruled_out');
   });
+
+  test('rules out H1 when PRM resource is a parent-path identifier covering the agent URL (RFC 9728 §3.3)', async () => {
+    // agentUrl() = http://127.0.0.1:{port}/mcp
+    // parentResource = http://127.0.0.1:{port}  (no path suffix)
+    // Per RFC 9728 §3.3 a single resource server may front multiple endpoints
+    // under a shared parent-path identifier — H1 must not fire.
+    const parentResource = `http://127.0.0.1:${state.port}`;
+    setHandlers({
+      '/.well-known/oauth-protected-resource/mcp': (req, res) =>
+        jsonRes(res, 200, { resource: parentResource, authorization_servers: [issuer()] }),
+      '/.well-known/oauth-authorization-server': (req, res) => jsonRes(res, 200, { token_endpoint: tokenEndpoint() }),
+      '/mcp': (req, res) => {
+        res.statusCode = 401;
+        res.setHeader('www-authenticate', 'Bearer error="invalid_token"');
+        res.end();
+      },
+    });
+
+    const report = await runAuthDiagnosis(
+      { id: 'test', name: 'test', agent_uri: agentUrl(), protocol: 'mcp' },
+      { allowPrivateIp: true, skipToolCall: true }
+    );
+
+    const h1 = report.hypotheses.find(h => h.id === 'H1');
+    assert.strictEqual(h1.verdict, 'ruled_out');
+    assert.match(h1.summary, /parent-path/);
+  });
 });
 
 describe('runAuthDiagnosis: H4 missing WWW-Authenticate', () => {
