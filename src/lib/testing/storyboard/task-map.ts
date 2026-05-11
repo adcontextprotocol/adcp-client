@@ -142,6 +142,7 @@ export async function executeStoryboardTask(
     success: result.success ?? true,
     data: result.data,
     error: result.error,
+    ...(result.adcpError && { adcp_error: result.adcpError }),
     ...(extractionPath !== undefined && { _extraction_path: extractionPath }),
   };
 }

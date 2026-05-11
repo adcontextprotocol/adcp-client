@@ -3,6 +3,7 @@
  */
 
 import type { AgentProfile, TestResult, TestScenario } from '../types';
+import type { AdcpErrorInfo } from '../../core/ConversationTypes';
 
 // ============================================================
 // COMPLY: Capability Tracks
@@ -73,6 +74,14 @@ export interface ComplianceFailure {
   step_title: string;
   task: string;
   error?: string;
+  /**
+   * Structured AdCP error from the transport layer. Present when the agent
+   * returned a structured `adcp_error` envelope (code, field, details).
+   * Complements the human-readable `error` string — use this field for
+   * machine-readable self-correction (the `field` and `details.validation_errors`
+   * sub-fields identify the exact fault address without re-running the step).
+   */
+  adcp_error?: AdcpErrorInfo;
   /** Human-readable expected behavior (from storyboard YAML). */
   expected?: string;
   /** CLI command to re-run just this step for debugging */
