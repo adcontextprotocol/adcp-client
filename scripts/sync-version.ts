@@ -98,12 +98,24 @@ const COMPATIBLE_PREFIX = ['v2.5', 'v2.6', 'v3', '3.0.0-beta.1', '3.0.0-beta.3']
  * the template, so the compat surface capped at `3.0.8` across multiple
  * patch bumps. Auto-deriving eliminates that drift class.
  */
+// Sanity bound on the patch enumeration. The AdCP spec patch cadence is
+// roughly weekly; even at 10× speed we won't see 3.0.500 in the lifetime
+// of the 3.0.x series. A defensive cap turns a hostile or fat-fingered
+// `ADCP_VERSION = '3.0.999999999'` into a clean build failure instead of
+// a silent ~10⁹-string OOM during enumeration.
+const MAX_PATCH_ENUMERATION = 500;
+
 function buildCompatibleVersions(adcpVersion: string): string[] {
-  const match = /^(\d+)\.(\d+)\.(\d+)(?:-[\w.+-]+)?$/.exec(adcpVersion);
+  // Reject prerelease pins (e.g. `3.0.11-rc.1`) — enumerating
+  // `3.0.0..3.0.11` from a prerelease pin over-claims GA stability for
+  // the unreleased patch. The bumper for a prerelease should land the
+  // GA pin separately when it stabilizes.
+  const match = /^(\d+)\.(\d+)\.(\d+)$/.exec(adcpVersion);
   if (!match) {
     console.error(
       `❌ ADCP_VERSION ${JSON.stringify(adcpVersion)} does not match the expected ` +
-        `major.minor.patch(-prerelease)? shape. Update scripts/sync-version.ts.`
+        `major.minor.patch shape (no prerelease suffix). Update scripts/sync-version.ts ` +
+        `to define compat semantics if you intend to pin a prerelease.`
     );
     process.exit(1);
   }
@@ -115,6 +127,14 @@ function buildCompatibleVersions(adcpVersion: string): string[] {
       `❌ ADCP_VERSION ${JSON.stringify(adcpVersion)} is outside the 3.0.x range this ` +
         `script enumerates. Extend buildCompatibleVersions in scripts/sync-version.ts ` +
         `to cover the new major/minor range, then re-run npm run sync-version.`
+    );
+    process.exit(1);
+  }
+  if (patch > MAX_PATCH_ENUMERATION) {
+    console.error(
+      `❌ ADCP_VERSION ${JSON.stringify(adcpVersion)} exceeds MAX_PATCH_ENUMERATION ` +
+        `(${MAX_PATCH_ENUMERATION}). If the spec has genuinely produced this many patches, ` +
+        `raise the constant in scripts/sync-version.ts deliberately.`
     );
     process.exit(1);
   }
