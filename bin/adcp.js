@@ -312,7 +312,10 @@ function decodeBasicCredentials(userpass, source = '--auth') {
   }
   const colon = userpass.indexOf(':');
   if (colon === -1) {
-    console.error(`ERROR: ${source} value for basic auth must contain ':' (got 'user:pass' shape only)\n`);
+    // Don't echo the credential itself — even a length leak is enough to help
+    // someone reasoning about the value off-screen. The fix is the same
+    // regardless of what they passed in.
+    console.error(`ERROR: ${source} basic-auth credential must be in 'user:pass' form (no ':' found)\n`);
     process.exit(2);
   }
   const username = userpass.slice(0, colon);
@@ -5675,6 +5678,21 @@ credential material — never sync or commit.
     }
   }
 
+  // Runtime mutex: `--auth-scheme basic` is incompatible with any OAuth shape
+  // (browser flow, refresh-token alias, or client credentials). The
+  // `--save-auth` flow catches this at register time, but a user invoking
+  // `adcp <oauth-alias> <tool> --auth user:pass --auth-scheme basic` would
+  // previously have the basic credential silently dropped because the gating
+  // logic below excludes basic when any OAuth material is present. Fail
+  // closed instead — better a clear error than a credential silently ignored.
+  if (authScheme === 'basic' && (useOAuth || agentOAuthClientCredentials || agentOAuthTokens)) {
+    console.error(
+      '\n❌ ERROR: --auth-scheme basic cannot be combined with --oauth or with an alias that has OAuth tokens / client credentials.\n' +
+        '   The agent is already configured for OAuth — pick one auth method, not both.\n'
+    );
+    process.exit(2);
+  }
+
   // Merge saved-alias headers (per-agent routing context, e.g. x-adcp-tenant)
   // with `-H KEY=VALUE` flags from the current invocation. CLI wins on conflict.
   let mergedHeaders = mergeHeaders(savedAgent && savedAgent.headers, cliHeaders);
@@ -5687,8 +5705,7 @@ credential material — never sync or commit.
   // `src/lib/protocols/a2a.ts:283-292`) spreads `customHeaders` before the
   // SDK-supplied Authorization, so suppressing `auth_token` here lets our
   // injected Basic header reach the wire intact.
-  const useBasicAuth =
-    authScheme === 'basic' && authToken && !useOAuth && !agentOAuthClientCredentials && !agentOAuthTokens;
+  const useBasicAuth = authScheme === 'basic' && authToken;
   if (useBasicAuth) {
     const { username, password } = decodeBasicCredentials(authToken);
     mergedHeaders = { ...(mergedHeaders || {}), Authorization: encodeBasicAuthHeader({ username, password }) };
@@ -6225,14 +6242,28 @@ credential material — never sync or commit.
     // `NeedsAuthorizationError` is the richer form (already extended from
     // AuthenticationRequiredError); the string-match branches cover older
     // error shapes from the MCP SDK and other 401 paths.
+    // `Authentication required` matches the plain `AuthenticationRequiredError`
+    // (thrown when the SDK got 401 but couldn't walk OAuth metadata) — that's
+    // the exact shape a Basic-fronted gateway produces, so it's critical the
+    // Basic-hint path catches it.
     const isUnauthorized =
       error instanceof NeedsAuthorizationError ||
       error.name === 'UnauthorizedError' ||
+      error.name === 'AuthenticationRequiredError' ||
       error.message?.toLowerCase().includes('unauthorized') ||
+      error.message?.toLowerCase().includes('authentication required') ||
       error.message?.includes('401');
 
     if (isUnauthorized && protocol === 'mcp' && !useOAuth && !authToken) {
       console.log('\n🔐 Server requires authentication.');
+      // Some agents sit behind an API gateway with a BasicAuthentication policy
+      // (Apigee, Kong, AWS API GW, nginx auth_basic). OAuth won't succeed
+      // against those gateways no matter how the browser flow goes — surface
+      // the alternative before opening the browser so a Basic-fronted adopter
+      // doesn't bounce through a doomed OAuth handshake first.
+      console.log(
+        'If your agent is fronted by an HTTP-Basic gateway, retry with: --auth <user:pass> --auth-scheme basic'
+      );
       console.log('Starting OAuth authentication...\n');
 
       // Run OAuth flow automatically

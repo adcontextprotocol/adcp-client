@@ -111,7 +111,7 @@ test('--auth-scheme basic rejects an --auth value missing the colon at register 
     'basic',
   ]);
   assert.strictEqual(result.status, 2);
-  assert.match(result.stderr, /must contain ':'/);
+  assert.match(result.stderr, /must be in 'user:pass' form \(no ':' found\)/);
   // Config must not have been written.
   const cfg = fs.existsSync(configPath()) ? JSON.parse(fs.readFileSync(configPath(), 'utf8')) : { agents: {} };
   assert.strictEqual(cfg.agents['malformed'], undefined);
@@ -154,6 +154,76 @@ test('--list-agents shows the auth scheme for basic-auth aliases', () => {
   // Bearer alias must still show without surprising the user.
   assert.match(result.stdout, /gateway-bearer/);
   assert.match(result.stdout, /Auth: token configured \(bearer\)/);
+});
+
+test('runtime mutex: --auth-scheme basic + --oauth fails closed instead of silently dropping the credential', () => {
+  // Save a bearer alias to the local config so the dispatcher resolves the
+  // first positional. The actual URL is unreachable but we exit before the
+  // network call thanks to the mutex.
+  const save = runCli(['--save-auth', 'mutex-alias', 'https://agent.example.com/mcp', 'mcp', '--auth', 'tok-abc']);
+  assert.strictEqual(save.status, 0, `setup save failed: ${save.stderr}`);
+
+  const result = runCli([
+    'mutex-alias',
+    'get_products',
+    '{}',
+    '--auth',
+    'user:pass',
+    '--auth-scheme',
+    'basic',
+    '--oauth',
+  ]);
+  assert.strictEqual(result.status, 2, `expected exit 2, got ${result.status}; stderr was:\n${result.stderr}`);
+  assert.match(result.stderr, /--auth-scheme basic cannot be combined with --oauth/);
+});
+
+test('401 path surfaces the --auth-scheme basic hint before bouncing to OAuth', async t => {
+  // Spin up a local server that returns 401 to every probe. The CLI's 401
+  // handler prints "Server requires authentication" and then the Basic-hint
+  // line we want to assert, before attempting OAuth. We don't care that the
+  // OAuth attempt then fails — we care that an Apigee-fronted adopter sees
+  // the alternative routing path before they wait for a browser flow to load.
+  const server = http.createServer((req, res) => {
+    res.writeHead(401, { 'content-type': 'application/json' });
+    res.end(JSON.stringify({ error: 'unauthorized' }));
+  });
+  await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
+  const port = server.address().port;
+  const url = `http://127.0.0.1:${port}/mcp`;
+  t.after(async () => {
+    if (typeof server.closeAllConnections === 'function') server.closeAllConnections();
+    await new Promise(resolve => server.close(() => resolve()));
+  });
+
+  // No `--auth` at all — that's the entry point into the OAuth-bounce branch
+  // we're hardening. Async spawn (not spawnSync) so the server can accept
+  // probes on the same event loop. 12s cap is plenty — the SDK's discovery
+  // walk against an instantly-401-ing server short-circuits in <1s; the
+  // remaining budget is OAuth provider initialization before it errors out.
+  const run = await new Promise(resolve => {
+    const child = spawn('node', [CLI, url, 'tools/list', '--protocol', 'mcp', '--allow-http'], {
+      env: { ...process.env, HOME: tmpHome },
+    });
+    let stdout = '';
+    let stderr = '';
+    child.stdout.on('data', d => (stdout += d.toString()));
+    child.stderr.on('data', d => (stderr += d.toString()));
+    const killer = setTimeout(() => child.kill('SIGTERM'), 12000);
+    child.on('exit', code => {
+      clearTimeout(killer);
+      resolve({ status: code, stdout, stderr });
+    });
+  });
+
+  // Hint must appear in the 401-handler output before the OAuth attempt
+  // begins. We assert against stdout (where the CLI prints user-facing 401
+  // messages); stderr would also work if the implementation moves.
+  const combined = run.stdout + run.stderr;
+  assert.match(
+    combined,
+    /If your agent is fronted by an HTTP-Basic gateway, retry with: --auth <user:pass> --auth-scheme basic/,
+    `expected --auth-scheme basic hint in 401 path output, got:\n${combined}`
+  );
 });
 
 test('wire test: basic alias sends Authorization: Basic <b64(user:pass)>, not Bearer', async t => {
