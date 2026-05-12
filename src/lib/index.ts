@@ -90,6 +90,13 @@ export type {
   PropertyType,
   AdAgentsJson,
 } from './discovery/types';
+export {
+  validateAdAgents,
+  parseManagerDomain,
+  type DiscoveryMethod,
+  type AdAgentsValidationResult,
+  type ValidateAdAgentsOptions,
+} from './discovery/validate-adagents';
 
 // ====== CORE CONVERSATION-AWARE CLIENTS ======
 // New conversation-aware clients with input handler pattern
