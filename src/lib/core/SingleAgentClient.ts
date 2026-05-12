@@ -96,7 +96,11 @@ import {
   is401Error,
 } from '../errors';
 import { isLikelyPrivateUrl } from '../net';
-import { discoverAuthorizationRequirements, NeedsAuthorizationError } from '../auth/oauth/authorization-required';
+import {
+  discoverAuthorizationRequirements,
+  NeedsAuthorizationError,
+  probeAuthChallenge,
+} from '../auth/oauth/authorization-required';
 import { discoverOAuthMetadata } from '../auth/oauth/discovery';
 import type { InputHandler, TaskOptions, TaskResult, ConversationConfig, TaskInfo } from './ConversationTypes';
 import type { Activity, AsyncHandlerConfig, WebhookMetadata } from './AsyncHandler';
@@ -598,8 +602,14 @@ export class SingleAgentClient {
         if (requirements) {
           throw new NeedsAuthorizationError(requirements);
         }
+        // `discoverAuthorizationRequirements` returned null — either no PRM
+        // walk available, or the 401 challenge wasn't Bearer. Re-probe to
+        // surface the scheme on the error (Basic-fronted gateways are the
+        // common non-Bearer case) so consumers don't bounce through OAuth
+        // remediation that will never succeed.
+        const challenge = await probeAuthChallenge(agentUri, { allowPrivateIp: isLikelyPrivateUrl(agentUri) });
         const oauthMetadata = await discoverOAuthMetadata(agentUri);
-        throw new AuthenticationRequiredError(agentUri, oauthMetadata || undefined);
+        throw new AuthenticationRequiredError(agentUri, oauthMetadata || undefined, undefined, challenge ?? undefined);
       }
 
       // Re-throw other errors
@@ -727,8 +737,13 @@ export class SingleAgentClient {
       if (requirements) {
         throw new NeedsAuthorizationError(requirements);
       }
+      // Non-Bearer 401 (or Bearer-without-PRM). Re-probe to surface the
+      // scheme on the error envelope — `Basic` is the common shape for
+      // gateway-fronted agents (Apigee, Kong, AWS API GW) and routing
+      // consumers at OAuth would never succeed.
+      const challenge = await probeAuthChallenge(providedUri, { allowPrivateIp: isLikelyPrivateUrl(providedUri) });
       const oauthMetadata = await discoverOAuthMetadata(providedUri);
-      throw new AuthenticationRequiredError(providedUri, oauthMetadata || undefined);
+      throw new AuthenticationRequiredError(providedUri, oauthMetadata || undefined, undefined, challenge ?? undefined);
     }
 
     // None worked and no 401 - generic discovery failure.

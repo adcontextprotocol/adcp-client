@@ -107,6 +107,107 @@ describe('AuthenticationRequiredError', () => {
       assert.strictEqual(error.details.agentUrl, 'https://agent.example.com/mcp');
       assert.deepStrictEqual(error.details.oauthMetadata, oauthMetadata);
     });
+
+    test('contains challenge when provided', () => {
+      const challenge = { scheme: 'basic', realm: 'API', params: { realm: 'API' } };
+      const error = new AuthenticationRequiredError(
+        'https://agent.example.com/mcp',
+        undefined,
+        undefined,
+        challenge
+      );
+      assert.deepStrictEqual(error.details.challenge, challenge);
+    });
+  });
+
+  describe('scheme-aware default message', () => {
+    test('Basic challenge → message names HTTP Basic and points at SDK + CLI shapes', () => {
+      // Gateway-fronted agent: a Basic challenge should NOT teleport consumers
+      // at OAuth metadata. The message names the SDK shape and the CLI shape so
+      // the same envelope serves library and CLI consumers without an extra
+      // hop through docs.
+      const challenge = {
+        scheme: 'basic',
+        realm: 'Apigee',
+        params: { realm: 'Apigee' },
+      };
+      const error = new AuthenticationRequiredError(
+        'https://agent.example.com/mcp',
+        undefined,
+        undefined,
+        challenge
+      );
+      assert.match(error.message, /HTTP Basic/);
+      assert.match(error.message, /createTestClient\({ auth: { type: 'basic'/);
+      assert.match(error.message, /--auth-scheme basic/);
+      // Must NOT mention OAuth — the consumer should not bounce through a flow
+      // that will never succeed against a BasicAuthentication gateway.
+      assert.doesNotMatch(error.message, /OAuth/);
+      assert.doesNotMatch(error.message, /provide auth_token/);
+    });
+
+    test('non-Bearer non-Basic challenge → generic remediation with scheme name', () => {
+      const challenge = { scheme: 'digest', realm: 'corp', params: { realm: 'corp' } };
+      const error = new AuthenticationRequiredError(
+        'https://agent.example.com/mcp',
+        undefined,
+        undefined,
+        challenge
+      );
+      assert.match(error.message, /digest/);
+      assert.match(error.message, /realm: corp/);
+      assert.match(error.message, /not natively supported/);
+    });
+
+    test('Bearer challenge with OAuth metadata → OAuth message (Bearer-scheme branch falls through)', () => {
+      // When the challenge IS Bearer, the OAuth-metadata branch wins — that's
+      // the path the existing OAuth-discovery flow already exercises.
+      const challenge = { scheme: 'bearer', params: {} };
+      const oauthMetadata = {
+        authorization_endpoint: 'https://auth.example.com/authorize',
+        token_endpoint: 'https://auth.example.com/token',
+      };
+      const error = new AuthenticationRequiredError(
+        'https://agent.example.com/mcp',
+        oauthMetadata,
+        undefined,
+        challenge
+      );
+      assert.match(error.message, /OAuth available at: https:\/\/auth\.example\.com\/authorize/);
+    });
+
+    test('no challenge, no oauthMetadata → legacy fallback message (back-compat)', () => {
+      const error = new AuthenticationRequiredError('https://agent.example.com/mcp');
+      assert.match(error.message, /No OAuth metadata available - provide auth_token/);
+    });
+
+    test('custom message wins over scheme-aware default', () => {
+      const challenge = { scheme: 'basic', realm: 'x', params: { realm: 'x' } };
+      const error = new AuthenticationRequiredError(
+        'https://agent.example.com/mcp',
+        undefined,
+        'Custom message here',
+        challenge
+      );
+      assert.strictEqual(error.message, 'Custom message here');
+    });
+  });
+
+  describe('suggestedScheme getter', () => {
+    test('returns the lowercased scheme from the challenge', () => {
+      const error = new AuthenticationRequiredError(
+        'https://agent.example.com/mcp',
+        undefined,
+        undefined,
+        { scheme: 'basic', params: {} }
+      );
+      assert.strictEqual(error.suggestedScheme, 'basic');
+    });
+
+    test('returns undefined when no challenge supplied', () => {
+      const error = new AuthenticationRequiredError('https://agent.example.com/mcp');
+      assert.strictEqual(error.suggestedScheme, undefined);
+    });
   });
 });
 

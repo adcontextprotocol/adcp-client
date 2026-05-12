@@ -313,6 +313,7 @@ export {
 export {
   NeedsAuthorizationError,
   discoverAuthorizationRequirements,
+  probeAuthChallenge,
   type AuthorizationRequirements,
   type DiscoverAuthorizationOptions,
 } from './authorization-required';
