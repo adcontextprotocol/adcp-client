@@ -8,6 +8,7 @@ import type { PushNotificationConfig } from '../types/tools.generated';
 import type { DebugLogEntry } from '../types/adcp';
 import { AuthenticationRequiredError, is401Error } from '../errors';
 import { discoverOAuthMetadata } from '../auth/oauth/discovery';
+import { probeAuthChallenge } from '../auth/oauth/authorization-required';
 import { withSpan, injectTraceHeaders } from '../observability/tracing';
 import { isAgentCardPath, buildCardUrls } from '../utils/a2a-discovery';
 import { buildAgentSigningFetch, signingContextStorage, type AgentSigningContext } from '../signing/client';
@@ -546,8 +547,14 @@ async function callA2AToolImpl(
         timestamp: new Date().toISOString(),
       });
 
+      // Re-probe to surface the WWW-Authenticate scheme on the error envelope.
+      // Basic-fronted agents (Apigee/Kong/AWS API GW with a BasicAuthentication
+      // policy) would otherwise leave consumers chasing OAuth metadata that
+      // doesn't exist. Matches the MCP discovery throw site in
+      // `SingleAgentClient.discoverMCPEndpoint`.
+      const challenge = await probeAuthChallenge(agentUrl);
       const oauthMetadata = await discoverOAuthMetadata(agentUrl);
-      throw new AuthenticationRequiredError(agentUrl, oauthMetadata || undefined);
+      throw new AuthenticationRequiredError(agentUrl, oauthMetadata || undefined, undefined, challenge ?? undefined);
     }
 
     throw error;
