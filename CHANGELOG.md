@@ -1,5 +1,186 @@
 # Changelog
 
+## 7.1.0
+
+### Minor Changes
+
+- 7de0872: fix(comply): autodetect `request_signer` and `oauth_metadata` prereqs (#1702)
+
+  Extends the implicit-requires pattern shipped in #1678 (`webhook_receiver`)
+  to two more requirement surfaces, removing ~44 false-negative step
+  failures per `comply()` run on agents that don't claim the underlying
+  capability.
+  - Adds `'request_signer'` to `RequirementName` / `KNOWN_REQUIREMENTS` /
+    `REQUIREMENT_TO_SKIP_REASON` and extends `detectImplicitRequires` to
+    flag any storyboard whose `id === 'signed_requests'` or that contains
+    a `request_signing_probe` step. The gate consults the agent's
+    `get_adcp_capabilities.request_signing.supported` from the discovered
+    profile (not a runner opt-out flag) so an agent that claims the
+    capability but hasn't pre-registered the runner's compliance test
+    keypair still fails — matches the universal storyboard's stated
+    gating contract at
+    `compliance/{version}/universal/signed-requests.yaml` ("absence of
+    advertisement is not a failure").
+  - Pre-empts `oauth_discovery` cascade-skip on `security_baseline` when
+    the agent's capabilities don't declare `account.authorization_endpoint`.
+    The existing reactive `phaseAbsent` cascade (#677) only triggers on a
+    404 from `/.well-known/oauth-protected-resource`; non-404 responses
+    from a bearer-only agent (200-HTML, 405, redirect — the Wonderstruck
+    shape) fell through to validation failures inside an `optional: true`
+    phase. The pre-empt is phase-level, not storyboard-level, so the
+    universal `unauth_rejection` and `mechanism_required` checks still run.
+
+  Part of the coordinated stance at #1685 (the SDK is a witness, not a
+  translator).
+
+- e1ec3ef: Add structured `notices: RunnerNotice[]` advisory surface to `StoryboardResult` and `ComplianceResult` (adcp-client#1704).
+  - New types: `RunnerNotice`, `NoticeCode`, `NoticeSeverity` — exported from `@adcp/sdk`
+  - `StoryboardResult.notices` is always-present (default `[]`); `ComplianceResult.notices` is optional, deduplicated by `code` across all storyboard runs
+  - Two spec-grounded notices emitted on day one:
+    - `request_signing_required_in_4_0` (`future_required`) — when the `signed_requests` storyboard runs against an agent that lacks `request_signing.supported: true` (signing required for spend-committing operations in AdCP 4.0)
+    - `legacy_hmac_fallback_removed_in_4_0` (`deprecation`) — when agent declares `webhook_signing.legacy_hmac_fallback: true` (removed in AdCP 4.0)
+  - CI gates and JUnit consumers can now key on stable `code` values for badge routing instead of parsing prose `skip.detail` strings
+
+- 36d279f: fix(runner): attribute Zod schema rejects to `response_schema`, short-circuit invariants (#1709)
+
+  When the SDK's response unwrapper rejects an agent response against the
+  codegen-emitted Zod schema for the tool (e.g. an `additionalProperties:
+true` field the runner's `.strict()` schema doesn't enumerate, like the
+  recently-added `authorization` field on `sync_accounts`), the exception
+  previously propagated as a generic `Error` with a freeform message.
+  The runner's step-execution catch absorbed it into `stepResult.error`
+  but never attributed the failure to schema validation in
+  `step.validations[]`. Step-scope invariants then ran against the
+  malformed payload, and whichever fired first (canonically
+  `context.no_secret_echo` — the next assertion in the default-invariant
+  queue) became the surfaced failure. BidMachine spent 10+ deploys
+  chasing the `no_secret_echo` ghost before the strict-Zod root cause
+  surfaced. Full trace: adcontextprotocol/adcp#4419.
+
+  Fix:
+  - New `ResponseSchemaValidationError` typed error class in
+    `src/lib/utils/response-unwrapper.ts`. Carries `toolName`, `issues`
+    (raw Zod issues), and `data` (the rejected payload) for downstream
+    attribution. Stable `name === 'ResponseSchemaValidationError'` so
+    cross-bundle consumers can detect by string match without `instanceof`.
+    Replaces the two generic `new Error('Response validation failed for
+${toolName}: ...')` throws in the unwrapper.
+  - `runStep` in `src/lib/testing/client.ts` now returns
+    `{ result?, step, caughtError? }`. The new `caughtError` is the
+    raw thrown value (typed `unknown`) so callers can pattern-match on
+    typed exceptions. Backwards-compatible — pre-existing callers that
+    consume only `result` and `step` are unaffected.
+  - Storyboard runner `executeStep` threads `caughtError` from the
+    dispatch fn, and on `ResponseSchemaValidationError` prepends a
+    synthesized `response_schema` ValidationResult to `step.validations`.
+    The synthesized entry carries the structured issues, the failing
+    tool name, an RFC 6901-shaped `json_pointer`, and the rejection
+    message. `extractFailures.find(v => !v.passed)` now picks it up
+    before any inline or invariant entry.
+  - Step-scope invariants in `executeStoryboardPass` are short-circuited
+    when the synthesized `response_schema` entry is present. Each bypassed
+    invariant emits a single skip marker entry (passed: true) so consumers
+    see WHICH invariants were bypassed and why, but the bypass entries
+    don't crowd out the schema failure in extractFailures.
+
+  Sequencing: this PR is the upstream dependency for #1707 (dynamic
+  schema fetch + strict→passthrough flip + codegen regen). Lands first
+  so any remaining Zod rejects during #1707's rollout produce honest
+  signal instead of misattributing to `no_secret_echo`. After both #1709
+  and #1707 land, BidMachine's 63/128 comply-vs-45/59 CLI delta
+  (adcp#4419) should collapse — fgranata volunteered as the retest
+  target on adcp-client#1711.
+
+  Coordinated stance: adcp-client#1685 (the SDK is a witness, not a
+  translator). Same anti-pattern: the SDK was fabricating a different
+  failure (`no_secret_echo`) than what actually went wrong (schema
+  rejection); this PR makes it a faithful witness.
+
+### Patch Changes
+
+- 05ce456: fix(version): auto-derive COMPATIBLE_ADCP_VERSIONS from ADCP_VERSION pin
+
+  The 3.0.x patch enumeration in `COMPATIBLE_ADCP_VERSIONS` was a hardcoded
+  array literal inside the `scripts/sync-version.ts` template. Every AdCP
+  patch bump needed someone to remember to append the new version to it.
+  The 3.0.9, 3.0.10, and 3.0.11 chore PRs all forgot — the list capped
+  at `3.0.8` even though `ADCP_VERSION` moved to `3.0.11`. Symptom:
+  `isCompatibleWith('3.0.11') === false` against the SDK's own pin.
+
+  Same root-cause class as the schema URL pinning drift surfaced by
+  `adcontextprotocol/adcp#4419` (BidMachine reports / "3.0.1 schemas" cited
+  against a 3.0.11 seller): a load-bearing version surface that depends on
+  human discipline at every patch bump.
+
+  Fix:
+  - `scripts/sync-version.ts` now derives the list dynamically from the
+    current `ADCP_VERSION`. Enumerates `3.0.0..3.0.<patch>` mechanically;
+    the bumper no longer has to remember anything.
+  - Fails closed when `ADCP_VERSION` falls outside the `3.0.x` range so a
+    future 3.1.x or 4.x bump forces the script to be extended (rather than
+    silently inheriting a stale enumeration). The compat surface for a
+    major/minor move is rarely mechanical — that's the right time to think.
+  - Adds `test/lib/compatible-versions-self-consistency.test.js` asserting
+    the regenerated list contains the current pin and fills the
+    `3.0.0..ADCP_VERSION` range without gaps. Future regressions (someone
+    reverting to hardcoded literals) fail loud at CI.
+
+  Does not address the deeper schema URL pinning drift in
+  `src/lib/testing/storyboard/validations.ts` (SDK-build-time `ADCP_VERSION`
+  used in cited schema URLs regardless of the agent's advertised version);
+  tracked separately at adcp-client#NNNN.
+
+- 110b49e: fix(invariant): no_secret_echo only fails on string-valued suspect-named fields (#1713)
+
+  The default `context.no_secret_echo` invariant flagged any response field
+  whose name was in `SUSPECT_PROPERTY_NAMES` (`'authorization'`, `'api_key'`,
+  `'apikey'`, `'bearer'`, `'x-api-key'`) regardless of the field's value.
+  This over-rejected spec-legitimate structured fields — notably the
+  `authorization` object on `validation-result.json` (a structured
+  authorization-validation payload, not a credential) and any seller-side
+  extension fields named `authorization` under
+  `sync_accounts_response.accounts[]` (`additionalProperties: true`).
+
+  Symptom: BidMachine's `sync_accounts` failures in
+  adcontextprotocol/adcp#4419 all surfaced as `context.no_secret_echo`.
+  Diagnosis in #4419 pointed at Zod `.strict()` codegen lag, but
+  verification of the published SDK tarballs (5.25.1 / 6.12.0 / current)
+  shows `SyncAccountsResponseSchema.accounts[]` already uses
+  `.passthrough()`. Zod silently accepts the `authorization` field; the
+  NAME dragnet in this invariant is the actual rejection.
+
+  Fix: narrow `findSecretEcho` so the suspect-name check only fires when
+  the field VALUE is a non-empty string. Structured object/array values
+  on suspect-named fields pass through to the recursive walk, which still
+  scans nested strings against `BEARER_TOKEN_PATTERN` and caller-supplied
+  secret literals. The actual leak shapes the invariant was designed to
+  catch (bearer tokens, API keys, caller secret echoes) remain caught.
+
+  Adds five new test cases covering:
+  - Suspect name with object value passes (the BidMachine case)
+  - Suspect name with array value passes
+  - Suspect name with empty string passes (no leak)
+  - Suspect name with non-empty string value still fails (existing dragnet)
+  - Bearer literal nested inside a structured suspect-named object still
+    fails via the value-scan regression guard
+
+  Sequencing relative to other in-flight work:
+  - adcp-client#1709 (PR #1712, merged) — Zod-reject error attribution.
+    Addresses a different misattribution path (when Zod DOES reject).
+    This fix addresses the case where Zod ACCEPTS but the invariant
+    over-rejects on field name.
+  - adcp-client#1707 — dynamic schema fetch + strict→passthrough +
+    codegen regen. Real architectural cleanup; does NOT unblock
+    BidMachine (the published SDK already uses passthrough).
+  - adcp-client#1711 (fgranata) — BidMachine's report. The "Zod
+    `.strict()` codegen lag" diagnosis was incorrect for the published
+    SDK; this fix is the actual unblocker. Closes once fgranata retests.
+
+  Coordinated stance: adcp-client#1685 (the SDK is a witness, not a
+  translator). Same anti-pattern: the SDK fabricated a credential-leak
+  signal against a structured non-credential field that the spec legally
+  permits.
+
 ## 7.0.0
 
 ### Major Changes
