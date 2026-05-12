@@ -1,6 +1,7 @@
 /**
  * Property Discovery Types
- * Based on AdCP v2.2.0 specification
+ * Aligned with the AdCP `adagents.json` schema at
+ * `schemas/cache/3.0.11/adagents.json`.
  */
 
 /** Property identifier types from AdCP spec */
@@ -43,11 +44,57 @@ export interface Property {
   publisher_domain?: string;
 }
 
-/** Authorized agent from adagents.json */
+/**
+ * Discriminator for the per-agent authorization scope on each
+ * `authorized_agents[]` entry. Drives `resolveAgentProperties()` —
+ * see `src/lib/discovery/resolve-agent-properties.ts`.
+ */
+export type AuthorizationType =
+  | 'property_ids'
+  | 'property_tags'
+  | 'inline_properties'
+  | 'publisher_properties'
+  | 'signal_ids'
+  | 'signal_tags';
+
+/**
+ * Cross-publisher selector used by `authorization_type: 'publisher_properties'`.
+ * Each entry references properties from a different publisher's adagents.json
+ * (resolving the actual `Property` objects requires fetching that publisher's
+ * file separately).
+ */
+export interface PublisherPropertySelector {
+  publisher_domain: string;
+  selection_type: 'all' | 'by_id' | 'by_tag';
+  property_ids?: string[];
+  property_tags?: string[];
+}
+
+/**
+ * Entry in `adagents.json` `authorized_agents[]`. The schema requires
+ * every entry to carry `authorization_type` plus the matching selector
+ * field — see the spec at `schemas/cache/3.0.11/adagents.json`. Files
+ * in the wild sometimes omit them, so both fields are typed as optional
+ * here. `resolveAgentProperties()` fails closed (returns no properties)
+ * when the discriminator or its selector is missing.
+ */
 export interface AuthorizedAgent {
   url: string;
   authorized_for: string;
+  /** Discriminator. Required by the schema; absent in pre-schema-3 files. */
+  authorization_type?: AuthorizationType;
+  /** Selector for `authorization_type: 'property_ids'`. */
   property_ids?: string[];
+  /** Selector for `authorization_type: 'property_tags'`. */
+  property_tags?: string[];
+  /** Selector for `authorization_type: 'inline_properties'`. */
+  properties?: Property[];
+  /** Selector for `authorization_type: 'publisher_properties'`. */
+  publisher_properties?: PublisherPropertySelector[];
+  /** Selector for `authorization_type: 'signal_ids'` (signals agents). */
+  signal_ids?: string[];
+  /** Selector for `authorization_type: 'signal_tags'` (signals agents). */
+  signal_tags?: string[];
 }
 
 /** adagents.json structure */

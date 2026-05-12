@@ -16,6 +16,7 @@ import { validateUserAgent } from '../utils/validate-user-agent';
 import { ssrfSafeFetch, SsrfRefusedError, SSRF_TRANSIENT_CODES, decodeBodyAsJsonOrText } from '../net/ssrf-fetch';
 import { isInternalProbesAllowed } from '../utils/probe-policy';
 import type { Property, AdAgentsJson } from './types';
+import { resolveAgentProperties } from './resolve-agent-properties';
 
 /**
  * Cap on a single adagents.json response body. The published advertising
@@ -106,24 +107,46 @@ export class PropertyCrawler {
     result.totalPublisherDomains = allPublisherDomains.size;
 
     // Step 2: Fetch adagents.json from each unique publisher domain
-    const { properties: domainProperties, warnings } = await this.fetchPublisherProperties(
-      Array.from(allPublisherDomains)
-    );
+    const {
+      properties: domainProperties,
+      adAgents: domainAdAgents,
+      warnings,
+    } = await this.fetchPublisherProperties(Array.from(allPublisherDomains));
     result.warnings = warnings;
 
-    // Step 3: Build property → agents index
+    // Step 3: Build property → agents index. Per the AdCP schema
+    // (`adagents.json` — `authorized_agents[].authorization_type` +
+    // selector), which top-level properties an agent gets is a function
+    // of its entry in the file, NOT the file's mere presence. We dispatch
+    // through `resolveAgentProperties` to honor the per-agent selectors
+    // (`property_ids`, `property_tags`, `inline_properties`).
+    //
+    // Fallback: if the crawler had to infer a default property because
+    // the file declared `authorized_agents` but no `properties` array
+    // (graceful-degradation branch in `fetchAdAgentsJsonFromUrl`), the
+    // raw `AdAgentsJson` is intentionally NOT in `domainAdAgents` — we
+    // attribute the inferred property to every claiming agent (pre-#1721
+    // behavior). The file simply isn't strict-conformant enough to
+    // dispatch on.
     for (const [domain, properties] of Object.entries(domainProperties)) {
-      for (const property of properties) {
-        // Find which agents are authorized for this publisher domain
-        const authorizedAgents = agents
-          .map(a => a.agent_url)
-          .filter(agentUrl => {
-            const auth = index.getAgentAuthorizations(agentUrl);
-            return auth?.publisher_domains.includes(domain);
-          });
+      const claimingAgents = agents
+        .map(a => a.agent_url)
+        .filter(agentUrl => {
+          const auth = index.getAgentAuthorizations(agentUrl);
+          return auth?.publisher_domains.includes(domain);
+        });
 
-        // Add property to index for each authorized agent
-        for (const agentUrl of authorizedAgents) {
+      const adAgentsFile = domainAdAgents[domain];
+
+      for (const agentUrl of claimingAgents) {
+        let attributable: Property[];
+        if (adAgentsFile) {
+          const scope = resolveAgentProperties(adAgentsFile, agentUrl);
+          attributable = scope.properties;
+        } else {
+          attributable = properties;
+        }
+        for (const property of attributable) {
           index.addProperty(property, agentUrl, domain);
           result.totalProperties++;
         }
@@ -168,17 +191,30 @@ export class PropertyCrawler {
    */
   async fetchPublisherProperties(domains: string[]): Promise<{
     properties: Record<string, Property[]>;
+    /**
+     * Raw `AdAgentsJson` per fetched domain. `PropertyCrawler.crawlAgents`
+     * needs `authorized_agents[]` (with their per-entry selectors) to do
+     * spec-correct per-agent attribution — the `properties` array alone
+     * doesn't carry the discriminator. Kept on a side map (instead of
+     * widening `properties`) so external callers that only consume
+     * `properties` keep the same shape.
+     */
+    adAgents: Record<string, AdAgentsJson>;
     warnings: Array<{ domain: string; message: string }>;
   }> {
     const result: Record<string, Property[]> = {};
+    const adAgents: Record<string, AdAgentsJson> = {};
     const warnings: Array<{ domain: string; message: string }> = [];
 
     await Promise.all(
       domains.map(async domain => {
         try {
-          const { properties, warning } = await this.fetchAdAgentsJson(domain);
+          const { properties, warning, adAgents: raw } = await this.fetchAdAgentsJson(domain);
           if (properties.length > 0) {
             result[domain] = properties;
+          }
+          if (raw) {
+            adAgents[domain] = raw;
           }
           if (warning) {
             warnings.push({ domain, message: warning });
@@ -197,7 +233,7 @@ export class PropertyCrawler {
       })
     );
 
-    return { properties: result, warnings };
+    return { properties: result, adAgents, warnings };
   }
 
   /**
@@ -233,6 +269,9 @@ export class PropertyCrawler {
    */
   async fetchAdAgentsJson(domain: string): Promise<{
     properties: Property[];
+    /** Raw parsed adagents.json — needed for per-agent property resolution
+     *  (#1721). Omitted when the response wasn't a parseable adagents.json. */
+    adAgents?: AdAgentsJson;
     warning?: string;
   }> {
     const initialUrl = `https://${domain}/.well-known/adagents.json`;
@@ -253,6 +292,9 @@ export class PropertyCrawler {
     depth: number
   ): Promise<{
     properties: Property[];
+    /** Raw parsed adagents.json — needed for per-agent property resolution
+     *  (#1721). Omitted on inferred / empty responses. */
+    adAgents?: AdAgentsJson;
     warning?: string;
   }> {
     // Loop detection
@@ -376,6 +418,7 @@ export class PropertyCrawler {
 
       return {
         properties: normalized,
+        adAgents: data,
         ...(skipped > 0 && {
           warning: `Skipped ${skipped} ${skipped === 1 ? 'property' : 'properties'} with missing or empty identifiers`,
         }),

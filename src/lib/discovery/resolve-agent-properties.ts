@@ -1,0 +1,249 @@
+/**
+ * Per-agent property resolution for `adagents.json` (adcp-client#1721).
+ *
+ * The schema (`schemas/cache/3.0.11/adagents.json`) requires every
+ * `authorized_agents[]` entry to carry `authorization_type` + the matching
+ * selector field. Which top-level `properties[]` an agent is authorized
+ * for is a function of that discriminator + selector — NOT a property of
+ * presence-in-the-list (the pre-#1721 SDK bug).
+ *
+ * This resolver dispatches on `authorization_type`:
+ *
+ *   - `property_ids`   → filter top-level `properties[]` by `property_id`
+ *   - `property_tags`  → filter top-level `properties[]` by tag intersection
+ *   - `inline_properties` → return the agent entry's own `properties[]`
+ *   - `publisher_properties` → cross-publisher; returned as `cross_publisher`
+ *     for the caller to resolve against other publishers' adagents.json
+ *   - `signal_ids` / `signal_tags` → signals agents; no property output
+ *
+ * Mirrors the Python SDK's `_resolve_agent_properties` (adcp-client-python).
+ * Fails closed: entries without `authorization_type` or with a missing
+ * selector return zero properties — matching the Python SDK and the
+ * schema's strict-conformance position. The pre-fix TS behavior of
+ * attributing every property to every listed agent is gone.
+ */
+import type { AdAgentsJson, AuthorizedAgent, AuthorizationType, Property, PublisherPropertySelector } from './types';
+
+/**
+ * Result of resolving a single agent's authorization scope against an
+ * `adagents.json` file. `properties` are the locally-resolved entries
+ * (in-file). `cross_publisher` selectors point at other publishers'
+ * files; resolving them to concrete `Property` objects requires
+ * fetching those publishers' adagents.json separately. `unresolvable`
+ * communicates why the agent's scope is empty when it is.
+ */
+export interface ResolvedAgentScope {
+  /** Locally-resolved properties (subset of top-level `properties[]`, or inline). */
+  properties: Property[];
+  /** Cross-publisher selectors the caller must resolve against other files. */
+  cross_publisher: PublisherPropertySelector[];
+  /** The matched agent entry, or `undefined` if no entry matched the agent URL. */
+  matched_entry?: AuthorizedAgent;
+  /** Why the resolution returned an empty result, when it did. */
+  unresolvable?: ResolveUnresolvableReason;
+}
+
+export type ResolveUnresolvableReason =
+  /** The agent URL is not listed in `authorized_agents[]` at all. */
+  | 'agent_not_listed'
+  /** Entry exists but has no `authorization_type` discriminator. */
+  | 'missing_authorization_type'
+  /** Entry has an `authorization_type` we do not recognize. */
+  | 'unknown_authorization_type'
+  /** Entry has a known `authorization_type` but the matching selector is missing/empty. */
+  | 'missing_selector'
+  /** Selector resolved to no properties (e.g., `property_ids` matched no top-level entry). */
+  | 'no_match'
+  /** Entry uses a signals authorization type — no property output is appropriate. */
+  | 'signals_only';
+
+/**
+ * Canonicalize an agent URL for `authorized_agents[].url` comparison per
+ * the AdCP URL canonicalization rules
+ * (https://adcontextprotocol.org/docs/reference/url-canonicalization).
+ * Returns the canonical string or `null` if the input is unparseable.
+ *
+ * The full 8-step canonicalization (Punycode, percent-encoding decode,
+ * `remove_dot_segments`, etc.) is delegated to Node's WHATWG URL parser
+ * for most rules; this helper layers on the SDK-specific bits the parser
+ * doesn't do automatically: default-port stripping (already done by
+ * `URL.host`), unreserved-char percent-decoding, and fragment strip.
+ *
+ * Exported for callers building their own per-agent matching outside the
+ * resolver — e.g., TMP `seller_agent_url` validation.
+ */
+export function canonicalizeAgentUrl(raw: string): string | null {
+  if (typeof raw !== 'string' || raw.length === 0) return null;
+  let parsed: URL;
+  try {
+    parsed = new URL(raw);
+  } catch {
+    return null;
+  }
+  // Reject userinfo per the spec's step 3.
+  if (parsed.username || parsed.password) return null;
+  // Reject non-http(s) schemes — `adagents.json` agent URLs are HTTPS-only
+  // in production, but we accept `http://` here so loopback fixtures parse.
+  if (parsed.protocol !== 'https:' && parsed.protocol !== 'http:') return null;
+  // `URL.host` already strips default ports and lowercases the hostname.
+  // Use `protocol + host` (NOT `origin`) so the assembled string keeps
+  // the IDN-A-label form Node produces.
+  const path = decodeUnreservedPercentEncoding(parsed.pathname);
+  const query = parsed.search ? decodeUnreservedPercentEncoding(parsed.search) : '';
+  return `${parsed.protocol}//${parsed.host}${path}${query}`;
+}
+
+/**
+ * Resolve `agentUrl`'s authorization scope against an `adagents.json`
+ * file. The lookup uses canonicalized URL comparison — two URLs
+ * differing only in case, default port, percent-encoding of unreserved
+ * chars, or fragment are the same agent.
+ *
+ * Returns `{ properties: [], cross_publisher: [], unresolvable: '...' }`
+ * (never throws) when the agent isn't listed, when its entry is
+ * malformed, or when the agent uses a signals authorization type.
+ */
+export function resolveAgentProperties(adAgents: AdAgentsJson, agentUrl: string): ResolvedAgentScope {
+  const wanted = canonicalizeAgentUrl(agentUrl);
+  if (!wanted) {
+    return { properties: [], cross_publisher: [], unresolvable: 'agent_not_listed' };
+  }
+
+  const entries = Array.isArray(adAgents.authorized_agents) ? adAgents.authorized_agents : [];
+  const entry = entries.find(e => {
+    if (!e || typeof e.url !== 'string') return false;
+    const canon = canonicalizeAgentUrl(e.url);
+    return canon !== null && canon === wanted;
+  });
+
+  if (!entry) {
+    return { properties: [], cross_publisher: [], unresolvable: 'agent_not_listed' };
+  }
+
+  const authType = entry.authorization_type as AuthorizationType | undefined;
+  if (!authType) {
+    return { properties: [], cross_publisher: [], matched_entry: entry, unresolvable: 'missing_authorization_type' };
+  }
+
+  const allProperties = Array.isArray(adAgents.properties) ? adAgents.properties : [];
+
+  switch (authType) {
+    case 'property_ids': {
+      const ids = entry.property_ids;
+      if (!Array.isArray(ids) || ids.length === 0) {
+        return { properties: [], cross_publisher: [], matched_entry: entry, unresolvable: 'missing_selector' };
+      }
+      const idSet = new Set(ids);
+      const matched = allProperties.filter(p => p.property_id !== undefined && idSet.has(p.property_id));
+      return {
+        properties: matched,
+        cross_publisher: [],
+        matched_entry: entry,
+        ...(matched.length === 0 ? { unresolvable: 'no_match' as const } : {}),
+      };
+    }
+
+    case 'property_tags': {
+      const tags = entry.property_tags;
+      if (!Array.isArray(tags) || tags.length === 0) {
+        return { properties: [], cross_publisher: [], matched_entry: entry, unresolvable: 'missing_selector' };
+      }
+      const tagSet = new Set(tags);
+      const matched = allProperties.filter(p => Array.isArray(p.tags) && p.tags.some(t => tagSet.has(t)));
+      return {
+        properties: matched,
+        cross_publisher: [],
+        matched_entry: entry,
+        ...(matched.length === 0 ? { unresolvable: 'no_match' as const } : {}),
+      };
+    }
+
+    case 'inline_properties': {
+      const inline = entry.properties;
+      if (!Array.isArray(inline) || inline.length === 0) {
+        return { properties: [], cross_publisher: [], matched_entry: entry, unresolvable: 'missing_selector' };
+      }
+      return { properties: inline, cross_publisher: [], matched_entry: entry };
+    }
+
+    case 'publisher_properties': {
+      const selectors = entry.publisher_properties;
+      if (!Array.isArray(selectors) || selectors.length === 0) {
+        return { properties: [], cross_publisher: [], matched_entry: entry, unresolvable: 'missing_selector' };
+      }
+      return { properties: [], cross_publisher: selectors, matched_entry: entry };
+    }
+
+    case 'signal_ids':
+    case 'signal_tags':
+      return { properties: [], cross_publisher: [], matched_entry: entry, unresolvable: 'signals_only' };
+
+    default:
+      // Exhaustiveness guard — if a new authorization_type lands on
+      // `AuthorizationType` without a branch here, TS won't compile.
+      // For runtime files carrying a string we don't recognize, return
+      // `unknown_authorization_type`.
+      return { properties: [], cross_publisher: [], matched_entry: entry, unresolvable: 'unknown_authorization_type' };
+  }
+}
+
+/**
+ * Convenience: list every locally-resolvable (`agent_url` →
+ * `Property[]`) pair from an `adagents.json` file. Agents listed with
+ * `signal_ids` / `signal_tags` or with no `authorization_type` are
+ * absent from the result. `publisher_properties` cross-references are
+ * reported separately so the caller can resolve them against other
+ * publishers' files.
+ */
+export function listAgentPropertyMap(adAgents: AdAgentsJson): {
+  byAgent: Map<string, Property[]>;
+  unresolved: Array<{ agent_url: string; reason: ResolveUnresolvableReason }>;
+  cross_publisher: Array<{ agent_url: string; selectors: PublisherPropertySelector[] }>;
+} {
+  const byAgent = new Map<string, Property[]>();
+  const unresolved: Array<{ agent_url: string; reason: ResolveUnresolvableReason }> = [];
+  const cross_publisher: Array<{ agent_url: string; selectors: PublisherPropertySelector[] }> = [];
+
+  const entries = Array.isArray(adAgents.authorized_agents) ? adAgents.authorized_agents : [];
+  for (const entry of entries) {
+    if (!entry || typeof entry.url !== 'string') continue;
+    const scope = resolveAgentProperties(adAgents, entry.url);
+    const canon = canonicalizeAgentUrl(entry.url);
+    const key = canon ?? entry.url;
+    if (scope.properties.length > 0) {
+      byAgent.set(key, scope.properties);
+    }
+    if (scope.cross_publisher.length > 0) {
+      cross_publisher.push({ agent_url: key, selectors: scope.cross_publisher });
+    }
+    if (scope.unresolvable && scope.properties.length === 0 && scope.cross_publisher.length === 0) {
+      unresolved.push({ agent_url: key, reason: scope.unresolvable });
+    }
+  }
+
+  return { byAgent, unresolved, cross_publisher };
+}
+
+/**
+ * RFC 3986 §6.2.2.2: decode percent-encoded triplets that map to
+ * unreserved characters (`ALPHA / DIGIT / "-" / "." / "_" / "~"`).
+ * Leaves reserved characters and non-unreserved encodings byte-for-byte.
+ *
+ * Vendored from `src/lib/signing/canonicalize.ts` to keep this file
+ * dependency-free of the signing module (which is the source for
+ * request-signing canonicalization, not authorization).
+ */
+function decodeUnreservedPercentEncoding(input: string): string {
+  return input.replace(/%([0-9a-fA-F]{2})/g, (match, hex: string) => {
+    const code = parseInt(hex, 16);
+    const isUnreserved =
+      (code >= 0x41 && code <= 0x5a) || // A–Z
+      (code >= 0x61 && code <= 0x7a) || // a–z
+      (code >= 0x30 && code <= 0x39) || // 0–9
+      code === 0x2d || // '-'
+      code === 0x2e || // '.'
+      code === 0x5f || // '_'
+      code === 0x7e; // '~'
+    return isUnreserved ? String.fromCharCode(code) : match.toUpperCase();
+  });
+}
