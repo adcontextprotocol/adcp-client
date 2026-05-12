@@ -250,6 +250,40 @@ describe('validateAdAgents — discovery_method', () => {
     }
   });
 
+  test('authoritative_location bounce variants caught by normalized cycle check', async () => {
+    // Bind the server first so we know its port, then hand-craft a
+    // self-pointer with `?x=1` tacked on. Naive string equality would
+    // miss this (`http://host/path` vs `http://host/path?x=1`).
+    // Origin+path normalization must catch it.
+    const http = require('node:http');
+    const server = http.createServer((req, res) => {
+      if (req.url.startsWith('/.well-known/adagents.json')) {
+        const port = server.address().port;
+        const selfPointer = `http://127.0.0.1:${port}/.well-known/adagents.json?x=1`;
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ authoritative_location: selfPointer }));
+        return;
+      }
+      res.writeHead(404);
+      res.end();
+    });
+    await new Promise(r => server.listen(0, '127.0.0.1', r));
+    const host = `127.0.0.1:${server.address().port}`;
+    try {
+      const result = await validateAdAgents(host, {
+        urlForDomain: (domain, path) => `http://${domain}${path}`,
+      });
+      assert.strictEqual(result.valid, false);
+      assert.strictEqual(result.discovery_method, 'authoritative_location');
+      assert.ok(
+        result.errors.some(e => e.toLowerCase().includes('cycle')),
+        `expected cycle error, got: ${JSON.stringify(result.errors)}`
+      );
+    } finally {
+      await new Promise(r => server.close(r));
+    }
+  });
+
   test('non-404 publisher failure (5xx) does NOT trigger fallback', async () => {
     const manager = await startRoutedServer({
       '/.well-known/adagents.json': { body: adAgentsJson() },

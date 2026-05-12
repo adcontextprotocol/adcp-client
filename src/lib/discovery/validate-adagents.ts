@@ -144,7 +144,13 @@ export async function validateAdAgents(
           errors: [`authoritative_location must use https://, got: ${target}`],
         };
       }
-      if (target === publisherUrl) {
+      // Normalize before cycle-comparing — string equality misses
+      // trivial bounce variants (trailing slash, `?query`, fragment,
+      // uppercase scheme). Worst case of missing one of these is a
+      // wasted RTT against the publisher's own server, not SSRF
+      // (still routed through `ssrfSafeFetch`), but the right check
+      // is on origin+pathname.
+      if (sameOriginAndPath(target, publisherUrl)) {
         return {
           valid: false,
           publisher_domain: publisher,
@@ -311,6 +317,26 @@ export function parseManagerDomain(adsTxt: string): string | undefined {
     last = value.toLowerCase();
   }
   return last;
+}
+
+/**
+ * URL equality for cycle detection. Compares lowercased origin
+ * (scheme + host + port) and pathname; ignores trailing slashes,
+ * query strings, fragments, and scheme case. Returns false on
+ * unparseable URLs (callers treat unparseable as "not a cycle" so
+ * `ssrfSafeFetch` can produce a cleaner error downstream).
+ */
+function sameOriginAndPath(a: string, b: string): boolean {
+  try {
+    const ua = new URL(a);
+    const ub = new URL(b);
+    if (ua.origin.toLowerCase() !== ub.origin.toLowerCase()) return false;
+    const pathA = ua.pathname.replace(/\/+$/, '');
+    const pathB = ub.pathname.replace(/\/+$/, '');
+    return pathA === pathB;
+  } catch {
+    return false;
+  }
 }
 
 function isEligibleHostToken(value: string): boolean {
