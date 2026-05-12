@@ -240,7 +240,7 @@ Quick lookup before reading the full envelope. Match what you see in `adcp_error
 | `recovery: 'transient'` (rate limit, 5xx, timeout) | Server-side, retry-safe | Retry with the **same** `idempotency_key`. |
 | `recovery: 'correctable'` | Buyer-side fix | Read `issues[]`, patch the pointers, resend. Most cases close in one attempt. |
 | `recovery: 'terminal'` (account suspended, payment required, …) | Requires human action | Don't retry. Surface to the user. |
-| HTTP 401 with `WWW-Authenticate` header | Missing or expired credential | Add `Authorization` per the agent's auth spec; re-auth if applicable. |
+| HTTP 401 with `WWW-Authenticate` header | Missing or expired credential | Add `Authorization` per the agent's auth spec; re-auth if applicable. If the challenge `scheme` is `Basic` (gateway-fronted agents — Apigee, Kong, AWS API GW), the SDK / CLI need `auth: { type: 'basic', username, password }` or `--auth user:pass --auth-scheme basic` — `Bearer` will never succeed against that gateway. **Saved aliases**: if registered with `--auth-scheme basic`, the scheme persists in `~/.adcp/config.json` and auto-applies on every later invocation — don't redundantly repeat the flag on each call. |
 
 If your symptom isn't here, fall through to the next section.
 
