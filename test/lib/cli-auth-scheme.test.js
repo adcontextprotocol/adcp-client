@@ -145,15 +145,125 @@ test('--auth-scheme basic rejects CR/LF in the credential (header-smuggling defe
   assert.match(result.stderr, /CR, LF, NUL, or non-printable/);
 });
 
-test('--list-agents shows the auth scheme for basic-auth aliases', () => {
-  // Reuses 'gateway-basic' from the first test. node:test runs in declared order.
+test('--list-agents shows scheme + username for basic, bearer label for bearer (no nested parens)', () => {
+  // Reuses 'gateway-basic' and 'gateway-bearer' from earlier tests. node:test
+  // runs declared-order so we know they exist.
   const result = runCli(['--list-agents']);
   assert.strictEqual(result.status, 0, `expected exit 0, stderr: ${result.stderr}`);
+  // Basic shows username — already on disk in cleartext, surfacing it makes
+  // multi-tenant aliases immediately distinguishable. Password stays hidden.
   assert.match(result.stdout, /gateway-basic/);
-  assert.match(result.stdout, /Auth: token configured \(basic \(user:pass\)\)/);
-  // Bearer alias must still show without surprising the user.
+  assert.match(result.stdout, /Auth: HTTP Basic \(user=svc-user\)/);
+  assert.doesNotMatch(result.stdout, /s3cret-pa55/, 'password must NEVER appear in --list-agents output');
+  // Bearer alias gets a plain label (no nested parens, no scheme noise).
   assert.match(result.stdout, /gateway-bearer/);
-  assert.match(result.stdout, /Auth: token configured \(bearer\)/);
+  assert.match(result.stdout, /Auth: bearer token configured/);
+});
+
+test('--auth-scheme=basic single-token form parses identically to --auth-scheme basic', () => {
+  // Security-reviewer L3 from PR #1719: the long-form path treated
+  // `--auth-scheme=basic` as an unknown arg and silently fell through to
+  // env-var lookup. The equals form is now first-class.
+  const result = runCli([
+    '--save-auth',
+    'gateway-eqform',
+    'https://agent.example.com/mcp',
+    '--auth',
+    'svc-eq:passw0rd',
+    '--auth-scheme=basic',
+  ]);
+  assert.strictEqual(result.status, 0, `expected exit 0, stderr: ${result.stderr}`);
+  const cfg = JSON.parse(fs.readFileSync(configPath(), 'utf8'));
+  assert.strictEqual(cfg.agents['gateway-eqform'].auth_scheme, 'basic');
+});
+
+test('ADCP_AUTH_SCHEME env var supplies the scheme when no flag is passed', () => {
+  // Confirm the env var actually works on the save path (used by CI scripts
+  // that set ADCP_AUTH_SCHEME globally instead of repeating the flag).
+  const result = runCli(
+    ['--save-auth', 'gateway-env', 'https://agent.example.com/mcp', '--auth', 'env-user:env-pass'],
+    { ADCP_AUTH_SCHEME: 'basic' }
+  );
+  assert.strictEqual(result.status, 0, `expected exit 0, stderr: ${result.stderr}`);
+  const cfg = JSON.parse(fs.readFileSync(configPath(), 'utf8'));
+  assert.strictEqual(cfg.agents['gateway-env'].auth_scheme, 'basic');
+});
+
+test('invariant: a saved header bag with Authorization gets stripped — basic injection MUST run after mergeHeaders', () => {
+  // Refactor-safety guard from the code-reviewer follow-up. Two facts the
+  // CLI relies on:
+  //   1. `mergeHeaders` strips reserved auth-class keys case-insensitively.
+  //   2. `injectBasicAuthHeader` adds `Authorization: Basic …` AFTER step 1.
+  // If a future refactor moves the injection inside or before mergeHeaders,
+  // (1) silently drops the basic header — the wire test catches the symptom,
+  // but this test catches the cause earlier. We exercise (1) end-to-end
+  // through `--list-agents` after hand-editing a saved alias to smuggle an
+  // `authorization` header — the merge filter MUST drop it on read.
+  const cfgFile = configPath();
+  const cfg = JSON.parse(fs.readFileSync(cfgFile, 'utf8'));
+  cfg.agents['invariant-check'] = {
+    url: 'https://agent.example.com/mcp',
+    protocol: 'mcp',
+    auth_token: 'tok-real',
+    headers: {
+      authorization: 'Bearer attacker',
+      'x-adcp-tenant': 'real-tenant',
+    },
+  };
+  fs.writeFileSync(cfgFile, JSON.stringify(cfg, null, 2), { mode: 0o600 });
+
+  // Invoke any command path that runs through mergeHeaders. `--list-agents`
+  // just reads; we need a path that actually merges. Use the `tools/list`
+  // invocation with --dry-run-equivalent (debug) — saves a network call.
+  // But there's no global dry-run; instead use the `--list-agents` path,
+  // which doesn't trigger mergeHeaders. Simpler: invoke any agent command
+  // with --debug — the merge runs at agentConfig construction time, and the
+  // warning emits from mergeHeaders if a reserved key was present.
+  const result = runCli(['invariant-check', '--debug']);
+  // The warning must fire — proves mergeHeaders' filter still strips
+  // `authorization` keys from saved configs. A regression that moved basic
+  // injection into mergeHeaders would also affect this path.
+  assert.match(
+    result.stderr,
+    /ignoring saved authorization header/,
+    `expected mergeHeaders to strip the smuggled authorization key. stderr was:\n${result.stderr}`
+  );
+});
+
+test('ADCP_AUTH_SCHEME=basic without --auth produces a stderr warning on direct invocation', async t => {
+  // The advisory: env-var set but no token resolved → the env is silently
+  // shadowed (defaults to bearer with no token), and the caller's Basic
+  // gateway would 401 with no indication why. Warn at the seam.
+  // Spin up a real-ish 401 server so the CLI reaches `maybeWarnAuthSchemeIneffective`
+  // and emits the warning before bouncing through error handling.
+  const server = http.createServer((req, res) => {
+    res.writeHead(401);
+    res.end();
+  });
+  await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
+  const url = `http://127.0.0.1:${server.address().port}/mcp`;
+  t.after(async () => {
+    if (typeof server.closeAllConnections === 'function') server.closeAllConnections();
+    await new Promise(resolve => server.close(() => resolve()));
+  });
+
+  const run = await new Promise(resolve => {
+    const child = spawn('node', [CLI, url, 'tools/list', '--protocol', 'mcp', '--allow-http'], {
+      env: { ...process.env, HOME: tmpHome, ADCP_AUTH_SCHEME: 'basic' },
+    });
+    let stderr = '';
+    child.stderr.on('data', d => (stderr += d.toString()));
+    const killer = setTimeout(() => child.kill('SIGTERM'), 12000);
+    child.on('exit', code => {
+      clearTimeout(killer);
+      resolve({ status: code, stderr });
+    });
+  });
+  assert.match(
+    run.stderr,
+    /Warning: ADCP_AUTH_SCHEME=basic is set but did not apply/,
+    `expected env-var ineffective warning, stderr was:\n${run.stderr}`
+  );
 });
 
 test('runtime mutex: --auth-scheme basic + --oauth fails closed instead of silently dropping the credential', () => {

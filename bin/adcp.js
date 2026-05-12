@@ -275,23 +275,71 @@ function mergeHeaders(savedHeaders, cliHeaders) {
  * use that to defer to a saved alias's `auth_scheme`.
  */
 function parseAuthSchemeFlag(args) {
-  const idx = args.indexOf('--auth-scheme');
   let value = null;
-  if (idx !== -1) {
-    if (idx + 1 >= args.length || args[idx + 1].startsWith('--')) {
+  let source = null;
+  // Long-form: --auth-scheme VALUE
+  const longIdx = args.indexOf('--auth-scheme');
+  if (longIdx !== -1) {
+    if (longIdx + 1 >= args.length || args[longIdx + 1].startsWith('--')) {
       console.error('ERROR: --auth-scheme requires a value (bearer|basic)\n');
       process.exit(2);
     }
-    value = args[idx + 1];
-  } else if (process.env.ADCP_AUTH_SCHEME) {
+    value = args[longIdx + 1];
+    source = 'flag';
+  }
+  // Single-token form: --auth-scheme=VALUE. Security-reviewer L3 from PR #1719
+  // flagged that the long-form path treats `--auth-scheme=basic` (no space) as
+  // an unknown arg, which silently falls through to env-var lookup. Match the
+  // other flags' equals-form by checking for the literal prefix explicitly.
+  if (value === null) {
+    const eqArg = args.find(a => a.startsWith('--auth-scheme='));
+    if (eqArg) {
+      value = eqArg.slice('--auth-scheme='.length);
+      source = 'flag';
+    }
+  }
+  if (value === null && process.env.ADCP_AUTH_SCHEME) {
     value = process.env.ADCP_AUTH_SCHEME;
+    source = 'env';
   }
   if (value === null) return null;
   if (value !== 'bearer' && value !== 'basic') {
-    console.error(`ERROR: --auth-scheme must be 'bearer' or 'basic', got: ${value}\n`);
+    // Name the source in the error so the operator knows whether to fix the
+    // flag invocation or the environment variable.
+    const sourceLabel = source === 'env' ? 'ADCP_AUTH_SCHEME env var' : '--auth-scheme';
+    console.error(`ERROR: ${sourceLabel} must be 'bearer' or 'basic', got: ${value}\n`);
     process.exit(2);
   }
   return value;
+}
+
+/**
+ * Warn when `ADCP_AUTH_SCHEME` was set in the environment but the resolved
+ * scheme didn't end up applied (because no token / no credential resolved to
+ * the request). The inverse case (token without scheme → silent bearer) is
+ * the safe direction and gets no warning.
+ *
+ * Called once per top-level invocation, after auth resolution completes.
+ * The check is purely advisory; it doesn't change behavior, just surfaces a
+ * likely misconfiguration before the user wonders why their Basic gateway
+ * keeps 401ing.
+ */
+function maybeWarnAuthSchemeIneffective(resolvedAuthToken, resolvedAuthScheme) {
+  const envScheme = process.env.ADCP_AUTH_SCHEME;
+  if (!envScheme) return;
+  if (envScheme !== 'bearer' && envScheme !== 'basic') return; // parse error already exited
+  // Effective: a token resolved AND the resolved scheme matches what the env
+  // asked for. If we have no token, basic is meaningless; if we have a token
+  // but the scheme resolved differently (e.g. saved alias overrode), the env
+  // is no-op-shadowed and worth flagging.
+  const effective = !!resolvedAuthToken && resolvedAuthScheme === envScheme;
+  if (!effective) {
+    console.error(
+      `Warning: ADCP_AUTH_SCHEME=${envScheme} is set but did not apply ` +
+        `(${!resolvedAuthToken ? 'no --auth / saved auth_token resolved' : `resolved scheme is '${resolvedAuthScheme}'`}). ` +
+        `Pass --auth (or an alias with credentials) to use the env-supplied scheme.`
+    );
+  }
 }
 
 /**
@@ -349,6 +397,30 @@ function decodeBasicCredentials(userpass, source = '--auth') {
  */
 function encodeBasicAuthHeader({ username, password }) {
   return `Basic ${Buffer.from(`${username}:${password}`).toString('base64')}`;
+}
+
+/**
+ * Inject `Authorization: Basic <base64(user:pass)>` into the header map the
+ * CLI hands to the SDK. Called AFTER `mergeHeaders()` runs so the
+ * reserved-key filter doesn't strip the injected Authorization. The protocol
+ * layer (`src/lib/protocols/mcp.ts` and `protocols/a2a.ts`) spreads
+ * `customHeaders` BEFORE SDK-supplied Authorization, so this injected value
+ * reaches the wire intact only when the caller has suppressed `auth_token`
+ * (the bearer-path overrides Authorization in that case).
+ *
+ * **Invariant for future contributors**: this MUST be called after
+ * `mergeHeaders()` and the bearer-path `auth_token` must be omitted when
+ * `useBasicAuth` is true. Moving the injection inside `mergeHeaders()` would
+ * silently drop the header (reserved-key filter is case-insensitive on
+ * `authorization`). The test at
+ * `test/lib/cli-auth-scheme.test.js:'wire test'` is the regression guard —
+ * if a refactor moves the injection wrong, that test stops sending Basic.
+ *
+ * Returns the merged header bag (always defined, even if empty in).
+ */
+function injectBasicAuthHeader(mergedHeaders, userpass, source = '--auth') {
+  const { username, password } = decodeBasicCredentials(userpass, source);
+  return { ...(mergedHeaders || {}), Authorization: encodeBasicAuthHeader({ username, password }) };
 }
 
 /**
@@ -1233,8 +1305,14 @@ function buildResolvedAuthOption({
       // saved alias's `auth_token`). Decode it here so both the storyboard
       // runner and `createTestClient` receive the `type: 'basic'` shape they
       // already know how to send (`src/lib/testing/storyboard/runner.ts:4176`
-      // and `src/lib/testing/client.ts:155`).
-      const { username, password } = decodeBasicCredentials(resolvedAuth, 'auth credential');
+      // and `src/lib/testing/client.ts:155`). Most paths validated at
+      // register/parse time already, so this is a second-line defense; the
+      // source string names the alias-resolved origin so a malformed
+      // hand-edited config surfaces with the right hint instead of "--auth".
+      const { username, password } = decodeBasicCredentials(
+        resolvedAuth,
+        'resolved basic credential (saved alias or --auth)'
+      );
       return { auth: { type: 'basic', username, password } };
     }
     return { auth: { type: 'bearer', token: resolvedAuth } };
@@ -1522,9 +1600,9 @@ OPTIONS:
   --transport PROTO  Alias for --protocol (A2A SDK convention)
   --auth TOKEN      Authentication token (or 'user:pass' with --auth-scheme basic)
   --auth-scheme bearer|basic
-                    How --auth is sent. Default: bearer (Authorization: Bearer …).
-                    'basic' encodes 'user:pass' as RFC 7617 Authorization: Basic.
-                    Env: ADCP_AUTH_SCHEME (overridden by the flag).
+                    Send --auth as Bearer (default) or RFC 7617 Basic for
+                    gateway-fronted agents. Env: ADCP_AUTH_SCHEME. Details:
+                    "adcp --save-auth --help".
   -H, --header K=V  Extra HTTP header on every request (repeatable). Auth wins on conflict.
                     Common use: -H x-adcp-tenant=<id> for tenant routing behind a reverse proxy.
   --oauth           OAuth authentication (MCP only, opens browser)
@@ -4895,16 +4973,29 @@ credential material — never sync or commit.
         } else if (booleanFlags.has(tok)) {
           parsedFlags[tok] = true;
         } else {
-          positional.push(tok);
+          // Equals-form: `--auth-scheme=basic` (no space). The long-form
+          // valueFlags check above only matches the bare flag name; the
+          // equals form lands here. Mirror the parsing pattern used at the
+          // top-level parseAuthSchemeFlag so the two surfaces stay aligned.
+          const eqMatch = /^(--[a-z-]+)=(.+)$/i.exec(tok);
+          if (eqMatch && valueFlags.has(eqMatch[1])) {
+            parsedFlags[eqMatch[1]] = eqMatch[2];
+          } else {
+            positional.push(tok);
+          }
         }
       }
     }
     const savedHeaders = savedHeadersFromFlags.customHeaders;
 
     const providedAuthToken = parsedFlags['--auth'] ?? null;
-    const providedAuthScheme = parsedFlags['--auth-scheme'] ?? null;
+    // Honor `ADCP_AUTH_SCHEME` on the save path too — CI scripts that set it
+    // globally shouldn't have to re-pass the flag on every `adcp --save-auth`.
+    // The CLI flag wins on conflict (consistent with the runtime path).
+    const providedAuthScheme = parsedFlags['--auth-scheme'] ?? process.env.ADCP_AUTH_SCHEME ?? null;
     if (providedAuthScheme !== null && providedAuthScheme !== 'bearer' && providedAuthScheme !== 'basic') {
-      console.error(`ERROR: --auth-scheme must be 'bearer' or 'basic', got: ${providedAuthScheme}\n`);
+      const sourceLabel = parsedFlags['--auth-scheme'] !== undefined ? '--auth-scheme' : 'ADCP_AUTH_SCHEME env var';
+      console.error(`ERROR: ${sourceLabel} must be 'bearer' or 'basic', got: ${providedAuthScheme}\n`);
       process.exit(2);
     }
     if (providedAuthScheme === 'basic' && providedAuthToken !== null) {
@@ -5371,8 +5462,17 @@ credential material — never sync or commit.
         console.log(`    Protocol: ${agent.protocol}`);
       }
       if (agent.auth_token) {
-        const scheme = agent.auth_scheme === 'basic' ? 'basic (user:pass)' : 'bearer';
-        console.log(`    Auth: token configured (${scheme})`);
+        if (agent.auth_scheme === 'basic') {
+          // For basic, show the username — it's already on disk in cleartext
+          // and seeing it makes the alias immediately recognizable (e.g. tells
+          // you which gateway tenant this alias talks to). Password is the
+          // sensitive half and stays hidden.
+          const colonIdx = agent.auth_token.indexOf(':');
+          const username = colonIdx > 0 ? agent.auth_token.slice(0, colonIdx) : '(malformed)';
+          console.log(`    Auth: HTTP Basic (user=${username})`);
+        } else {
+          console.log(`    Auth: bearer token configured`);
+        }
       }
       if (agent.oauth_client_credentials) {
         // Intentionally minimal: show only that CC is configured and the
@@ -5707,9 +5807,18 @@ credential material — never sync or commit.
   // injected Basic header reach the wire intact.
   const useBasicAuth = authScheme === 'basic' && authToken;
   if (useBasicAuth) {
-    const { username, password } = decodeBasicCredentials(authToken);
-    mergedHeaders = { ...(mergedHeaders || {}), Authorization: encodeBasicAuthHeader({ username, password }) };
+    // Helper extraction protects the invariant: this MUST run after
+    // mergeHeaders() so the reserved-key filter doesn't strip the injection.
+    // See `injectBasicAuthHeader`'s docstring for the full rationale.
+    mergedHeaders = injectBasicAuthHeader(mergedHeaders, authToken);
   }
+
+  // Advisory warning: surface ADCP_AUTH_SCHEME=basic when no token resolved
+  // (otherwise the env var is silently no-op and adopters wonder why their
+  // Basic gateway keeps 401ing). Only fires in the env-set-but-not-applied
+  // case — the inverse (token-without-scheme → silent bearer) is the safe
+  // direction.
+  maybeWarnAuthSchemeIneffective(authToken, authScheme || 'bearer');
 
   // Create agent config
   const agentConfig = {
