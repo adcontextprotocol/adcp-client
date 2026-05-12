@@ -66,6 +66,17 @@ export interface Storyboard {
    *     declares this requirement implicitly. Authors do not need to
    *     write `requires: [webhook_receiver]` — the tokens are
    *     self-describing.
+   *   - `request_signer` — the agent under test MUST advertise
+   *     `request_signing.supported: true` in `get_adcp_capabilities`.
+   *     Autodetected: any storyboard whose `id === 'signed_requests'`
+   *     or contains a `request_signing_probe` step implicitly requires
+   *     this. Skipped (storyboard not applicable) when the agent omits
+   *     the capability claim — absence is a declaration that the agent
+   *     does not offer verified signed requests, per
+   *     `compliance/{version}/universal/signed-requests.yaml` gating
+   *     ("Agents that do not advertise support are not tested against
+   *     this storyboard — absence of advertisement is not a failure").
+   *     Spec: adcp-client#1702.
    *
    * Default when the field is absent: `[real_wire]` (storyboard runs
    * everywhere — matches existing pre-tagging behavior). Tagging is
@@ -1417,7 +1428,7 @@ export interface RunnerSkipResult {
  *
  * Spec: adcp-client#1626.
  */
-export type RequirementName = 'controller' | 'seeded_state' | 'real_wire' | 'webhook_receiver';
+export type RequirementName = 'controller' | 'seeded_state' | 'real_wire' | 'webhook_receiver' | 'request_signer';
 
 /**
  * Closed enumeration of every known requirement. Used by the loader to
@@ -1431,6 +1442,7 @@ export const KNOWN_REQUIREMENTS: ReadonlySet<RequirementName> = new Set([
   'seeded_state',
   'real_wire',
   'webhook_receiver',
+  'request_signer',
 ] as const satisfies readonly RequirementName[]);
 
 /**

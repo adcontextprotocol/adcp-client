@@ -876,6 +876,7 @@ const REQUIREMENT_TO_SKIP_REASON: Record<RequirementName, RunnerSkipReason> = {
   seeded_state: 'requirement_unmet',
   real_wire: 'requirement_unmet',
   webhook_receiver: 'requirement_unmet',
+  request_signer: 'not_applicable',
 };
 
 /**
@@ -959,10 +960,24 @@ function buildRequirementUnmetResult(
  *     Autodetected from step `sample_request` token presence (see
  *     `detectImplicitRequires`); authors don't write this tag manually.
  *     Spec: adcp-client#1678.
+ *   - `request_signer` — agent advertises `request_signing.supported: true`
+ *     in `get_adcp_capabilities`. Autodetected for any storyboard whose
+ *     id is `'signed_requests'` or that contains a `request_signing_probe`
+ *     step (see `detectImplicitRequires`); authors don't write this tag
+ *     manually. Absence-skip semantics are INVERTED from the general
+ *     `requires_capability` rule: the signed-requests universal
+ *     storyboard's own gating spec (signed-requests.yaml prerequisites)
+ *     declares "agents that do not advertise support are not tested
+ *     against this storyboard — absence of advertisement is not a
+ *     failure". When the runner can't read capabilities (no profile
+ *     threaded through), the gate is a no-op — the caller accepted
+ *     responsibility for capability compatibility by reusing an external
+ *     client. Spec: adcp-client#1702.
  */
 function checkRequires(
   requires: readonly RequirementName[],
-  options: StoryboardRunOptions
+  options: StoryboardRunOptions,
+  profile?: AgentProfile
 ): { requirement: RequirementName; detail: string } | null {
   for (const requirement of requires) {
     switch (requirement) {
@@ -1007,6 +1022,30 @@ function checkRequires(
         }
         break;
       }
+      case 'request_signer': {
+        // Gate is a no-op when no profile is threaded through (external
+        // `_client` mode). The caller has accepted responsibility for
+        // capability compatibility; failing the gate here would surprise
+        // them with a skip they can't explain from CLI options alone.
+        if (!profile?.raw_capabilities) break;
+        const supported = resolveCapabilityPath(profile.raw_capabilities, 'request_signing.supported');
+        if (supported === true) break;
+        return {
+          requirement,
+          detail:
+            'Storyboard requires `request_signing.supported: true` in `get_adcp_capabilities`; ' +
+            `agent declared ${supported === undefined ? 'no request_signing block' : JSON.stringify(supported)}. ` +
+            'Per compliance/{version}/universal/signed-requests.yaml: "Agents that do not advertise ' +
+            'support are not tested against this storyboard — absence of advertisement is not a ' +
+            'failure, it is a declaration that the agent does not offer verified signed requests." ' +
+            'To opt in, advertise `request_signing.supported: true` and pre-register the runner ' +
+            'compliance test keypair per test-kits/signed-requests-runner.yaml. ' +
+            'Forward-readiness: optional in AdCP 3.0; the schema (request_signing block description) ' +
+            'declares request signing required for spend-committing operations in AdCP 4.0. Sellers ' +
+            'that intend to support spend-committing tools SHOULD advertise the capability and ' +
+            'register the test keypair before the 4.0 cut to avoid a hard compliance failure then.',
+        };
+      }
     }
   }
   return null;
@@ -1044,23 +1083,41 @@ function valueContainsWebhookToken(value: unknown): boolean {
 
 /**
  * Return the implicit requirements a storyboard needs based on its
- * structure (not its declared `requires:` list). Today: only
- * `'webhook_receiver'`, autodetected from `{{runner.webhook_url:…}}` /
- * `{{runner.webhook_base}}` token presence inside any step's
- * `sample_request`. Token presence is the authoring contract — a
- * storyboard that names the runner's webhook receiver cannot run
- * without one — so authors don't need to remember to add
- * `requires: [webhook_receiver]` separately. Spec: adcp-client#1678.
+ * structure (not its declared `requires:` list). Today:
+ *   - `'webhook_receiver'`, autodetected from `{{runner.webhook_url:…}}`
+ *     / `{{runner.webhook_base}}` token presence inside any step's
+ *     `sample_request`. Token presence is the authoring contract — a
+ *     storyboard that names the runner's webhook receiver cannot run
+ *     without one — so authors don't need to remember to add
+ *     `requires: [webhook_receiver]` separately. Spec: adcp-client#1678.
+ *   - `'request_signer'`, autodetected from `storyboard.id ===
+ *     'signed_requests'` or any step using the synthesized
+ *     `request_signing_probe` task. The signed-requests universal
+ *     storyboard's own prerequisites section declares the
+ *     `request_signing.supported: true` capability gate; the runner
+ *     enforces it here so adopters don't see false-negative vector
+ *     failures on bearer-only agents that never claimed signing.
+ *     Spec: adcp-client#1702.
  */
 function detectImplicitRequires(storyboard: Storyboard): RequirementName[] {
+  const requires: RequirementName[] = [];
+  let needsWebhook = false;
+  let needsSigner = storyboard.id === 'signed_requests';
   for (const phase of storyboard.phases) {
     for (const step of phase.steps) {
-      if (step.sample_request && valueContainsWebhookToken(step.sample_request)) {
-        return ['webhook_receiver'];
+      if (!needsWebhook && step.sample_request && valueContainsWebhookToken(step.sample_request)) {
+        needsWebhook = true;
       }
+      if (!needsSigner && step.task === 'request_signing_probe') {
+        needsSigner = true;
+      }
+      if (needsWebhook && needsSigner) break;
     }
+    if (needsWebhook && needsSigner) break;
   }
-  return [];
+  if (needsWebhook) requires.push('webhook_receiver');
+  if (needsSigner) requires.push('request_signer');
+  return requires;
 }
 
 /**
@@ -1317,7 +1374,7 @@ async function executeStoryboardPass(
   const implicit = detectImplicitRequires(storyboard);
   const allRequires = [...declared, ...implicit.filter(r => !declared.includes(r))];
   if (allRequires.length) {
-    const unmet = checkRequires(allRequires, options);
+    const unmet = checkRequires(allRequires, options, profile);
     if (unmet) {
       if (!options._client) await closeConnections(options.protocol);
       return buildRequirementUnmetResult(agentUrls, storyboard, unmet.requirement, unmet.detail);
@@ -1698,6 +1755,19 @@ async function executeStoryboardPass(
         duration_ms: 0,
       });
       continue;
+    }
+
+    // Pre-empt OAuth-metadata probes when the agent's capabilities never
+    // advertised OAuth at all (adcp-client#1702). Without this, an
+    // API-key-only agent (e.g. Wonderstruck) has its PRM endpoint
+    // probed; if the well-known path returns anything other than 404
+    // (the existing reactive cascade trigger in `executeProbeStep`),
+    // validations fail and `oauth_discovery` produces 5 false-negative
+    // step failures even though the phase is `optional: true`. The skip
+    // is phase-level — not storyboard-level — so the universal
+    // `unauth_rejection` and `mechanism_required` phases still run.
+    if (!phaseAbsent && phaseContainsOauthMetadataProbe(phase) && !agentAdvertisesOauth(profile)) {
+      phaseAbsent = true;
     }
 
     // Reset alias cache at this phase boundary (#1657). $generate:uuid_v4#alias
@@ -3828,6 +3898,34 @@ function isTaskShape(result: unknown): boolean {
 // ────────────────────────────────────────────────────────────
 // Phase / step skip predicates
 // ────────────────────────────────────────────────────────────
+
+/**
+ * True when the phase contains an OAuth-metadata probe step
+ * (`protected_resource_metadata` or `oauth_auth_server_metadata`). Used
+ * to pre-emptively trigger the existing `phaseAbsent` cascade when the
+ * agent's capabilities never advertised OAuth in the first place, so we
+ * don't burn step failures probing a well-known path the agent doesn't
+ * claim. Spec: adcp-client#1702.
+ */
+function phaseContainsOauthMetadataProbe(phase: StoryboardPhase): boolean {
+  return phase.steps.some(s => s.task === 'protected_resource_metadata' || s.task === 'oauth_auth_server_metadata');
+}
+
+/**
+ * True when the agent's `get_adcp_capabilities` response declares an
+ * OAuth issuer (today: `account.authorization_endpoint`). When the
+ * profile or its capabilities aren't available — e.g. external
+ * `_client` mode — we conservatively return `true` so the runner falls
+ * through to the existing reactive cascade (`phaseAbsent` flips on a
+ * 404 from the PRM probe). That keeps backward compatibility for
+ * callers that haven't threaded a profile through. Spec: adcp-client#1702.
+ */
+function agentAdvertisesOauth(profile: AgentProfile | undefined): boolean {
+  const rawCaps = profile?.raw_capabilities;
+  if (rawCaps === undefined) return true;
+  const endpoint = resolveCapabilityPath(rawCaps, 'account.authorization_endpoint');
+  return typeof endpoint === 'string' && endpoint.length > 0;
+}
 
 /**
  * Evaluate a phase's `skip_if` expression against the runtime options. Only
