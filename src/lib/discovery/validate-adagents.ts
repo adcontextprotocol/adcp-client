@@ -54,11 +54,28 @@ export interface AdAgentsValidationResult {
    * The manager domain consulted when `discovery_method ===
    * 'ads_txt_managerdomain'`. Populated even on manager-domain failure
    * so callers can surface "we tried <manager>" in error reports.
+   *
+   * Note for chained validators: re-invoking `validateAdAgents` against
+   * `manager_domain` to walk N hops re-enters the discovery flow from
+   * scratch. This validator's one-hop guarantee is per-call, not
+   * per-chain — callers stringing multiple invocations together are
+   * responsible for their own loop guard.
    */
   manager_domain?: string;
   /** URL the `adagents.json` was ultimately loaded from. Omitted when nothing loaded. */
   resolved_url?: string;
-  /** Parsed authoritative file. Omitted on failure. */
+  /**
+   * Parsed authoritative file. Omitted on failure.
+   *
+   * **Counterparty-controlled.** This JSON came verbatim from the
+   * publisher (or their declared manager domain). Treat as untrusted
+   * input: do NOT splice into LLM system prompts, log-aggregator
+   * indices, or any context that interprets text as instructions
+   * without first stripping or sanitizing. Field names like
+   * `authorized_for` (free-text) and `properties[].name` are obvious
+   * vectors; less-obvious ones include arbitrary `$schema` URLs and
+   * structured `tags`.
+   */
   adagents?: AdAgentsJson;
   /** One or more reasons validation failed. Empty when `valid === true`. */
   errors: string[];
@@ -124,7 +141,16 @@ export async function validateAdAgents(
   });
 
   if (direct.kind === 'ok') {
-    const data = direct.data as AdAgentsJson;
+    const data = coerceAdAgentsObject(direct.data);
+    if (!data) {
+      return {
+        valid: false,
+        publisher_domain: publisher,
+        discovery_method: 'direct',
+        resolved_url: publisherUrl,
+        errors: ['adagents.json fetch failed: invalid JSON: response is not a JSON object'],
+      };
+    }
 
     // Handle `authoritative_location` indirection: a pointer file with no
     // inline `authorized_agents` should be followed exactly once.
@@ -174,12 +200,22 @@ export async function validateAdAgents(
           errors: [`authoritative_location fetch failed: ${describeOutcome(followed)}`],
         };
       }
+      const followedAdAgents = coerceAdAgentsObject(followed.data);
+      if (!followedAdAgents) {
+        return {
+          valid: false,
+          publisher_domain: publisher,
+          discovery_method: 'authoritative_location',
+          resolved_url: target,
+          errors: ['authoritative_location target returned a non-object JSON value'],
+        };
+      }
       return {
         valid: true,
         publisher_domain: publisher,
         discovery_method: 'authoritative_location',
         resolved_url: target,
-        adagents: followed.data as AdAgentsJson,
+        adagents: followedAdAgents,
         errors: [],
       };
     }
@@ -262,15 +298,37 @@ export async function validateAdAgents(
     };
   }
 
+  const managerAdAgents = coerceAdAgentsObject(manager.data);
+  if (!managerAdAgents) {
+    return {
+      valid: false,
+      publisher_domain: publisher,
+      discovery_method: 'ads_txt_managerdomain',
+      manager_domain: managerDomain,
+      errors: ['Manager domain adagents.json returned a non-object JSON value'],
+    };
+  }
+
   return {
     valid: true,
     publisher_domain: publisher,
     discovery_method: 'ads_txt_managerdomain',
     manager_domain: managerDomain,
     resolved_url: managerUrl,
-    adagents: manager.data as AdAgentsJson,
+    adagents: managerAdAgents,
     errors: [],
   };
+}
+
+/**
+ * Narrow `JSON.parse` output to a plain object — rejects `null`,
+ * arrays, primitives. Empty-body responses decode to `null` and
+ * pass the JSON parser; downstream code paths assume an object and
+ * would crash on null without this guard (#1720 review).
+ */
+function coerceAdAgentsObject(value: unknown): AdAgentsJson | null {
+  if (value === null || typeof value !== 'object' || Array.isArray(value)) return null;
+  return value as AdAgentsJson;
 }
 
 /**
@@ -292,7 +350,9 @@ export async function validateAdAgents(
 export function parseManagerDomain(adsTxt: string): string | undefined {
   if (!adsTxt) return undefined;
   // Strip BOM if present — common on Windows-authored ads.txt files.
-  const body = adsTxt.replace(/^﻿/, '');
+  // `charCodeAt` + `slice` is clearer than a regex match against a
+  // literal U+FEFF (per #1720 review).
+  const body = adsTxt.charCodeAt(0) === 0xfeff ? adsTxt.slice(1) : adsTxt;
   let last: string | undefined;
   for (const rawLine of body.split(/\r?\n/)) {
     // Split off any inline comment so the directive parser only sees
@@ -421,7 +481,12 @@ async function rawFetch(url: string, opts: InternalFetchOptions): Promise<RawFet
   }
 }
 
-function describeOutcome(outcome: JsonFetchOutcome | TextFetchOutcome): string {
+/**
+ * Render a fetch failure into a short, log-safe string. Callers only
+ * pass failures here — the `'ok'` branch is excluded at the type level
+ * so we don't keep a dead "ok" string lying around (#1720 review).
+ */
+function describeOutcome(outcome: FetchFailure): string {
   switch (outcome.kind) {
     case 'not_found':
       return 'HTTP 404';
@@ -433,7 +498,5 @@ function describeOutcome(outcome: JsonFetchOutcome | TextFetchOutcome): string {
       return `invalid JSON: ${outcome.message}`;
     case 'ssrf_refused':
       return `[SSRF refused] ${outcome.message}`;
-    case 'ok':
-      return 'ok';
   }
 }

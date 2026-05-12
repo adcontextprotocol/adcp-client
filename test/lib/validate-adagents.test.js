@@ -307,4 +307,108 @@ describe('validateAdAgents — discovery_method', () => {
       await Promise.all([publisher.close(), manager.close()]);
     }
   });
+
+  // ---- #1720 edge-case coverage (review follow-ups) ----
+
+  test('publisher returns 200 + empty body → terminal parse_error on direct path', async () => {
+    const publisher = await startRoutedServer({
+      '/.well-known/adagents.json': { body: '' },
+    });
+    try {
+      const result = await validateAdAgents(publisher.host, {
+        urlForDomain: (domain, path) => `http://${domain}${path}`,
+      });
+      assert.strictEqual(result.valid, false);
+      assert.strictEqual(result.discovery_method, 'direct');
+      assert.ok(
+        result.errors.some(e => e.toLowerCase().includes('invalid json')),
+        `expected invalid JSON error, got: ${JSON.stringify(result.errors)}`
+      );
+    } finally {
+      await publisher.close();
+    }
+  });
+
+  test('manager-domain pointer file with its own authoritative_location is NOT recursed (one hop only)', async () => {
+    // Per RFC 4175: "Validators MUST NOT recursively follow managerdomain
+    // declarations from the manager domain's own ads.txt." Same principle
+    // applies to `authoritative_location` indirection on the manager's
+    // adagents.json — we read it as-is, do not chase another hop.
+    const downstream = await startRoutedServer({
+      '/.well-known/adagents.json': { body: adAgentsJson('https://downstream.example/mcp') },
+    });
+    const manager = await startRoutedServer({
+      // Manager file declares a SECOND-hop pointer. The validator must
+      // NOT follow this — the file is consumed as-is.
+      '/.well-known/adagents.json': {
+        body: JSON.stringify({
+          authoritative_location: `http://${downstream.host}/.well-known/adagents.json`,
+          authorized_agents: [{ url: 'https://manager-agent.example/mcp', authorized_for: 'manager' }],
+        }),
+      },
+    });
+    const publisher = await startRoutedServer({
+      '/ads.txt': {
+        body: `MANAGERDOMAIN=${manager.host}\n`,
+        contentType: 'text/plain',
+      },
+    });
+    try {
+      const result = await validateAdAgents(publisher.host, {
+        urlForDomain: (domain, path) => `http://${domain}${path}`,
+      });
+      assert.strictEqual(result.valid, true, `expected valid, got: ${JSON.stringify(result.errors)}`);
+      assert.strictEqual(result.discovery_method, 'ads_txt_managerdomain');
+      // The result must reflect the MANAGER's file, not the downstream
+      // pointed at by manager's authoritative_location.
+      assert.strictEqual(result.adagents?.authorized_agents?.[0]?.url, 'https://manager-agent.example/mcp');
+    } finally {
+      await Promise.all([publisher.close(), manager.close(), downstream.close()]);
+    }
+  });
+
+  test('manager-domain returns 5xx → terminal failure on managerdomain path', async () => {
+    const manager = await startRoutedServer({
+      '/.well-known/adagents.json': { status: 503, body: 'maintenance' },
+    });
+    const publisher = await startRoutedServer({
+      '/ads.txt': {
+        body: `MANAGERDOMAIN=${manager.host}\n`,
+        contentType: 'text/plain',
+      },
+    });
+    try {
+      const result = await validateAdAgents(publisher.host, {
+        urlForDomain: (domain, path) => `http://${domain}${path}`,
+      });
+      assert.strictEqual(result.valid, false);
+      assert.strictEqual(result.discovery_method, 'ads_txt_managerdomain');
+      assert.strictEqual(result.manager_domain, manager.host);
+      assert.ok(
+        result.errors.some(e => e.includes('HTTP 503')),
+        `expected HTTP 503 error, got: ${JSON.stringify(result.errors)}`
+      );
+    } finally {
+      await Promise.all([publisher.close(), manager.close()]);
+    }
+  });
+
+  test('mixed-case publisher domain is lowercased through to result', async () => {
+    const publisher = await startRoutedServer({
+      '/.well-known/adagents.json': { body: adAgentsJson() },
+    });
+    try {
+      // Pass mixed-case input — `127.0.0.1` doesn't lowercase visibly,
+      // but the validator's public_domain field MUST match the
+      // lowercased canonical form regardless of caller casing.
+      const result = await validateAdAgents(publisher.host.toUpperCase(), {
+        urlForDomain: (domain, path) => `http://${domain.toLowerCase()}${path}`,
+      });
+      // Even if input was 127.0.0.1:PORT (numeric — no case to lose),
+      // the result MUST carry the lowercased form.
+      assert.strictEqual(result.publisher_domain, publisher.host);
+    } finally {
+      await publisher.close();
+    }
+  });
 });
