@@ -698,8 +698,17 @@ function buildNotApplicableStoryboardResult(agentUrl: string, na: NotApplicableS
  * Extract a flat list of failures from raw storyboard results.
  * Preserves step_id and expected text from the storyboard YAML,
  * and includes a fix_command for targeted re-running.
+ *
+ * Exported so the parity-guard test (adcp-client#1708) can call it directly
+ * with synthetic `StoryboardResult` fixtures and assert that
+ * `ComplianceResult.failures` preserves the per-storyboard
+ * `(storyboard_id, step_id, validation.check)` attribution from
+ * `runStoryboard()`. The post-fix invariant we're locking: a `response_schema`
+ * failure on a step always surfaces as `validation.check === 'response_schema'`
+ * here (never as `'assertion'`), so the aggregation layer can't silently
+ * reorder failures and reintroduce the BidMachine misattribution shape.
  */
-function extractFailures(
+export function extractFailures(
   results: StoryboardResult[],
   storyboards: Storyboard[],
   agentRef: string
