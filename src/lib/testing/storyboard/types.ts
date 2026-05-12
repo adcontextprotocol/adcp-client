@@ -1457,6 +1457,103 @@ export interface SchemaValidationError {
 }
 
 // ────────────────────────────────────────────────────────────
+// Runner notices
+// ────────────────────────────────────────────────────────────
+
+/**
+ * Closed literal union of every notice code the runner can emit.
+ *
+ * Adopters who narrow on `code` get exhaustiveness checks: when a new
+ * code lands in a future SDK release, their switch / discriminated
+ * union surfaces the gap at compile time. That's the right signal —
+ * a deprecation or future-required advisory is the kind of thing a CI
+ * gate or dashboard SHOULD have explicit handling for.
+ *
+ * Code naming follows the dot-namespaced convention `<topic>.<event>`
+ * (e.g. `request_signing.required`, `webhook_signing.legacy_hmac_fallback.removed`).
+ * The *when* lives in the `effective_version` field, never in the code.
+ * This keeps the surface stable across spec versions — codes don't proliferate
+ * `_in_4_0` / `_in_5_0` siblings as the spec evolves.
+ *
+ * Adding a new code is a wire-surface change AND a TypeScript breaking
+ * change for adopters who narrowed on `code`. Coordinate with the upstream
+ * spec (adcp#4418) before extending.
+ *
+ * Spec: adcp-client#1704.
+ */
+export type NoticeCode =
+  /** Agent lacks `request_signing.supported: true`. Required for spend-committing
+   *  operations in AdCP 4.0 per `effective_version`. */
+  | 'request_signing.required'
+  /** Agent advertises `webhook_signing.legacy_hmac_fallback: true`. Removed in
+   *  AdCP 4.0 per `effective_version`. */
+  | 'webhook_signing.legacy_hmac_fallback.removed';
+
+/**
+ * Severity of a runner notice. Deliberately separate from `ObservationSeverity`
+ * (which grades behavioral quality). Notices describe the agent's _protocol
+ * compliance trajectory_ — a different axis: something is fine today but the
+ * spec already signals a future state change.
+ *
+ * - `info` — purely informational; no action required now.
+ * - `deprecation` — SHOULD migrate; the field/claim is deprecated in the current
+ *   spec version.
+ * - `future_required` — behavior is optional today but will be mandatory in a
+ *   named future AdCP version (see `effective_version`).
+ */
+export type NoticeSeverity = 'info' | 'deprecation' | 'future_required';
+
+/**
+ * A structured advisory produced by the runner for a specific storyboard run.
+ * Notices describe protocol compliance trajectory (deprecations, upcoming
+ * requirements) rather than behavioral quality (which is `AdvisoryObservation`'s
+ * domain). Intended for CI gates and dashboards that need machine-readable badges
+ * like "DEPRECATION" or "FUTURE-REQUIRED" without parsing prose strings.
+ *
+ * `ComplianceResult.notices` aggregates these across all storyboard runs,
+ * deduplicated by `code`.
+ *
+ * Spec: adcp-client#1704.
+ */
+export interface RunnerNotice {
+  severity: NoticeSeverity;
+  /** Stable machine-readable identifier. Dashboards key on this for badge routing. */
+  code: NoticeCode;
+  /** Human-readable explanation; first 200 chars suitable for tabular rendering. */
+  message: string;
+  /**
+   * AdCP protocol version at which the behavior becomes mandatory (for
+   * `future_required`) or was formally removed (for `deprecation`).
+   * e.g. `'4.0'`. Absent when not version-bounded. Field name matches
+   * upstream spec issue adcontextprotocol/adcp#4418.
+   */
+  effective_version?: string;
+  /**
+   * Dot-path into the agent's capability response that motivated the notice
+   * (e.g. `request_signing.supported`). Use as a human-readable pointer only;
+   * not guaranteed to resolve via JSON Pointer.
+   */
+  capability_path?: string;
+  /**
+   * Click-through URL for adopters to read the underlying spec section,
+   * migration guide, or AdCP issue. Optional; consumers that surface
+   * notices in dashboards or CI output use this to deep-link the
+   * remediation context. Stable across runs for the same `code`.
+   */
+  docs_url?: string;
+  /**
+   * Storyboard ids that triggered this notice. On `StoryboardResult.notices`
+   * this is always a single-element array (the storyboard the notice came
+   * from). On `ComplianceResult.notices` (the deduplicated cross-storyboard
+   * rollup) this aggregates every storyboard that emitted the same `code`,
+   * so auditors can see "how widespread" a deprecation or future-required
+   * signal is without re-walking the per-storyboard arrays. Order is stable
+   * across runs (insertion order across the storyboard execution order).
+   */
+  storyboard_ids: string[];
+}
+
+// ────────────────────────────────────────────────────────────
 // Results
 // ────────────────────────────────────────────────────────────
 
@@ -2026,6 +2123,16 @@ export interface StoryboardResult {
    * `observable: false` and zeroed counters.
    */
   strict_validation_summary?: StrictValidationSummary;
+  /**
+   * Structured protocol-compliance advisories produced for this storyboard
+   * run. Each notice carries a stable `code` (machine-readable, suitable for
+   * CI badge routing) and a `severity` (`deprecation` | `future_required`).
+   * Always present; empty array when no notices were triggered.
+   *
+   * `ComplianceResult.notices` aggregates across all storyboard runs,
+   * deduplicated by `code`. Spec: adcp-client#1704.
+   */
+  notices: RunnerNotice[];
 }
 
 export interface StrictValidationSummary {

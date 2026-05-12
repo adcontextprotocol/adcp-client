@@ -2310,6 +2310,7 @@ async function handleStoryboardRun(args) {
       `${overallIcon} ${result.passed_count} passed, ${result.failed_count} failed, ${result.skipped_count} skipped (${result.total_duration_ms}ms)${hintTail}`
     );
     printStrictSummary(result.strict_validation_summary);
+    printNotices(result.notices);
   }
 
   if (opts.softFail && !result.overall_passed) printSoftFailBlock([result.storyboard_id], jsonOutput);
@@ -3135,6 +3136,23 @@ async function handleLocalAgentStoryboardRun(modulePath, args, opts) {
     `\n${overallIcon} ${result.passed_count} passed, ${result.failed_count} failed, ${result.skipped_count} skipped across ${result.results.length} storyboard(s)${hintTail}`
   );
   printStrictSummary(aggregateStrictSummaries(result.results.map(r => r.strict_validation_summary)));
+  // Aggregate notices across all storyboards in the run, deduped by `code`
+  // (matches ComplianceResult.notices semantics). Storyboard_ids on each
+  // notice carry which storyboards triggered it, so the rollup stays clean.
+  const aggregatedNotices = new Map();
+  for (const sb of result.results || []) {
+    for (const n of sb.notices || []) {
+      const existing = aggregatedNotices.get(n.code);
+      if (existing) {
+        for (const sid of n.storyboard_ids || []) {
+          if (!existing.storyboard_ids.includes(sid)) existing.storyboard_ids.push(sid);
+        }
+      } else {
+        aggregatedNotices.set(n.code, { ...n, storyboard_ids: [...(n.storyboard_ids || [])] });
+      }
+    }
+  }
+  printNotices([...aggregatedNotices.values()]);
   if (opts.softFail && !result.overall_passed) {
     printSoftFailBlock(
       result.results.filter(r => !r.overall_passed).map(r => r.storyboard_id),
@@ -3157,6 +3175,36 @@ function printStrictSummary(summary) {
   const icon = strictOnly > 0 ? '⚠️ ' : '✅';
   const tail = strictOnly > 0 ? ` (${strictOnly} lenient-only — strict dispatcher would reject)` : '';
   console.log(`${icon} strict: ${passed}/${checked} passed${tail}`);
+}
+
+/**
+ * Render the `notices` advisory surface (adcp-client#1704) in the
+ * default text output. Notices are decoupled from overall_passed —
+ * they describe protocol-compliance trajectory (deprecations, upcoming
+ * requirements) rather than pass/fail. Severity drives the icon:
+ *
+ *   - `future_required` → ⏰ (action needed before a named version cut)
+ *   - `deprecation`     → 🪦 (migrate away from the named claim/field)
+ *   - `info`            → ℹ️ (purely informational)
+ *
+ * Without this, notices land only in `--json` output and adopters who
+ * tail the default text output never see the signal. Stays silent when
+ * `notices` is empty or absent.
+ */
+function printNotices(notices) {
+  if (!Array.isArray(notices) || notices.length === 0) return;
+  const icon = sev => {
+    if (sev === 'future_required') return '⏰';
+    if (sev === 'deprecation') return '🪦';
+    return 'ℹ️ ';
+  };
+  for (const n of notices) {
+    const tag = (n.severity || 'info').toUpperCase().replace('_', '-');
+    const version = n.effective_version ? ` (effective in ${n.effective_version})` : '';
+    console.log(`${icon(n.severity)} ${tag}: ${n.code}${version}`);
+    if (n.message) console.log(`   ${n.message}`);
+    if (n.docs_url) console.log(`   ↳ ${n.docs_url}`);
+  }
 }
 
 /**

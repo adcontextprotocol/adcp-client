@@ -137,5 +137,6 @@ export function checkAccountDiscoveryGate(profile: AgentProfile, agentUrl: strin
     failed_count: 1,
     skipped_count: 0,
     tested_at: now,
+    notices: [],
   };
 }

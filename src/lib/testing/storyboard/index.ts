@@ -51,6 +51,9 @@ export type {
   StrictValidationSummary,
   StrictValidationVerdict,
   UpstreamTrafficPayloadMatch,
+  RunnerNotice,
+  NoticeCode,
+  NoticeSeverity,
 } from './types';
 export { WEBHOOK_IDEMPOTENCY_KEY_PATTERN } from './types';
 
