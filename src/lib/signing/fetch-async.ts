@@ -5,6 +5,11 @@ import { signRequestAsync } from './signer-async';
 
 type FetchLike = (input: string | URL | Request, init?: RequestInit) => Promise<Response>;
 
+// Mirrors `fetch.ts`'s SIGNING_RESERVED_HEADERS. `authorization` is intentionally
+// NOT in this set — AdCP's RFC 9421 profile does not cover Authorization, so
+// caller-supplied Bearer / RFC 7617 Basic headers pass through unmodified. See
+// `fetch.ts` for the full rationale and the RFC 9421 §7.5.7 caveat about
+// signing over long-lived credentials.
 const SIGNING_RESERVED_HEADERS = new Set(['signature', 'signature-input', 'content-digest']);
 
 /**
