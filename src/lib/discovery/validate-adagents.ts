@@ -299,9 +299,14 @@ export function parseManagerDomain(adsTxt: string): string | undefined {
     // Directive form only: KEY=VALUE on its own line, key matched
     // case-insensitively. Trailing `, ...` (ads.txt record syntax)
     // isn't valid on a variable line, so we don't tolerate commas.
-    const match = code.match(/^MANAGERDOMAIN\s*=\s*(.+?)\s*$/i);
+    //
+    // Regex shape note: the value is `(.*)` (greedy, no trailing `\s*`)
+    // rather than `(.+?)\s*$` because `code` is already trimmed — the
+    // lazy + trailing-whitespace shape is a polynomial-ReDoS pattern
+    // flagged by CodeQL (uncontrolled input from the network).
+    const match = code.match(/^MANAGERDOMAIN\s*=\s*(.*)$/i);
     if (!match || !match[1]) continue;
-    const value = match[1].trim();
+    const value = match[1];
     if (!isEligibleHostToken(value)) continue;
     if (/\bnoagents\b/i.test(comment)) continue;
     last = value.toLowerCase();
