@@ -1256,12 +1256,13 @@ function buildRequiredToolsMissingResult(
  *
  * Currently emits two spec-grounded notices (adcp-client#1704):
  *
- * - `request_signing_required_in_4_0`: `request_signing.supported` is absent
- *   or false on the signed_requests storyboard. Signing is required for
- *   spend-committing operations in AdCP 4.0.
+ * - `request_signing.required`: `request_signing.supported` is absent or
+ *   false on the signed_requests storyboard. Signing becomes required for
+ *   spend-committing operations in `effective_version: '4.0'`.
  *
- * - `legacy_hmac_fallback_removed_in_4_0`: agent claims
- *   `webhook_signing.legacy_hmac_fallback: true`, which is removed in 4.0.
+ * - `webhook_signing.legacy_hmac_fallback.removed`: agent claims
+ *   `webhook_signing.legacy_hmac_fallback: true`, which is removed in
+ *   `effective_version: '4.0'`.
  *
  * Note: a third notice (`signed_requests_specialism_deprecated`) is deferred
  * pending upstream deprecation of the `'signed-requests'` specialism value in
@@ -1285,15 +1286,15 @@ function collectCapabilityNotices(storyboard: Storyboard, rawCaps: unknown): Run
     if (requestSigning?.['supported'] !== true) {
       notices.push({
         severity: 'future_required',
-        code: 'request_signing_required_in_4_0',
+        code: 'request_signing.required',
         message:
           'RFC 9421 request signing (`request_signing.supported: true`) is not advertised. ' +
           'Required for spend-committing operations in AdCP 4.0 — declare the capability and ' +
           'pre-register the runner compliance test keypair before the 4.0 cut.',
         effective_version: '4.0',
-        requirement: 'request_signer',
         capability_path: 'request_signing.supported',
         docs_url: 'https://adcontextprotocol.org/docs/building/implementation/security#signed-requests-transport-layer',
+        storyboard_ids: [storyboard.id],
       });
     }
   }
@@ -1315,13 +1316,14 @@ function collectCapabilityNotices(storyboard: Storyboard, rawCaps: unknown): Run
     if (webhookSigning?.['legacy_hmac_fallback'] === true) {
       notices.push({
         severity: 'deprecation',
-        code: 'legacy_hmac_fallback_removed_in_4_0',
+        code: 'webhook_signing.legacy_hmac_fallback.removed',
         message:
           '`webhook_signing.legacy_hmac_fallback: true` is deprecated and removed in AdCP 4.0. ' +
           'Migrate webhook signature verification to RFC 9421 before the 4.0 cut.',
         effective_version: '4.0',
         capability_path: 'webhook_signing.legacy_hmac_fallback',
         docs_url: 'https://adcontextprotocol.org/docs/building/implementation/webhooks',
+        storyboard_ids: [storyboard.id],
       });
     }
   }

@@ -27,7 +27,7 @@ import {
   listAllComplianceStoryboards,
 } from '../storyboard/compliance';
 import type { NotApplicableStoryboard } from '../storyboard/compliance';
-import type { Storyboard, StoryboardResult, StoryboardRunOptions } from '../storyboard/types';
+import type { RunnerNotice, Storyboard, StoryboardResult, StoryboardRunOptions } from '../storyboard/types';
 import type {
   ComplianceTrack,
   ComplianceFailure,
@@ -1067,15 +1067,28 @@ async function complyImpl(agentUrl: string, options: ComplyOptions): Promise<Com
     const agentRef = options.agent_alias || agentUrl;
     const failures = extractFailures(storyboardResults, runnableStoryboards, agentRef);
 
-    // Aggregate notices from all storyboard runs, deduplicated by `code`.
-    // `new Map(arr.map(...))` is last-write-wins: when the same code appears
-    // across multiple storyboards, the last-emitted instance survives. Today
-    // every code carries identical body across storyboards so this is
-    // observably stable. If future notices ever embed per-storyboard context
-    // (e.g. distinct `capability_path` per board), revisit to either preserve
-    // the first instance or carry all occurrences (#1704 follow-up).
-    const allNotices = storyboardResults.flatMap(r => r.notices);
-    const noticesDedup = [...new Map(allNotices.map(n => [n.code, n])).values()];
+    // Aggregate notices from all storyboard runs. Dedup is by `code` (each
+    // notice type appears once in the rollup), but the per-occurrence
+    // `storyboard_ids` arrays are merged so auditors can see how widespread
+    // a deprecation or future-required signal is without re-walking the
+    // per-storyboard arrays. Order is stable: first occurrence wins for
+    // the notice body; storyboard_ids preserves insertion order across the
+    // run's storyboard execution order.
+    const aggregatedNotices = new Map<string, RunnerNotice>();
+    for (const sbResult of storyboardResults) {
+      for (const notice of sbResult.notices) {
+        const existing = aggregatedNotices.get(notice.code);
+        if (existing) {
+          for (const sid of notice.storyboard_ids) {
+            if (!existing.storyboard_ids.includes(sid)) existing.storyboard_ids.push(sid);
+          }
+        } else {
+          // Clone so subsequent merges don't mutate the per-storyboard array.
+          aggregatedNotices.set(notice.code, { ...notice, storyboard_ids: [...notice.storyboard_ids] });
+        }
+      }
+    }
+    const noticesDedup = [...aggregatedNotices.values()];
 
     return {
       agent_url: agentUrl,

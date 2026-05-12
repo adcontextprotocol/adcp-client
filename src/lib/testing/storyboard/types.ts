@@ -1461,32 +1461,33 @@ export interface SchemaValidationError {
 // ────────────────────────────────────────────────────────────
 
 /**
- * Notice `code` is intentionally typed as a plain `string` rather than a
- * closed literal union. The runner introduces new advisory codes as the
- * spec evolves; adopters who narrow on `code` should not see a TypeScript
- * breaking change for every new advisory. Use the `KNOWN_NOTICE_CODES`
- * constant below when you want autocomplete or to assert exhaustiveness
- * over the current day-one set.
+ * Closed literal union of every notice code the runner can emit.
  *
- * Adding a new code is still a wire-surface change — coordinate with the
- * upstream spec (adcp#4418) or open an issue before extending.
+ * Adopters who narrow on `code` get exhaustiveness checks: when a new
+ * code lands in a future SDK release, their switch / discriminated
+ * union surfaces the gap at compile time. That's the right signal —
+ * a deprecation or future-required advisory is the kind of thing a CI
+ * gate or dashboard SHOULD have explicit handling for.
+ *
+ * Code naming follows the dot-namespaced convention `<topic>.<event>`
+ * (e.g. `request_signing.required`, `webhook_signing.legacy_hmac_fallback.removed`).
+ * The *when* lives in the `effective_version` field, never in the code.
+ * This keeps the surface stable across spec versions — codes don't proliferate
+ * `_in_4_0` / `_in_5_0` siblings as the spec evolves.
+ *
+ * Adding a new code is a wire-surface change AND a TypeScript breaking
+ * change for adopters who narrowed on `code`. Coordinate with the upstream
+ * spec (adcp#4418) before extending.
  *
  * Spec: adcp-client#1704.
  */
-export type NoticeCode = string;
-
-/**
- * The day-one notice codes the runner emits today. Exported so adopters
- * can render badge-name maps or assert exhaustiveness; not closed at the
- * type level (see `NoticeCode`).
- */
-export const KNOWN_NOTICE_CODES = [
-  /** Agent lacks `request_signing.supported: true`; signing becomes required in AdCP 4.0. */
-  'request_signing_required_in_4_0',
-  /** Agent advertises `webhook_signing.legacy_hmac_fallback: true`; removed in AdCP 4.0. */
-  'legacy_hmac_fallback_removed_in_4_0',
-] as const;
-export type KnownNoticeCode = (typeof KNOWN_NOTICE_CODES)[number];
+export type NoticeCode =
+  /** Agent lacks `request_signing.supported: true`. Required for spend-committing
+   *  operations in AdCP 4.0 per `effective_version`. */
+  | 'request_signing.required'
+  /** Agent advertises `webhook_signing.legacy_hmac_fallback: true`. Removed in
+   *  AdCP 4.0 per `effective_version`. */
+  | 'webhook_signing.legacy_hmac_fallback.removed';
 
 /**
  * Severity of a runner notice. Deliberately separate from `ObservationSeverity`
@@ -1528,11 +1529,6 @@ export interface RunnerNotice {
    */
   effective_version?: string;
   /**
-   * When relevant, the structured requirement name (matches
-   * `RunnerSkipResult.requirement`).
-   */
-  requirement?: RequirementName;
-  /**
    * Dot-path into the agent's capability response that motivated the notice
    * (e.g. `request_signing.supported`). Use as a human-readable pointer only;
    * not guaranteed to resolve via JSON Pointer.
@@ -1545,6 +1541,16 @@ export interface RunnerNotice {
    * remediation context. Stable across runs for the same `code`.
    */
   docs_url?: string;
+  /**
+   * Storyboard ids that triggered this notice. On `StoryboardResult.notices`
+   * this is always a single-element array (the storyboard the notice came
+   * from). On `ComplianceResult.notices` (the deduplicated cross-storyboard
+   * rollup) this aggregates every storyboard that emitted the same `code`,
+   * so auditors can see "how widespread" a deprecation or future-required
+   * signal is without re-walking the per-storyboard arrays. Order is stable
+   * across runs (insertion order across the storyboard execution order).
+   */
+  storyboard_ids: string[];
 }
 
 // ────────────────────────────────────────────────────────────
