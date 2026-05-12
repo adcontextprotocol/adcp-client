@@ -89,7 +89,22 @@ export type {
   PropertyIdentifierType,
   PropertyType,
   AdAgentsJson,
+  AuthorizedAgent,
+  AuthorizationType,
+  // Aliased: the registry types also export a `PublisherPropertySelector`
+  // (registry-flat shape with no `selection_type` discriminator). The
+  // adagents.json schema's variant is a discriminated union, so we
+  // expose it under a distinct name to avoid clobbering the registry
+  // type that's been part of the public API longer.
+  PublisherPropertySelector as AdAgentsPublisherPropertySelector,
 } from './discovery/types';
+export {
+  resolveAgentProperties,
+  listAgentPropertyMap,
+  canonicalizeAgentUrl,
+  type ResolvedAgentScope,
+  type ResolveUnresolvableReason,
+} from './discovery/resolve-agent-properties';
 export {
   validateAdAgents,
   parseManagerDomain,
