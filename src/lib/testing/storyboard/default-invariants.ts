@@ -183,8 +183,27 @@ function findSecretEcho(value: unknown, secrets: Set<string>): string | null {
     }
     if (v !== null && typeof v === 'object') {
       for (const [key, inner] of Object.entries(v as Record<string, unknown>)) {
-        if (SUSPECT_PROPERTY_NAMES.has(key.toLowerCase())) {
-          return `contains suspect property name "${key}"`;
+        // Name-based dragnet. The SUSPECT_PROPERTY_NAMES set catches the
+        // "bare token on a credential-named field" leak shape that the
+        // BEARER_TOKEN_PATTERN value-scan misses (a JWT without `Bearer `
+        // prefix won't match the regex). But the dragnet over-rejects
+        // when the field's VALUE is a structured object or array — those
+        // are spec-legitimate config payloads, not credential echoes.
+        // `compliance/cache/{version}/property/validation-result.json`
+        // declares an `authorization` object field carrying authorization-
+        // validation metadata, not a token; sellers extending
+        // `sync_accounts` via the schema's `additionalProperties: true`
+        // may carry their own structured `authorization` posture. Both
+        // are spec-conformant.
+        //
+        // Gate the name-based fail on `typeof inner === 'string'` and
+        // non-empty so structured values pass through to the recursive
+        // walk below. The recursion still scans nested string values, so
+        // a `Bearer xyz...` literal embedded in a structured object is
+        // still caught by the regex at the top of this loop.
+        // Spec: adcp-client#1713 / adcp#4419.
+        if (SUSPECT_PROPERTY_NAMES.has(key.toLowerCase()) && typeof inner === 'string' && inner.length > 0) {
+          return `contains suspect property name "${key}" with string value`;
         }
         stack.push(inner);
       }

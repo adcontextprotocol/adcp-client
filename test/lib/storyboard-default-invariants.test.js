@@ -856,12 +856,73 @@ describe('default-invariants: context.no_secret_echo (widened whole-body scan)',
     assert.strictEqual(out[0].passed, false);
   });
 
-  test('fails on a suspect property name at any depth', () => {
+  test('fails on a suspect property name with a string value at any depth', () => {
     const c = ctx();
     spec.onStart(c);
     const out = spec.onStep(c, step({ nested: { deeper: { Authorization: 'anything' } } }));
     assert.strictEqual(out[0].passed, false);
     assert.match(out[0].error, /suspect property name "Authorization"/);
+  });
+
+  // adcp-client#1713 / adcp#4419 — name-based dragnet must NOT trip on
+  // structured (object/array) values. BidMachine returns a legitimate
+  // `authorization` field carrying a structured authorization-validation
+  // object (per spec) and was being false-flagged.
+  test('passes when a suspect property name carries an OBJECT value (spec-legit structured config)', () => {
+    const c = ctx();
+    spec.onStart(c);
+    const out = spec.onStep(
+      c,
+      step({
+        accounts: [
+          {
+            brand: 'b',
+            operator: 'o',
+            action: 'created',
+            status: 'active',
+            // Spec-legit structured authorization payload (mirrors the
+            // `authorization` object in validation-result.json).
+            authorization: { type: 'oauth', token_endpoint: 'https://auth.example/oauth/token' },
+          },
+        ],
+      })
+    );
+    assert.strictEqual(
+      out[0].passed,
+      true,
+      `expected pass; got: ${out[0].error || '(no error)'}. Validations:\n${JSON.stringify(out, null, 2)}`
+    );
+  });
+
+  test('passes when a suspect property name carries an ARRAY value', () => {
+    const c = ctx();
+    spec.onStart(c);
+    const out = spec.onStep(c, step({ api_key: [{ scope: 'read' }, { scope: 'write' }] }));
+    assert.strictEqual(out[0].passed, true);
+  });
+
+  test('passes when a suspect property name carries an empty string (no leak)', () => {
+    const c = ctx();
+    spec.onStart(c);
+    const out = spec.onStep(c, step({ authorization: '' }));
+    assert.strictEqual(out[0].passed, true);
+  });
+
+  test('still fails on a nested Bearer-prefixed string inside a structured authorization object', () => {
+    // Regression guard: even though the suspect-name dragnet now ignores
+    // the outer structured object, the recursive walk still scans nested
+    // strings against BEARER_TOKEN_PATTERN. A bearer leak buried inside
+    // a structured object remains caught.
+    const c = ctx();
+    spec.onStart(c);
+    const out = spec.onStep(
+      c,
+      step({
+        authorization: { type: 'oauth', cached_token: 'Bearer eyJabcdefghi1234567890' },
+      })
+    );
+    assert.strictEqual(out[0].passed, false);
+    assert.match(out[0].error, /bearer-token literal/);
   });
 
   test('walks arrays when hunting leaks', () => {
