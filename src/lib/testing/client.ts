@@ -260,11 +260,29 @@ function raceWithSignal<T>(promise: Promise<T>, signal?: AbortSignal): Promise<T
   });
 }
 
+/**
+ * Result of {@link runStep}. The optional `caughtError` carries the raw
+ * thrown value (typed `unknown`, narrow via `instanceof` at the call site)
+ * so callers can pattern-match on typed exceptions like
+ * `ResponseSchemaValidationError` without losing the freeform string
+ * representation on `step.error`. Pre-existing callers that only consume
+ * `result` and `step` are unaffected.
+ *
+ * Spec: adcp-client#1709 (storyboard runner attributes Zod rejects to
+ * the canonical `response_schema` validation entry by detecting the typed
+ * error here).
+ */
+export interface RunStepOutcome<T> {
+  result?: T;
+  step: TestStepResult;
+  caughtError?: unknown;
+}
+
 export async function runStep<T>(
   stepName: string,
   taskName: string | undefined,
   fn: () => Promise<T>
-): Promise<{ result?: T; step: TestStepResult }> {
+): Promise<RunStepOutcome<T>> {
   const start = Date.now();
   try {
     const result = await fn();
@@ -289,6 +307,7 @@ export async function runStep<T>(
         duration_ms: duration,
         error: errorMessage,
       },
+      caughtError: error,
     };
   }
 }
