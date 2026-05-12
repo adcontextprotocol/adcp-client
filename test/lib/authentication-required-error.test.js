@@ -110,12 +110,7 @@ describe('AuthenticationRequiredError', () => {
 
     test('contains challenge when provided', () => {
       const challenge = { scheme: 'basic', realm: 'API', params: { realm: 'API' } };
-      const error = new AuthenticationRequiredError(
-        'https://agent.example.com/mcp',
-        undefined,
-        undefined,
-        challenge
-      );
+      const error = new AuthenticationRequiredError('https://agent.example.com/mcp', undefined, undefined, challenge);
       assert.deepStrictEqual(error.details.challenge, challenge);
     });
   });
@@ -131,12 +126,7 @@ describe('AuthenticationRequiredError', () => {
         realm: 'Apigee',
         params: { realm: 'Apigee' },
       };
-      const error = new AuthenticationRequiredError(
-        'https://agent.example.com/mcp',
-        undefined,
-        undefined,
-        challenge
-      );
+      const error = new AuthenticationRequiredError('https://agent.example.com/mcp', undefined, undefined, challenge);
       assert.match(error.message, /HTTP Basic/);
       assert.match(error.message, /createTestClient\({ auth: { type: 'basic'/);
       assert.match(error.message, /--auth-scheme basic/);
@@ -148,12 +138,7 @@ describe('AuthenticationRequiredError', () => {
 
     test('non-Bearer non-Basic challenge → generic remediation with scheme name', () => {
       const challenge = { scheme: 'digest', realm: 'corp', params: { realm: 'corp' } };
-      const error = new AuthenticationRequiredError(
-        'https://agent.example.com/mcp',
-        undefined,
-        undefined,
-        challenge
-      );
+      const error = new AuthenticationRequiredError('https://agent.example.com/mcp', undefined, undefined, challenge);
       assert.match(error.message, /digest/);
       assert.match(error.message, /realm: corp/);
       assert.match(error.message, /not natively supported/);
@@ -195,12 +180,10 @@ describe('AuthenticationRequiredError', () => {
 
   describe('suggestedScheme getter', () => {
     test('returns the lowercased scheme from the challenge', () => {
-      const error = new AuthenticationRequiredError(
-        'https://agent.example.com/mcp',
-        undefined,
-        undefined,
-        { scheme: 'basic', params: {} }
-      );
+      const error = new AuthenticationRequiredError('https://agent.example.com/mcp', undefined, undefined, {
+        scheme: 'basic',
+        params: {},
+      });
       assert.strictEqual(error.suggestedScheme, 'basic');
     });
 
