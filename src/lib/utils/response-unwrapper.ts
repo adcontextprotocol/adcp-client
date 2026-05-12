@@ -16,6 +16,7 @@ const ERROR_CODES = {
   INVALID_RESPONSE: 'invalid_response',
   UNKNOWN: 'unknown',
 } as const;
+
 import type {
   GetProductsResponse,
   ListCreativeFormatsResponse,
@@ -32,6 +33,45 @@ import type {
   ActivateSignalResponse,
 } from '../types/tools.generated';
 import { TOOL_RESPONSE_SCHEMAS } from './response-schemas';
+
+/**
+ * Typed error thrown when the response unwrapper's Zod schema rejects an
+ * agent response. Carries the structured rejection detail so the storyboard
+ * runner can attribute the failure to its canonical `response_schema`
+ * validation entry instead of silently falling through to whichever
+ * step-level invariant fires next (e.g., `context.no_secret_echo`).
+ *
+ * Without this typed boundary, the runner can only catch a generic `Error`
+ * with a freeform message — there's no stable way to distinguish a
+ * schema rejection from a transport error or any other failure. The
+ * misattribution this caused (every BidMachine `sync_accounts` failure
+ * surfaced as `no_secret_echo`, masking the root cause across 10+ deploys)
+ * is the canonical evidence for adcp-client#1709 and the reason this
+ * class exists. The runner pattern-matches `err instanceof
+ * ResponseSchemaValidationError` to synthesize the correct attribution.
+ *
+ * Stable wire surface: `name` is the literal string `'ResponseSchemaValidationError'`
+ * so consumers that can't import the class (cross-bundle, dynamic
+ * `require`) can still recognize it by string comparison.
+ *
+ * Spec: adcp-client#1709.
+ */
+export class ResponseSchemaValidationError extends Error {
+  readonly name = 'ResponseSchemaValidationError';
+  /** The AdCP tool name whose response failed validation (e.g., `'sync_accounts'`). */
+  readonly toolName: string;
+  /** The structured Zod issues from the failed `safeParse`. */
+  readonly issues: z.core.$ZodIssue[];
+  /** The raw response data that failed validation, for diagnostic reporting. */
+  readonly data: unknown;
+
+  constructor(toolName: string, issues: z.core.$ZodIssue[], data: unknown, summaryMessage: string) {
+    super(`Response validation failed for ${toolName}: ${summaryMessage}`);
+    this.toolName = toolName;
+    this.issues = issues;
+    this.data = data;
+  }
+}
 
 /**
  * Union type of all possible AdCP responses
@@ -141,11 +181,11 @@ export function unwrapProtocolResponse(
           const betterErrors = getBestUnionErrors(schema, dataToValidate);
           if (betterErrors && betterErrors.length > 0) {
             const bestMessage = betterErrors.map(e => `${e.path}: ${e.message}`).join('; ');
-            throw new Error(`Response validation failed for ${toolName}: ${bestMessage}`);
+            throw new ResponseSchemaValidationError(toolName, result.error.issues, dataToValidate, bestMessage);
           }
         }
 
-        throw new Error(`Response validation failed for ${toolName}: ${result.error.message}`);
+        throw new ResponseSchemaValidationError(toolName, result.error.issues, dataToValidate, result.error.message);
       }
 
       // Re-attach _message after validation so it's available for text summaries

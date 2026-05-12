@@ -32,6 +32,7 @@ import {
 import { PARALLEL_DISPATCH_CONTRACT, runParallelDispatches, validateParallelDispatchSpec } from './parallel-dispatch';
 import { toJsonPointer } from './path';
 import { redactSecrets } from '../../utils/redact-secrets';
+import { ResponseSchemaValidationError } from '../../utils/response-unwrapper';
 import { queryUpstreamTraffic, type ControllerScenario, type UpstreamTrafficSuccess } from '../test-controller';
 import { enrichRequest, hasRequestEnricher } from './request-builder';
 import { resolveAccount, resolveBrand } from '../client';
@@ -2077,6 +2078,21 @@ async function executeStoryboardPass(
       stepResults.push(result);
       priorStepResults.set(step.id, result);
 
+      // Schema-validation short-circuit (adcp-client#1709). When the
+      // response unwrapper rejected the agent's response against the SDK's
+      // Zod schema, the step-execution path synthesized a failing
+      // `response_schema` ValidationResult on `result.validations`.
+      // Running step-scope invariants against a response the SDK has
+      // already declared malformed produces noise — the invariants
+      // can't meaningfully grade a payload that didn't parse. Worse,
+      // before #1709 the invariants' failure entries crowded out the
+      // schema-validation entry in `extractFailures`, masking the root
+      // cause across BidMachine's 10+ deploys (see adcp#4419). Skip the
+      // invariant pass entirely on this step and emit a single skipped
+      // `assertion` entry per invariant so consumers can still see WHICH
+      // invariants were skipped and why.
+      const schemaInvalidResponse = result.validations.some(v => v.check === 'response_schema' && !v.passed);
+
       // Fire per-step assertions. Each result is appended to the step's
       // `validations[]` under `check: "assertion"` so existing UI renders
       // them alongside inline checks, and mirrored into `assertionResults`
@@ -2089,6 +2105,18 @@ async function executeStoryboardPass(
         // suppress a default invariant on a step that deliberately models
         // behavior the invariant would flag (validated at runner start).
         if (stepDisablesAssertion(step.invariants, spec.id)) continue;
+        if (schemaInvalidResponse) {
+          // Emit a skipped marker so the report shows the invariant was
+          // intentionally bypassed (not silently dropped). `passed: true`
+          // keeps it from flipping `result.passed` — the schema-validation
+          // failure already did that.
+          result.validations.push({
+            check: 'assertion',
+            passed: true,
+            description: `${spec.id}: skipped — response failed schema validation (adcp-client#1709)`,
+          });
+          continue;
+        }
         const raw = await spec.onStep(assertionContexts.get(spec.id)!, result);
         for (const r of raw) {
           const full: AssertionResult = { ...r, assertion_id: spec.id, scope: 'step', step_id: step.id };
@@ -3157,6 +3185,11 @@ async function executeStep(
 
   let taskResult: TaskResult | undefined;
   let stepResult: { duration_ms: number; error?: string; passed: boolean };
+  // Raw caught error from the dispatch fn — preserved as `unknown` so the
+  // schema-validation attribution path below can `instanceof` it against
+  // `ResponseSchemaValidationError`. Undefined when the step succeeded or
+  // failed for a non-typed reason. Spec: adcp-client#1709.
+  let caughtError: unknown;
   let httpResult: HttpProbeResult | undefined;
   let responseRecord: RunnerResponseRecord | undefined;
   let a2aEnvelope: A2ATaskEnvelope | undefined;
@@ -3368,6 +3401,7 @@ async function executeStep(
       });
       taskResult = run.result;
       stepResult = run.step;
+      caughtError = run.caughtError;
       if (captureA2a && a2aCaptures) {
         a2aEnvelope = parseLastA2aMessageSendCapture(a2aCaptures);
       }
@@ -3437,10 +3471,10 @@ async function executeStep(
     passed = stepResult.passed && (taskResult?.success ?? false);
   }
 
+  let validations: ValidationResult[] = [];
   // Run validations. Resolve `$context.<key>` placeholders in `value` and
   // `allowed_values` fields so expected values can reference prior steps
   // (e.g., replay tests assert `media_buy_id === $context.initial_media_buy_id`).
-  let validations: ValidationResult[] = [];
   if (step.validations?.length && (taskResult || httpResult)) {
     const resolvedValidations = step.validations.map(v => {
       const resolved = { ...v };
@@ -3543,6 +3577,42 @@ async function executeStep(
         validations.push(...dispatchResults);
       }
     }
+  }
+
+  // Schema-validation attribution (adcp-client#1709). When the response
+  // unwrapper rejected the agent's response against the SDK's Zod schema
+  // for the tool, it threw a typed `ResponseSchemaValidationError` that
+  // surfaced on `caughtError`. Without this attribution, the rejection
+  // would silently propagate into whichever step-scope invariant (e.g.
+  // `context.no_secret_echo`) happened to fire next — the BidMachine
+  // misdiagnosis trace from adcp-client#1709 / adcp#4419 ate 10+ deploys
+  // chasing the wrong cause.
+  //
+  // Synthesize a canonical `response_schema` ValidationResult and prepend
+  // it so `extractFailures.find(v => !v.passed)` resolves it before any
+  // invariant entry. Step-scope invariants downstream of this point will
+  // short-circuit on the schema-invalid response (see the invariant
+  // dispatch loop in `executeStoryboardPass`).
+  if (caughtError instanceof ResponseSchemaValidationError) {
+    const issues = caughtError.issues
+      .slice(0, 5)
+      .map(i => `${i.path.join('.') || '(root)'}: ${i.message}`)
+      .join('; ');
+    const firstIssue = caughtError.issues[0];
+    const jsonPointer = firstIssue ? '/' + firstIssue.path.map(s => String(s)).join('/') : null;
+    const synthSchemaResult: ValidationResult = {
+      check: 'response_schema',
+      passed: false,
+      description: `Response schema validation for ${caughtError.toolName}`,
+      error: issues,
+      json_pointer: jsonPointer,
+      expected: `response schema for ${caughtError.toolName}`,
+      actual: caughtError.issues,
+    };
+    // Prepend so extractFailures picks it up before any inline validation
+    // entry that may also be failing (e.g. `field_present` checks that
+    // legitimately can't observe their target against an unparsed payload).
+    validations = [synthSchemaResult, ...validations];
   }
 
   // Persist the captured A2A envelope keyed by step id so cross-step
