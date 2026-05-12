@@ -4,7 +4,7 @@
 /**
  * AdCP SDK library version
  */
-export const LIBRARY_VERSION = '6.19.1';
+export const LIBRARY_VERSION = '7.0.0';
 
 /**
  * AdCP specification version this library is built for
@@ -19,7 +19,11 @@ export const ADCP_VERSION = '3.0.11';
 export const ADCP_MAJOR_VERSION = 3;
 
 /**
- * AdCP versions this library maintains backward compatibility with
+ * AdCP versions this library maintains backward compatibility with.
+ *
+ * Auto-derived from `ADCP_VERSION` by scripts/sync-version.ts — every
+ * `3.0.0` through the current pin is enumerated. Do not edit this list
+ * by hand; bumping the AdCP pin via `npm run sync-version` extends it.
  */
 export const COMPATIBLE_ADCP_VERSIONS = [
   'v2.5',
@@ -36,6 +40,9 @@ export const COMPATIBLE_ADCP_VERSIONS = [
   '3.0.6',
   '3.0.7',
   '3.0.8',
+  '3.0.9',
+  '3.0.10',
+  '3.0.11',
 ] as const;
 
 /**
@@ -52,10 +59,10 @@ export type AdcpVersion = (typeof COMPATIBLE_ADCP_VERSIONS)[number];
  * Full version information
  */
 export const VERSION_INFO = {
-  library: '6.19.1',
+  library: '7.0.0',
   adcp: '3.0.11',
   compatibleVersions: COMPATIBLE_ADCP_VERSIONS,
-  generatedAt: '2026-05-11T14:19:39.941Z',
+  generatedAt: '2026-05-12T01:00:50.163Z',
 } as const;
 
 /**
