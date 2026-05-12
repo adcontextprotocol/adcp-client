@@ -1,5 +1,529 @@
 # Changelog
 
+## 7.2.0
+
+### Minor Changes
+
+- 77c1022: feat(errors): `AuthenticationRequiredError.challenge` surfaces `WWW-Authenticate` scheme for non-Bearer 401s (closes #1722)
+
+  When an MCP or A2A agent responds with a 401, the SDK now probes for the
+  `WWW-Authenticate` header and parses the challenge before throwing
+  `AuthenticationRequiredError`. The parsed challenge rides on the error so
+  **every** consumer (the CLI, LLM agents wrapping the SDK, dashboards,
+  programmatic callers) can branch on the auth scheme without re-fetching
+  or grep-matching error messages.
+
+  The error gains:
+  - `challenge?: AuthChallengeInfo` — `{ scheme, realm?, scope?, error?,
+error_description? }`, lowercased scheme per RFC 9110 §11.6.1.
+  - `suggestedScheme: string | undefined` getter — the lowercased scheme,
+    intended for `error.suggestedScheme === 'basic'` checks.
+  - Scheme-aware default message: a Basic challenge produces a message
+    naming both the SDK shape (`createTestClient({ auth: { type: 'basic',
+username, password } })`) and the CLI shape (`--auth user:pass
+--auth-scheme basic`); a Digest / Negotiate / NTLM challenge produces
+    a generic "not natively supported" message with the scheme name; the
+    legacy "provide auth_token" fallback is preserved for the no-challenge
+    path so existing consumers don't regress.
+
+  Why this matters: before PR #1719, `AuthenticationRequiredError` always
+  said "No OAuth metadata available — provide auth_token in agent config."
+  That was right when Bearer/OAuth were the only options. After PR #1719
+  added CLI support for HTTP Basic, the same error surfaced for gateway-
+  fronted agents (Apigee, Kong, AWS API GW, nginx `auth_basic`) and the
+  message led adopters down a doomed OAuth path. The CLI's 401 handler
+  gained a Basic hint in #1719, but only because it parses the error
+  envelope itself. Every other consumer — including LLM agents using the
+  SDK directly — still saw the misleading message.
+
+  **Constructor signature is back-compat**: the new `challenge` parameter
+  is positional argument 4 (after `agentUrl`, `oauthMetadata`, `message`)
+  and defaults to `undefined`. Existing call sites (3 in the SDK; any
+  adopter code passing 1–3 args) work unchanged. The scheme-aware default
+  message only fires when a challenge is passed AND its scheme is
+  non-Bearer — Bearer challenges fall through to the OAuth-metadata branch
+  exactly as before.
+
+  **New helper**: `probeAuthChallenge(agentUrl, options)` exported from
+  `@adcp/sdk/auth/oauth` — fires a single unauthenticated `tools/list` and
+  returns the parsed challenge (or `null`). Reuses the same SSRF gate and
+  timeout policy as `discoverAuthorizationRequirements` so adopter
+  deployments don't need a second SSRF policy.
+
+  **Wired into three throw sites**:
+  - `SingleAgentClient.discoverMCPEndpoint` (the MCP discovery walk)
+  - `SingleAgentClient.discoverA2AEndpoint` (the A2A agent-card path)
+  - `ProtocolClient.callA2ATool` (the A2A in-flight 401 path)
+
+  All three now probe for the challenge when `discoverAuthorizationRequirements`
+  returns null (non-Bearer or PRM-missing 401) and pass it through to the
+  error envelope.
+
+  Tests added:
+  - `test/lib/authentication-required-error.test.js`: 6 new tests covering
+    the Basic message shape, the non-Bearer-non-Basic generic message, the
+    Bearer + OAuth-metadata fallthrough, the no-challenge legacy fallback,
+    the custom-message override, and the `suggestedScheme` getter.
+  - `test/lib/probe-auth-challenge.test.js`: 5 tests against local 401
+    servers covering Basic, Bearer, 200 OK, 401 without
+    `WWW-Authenticate`, and unreachable host.
+
+  44/44 cross-suite regression passing (`cli-auth-scheme.test.js`,
+  `cli-oauth-flag.test.js`, `authentication-required-error.test.js`).
+
+  Source: protocol-expert review follow-up from PR #1719.
+
+- a2f9238: feat(cli): `--auth-scheme bearer|basic` for HTTP Basic auth (RFC 7617)
+
+  The CLI's `--auth TOKEN` flag was bearer-only — it always emitted
+  `Authorization: Bearer …` and silently dropped any `-H Authorization=…`
+  override via the reserved-header filter. Any agent fronted by an API
+  gateway that requires `Authorization: Basic <base64(user:pass)>` (Apigee,
+  Kong, AWS API Gateway with a BasicAuthentication policy, or just a
+  self-hosted nginx with `auth_basic`) was therefore unreachable from
+  `adcp <alias> <tool>` even though the underlying library already supported
+  basic via `createTestClient({ auth: { type: 'basic', … } })`.
+
+  `--auth-scheme bearer|basic` opts into the alternate scheme, applied across
+  every CLI surface that takes `--auth`:
+  - `adcp <alias> <tool>` (the direct `mcp`/`a2a` invocation path)
+  - `adcp test <agent>`
+  - `adcp storyboard run <agent> …` (single-instance, multi-instance, and
+    multi-agent routing)
+  - `adcp storyboard step <agent> …`
+
+  Usage:
+
+  ```bash
+  # Ad-hoc against a gateway-fronted agent
+  adcp https://agent.example.com/mcp tools/list \
+    --auth svc-user:s3cret --auth-scheme basic
+
+  # Saved alias (scheme persists in ~/.adcp/config.json so future calls
+  # don't need to repeat --auth-scheme)
+  adcp --save-auth inmobi-prod https://agent.example.com/mcp \
+    --auth svc-user:s3cret --auth-scheme basic
+  adcp inmobi-prod get_products '{"brief":"coffee"}'
+  ```
+
+  Env-var form: `ADCP_AUTH_SCHEME=basic` (overridden by the flag).
+
+  Behavior:
+  - `--auth <user:pass>` is RFC 7617-validated at register time and again
+    at use time — colon-less, empty-username, CR/LF, and non-printable
+    ASCII inputs are rejected with a clear stderr message before any
+    request leaves the CLI. A typo doesn't get persisted only to surface
+    as a confusing decode error on every later call.
+  - When basic auth is in effect, the CLI injects the encoded
+    `Authorization: Basic …` header via `agentConfig.headers` (which the
+    protocol layer at `src/lib/protocols/mcp.ts` and `protocols/a2a.ts`
+    spreads BEFORE the SDK's bearer header). The bearer path is suppressed
+    so there's no scheme collision on the wire.
+  - `--list-agents` surfaces the scheme (`Auth: token configured (basic
+(user:pass))`) so operators can tell at a glance whether an alias
+    speaks bearer or basic.
+  - Bearer remains the default; existing aliases and CI commands behave
+    identically. Saved bearer aliases do NOT gain an `auth_scheme: "bearer"`
+    field on rewrite (only `"basic"` is persisted) to keep config diffs
+    clean.
+
+  Mutually exclusive with `--oauth` and the client-credentials flags — the
+  CLI rejects combinations at parse time rather than silently picking one.
+
+- c3e5b96: fix(discovery): per-agent property resolution from adagents.json (#1721)
+
+  The TS SDK now honors the per-entry `authorization_type` + selector on
+  `authorized_agents[]` in `adagents.json`, matching the schema
+  (`schemas/cache/3.0.11/adagents.json`) and the Python SDK's
+  `_resolve_agent_properties`. Pre-fix, the TS SDK treated
+  `authorized_agents[]` as a presence list and attributed every
+  top-level property to every listed agent — giving different answers
+  than the Python SDK for the same input file.
+
+  ### Bug
+
+  For the file shape called out in #1721:
+
+  ```json
+  {
+    "authorized_agents": [
+      {"url": "https://wonderstruck.sales-agent.scope3.com", "authorized_for": "..."},
+      {"url": "https://interchange.io", "authorized_for": "..."}
+    ],
+    "properties": [{"property_id": "main_site", "property_type": "website", ...}]
+  }
+  ```
+
+  - Pre-fix TS SDK: both agents authorized for `main_site` (1 property each).
+  - Python SDK: both agents authorized for 0 properties (no `authorization_type`).
+  - JSON Schema: file is invalid (no `oneOf` variant matches).
+
+  The pre-fix TS behavior produced silently-divergent authorization
+  answers across SDKs. The fix makes the TS SDK fail closed when the
+  file omits `authorization_type` or its selector — same as Python.
+
+  ### New public API
+
+  ```ts
+  import {
+    resolveAgentProperties,
+    listAgentPropertyMap,
+    canonicalizeAgentUrl,
+    type AuthorizedAgent,
+    type AuthorizationType,
+    type AdAgentsPublisherPropertySelector,
+  } from '@adcp/sdk';
+
+  const scope = resolveAgentProperties(adAgents, 'https://agent.example/mcp');
+  if (scope.properties.length > 0) {
+    // The agent is authorized for these top-level (or inline) properties.
+  }
+  if (scope.unresolvable) {
+    // 'agent_not_listed' | 'missing_authorization_type' |
+    // 'unknown_authorization_type' | 'missing_selector' | 'no_match' |
+    // 'signals_only'
+  }
+  ```
+
+  `resolveAgentProperties(adAgents, agentUrl)` dispatches on
+  `authorization_type`:
+  - `property_ids` → filter top-level `properties[]` by `property_id`
+  - `property_tags` → filter top-level `properties[]` by tag intersection
+  - `inline_properties` → return the agent entry's own `properties[]`
+  - `publisher_properties` → return cross-publisher selectors for the
+    caller to resolve against other publishers' files
+  - `signal_ids` / `signal_tags` → no property output (signals agents)
+
+  `listAgentPropertyMap(adAgents)` returns
+  `{ byAgent, unresolved, cross_publisher }` so consumers can iterate
+  the full per-agent map.
+
+  `canonicalizeAgentUrl(url)` is exported for callers doing their own
+  per-agent matching (e.g., TMP `seller_agent_url` validation).
+  URL comparison follows the AdCP URL canonicalization rules — case,
+  default port, percent-encoded unreserved chars, and fragment all
+  normalized; userinfo, non-http(s) schemes rejected.
+
+  ### Behavior changes
+  - `PropertyCrawler.crawlAgents()` now attributes properties per
+    agent using `resolveAgentProperties`. Agents that don't appear in
+    the publisher's `authorized_agents[]` (or whose entry is missing
+    `authorization_type`/selector) get **zero** properties instead of
+    the file's entire `properties[]`.
+  - `PropertyCrawler.fetchAdAgentsJson()` and `fetchPublisherProperties()`
+    now also surface the raw parsed `AdAgentsJson` (alongside the
+    normalized `properties`) so external callers can run the resolver
+    themselves.
+  - Graceful-fallback unchanged: when a file has `authorized_agents` but
+    no `properties` array (the crawler infers a default property), the
+    inferred property is still attributed to every claiming agent. The
+    fallback only fires for non-conformant files.
+
+  ### Types
+  - `AuthorizedAgent` widened to expose `authorization_type` (required by
+    schema; typed optional here for backward compat with pre-schema-3
+    fixtures), `property_ids`, `property_tags`, `properties`,
+    `publisher_properties`, `signal_ids`, `signal_tags`.
+  - New type `AdAgentsPublisherPropertySelector` — the `adagents.json`
+    variant of `PublisherPropertySelector` (discriminated by
+    `selection_type: 'all' | 'by_id' | 'by_tag'`). Exposed under a
+    distinct name to avoid clobbering the existing registry-flat
+    `PublisherPropertySelector`.
+
+- 85bdd89: feat(discovery): `validateAdAgents` with ads.txt `MANAGERDOMAIN` one-hop fallback (#1717)
+
+  Implements RFC 4175 / adcontextprotocol/adcp#4175 — new public
+  `validateAdAgents(publisherDomain, options?)` helper that resolves a
+  publisher's `adagents.json` via:
+  1. Canonical: `https://{publisher}/.well-known/adagents.json` (direct).
+  2. Pointer indirection: if the canonical file carries
+     `authoritative_location` (and no inline `authorized_agents`), follow
+     one redirect — reports `discovery_method: 'authoritative_location'`.
+  3. On HTTP **404 only** — parse `https://{publisher}/ads.txt` for a
+     `MANAGERDOMAIN=` directive and attempt
+     `https://{managerdomain}/.well-known/adagents.json` — reports
+     `discovery_method: 'ads_txt_managerdomain'` and populates
+     `manager_domain`.
+
+  Per the #4173 resolution of the RFC's open questions:
+  - Only the IAB directive form `MANAGERDOMAIN=example.com` counts; the
+    comment form `# managerdomain=example.com` is rejected.
+  - Duplicate `MANAGERDOMAIN` lines: **last-wins** (rather than the RFC's
+    fail-closed default — IAB-aligned).
+
+  Other safety rules carry through from the RFC:
+  - Fallback fires only on HTTP 404. 5xx / timeouts / invalid JSON / SSRF
+    refusals stay terminal on the direct path.
+  - One hop only — the manager-domain file is never recursed into.
+  - `publisher → publisher` cycles are rejected.
+  - `#noagents` trailing comment on a `MANAGERDOMAIN` line excludes that
+    entry from fallback discovery (publisher-side opt-out).
+  - Manager-domain failure (404, parse error, SSRF refusal) is a terminal
+    validation failure, never a silent pass.
+
+  ### New public API
+
+  ```ts
+  import { validateAdAgents, type DiscoveryMethod, type AdAgentsValidationResult } from '@adcp/sdk';
+
+  const result = await validateAdAgents('publisher.example');
+  if (result.valid) {
+    console.log(result.discovery_method, result.manager_domain, result.adagents);
+  }
+  ```
+
+  Exports added from `@adcp/sdk`:
+  - `validateAdAgents(domain, options?)` — main entrypoint.
+  - `parseManagerDomain(adsTxt)` — directive-only parser, exported for
+    direct unit testing and adopters who want to consume MANAGERDOMAIN
+    outside the validator.
+  - Types: `DiscoveryMethod`, `AdAgentsValidationResult`,
+    `ValidateAdAgentsOptions`.
+
+  Routes through `ssrfSafeFetch` for DNS-pin / SSRF-policy defense (same
+  posture as `PropertyCrawler` and `NetworkConsistencyChecker` post-#1633).
+
+### Patch Changes
+
+- 1aa097a: fix(cli): basic-auth UX polish (closes #1723 — CLI bundle)
+
+  Final slice of #1723 follow-up to PR #1719. Picks up the CLI-side review
+  items that didn't fit the SDK-layer cache-key fix (landed separately).
+
+  **Refactor-safety: `injectBasicAuthHeader` helper.** The basic-auth path
+  relies on a subtle invariant: the encoded `Authorization` header is
+  injected into `mergedHeaders` AFTER `mergeHeaders()` runs, so the
+  reserved-key filter (case-insensitive `authorization` strip) doesn't
+  drop it. The invariant lived in prose only. Extract a tiny helper with
+  the warning baked into the docstring, and add an end-to-end invariant
+  test (`test/lib/cli-auth-scheme.test.js`) that hand-edits a saved
+  config to smuggle an `authorization` header, then asserts the merge
+  filter strips it on read. A future refactor that moved injection
+  inside or before `mergeHeaders` would fail this test before reaching
+  the wire test that catches the symptom.
+
+  **Env-var asymmetry warning.** `ADCP_AUTH_SCHEME=basic` is silently
+  no-op when no token resolves to the request — adopters wouldn't see
+  why their Basic gateway keeps 401ing. Surface a stderr warning at the
+  direct-invocation site when `ADCP_AUTH_SCHEME` is set in the env but
+  the resolved scheme didn't end up applied. The inverse (token-without-
+  scheme → silent bearer) is the safe direction and stays silent.
+
+  **`--auth-scheme=basic` single-token form.** Pre-existing
+  inconsistency: the long-form path treated `--auth-scheme=basic` as an
+  unknown arg and silently fell through to env-var lookup. Equals-form
+  is now first-class at both the top-level `parseAuthSchemeFlag` and the
+  `--save-auth` flag parser. Source label in error messages distinguishes
+  flag vs env-var when validation fails so operators know which to fix.
+
+  **`--list-agents` pretty-print.** Old format: `Auth: token configured
+(basic (user:pass))` — nested parens, inner placeholder non-informative.
+  New format: `Auth: HTTP Basic (user=<username>)` for basic, `Auth:
+bearer token configured` for bearer. The username is already on disk
+  in cleartext; surfacing it makes multi-tenant aliases immediately
+  distinguishable. The password stays hidden. Regression test asserts
+  the password value NEVER appears in `--list-agents` output.
+
+  **`--save-auth` honors `ADCP_AUTH_SCHEME`.** CI scripts that set
+  `ADCP_AUTH_SCHEME` globally previously had to repeat `--auth-scheme
+basic` on every `adcp --save-auth` invocation. The env var now feeds
+  the save path as well. The CLI flag wins on conflict (consistent with
+  the runtime path).
+
+  **Root `--help` density.** Collapsed the 4-line `--auth-scheme` block
+  in `printUsage` to 3 lines and pointed at `adcp --save-auth --help`
+  for full detail. Keeps the niche case from competing with `--oauth`
+  for visual weight in the main usage screen.
+
+  **Decode-source message clarity.** `buildResolvedAuthOption`'s
+  second-line decode now uses the source label `resolved basic credential
+(saved alias or --auth)` instead of the generic `auth credential`, so a
+  malformed hand-edited config surfaces with the right hint.
+
+  Tests added (`test/lib/cli-auth-scheme.test.js`):
+  - `--list-agents` pretty-print (HTTP Basic with user, bearer plain
+    label, no nested parens, no password leak)
+  - `--auth-scheme=basic` single-token form parsing
+  - `ADCP_AUTH_SCHEME` env var feeds the save path
+  - Env-var ineffective warning fires (spawns a local 401 server)
+  - Helper invariant: `mergeHeaders` strips smuggled `authorization`
+    (refactor-safety guard)
+
+  24/24 cross-suite passing (cli-auth-scheme + cli-header-flag).
+
+  Source: code-reviewer (helper extraction), DX-reviewer (list-agents,
+  help density, env warn), security-reviewer L3 (equals-form parsing),
+  from PR #1719 follow-ups.
+
+- c566612: test(comply): regression guard for storyboard-runner ↔ comply aggregation parity (#1708)
+
+  Locks the post-7.1.0 attribution invariants so future refactors of
+  `comply()`'s `extractFailures` aggregation can't silently reintroduce the
+  BidMachine misattribution shape (adcp#4419).
+
+  What's locked:
+  - A storyboard step carrying both a synthesized `response_schema` failure
+    (prepended by the runner per #1709 / PR #1712) and an `assertion` entry
+    surfaces `validation.check === 'response_schema'` in
+    `ComplianceResult.failures` — never `'assertion'`. This is the
+    attribution that was silently broken pre-7.1.0 (Zod rejects fell
+    through to the next invariant, canonically `context.no_secret_echo`).
+  - Skipped-invariant markers (`passed: true` entries the runner emits when
+    short-circuiting invariants downstream of a schema failure per #1712)
+    are correctly filtered out — only failed validations surface in
+    `failures`. A future change that included `passed: true` entries would
+    crowd out the real failure.
+  - A clean BidMachine-shape response (structured `authorization` field on
+    passing `no_secret_echo` per #1713 / PR #1714) produces zero failures
+    through the aggregation layer.
+  - Multi-storyboard aggregation preserves per-storyboard
+    `(storyboard_id, step_id, validation.check)` tuples — A failed, B clean,
+    C failed produces exactly two `failures` entries with stable attribution.
+
+  API change (minor): `extractFailures` (previously file-internal) is now
+  `export`-ed from `src/lib/testing/compliance/comply.ts` so the regression
+  test can call it directly with synthetic `StoryboardResult` fixtures.
+  Functionally identical; just visibility.
+
+  Scope correction relative to the original #1708 framing: the
+  "cross-evaluator divergence" symptom was version-driven (different
+  `@adcp/sdk` versions hitting #1713 and #1709 differently), not a true
+  parity gap between `comply()` and `runStoryboard()`. Both root causes
+  shipped in 7.1.0; this test is the durable guard for the
+  aggregation-layer invariants those fixes depend on.
+
+- 7714410: docs(llms): add Transport auth section clarifying operator-private posture (closes #1724)
+
+  Add a "Transport auth" section to `docs/llms.txt` (immediately after Quick
+  Start) clarifying that AdCP is auth-scheme-agnostic at the transport
+  layer. The protocol carries JSON-RPC over HTTP; how the outer envelope
+  is gated is an operator-private deployment choice — bearer, OAuth, mTLS,
+  AWS SigV4 at the edge, IP allow-lists, or RFC 7617 HTTP Basic for
+  gateway-fronted agents (Apigee, Kong, AWS API Gateway, nginx
+  auth_basic). `get_adcp_capabilities` does NOT advertise accepted auth
+  schemes; coupling the protocol to infrastructure permutations would
+  invite "auth_methods" PRs every time someone adds a new gateway shape.
+
+  Calls out the discovery vector explicitly: `WWW-Authenticate` (RFC 9110
+  §11.6.1) and PRM (RFC 9728), already consumed by
+  `src/lib/auth/oauth/diagnose.ts`. Basic-fronted agents emit
+  `WWW-Authenticate: Basic realm="…"` on a 401; consumers should branch on
+  the challenge scheme rather than retrying Bearer indefinitely.
+
+  Closes the documentation gap surfaced by the protocol-expert review of
+  PR #1719 (`--auth-scheme bearer|basic` for the CLI). Pre-empts the
+  "should we add `auth_methods` to capabilities?" PR that someone will
+  eventually open.
+
+  Doc-only change. No code or behavior impact.
+
+- 11ebe09: fix(protocols): MCP/A2A connection cache key disambiguates non-Bearer credentials (closes #1723 / Security L1)
+
+  Both protocol caches keyed on `agentUrl + hash(authToken)`. When the caller
+  used a non-Bearer scheme — RFC 7617 Basic from the CLI's `--auth-scheme
+basic` shape landed in #1719, or any future caller-injected
+  `Authorization` header — `authToken` was undefined and the cache key
+  collapsed to just `agentUrl + signingCacheKey`. Two callers with
+  different `user:pass` credentials targeting the same agent URL would
+  silently share a single cached MCP/A2A transport, and the transport
+  closed over whichever credential it saw first.
+
+  For the single-process CLI this was a non-issue (process boundary
+  isolates credentials). But the SDK is also consumed by long-lived
+  multi-tenant hosts (`createTestClient`-fronted services serving N
+  principals), and there a credential cross-leak across the connection
+  boundary is a real bug — `tenant-A`'s next call could ride
+  `tenant-B`'s transport.
+
+  **Fix**: when `authToken` is unset, both `connectionCacheKey` (MCP) and
+  `a2aCacheKey` (A2A) now derive the cache fingerprint from the
+  `Authorization` header on the outgoing request (case-insensitive
+  lookup, since header keys vary by call site). The hash prefix
+  (`createHash('sha256').update(fingerprint).digest('hex').slice(0, 16)`)
+  stays byte-equivalent with the bearer path so existing cache entries
+  work unchanged, and same-credential callers still share a single
+  cached transport — the key only changes when the credential differs.
+
+  A new helper `extractAuthHeader` (mirrored on both protocols, kept
+  private to each module so they don't share a runtime import) does the
+  case-insensitive lookup.
+
+  A2A also gets the same fix at the eviction site (`is401Error` cache
+  delete) so a 401 on a non-Bearer call evicts the right entry instead
+  of the bearer-keyed entry.
+
+  Tests: `test/lib/mcp-connection-cache-basic-auth.test.js` spins up a
+  local minimal MCP server, calls it twice with different
+  `Authorization: Basic …` headers via `callMCPTool`, and asserts BOTH
+  credentials reach the wire. The pre-fix shape (cache key matches on
+  just `agentUrl`) fails the first assertion — only tenant-A's
+  credential ever reaches the wire because tenant-B's call gets a cache
+  hit on tenant-A's transport. Second test asserts no cross-test
+  contamination (same-credential calls don't leak prior-test
+  credentials into the same connection).
+
+  47/47 cross-suite regression passing (cli-auth-scheme +
+  cli-header-flag + cli-oauth-flag + authentication-required-error +
+  probe-auth-challenge + mcp-connection-cache-basic-auth).
+
+  Source: security-reviewer L1 from PR #1719 follow-up.
+
+- e4e38f8: docs(signing): note that Authorization is not in SIGNING_RESERVED_HEADERS (closes #1725)
+
+  Add a block comment to `src/lib/signing/fetch.ts` (and the mirrored line in
+  `fetch-async.ts`) explaining that `authorization` is intentionally NOT in
+  `SIGNING_RESERVED_HEADERS`. AdCP's RFC 9421 profile doesn't cover the
+  `Authorization` header (see `MANDATORY_COMPONENTS` in
+  `src/lib/signing/types.ts`), so caller-supplied Bearer / RFC 7617 Basic
+  headers pass through `createSigningFetch` unmodified.
+
+  Surfaces two latent gotchas in the comment so future contributors don't
+  have to rediscover them:
+  1. If a future AdCP profile adds `authorization` to `covered_components`,
+     the canonicalizer must read the FINAL outgoing value (post-`mergeHeaders`
+     injection in `bin/adcp.js` for the CLI Basic-auth path landed in #1719).
+     `createSigningFetch` already reads `init.headers` at fetch time so the
+     architecture survives this — the comment makes that explicit.
+  2. RFC 9421 §7.5.7 warns about signing over long-lived credentials. Basic
+     credentials don't rotate, so signing over them creates a re-attack
+     surface. Any future `covers_authorization` policy knob needs that
+     security consideration in scope.
+
+  Comment-only change. No code, test, or behavior impact. Source: protocol-
+  expert review of #1719.
+
+- a96dd42: fix(discovery): validateAdAgents polish from #1718 review (closes #1720)
+
+  Follow-ups from the multi-reviewer pass on PR #1718 (`validateAdAgents`):
+
+  **Real fix surfaced by new test:**
+  - HTTP 200 with an empty (zero-byte) body decodes to `null` and was crashing
+    the `data.authoritative_location` check. Added a `coerceAdAgentsObject`
+    guard at all three entry points (direct, `authoritative_location` follow,
+    manager-domain hop) that rejects non-object JSON values and returns a
+    clean `parse_error`-shaped failure instead of throwing.
+
+  **Code-quality cleanups:**
+  - `describeOutcome` accepts `FetchFailure` only (was a wider union with a
+    dead `'ok'` arm).
+  - BOM strip in `parseManagerDomain` uses `charCodeAt(0) === 0xfeff` +
+    `slice` instead of a literal-U+FEFF regex.
+
+  **New JSDoc safety warnings** on `AdAgentsValidationResult`:
+  - `manager_domain` — chained callers re-invoking `validateAdAgents` are
+    responsible for their own loop guard. The one-hop guarantee is
+    per-call, not per-chain.
+  - `adagents` — counterparty-controlled JSON. Treat as untrusted input
+    before splicing into LLM prompts, log indices, or any text-as-instruction
+    context.
+
+  **New regression tests:**
+  - HTTP 200 + empty body → terminal `invalid JSON` failure on direct path
+  - Manager-domain pointer file with its OWN `authoritative_location` — NOT
+    recursed (RFC's "one hop only" rule)
+  - Manager domain returns 5xx → terminal failure on managerdomain path
+  - Mixed-case publisher domain lowercased through to result
+
 ## 7.1.0
 
 ### Minor Changes
