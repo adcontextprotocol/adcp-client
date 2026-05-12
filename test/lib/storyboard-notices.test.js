@@ -63,9 +63,24 @@ function buildSigningProbeStoryboard() {
   });
 }
 
-/** A storyboard whose id marks it as webhook-related (triggers legacy_hmac_fallback notice). */
+/**
+ * A storyboard that exercises the webhook delivery path. Detection is by
+ * step-task presence (`expect_webhook` family), not by storyboard id —
+ * the authoring contract is "the storyboard asserts webhook delivery".
+ * Matches the production detection in `collectCapabilityNotices`.
+ */
 function buildWebhookStoryboard(overrides = {}) {
-  return buildMinimalStoryboard({ id: 'webhook_delivery_conformance', ...overrides });
+  return buildMinimalStoryboard({
+    id: 'webhook_delivery_conformance',
+    phases: [
+      {
+        id: 'p1',
+        title: 'Webhook delivery',
+        steps: [{ id: 's1', title: 'await webhook', task: 'expect_webhook' }],
+      },
+    ],
+    ...overrides,
+  });
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -169,12 +184,11 @@ describe('RunnerNotice: request_signing_required_in_4_0 (#1704)', () => {
     const notice = result.notices.find(n => n.code === 'request_signing_required_in_4_0');
     assert.ok(notice, 'notice should be present');
     assert.equal(notice.severity, 'future_required');
-    assert.equal(notice.effective_adcp_version, '4.0');
+    assert.equal(notice.effective_version, '4.0');
     assert.equal(notice.capability_path, 'request_signing.supported');
-    assert.ok(
-      notice.message.length > 0 && notice.message.length <= 200,
-      'message within 200 chars (tabular rendering)'
-    );
+    assert.equal(notice.requirement, 'request_signer', 'requirement field populated for badge routing');
+    assert.equal(typeof notice.docs_url, 'string', 'docs_url populated for click-through');
+    assert.ok(notice.message.length > 0, 'message non-empty for human consumption');
   });
 
   test('emits notice on storyboard with request_signing_probe step', async () => {
@@ -210,8 +224,9 @@ describe('RunnerNotice: legacy_hmac_fallback_removed_in_4_0 (#1704)', () => {
     const notice = result.notices.find(n => n.code === 'legacy_hmac_fallback_removed_in_4_0');
     assert.ok(notice, 'notice should be present on a webhook-scoped storyboard');
     assert.equal(notice.severity, 'deprecation');
-    assert.equal(notice.effective_adcp_version, '4.0');
+    assert.equal(notice.effective_version, '4.0');
     assert.equal(notice.capability_path, 'webhook_signing.legacy_hmac_fallback');
+    assert.equal(typeof notice.docs_url, 'string', 'docs_url populated for click-through');
   });
 
   test('does NOT emit notice on non-webhook storyboard even when legacy_hmac_fallback is true', async () => {

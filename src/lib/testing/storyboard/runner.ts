@@ -1287,25 +1287,29 @@ function collectCapabilityNotices(storyboard: Storyboard, rawCaps: unknown): Run
         severity: 'future_required',
         code: 'request_signing_required_in_4_0',
         message:
-          'RFC 9421 request signing (`request_signing.supported: true`) is not advertised ' +
-          'but will be required for spend-committing operations in AdCP 4.0.',
-        effective_adcp_version: '4.0',
+          'RFC 9421 request signing (`request_signing.supported: true`) is not advertised. ' +
+          'Required for spend-committing operations in AdCP 4.0 — declare the capability and ' +
+          'pre-register the runner compliance test keypair before the 4.0 cut.',
+        effective_version: '4.0',
+        requirement: 'request_signer',
         capability_path: 'request_signing.supported',
+        docs_url: 'https://adcontextprotocol.org/docs/building/implementation/security#signed-requests-transport-layer',
       });
     }
   }
 
   // Notice: legacy_hmac_fallback removed in AdCP 4.0.
-  // Scoped to webhook-related storyboards (id matches /webhook/i or the storyboard
-  // contains webhook assertion steps) — the flag only affects webhook delivery paths
-  // and emitting it on unrelated storyboards would be a scope mismatch.
+  // Scoped via the WEBHOOK_STEP_TASKS step-task set rather than an id-regex.
+  // Step-task presence is the authoring contract — a storyboard that asserts
+  // webhook delivery uses one of these tasks. A storyboard id alone (e.g. a
+  // hypothetical `webhook_authoring_guide`) shouldn't trigger the notice
+  // unless it actually exercises the delivery path.
   const WEBHOOK_STEP_TASKS = new Set([
     'expect_webhook',
     'expect_webhook_retry_keys_stable',
     'expect_webhook_signature_valid',
   ]);
-  const isWebhookRelatedStoryboard =
-    /webhook/i.test(storyboard.id) || storyboard.phases.some(p => p.steps.some(s => WEBHOOK_STEP_TASKS.has(s.task)));
+  const isWebhookRelatedStoryboard = storyboard.phases.some(p => p.steps.some(s => WEBHOOK_STEP_TASKS.has(s.task)));
   if (isWebhookRelatedStoryboard) {
     const webhookSigning = caps['webhook_signing'] as Record<string, unknown> | undefined;
     if (webhookSigning?.['legacy_hmac_fallback'] === true) {
@@ -1314,9 +1318,10 @@ function collectCapabilityNotices(storyboard: Storyboard, rawCaps: unknown): Run
         code: 'legacy_hmac_fallback_removed_in_4_0',
         message:
           '`webhook_signing.legacy_hmac_fallback: true` is deprecated and removed in AdCP 4.0. ' +
-          'Migrate webhook signature verification to RFC 9421.',
-        effective_adcp_version: '4.0',
+          'Migrate webhook signature verification to RFC 9421 before the 4.0 cut.',
+        effective_version: '4.0',
         capability_path: 'webhook_signing.legacy_hmac_fallback',
+        docs_url: 'https://adcontextprotocol.org/docs/building/implementation/webhooks',
       });
     }
   }

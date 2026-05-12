@@ -1067,7 +1067,13 @@ async function complyImpl(agentUrl: string, options: ComplyOptions): Promise<Com
     const agentRef = options.agent_alias || agentUrl;
     const failures = extractFailures(storyboardResults, runnableStoryboards, agentRef);
 
-    // Aggregate notices from all storyboard runs, deduplicated by code.
+    // Aggregate notices from all storyboard runs, deduplicated by `code`.
+    // `new Map(arr.map(...))` is last-write-wins: when the same code appears
+    // across multiple storyboards, the last-emitted instance survives. Today
+    // every code carries identical body across storyboards so this is
+    // observably stable. If future notices ever embed per-storyboard context
+    // (e.g. distinct `capability_path` per board), revisit to either preserve
+    // the first instance or carry all occurrences (#1704 follow-up).
     const allNotices = storyboardResults.flatMap(r => r.notices);
     const noticesDedup = [...new Map(allNotices.map(n => [n.code, n])).values()];
 
@@ -1090,7 +1096,7 @@ async function complyImpl(agentUrl: string, options: ComplyOptions): Promise<Com
       controller_scenarios: controllerDetection.detected ? controllerDetection.scenarios : undefined,
       tested_at: new Date().toISOString(),
       total_duration_ms: Date.now() - start,
-      ...(noticesDedup.length > 0 && { notices: noticesDedup }),
+      notices: noticesDedup,
     };
   } finally {
     if (timeoutId !== undefined) clearTimeout(timeoutId);
@@ -1273,6 +1279,7 @@ async function runWithDegradedProfile(
     controller_detected: false,
     tested_at: new Date().toISOString(),
     total_duration_ms: Date.now() - start,
+    notices: [],
   };
 }
 
@@ -1313,6 +1320,7 @@ async function buildUnreachableResult(
     storyboards_executed: [],
     tested_at: new Date().toISOString(),
     total_duration_ms: Date.now() - start,
+    notices: [],
   };
 }
 

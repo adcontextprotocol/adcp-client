@@ -145,12 +145,14 @@ export interface ComplianceResult {
   total_duration_ms: number;
   /**
    * Protocol-compliance advisories aggregated across all storyboard runs,
-   * deduplicated by `code`. Absent when no notices were triggered. For
-   * per-storyboard notices see `StoryboardResult.notices`.
+   * deduplicated by `code`. Always present (default `[]`) — mirrors the
+   * always-present invariant on `StoryboardResult.notices` so adopters
+   * can iterate `for (const n of result.notices)` at either level without
+   * a defensive `?.`. For per-storyboard notices see `StoryboardResult.notices`.
    *
    * Spec: adcp-client#1704.
    */
-  notices?: RunnerNotice[];
+  notices: RunnerNotice[];
 }
 
 export interface ComplianceSummary {

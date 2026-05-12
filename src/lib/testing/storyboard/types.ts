@@ -1461,17 +1461,32 @@ export interface SchemaValidationError {
 // ────────────────────────────────────────────────────────────
 
 /**
- * Stable machine-readable identifiers for runner notices. Adding a new value
- * here is a wire-surface change — coordinate with the upstream spec or open
- * an issue before extending. Keep in sync with the `RunnerNotice.code` field.
+ * Notice `code` is intentionally typed as a plain `string` rather than a
+ * closed literal union. The runner introduces new advisory codes as the
+ * spec evolves; adopters who narrow on `code` should not see a TypeScript
+ * breaking change for every new advisory. Use the `KNOWN_NOTICE_CODES`
+ * constant below when you want autocomplete or to assert exhaustiveness
+ * over the current day-one set.
+ *
+ * Adding a new code is still a wire-surface change — coordinate with the
+ * upstream spec (adcp#4418) or open an issue before extending.
  *
  * Spec: adcp-client#1704.
  */
-export type NoticeCode =
+export type NoticeCode = string;
+
+/**
+ * The day-one notice codes the runner emits today. Exported so adopters
+ * can render badge-name maps or assert exhaustiveness; not closed at the
+ * type level (see `NoticeCode`).
+ */
+export const KNOWN_NOTICE_CODES = [
   /** Agent lacks `request_signing.supported: true`; signing becomes required in AdCP 4.0. */
-  | 'request_signing_required_in_4_0'
+  'request_signing_required_in_4_0',
   /** Agent advertises `webhook_signing.legacy_hmac_fallback: true`; removed in AdCP 4.0. */
-  | 'legacy_hmac_fallback_removed_in_4_0';
+  'legacy_hmac_fallback_removed_in_4_0',
+] as const;
+export type KnownNoticeCode = (typeof KNOWN_NOTICE_CODES)[number];
 
 /**
  * Severity of a runner notice. Deliberately separate from `ObservationSeverity`
@@ -1483,7 +1498,7 @@ export type NoticeCode =
  * - `deprecation` — SHOULD migrate; the field/claim is deprecated in the current
  *   spec version.
  * - `future_required` — behavior is optional today but will be mandatory in a
- *   named future AdCP version (see `effective_adcp_version`).
+ *   named future AdCP version (see `effective_version`).
  */
 export type NoticeSeverity = 'info' | 'deprecation' | 'future_required';
 
@@ -1508,9 +1523,10 @@ export interface RunnerNotice {
   /**
    * AdCP protocol version at which the behavior becomes mandatory (for
    * `future_required`) or was formally removed (for `deprecation`).
-   * e.g. `'4.0'`. Absent when not version-bounded.
+   * e.g. `'4.0'`. Absent when not version-bounded. Field name matches
+   * upstream spec issue adcontextprotocol/adcp#4418.
    */
-  effective_adcp_version?: string;
+  effective_version?: string;
   /**
    * When relevant, the structured requirement name (matches
    * `RunnerSkipResult.requirement`).
@@ -1522,6 +1538,13 @@ export interface RunnerNotice {
    * not guaranteed to resolve via JSON Pointer.
    */
   capability_path?: string;
+  /**
+   * Click-through URL for adopters to read the underlying spec section,
+   * migration guide, or AdCP issue. Optional; consumers that surface
+   * notices in dashboards or CI output use this to deep-link the
+   * remediation context. Stable across runs for the same `code`.
+   */
+  docs_url?: string;
 }
 
 // ────────────────────────────────────────────────────────────
