@@ -637,6 +637,26 @@ function generateLlmsTxt(
   ln('```');
   ln();
 
+  // --- Transport auth ---
+  // Clarifies the operator-private posture and points at the right discovery
+  // vector (WWW-Authenticate / PRM) so future "should we add auth_methods to
+  // capabilities?" proposals land with the precedent already documented.
+  // Closes #1724.
+  ln(`## Transport auth`);
+  ln();
+  ln(
+    `AdCP is auth-scheme-agnostic at the transport layer. The protocol carries JSON-RPC over HTTP; how the outer envelope is gated is an operator-private deployment choice — bearer tokens, OAuth, mTLS, AWS SigV4 at the edge, an IP allow-list, or RFC 7617 HTTP Basic when the agent sits behind an API gateway with a BasicAuthentication policy (Apigee, Kong, AWS API Gateway, nginx \`auth_basic\`) are all valid. \`get_adcp_capabilities\` does NOT advertise the accepted auth schemes; encoding every gateway permutation in the capability payload would couple the protocol to infrastructure choices that change between deployments.`
+  );
+  ln();
+  ln(
+    `Auth-scheme discovery, when needed, flows through \`WWW-Authenticate\` (RFC 9110 §11.6.1) and Protected Resource Metadata (RFC 9728) — both consumed by the SDK's auth-diagnostics path. Basic-fronted agents emit \`WWW-Authenticate: Basic realm="…"\` on a 401; consumers (SDK callers, the CLI's 401-bounce path, LLM agents) should branch on the challenge scheme rather than retrying Bearer indefinitely.`
+  );
+  ln();
+  ln(
+    `The TypeScript SDK speaks both schemes today. Programmatically: \`createTestClient({ auth: { type: 'basic', username, password } })\` (RFC 7617) and \`createTestClient({ auth: { type: 'bearer', token } })\`. From the CLI: \`--auth-scheme basic\` opts into Basic and \`--auth <user:pass>\` carries the credential; the default \`bearer\` remains unchanged.`
+  );
+  ln();
+
   // --- Error Handling ---
   ln(`## Error Handling`);
   ln();
