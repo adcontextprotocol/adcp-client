@@ -267,6 +267,91 @@ function mergeHeaders(savedHeaders, cliHeaders) {
 }
 
 /**
+ * Parse `--auth-scheme bearer|basic`. Defaults to `bearer` (preserving the
+ * pre-existing CLI contract where `--auth TOKEN` is always a bearer). When
+ * the flag is absent, falls back to the `ADCP_AUTH_SCHEME` env var so CI
+ * jobs can flip the scheme without rewriting their command line. Returns
+ * `null` when neither the flag nor the env var supplied a value — callers
+ * use that to defer to a saved alias's `auth_scheme`.
+ */
+function parseAuthSchemeFlag(args) {
+  const idx = args.indexOf('--auth-scheme');
+  let value = null;
+  if (idx !== -1) {
+    if (idx + 1 >= args.length || args[idx + 1].startsWith('--')) {
+      console.error('ERROR: --auth-scheme requires a value (bearer|basic)\n');
+      process.exit(2);
+    }
+    value = args[idx + 1];
+  } else if (process.env.ADCP_AUTH_SCHEME) {
+    value = process.env.ADCP_AUTH_SCHEME;
+  }
+  if (value === null) return null;
+  if (value !== 'bearer' && value !== 'basic') {
+    console.error(`ERROR: --auth-scheme must be 'bearer' or 'basic', got: ${value}\n`);
+    process.exit(2);
+  }
+  return value;
+}
+
+/**
+ * Split a `user:pass` credential string and validate per RFC 7617:
+ *   - userid must not contain `:` (a colon would decode ambiguously on the
+ *     server, and undici/curl would mis-parse the cached header).
+ *   - CR, LF, and non-printable ASCII are rejected — these are the same
+ *     header-smuggling shapes parseHeaderFlags refuses on `-H` input.
+ *
+ * Returns `{ username, password }`. Exits 2 with a stderr message on any
+ * validation failure so the failure mode matches the rest of the CLI's
+ * argument validation (no half-encoded header reaches the wire).
+ */
+function decodeBasicCredentials(userpass, source = '--auth') {
+  if (typeof userpass !== 'string' || userpass.length === 0) {
+    console.error(`ERROR: ${source} value for basic auth must be 'user:pass' (got empty value)\n`);
+    process.exit(2);
+  }
+  const colon = userpass.indexOf(':');
+  if (colon === -1) {
+    // Don't echo the credential itself — even a length leak is enough to help
+    // someone reasoning about the value off-screen. The fix is the same
+    // regardless of what they passed in.
+    console.error(`ERROR: ${source} basic-auth credential must be in 'user:pass' form (no ':' found)\n`);
+    process.exit(2);
+  }
+  const username = userpass.slice(0, colon);
+  const password = userpass.slice(colon + 1);
+  if (username.length === 0) {
+    console.error(`ERROR: ${source} basic auth username must not be empty\n`);
+    process.exit(2);
+  }
+  if (username.includes(':')) {
+    // Impossible from a single-colon split, but kept as a defensive guard
+    // in case a future refactor changes the split logic.
+    console.error(`ERROR: ${source} basic auth username must not contain ':' (RFC 7617)\n`);
+    process.exit(2);
+  }
+  const badChar = /[\r\n\0]|[^\x20-\x7E]/;
+  if (badChar.test(username)) {
+    console.error(`ERROR: ${source} basic auth username contains CR, LF, NUL, or non-printable ASCII\n`);
+    process.exit(2);
+  }
+  if (badChar.test(password)) {
+    console.error(`ERROR: ${source} basic auth password contains CR, LF, NUL, or non-printable ASCII\n`);
+    process.exit(2);
+  }
+  return { username, password };
+}
+
+/**
+ * Encode RFC 7617 `Authorization: Basic <base64(user:pass)>` from a validated
+ * `{username, password}` pair. Caller MUST have run `decodeBasicCredentials`
+ * first — this helper does not re-validate.
+ */
+function encodeBasicAuthHeader({ username, password }) {
+  return `Basic ${Buffer.from(`${username}:${password}`).toString('base64')}`;
+}
+
+/**
  * Extract human-readable protocol message from conversation
  */
 function extractProtocolMessage(conversation, protocol) {
@@ -439,6 +524,10 @@ async function handleTestCommand(args) {
     }
     authToken = args[authIndex + 1];
   }
+  // `--auth-scheme bearer|basic` selects how `--auth` (or the saved alias's
+  // auth_token) is sent. Default null → defer to saved alias's `auth_scheme`,
+  // then fall back to `bearer`.
+  const authScheme = parseAuthSchemeFlag(args);
 
   // adcp-client#1612: accept `--transport` as an alias for `--protocol`.
   // The original symptom report used `--transport a2a` (per A2A SDK
@@ -476,7 +565,7 @@ async function handleTestCommand(args) {
 
   // Filter out flag arguments to find positional arguments
   const positionalArgs = args.filter(
-    arg => !arg.startsWith('--') && arg !== authToken && arg !== protocolFlag && arg !== brief
+    arg => !arg.startsWith('--') && arg !== authToken && arg !== authScheme && arg !== protocolFlag && arg !== brief
   );
 
   if (positionalArgs.length === 0) {
@@ -507,6 +596,7 @@ async function handleTestCommand(args) {
   let agentUrl;
   let protocol = protocolFlag;
   let finalAuthToken = authToken;
+  let finalAuthScheme = authScheme; // null = defer to alias's saved scheme
   let oauthTokens = null;
 
   // Resolve agent
@@ -520,6 +610,9 @@ async function handleTestCommand(args) {
     agentUrl = savedAgent.url;
     protocol = protocol || savedAgent.protocol;
     finalAuthToken = finalAuthToken || getEffectiveAuthToken(savedAgent);
+    if (finalAuthScheme === null && savedAgent.auth_scheme) {
+      finalAuthScheme = savedAgent.auth_scheme;
+    }
     if (savedAgent.oauth_client_credentials) {
       // Client credentials: tokens are refreshed inside `ProtocolClient.callTool`
       // via `ensureClientCredentialsTokens`. Surface cached tokens so the call
@@ -583,11 +676,12 @@ async function handleTestCommand(args) {
     }
   }
 
-  // Build test options
+  // Build test options. `buildResolvedAuthOption` handles the bearer/basic
+  // split based on the resolved scheme (default: bearer).
   const testOptions = {
     protocol,
     brief,
-    ...(finalAuthToken && { auth: { type: 'bearer', token: finalAuthToken } }),
+    ...buildResolvedAuthOption({ resolvedAuth: finalAuthToken, resolvedAuthScheme: finalAuthScheme || 'bearer' }),
   };
 
   if (!jsonOutput) {
@@ -713,6 +807,9 @@ function parseAgentOptions(args) {
   if (authIndex !== -1 && authIndex + 1 < args.length && !args[authIndex + 1].startsWith('--')) {
     authToken = args[authIndex + 1];
   }
+  // `--auth-scheme bearer|basic` selects the scheme used to send `--auth`.
+  // Default (null) defers to the saved alias's `auth_scheme`, then to `bearer`.
+  const authScheme = parseAuthSchemeFlag(args);
 
   // adcp-client#1612: accept `--transport` as an alias for `--protocol`.
   // See parseStorboardArgs for full rationale.
@@ -894,6 +991,7 @@ function parseAgentOptions(args) {
   // so falsy-but-valid values (e.g. port "0") aren't dropped from the filter.
   const flagValues = [
     authToken,
+    authScheme,
     protocolFlag,
     brief,
     contextValue,
@@ -921,6 +1019,7 @@ function parseAgentOptions(args) {
 
   return {
     authToken,
+    authScheme,
     protocolFlag,
     brief,
     file,
@@ -1105,6 +1204,7 @@ async function ensureOAuthTokensForAlias(alias, url, { quiet = false, allowHttp 
  */
 function buildResolvedAuthOption({
   resolvedAuth,
+  resolvedAuthScheme,
   resolvedOauthTokens,
   resolvedOauthClient,
   resolvedOauthClientCredentials,
@@ -1128,6 +1228,15 @@ function buildResolvedAuthOption({
     };
   }
   if (resolvedAuth) {
+    if (resolvedAuthScheme === 'basic') {
+      // `resolvedAuth` is the raw `user:pass` string (from `--auth` or the
+      // saved alias's `auth_token`). Decode it here so both the storyboard
+      // runner and `createTestClient` receive the `type: 'basic'` shape they
+      // already know how to send (`src/lib/testing/storyboard/runner.ts:4176`
+      // and `src/lib/testing/client.ts:155`).
+      const { username, password } = decodeBasicCredentials(resolvedAuth, 'auth credential');
+      return { auth: { type: 'basic', username, password } };
+    }
     return { auth: { type: 'bearer', token: resolvedAuth } };
   }
   return {};
@@ -1149,10 +1258,11 @@ function buildResolvedAuthOption({
  * function deliberately does NOT exchange — it just surfaces the saved
  * credentials so the caller can hand them to the testing/protocol layer.
  */
-async function resolveAgent(agentArg, authToken, protocolFlag, jsonOutput) {
+async function resolveAgent(agentArg, authToken, protocolFlag, jsonOutput, authScheme = null) {
   let agentUrl;
   let protocol = protocolFlag;
   let finalAuthToken = authToken;
+  let finalAuthScheme = authScheme; // Explicit CLI flag wins; null = defer.
   let oauthTokens;
   let oauthClient;
   let oauthClientCredentials;
@@ -1164,6 +1274,8 @@ async function resolveAgent(agentArg, authToken, protocolFlag, jsonOutput) {
     agentUrl = builtIn.url;
     protocol = protocol || builtIn.protocol;
     finalAuthToken = finalAuthToken || builtIn.auth_token;
+    // Built-ins are bearer-only — no basic-auth gateway in front of them.
+    if (finalAuthScheme === null) finalAuthScheme = 'bearer';
   } else if (isAlias(agentArg)) {
     const savedAgent = getAgent(agentArg);
     agentUrl = savedAgent.url;
@@ -1177,6 +1289,9 @@ async function resolveAgent(agentArg, authToken, protocolFlag, jsonOutput) {
       oauthClient = savedAgent.oauth_client;
     }
     finalAuthToken = finalAuthToken || getEffectiveAuthToken(savedAgent);
+    if (finalAuthScheme === null && savedAgent.auth_scheme) {
+      finalAuthScheme = savedAgent.auth_scheme;
+    }
     if (savedAgent.headers && Object.keys(savedAgent.headers).length > 0) {
       savedHeaders = { ...savedAgent.headers };
     }
@@ -1205,6 +1320,11 @@ async function resolveAgent(agentArg, authToken, protocolFlag, jsonOutput) {
     agentUrl,
     protocol,
     authToken: finalAuthToken,
+    // Default to 'bearer' so callers can compare without null-checking. The
+    // distinction between an explicit `bearer` and an absent flag is only
+    // meaningful during alias resolution above — once we've returned, the
+    // scheme has been resolved.
+    authScheme: finalAuthScheme || 'bearer',
     oauthTokens,
     oauthClient,
     oauthClientCredentials,
@@ -1387,6 +1507,7 @@ QUICK START:
 AGENT MANAGEMENT:
   --save-auth <alias> [url]   Save agent with alias
                                 Static bearer:   --auth <token> | --no-auth
+                                HTTP Basic:      --auth <user:pass> --auth-scheme basic
                                 OAuth (browser): --oauth
                                 OAuth (M2M):     --client-id <id> | --client-id-env <VAR>
                                                  --client-secret <s> | --client-secret-env <VAR>
@@ -1399,7 +1520,11 @@ AGENT MANAGEMENT:
 OPTIONS:
   --protocol PROTO  Force protocol: mcp or a2a (default: auto-detect)
   --transport PROTO  Alias for --protocol (A2A SDK convention)
-  --auth TOKEN      Authentication token
+  --auth TOKEN      Authentication token (or 'user:pass' with --auth-scheme basic)
+  --auth-scheme bearer|basic
+                    How --auth is sent. Default: bearer (Authorization: Bearer …).
+                    'basic' encodes 'user:pass' as RFC 7617 Authorization: Basic.
+                    Env: ADCP_AUTH_SCHEME (overridden by the flag).
   -H, --header K=V  Extra HTTP header on every request (repeatable). Auth wins on conflict.
                     Common use: -H x-adcp-tenant=<id> for tenant routing behind a reverse proxy.
   --oauth           OAuth authentication (MCP only, opens browser)
@@ -1519,7 +1644,11 @@ OPTIONS:
   --context JSON      Pass context from previous step (step only)
   --request JSON      Override sample_request for the step (step only)
   --json              JSON output (recommended for LLM consumption)
-  --auth TOKEN        Authentication token
+  --auth TOKEN        Authentication token (or 'user:pass' with --auth-scheme basic)
+  --auth-scheme bearer|basic
+                      How --auth is sent (default: bearer). Use 'basic' for
+                      gateways that require RFC 7617 Authorization: Basic
+                      instead of Authorization: Bearer.
   --oauth             Run the browser OAuth flow inline if the saved alias
                       has no valid tokens yet. Requires a saved alias
                       (use --save-auth first for raw URLs). MCP only.
@@ -2067,7 +2196,17 @@ function enforceStrictFlags(args, removedFound) {
 
 async function handleStoryboardRun(args) {
   const opts = parseAgentOptions(args);
-  const { authToken, protocolFlag, jsonOutput, dryRun, positionalArgs, file: filePath, localAgent, format } = opts;
+  const {
+    authToken,
+    authScheme,
+    protocolFlag,
+    jsonOutput,
+    dryRun,
+    positionalArgs,
+    file: filePath,
+    localAgent,
+    format,
+  } = opts;
 
   enforceStrictFlags(args, warnRemovedFlags(args));
 
@@ -2152,11 +2291,12 @@ async function handleStoryboardRun(args) {
     agentUrl,
     protocol,
     authToken: resolvedAuth,
+    authScheme: resolvedAuthScheme,
     oauthTokens: resolvedOauthTokens,
     oauthClient: resolvedOauthClient,
     oauthClientCredentials: resolvedOauthClientCredentials,
     savedHeaders,
-  } = await resolveAgent(agentArg, authToken, protocolFlag, jsonOutput);
+  } = await resolveAgent(agentArg, authToken, protocolFlag, jsonOutput, authScheme);
 
   const mergedRunHeaders = mergeHeaders(savedHeaders, opts.customHeaders);
 
@@ -2222,6 +2362,7 @@ async function handleStoryboardRun(args) {
     protocol,
     ...buildResolvedAuthOption({
       resolvedAuth,
+      resolvedAuthScheme,
       resolvedOauthTokens,
       resolvedOauthClient,
       resolvedOauthClientCredentials,
@@ -3236,7 +3377,7 @@ function aggregateStrictSummaries(summaries) {
 }
 
 async function handleMultiInstanceStoryboardRun(args, opts, urls) {
-  const { authToken, protocolFlag, jsonOutput, dryRun, positionalArgs, file: filePath } = opts;
+  const { authToken, authScheme, protocolFlag, jsonOutput, dryRun, positionalArgs, file: filePath } = opts;
 
   if (urls.length < 2) {
     console.error('ERROR: Multi-instance mode requires 2+ --url flags. Drop --url for single-instance.');
@@ -3445,7 +3586,7 @@ async function handleMultiInstanceStoryboardRun(args, opts, urls) {
 
   const runOptions = {
     protocol,
-    ...(authToken ? { auth: { type: 'bearer', token: authToken } } : {}),
+    ...buildResolvedAuthOption({ resolvedAuth: authToken, resolvedAuthScheme: authScheme || 'bearer' }),
     ...(opts.allowHttp && { allow_http: true }),
     multi_instance_strategy: strategy,
     ...(webhookReceiverOpts ?? {}),
@@ -3556,7 +3697,7 @@ async function handleMultiInstanceStoryboardRun(args, opts, urls) {
  * Storyboard ID, bundle ID, or `--file` is required.
  */
 async function handleAgentsRoutedStoryboardRun(args, opts, routing) {
-  const { authToken, protocolFlag, jsonOutput, dryRun, positionalArgs, file: filePath, format } = opts;
+  const { authToken, authScheme, protocolFlag, jsonOutput, dryRun, positionalArgs, file: filePath, format } = opts;
 
   const webhookAutoTunnel = args.includes('--webhook-receiver-auto-tunnel');
   const webhookReceiverBase = extractWebhookReceiverOptions(args);
@@ -3703,7 +3844,7 @@ async function handleAgentsRoutedStoryboardRun(args, opts, routing) {
 
   const runOptions = {
     protocol,
-    ...(authToken ? { auth: { type: 'bearer', token: authToken } } : {}),
+    ...buildResolvedAuthOption({ resolvedAuth: authToken, resolvedAuthScheme: authScheme || 'bearer' }),
     ...(opts.allowHttp && { allow_http: true }),
     agents: routing.agents,
     ...(routing.default_agent ? { default_agent: routing.default_agent } : {}),
@@ -3831,11 +3972,12 @@ async function runFullAssessment(agentArg, rawArgs, parsedOpts) {
     agentUrl,
     protocol,
     authToken: finalAuthToken,
+    authScheme: finalAuthScheme,
     oauthTokens,
     oauthClient,
     oauthClientCredentials,
     savedHeaders,
-  } = await resolveAgent(agentArg, opts.authToken, opts.protocolFlag, opts.jsonOutput);
+  } = await resolveAgent(agentArg, opts.authToken, opts.protocolFlag, opts.jsonOutput, opts.authScheme);
 
   const mergedAssessmentHeaders = mergeHeaders(savedHeaders, opts.customHeaders);
 
@@ -3888,6 +4030,7 @@ async function runFullAssessment(agentArg, rawArgs, parsedOpts) {
 
   const { auth: authOption } = buildResolvedAuthOption({
     resolvedAuth: finalAuthToken,
+    resolvedAuthScheme: finalAuthScheme,
     resolvedOauthTokens: oauthTokens,
     resolvedOauthClient: oauthClient,
     resolvedOauthClientCredentials: oauthClientCredentials,
@@ -4047,7 +4190,7 @@ async function runFullAssessment(agentArg, rawArgs, parsedOpts) {
 
 async function handleStoryboardStepCmd(args) {
   const { getComplianceStoryboardById, runStoryboardStep } = await import('../dist/lib/testing/storyboard/index.js');
-  const { authToken, protocolFlag, jsonOutput, debug, positionalArgs } = parseAgentOptions(args);
+  const { authToken, authScheme, protocolFlag, jsonOutput, debug, positionalArgs } = parseAgentOptions(args);
 
   enforceStrictFlags(args, warnRemovedFlags(args));
 
@@ -4072,10 +4215,11 @@ async function handleStoryboardStepCmd(args) {
     agentUrl,
     protocol,
     authToken: resolvedAuth,
+    authScheme: resolvedAuthScheme,
     oauthTokens: resolvedOauthTokens,
     oauthClient: resolvedOauthClient,
     oauthClientCredentials: resolvedOauthClientCredentials,
-  } = await resolveAgent(agentArg, authToken, protocolFlag, jsonOutput);
+  } = await resolveAgent(agentArg, authToken, protocolFlag, jsonOutput, authScheme);
 
   // Parse --context and --request flags (supports inline JSON or @file.json)
   let context = {};
@@ -4095,6 +4239,7 @@ async function handleStoryboardStepCmd(args) {
     request,
     ...buildResolvedAuthOption({
       resolvedAuth,
+      resolvedAuthScheme,
       resolvedOauthTokens,
       resolvedOauthClient,
       resolvedOauthClientCredentials,
@@ -4632,9 +4777,16 @@ Save an agent URL under an alias in ~/.adcp/config.json so future commands
 can use the alias in place of the URL.
 
 AUTH METHODS (pick one):
-  Static bearer token:
+  Static bearer token (default):
     --auth <token>            Pre-issued bearer token
     --no-auth                 Agent requires no auth
+
+  HTTP Basic auth (RFC 7617, for gateways like Apigee/Kong/AWS API GW that
+  front the agent with a BasicAuthentication policy):
+    --auth <user:pass>        Credentials in 'user:pass' form
+    --auth-scheme basic       Required to switch from bearer to Basic. The
+                              username is checked for the RFC 7617 ban on
+                              ':', and both halves are checked for CR/LF/NUL.
 
 HEADERS (compose with any auth method):
     -H, --header K=V          Extra HTTP header on every request to this agent.
@@ -4665,6 +4817,9 @@ HEADERS (compose with any auth method):
 EXAMPLES:
   # Static bearer (local dev)
   adcp --save-auth mine https://agent.example.com/mcp --auth AB12
+
+  # HTTP Basic (gateway-fronted agent — Apigee, Kong, AWS API GW)
+  adcp --save-auth mine https://agent.example.com/mcp --auth user:pass --auth-scheme basic
 
   # Browser OAuth
   adcp --save-auth mine https://agent.example.com/mcp --oauth
@@ -4704,6 +4859,7 @@ credential material — never sync or commit.
     // consume the next token; boolean flags consume only themselves.
     const valueFlags = new Set([
       '--auth',
+      '--auth-scheme',
       '--oauth-token-url',
       '--client-id',
       '--client-id-env',
@@ -4746,6 +4902,20 @@ credential material — never sync or commit.
     const savedHeaders = savedHeadersFromFlags.customHeaders;
 
     const providedAuthToken = parsedFlags['--auth'] ?? null;
+    const providedAuthScheme = parsedFlags['--auth-scheme'] ?? null;
+    if (providedAuthScheme !== null && providedAuthScheme !== 'bearer' && providedAuthScheme !== 'basic') {
+      console.error(`ERROR: --auth-scheme must be 'bearer' or 'basic', got: ${providedAuthScheme}\n`);
+      process.exit(2);
+    }
+    if (providedAuthScheme === 'basic' && providedAuthToken !== null) {
+      // Validate at register time so a typo (missing `:`) doesn't get persisted
+      // to disk and then surface as a confusing decode error on every later call.
+      decodeBasicCredentials(providedAuthToken, '--auth');
+    }
+    if (providedAuthScheme !== null && providedAuthToken === null) {
+      console.error('ERROR: --auth-scheme requires --auth (no token to interpret)\n');
+      process.exit(2);
+    }
     const noAuthFlag = parsedFlags['--no-auth'] === true;
     const oauthFlag = parsedFlags['--oauth'] === true;
     const dryRunFlag = parsedFlags['--dry-run'] === true;
@@ -5169,7 +5339,16 @@ credential material — never sync or commit.
     const hasAuthDecision = providedAuthToken !== null || noAuthFlag;
     const nonInteractive = url && hasAuthDecision;
 
-    await interactiveSetup(alias, url, protocol, providedAuthToken, nonInteractive, noAuthFlag, savedHeaders);
+    await interactiveSetup(
+      alias,
+      url,
+      protocol,
+      providedAuthToken,
+      nonInteractive,
+      noAuthFlag,
+      savedHeaders,
+      providedAuthScheme
+    );
     process.exit(0);
   }
 
@@ -5192,7 +5371,8 @@ credential material — never sync or commit.
         console.log(`    Protocol: ${agent.protocol}`);
       }
       if (agent.auth_token) {
-        console.log(`    Auth: token configured`);
+        const scheme = agent.auth_scheme === 'basic' ? 'basic (user:pass)' : 'bearer';
+        console.log(`    Auth: token configured (${scheme})`);
       }
       if (agent.oauth_client_credentials) {
         // Intentionally minimal: show only that CC is configured and the
@@ -5283,6 +5463,10 @@ credential material — never sync or commit.
   // Parse options first
   const authIndex = args.indexOf('--auth');
   let authToken = authIndex !== -1 ? args[authIndex + 1] : process.env.ADCP_AUTH_TOKEN;
+  // `--auth-scheme bearer|basic`. Default null → defer to saved alias's
+  // `auth_scheme`, then fall back to `bearer`. `--auth user:pass --auth-scheme
+  // basic` is the gateway-Basic shape (e.g. an Apigee BasicAuthentication policy).
+  let authScheme = parseAuthSchemeFlag(args);
   // adcp-client#1612: accept `--transport` as an alias for `--protocol`.
   // Hard-fail when the flag is present without a value, matching sites 1
   // and 2 — security review of #1619 flagged the silent-fallthrough as a
@@ -5323,6 +5507,7 @@ credential material — never sync or commit.
     arg =>
       !arg.startsWith('--') &&
       arg !== authToken && // Don't include the auth token value
+      arg !== authScheme && // Don't include the auth-scheme value
       arg !== protocolFlag && // Don't include the protocol value
       arg !== (timeoutIndex !== -1 ? args[timeoutIndex + 1] : null) && // Don't include timeout value
       !headerTokens.has(arg) // Drop -H and its KEY=VALUE payload
@@ -5378,6 +5563,12 @@ credential material — never sync or commit.
 
     if (!authToken) {
       authToken = getEffectiveAuthToken(savedAgent);
+    }
+    // Honor the alias's saved scheme only when the caller didn't override
+    // it explicitly. Lets a basic-auth alias work without `--auth-scheme basic`
+    // on every invocation.
+    if (authScheme === null && savedAgent.auth_scheme) {
+      authScheme = savedAgent.auth_scheme;
     }
 
     if (debug) {
@@ -5445,7 +5636,14 @@ credential material — never sync or commit.
     console.error(`  Protocol: ${protocol}`);
     console.error(`  Agent URL: ${agentUrl}`);
     console.error(`  Tool: ${toolName || '(list tools)'}`);
-    console.error(`  Auth: ${authToken ? 'provided' : useOAuth ? 'oauth' : 'none'}`);
+    const authLabel = authToken
+      ? authScheme === 'basic'
+        ? 'basic (user:pass)'
+        : 'bearer'
+      : useOAuth
+        ? 'oauth'
+        : 'none';
+    console.error(`  Auth: ${authLabel}`);
     console.error(`  Payload: ${JSON.stringify(payload, null, 2)}`);
     console.error('');
   }
@@ -5480,9 +5678,38 @@ credential material — never sync or commit.
     }
   }
 
+  // Runtime mutex: `--auth-scheme basic` is incompatible with any OAuth shape
+  // (browser flow, refresh-token alias, or client credentials). The
+  // `--save-auth` flow catches this at register time, but a user invoking
+  // `adcp <oauth-alias> <tool> --auth user:pass --auth-scheme basic` would
+  // previously have the basic credential silently dropped because the gating
+  // logic below excludes basic when any OAuth material is present. Fail
+  // closed instead — better a clear error than a credential silently ignored.
+  if (authScheme === 'basic' && (useOAuth || agentOAuthClientCredentials || agentOAuthTokens)) {
+    console.error(
+      '\n❌ ERROR: --auth-scheme basic cannot be combined with --oauth or with an alias that has OAuth tokens / client credentials.\n' +
+        '   The agent is already configured for OAuth — pick one auth method, not both.\n'
+    );
+    process.exit(2);
+  }
+
   // Merge saved-alias headers (per-agent routing context, e.g. x-adcp-tenant)
   // with `-H KEY=VALUE` flags from the current invocation. CLI wins on conflict.
-  const mergedHeaders = mergeHeaders(savedAgent && savedAgent.headers, cliHeaders);
+  let mergedHeaders = mergeHeaders(savedAgent && savedAgent.headers, cliHeaders);
+
+  // Basic auth path: gateways like Apigee/Kong/AWS API GW with a
+  // BasicAuthentication policy speak RFC 7617 (`Authorization: Basic
+  // <base64(user:pass)>`), not OAuth bearer. We inject the encoded header
+  // AFTER `mergeHeaders` runs so the reserved-key filter doesn't strip it.
+  // The protocol layer (`src/lib/protocols/mcp.ts:475-477`,
+  // `src/lib/protocols/a2a.ts:283-292`) spreads `customHeaders` before the
+  // SDK-supplied Authorization, so suppressing `auth_token` here lets our
+  // injected Basic header reach the wire intact.
+  const useBasicAuth = authScheme === 'basic' && authToken;
+  if (useBasicAuth) {
+    const { username, password } = decodeBasicCredentials(authToken);
+    mergedHeaders = { ...(mergedHeaders || {}), Authorization: encodeBasicAuthHeader({ username, password }) };
+  }
 
   // Create agent config
   const agentConfig = {
@@ -5490,7 +5717,11 @@ credential material — never sync or commit.
     name: 'CLI Agent',
     agent_uri: agentUrl,
     protocol: protocol,
-    ...(authToken && !useOAuth && !agentOAuthClientCredentials && { auth_token: authToken, requiresAuth: true }),
+    ...(authToken &&
+      !useOAuth &&
+      !agentOAuthClientCredentials &&
+      !useBasicAuth && { auth_token: authToken, requiresAuth: true }),
+    ...(useBasicAuth && { requiresAuth: true }),
     ...(agentOAuthTokens && { oauth_tokens: agentOAuthTokens }),
     ...(agentOAuthClient && { oauth_client: agentOAuthClient }),
     ...(agentOAuthClientCredentials && { oauth_client_credentials: agentOAuthClientCredentials }),
@@ -6011,14 +6242,28 @@ credential material — never sync or commit.
     // `NeedsAuthorizationError` is the richer form (already extended from
     // AuthenticationRequiredError); the string-match branches cover older
     // error shapes from the MCP SDK and other 401 paths.
+    // `Authentication required` matches the plain `AuthenticationRequiredError`
+    // (thrown when the SDK got 401 but couldn't walk OAuth metadata) — that's
+    // the exact shape a Basic-fronted gateway produces, so it's critical the
+    // Basic-hint path catches it.
     const isUnauthorized =
       error instanceof NeedsAuthorizationError ||
       error.name === 'UnauthorizedError' ||
+      error.name === 'AuthenticationRequiredError' ||
       error.message?.toLowerCase().includes('unauthorized') ||
+      error.message?.toLowerCase().includes('authentication required') ||
       error.message?.includes('401');
 
     if (isUnauthorized && protocol === 'mcp' && !useOAuth && !authToken) {
       console.log('\n🔐 Server requires authentication.');
+      // Some agents sit behind an API gateway with a BasicAuthentication policy
+      // (Apigee, Kong, AWS API GW, nginx auth_basic). OAuth won't succeed
+      // against those gateways no matter how the browser flow goes — surface
+      // the alternative before opening the browser so a Basic-fronted adopter
+      // doesn't bounce through a doomed OAuth handshake first.
+      console.log(
+        'If your agent is fronted by an HTTP-Basic gateway, retry with: --auth <user:pass> --auth-scheme basic'
+      );
       console.log('Starting OAuth authentication...\n');
 
       // Run OAuth flow automatically

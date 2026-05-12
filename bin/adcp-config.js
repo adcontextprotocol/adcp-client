@@ -172,13 +172,18 @@ async function interactiveSetup(
   authToken = null,
   nonInteractive = false,
   noAuth = false,
-  headers = null
+  headers = null,
+  authScheme = null
 ) {
   // Non-interactive mode: save immediately without prompts
   if (nonInteractive && url) {
     const agentConfig = { url };
     if (protocol) agentConfig.protocol = protocol;
     if (authToken) agentConfig.auth_token = authToken;
+    // Only persist `auth_scheme` when it diverges from the default. Avoids
+    // a needless `auth_scheme: "bearer"` line in every saved bearer alias
+    // (also keeps existing tests that round-trip the config file passing).
+    if (authToken && authScheme === 'basic') agentConfig.auth_scheme = 'basic';
     if (headers && Object.keys(headers).length > 0) agentConfig.headers = headers;
     // noAuth flag means explicitly don't save auth
 
@@ -219,6 +224,10 @@ async function interactiveSetup(
 
   if (authToken) {
     agentConfig.auth_token = authToken;
+  }
+
+  if (authToken && authScheme === 'basic') {
+    agentConfig.auth_scheme = 'basic';
   }
 
   if (headers && Object.keys(headers).length > 0) {
