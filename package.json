@@ -202,6 +202,7 @@
   ],
   "scripts": {
     "prepare": "node scripts/install-hooks.js 2>/dev/null || true",
+    "sync:agents": "node scripts/import-claude-agents.mjs",
     "prepublishOnly": "npm run clean && npm run sync-schemas:all && (test -f src/lib/types/tools.generated.ts || npm run generate-types) && npm run build:lib && node --test-timeout=60000 --test-force-exit --test test/lib/adcp-client.test.js test/lib/validation.test.js test/lib/zod-schemas.test.js",
     "build": "npm run build:lib",
     "build:lib": "npm run sync-version && npm run schemas:ensure && tsx scripts/generate-wire-spec-fields.ts && tsc --project tsconfig.lib.json && tsx scripts/copy-schemas-to-dist.ts",
