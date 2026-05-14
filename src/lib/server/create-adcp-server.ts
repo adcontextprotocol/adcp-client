@@ -131,6 +131,16 @@ import {
   isSandboxRequest as isSandboxRequestForSeeding,
   mergeSeededProductsIntoResponse,
   filterValidSeededProducts,
+  mergeSeededCreativesIntoResponse,
+  filterValidSeededCreatives,
+  mergeSeededMediaBuysIntoResponse,
+  filterValidSeededMediaBuys,
+  mergeSeededAccountsIntoResponse,
+  filterValidSeededAccounts,
+  mergeSeededAccountFinancialsIntoResponse,
+  filterValidSeededAccountFinancials,
+  mergeSeededCreativeFormatsIntoResponse,
+  filterValidSeededCreativeFormats,
   type TestControllerBridge,
   type TestControllerBridgeContext,
 } from './test-controller-bridge';
@@ -3909,6 +3919,180 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
               // test fixture shouldn't tank the request under test.
               const reason = err instanceof Error ? err.message : String(err);
               logger.warn('testController.getSeededProducts failed; returning handler response unchanged', {
+                tool: toolName,
+                error: reason,
+              });
+            }
+          }
+
+          // --- Test-controller bridge: augment list_creatives with seeded fixtures. ---
+          if (
+            toolName === 'list_creatives' &&
+            testControllerBridge?.getSeededCreatives &&
+            !isErrorResponse(formatted) &&
+            isSandboxRequestForSeeding(params) &&
+            (ctx.account === undefined ||
+              (typeof ctx.account === 'object' &&
+                ctx.account !== null &&
+                (ctx.account as { sandbox?: unknown }).sandbox === true))
+          ) {
+            try {
+              const bridgeCtx: TestControllerBridgeContext<TAccount> = { input: params };
+              if (ctx.account !== undefined) bridgeCtx.account = ctx.account;
+              const rawSeeded = await testControllerBridge.getSeededCreatives(bridgeCtx);
+              const seeded = filterValidSeededCreatives(rawSeeded, logger);
+              if (seeded.length > 0) {
+                const sc = formatted.structuredContent as
+                  | import('../types/tools.generated').ListCreativesResponse
+                  | undefined;
+                if (sc && typeof sc === 'object') {
+                  const merged = mergeSeededCreativesIntoResponse(sc, seeded);
+                  formatted = wrap(merged);
+                }
+              }
+            } catch (err) {
+              const reason = err instanceof Error ? err.message : String(err);
+              logger.warn('testController.getSeededCreatives failed; returning handler response unchanged', {
+                tool: toolName,
+                error: reason,
+              });
+            }
+          }
+
+          // --- Test-controller bridge: augment get_media_buys with seeded fixtures. ---
+          if (
+            toolName === 'get_media_buys' &&
+            testControllerBridge?.getSeededMediaBuys &&
+            !isErrorResponse(formatted) &&
+            isSandboxRequestForSeeding(params) &&
+            (ctx.account === undefined ||
+              (typeof ctx.account === 'object' &&
+                ctx.account !== null &&
+                (ctx.account as { sandbox?: unknown }).sandbox === true))
+          ) {
+            try {
+              const bridgeCtx: TestControllerBridgeContext<TAccount> = { input: params };
+              if (ctx.account !== undefined) bridgeCtx.account = ctx.account;
+              const rawSeeded = await testControllerBridge.getSeededMediaBuys(bridgeCtx);
+              const seeded = filterValidSeededMediaBuys(rawSeeded, logger);
+              if (seeded.length > 0) {
+                const sc = formatted.structuredContent as
+                  | import('../types/tools.generated').GetMediaBuysResponse
+                  | undefined;
+                if (sc && typeof sc === 'object') {
+                  const merged = mergeSeededMediaBuysIntoResponse(sc, seeded);
+                  formatted = wrap(merged);
+                }
+              }
+            } catch (err) {
+              const reason = err instanceof Error ? err.message : String(err);
+              logger.warn('testController.getSeededMediaBuys failed; returning handler response unchanged', {
+                tool: toolName,
+                error: reason,
+              });
+            }
+          }
+
+          // --- Test-controller bridge: augment list_accounts with seeded fixtures. ---
+          if (
+            toolName === 'list_accounts' &&
+            testControllerBridge?.getSeededAccounts &&
+            !isErrorResponse(formatted) &&
+            isSandboxRequestForSeeding(params) &&
+            (ctx.account === undefined ||
+              (typeof ctx.account === 'object' &&
+                ctx.account !== null &&
+                (ctx.account as { sandbox?: unknown }).sandbox === true))
+          ) {
+            try {
+              const bridgeCtx: TestControllerBridgeContext<TAccount> = { input: params };
+              if (ctx.account !== undefined) bridgeCtx.account = ctx.account;
+              const rawSeeded = await testControllerBridge.getSeededAccounts(bridgeCtx);
+              const seeded = filterValidSeededAccounts(rawSeeded, logger);
+              if (seeded.length > 0) {
+                const sc = formatted.structuredContent as
+                  | import('../types/tools.generated').ListAccountsResponse
+                  | undefined;
+                if (sc && typeof sc === 'object') {
+                  const merged = mergeSeededAccountsIntoResponse(sc, seeded);
+                  formatted = wrap(merged);
+                }
+              }
+            } catch (err) {
+              const reason = err instanceof Error ? err.message : String(err);
+              logger.warn('testController.getSeededAccounts failed; returning handler response unchanged', {
+                tool: toolName,
+                error: reason,
+              });
+            }
+          }
+
+          // --- Test-controller bridge: overlay get_account_financials with seeded fixtures. ---
+          // Unlike list tools, get_account_financials returns a single object. The seeded
+          // entry deep-merges onto the handler's response (seeded fields win). This lets
+          // proxy sellers inject the financial values a conformance storyboard expects
+          // without needing a live upstream billing API.
+          if (
+            toolName === 'get_account_financials' &&
+            testControllerBridge?.getSeededAccountFinancials &&
+            !isErrorResponse(formatted) &&
+            isSandboxRequestForSeeding(params) &&
+            (ctx.account === undefined ||
+              (typeof ctx.account === 'object' &&
+                ctx.account !== null &&
+                (ctx.account as { sandbox?: unknown }).sandbox === true))
+          ) {
+            try {
+              const bridgeCtx: TestControllerBridgeContext<TAccount> = { input: params };
+              if (ctx.account !== undefined) bridgeCtx.account = ctx.account;
+              const rawSeeded = await testControllerBridge.getSeededAccountFinancials(bridgeCtx);
+              const seeded = filterValidSeededAccountFinancials(rawSeeded, logger);
+              if (seeded.length > 0) {
+                const sc = formatted.structuredContent as
+                  | import('../types/tools.generated').GetAccountFinancialsSuccess
+                  | undefined;
+                if (sc && typeof sc === 'object') {
+                  const merged = mergeSeededAccountFinancialsIntoResponse(sc, seeded);
+                  formatted = wrap(merged);
+                }
+              }
+            } catch (err) {
+              const reason = err instanceof Error ? err.message : String(err);
+              logger.warn('testController.getSeededAccountFinancials failed; returning handler response unchanged', {
+                tool: toolName,
+                error: reason,
+              });
+            }
+          }
+
+          // --- Test-controller bridge: augment list_creative_formats with seeded fixtures. ---
+          if (
+            toolName === 'list_creative_formats' &&
+            testControllerBridge?.getSeededCreativeFormats &&
+            !isErrorResponse(formatted) &&
+            isSandboxRequestForSeeding(params) &&
+            (ctx.account === undefined ||
+              (typeof ctx.account === 'object' &&
+                ctx.account !== null &&
+                (ctx.account as { sandbox?: unknown }).sandbox === true))
+          ) {
+            try {
+              const bridgeCtx: TestControllerBridgeContext<TAccount> = { input: params };
+              if (ctx.account !== undefined) bridgeCtx.account = ctx.account;
+              const rawSeeded = await testControllerBridge.getSeededCreativeFormats(bridgeCtx);
+              const seeded = filterValidSeededCreativeFormats(rawSeeded, logger);
+              if (seeded.length > 0) {
+                const sc = formatted.structuredContent as
+                  | import('../types/tools.generated').ListCreativeFormatsResponse
+                  | undefined;
+                if (sc && typeof sc === 'object') {
+                  const merged = mergeSeededCreativeFormatsIntoResponse(sc, seeded);
+                  formatted = wrap(merged);
+                }
+              }
+            } catch (err) {
+              const reason = err instanceof Error ? err.message : String(err);
+              logger.warn('testController.getSeededCreativeFormats failed; returning handler response unchanged', {
                 tool: toolName,
                 error: reason,
               });

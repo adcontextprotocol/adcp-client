@@ -10,25 +10,47 @@
  *
  * This module exposes a small declarative shape (`TestControllerBridge`)
  * that the server config accepts; when present, the dispatcher augments
- * `get_products` responses with seeded products on sandbox requests, and
+ * read-path responses with seeded fixtures on sandbox requests, and
  * leaves production traffic untouched.
  *
- * The bridge intentionally does NOT know how seeded products are stored.
- * Sellers provide a `getSeededProducts` callback that returns the list the
- * SDK should merge — which lets the same wiring work whether the backing
- * store is in-memory, Postgres, Redis, or a mock.
+ * The bridge intentionally does NOT know how seeded fixtures are stored.
+ * Sellers provide callbacks that return the lists the SDK should merge —
+ * which lets the same wiring work whether the backing store is in-memory,
+ * Postgres, Redis, or a mock.
+ *
+ * Platform-proxy sellers (DSPs, walled gardens, retail-media networks whose
+ * read path calls an upstream API rather than a local store) use these
+ * callbacks to inject seeded fixtures so conformance storyboards see the
+ * expected data without needing live upstream OAuth.
  */
 
-import type { Product, GetProductsResponse } from '../types/tools.generated';
-import { mergeSeedProduct } from '../testing/seed-merge';
+import type {
+  Product,
+  GetProductsResponse,
+  ListCreativesResponse,
+  GetMediaBuysResponse,
+  ListAccountsResponse,
+  GetAccountFinancialsSuccess,
+  Format,
+} from '../types/tools.generated';
+import { mergeSeed, mergeSeedProduct } from '../testing/seed-merge';
+
+/** Element type of `ListCreativesResponse.creatives`. */
+export type SeededCreative = ListCreativesResponse['creatives'][number];
+
+/** Element type of `GetMediaBuysResponse.media_buys`. */
+export type SeededMediaBuy = GetMediaBuysResponse['media_buys'][number];
+
+/** Account type used in `ListAccountsResponse.accounts`. */
+export type { Format };
 
 /**
- * Context passed to {@link TestControllerBridge.getSeededProducts}.
+ * Context passed to each {@link TestControllerBridge} callback.
  *
- * `input` is the raw `get_products` request as received over the wire (post
- * MCP schema validation). `account` is the resolved seller account when
- * `resolveAccount` is configured on `createAdcpServer`, else `undefined` —
- * sellers who key seeded fixtures per account read it from here.
+ * `input` is the raw request as received over the wire (post MCP schema
+ * validation). `account` is the resolved seller account when `resolveAccount`
+ * is configured on `createAdcpServer`, else `undefined` — sellers who key
+ * seeded fixtures per account read it from here.
  */
 export interface TestControllerBridgeContext<TAccount = unknown> {
   input: Record<string, unknown>;
@@ -40,24 +62,75 @@ export interface TestControllerBridgeContext<TAccount = unknown> {
  * spec-tool pipeline.
  *
  * Set on `AdcpServerConfig.testController`; when absent, behavior is
- * unchanged. The bridge is opt-in via the presence of `getSeededProducts`
- * — omit it to hold seeded state without changing response shape.
+ * unchanged. Each callback is opt-in via presence — omit a callback to
+ * hold seeded state without changing that tool's response shape.
+ *
+ * All callbacks fire ONLY on sandbox requests (the framework gates on
+ * `account.sandbox === true` or `context.sandbox === true` plus the
+ * resolved-account check). They must still re-verify `ctx.account` is
+ * sandbox-scoped internally if they key fixtures by account.
+ *
+ * Post-handler merge contract: the registered handler runs first, the
+ * callback returns seeded entries, and the framework merges them into
+ * the handler's response. For list tools, seeded entries append after
+ * dedup (seeded wins on ID collision). For single-record tools
+ * (`get_account_financials`), the first seeded entry overlays the
+ * handler's response field-by-field via deep merge (seeded fields win).
  */
 export interface TestControllerBridge<TAccount = unknown> {
   /**
-   * Retrieve seeded products for the current request. Return an empty
-   * array (or `undefined`) when nothing is seeded. The returned products
-   * are appended to the handler's `get_products` response; on
-   * `product_id` collision, the seeded entry wins (sellers who seed to
-   * override default inventory expect their fixture to take precedence).
+   * Retrieve seeded products for the current `get_products` request.
    *
-   * Scope your implementation to `ctx.account`; the framework's sandbox
-   * check is a namespace selector, not an authority boundary. Your
-   * callback MUST re-verify that `ctx.account` is a sandbox account
-   * before returning fixtures (and the framework additionally skips the
-   * bridge when it has a resolved non-sandbox account, belt-and-suspenders).
+   * Return an empty array (or `undefined`) when nothing is seeded. The
+   * returned products are appended to the handler's response; on
+   * `product_id` collision, the seeded entry wins.
    */
   getSeededProducts?: (ctx: TestControllerBridgeContext<TAccount>) => Promise<Product[]> | Product[];
+
+  /**
+   * Retrieve seeded creatives for the current `list_creatives` request.
+   *
+   * Returned entries are appended to the handler's `creatives` array; on
+   * `creative_id` collision the seeded entry wins. The `query_summary.returned`
+   * count is updated to reflect the merged length.
+   */
+  getSeededCreatives?: (ctx: TestControllerBridgeContext<TAccount>) => Promise<SeededCreative[]> | SeededCreative[];
+
+  /**
+   * Retrieve seeded media buys for the current `get_media_buys` request.
+   *
+   * Returned entries are appended to the handler's `media_buys` array; on
+   * `media_buy_id` collision the seeded entry wins.
+   */
+  getSeededMediaBuys?: (ctx: TestControllerBridgeContext<TAccount>) => Promise<SeededMediaBuy[]> | SeededMediaBuy[];
+
+  /**
+   * Retrieve seeded accounts for the current `list_accounts` request.
+   *
+   * Returned entries are appended to the handler's `accounts` array; on
+   * `account_id` collision the seeded entry wins.
+   */
+  getSeededAccounts?: (ctx: TestControllerBridgeContext<TAccount>) => Promise<ListAccountsResponse['accounts'][number][]> | ListAccountsResponse['accounts'][number][];
+
+  /**
+   * Retrieve seeded account financials for the current `get_account_financials`
+   * request.
+   *
+   * The first valid entry in the returned array is deep-merged onto the
+   * handler's `GetAccountFinancialsSuccess` response (seeded fields win on
+   * collision). If the handler returns an error arm or no seeded entries are
+   * provided, the handler response is returned unchanged.
+   */
+  getSeededAccountFinancials?: (ctx: TestControllerBridgeContext<TAccount>) => Promise<GetAccountFinancialsSuccess[]> | GetAccountFinancialsSuccess[];
+
+  /**
+   * Retrieve seeded creative formats for the current `list_creative_formats`
+   * request.
+   *
+   * Returned entries are appended to the handler's `formats` array; on
+   * `format_id.agent_url + format_id.id` collision the seeded entry wins.
+   */
+  getSeededCreativeFormats?: (ctx: TestControllerBridgeContext<TAccount>) => Promise<Format[]> | Format[];
 }
 
 /**
@@ -84,6 +157,10 @@ export function isSandboxRequest(input: Record<string, unknown>): boolean {
   }
   return false;
 }
+
+// ---------------------------------------------------------------------------
+// get_products merge helpers
+// ---------------------------------------------------------------------------
 
 /**
  * Merge seeded products into a `get_products` response payload.
@@ -161,6 +238,329 @@ export function filterValidSeededProducts(
   return valid;
 }
 
+// ---------------------------------------------------------------------------
+// list_creatives merge helpers
+// ---------------------------------------------------------------------------
+
+/**
+ * Merge seeded creatives into a `list_creatives` response payload.
+ *
+ * Handler-returned creatives come first; seeded entries append after deduping
+ * by `creative_id`. On collision the seeded entry wins. The
+ * `query_summary.returned` count is updated to match the merged array length.
+ * The `sandbox: true` flag is stamped unless the handler explicitly set
+ * `sandbox: false`.
+ */
+export function mergeSeededCreativesIntoResponse(
+  response: ListCreativesResponse,
+  seeded: readonly SeededCreative[]
+): ListCreativesResponse {
+  if (!seeded.length) return response;
+
+  const seededIds = new Set<string>();
+  for (const c of seeded) seededIds.add(c.creative_id);
+
+  const handlerCreatives = Array.isArray(response.creatives) ? response.creatives : [];
+  const retained = handlerCreatives.filter(c => !seededIds.has(c?.creative_id));
+  const mergedList = [...retained, ...seeded];
+
+  return {
+    ...response,
+    creatives: mergedList,
+    query_summary: {
+      ...response.query_summary,
+      returned: mergedList.length,
+    },
+    sandbox: response.sandbox !== false ? true : response.sandbox,
+  };
+}
+
+/**
+ * Validate and normalize seeded creatives. Entries missing `creative_id` or
+ * that are not plain objects are dropped with a warning.
+ */
+export function filterValidSeededCreatives(
+  raw: unknown,
+  logger?: { warn: (message: string, meta?: Record<string, unknown>) => void }
+): SeededCreative[] {
+  if (!Array.isArray(raw)) {
+    logger?.warn('testController.getSeededCreatives did not return an array; skipping bridge', {
+      received: typeof raw,
+    });
+    return [];
+  }
+  const valid: SeededCreative[] = [];
+  raw.forEach((entry, index) => {
+    if (!entry || typeof entry !== 'object' || Array.isArray(entry)) {
+      logger?.warn('testController.getSeededCreatives entry is not an object; dropping', { index });
+      return;
+    }
+    const id = (entry as { creative_id?: unknown }).creative_id;
+    if (typeof id !== 'string' || id.length === 0) {
+      logger?.warn('testController.getSeededCreatives entry missing creative_id; dropping', { index });
+      return;
+    }
+    valid.push(entry as SeededCreative);
+  });
+  return valid;
+}
+
+// ---------------------------------------------------------------------------
+// get_media_buys merge helpers
+// ---------------------------------------------------------------------------
+
+/**
+ * Merge seeded media buys into a `get_media_buys` response payload.
+ *
+ * Handler-returned media buys come first; seeded entries append after deduping
+ * by `media_buy_id`. On collision the seeded entry wins. The `sandbox: true`
+ * flag is stamped unless the handler explicitly set `sandbox: false`.
+ */
+export function mergeSeededMediaBuysIntoResponse(
+  response: GetMediaBuysResponse,
+  seeded: readonly SeededMediaBuy[]
+): GetMediaBuysResponse {
+  if (!seeded.length) return response;
+
+  const seededIds = new Set<string>();
+  for (const m of seeded) seededIds.add(m.media_buy_id);
+
+  const handlerBuys = Array.isArray(response.media_buys) ? response.media_buys : [];
+  const retained = handlerBuys.filter(m => !seededIds.has(m?.media_buy_id));
+
+  return {
+    ...response,
+    media_buys: [...retained, ...seeded],
+    sandbox: response.sandbox !== false ? true : response.sandbox,
+  };
+}
+
+/**
+ * Validate and normalize seeded media buys. Entries missing `media_buy_id` or
+ * that are not plain objects are dropped with a warning.
+ */
+export function filterValidSeededMediaBuys(
+  raw: unknown,
+  logger?: { warn: (message: string, meta?: Record<string, unknown>) => void }
+): SeededMediaBuy[] {
+  if (!Array.isArray(raw)) {
+    logger?.warn('testController.getSeededMediaBuys did not return an array; skipping bridge', {
+      received: typeof raw,
+    });
+    return [];
+  }
+  const valid: SeededMediaBuy[] = [];
+  raw.forEach((entry, index) => {
+    if (!entry || typeof entry !== 'object' || Array.isArray(entry)) {
+      logger?.warn('testController.getSeededMediaBuys entry is not an object; dropping', { index });
+      return;
+    }
+    const id = (entry as { media_buy_id?: unknown }).media_buy_id;
+    if (typeof id !== 'string' || id.length === 0) {
+      logger?.warn('testController.getSeededMediaBuys entry missing media_buy_id; dropping', { index });
+      return;
+    }
+    valid.push(entry as SeededMediaBuy);
+  });
+  return valid;
+}
+
+// ---------------------------------------------------------------------------
+// list_accounts merge helpers
+// ---------------------------------------------------------------------------
+
+/**
+ * Merge seeded accounts into a `list_accounts` response payload.
+ *
+ * Handler-returned accounts come first; seeded entries append after deduping
+ * by `account_id`. On collision the seeded entry wins.
+ */
+export function mergeSeededAccountsIntoResponse(
+  response: ListAccountsResponse,
+  seeded: readonly ListAccountsResponse['accounts'][number][]
+): ListAccountsResponse {
+  if (!seeded.length) return response;
+
+  const seededIds = new Set<string>();
+  for (const a of seeded) seededIds.add(a.account_id);
+
+  const handlerAccounts = Array.isArray(response.accounts) ? response.accounts : [];
+  const retained = handlerAccounts.filter(a => !seededIds.has(a?.account_id));
+
+  return {
+    ...response,
+    accounts: [...retained, ...seeded],
+  };
+}
+
+/**
+ * Validate and normalize seeded accounts. Entries missing `account_id` or
+ * that are not plain objects are dropped with a warning.
+ */
+export function filterValidSeededAccounts(
+  raw: unknown,
+  logger?: { warn: (message: string, meta?: Record<string, unknown>) => void }
+): ListAccountsResponse['accounts'][number][] {
+  if (!Array.isArray(raw)) {
+    logger?.warn('testController.getSeededAccounts did not return an array; skipping bridge', {
+      received: typeof raw,
+    });
+    return [];
+  }
+  const valid: ListAccountsResponse['accounts'][number][] = [];
+  raw.forEach((entry, index) => {
+    if (!entry || typeof entry !== 'object' || Array.isArray(entry)) {
+      logger?.warn('testController.getSeededAccounts entry is not an object; dropping', { index });
+      return;
+    }
+    const id = (entry as { account_id?: unknown }).account_id;
+    if (typeof id !== 'string' || id.length === 0) {
+      logger?.warn('testController.getSeededAccounts entry missing account_id; dropping', { index });
+      return;
+    }
+    valid.push(entry as ListAccountsResponse['accounts'][number]);
+  });
+  return valid;
+}
+
+// ---------------------------------------------------------------------------
+// get_account_financials merge helpers
+// ---------------------------------------------------------------------------
+
+/**
+ * Merge seeded account financials onto a `get_account_financials` success
+ * response.
+ *
+ * Unlike list tools, `get_account_financials` returns a single object per
+ * call. The first valid seeded entry is deep-merged onto the handler's
+ * response: seeded fields win on collision. If no seeded entries are
+ * provided, the handler response is returned unchanged.
+ *
+ * This allows proxy sellers to seed the financial values the conformance
+ * storyboard expects without needing a live upstream billing API.
+ */
+export function mergeSeededAccountFinancialsIntoResponse(
+  response: GetAccountFinancialsSuccess,
+  seeded: readonly GetAccountFinancialsSuccess[]
+): GetAccountFinancialsSuccess {
+  if (!seeded.length) return response;
+  return mergeSeed(response, seeded[0] as Partial<GetAccountFinancialsSuccess>) as GetAccountFinancialsSuccess;
+}
+
+/**
+ * Validate and normalize seeded account financials. Entries lacking a plain
+ * `account` object or `currency` string are dropped with a warning.
+ */
+export function filterValidSeededAccountFinancials(
+  raw: unknown,
+  logger?: { warn: (message: string, meta?: Record<string, unknown>) => void }
+): GetAccountFinancialsSuccess[] {
+  if (!Array.isArray(raw)) {
+    logger?.warn('testController.getSeededAccountFinancials did not return an array; skipping bridge', {
+      received: typeof raw,
+    });
+    return [];
+  }
+  const valid: GetAccountFinancialsSuccess[] = [];
+  raw.forEach((entry, index) => {
+    if (!entry || typeof entry !== 'object' || Array.isArray(entry)) {
+      logger?.warn('testController.getSeededAccountFinancials entry is not an object; dropping', { index });
+      return;
+    }
+    const e = entry as Record<string, unknown>;
+    if (!e.account || typeof e.account !== 'object') {
+      logger?.warn('testController.getSeededAccountFinancials entry missing account; dropping', { index });
+      return;
+    }
+    if (typeof e.currency !== 'string' || e.currency.length === 0) {
+      logger?.warn('testController.getSeededAccountFinancials entry missing currency; dropping', { index });
+      return;
+    }
+    valid.push(entry as GetAccountFinancialsSuccess);
+  });
+  return valid;
+}
+
+// ---------------------------------------------------------------------------
+// list_creative_formats merge helpers
+// ---------------------------------------------------------------------------
+
+/**
+ * Merge seeded creative formats into a `list_creative_formats` response
+ * payload.
+ *
+ * Handler-returned formats come first; seeded entries append after deduping
+ * by `format_id.agent_url + format_id.id` composite. On collision the seeded
+ * entry wins. The `sandbox: true` flag is stamped unless the handler
+ * explicitly set `sandbox: false`.
+ */
+export function mergeSeededCreativeFormatsIntoResponse(
+  response: import('../types/tools.generated').ListCreativeFormatsResponse,
+  seeded: readonly Format[]
+): import('../types/tools.generated').ListCreativeFormatsResponse {
+  if (!seeded.length) return response;
+
+  const seededKeys = new Set<string>();
+  for (const f of seeded) {
+    seededKeys.add(`${f.format_id.agent_url}\0${f.format_id.id}`);
+  }
+
+  const handlerFormats = Array.isArray(response.formats) ? response.formats : [];
+  const retained = handlerFormats.filter(f => {
+    if (!f?.format_id) return true;
+    return !seededKeys.has(`${f.format_id.agent_url}\0${f.format_id.id}`);
+  });
+
+  return {
+    ...response,
+    formats: [...retained, ...seeded],
+    sandbox: response.sandbox !== false ? true : response.sandbox,
+  };
+}
+
+/**
+ * Validate and normalize seeded creative formats. Entries lacking a
+ * `format_id` with string `agent_url` and `id` fields are dropped.
+ */
+export function filterValidSeededCreativeFormats(
+  raw: unknown,
+  logger?: { warn: (message: string, meta?: Record<string, unknown>) => void }
+): Format[] {
+  if (!Array.isArray(raw)) {
+    logger?.warn('testController.getSeededCreativeFormats did not return an array; skipping bridge', {
+      received: typeof raw,
+    });
+    return [];
+  }
+  const valid: Format[] = [];
+  raw.forEach((entry, index) => {
+    if (!entry || typeof entry !== 'object' || Array.isArray(entry)) {
+      logger?.warn('testController.getSeededCreativeFormats entry is not an object; dropping', { index });
+      return;
+    }
+    const fid = (entry as { format_id?: unknown }).format_id;
+    if (!fid || typeof fid !== 'object' || Array.isArray(fid)) {
+      logger?.warn('testController.getSeededCreativeFormats entry missing format_id; dropping', { index });
+      return;
+    }
+    const { agent_url, id } = fid as { agent_url?: unknown; id?: unknown };
+    if (typeof agent_url !== 'string' || agent_url.length === 0) {
+      logger?.warn('testController.getSeededCreativeFormats entry missing format_id.agent_url; dropping', { index });
+      return;
+    }
+    if (typeof id !== 'string' || id.length === 0) {
+      logger?.warn('testController.getSeededCreativeFormats entry missing format_id.id; dropping', { index });
+      return;
+    }
+    valid.push(entry as Format);
+  });
+  return valid;
+}
+
+// ---------------------------------------------------------------------------
+// bridgeFromTestControllerStore — process-wide Map-backed bridge (products)
+// ---------------------------------------------------------------------------
+
 /**
  * Bridge the default test-controller store (a `Map<string, unknown>` that
  * holds seeded fixtures by `product_id`, populated by `seed_product` scenarios)
@@ -206,26 +606,29 @@ export function bridgeFromTestControllerStore<TAccount = unknown>(
   };
 }
 
+// ---------------------------------------------------------------------------
+// bridgeFromSessionStore — session-scoped bridge (all entities)
+// ---------------------------------------------------------------------------
+
 /**
  * Options for {@link bridgeFromSessionStore}.
  *
  * Passed as an options object (rather than positional args) so future
- * additions (logger, sandbox override, cache hooks) land non-breakingly.
- * `loadSession` here receives the raw `get_products` request — distinct
- * from any session-loader a seller writes elsewhere that takes `{ context }`.
+ * additions land non-breakingly. `loadSession` receives the raw request —
+ * distinct from any session-loader a seller writes elsewhere that takes
+ * `{ context }`.
  */
 export interface BridgeFromSessionStoreOptions<TSession> {
   /**
-   * Resolve the session for the current request. Receives the raw
-   * `get_products` request post-schema-validation; pull whatever key
-   * you use (`session_id`, `brand.domain`, `account_id`) out of
-   * `input.context` / `input.account` / `input.brand` and return the
-   * session object. May be async.
+   * Resolve the session for the current request. Receives the raw request
+   * post-schema-validation; pull whatever key you use (`session_id`,
+   * `brand.domain`, `account_id`) out of `input.context` / `input.account`
+   * / `input.brand` and return the session object. May be async.
    *
-   * Errors propagate unchanged to the dispatcher — a `loadSession`
-   * rejection fails the bridge call rather than silently producing an
-   * empty seed list (seed loss under DB failure would be worse than a
-   * loud error, and the storyboard runner surfaces the failure).
+   * Errors propagate unchanged — a `loadSession` rejection fails the bridge
+   * call rather than silently producing an empty seed list (seed loss under
+   * DB failure would be worse than a loud error, and the storyboard runner
+   * surfaces the failure).
    */
   loadSession: (input: Record<string, unknown>) => Promise<TSession> | TSession;
 
@@ -251,6 +654,43 @@ export interface BridgeFromSessionStoreOptions<TSession> {
    * / pricing / property fields the response schema requires.
    */
   productDefaults?: Partial<Product>;
+
+  /**
+   * Extract seeded creatives from a resolved session. Return an array (or
+   * a Promise of one) of {@link SeededCreative} objects, or `null` /
+   * `undefined` when nothing is seeded. Each entry must have a `creative_id`.
+   */
+  selectSeededCreatives?: (session: TSession) => SeededCreative[] | Promise<SeededCreative[] | null | undefined> | null | undefined;
+
+  /**
+   * Extract seeded media buys from a resolved session. Return an array (or
+   * a Promise of one) of {@link SeededMediaBuy} objects, or `null` /
+   * `undefined` when nothing is seeded. Each entry must have a `media_buy_id`.
+   */
+  selectSeededMediaBuys?: (session: TSession) => SeededMediaBuy[] | Promise<SeededMediaBuy[] | null | undefined> | null | undefined;
+
+  /**
+   * Extract seeded accounts from a resolved session. Return an array (or a
+   * Promise of one) of account objects, or `null` / `undefined` when nothing
+   * is seeded. Each entry must have an `account_id`.
+   */
+  selectSeededAccounts?: (session: TSession) => ListAccountsResponse['accounts'][number][] | Promise<ListAccountsResponse['accounts'][number][] | null | undefined> | null | undefined;
+
+  /**
+   * Extract seeded account financials from a resolved session. Return an
+   * array (or a Promise of one) of {@link GetAccountFinancialsSuccess} objects,
+   * or `null` / `undefined` when nothing is seeded. The first valid entry is
+   * deep-merged onto the handler's response.
+   */
+  selectSeededAccountFinancials?: (session: TSession) => GetAccountFinancialsSuccess[] | Promise<GetAccountFinancialsSuccess[] | null | undefined> | null | undefined;
+
+  /**
+   * Extract seeded creative formats from a resolved session. Return an array
+   * (or a Promise of one) of {@link Format} objects, or `null` / `undefined`
+   * when nothing is seeded. Each entry must have a `format_id` with
+   * `agent_url` and `id`.
+   */
+  selectSeededCreativeFormats?: (session: TSession) => Format[] | Promise<Format[] | null | undefined> | null | undefined;
 }
 
 /**
@@ -259,9 +699,13 @@ export interface BridgeFromSessionStoreOptions<TSession> {
  * {@link bridgeFromTestControllerStore} closes over a single `Map` at
  * construction time — fine for a process-wide seed store, but doesn't
  * compose with sellers whose seed state is per-tenant / per-brand / per-
- * `account_id` and loaded from Postgres or Redis on every request. Those
- * sellers end up rewriting the same "load session, pull the seed Map,
- * merge into products" glue each time.
+ * `account_id` and loaded from Postgres or Redis on every request.
+ *
+ * This helper covers the full set of bridgeable tools: `get_products`,
+ * `list_creatives`, `get_media_buys`, `list_accounts`,
+ * `get_account_financials`, and `list_creative_formats`. Each entity
+ * type has its own optional `select*` callback — omit the ones you don't
+ * need.
  *
  * Sandbox gating and dedup happen in the dispatcher (same path as the
  * default-store bridge); this helper returns fixtures unconditionally
@@ -275,6 +719,11 @@ export interface BridgeFromSessionStoreOptions<TSession> {
  *   testController: bridgeFromSessionStore({
  *     loadSession: (input) => loadComplySession(sessionKeyFromInput(input)),
  *     selectSeededProducts: (session) => session.complyExtensions.seededProducts,
+ *     selectSeededCreatives: (session) => session.complyExtensions.seededCreatives,
+ *     selectSeededMediaBuys: (session) => session.complyExtensions.seededMediaBuys,
+ *     selectSeededAccounts: (session) => session.complyExtensions.seededAccounts,
+ *     selectSeededAccountFinancials: (session) => session.complyExtensions.seededFinancials,
+ *     selectSeededCreativeFormats: (session) => session.complyExtensions.seededFormats,
  *     productDefaults: SEED_PRODUCT_DEFAULTS,
  *   }),
  * });
@@ -283,7 +732,17 @@ export interface BridgeFromSessionStoreOptions<TSession> {
 export function bridgeFromSessionStore<TSession, TAccount = unknown>(
   opts: BridgeFromSessionStoreOptions<TSession>
 ): TestControllerBridge<TAccount> {
-  const { loadSession, selectSeededProducts, productDefaults = {} } = opts;
+  const {
+    loadSession,
+    selectSeededProducts,
+    productDefaults = {},
+    selectSeededCreatives,
+    selectSeededMediaBuys,
+    selectSeededAccounts,
+    selectSeededAccountFinancials,
+    selectSeededCreativeFormats,
+  } = opts;
+
   return {
     getSeededProducts: async ctx => {
       const session = await loadSession(ctx.input);
@@ -299,5 +758,45 @@ export function bridgeFromSessionStore<TSession, TAccount = unknown>(
       }
       return out;
     },
+
+    getSeededCreatives: selectSeededCreatives
+      ? async ctx => {
+          const session = await loadSession(ctx.input);
+          const entries = await selectSeededCreatives(session);
+          return entries ?? [];
+        }
+      : undefined,
+
+    getSeededMediaBuys: selectSeededMediaBuys
+      ? async ctx => {
+          const session = await loadSession(ctx.input);
+          const entries = await selectSeededMediaBuys(session);
+          return entries ?? [];
+        }
+      : undefined,
+
+    getSeededAccounts: selectSeededAccounts
+      ? async ctx => {
+          const session = await loadSession(ctx.input);
+          const entries = await selectSeededAccounts(session);
+          return entries ?? [];
+        }
+      : undefined,
+
+    getSeededAccountFinancials: selectSeededAccountFinancials
+      ? async ctx => {
+          const session = await loadSession(ctx.input);
+          const entries = await selectSeededAccountFinancials(session);
+          return entries ?? [];
+        }
+      : undefined,
+
+    getSeededCreativeFormats: selectSeededCreativeFormats
+      ? async ctx => {
+          const session = await loadSession(ctx.input);
+          const entries = await selectSeededCreativeFormats(session);
+          return entries ?? [];
+        }
+      : undefined,
   };
 }
