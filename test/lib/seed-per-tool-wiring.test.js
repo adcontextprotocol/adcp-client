@@ -1443,3 +1443,724 @@ describe('bridgeFromSessionStore — selectSeededMediaBuyDelivery', () => {
     assert.equal(bridge.getSeededMediaBuyDelivery, undefined);
   });
 });
+
+// ---------------------------------------------------------------------------
+// getSeededPropertyLists — list_property_lists (append-merge)
+// ---------------------------------------------------------------------------
+
+describe('createAdcpServer — getSeededPropertyLists wiring (list_property_lists)', () => {
+  function handlerWith(lists) {
+    return async () => ({ lists });
+  }
+
+  function plist(id, overrides = {}) {
+    return { list_id: id, name: `List ${id}`, ...overrides };
+  }
+
+  it('appends seeded property lists to handler output on sandbox requests', async () => {
+    const server = createAdcpServer({
+      name: 'Test',
+      version: '1.0.0',
+      governance: { listPropertyLists: handlerWith([plist('h-1')]) },
+      testController: {
+        getSeededPropertyLists: () => [plist('s-1'), plist('s-2')],
+      },
+    });
+    const res = await dispatch(server, 'list_property_lists', { account: SANDBOX_ACCOUNT });
+    assert.deepEqual(
+      res.structuredContent.lists.map(l => l.list_id),
+      ['h-1', 's-1', 's-2']
+    );
+  });
+
+  it('returns seeded-only entries when handler returned empty', async () => {
+    const server = createAdcpServer({
+      name: 'Test',
+      version: '1.0.0',
+      governance: { listPropertyLists: handlerWith([]) },
+      testController: { getSeededPropertyLists: () => [plist('s-1')] },
+    });
+    const res = await dispatch(server, 'list_property_lists', { account: SANDBOX_ACCOUNT });
+    assert.deepEqual(
+      res.structuredContent.lists.map(l => l.list_id),
+      ['s-1']
+    );
+  });
+
+  it('returns handler-only entries when bridge is omitted', async () => {
+    const server = createAdcpServer({
+      name: 'Test',
+      version: '1.0.0',
+      governance: { listPropertyLists: handlerWith([plist('h-1'), plist('h-2')]) },
+      testController: {},
+    });
+    const res = await dispatch(server, 'list_property_lists', { account: SANDBOX_ACCOUNT });
+    assert.deepEqual(
+      res.structuredContent.lists.map(l => l.list_id),
+      ['h-1', 'h-2']
+    );
+  });
+
+  it('seeded wins on list_id collision; mixed [A, B] handler + [B, C] bridge → [A, B-seeded, C]', async () => {
+    const server = createAdcpServer({
+      name: 'Test',
+      version: '1.0.0',
+      governance: {
+        listPropertyLists: handlerWith([plist('A', { name: 'Handler A' }), plist('B', { name: 'Handler B' })]),
+      },
+      testController: {
+        getSeededPropertyLists: () => [plist('B', { name: 'Seeded B' }), plist('C', { name: 'Seeded C' })],
+      },
+    });
+    const res = await dispatch(server, 'list_property_lists', { account: SANDBOX_ACCOUNT });
+    const byId = Object.fromEntries(res.structuredContent.lists.map(l => [l.list_id, l.name]));
+    assert.deepEqual(Object.keys(byId).sort(), ['A', 'B', 'C']);
+    assert.equal(byId.A, 'Handler A');
+    assert.equal(byId.B, 'Seeded B', 'seeded wins on collision');
+    assert.equal(byId.C, 'Seeded C');
+  });
+
+  it('updates pagination.total_count by the non-colliding seeded count', async () => {
+    const server = createAdcpServer({
+      name: 'Test',
+      version: '1.0.0',
+      governance: {
+        listPropertyLists: async () => ({
+          lists: [plist('A'), plist('B')],
+          pagination: { has_more: false, total_count: 2 },
+        }),
+      },
+      testController: {
+        getSeededPropertyLists: () => [plist('B'), plist('C'), plist('D')],
+      },
+    });
+    const res = await dispatch(server, 'list_property_lists', { account: SANDBOX_ACCOUNT });
+    // 2 new seeded (C, D); B collided (seeded wins, no count increment).
+    assert.equal(res.structuredContent.pagination.total_count, 4);
+  });
+
+  it('does not call the bridge on non-sandbox requests', async () => {
+    let called = false;
+    const server = createAdcpServer({
+      name: 'Test',
+      version: '1.0.0',
+      governance: { listPropertyLists: handlerWith([plist('h-1')]) },
+      testController: {
+        getSeededPropertyLists: () => {
+          called = true;
+          return [plist('s-1')];
+        },
+      },
+    });
+    const res = await dispatch(server, 'list_property_lists', {
+      account: { brand: { domain: 'example.com' }, operator: 'example.com' /* no sandbox */ },
+    });
+    assert.equal(called, false);
+    assert.deepEqual(
+      res.structuredContent.lists.map(l => l.list_id),
+      ['h-1']
+    );
+  });
+
+  it('drops seeded entries missing list_id', async () => {
+    const server = createAdcpServer({
+      name: 'Test',
+      version: '1.0.0',
+      governance: { listPropertyLists: handlerWith([]) },
+      testController: {
+        getSeededPropertyLists: () => [plist('ok-1'), { name: 'no id' }, { list_id: '', name: 'empty' }, plist('ok-2')],
+      },
+    });
+    const res = await dispatch(server, 'list_property_lists', { account: SANDBOX_ACCOUNT });
+    assert.deepEqual(
+      res.structuredContent.lists.map(l => l.list_id),
+      ['ok-1', 'ok-2']
+    );
+  });
+});
+
+// ---------------------------------------------------------------------------
+// getSeededPropertyLists — get_property_list (singleton replace)
+// ---------------------------------------------------------------------------
+
+describe('createAdcpServer — getSeededPropertyLists wiring (get_property_list)', () => {
+  function plist(id, overrides = {}) {
+    return { list_id: id, name: `List ${id}`, ...overrides };
+  }
+
+  it('replaces the response.list field when a seeded fixture matches request.list_id', async () => {
+    const server = createAdcpServer({
+      name: 'Test',
+      version: '1.0.0',
+      governance: {
+        getPropertyList: async () => ({
+          list: plist('pl-1', { name: 'Handler' }),
+          identifiers: [],
+          resolved_at: '2025-05-14T00:00:00Z',
+        }),
+      },
+      testController: {
+        getSeededPropertyLists: () => [plist('pl-1', { name: 'Seeded' })],
+      },
+    });
+    const res = await dispatch(server, 'get_property_list', {
+      list_id: 'pl-1',
+      account: SANDBOX_ACCOUNT,
+    });
+    assert.equal(res.structuredContent.list.name, 'Seeded');
+  });
+
+  it('passes handler response through when no seeded fixture matches request.list_id', async () => {
+    const server = createAdcpServer({
+      name: 'Test',
+      version: '1.0.0',
+      governance: {
+        getPropertyList: async () => ({ list: plist('pl-1', { name: 'Handler' }) }),
+      },
+      testController: {
+        getSeededPropertyLists: () => [plist('other-id', { name: 'Other' })],
+      },
+    });
+    const res = await dispatch(server, 'get_property_list', {
+      list_id: 'pl-1',
+      account: SANDBOX_ACCOUNT,
+    });
+    assert.equal(res.structuredContent.list.name, 'Handler');
+  });
+
+  it('preserves handler context, ext, identifiers, pagination, resolved_at across the replace', async () => {
+    const server = createAdcpServer({
+      name: 'Test',
+      version: '1.0.0',
+      governance: {
+        getPropertyList: async () => ({
+          list: plist('pl-1', { name: 'Handler' }),
+          identifiers: [{ type: 'domain', value: 'example.com' }],
+          pagination: { has_more: false, total_count: 1 },
+          resolved_at: '2025-05-14T00:00:00Z',
+          cache_valid_until: '2025-05-15T00:00:00Z',
+          context: { adcp_version: '3.0.11', request_id: 'req-1' },
+          ext: { audit: { trace_id: 't-1' } },
+        }),
+      },
+      testController: {
+        getSeededPropertyLists: () => [plist('pl-1', { name: 'Seeded' })],
+      },
+    });
+    const res = await dispatch(server, 'get_property_list', {
+      list_id: 'pl-1',
+      account: SANDBOX_ACCOUNT,
+    });
+    assert.equal(res.structuredContent.list.name, 'Seeded');
+    assert.deepEqual(res.structuredContent.identifiers, [{ type: 'domain', value: 'example.com' }]);
+    assert.deepEqual(res.structuredContent.pagination, { has_more: false, total_count: 1 });
+    assert.equal(res.structuredContent.resolved_at, '2025-05-14T00:00:00Z');
+    assert.equal(res.structuredContent.cache_valid_until, '2025-05-15T00:00:00Z');
+    assert.deepEqual(res.structuredContent.context, { adcp_version: '3.0.11', request_id: 'req-1' });
+    assert.deepEqual(res.structuredContent.ext, { audit: { trace_id: 't-1' } });
+  });
+
+  it('skipped on non-sandbox requests', async () => {
+    let called = false;
+    const server = createAdcpServer({
+      name: 'Test',
+      version: '1.0.0',
+      governance: {
+        getPropertyList: async () => ({ list: plist('pl-1', { name: 'Handler' }) }),
+      },
+      testController: {
+        getSeededPropertyLists: () => {
+          called = true;
+          return [plist('pl-1', { name: 'Seeded' })];
+        },
+      },
+    });
+    const res = await dispatch(server, 'get_property_list', {
+      list_id: 'pl-1',
+      account: { brand: { domain: 'example.com' }, operator: 'example.com' },
+    });
+    assert.equal(called, false);
+    assert.equal(res.structuredContent.list.name, 'Handler');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// getSeededCollectionLists — list_collection_lists + get_collection_list
+// ---------------------------------------------------------------------------
+
+describe('createAdcpServer — getSeededCollectionLists wiring (list_collection_lists)', () => {
+  function clist(id, overrides = {}) {
+    return { list_id: id, name: `Collection ${id}`, ...overrides };
+  }
+
+  it('appends seeded collection lists to handler output on sandbox requests', async () => {
+    const server = createAdcpServer({
+      name: 'Test',
+      version: '1.0.0',
+      governance: { listCollectionLists: async () => ({ lists: [clist('h-1')] }) },
+      testController: {
+        getSeededCollectionLists: () => [clist('s-1'), clist('s-2')],
+      },
+    });
+    const res = await dispatch(server, 'list_collection_lists', { account: SANDBOX_ACCOUNT });
+    assert.deepEqual(
+      res.structuredContent.lists.map(l => l.list_id),
+      ['h-1', 's-1', 's-2']
+    );
+  });
+
+  it('seeded wins on list_id collision; mixed [A, B] + [B, C] → [A, B-seeded, C]', async () => {
+    const server = createAdcpServer({
+      name: 'Test',
+      version: '1.0.0',
+      governance: {
+        listCollectionLists: async () => ({
+          lists: [clist('A', { name: 'Handler A' }), clist('B', { name: 'Handler B' })],
+        }),
+      },
+      testController: {
+        getSeededCollectionLists: () => [clist('B', { name: 'Seeded B' }), clist('C', { name: 'Seeded C' })],
+      },
+    });
+    const res = await dispatch(server, 'list_collection_lists', { account: SANDBOX_ACCOUNT });
+    const byId = Object.fromEntries(res.structuredContent.lists.map(l => [l.list_id, l.name]));
+    assert.deepEqual(Object.keys(byId).sort(), ['A', 'B', 'C']);
+    assert.equal(byId.A, 'Handler A');
+    assert.equal(byId.B, 'Seeded B');
+    assert.equal(byId.C, 'Seeded C');
+  });
+
+  it('updates pagination.total_count by the non-colliding seeded count', async () => {
+    const server = createAdcpServer({
+      name: 'Test',
+      version: '1.0.0',
+      governance: {
+        listCollectionLists: async () => ({
+          lists: [clist('A')],
+          pagination: { has_more: false, total_count: 1 },
+        }),
+      },
+      testController: {
+        getSeededCollectionLists: () => [clist('A'), clist('B')],
+      },
+    });
+    const res = await dispatch(server, 'list_collection_lists', { account: SANDBOX_ACCOUNT });
+    // Only B is new (A collided).
+    assert.equal(res.structuredContent.pagination.total_count, 2);
+  });
+
+  it('handler-only when bridge omitted', async () => {
+    const server = createAdcpServer({
+      name: 'Test',
+      version: '1.0.0',
+      governance: { listCollectionLists: async () => ({ lists: [clist('h-1')] }) },
+      testController: {},
+    });
+    const res = await dispatch(server, 'list_collection_lists', { account: SANDBOX_ACCOUNT });
+    assert.deepEqual(
+      res.structuredContent.lists.map(l => l.list_id),
+      ['h-1']
+    );
+  });
+
+  it('skipped on non-sandbox requests', async () => {
+    let called = false;
+    const server = createAdcpServer({
+      name: 'Test',
+      version: '1.0.0',
+      governance: { listCollectionLists: async () => ({ lists: [clist('h-1')] }) },
+      testController: {
+        getSeededCollectionLists: () => {
+          called = true;
+          return [clist('s-1')];
+        },
+      },
+    });
+    const res = await dispatch(server, 'list_collection_lists', {
+      account: { brand: { domain: 'example.com' }, operator: 'example.com' },
+    });
+    assert.equal(called, false);
+    assert.deepEqual(
+      res.structuredContent.lists.map(l => l.list_id),
+      ['h-1']
+    );
+  });
+
+  it('drops seeded entries missing list_id', async () => {
+    const server = createAdcpServer({
+      name: 'Test',
+      version: '1.0.0',
+      governance: { listCollectionLists: async () => ({ lists: [] }) },
+      testController: {
+        getSeededCollectionLists: () => [clist('ok-1'), { name: 'no id' }, { list_id: '' }, clist('ok-2')],
+      },
+    });
+    const res = await dispatch(server, 'list_collection_lists', { account: SANDBOX_ACCOUNT });
+    assert.deepEqual(
+      res.structuredContent.lists.map(l => l.list_id),
+      ['ok-1', 'ok-2']
+    );
+  });
+});
+
+describe('createAdcpServer — getSeededCollectionLists wiring (get_collection_list)', () => {
+  function clist(id, overrides = {}) {
+    return { list_id: id, name: `Collection ${id}`, ...overrides };
+  }
+
+  it('replaces response.list when a seeded fixture matches request.list_id', async () => {
+    const server = createAdcpServer({
+      name: 'Test',
+      version: '1.0.0',
+      governance: {
+        getCollectionList: async () => ({ list: clist('cl-1', { name: 'Handler' }) }),
+      },
+      testController: {
+        getSeededCollectionLists: () => [clist('cl-1', { name: 'Seeded' })],
+      },
+    });
+    const res = await dispatch(server, 'get_collection_list', {
+      list_id: 'cl-1',
+      account: SANDBOX_ACCOUNT,
+    });
+    assert.equal(res.structuredContent.list.name, 'Seeded');
+  });
+
+  it('passes handler response through when no fixture matches request.list_id', async () => {
+    const server = createAdcpServer({
+      name: 'Test',
+      version: '1.0.0',
+      governance: {
+        getCollectionList: async () => ({ list: clist('cl-1', { name: 'Handler' }) }),
+      },
+      testController: {
+        getSeededCollectionLists: () => [clist('other', { name: 'Other' })],
+      },
+    });
+    const res = await dispatch(server, 'get_collection_list', {
+      list_id: 'cl-1',
+      account: SANDBOX_ACCOUNT,
+    });
+    assert.equal(res.structuredContent.list.name, 'Handler');
+  });
+
+  it('preserves handler context, ext, collections, pagination across replace', async () => {
+    const server = createAdcpServer({
+      name: 'Test',
+      version: '1.0.0',
+      governance: {
+        getCollectionList: async () => ({
+          list: clist('cl-1', { name: 'Handler' }),
+          collections: [{ name: 'Coll A' }],
+          pagination: { has_more: false, total_count: 1 },
+          resolved_at: '2025-05-14T00:00:00Z',
+          context: { adcp_version: '3.0.11', request_id: 'req-2' },
+          ext: { tag: 'preserve-me' },
+        }),
+      },
+      testController: {
+        getSeededCollectionLists: () => [clist('cl-1', { name: 'Seeded' })],
+      },
+    });
+    const res = await dispatch(server, 'get_collection_list', {
+      list_id: 'cl-1',
+      account: SANDBOX_ACCOUNT,
+    });
+    assert.equal(res.structuredContent.list.name, 'Seeded');
+    assert.deepEqual(res.structuredContent.collections, [{ name: 'Coll A' }]);
+    assert.deepEqual(res.structuredContent.pagination, { has_more: false, total_count: 1 });
+    assert.equal(res.structuredContent.resolved_at, '2025-05-14T00:00:00Z');
+    assert.deepEqual(res.structuredContent.context, { adcp_version: '3.0.11', request_id: 'req-2' });
+    assert.deepEqual(res.structuredContent.ext, { tag: 'preserve-me' });
+  });
+
+  it('skipped on non-sandbox requests', async () => {
+    let called = false;
+    const server = createAdcpServer({
+      name: 'Test',
+      version: '1.0.0',
+      governance: {
+        getCollectionList: async () => ({ list: clist('cl-1', { name: 'Handler' }) }),
+      },
+      testController: {
+        getSeededCollectionLists: () => {
+          called = true;
+          return [clist('cl-1', { name: 'Seeded' })];
+        },
+      },
+    });
+    const res = await dispatch(server, 'get_collection_list', {
+      list_id: 'cl-1',
+      account: { brand: { domain: 'example.com' }, operator: 'example.com' },
+    });
+    assert.equal(called, false);
+    assert.equal(res.structuredContent.list.name, 'Handler');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// getSeededContentStandards — list_content_standards (append-merge)
+// ---------------------------------------------------------------------------
+
+describe('createAdcpServer — getSeededContentStandards wiring (list_content_standards)', () => {
+  function cs(id, overrides = {}) {
+    return { standards_id: id, name: `Standards ${id}`, ...overrides };
+  }
+
+  it('appends seeded content-standards to handler output on sandbox requests', async () => {
+    const server = createAdcpServer({
+      name: 'Test',
+      version: '1.0.0',
+      governance: { listContentStandards: async () => ({ standards: [cs('h-1')] }) },
+      testController: {
+        getSeededContentStandards: () => [cs('s-1'), cs('s-2')],
+      },
+    });
+    const res = await dispatch(server, 'list_content_standards', { account: SANDBOX_ACCOUNT });
+    assert.deepEqual(
+      res.structuredContent.standards.map(s => s.standards_id),
+      ['h-1', 's-1', 's-2']
+    );
+  });
+
+  it('seeded wins on standards_id collision; mixed [A, B] + [B, C] → [A, B-seeded, C]', async () => {
+    const server = createAdcpServer({
+      name: 'Test',
+      version: '1.0.0',
+      governance: {
+        listContentStandards: async () => ({
+          standards: [cs('A', { name: 'Handler A' }), cs('B', { name: 'Handler B' })],
+        }),
+      },
+      testController: {
+        getSeededContentStandards: () => [cs('B', { name: 'Seeded B' }), cs('C', { name: 'Seeded C' })],
+      },
+    });
+    const res = await dispatch(server, 'list_content_standards', { account: SANDBOX_ACCOUNT });
+    const byId = Object.fromEntries(res.structuredContent.standards.map(s => [s.standards_id, s.name]));
+    assert.deepEqual(Object.keys(byId).sort(), ['A', 'B', 'C']);
+    assert.equal(byId.A, 'Handler A');
+    assert.equal(byId.B, 'Seeded B');
+    assert.equal(byId.C, 'Seeded C');
+  });
+
+  it('updates pagination.total_count by the non-colliding seeded count', async () => {
+    const server = createAdcpServer({
+      name: 'Test',
+      version: '1.0.0',
+      governance: {
+        listContentStandards: async () => ({
+          standards: [cs('A')],
+          pagination: { has_more: false, total_count: 1 },
+        }),
+      },
+      testController: { getSeededContentStandards: () => [cs('A'), cs('B'), cs('C')] },
+    });
+    const res = await dispatch(server, 'list_content_standards', { account: SANDBOX_ACCOUNT });
+    assert.equal(res.structuredContent.pagination.total_count, 3);
+  });
+
+  it('handler-only when bridge omitted', async () => {
+    const server = createAdcpServer({
+      name: 'Test',
+      version: '1.0.0',
+      governance: { listContentStandards: async () => ({ standards: [cs('h-1')] }) },
+      testController: {},
+    });
+    const res = await dispatch(server, 'list_content_standards', { account: SANDBOX_ACCOUNT });
+    assert.deepEqual(
+      res.structuredContent.standards.map(s => s.standards_id),
+      ['h-1']
+    );
+  });
+
+  it('skipped on non-sandbox requests', async () => {
+    let called = false;
+    const server = createAdcpServer({
+      name: 'Test',
+      version: '1.0.0',
+      governance: { listContentStandards: async () => ({ standards: [cs('h-1')] }) },
+      testController: {
+        getSeededContentStandards: () => {
+          called = true;
+          return [cs('s-1')];
+        },
+      },
+    });
+    const res = await dispatch(server, 'list_content_standards', {
+      account: { brand: { domain: 'example.com' }, operator: 'example.com' },
+    });
+    assert.equal(called, false);
+    assert.deepEqual(
+      res.structuredContent.standards.map(s => s.standards_id),
+      ['h-1']
+    );
+  });
+
+  it('drops seeded entries missing standards_id', async () => {
+    const server = createAdcpServer({
+      name: 'Test',
+      version: '1.0.0',
+      governance: { listContentStandards: async () => ({ standards: [] }) },
+      testController: {
+        getSeededContentStandards: () => [cs('ok-1'), { name: 'no id' }, { standards_id: '' }, cs('ok-2')],
+      },
+    });
+    const res = await dispatch(server, 'list_content_standards', { account: SANDBOX_ACCOUNT });
+    assert.deepEqual(
+      res.structuredContent.standards.map(s => s.standards_id),
+      ['ok-1', 'ok-2']
+    );
+  });
+});
+
+// ---------------------------------------------------------------------------
+// getSeededContentStandards — get_content_standards (singleton replace)
+//
+// Unlike PropertyList / CollectionList, the success arm of
+// GetContentStandardsResponse IS `ContentStandards` directly — no envelope
+// wrapper. Replace the entire response; preserve only the handler's `ext`.
+// ---------------------------------------------------------------------------
+
+describe('createAdcpServer — getSeededContentStandards wiring (get_content_standards)', () => {
+  function cs(id, overrides = {}) {
+    return { standards_id: id, name: `Standards ${id}`, ...overrides };
+  }
+
+  it('replaces the response with seeded fixture when standards_id matches', async () => {
+    const server = createAdcpServer({
+      name: 'Test',
+      version: '1.0.0',
+      governance: {
+        getContentStandards: async () => cs('cs-1', { name: 'Handler' }),
+      },
+      testController: {
+        getSeededContentStandards: () => [cs('cs-1', { name: 'Seeded' })],
+      },
+    });
+    const res = await dispatch(server, 'get_content_standards', {
+      standards_id: 'cs-1',
+      account: SANDBOX_ACCOUNT,
+    });
+    assert.equal(res.structuredContent.name, 'Seeded');
+    assert.equal(res.structuredContent.standards_id, 'cs-1');
+  });
+
+  it('passes handler response through when no fixture matches request.standards_id', async () => {
+    const server = createAdcpServer({
+      name: 'Test',
+      version: '1.0.0',
+      governance: {
+        getContentStandards: async () => cs('cs-1', { name: 'Handler' }),
+      },
+      testController: {
+        getSeededContentStandards: () => [cs('other', { name: 'Other' })],
+      },
+    });
+    const res = await dispatch(server, 'get_content_standards', {
+      standards_id: 'cs-1',
+      account: SANDBOX_ACCOUNT,
+    });
+    assert.equal(res.structuredContent.name, 'Handler');
+  });
+
+  it('preserves handler.ext on replace; seeded ext loses', async () => {
+    const server = createAdcpServer({
+      name: 'Test',
+      version: '1.0.0',
+      governance: {
+        getContentStandards: async () => ({
+          ...cs('cs-1', { name: 'Handler' }),
+          ext: { audit: { trace_id: 't-cs' } },
+        }),
+      },
+      testController: {
+        getSeededContentStandards: () => [{ ...cs('cs-1', { name: 'Seeded' }), ext: { audit: { trace_id: 'WRONG' } } }],
+      },
+    });
+    const res = await dispatch(server, 'get_content_standards', {
+      standards_id: 'cs-1',
+      account: SANDBOX_ACCOUNT,
+    });
+    assert.equal(res.structuredContent.name, 'Seeded', 'body replaced');
+    assert.deepEqual(res.structuredContent.ext, { audit: { trace_id: 't-cs' } }, 'handler ext preserved');
+  });
+
+  it('skipped on non-sandbox requests', async () => {
+    let called = false;
+    const server = createAdcpServer({
+      name: 'Test',
+      version: '1.0.0',
+      governance: {
+        getContentStandards: async () => cs('cs-1', { name: 'Handler' }),
+      },
+      testController: {
+        getSeededContentStandards: () => {
+          called = true;
+          return [cs('cs-1', { name: 'Seeded' })];
+        },
+      },
+    });
+    const res = await dispatch(server, 'get_content_standards', {
+      standards_id: 'cs-1',
+      account: { brand: { domain: 'example.com' }, operator: 'example.com' },
+    });
+    assert.equal(called, false);
+    assert.equal(res.structuredContent.name, 'Handler');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// bridgeFromSessionStore — governance selectors
+// ---------------------------------------------------------------------------
+
+describe('bridgeFromSessionStore — governance selectors', () => {
+  it('wires getSeededPropertyLists from selectSeededPropertyLists', async () => {
+    const bridge = bridgeFromSessionStore({
+      loadSession: () => ({ pls: [{ list_id: 'pl-a', name: 'A' }] }),
+      selectSeededProducts: () => undefined,
+      selectSeededPropertyLists: session => session.pls,
+    });
+    const out = await bridge.getSeededPropertyLists({ input: {} });
+    assert.deepEqual(
+      out.map(l => l.list_id),
+      ['pl-a']
+    );
+  });
+
+  it('wires getSeededCollectionLists from selectSeededCollectionLists', async () => {
+    const bridge = bridgeFromSessionStore({
+      loadSession: () => ({ cls: [{ list_id: 'cl-a', name: 'A' }] }),
+      selectSeededProducts: () => undefined,
+      selectSeededCollectionLists: session => session.cls,
+    });
+    const out = await bridge.getSeededCollectionLists({ input: {} });
+    assert.deepEqual(
+      out.map(l => l.list_id),
+      ['cl-a']
+    );
+  });
+
+  it('wires getSeededContentStandards from selectSeededContentStandards', async () => {
+    const bridge = bridgeFromSessionStore({
+      loadSession: () => ({ cs: [{ standards_id: 'cs-a', name: 'A' }] }),
+      selectSeededProducts: () => undefined,
+      selectSeededContentStandards: session => session.cs,
+    });
+    const out = await bridge.getSeededContentStandards({ input: {} });
+    assert.deepEqual(
+      out.map(s => s.standards_id),
+      ['cs-a']
+    );
+  });
+
+  it('omits governance per-tool callbacks when no selectors are provided', async () => {
+    const bridge = bridgeFromSessionStore({
+      loadSession: () => ({}),
+      selectSeededProducts: () => undefined,
+    });
+    assert.equal(bridge.getSeededPropertyLists, undefined);
+    assert.equal(bridge.getSeededCollectionLists, undefined);
+    assert.equal(bridge.getSeededContentStandards, undefined);
+  });
+});

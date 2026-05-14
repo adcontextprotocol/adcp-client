@@ -135,7 +135,13 @@ import {
   mergeSeededMediaBuyDeliveryIntoResponse,
   mergeSeededAccountsIntoResponse,
   mergeSeededCreativeFormatsIntoResponse,
+  mergeSeededPropertyListsIntoResponse,
+  mergeSeededCollectionListsIntoResponse,
+  mergeSeededContentStandardsIntoResponse,
   replaceAccountFinancialsIfSeeded,
+  replacePropertyListIfSeeded,
+  replaceCollectionListIfSeeded,
+  replaceContentStandardsIfSeeded,
   filterValidSeededProducts,
   filterValidSeededCreatives,
   filterValidSeededMediaBuys,
@@ -143,6 +149,9 @@ import {
   filterValidSeededAccounts,
   filterValidSeededAccountFinancials,
   filterValidSeededCreativeFormats,
+  filterValidSeededPropertyLists,
+  filterValidSeededCollectionLists,
+  filterValidSeededContentStandards,
   type TestControllerBridge,
   type TestControllerBridgeContext,
 } from './test-controller-bridge';
@@ -4076,6 +4085,136 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
               } catch (err) {
                 const reason = err instanceof Error ? err.message : String(err);
                 logger.warn('testController.getSeededCreativeFormats failed; returning handler response unchanged', {
+                  tool: toolName,
+                  error: reason,
+                });
+              }
+            }
+
+            // list_property_lists / get_property_list — one seeded fixture array
+            // feeds both. List path: append-merge with seeded-wins on `list_id`
+            // collision. Get path: pick by request.list_id and replace the
+            // response's `list` field, preserving handler's resolved data
+            // (`identifiers` / `pagination` / `resolved_at` / `cache_valid_until`
+            // / `coverage_gaps` / `context` / `ext`).
+            else if (
+              (toolName === 'list_property_lists' || toolName === 'get_property_list') &&
+              testControllerBridge.getSeededPropertyLists
+            ) {
+              try {
+                const rawSeeded = await testControllerBridge.getSeededPropertyLists(bridgeCtx);
+                const seeded = filterValidSeededPropertyLists(rawSeeded, logger);
+                if (seeded.length > 0) {
+                  if (toolName === 'list_property_lists') {
+                    const sc = formatted.structuredContent as
+                      | import('../types/tools.generated').ListPropertyListsResponse
+                      | undefined;
+                    if (sc && typeof sc === 'object') {
+                      const merged = mergeSeededPropertyListsIntoResponse(sc, seeded);
+                      formatted = wrap(merged);
+                    }
+                  } else {
+                    const sc = formatted.structuredContent as
+                      | import('../types/tools.generated').GetPropertyListResponse
+                      | undefined;
+                    if (sc && typeof sc === 'object') {
+                      const merged = replacePropertyListIfSeeded(
+                        params as import('../types/tools.generated').GetPropertyListRequest,
+                        sc,
+                        seeded
+                      );
+                      if (merged !== sc) formatted = wrap(merged);
+                    }
+                  }
+                }
+              } catch (err) {
+                const reason = err instanceof Error ? err.message : String(err);
+                logger.warn('testController.getSeededPropertyLists failed; returning handler response unchanged', {
+                  tool: toolName,
+                  error: reason,
+                });
+              }
+            }
+
+            // list_collection_lists / get_collection_list — symmetric with
+            // property lists.
+            else if (
+              (toolName === 'list_collection_lists' || toolName === 'get_collection_list') &&
+              testControllerBridge.getSeededCollectionLists
+            ) {
+              try {
+                const rawSeeded = await testControllerBridge.getSeededCollectionLists(bridgeCtx);
+                const seeded = filterValidSeededCollectionLists(rawSeeded, logger);
+                if (seeded.length > 0) {
+                  if (toolName === 'list_collection_lists') {
+                    const sc = formatted.structuredContent as
+                      | import('../types/tools.generated').ListCollectionListsResponse
+                      | undefined;
+                    if (sc && typeof sc === 'object') {
+                      const merged = mergeSeededCollectionListsIntoResponse(sc, seeded);
+                      formatted = wrap(merged);
+                    }
+                  } else {
+                    const sc = formatted.structuredContent as
+                      | import('../types/tools.generated').GetCollectionListResponse
+                      | undefined;
+                    if (sc && typeof sc === 'object') {
+                      const merged = replaceCollectionListIfSeeded(
+                        params as import('../types/tools.generated').GetCollectionListRequest,
+                        sc,
+                        seeded
+                      );
+                      if (merged !== sc) formatted = wrap(merged);
+                    }
+                  }
+                }
+              } catch (err) {
+                const reason = err instanceof Error ? err.message : String(err);
+                logger.warn('testController.getSeededCollectionLists failed; returning handler response unchanged', {
+                  tool: toolName,
+                  error: reason,
+                });
+              }
+            }
+
+            // list_content_standards / get_content_standards — list returns
+            // `{ standards: ContentStandards[] }` (success arm of a union; the
+            // error arm is gated out upstream). Get returns `ContentStandards`
+            // directly (success arm); replace the entire envelope, preserving
+            // only handler `ext`. No `context` field in the success arm.
+            else if (
+              (toolName === 'list_content_standards' || toolName === 'get_content_standards') &&
+              testControllerBridge.getSeededContentStandards
+            ) {
+              try {
+                const rawSeeded = await testControllerBridge.getSeededContentStandards(bridgeCtx);
+                const seeded = filterValidSeededContentStandards(rawSeeded, logger);
+                if (seeded.length > 0) {
+                  if (toolName === 'list_content_standards') {
+                    const sc = formatted.structuredContent as
+                      | import('../types/tools.generated').ListContentStandardsResponse
+                      | undefined;
+                    if (sc && typeof sc === 'object') {
+                      const merged = mergeSeededContentStandardsIntoResponse(sc, seeded);
+                      if (merged !== sc) formatted = wrap(merged);
+                    }
+                  } else {
+                    const sc = formatted.structuredContent as
+                      | import('../types/tools.generated').GetContentStandardsResponse
+                      | undefined;
+                    if (sc && typeof sc === 'object') {
+                      const merged = replaceContentStandardsIfSeeded(
+                        params as import('../types/tools.generated').GetContentStandardsRequest,
+                        sc,
+                        seeded
+                      );
+                      if (merged !== sc) formatted = wrap(merged);
+                    }
+                  }
+                }
+              } catch (err) {
+                const reason = err instanceof Error ? err.message : String(err);
+                logger.warn('testController.getSeededContentStandards failed; returning handler response unchanged', {
                   tool: toolName,
                   error: reason,
                 });
