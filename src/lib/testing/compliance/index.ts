@@ -4,7 +4,13 @@
  * comply → "Your agent works"  (deterministic, per-track)
  */
 
-export { comply, computeOverallStatus, formatComplianceResults, formatComplianceResultsJSON } from './comply';
+export {
+  comply,
+  collectObservations,
+  computeOverallStatus,
+  formatComplianceResults,
+  formatComplianceResultsJSON,
+} from './comply';
 export type { ComplyOptions } from './comply';
 
 export {

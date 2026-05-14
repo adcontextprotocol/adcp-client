@@ -63,8 +63,12 @@ const TRACK_ORDER: ComplianceTrack[] = [
 /**
  * Collect advisory observations from test results.
  * Analyzes the actual data for quality signals that aren't pass/fail.
+ *
+ * Exported so the regression test (adcp-client#1736) can call it directly
+ * with synthetic `TestResult` fixtures and assert that advisories without
+ * a backing storyboard rule do not fire on `create_media_buy` responses.
  */
-function collectObservations(
+export function collectObservations(
   track: ComplianceTrack,
   results: TestResult[],
   profile: AgentProfile
@@ -197,38 +201,12 @@ function collectObservations(
       }
     }
 
-    // Check for confirmed_at and revision in create_media_buy responses (first match only)
-    let checkedCreateLifecycle = false;
-    for (const result of results) {
-      if (checkedCreateLifecycle) break;
-      for (const step of result.steps ?? []) {
-        if (step.task === 'create_media_buy' && step.observation_data) {
-          const obs = step.observation_data as { confirmed_at?: unknown; revision?: unknown };
-          if (obs.confirmed_at === undefined || obs.confirmed_at === null) {
-            observations.push({
-              category: 'best_practice',
-              severity: 'warning',
-              track,
-              message:
-                'Agent does not return confirmed_at in create_media_buy response. ' +
-                'A successful response constitutes order confirmation — confirmed_at provides an auditable timestamp for dispute resolution.',
-            });
-          }
-          if (obs.revision === undefined || obs.revision === null) {
-            observations.push({
-              category: 'best_practice',
-              severity: 'suggestion',
-              track,
-              message:
-                'Agent does not return revision in create_media_buy response. ' +
-                'Revision numbers enable optimistic concurrency for safe concurrent updates.',
-            });
-          }
-          checkedCreateLifecycle = true;
-          break;
-        }
-      }
-    }
+    // No hard-coded `confirmed_at` / `revision` advisories on create_media_buy.
+    // Both fields are optional in `create_media_buy_response` and previously
+    // surfaced "Agent does not return …" warnings without a backing storyboard
+    // rule. Genuine non-conformance (e.g. `revision: 0` violating
+    // `minimum: 1`) is caught by the response_schema validator with the
+    // failed keyword + JSON Pointer. Tracked: adcp-client#1736 / adcp#3025.
 
     // Check for history support in get_media_buys responses (first match only)
     let checkedHistory = false;
