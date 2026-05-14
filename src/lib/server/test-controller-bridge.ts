@@ -26,6 +26,7 @@ import type {
   ListAccountsResponse,
   ListCreativesResponse,
   GetMediaBuysResponse,
+  GetMediaBuyDeliveryResponse,
   ListCreativeFormatsResponse,
   Format,
   GetAccountFinancialsResponse,
@@ -55,6 +56,20 @@ export type SeededMediaBuy = GetMediaBuysResponse['media_buys'][number];
  * under test see their fixture; un-seeded accounts pass through to the handler.
  */
 export type SeededAccountFinancials = GetAccountFinancialsSuccess;
+
+/**
+ * Seeded media-buy-delivery entry — the inline element type of
+ * `GetMediaBuyDeliveryResponse.media_buy_deliveries`. Derived via lookup so it
+ * stays in lockstep with the generated wire schema.
+ */
+export type SeededMediaBuyDelivery = GetMediaBuyDeliveryResponse['media_buy_deliveries'][number];
+
+/**
+ * The shape of `GetMediaBuyDeliveryResponse.aggregated_totals` (optional on the
+ * wire — recomputed by the bridge from the merged delivery array per the
+ * documented policy).
+ */
+type AggregatedTotals = NonNullable<GetMediaBuyDeliveryResponse['aggregated_totals']>;
 
 /**
  * Context passed to {@link TestControllerBridge.getSeededProducts}.
@@ -109,6 +124,24 @@ export interface TestControllerBridge<TAccount = unknown> {
    * contract as {@link TestControllerBridge.getSeededProducts}.
    */
   getSeededMediaBuys?: (ctx: TestControllerBridgeContext<TAccount>) => Promise<SeededMediaBuy[]> | SeededMediaBuy[];
+
+  /**
+   * Retrieve seeded media-buy delivery snapshots. Returned entries are merged
+   * into the handler's `get_media_buy_delivery` response (`media_buy_deliveries`
+   * array); on `media_buy_id` collision the seeded entry wins, matching the
+   * precedent set by `mergeSeededMediaBuys` / `mergeSeededCreatives` /
+   * `mergeSeededAccounts` — storyboards seed deliberately, so a seeded fixture
+   * for an existing `media_buy_id` is an explicit author override.
+   *
+   * After the merge, the response's `aggregated_totals` block is recomputed
+   * from the merged per-delivery `totals` so `media_buy_count` /
+   * `impressions` / `spend` stay wire-correct. See
+   * {@link recomputeAggregatedTotals} for the recomputation policy. Same
+   * sandbox gating contract as {@link TestControllerBridge.getSeededProducts}.
+   */
+  getSeededMediaBuyDelivery?: (
+    ctx: TestControllerBridgeContext<TAccount>
+  ) => Promise<SeededMediaBuyDelivery[]> | SeededMediaBuyDelivery[];
 
   /**
    * Retrieve seeded accounts for the current request. Returned entries are
@@ -290,6 +323,17 @@ export function filterValidSeededMediaBuys(
   logger?: { warn: (message: string, meta?: Record<string, unknown>) => void }
 ): SeededMediaBuy[] {
   return filterValidById<SeededMediaBuy>(raw, 'media_buy_id', 'getSeededMediaBuys', logger);
+}
+
+/**
+ * Validate seeded media-buy-delivery snapshots. Drops entries missing a
+ * non-empty string `media_buy_id` — the dedup key against the handler set.
+ */
+export function filterValidSeededMediaBuyDeliveries(
+  raw: unknown,
+  logger?: { warn: (message: string, meta?: Record<string, unknown>) => void }
+): SeededMediaBuyDelivery[] {
+  return filterValidById<SeededMediaBuyDelivery>(raw, 'media_buy_id', 'getSeededMediaBuyDelivery', logger);
 }
 
 /**
@@ -531,6 +575,172 @@ export function mergeSeededMediaBuysIntoResponse(
       ...pagination,
       total_count: pagination.total_count + newCount,
     };
+  }
+  return merged;
+}
+
+/**
+ * Recompute `aggregated_totals` from a merged `media_buy_deliveries` array.
+ *
+ * The wire schema makes `aggregated_totals.impressions` / `spend` /
+ * `media_buy_count` REQUIRED, so once the bridge changes the delivery list it
+ * MUST rewrite the totals — otherwise `media_buy_count` is stale and the
+ * impressions/spend sums no longer reflect the merged set.
+ *
+ * Policy (see VALIDATE-YOUR-AGENT.md "Platform-proxy sellers"):
+ *   - Sum-derived (required): `impressions`, `spend`, `media_buy_count`.
+ *   - Sum-derived (optional): `clicks`, `completed_views`, `views`,
+ *     `conversions`, `conversion_value` — recomputed ONLY when EVERY merged
+ *     delivery populates the field on its `totals`. Otherwise fall back to
+ *     the handler's value (or omit if the handler omitted).
+ *   - Derived ratios: `roas` (`conversion_value / spend`),
+ *     `completion_rate` (`completed_views / impressions`),
+ *     `cost_per_acquisition` (`spend / conversions`). Recomputed ONLY when
+ *     both input fields recomputed AND the divisor is non-zero. Otherwise
+ *     fall back to the handler's value (or omit).
+ *   - Pass-through (not derivable from per-delivery `totals`): `reach`,
+ *     `reach_unit`, `frequency`, `new_to_brand_rate`. The handler's values
+ *     survive verbatim.
+ *
+ * Empty merged array → `{ impressions: 0, spend: 0, media_buy_count: 0 }` +
+ * any pass-through the handler set. Divide-by-zero guards keep ratios omitted
+ * rather than producing `Infinity` / `NaN` values that would fail validation.
+ *
+ * Pure helper — testable in isolation, no I/O.
+ */
+export function recomputeAggregatedTotals(
+  deliveries: readonly SeededMediaBuyDelivery[],
+  handlerAggregated: AggregatedTotals | undefined
+): AggregatedTotals {
+  const totalsList = deliveries.map(d => d.totals);
+
+  const sumNumber = (key: keyof AggregatedTotals): number => {
+    let acc = 0;
+    for (const t of totalsList) {
+      const v = (t as Record<string, unknown>)[key as string];
+      if (typeof v === 'number') acc += v;
+    }
+    return acc;
+  };
+
+  const everyHasNumber = (key: string): boolean => {
+    if (totalsList.length === 0) return false;
+    for (const t of totalsList) {
+      const v = (t as Record<string, unknown>)[key];
+      if (typeof v !== 'number') return false;
+    }
+    return true;
+  };
+
+  // Required sums: per spec, these fields are REQUIRED on aggregated_totals
+  // when the block exists. Empty merged set → zeros (still wire-correct).
+  const recomputed: AggregatedTotals = {
+    impressions: everyHasNumber('impressions') ? sumNumber('impressions' as keyof AggregatedTotals) : 0,
+    spend: everyHasNumber('spend') ? sumNumber('spend' as keyof AggregatedTotals) : 0,
+    media_buy_count: deliveries.length,
+  };
+
+  // Optional sums — only recompute when every delivery populates the field.
+  // Otherwise fall back to the handler's value to avoid wire-incorrect
+  // partial sums.
+  const recomputedFields = new Set<string>();
+  const optionalSumFields = ['clicks', 'completed_views', 'views', 'conversions', 'conversion_value'] as const;
+  for (const field of optionalSumFields) {
+    if (everyHasNumber(field)) {
+      (recomputed as Record<string, unknown>)[field] = sumNumber(field as keyof AggregatedTotals);
+      recomputedFields.add(field);
+    } else {
+      const handlerValue = handlerAggregated ? (handlerAggregated as Record<string, unknown>)[field] : undefined;
+      if (handlerValue !== undefined) (recomputed as Record<string, unknown>)[field] = handlerValue;
+    }
+  }
+
+  // Also track recomputed status for the required sum fields — needed for the
+  // derived-ratio guards below. `impressions` / `spend` are recomputed when
+  // every delivery populates them; empty merged set counts as "recomputed to 0".
+  if (everyHasNumber('impressions') || deliveries.length === 0) recomputedFields.add('impressions');
+  if (everyHasNumber('spend') || deliveries.length === 0) recomputedFields.add('spend');
+
+  // Derived ratios — only recompute when BOTH inputs were recomputed AND the
+  // divisor is non-zero. Otherwise fall back to the handler's value (or omit).
+  const tryRatio = (
+    outKey: 'roas' | 'completion_rate' | 'cost_per_acquisition',
+    numerator: 'conversion_value' | 'completed_views' | 'spend',
+    denominator: 'spend' | 'impressions' | 'conversions'
+  ): void => {
+    if (recomputedFields.has(numerator) && recomputedFields.has(denominator)) {
+      const denom = (recomputed as Record<string, unknown>)[denominator];
+      const num = (recomputed as Record<string, unknown>)[numerator];
+      if (typeof denom === 'number' && denom > 0 && typeof num === 'number') {
+        (recomputed as Record<string, unknown>)[outKey] = num / denom;
+        return;
+      }
+      // Divide-by-zero — omit the ratio (don't fall back; the recomputed
+      // inputs say the ratio is undefined for this set).
+      return;
+    }
+    const handlerValue = handlerAggregated ? (handlerAggregated as Record<string, unknown>)[outKey] : undefined;
+    if (handlerValue !== undefined) (recomputed as Record<string, unknown>)[outKey] = handlerValue;
+  };
+
+  tryRatio('roas', 'conversion_value', 'spend');
+  tryRatio('completion_rate', 'completed_views', 'impressions');
+  tryRatio('cost_per_acquisition', 'spend', 'conversions');
+
+  // Pass-through fields — not derivable from per-delivery `totals` (reach
+  // needs de-dup info we don't have; frequency depends on reach; NTB rate
+  // needs an NTB conversion count that isn't carried on per-delivery totals).
+  // Preserve handler's values verbatim.
+  const passThroughFields = ['reach', 'reach_unit', 'frequency', 'new_to_brand_rate'] as const;
+  for (const field of passThroughFields) {
+    const handlerValue = handlerAggregated ? (handlerAggregated as Record<string, unknown>)[field] : undefined;
+    if (handlerValue !== undefined) (recomputed as Record<string, unknown>)[field] = handlerValue;
+  }
+
+  return recomputed;
+}
+
+/**
+ * Merge seeded media-buy-delivery entries into a `get_media_buy_delivery`
+ * response. Existing handler entries come first; seeded entries append after
+ * deduping by `media_buy_id`. On collision the SEEDED entry wins, matching the
+ * precedent set by `mergeSeededMediaBuys` / `mergeSeededCreatives` /
+ * `mergeSeededAccounts` — storyboards seed deliberately, so a seeded fixture
+ * for an existing `media_buy_id` is an explicit author override.
+ *
+ * After merging, `aggregated_totals` is recomputed via
+ * {@link recomputeAggregatedTotals} so `media_buy_count` / `impressions` /
+ * `spend` reflect the merged set instead of the handler's pre-merge values.
+ *
+ * Returns a NEW response object — the handler's singleton envelope fields
+ * (`reporting_period`, `currency`, `attribution_window`, `errors`, `sandbox`,
+ * `context`, `ext`, plus webhook-only `notification_type` / `partial_data` /
+ * `sequence_number` / etc.) pass through verbatim. Stamps `sandbox: true`
+ * unless the handler explicitly declared `sandbox: false`.
+ */
+export function mergeSeededMediaBuyDeliveryIntoResponse(
+  response: GetMediaBuyDeliveryResponse,
+  seeded: readonly SeededMediaBuyDelivery[]
+): GetMediaBuyDeliveryResponse {
+  if (!seeded.length) return response;
+
+  const handlerDeliveries = Array.isArray(response.media_buy_deliveries) ? response.media_buy_deliveries : [];
+  const seededIds = new Set<string>();
+  for (const d of seeded) seededIds.add(d.media_buy_id);
+  // Seeded wins on collision: drop handler entries whose `media_buy_id` is in
+  // the seeded set, then append seeded entries. Order mirrors
+  // `mergeSeededMediaBuysIntoResponse` — retained handler entries first,
+  // seeded entries (including overrides) last.
+  const retained = handlerDeliveries.filter(d => !seededIds.has(d?.media_buy_id));
+  const final = [...retained, ...seeded];
+
+  const merged: GetMediaBuyDeliveryResponse = {
+    ...response,
+    media_buy_deliveries: final,
+    aggregated_totals: recomputeAggregatedTotals(final, response.aggregated_totals),
+  };
+  if ((response as { sandbox?: unknown }).sandbox !== false) {
+    (merged as { sandbox?: boolean }).sandbox = true;
   }
   return merged;
 }
@@ -821,6 +1031,21 @@ export interface BridgeFromSessionStoreOptions<TSession> {
   ) => Iterable<SeededMediaBuy> | Promise<Iterable<SeededMediaBuy> | null | undefined> | null | undefined;
 
   /**
+   * Extract seeded media-buy-delivery snapshots from a resolved session. Each
+   * entry MUST carry a non-empty string `media_buy_id`. The framework appends
+   * non-colliding seeded entries to the handler's response and recomputes
+   * `aggregated_totals` from the merged set — see
+   * {@link TestControllerBridge.getSeededMediaBuyDelivery}.
+   */
+  selectSeededMediaBuyDelivery?: (
+    session: TSession
+  ) =>
+    | Iterable<SeededMediaBuyDelivery>
+    | Promise<Iterable<SeededMediaBuyDelivery> | null | undefined>
+    | null
+    | undefined;
+
+  /**
    * Extract seeded accounts from a resolved session. Each entry MUST carry
    * a non-empty string `account_id`.
    */
@@ -887,6 +1112,7 @@ export function bridgeFromSessionStore<TSession, TAccount = unknown>(
     productDefaults = {},
     selectSeededCreatives,
     selectSeededMediaBuys,
+    selectSeededMediaBuyDelivery,
     selectSeededAccounts,
     selectSeededAccountFinancials,
     selectSeededCreativeFormats,
@@ -926,6 +1152,13 @@ export function bridgeFromSessionStore<TSession, TAccount = unknown>(
     bridge.getSeededMediaBuys = async ctx => {
       const session = await loadSession(ctx.input);
       const entries = await selectSeededMediaBuys(session);
+      return entries ? Array.from(entries) : [];
+    };
+  }
+  if (selectSeededMediaBuyDelivery) {
+    bridge.getSeededMediaBuyDelivery = async ctx => {
+      const session = await loadSession(ctx.input);
+      const entries = await selectSeededMediaBuyDelivery(session);
       return entries ? Array.from(entries) : [];
     };
   }

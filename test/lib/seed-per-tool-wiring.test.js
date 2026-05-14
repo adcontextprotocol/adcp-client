@@ -715,6 +715,53 @@ describe('get_account_financials — brand+operator account reference resolution
     assert.equal(res.structuredContent.spend.total_spend, 4242, 'seeded fixture should replace via resolved id');
   });
 
+  it('resolved ctx.account.account_id takes precedence over request account.account_id', async () => {
+    // Operator-resolved AccountReference variant: request carries `account_id`
+    // AND `resolveAccount` produces a record with a DIFFERENT `account_id`.
+    // The bridge MUST key on the resolved id (the framework's source of truth
+    // for who the caller is), not the request's. This is the contract that
+    // makes seeded fixtures interchangeable across AccountReference variants —
+    // if the request id won, brand+operator variants and operator-resolved
+    // variants for the same account would have to seed under different keys.
+    const server = createAdcpServer({
+      name: 'Test',
+      version: '1.0.0',
+      resolveAccount: async () => ({ account_id: 'resolved-acct', sandbox: true }),
+      accounts: {
+        getAccountFinancials: async () => ({
+          account: { account_id: 'resolved-acct' },
+          currency: 'USD',
+          period: { start: '2025-01-01', end: '2025-01-31' },
+          timezone: 'UTC',
+          spend: { total_spend: 1 },
+        }),
+      },
+      testController: {
+        getSeededAccountFinancials: () => [
+          {
+            // Fixture seeded under the RESOLVED id, not the request's id.
+            account: { account_id: 'resolved-acct' },
+            currency: 'USD',
+            period: { start: '2025-01-01', end: '2025-01-31' },
+            timezone: 'UTC',
+            spend: { total_spend: 1234 },
+          },
+        ],
+      },
+    });
+    const res = await dispatch(server, 'get_account_financials', {
+      // Request carries a DIFFERENT account_id than the resolved one. The bridge
+      // should match against the resolved id, find the seeded fixture, and
+      // replace the handler envelope.
+      account: { account_id: 'request-acct', sandbox: true },
+    });
+    assert.equal(
+      res.structuredContent.spend.total_spend,
+      1234,
+      'resolved id wins; seeded fixture for resolved-acct replaces the envelope'
+    );
+  });
+
   it('passes handler envelope through unchanged when no seeded fixture matches the resolved id', async () => {
     const server = createAdcpServer({
       name: 'Test',
@@ -897,6 +944,48 @@ describe('list_creatives — query_summary count updates on merge', () => {
     assert.equal(res.structuredContent.pagination.total_count, 53);
   });
 
+  it('mixed-collision count drift: total_matching grows only by the non-colliding subset', async () => {
+    // Handler returns 2 creatives (1 shared id, 1 unique). Bridge seeds 2 (1
+    // collision, 1 new). The merged array is 3 entries (shared deduped to the
+    // seeded fixture). query_summary.total_matching should grow by exactly 1
+    // — the non-colliding seeded entry. If the bridge added the full seeded
+    // count (2) instead of the new count (1), the total drifts past the array
+    // length on subsequent merges.
+    const server = createAdcpServer({
+      name: 'Test',
+      version: '1.0.0',
+      creative: {
+        listCreatives: async () => ({
+          query_summary: { total_matching: 50, returned: 2 },
+          pagination: { has_more: true, total_count: 50 },
+          creatives: [
+            { creative_id: 'shared', name: 'Handler shared' },
+            { creative_id: 'h-only', name: 'Handler only' },
+          ],
+        }),
+      },
+      testController: {
+        getSeededCreatives: () => [
+          { creative_id: 'shared', name: 'Seeded shared' },
+          { creative_id: 's-new', name: 'Seeded new' },
+        ],
+      },
+    });
+    const res = await dispatch(server, 'list_creatives', { account: SANDBOX_ACCOUNT });
+    assert.equal(res.structuredContent.creatives.length, 3, 'array: handler h-only + seeded shared + seeded s-new');
+    assert.equal(res.structuredContent.query_summary.returned, 3, 'returned == final array length');
+    assert.equal(
+      res.structuredContent.query_summary.total_matching,
+      51,
+      'total_matching += newCount (1), not += seededCount (2)'
+    );
+    assert.equal(
+      res.structuredContent.pagination.total_count,
+      51,
+      'pagination mirror increments by newCount, not seededCount'
+    );
+  });
+
   it('does not inflate counts on id collision (dedupe wins, no drift)', async () => {
     const server = createAdcpServer({
       name: 'Test',
@@ -986,5 +1075,371 @@ describe('get_media_buys — pagination.total_count updates on merge', () => {
     const res = await dispatch(server, 'get_media_buys', { account: SANDBOX_ACCOUNT });
     assert.equal(res.structuredContent.media_buys.length, 3);
     assert.equal(res.structuredContent.pagination.total_count, 10);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// getSeededMediaBuyDelivery — get_media_buy_delivery
+//
+// Unlike the other array bridges, the merge here recomputes
+// `aggregated_totals` from the merged per-delivery `totals` so the response
+// stays wire-correct after the merge. On collision the SEEDED entry wins —
+// matches the precedent set by mergeSeededMediaBuys / mergeSeededCreatives /
+// mergeSeededAccounts. Storyboards seed deliberately; a seeded fixture for
+// an existing media_buy_id is an explicit author override.
+// aggregated_totals are then recomputed from the final merged list.
+// ---------------------------------------------------------------------------
+
+describe('createAdcpServer — getSeededMediaBuyDelivery wiring (get_media_buy_delivery)', () => {
+  const REPORTING_PERIOD = { start: '2025-01-01T00:00:00Z', end: '2025-01-31T23:59:59Z' };
+
+  function makeDelivery(media_buy_id, totals = {}, extras = {}) {
+    return {
+      media_buy_id,
+      status: 'active',
+      totals,
+      by_package: [],
+      ...extras,
+    };
+  }
+
+  function handlerWith(deliveries, aggregated_totals = undefined) {
+    return async () => ({
+      reporting_period: REPORTING_PERIOD,
+      currency: 'USD',
+      aggregated_totals: aggregated_totals ?? {
+        impressions: deliveries.reduce((acc, d) => acc + (d.totals?.impressions ?? 0), 0),
+        spend: deliveries.reduce((acc, d) => acc + (d.totals?.spend ?? 0), 0),
+        media_buy_count: deliveries.length,
+      },
+      media_buy_deliveries: deliveries,
+    });
+  }
+
+  it('seeded-only: empty handler, two seeded; aggregated_totals recomputed from per-delivery totals', async () => {
+    const server = createAdcpServer({
+      name: 'Test',
+      version: '1.0.0',
+      mediaBuy: {
+        getMediaBuyDelivery: handlerWith([], { impressions: 0, spend: 0, media_buy_count: 0 }),
+      },
+      testController: {
+        getSeededMediaBuyDelivery: () => [
+          makeDelivery('s-1', { impressions: 100, spend: 5 }),
+          makeDelivery('s-2', { impressions: 250, spend: 12 }),
+        ],
+      },
+    });
+    const res = await dispatch(server, 'get_media_buy_delivery', { account: SANDBOX_ACCOUNT });
+    assert.equal(res.structuredContent.media_buy_deliveries.length, 2);
+    assert.equal(res.structuredContent.aggregated_totals.impressions, 350);
+    assert.equal(res.structuredContent.aggregated_totals.spend, 17);
+    assert.equal(res.structuredContent.aggregated_totals.media_buy_count, 2);
+  });
+
+  it('handler-only: bridge callback not registered, response passes through verbatim', async () => {
+    const handlerEnvelope = {
+      reporting_period: REPORTING_PERIOD,
+      currency: 'USD',
+      aggregated_totals: { impressions: 7, spend: 3, media_buy_count: 1 },
+      media_buy_deliveries: [makeDelivery('h-1', { impressions: 7, spend: 3 })],
+    };
+    const server = createAdcpServer({
+      name: 'Test',
+      version: '1.0.0',
+      mediaBuy: { getMediaBuyDelivery: async () => handlerEnvelope },
+      testController: {},
+    });
+    const res = await dispatch(server, 'get_media_buy_delivery', { account: SANDBOX_ACCOUNT });
+    assert.equal(res.structuredContent.media_buy_deliveries.length, 1);
+    assert.equal(res.structuredContent.aggregated_totals.impressions, 7);
+    assert.equal(res.structuredContent.aggregated_totals.media_buy_count, 1);
+  });
+
+  it('append-merge: handler 1 + bridge 2 (different ids) → merged 3 with summed aggregated_totals', async () => {
+    const server = createAdcpServer({
+      name: 'Test',
+      version: '1.0.0',
+      mediaBuy: {
+        getMediaBuyDelivery: handlerWith([makeDelivery('h-1', { impressions: 100, spend: 4 })]),
+      },
+      testController: {
+        getSeededMediaBuyDelivery: () => [
+          makeDelivery('s-1', { impressions: 200, spend: 8 }),
+          makeDelivery('s-2', { impressions: 300, spend: 12 }),
+        ],
+      },
+    });
+    const res = await dispatch(server, 'get_media_buy_delivery', { account: SANDBOX_ACCOUNT });
+    assert.deepEqual(
+      res.structuredContent.media_buy_deliveries.map(d => d.media_buy_id),
+      ['h-1', 's-1', 's-2']
+    );
+    assert.equal(res.structuredContent.aggregated_totals.impressions, 600);
+    assert.equal(res.structuredContent.aggregated_totals.spend, 24);
+    assert.equal(res.structuredContent.aggregated_totals.media_buy_count, 3);
+  });
+
+  it('collision dedup: seeded wins on shared media_buy_id; aggregated_totals reflect seeded value', async () => {
+    const server = createAdcpServer({
+      name: 'Test',
+      version: '1.0.0',
+      mediaBuy: {
+        getMediaBuyDelivery: handlerWith([makeDelivery('X', { impressions: 999, spend: 50 })]),
+      },
+      testController: {
+        getSeededMediaBuyDelivery: () => [makeDelivery('X', { impressions: 1, spend: 1 })],
+      },
+    });
+    const res = await dispatch(server, 'get_media_buy_delivery', { account: SANDBOX_ACCOUNT });
+    assert.equal(res.structuredContent.media_buy_deliveries.length, 1, 'collision deduped');
+    assert.equal(res.structuredContent.media_buy_deliveries[0].totals.impressions, 1, 'seeded wins on collision');
+    assert.equal(res.structuredContent.aggregated_totals.impressions, 1);
+    assert.equal(res.structuredContent.aggregated_totals.spend, 1);
+    assert.equal(res.structuredContent.aggregated_totals.media_buy_count, 1);
+  });
+
+  it('mixed collision: handler [A,B] + bridge [B,C] → merged [A,B,C] with seeded-wins on B and aggregated_totals from merged set', async () => {
+    const server = createAdcpServer({
+      name: 'Test',
+      version: '1.0.0',
+      mediaBuy: {
+        getMediaBuyDelivery: handlerWith([
+          makeDelivery('A', { impressions: 10, spend: 1 }),
+          makeDelivery('B', { impressions: 20, spend: 2 }),
+        ]),
+      },
+      testController: {
+        getSeededMediaBuyDelivery: () => [
+          makeDelivery('B', { impressions: 99, spend: 99 }), // collides → seeded wins
+          makeDelivery('C', { impressions: 30, spend: 3 }), // new → appended
+        ],
+      },
+    });
+    const res = await dispatch(server, 'get_media_buy_delivery', { account: SANDBOX_ACCOUNT });
+    assert.deepEqual(
+      res.structuredContent.media_buy_deliveries.map(d => d.media_buy_id),
+      ['A', 'B', 'C']
+    );
+    // B in merged is the SEEDED one (99/99), not the handler's (20/2).
+    // aggregated_totals reflects A.totals (handler 10/1) + B.totals (seeded 99/99) + C.totals (seeded 30/3) = 139/103.
+    assert.equal(res.structuredContent.aggregated_totals.impressions, 139);
+    assert.equal(res.structuredContent.aggregated_totals.spend, 103);
+    assert.equal(res.structuredContent.aggregated_totals.media_buy_count, 3);
+  });
+
+  it('optional-field guard: partial population on seeded falls back to handler value', async () => {
+    // Handler reports clicks on both deliveries. Bridge seeds one delivery
+    // WITHOUT clicks. The merged set is no longer uniformly populated, so the
+    // bridge MUST NOT recompute a partial sum — fall back to the handler's
+    // `aggregated_totals.clicks` (50). If we summed the partial set we'd get
+    // 30, silently understating the metric.
+    const handlerEnvelope = {
+      reporting_period: REPORTING_PERIOD,
+      currency: 'USD',
+      aggregated_totals: { impressions: 100, spend: 5, media_buy_count: 2, clicks: 50 },
+      media_buy_deliveries: [
+        makeDelivery('h-1', { impressions: 60, spend: 3, clicks: 30 }),
+        makeDelivery('h-2', { impressions: 40, spend: 2, clicks: 20 }),
+      ],
+    };
+    const server = createAdcpServer({
+      name: 'Test',
+      version: '1.0.0',
+      mediaBuy: { getMediaBuyDelivery: async () => handlerEnvelope },
+      testController: {
+        getSeededMediaBuyDelivery: () => [makeDelivery('s-1', { impressions: 10, spend: 1 /* no clicks */ })],
+      },
+    });
+    const res = await dispatch(server, 'get_media_buy_delivery', { account: SANDBOX_ACCOUNT });
+    // impressions/spend recomputed (every delivery has them).
+    assert.equal(res.structuredContent.aggregated_totals.impressions, 110);
+    assert.equal(res.structuredContent.aggregated_totals.spend, 6);
+    assert.equal(res.structuredContent.aggregated_totals.media_buy_count, 3);
+    // clicks is NOT recomputed — falls back to handler's value.
+    assert.equal(
+      res.structuredContent.aggregated_totals.clicks,
+      50,
+      'partial population falls back to handler value, not partial sum (30)'
+    );
+  });
+
+  it('derived ratios: completion_rate recomputed when impressions and completed_views uniformly populated', async () => {
+    const server = createAdcpServer({
+      name: 'Test',
+      version: '1.0.0',
+      mediaBuy: {
+        getMediaBuyDelivery: handlerWith([makeDelivery('h-1', { impressions: 400, completed_views: 100, spend: 5 })], {
+          impressions: 400,
+          completed_views: 100,
+          spend: 5,
+          media_buy_count: 1,
+          completion_rate: 0.25,
+        }),
+      },
+      testController: {
+        getSeededMediaBuyDelivery: () => [makeDelivery('s-1', { impressions: 600, completed_views: 200, spend: 5 })],
+      },
+    });
+    const res = await dispatch(server, 'get_media_buy_delivery', { account: SANDBOX_ACCOUNT });
+    // impressions = 1000, completed_views = 300, completion_rate = 0.3
+    assert.equal(res.structuredContent.aggregated_totals.impressions, 1000);
+    assert.equal(res.structuredContent.aggregated_totals.completed_views, 300);
+    assert.equal(res.structuredContent.aggregated_totals.completion_rate, 0.3);
+  });
+
+  it('derived ratios: omitted on divide-by-zero (impressions=0 → no completion_rate)', async () => {
+    const server = createAdcpServer({
+      name: 'Test',
+      version: '1.0.0',
+      mediaBuy: {
+        getMediaBuyDelivery: handlerWith([makeDelivery('h-1', { impressions: 0, completed_views: 0, spend: 0 })], {
+          impressions: 0,
+          completed_views: 0,
+          spend: 0,
+          media_buy_count: 1,
+        }),
+      },
+      testController: {
+        getSeededMediaBuyDelivery: () => [makeDelivery('s-1', { impressions: 0, completed_views: 0, spend: 0 })],
+      },
+    });
+    const res = await dispatch(server, 'get_media_buy_delivery', { account: SANDBOX_ACCOUNT });
+    assert.equal(res.structuredContent.aggregated_totals.impressions, 0);
+    assert.equal(
+      res.structuredContent.aggregated_totals.completion_rate,
+      undefined,
+      'no divide-by-zero; ratio omitted'
+    );
+  });
+
+  it('pass-through: reach / frequency / new_to_brand_rate survive merge unchanged', async () => {
+    const handlerEnvelope = {
+      reporting_period: REPORTING_PERIOD,
+      currency: 'USD',
+      aggregated_totals: {
+        impressions: 100,
+        spend: 5,
+        media_buy_count: 1,
+        reach: 80,
+        reach_unit: 'individuals',
+        frequency: 1.25,
+        new_to_brand_rate: 0.42,
+      },
+      media_buy_deliveries: [makeDelivery('h-1', { impressions: 100, spend: 5 })],
+    };
+    const server = createAdcpServer({
+      name: 'Test',
+      version: '1.0.0',
+      mediaBuy: { getMediaBuyDelivery: async () => handlerEnvelope },
+      testController: {
+        getSeededMediaBuyDelivery: () => [makeDelivery('s-1', { impressions: 50, spend: 2 })],
+      },
+    });
+    const res = await dispatch(server, 'get_media_buy_delivery', { account: SANDBOX_ACCOUNT });
+    // Sums recomputed; reach/frequency/NTB survive verbatim from handler.
+    assert.equal(res.structuredContent.aggregated_totals.impressions, 150);
+    assert.equal(res.structuredContent.aggregated_totals.reach, 80);
+    assert.equal(res.structuredContent.aggregated_totals.reach_unit, 'individuals');
+    assert.equal(res.structuredContent.aggregated_totals.frequency, 1.25);
+    assert.equal(res.structuredContent.aggregated_totals.new_to_brand_rate, 0.42);
+  });
+
+  it('skipped on non-sandbox requests (bridge callback not invoked)', async () => {
+    let called = false;
+    const server = createAdcpServer({
+      name: 'Test',
+      version: '1.0.0',
+      mediaBuy: { getMediaBuyDelivery: handlerWith([makeDelivery('h-1', { impressions: 10, spend: 1 })]) },
+      testController: {
+        getSeededMediaBuyDelivery: () => {
+          called = true;
+          return [makeDelivery('s-1', { impressions: 999, spend: 999 })];
+        },
+      },
+    });
+    const res = await dispatch(server, 'get_media_buy_delivery', {
+      account: { brand: { domain: 'example.com' }, operator: 'example.com' /* no sandbox */ },
+    });
+    assert.equal(called, false);
+    assert.equal(res.structuredContent.media_buy_deliveries.length, 1);
+    assert.equal(res.structuredContent.aggregated_totals.impressions, 10);
+  });
+
+  it('validation: warn-and-drop seeded entries missing media_buy_id; valid entries still merge', async () => {
+    const server = createAdcpServer({
+      name: 'Test',
+      version: '1.0.0',
+      mediaBuy: { getMediaBuyDelivery: handlerWith([]) },
+      testController: {
+        getSeededMediaBuyDelivery: () => [
+          makeDelivery('ok-1', { impressions: 5, spend: 1 }),
+          // missing media_buy_id — dropped
+          { status: 'active', totals: { impressions: 999, spend: 999 }, by_package: [] },
+        ],
+      },
+    });
+    const res = await dispatch(server, 'get_media_buy_delivery', { account: SANDBOX_ACCOUNT });
+    assert.deepEqual(
+      res.structuredContent.media_buy_deliveries.map(d => d.media_buy_id),
+      ['ok-1']
+    );
+    assert.equal(res.structuredContent.aggregated_totals.impressions, 5, 'invalid fixture did not contaminate sums');
+    assert.equal(res.structuredContent.aggregated_totals.media_buy_count, 1);
+  });
+
+  it('empty merged set: bridge returns []; handler envelope unchanged', async () => {
+    const handlerEnvelope = {
+      reporting_period: REPORTING_PERIOD,
+      currency: 'USD',
+      aggregated_totals: { impressions: 42, spend: 2, media_buy_count: 1 },
+      media_buy_deliveries: [makeDelivery('h-1', { impressions: 42, spend: 2 })],
+    };
+    const server = createAdcpServer({
+      name: 'Test',
+      version: '1.0.0',
+      mediaBuy: { getMediaBuyDelivery: async () => handlerEnvelope },
+      testController: {
+        getSeededMediaBuyDelivery: () => [],
+      },
+    });
+    const res = await dispatch(server, 'get_media_buy_delivery', { account: SANDBOX_ACCOUNT });
+    assert.equal(res.structuredContent.media_buy_deliveries.length, 1);
+    assert.equal(res.structuredContent.aggregated_totals.impressions, 42);
+    assert.equal(res.structuredContent.aggregated_totals.media_buy_count, 1);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// bridgeFromSessionStore — selectSeededMediaBuyDelivery wiring
+// ---------------------------------------------------------------------------
+
+describe('bridgeFromSessionStore — selectSeededMediaBuyDelivery', () => {
+  it('wires getSeededMediaBuyDelivery from selectSeededMediaBuyDelivery', async () => {
+    const bridge = bridgeFromSessionStore({
+      loadSession: () => ({
+        snapshots: [
+          {
+            media_buy_id: 'mb-1',
+            status: 'active',
+            totals: { impressions: 100, spend: 5 },
+            by_package: [],
+          },
+        ],
+      }),
+      selectSeededProducts: () => undefined,
+      selectSeededMediaBuyDelivery: session => session.snapshots,
+    });
+    const out = await bridge.getSeededMediaBuyDelivery({ input: {} });
+    assert.equal(out.length, 1);
+    assert.equal(out[0].media_buy_id, 'mb-1');
+  });
+
+  it('omits getSeededMediaBuyDelivery when no selector is provided', async () => {
+    const bridge = bridgeFromSessionStore({
+      loadSession: () => ({}),
+      selectSeededProducts: () => undefined,
+    });
+    assert.equal(bridge.getSeededMediaBuyDelivery, undefined);
   });
 });

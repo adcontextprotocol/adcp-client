@@ -251,12 +251,13 @@ const server = createAdcpServer({
     // your specialism gates on. Returned entries are validated (warn-and-drop
     // on shape errors, never throw) and merged into the matching tool's
     // response on sandbox requests only.
-    selectSeededProducts:          s => s.seededProducts,          // get_products
-    selectSeededCreatives:         s => s.seededCreatives,         // list_creatives
-    selectSeededMediaBuys:         s => s.seededMediaBuys,         // get_media_buys
-    selectSeededAccounts:          s => s.seededAccounts,          // list_accounts
-    selectSeededAccountFinancials: s => s.seededFinancials,        // get_account_financials
-    selectSeededCreativeFormats:   s => s.seededFormats,           // list_creative_formats
+    selectSeededProducts:           s => s.seededProducts,          // get_products              → sales-* product discovery
+    selectSeededCreatives:          s => s.seededCreatives,          // list_creatives            → creative-* upload/listing
+    selectSeededMediaBuys:          s => s.seededMediaBuys,          // get_media_buys            → sales-non-guaranteed delivery-readback
+    selectSeededMediaBuyDelivery:   s => s.seededDelivery,           // get_media_buy_delivery    → sales-* delivery-snapshot assertions
+    selectSeededAccounts:           s => s.seededAccounts,           // list_accounts             → audience-sync / governance-* multi-account
+    selectSeededAccountFinancials:  s => s.seededFinancials,         // get_account_financials    → governance-spend-authority financial readback
+    selectSeededCreativeFormats:    s => s.seededFormats,            // list_creative_formats     → creative-template / creative-generative
   }),
 });
 ```
@@ -265,7 +266,8 @@ Bridge contract:
 
 - **Triply gated.** Bridge runs only when the bridge is registered, the request carries a sandbox marker (`account.sandbox === true` or `context.sandbox === true`), and — if `resolveAccount` produced a record — that record is `sandbox: true` too. Production traffic untouched.
 - **Post-handler merge.** The adapter's real handler runs first (so a broken `snapClient.getCreatives()` still fails the conformance gate — the bridge supplements, it does not replace adapter behavior). Seeded entries append; on id collision the seeded fixture wins.
-- **Singleton exception.** `get_account_financials` returns one account's envelope, so the bridge picks the seeded fixture whose `account.account_id` matches the request's `account.account_id` and REPLACES the handler envelope for that account. Other accounts pass through unchanged.
+- **Singleton exception.** `get_account_financials` returns one account's envelope, so the bridge picks the seeded fixture whose `account.account_id` matches the request's `account.account_id` and REPLACES the handler envelope for that account. Other accounts pass through unchanged. When `resolveAccount` produces a record, the resolved `account_id` wins over the request's `account_id` — fixtures are interchangeable across `AccountReference` variants.
+- **Delivery merge recomputes aggregated_totals.** `get_media_buy_delivery` is the one append-merge bridge that updates the response envelope: after seeded deliveries merge in (seeded wins on `media_buy_id` collision — matches the precedent set by the other five `getSeeded*` bridges, since storyboards seed deliberately and a seeded fixture for an existing id is an explicit author override), `aggregated_totals` is recomputed from the merged per-delivery `totals`. Required sums (`impressions`, `spend`, `media_buy_count`) always recompute. Optional sums (`clicks`, `completed_views`, `views`, `conversions`, `conversion_value`) only recompute when every merged delivery populates the field — partial population falls back to the handler's value (no silent under-counting). Derived ratios (`roas`, `completion_rate`, `cost_per_acquisition`) recompute only when both inputs were recomputed AND the divisor is non-zero. Pass-through fields (`reach`, `reach_unit`, `frequency`, `new_to_brand_rate`) keep the handler's value verbatim — they aren't derivable from per-delivery `totals`.
 - **Validation drops invalid fixtures.** Entries missing the dedup id (`creative_id`, `media_buy_id`, `account_id`, `account.account_id`, `format_id.{agent_url,id}`) are warn-and-dropped, not thrown — a broken test fixture shouldn't tank the request under test.
 
 Plain hand-rolled `TestControllerBridge` (no session store) is also supported — wire `getSeededProducts` / `getSeededCreatives` / etc. directly. See `src/lib/server/test-controller-bridge.ts` for the interface.
