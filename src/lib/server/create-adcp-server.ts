@@ -4007,10 +4007,20 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
                     | import('../types/tools.generated').GetAccountFinancialsResponse
                     | undefined;
                   if (sc && typeof sc === 'object') {
+                    // Brand+operator `AccountReference` variants don't carry
+                    // `account_id` on the wire — the framework's resolved
+                    // account does, so prefer it for the match key.
+                    const resolvedAccountId =
+                      ctx.account && typeof ctx.account === 'object' && !Array.isArray(ctx.account)
+                        ? ((ctx.account as { account_id?: unknown }).account_id as string | undefined)
+                        : undefined;
                     const merged = replaceAccountFinancialsIfSeeded(
                       params as import('../types/tools.generated').GetAccountFinancialsRequest,
                       sc,
-                      seeded
+                      seeded,
+                      typeof resolvedAccountId === 'string' && resolvedAccountId.length > 0
+                        ? resolvedAccountId
+                        : undefined
                     );
                     if (merged !== sc) formatted = wrap(merged);
                   }

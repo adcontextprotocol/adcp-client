@@ -123,9 +123,17 @@ export interface TestControllerBridge<TAccount = unknown> {
    * collections, `get_account_financials` returns a singleton response —
    * one account, one envelope. The bridge callback returns an array of
    * seeded records keyed by `account.account_id`; the framework picks the
-   * entry whose `account_id` matches the request's `account` reference and
-   * REPLACES the handler response with that fixture. When no seeded entry
-   * matches, the handler response passes through unchanged.
+   * entry whose `account_id` matches the resolved request account and
+   * replaces the handler response's financials payload with that fixture.
+   * Framework-managed `context` and `ext` from the handler response are
+   * PRESERVED across the replace — the seeded fixture is authoritative on
+   * the financials body (spend / period / account / currency / ...) but not
+   * on the response envelope (the fixture can't know the current request's
+   * `request_id` / `adcp_version` echo).
+   *
+   * When no seeded entry matches, the handler response passes through
+   * unchanged. Duplicate seeded entries with the same `account.account_id`
+   * are warn-and-dropped during validation (first occurrence wins).
    *
    * Same sandbox gating contract as {@link TestControllerBridge.getSeededProducts}.
    */
@@ -299,6 +307,13 @@ export function filterValidSeededAccounts(
  * field is not a `{ account_id: string }`-shaped object (`AccountReference`
  * carries `account_id` on the operator-resolved variant; the bridge keys on
  * that field to match against the request's account).
+ *
+ * Also drops duplicate entries by `account.account_id` (first occurrence
+ * wins, matching the array-collection helpers' on-collision-seeded-wins
+ * contract — the "first" seeded entry in iteration order is authoritative).
+ * A fixture array with two entries for the same `account_id` is almost
+ * always a seed-store bug; warn-and-drop surfaces it instead of silently
+ * picking whichever happened to come first in iteration order.
  */
 export function filterValidSeededAccountFinancials(
   raw: unknown,
@@ -311,6 +326,7 @@ export function filterValidSeededAccountFinancials(
     return [];
   }
   const valid: SeededAccountFinancials[] = [];
+  const seenAccountIds = new Set<string>();
   raw.forEach((entry, index) => {
     if (!entry || typeof entry !== 'object' || Array.isArray(entry)) {
       logger?.warn('testController.getSeededAccountFinancials entry is not an object; dropping', { index });
@@ -325,6 +341,14 @@ export function filterValidSeededAccountFinancials(
       logger?.warn('testController.getSeededAccountFinancials entry missing account.account_id; dropping', { index });
       return;
     }
+    if (seenAccountIds.has(accountId)) {
+      logger?.warn(
+        'testController.getSeededAccountFinancials duplicate account.account_id; dropping (first occurrence wins)',
+        { index, account_id: accountId }
+      );
+      return;
+    }
+    seenAccountIds.add(accountId);
     valid.push(entry as SeededAccountFinancials);
   });
   return valid;
@@ -411,6 +435,13 @@ function filterValidById<T>(
  * come first; seeded entries append after deduping by `creative_id`. On
  * collision the seeded entry wins. Stamps `sandbox: true` unless the handler
  * explicitly declared `sandbox: false`. Returns a NEW response object.
+ *
+ * Also updates `query_summary.returned` to match the final array length and
+ * `query_summary.total_matching` to `handler.total_matching + (seeded entries
+ * that did NOT collide with the handler set)`. Storyboards that assert on
+ * counts see the merged totals, not the handler's pre-merge counts. Mirror
+ * field on `pagination.total_count` is updated by the same delta when the
+ * handler set it.
  */
 export function mergeSeededCreativesIntoResponse(
   response: ListCreativesResponse,
@@ -420,13 +451,42 @@ export function mergeSeededCreativesIntoResponse(
   const seededIds = new Set<string>();
   for (const c of seeded) seededIds.add(c.creative_id);
   const existing = Array.isArray(response.creatives) ? response.creatives : [];
+  const existingIds = new Set<string>();
+  for (const c of existing) {
+    if (c && typeof c.creative_id === 'string') existingIds.add(c.creative_id);
+  }
   const retained = existing.filter(c => !seededIds.has(c?.creative_id));
+  const finalCreatives = [...retained, ...seeded];
+  // New entries = seeded that did NOT collide with the handler's set. Collisions
+  // replace in-place; the merged total_matching shouldn't grow on those.
+  let newCount = 0;
+  for (const c of seeded) if (!existingIds.has(c.creative_id)) newCount += 1;
   const merged: ListCreativesResponse = {
     ...response,
-    creatives: [...retained, ...seeded],
+    creatives: finalCreatives,
   };
   if ((response as { sandbox?: unknown }).sandbox !== false) {
     (merged as { sandbox?: boolean }).sandbox = true;
+  }
+  // query_summary is required on list_creatives per AdCP 3.0.11. Update the
+  // counts if the handler provided them; leave the rest of the block
+  // (filters_applied, etc.) untouched.
+  const qs = (response as { query_summary?: { total_matching?: unknown; returned?: unknown } }).query_summary;
+  if (qs && typeof qs === 'object') {
+    const baseTotal = typeof qs.total_matching === 'number' ? qs.total_matching : existing.length;
+    (merged as { query_summary?: unknown }).query_summary = {
+      ...qs,
+      total_matching: baseTotal + newCount,
+      returned: finalCreatives.length,
+    };
+  }
+  // pagination.total_count is optional; only update when the handler provided it.
+  const pagination = (response as { pagination?: { total_count?: unknown } }).pagination;
+  if (pagination && typeof pagination === 'object' && typeof pagination.total_count === 'number') {
+    (merged as { pagination?: unknown }).pagination = {
+      ...pagination,
+      total_count: pagination.total_count + newCount,
+    };
   }
   return merged;
 }
@@ -435,6 +495,13 @@ export function mergeSeededCreativesIntoResponse(
  * Merge seeded media buys into a `get_media_buys` response. Existing media
  * buys come first; seeded entries append after deduping by `media_buy_id`.
  * On collision the seeded entry wins. Returns a NEW response object.
+ *
+ * `get_media_buys` does NOT carry a `query_summary` block (per AdCP 3.0.11);
+ * it exposes its count via `pagination.total_count` (optional). When the
+ * handler set `pagination.total_count`, it's incremented by the count of
+ * new (non-colliding) seeded entries so the merged response stays
+ * internally consistent. Handlers that left `total_count` off pass through
+ * unchanged.
  */
 export function mergeSeededMediaBuysIntoResponse(
   response: GetMediaBuysResponse,
@@ -444,13 +511,26 @@ export function mergeSeededMediaBuysIntoResponse(
   const seededIds = new Set<string>();
   for (const mb of seeded) seededIds.add(mb.media_buy_id);
   const existing = Array.isArray(response.media_buys) ? response.media_buys : [];
+  const existingIds = new Set<string>();
+  for (const mb of existing) {
+    if (mb && typeof mb.media_buy_id === 'string') existingIds.add(mb.media_buy_id);
+  }
   const retained = existing.filter(mb => !seededIds.has(mb?.media_buy_id));
+  let newCount = 0;
+  for (const mb of seeded) if (!existingIds.has(mb.media_buy_id)) newCount += 1;
   const merged: GetMediaBuysResponse = {
     ...response,
     media_buys: [...retained, ...seeded],
   };
   if ((response as { sandbox?: unknown }).sandbox !== false) {
     (merged as { sandbox?: boolean }).sandbox = true;
+  }
+  const pagination = (response as { pagination?: { total_count?: unknown } }).pagination;
+  if (pagination && typeof pagination === 'object' && typeof pagination.total_count === 'number') {
+    (merged as { pagination?: unknown }).pagination = {
+      ...pagination,
+      total_count: pagination.total_count + newCount,
+    };
   }
   return merged;
 }
@@ -459,6 +539,10 @@ export function mergeSeededMediaBuysIntoResponse(
  * Merge seeded accounts into a `list_accounts` response. Existing accounts
  * come first; seeded entries append after deduping by `account_id`. On
  * collision the seeded entry wins. Returns a NEW response object.
+ *
+ * `list_accounts` exposes its count via `pagination.total_count` (optional,
+ * same as `get_media_buys`). When the handler set it, it's incremented by
+ * the count of new (non-colliding) seeded entries.
  */
 export function mergeSeededAccountsIntoResponse(
   response: ListAccountsResponse,
@@ -468,13 +552,26 @@ export function mergeSeededAccountsIntoResponse(
   const seededIds = new Set<string>();
   for (const a of seeded) seededIds.add(a.account_id);
   const existing = Array.isArray(response.accounts) ? response.accounts : [];
+  const existingIds = new Set<string>();
+  for (const a of existing) {
+    if (a && typeof a.account_id === 'string') existingIds.add(a.account_id);
+  }
   const retained = existing.filter(a => !seededIds.has(a?.account_id));
+  let newCount = 0;
+  for (const a of seeded) if (!existingIds.has(a.account_id)) newCount += 1;
   const merged: ListAccountsResponse = {
     ...response,
     accounts: [...retained, ...seeded],
   };
   if ((response as { sandbox?: unknown }).sandbox !== false) {
     (merged as { sandbox?: boolean }).sandbox = true;
+  }
+  const pagination = (response as { pagination?: { total_count?: unknown } }).pagination;
+  if (pagination && typeof pagination === 'object' && typeof pagination.total_count === 'number') {
+    (merged as { pagination?: unknown }).pagination = {
+      ...pagination,
+      total_count: pagination.total_count + newCount,
+    };
   }
   return merged;
 }
@@ -496,17 +593,32 @@ function readRequestAccountId(req: Record<string, unknown> | undefined): string 
 
 /**
  * Pick a seeded `get_account_financials` fixture matching the request's
- * `account.account_id`. Unlike the array-collection helpers, this returns
- * the SINGLE matched envelope or `undefined` — `get_account_financials` is
- * a singleton response and "merge" reduces to "replace if the request's
- * account matches a seeded fixture".
+ * account. Unlike the array-collection helpers, this returns the SINGLE
+ * matched envelope or `undefined` — `get_account_financials` is a singleton
+ * response and "merge" reduces to "replace if the request's account matches
+ * a seeded fixture".
+ *
+ * Matching honors both the raw request and the resolved account from
+ * `resolveAccount`. `AccountReference` is a discriminated union — the
+ * operator-resolved variant carries `account_id` on the request, but the
+ * brand+operator variants do not. When the framework has already resolved
+ * the request to an account, prefer that resolved id so seeded fixtures
+ * find their match regardless of which `AccountReference` variant the
+ * buyer sent.
+ *
+ * @param resolvedAccountId - The `account_id` from `ctx.account` after
+ *   `resolveAccount` ran. Pass `undefined` when no account was resolved
+ *   (singleton-tenant adopters) — the function falls back to the request's
+ *   `account.account_id` field, which preserves the original semantics for
+ *   adopters who don't wire `resolveAccount`.
  */
 export function pickSeededAccountFinancialsForRequest(
   request: GetAccountFinancialsRequest | Record<string, unknown>,
-  seeded: readonly SeededAccountFinancials[]
+  seeded: readonly SeededAccountFinancials[],
+  resolvedAccountId?: string
 ): SeededAccountFinancials | undefined {
   if (!seeded.length) return undefined;
-  const requestedId = readRequestAccountId(request as Record<string, unknown>);
+  const requestedId = resolvedAccountId ?? readRequestAccountId(request as Record<string, unknown>);
   if (requestedId == null) return undefined;
   for (const entry of seeded) {
     const id = (entry.account as { account_id?: unknown } | undefined)?.account_id;
@@ -517,19 +629,38 @@ export function pickSeededAccountFinancialsForRequest(
 
 /**
  * Replace a `get_account_financials` response when a seeded fixture matches
- * the request's account. Returns the seeded fixture (preserving any
- * `context` / `ext` from the handler response is intentionally NOT done —
- * the seeded envelope is authoritative for the seeded account, including
- * its own `context` / `ext` if the fixture set them). When no fixture
- * matches, returns the handler response unchanged.
+ * the request's account. The seeded fixture is authoritative on the
+ * financials payload (spend, period, account, currency, ...). The handler's
+ * `context` and `ext` are framework-managed (`context` echoes
+ * `adcp_version` / `request_id`; `ext` carries adopter passthrough) and
+ * MUST be preserved across the replace — wire-correct context echo is the
+ * framework's responsibility, not the seed fixture's.
+ *
+ * When no fixture matches, returns the handler response unchanged.
+ *
+ * @param resolvedAccountId - Optional resolved `account_id` from
+ *   `ctx.account`; passed through to {@link pickSeededAccountFinancialsForRequest}.
  */
 export function replaceAccountFinancialsIfSeeded(
   request: GetAccountFinancialsRequest | Record<string, unknown>,
   response: GetAccountFinancialsResponse,
-  seeded: readonly SeededAccountFinancials[]
+  seeded: readonly SeededAccountFinancials[],
+  resolvedAccountId?: string
 ): GetAccountFinancialsResponse {
-  const picked = pickSeededAccountFinancialsForRequest(request, seeded);
-  return picked ?? response;
+  const picked = pickSeededAccountFinancialsForRequest(request, seeded, resolvedAccountId);
+  if (!picked) return response;
+  // Preserve framework-managed envelope fields from the handler response;
+  // seeded fixture owns the financials body. Pull `context` / `ext` off the
+  // handler response (when present) and re-stamp them on top of the seeded
+  // payload — the fixture's own `context` / `ext` (if any) lose to the
+  // handler's, which is correct: a seeded snapshot can't know the current
+  // request's `request_id` / `adcp_version` echo.
+  const handlerContext = (response as { context?: unknown }).context;
+  const handlerExt = (response as { ext?: unknown }).ext;
+  const merged: GetAccountFinancialsResponse = { ...picked };
+  if (handlerContext !== undefined) (merged as { context?: unknown }).context = handlerContext;
+  if (handlerExt !== undefined) (merged as { ext?: unknown }).ext = handlerExt;
+  return merged;
 }
 
 /**

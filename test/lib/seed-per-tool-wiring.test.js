@@ -672,3 +672,319 @@ describe('bridgeFromSessionStore — per-tool selectors', () => {
     assert.equal(bridge.getSeededCreativeFormats, undefined);
   });
 });
+
+// ---------------------------------------------------------------------------
+// get_account_financials — brand+operator AccountReference resolution
+//
+// AccountReference is a discriminated union. The brand+operator variants
+// don't carry `account_id` on the wire — `resolveAccount` produces a
+// resolved record with `account_id`, and the bridge MUST key on the
+// resolved id, not the (absent) request field.
+// ---------------------------------------------------------------------------
+
+describe('get_account_financials — brand+operator account reference resolution', () => {
+  it('matches seeded fixture against resolved ctx.account.account_id on brand+operator requests', async () => {
+    const server = createAdcpServer({
+      name: 'Test',
+      version: '1.0.0',
+      resolveAccount: async () => ({ account_id: 'resolved-acct-7', sandbox: true }),
+      accounts: {
+        getAccountFinancials: async () => ({
+          account: { account_id: 'resolved-acct-7' },
+          currency: 'USD',
+          period: { start: '2025-01-01', end: '2025-01-31' },
+          timezone: 'UTC',
+          spend: { total_spend: 1 },
+        }),
+      },
+      testController: {
+        getSeededAccountFinancials: () => [
+          {
+            account: { account_id: 'resolved-acct-7' },
+            currency: 'USD',
+            period: { start: '2025-01-01', end: '2025-01-31' },
+            timezone: 'UTC',
+            spend: { total_spend: 4242 },
+          },
+        ],
+      },
+    });
+    const res = await dispatch(server, 'get_account_financials', {
+      account: { brand: { domain: 'example.com' }, operator: 'example.com', sandbox: true },
+    });
+    assert.equal(res.structuredContent.spend.total_spend, 4242, 'seeded fixture should replace via resolved id');
+  });
+
+  it('passes handler envelope through unchanged when no seeded fixture matches the resolved id', async () => {
+    const server = createAdcpServer({
+      name: 'Test',
+      version: '1.0.0',
+      resolveAccount: async () => ({ account_id: 'resolved-acct-8', sandbox: true }),
+      accounts: {
+        getAccountFinancials: async () => ({
+          account: { account_id: 'resolved-acct-8' },
+          currency: 'USD',
+          period: { start: '2025-01-01', end: '2025-01-31' },
+          timezone: 'UTC',
+          spend: { total_spend: 17 },
+        }),
+      },
+      testController: {
+        getSeededAccountFinancials: () => [
+          {
+            account: { account_id: 'some-other-account' },
+            currency: 'USD',
+            period: { start: '2025-01-01', end: '2025-01-31' },
+            timezone: 'UTC',
+            spend: { total_spend: 999 },
+          },
+        ],
+      },
+    });
+    const res = await dispatch(server, 'get_account_financials', {
+      account: { brand: { domain: 'example.com' }, operator: 'example.com', sandbox: true },
+    });
+    assert.equal(res.structuredContent.spend.total_spend, 17, 'handler response should pass through unchanged');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// get_account_financials — preserve handler context/ext on singleton replace
+// ---------------------------------------------------------------------------
+
+describe('get_account_financials — handler context/ext preserved on singleton replace', () => {
+  it('preserves handler.context and handler.ext when replacing with seeded financials', async () => {
+    const handlerEnvelope = {
+      context: { adcp_version: '3.0.11', request_id: 'req-xyz' },
+      ext: { audit: { trace_id: 'trace-1' } },
+      account: { account_id: 'acct-ctx' },
+      currency: 'USD',
+      period: { start: '2025-01-01', end: '2025-01-31' },
+      timezone: 'UTC',
+      spend: { total_spend: 1 },
+    };
+    const server = createAdcpServer({
+      name: 'Test',
+      version: '1.0.0',
+      accounts: { getAccountFinancials: async () => handlerEnvelope },
+      testController: {
+        getSeededAccountFinancials: () => [
+          {
+            // Seeded fixture has NO context / ext. Replace must preserve
+            // the handler's context echo, not produce a fixture envelope
+            // missing it.
+            account: { account_id: 'acct-ctx' },
+            currency: 'USD',
+            period: { start: '2025-01-01', end: '2025-01-31' },
+            timezone: 'UTC',
+            spend: { total_spend: 7777 },
+          },
+        ],
+      },
+    });
+    const res = await dispatch(server, 'get_account_financials', {
+      account: { account_id: 'acct-ctx', sandbox: true },
+    });
+    assert.equal(res.structuredContent.spend.total_spend, 7777, 'financials replaced by seeded fixture');
+    assert.deepEqual(
+      res.structuredContent.context,
+      { adcp_version: '3.0.11', request_id: 'req-xyz' },
+      'handler context preserved across replace'
+    );
+    assert.deepEqual(
+      res.structuredContent.ext,
+      { audit: { trace_id: 'trace-1' } },
+      'handler ext preserved across replace'
+    );
+  });
+});
+
+// ---------------------------------------------------------------------------
+// get_account_financials — duplicate seeded account_ids warn-and-drop
+// ---------------------------------------------------------------------------
+
+describe('get_account_financials — duplicate seeded account_ids', () => {
+  it('warns and drops duplicate seeded entries by account.account_id (first wins)', async () => {
+    const warnings = [];
+    const logger = {
+      info: () => {},
+      warn: (message, meta) => warnings.push({ message, meta }),
+      error: () => {},
+      debug: () => {},
+    };
+    const server = createAdcpServer({
+      name: 'Test',
+      version: '1.0.0',
+      logger,
+      accounts: {
+        getAccountFinancials: async () => ({
+          account: { account_id: 'dup-acct' },
+          currency: 'USD',
+          period: { start: '2025-01-01', end: '2025-01-31' },
+          timezone: 'UTC',
+          spend: { total_spend: 1 },
+        }),
+      },
+      testController: {
+        getSeededAccountFinancials: () => [
+          {
+            account: { account_id: 'dup-acct' },
+            currency: 'USD',
+            period: { start: '2025-01-01', end: '2025-01-31' },
+            timezone: 'UTC',
+            spend: { total_spend: 100 },
+          },
+          {
+            account: { account_id: 'dup-acct' },
+            currency: 'USD',
+            period: { start: '2025-01-01', end: '2025-01-31' },
+            timezone: 'UTC',
+            spend: { total_spend: 200 },
+          },
+          {
+            account: { account_id: 'other-acct' },
+            currency: 'USD',
+            period: { start: '2025-01-01', end: '2025-01-31' },
+            timezone: 'UTC',
+            spend: { total_spend: 300 },
+          },
+        ],
+      },
+    });
+    const res = await dispatch(server, 'get_account_financials', {
+      account: { account_id: 'dup-acct', sandbox: true },
+    });
+    // First seeded fixture (total_spend: 100) wins; the duplicate (total_spend: 200) is dropped.
+    assert.equal(res.structuredContent.spend.total_spend, 100);
+    const dupWarn = warnings.find(w => /duplicate account.account_id/.test(w.message));
+    assert.ok(dupWarn, 'should have logged a duplicate-drop warning');
+    assert.equal(dupWarn.meta.account_id, 'dup-acct');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// list_creatives — query_summary count update on merge
+// ---------------------------------------------------------------------------
+
+describe('list_creatives — query_summary count updates on merge', () => {
+  it('updates returned and total_matching when new seeded entries append', async () => {
+    const server = createAdcpServer({
+      name: 'Test',
+      version: '1.0.0',
+      creative: {
+        listCreatives: async () => ({
+          query_summary: { total_matching: 50, returned: 2 },
+          pagination: { has_more: true, total_count: 50 },
+          creatives: [
+            { creative_id: 'h-1', name: 'A' },
+            { creative_id: 'h-2', name: 'B' },
+          ],
+        }),
+      },
+      testController: {
+        getSeededCreatives: () => [
+          { creative_id: 's-1', name: 'X' },
+          { creative_id: 's-2', name: 'Y' },
+          { creative_id: 's-3', name: 'Z' },
+        ],
+      },
+    });
+    const res = await dispatch(server, 'list_creatives', { account: SANDBOX_ACCOUNT });
+    assert.equal(res.structuredContent.creatives.length, 5);
+    assert.equal(res.structuredContent.query_summary.returned, 5, 'returned == final array length');
+    assert.equal(res.structuredContent.query_summary.total_matching, 53, 'total_matching += new seeded count');
+    // pagination.total_count mirrors the delta when the handler set it.
+    assert.equal(res.structuredContent.pagination.total_count, 53);
+  });
+
+  it('does not inflate counts on id collision (dedupe wins, no drift)', async () => {
+    const server = createAdcpServer({
+      name: 'Test',
+      version: '1.0.0',
+      creative: {
+        listCreatives: async () => ({
+          query_summary: { total_matching: 10, returned: 3 },
+          pagination: { has_more: false, total_count: 10 },
+          creatives: [
+            { creative_id: 'shared-1', name: 'A' },
+            { creative_id: 'shared-2', name: 'B' },
+            { creative_id: 'h-only', name: 'C' },
+          ],
+        }),
+      },
+      testController: {
+        getSeededCreatives: () => [
+          { creative_id: 'shared-1', name: 'A-seeded' },
+          { creative_id: 'shared-2', name: 'B-seeded' },
+        ],
+      },
+    });
+    const res = await dispatch(server, 'list_creatives', { account: SANDBOX_ACCOUNT });
+    assert.equal(res.structuredContent.creatives.length, 3, 'array length unchanged on full collision');
+    assert.equal(res.structuredContent.query_summary.returned, 3);
+    assert.equal(
+      res.structuredContent.query_summary.total_matching,
+      10,
+      'no drift; collided entries do not grow total'
+    );
+    assert.equal(res.structuredContent.pagination.total_count, 10);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// get_media_buys — pagination.total_count update on merge
+// ---------------------------------------------------------------------------
+
+describe('get_media_buys — pagination.total_count updates on merge', () => {
+  it('updates pagination.total_count when new seeded entries append', async () => {
+    const server = createAdcpServer({
+      name: 'Test',
+      version: '1.0.0',
+      mediaBuy: {
+        getMediaBuys: async () => ({
+          pagination: { has_more: true, total_count: 50 },
+          media_buys: [
+            { media_buy_id: 'h-1', status: 'active', currency: 'USD' },
+            { media_buy_id: 'h-2', status: 'active', currency: 'USD' },
+          ],
+        }),
+      },
+      testController: {
+        getSeededMediaBuys: () => [
+          { media_buy_id: 's-1', status: 'active', currency: 'USD' },
+          { media_buy_id: 's-2', status: 'active', currency: 'USD' },
+          { media_buy_id: 's-3', status: 'active', currency: 'USD' },
+        ],
+      },
+    });
+    const res = await dispatch(server, 'get_media_buys', { account: SANDBOX_ACCOUNT });
+    assert.equal(res.structuredContent.media_buys.length, 5);
+    assert.equal(res.structuredContent.pagination.total_count, 53);
+  });
+
+  it('does not inflate pagination.total_count on full id collision', async () => {
+    const server = createAdcpServer({
+      name: 'Test',
+      version: '1.0.0',
+      mediaBuy: {
+        getMediaBuys: async () => ({
+          pagination: { has_more: false, total_count: 10 },
+          media_buys: [
+            { media_buy_id: 'shared-1', status: 'active', currency: 'USD' },
+            { media_buy_id: 'shared-2', status: 'active', currency: 'USD' },
+            { media_buy_id: 'h-only', status: 'active', currency: 'USD' },
+          ],
+        }),
+      },
+      testController: {
+        getSeededMediaBuys: () => [
+          { media_buy_id: 'shared-1', status: 'completed', currency: 'USD' },
+          { media_buy_id: 'shared-2', status: 'completed', currency: 'USD' },
+        ],
+      },
+    });
+    const res = await dispatch(server, 'get_media_buys', { account: SANDBOX_ACCOUNT });
+    assert.equal(res.structuredContent.media_buys.length, 3);
+    assert.equal(res.structuredContent.pagination.total_count, 10);
+  });
+});
