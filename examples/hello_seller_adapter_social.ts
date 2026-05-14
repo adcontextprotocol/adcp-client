@@ -38,6 +38,7 @@ import {
   AdcpError,
   defineSalesPlatform,
   defineAudiencePlatform,
+  assertNoExampleTlds,
   type DecisioningPlatform,
   type SalesPlatform,
   type AudiencePlatform,
@@ -303,6 +304,10 @@ interface AdvertiserMeta {
 // AdCP-side identifiers from the mock's seed data. SWAP: replace with a
 // real `/advertiser/list` call.
 const KNOWN_ADVERTISERS = ['acmeoutdoor.example', 'summit-media.example'];
+assertNoExampleTlds(
+  { KNOWN_ADVERTISERS },
+  { allowIn: ['test', 'development'], checklistPath: 'examples/hello_seller_adapter_social.ts' }
+);
 
 // Buyer event_source_id → upstream pixel_id translation map. The mock
 // ignores buyer-supplied pixel_id and assigns its own (`px_<uuid>`); buyers
