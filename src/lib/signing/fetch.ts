@@ -26,6 +26,17 @@ export type FetchLike = (input: string | URL | Request, init?: RequestInit) => P
  * caller-supplied value gets stripped before signing so a misconfigured
  * custom-headers bag can't silently overwrite (or bypass) the RFC 9421
  * signature output.
+ *
+ * `authorization` is intentionally NOT in this set. AdCP's RFC 9421 profile
+ * does not cover `Authorization` (see `MANDATORY_COMPONENTS` in
+ * `src/lib/signing/types.ts`), so a caller-supplied bearer or RFC 7617 Basic
+ * header passes through unmodified. If a future profile adds `authorization`
+ * to `covered_components`, the canonicalizer must read the FINAL outgoing
+ * value (post-`mergeHeaders` injection in `bin/adcp.js` for the CLI Basic
+ * path) — `createSigningFetch` already does because it reads `init.headers`
+ * at fetch time. Note RFC 9421 §7.5.7 warns about signing over long-lived
+ * credentials (Basic doesn't rotate) — re-attacking the signed credential is
+ * a real risk; a `covers_authorization` policy needs that in scope.
  */
 const SIGNING_RESERVED_HEADERS = new Set(['signature', 'signature-input', 'content-digest']);
 

@@ -1,7 +1,7 @@
 # Ad Context Protocol (AdCP)
 
-> Generated at: 2026-05-08
-> Library: @adcp/sdk v6.11.0
+> Generated at: 2026-05-12
+> Library: @adcp/sdk v7.1.0
 > AdCP major version: 3
 > Canonical URL: https://adcontextprotocol.github.io/adcp-client/llms.txt
 > Note: the `Library` stamp reflects the package.json version at doc-generation time. The narrative below describes the surface that lands on the next-published minor — including any 6.7 helpers documented here ahead of the release tag.
@@ -96,6 +96,14 @@ const buy = await agent.createMediaBuy({
   packages: [{ buyer_ref: 'pkg-1', product_id: 'prod_1', pricing_option_id: 'cpm_1', budget: 5000 }],
 });
 ```
+
+## Transport auth
+
+AdCP is auth-scheme-agnostic at the transport layer. The protocol carries JSON-RPC over HTTP; how the outer envelope is gated is an operator-private deployment choice — bearer tokens, OAuth, mTLS, AWS SigV4 at the edge, an IP allow-list, or RFC 7617 HTTP Basic when the agent sits behind an API gateway with a BasicAuthentication policy (Apigee, Kong, AWS API Gateway, nginx `auth_basic`) are all valid. `get_adcp_capabilities` does NOT advertise the accepted auth schemes; encoding every gateway permutation in the capability payload would couple the protocol to infrastructure choices that change between deployments.
+
+Auth-scheme discovery, when needed, flows through `WWW-Authenticate` (RFC 9110 §11.6.1) and Protected Resource Metadata (RFC 9728) — both consumed by the SDK's auth-diagnostics path. Basic-fronted agents emit `WWW-Authenticate: Basic realm="…"` on a 401; consumers (SDK callers, the CLI's 401-bounce path, LLM agents) should branch on the challenge scheme rather than retrying Bearer indefinitely.
+
+The TypeScript SDK speaks both schemes today. Programmatically: `createTestClient({ auth: { type: 'basic', username, password } })` (RFC 7617) and `createTestClient({ auth: { type: 'bearer', token } })`. From the CLI: `--auth-scheme basic` opts into Basic and `--auth <user:pass>` carries the credential; the default `bearer` remains unchanged.
 
 ## Error Handling
 

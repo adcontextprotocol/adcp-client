@@ -341,6 +341,28 @@ export async function discoverAuthorizationRequirements(
 }
 
 /**
+ * Probe the agent for the parsed `WWW-Authenticate` challenge on a 401.
+ *
+ * Where `discoverAuthorizationRequirements` walks the full RFC 9728 → 8414
+ * chain for Bearer/OAuth challenges, this helper is the catch-all: it works
+ * for ANY scheme (Basic, Digest, Bearer-without-PRM, …) and returns the
+ * structured challenge so callers can surface scheme-specific remediation
+ * (e.g. "use `--auth-scheme basic`" when the gateway speaks RFC 7617).
+ *
+ * Returns `null` when the agent isn't responding with a 401, or when the
+ * response carries no parseable `WWW-Authenticate`. Reuses `probeAgent401`
+ * so the SSRF gate and timeout policy stay consistent with the OAuth path.
+ */
+export async function probeAuthChallenge(
+  agentUrl: string,
+  options: { allowPrivateIp?: boolean; timeoutMs?: number } = {}
+): Promise<WWWAuthenticateChallenge | null> {
+  const probe = await probeAgent401(agentUrl, options.allowPrivateIp ?? false, options.timeoutMs);
+  if (probe.status !== 401) return null;
+  return parseWWWAuthenticate(probe.wwwAuthenticate ?? null);
+}
+
+/**
  * Fire a single unauthenticated `tools/list` at the agent and return the
  * status + `WWW-Authenticate` header. Used when the caller hasn't provided
  * a cached 401 response.

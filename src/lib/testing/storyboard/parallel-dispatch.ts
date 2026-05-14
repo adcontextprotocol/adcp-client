@@ -37,10 +37,12 @@ export const PARALLEL_DISPATCH_COUNT_MAX = 10;
 /** Default barrier timeout when the storyboard omits `barrier_timeout_ms`. */
 export const PARALLEL_DISPATCH_DEFAULT_BARRIER_MS = 5000;
 /**
- * Per-dispatch retry budget for the in-flight branch. Sized so a slow
- * seller's first request can finish within a 5-second barrier even when
- * the SDK's retry-after hint caps at the store's 5-second hint ceiling —
- * any larger and the barrier timeout would fire first anyway.
+ * Per-dispatch retry budget for the in-flight branch. The outer barrier
+ * (default 5s, configurable) is the real cap — the dispatcher honors the
+ * seller's `retry_after` hint, then clamps every sleep to the remaining
+ * barrier so the budget mostly matters when a misbehaving seller floods
+ * tiny hints. 5 is enough headroom for that case without letting a stuck
+ * seller pin the runner past the barrier.
  */
 const IN_FLIGHT_RETRY_BUDGET = 5;
 /** Floor for the in-flight retry sleep so a misbehaving seller can't busy-loop the runner. */

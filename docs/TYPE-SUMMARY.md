@@ -1,7 +1,7 @@
 # AdCP Type Summary
 
-> Generated at: 2026-05-08
-> @adcp/sdk v6.11.0
+> Generated at: 2026-05-12
+> @adcp/sdk v7.1.0
 
 Curated reference of the types that matter for using the AdCP client. For full generated types see `src/lib/types/tools.generated.ts` and `src/lib/types/core.generated.ts`.
 
@@ -1516,6 +1516,24 @@ Variant-specific fields:
 | `TimeBasedPricingOption` | `'time'` | — |
 
 **CPV note**: The `parameters.view_threshold` is required and defines what counts as a "view". Use a number for percentage-based thresholds or `{ duration_seconds }` for time-based thresholds.
+
+## Well-Known Files
+
+Inferred types and Zod schemas for the AdCP well-known JSON files. Use these when ingesting `.well-known/brand.json` or `.well-known/adagents.json` instead of hand-rolling interfaces (which drift when the spec bumps).
+
+```typescript
+import { BrandJsonSchema, type BrandJson, type AdagentsJson } from '@adcp/sdk';
+
+// brand.json is a union: redirect | house-redirect | portfolio
+// Narrow with Extract to get just the portfolio shape:
+type BrandPortfolio = Extract<BrandJson, { brands: unknown[] }>;
+type BrandDefinition = BrandPortfolio['brands'][number];
+
+// Parse at the boundary with the Zod schema:
+const brand = BrandJsonSchema.parse(await res.json());
+```
+
+Source of truth: `schemas/cache/{version}/brand.json` and `adagents.json` — regenerate with `npm run generate-wellknown-schemas` when the spec bumps.
 
 ## Key Enums
 

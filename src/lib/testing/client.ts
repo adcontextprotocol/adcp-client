@@ -3,7 +3,7 @@
  */
 
 import { ADCPMultiAgentClient } from '../core/ADCPMultiAgentClient';
-import { getBestUnionErrors } from '../utils/union-errors';
+import { getBestUnionErrors, type SchemaViolation } from '../utils/union-errors';
 import { getFormatAssets, usesDeprecatedAssetsField } from '../utils/format-assets';
 import { brandManifestToBrandReference } from '../types/compat';
 import type { Product } from '../types/core.generated';
@@ -648,6 +648,14 @@ export async function discoverSignals(
  * unhelpful "(root): Invalid input". This function detects that case and
  * reports per-variant errors instead, picking the variant with the fewest
  * issues (the closest match) so the developer sees actionable field names.
+ *
+ * Violations are split into two categories so remediation guidance differs
+ * appropriately (set the field vs. fix the value):
+ *  - `required` — a required field is absent from the response. Zod emits
+ *    `invalid_type` with `received: 'undefined'` for this case; we re-tag
+ *    it as `required` and report it as a missing field.
+ *  - constraint keyword (`minimum`, `maximum`, `enum`, `format`, …) — the
+ *    field is present but violates a JSON Schema keyword constraint.
  */
 export function validateResponseSchema(toolName: string, data: unknown): TestStepResult {
   const schema = TOOL_RESPONSE_SCHEMAS[toolName];
@@ -671,7 +679,7 @@ export function validateResponseSchema(toolName: string, data: unknown): TestSte
     };
   }
 
-  let violations = result.error.issues.map(i => {
+  let violations: SchemaViolation[] = result.error.issues.map(i => {
     const path = i.path.length > 0 ? i.path.join('.') : '(root)';
     return { path, message: i.message, code: i.code };
   });
@@ -688,11 +696,88 @@ export function validateResponseSchema(toolName: string, data: unknown): TestSte
     }
   }
 
+  const classified = violations.map(classifyViolation);
+  const missing = classified.filter(v => v.kind === 'missing');
+  const constraint = classified.filter(v => v.kind === 'constraint');
+
+  const parts: string[] = [];
+  if (missing.length > 0) {
+    parts.push(`Response missing required fields: ${missing.map(v => v.json_pointer).join(', ')}`);
+  }
+  if (constraint.length > 0) {
+    parts.push(
+      `Response constraint violations: ${constraint
+        .map(v => `${v.json_pointer} (${v.keyword}): ${v.message}`)
+        .join('; ')}`
+    );
+  }
+
   return {
     step: `Schema validation: ${toolName}`,
     passed: false,
     duration_ms: 0,
-    error: `Response schema violations: ${violations.map(v => `${v.path}: ${v.message}`).join('; ')}`,
-    response_preview: JSON.stringify({ violations }, null, 2),
+    error: parts.join(' | '),
+    response_preview: JSON.stringify({ violations: classified }, null, 2),
   };
+}
+
+/**
+ * Classify a Zod-flavored schema violation as either a missing required field
+ * or a constraint violation (with the failed JSON Schema keyword). Adds a
+ * JSON Pointer (`/foo/0/bar`) so downstream tooling can locate the field
+ * without re-parsing dot paths.
+ */
+function classifyViolation(v: SchemaViolation): {
+  kind: 'missing' | 'constraint';
+  json_pointer: string;
+  keyword: string;
+  message: string;
+  code: SchemaViolation['code'];
+} {
+  const segments = v.path === '(root)' ? [] : v.path.split('.');
+  const json_pointer = '/' + segments.map(s => s.replace(/~/g, '~0').replace(/\//g, '~1')).join('/');
+
+  // Zod emits `invalid_type` with `received: 'undefined'` for missing required
+  // fields. The `code` alone is ambiguous (`invalid_type` also covers wrong-
+  // type-but-present), so we sniff the message for the canonical Zod wording.
+  const isMissing = v.code === 'invalid_type' && /received `?undefined`?/i.test(v.message);
+  if (isMissing) {
+    return { kind: 'missing', json_pointer, keyword: 'required', message: v.message, code: v.code };
+  }
+
+  return {
+    kind: 'constraint',
+    json_pointer,
+    keyword: zodCodeToKeyword(v.code),
+    message: v.message,
+    code: v.code,
+  };
+}
+
+/**
+ * Map a Zod error code to the equivalent JSON Schema keyword so downstream
+ * tooling (and humans reading the report) see the standard vocabulary
+ * (`minimum`, `enum`, `format`, …) instead of Zod-specific names.
+ */
+function zodCodeToKeyword(code: SchemaViolation['code']): string {
+  switch (code) {
+    case 'invalid_type':
+      return 'type';
+    case 'invalid_value':
+      return 'enum';
+    case 'too_small':
+      return 'minimum';
+    case 'too_big':
+      return 'maximum';
+    case 'invalid_format':
+      return 'format';
+    case 'unrecognized_keys':
+      return 'additionalProperties';
+    case 'invalid_union':
+      return 'oneOf';
+    case 'not_multiple_of':
+      return 'multipleOf';
+    default:
+      return code;
+  }
 }

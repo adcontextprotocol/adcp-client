@@ -189,11 +189,39 @@ export interface OAuthMetadataInfo {
 }
 
 /**
+ * Subset of the parsed `WWW-Authenticate` challenge surfaced on
+ * {@link AuthenticationRequiredError}. Mirrors the public shape of
+ * `WWWAuthenticateChallenge` from `@adcp/sdk/auth/oauth` without forcing the
+ * errors module to depend on the auth subtree (the dependency would invert
+ * the build graph).
+ *
+ * `scheme` is lowercased per RFC 9110 §11.6.1.
+ */
+export interface AuthChallengeInfo {
+  scheme: string;
+  realm?: string;
+  scope?: string;
+  error?: string;
+  error_description?: string;
+}
+
+/**
  * Error thrown when authentication is required to access an MCP endpoint
  *
  * This error is thrown during MCP endpoint discovery when the server returns
- * a 401 Unauthorized response. If the server supports OAuth, the error includes
- * the OAuth metadata to help clients initiate the authentication flow.
+ * a 401 Unauthorized response. The shape of the remediation depends on what
+ * the 401 disclosed:
+ *
+ * - OAuth metadata (RFC 9728 PRM walk succeeded) → `oauthMetadata` set,
+ *   message points at the authorization endpoint.
+ * - A `WWW-Authenticate` challenge with a non-Bearer scheme (e.g. Basic
+ *   behind an Apigee/Kong/AWS API GW gateway) → `challenge` set, message
+ *   names the scheme and the SDK / CLI surface that configures it.
+ * - Plain 401 with no metadata → fallback "provide auth_token" message.
+ *
+ * Consumers branching on `error.challenge?.scheme === 'basic'` can route
+ * straight to `auth: { type: 'basic', username, password }` instead of
+ * retrying Bearer indefinitely.
  *
  * @example
  * ```typescript
@@ -201,12 +229,15 @@ export interface OAuthMetadataInfo {
  *   await client.getProducts({ brief: 'test' });
  * } catch (error) {
  *   if (error instanceof AuthenticationRequiredError) {
- *     if (error.oauthMetadata) {
+ *     if (error.challenge?.scheme === 'basic') {
+ *       // Gateway-fronted agent — configure HTTP Basic
+ *       reconnect({ auth: { type: 'basic', username, password } });
+ *     } else if (error.oauthMetadata) {
  *       // Redirect user to OAuth flow
  *       const authUrl = error.oauthMetadata.authorization_endpoint;
  *       console.log(`Please authenticate at: ${authUrl}`);
  *     } else {
- *       console.log('Authentication required but OAuth not available');
+ *       console.log('Authentication required but no scheme metadata available');
  *     }
  *   }
  * }
@@ -218,13 +249,15 @@ export class AuthenticationRequiredError extends ADCPError {
   constructor(
     public readonly agentUrl: string,
     public readonly oauthMetadata?: OAuthMetadataInfo,
-    message?: string
+    message?: string,
+    public readonly challenge?: AuthChallengeInfo
   ) {
-    const defaultMessage = oauthMetadata
-      ? `Authentication required for ${agentUrl}. OAuth available at: ${oauthMetadata.authorization_endpoint}`
-      : `Authentication required for ${agentUrl}. No OAuth metadata available - provide auth_token in agent config.`;
+    const defaultMessage = buildAuthRequiredMessage(agentUrl, oauthMetadata, challenge);
     super(message || defaultMessage);
-    this.details = { agentUrl, oauthMetadata };
+    // `details` is serialized through error envelopes; surfacing the challenge
+    // here lets non-CLI consumers (LLM agents, dashboards, programmatic
+    // callers) branch on the scheme without instanceof-checking.
+    this.details = { agentUrl, oauthMetadata, challenge };
   }
 
   /**
@@ -240,6 +273,54 @@ export class AuthenticationRequiredError extends ADCPError {
   get authorizationUrl(): string | undefined {
     return this.oauthMetadata?.authorization_endpoint;
   }
+
+  /**
+   * Lowercased scheme from the `WWW-Authenticate` challenge, when present.
+   * `'basic'` is the common non-OAuth case — gateway-fronted agents speaking
+   * RFC 7617.
+   */
+  get suggestedScheme(): string | undefined {
+    return this.challenge?.scheme;
+  }
+}
+
+/**
+ * Build the default error message. Branches on what the 401 disclosed:
+ * - non-Bearer challenge (Basic, Digest, …) → scheme-specific remediation
+ * - OAuth metadata → point at the authorization endpoint
+ * - nothing → fallback "provide auth_token"
+ *
+ * The Basic branch names both the SDK shape (`createTestClient({ auth: …
+ * type: 'basic' })`) and the CLI shape (`--auth user:pass --auth-scheme
+ * basic`) so the same error envelope serves library and CLI consumers.
+ */
+function buildAuthRequiredMessage(
+  agentUrl: string,
+  oauthMetadata: OAuthMetadataInfo | undefined,
+  challenge: AuthChallengeInfo | undefined
+): string {
+  if (challenge && challenge.scheme !== 'bearer') {
+    if (challenge.scheme === 'basic') {
+      return (
+        `Authentication required for ${agentUrl}. Agent (or its fronting gateway) speaks HTTP Basic ` +
+        `(RFC 7617). Configure via createTestClient({ auth: { type: 'basic', username, password } }) ` +
+        `— or from the CLI, --auth <user:pass> --auth-scheme basic.`
+      );
+    }
+    // Digest / Negotiate / NTLM / vendor schemes: we don't have first-class
+    // support but the scheme name in the message saves a discovery round-trip.
+    const realmHint = challenge.realm ? ` (realm: ${challenge.realm})` : '';
+    return (
+      `Authentication required for ${agentUrl}. Agent speaks ${challenge.scheme}${realmHint}, ` +
+      `which is not natively supported by @adcp/sdk. Configure auth at the transport layer ` +
+      `(custom fetch wrapper, reverse-proxy header injection) or contact the agent operator ` +
+      `about Bearer / Basic / OAuth support.`
+    );
+  }
+  if (oauthMetadata) {
+    return `Authentication required for ${agentUrl}. OAuth available at: ${oauthMetadata.authorization_endpoint}`;
+  }
+  return `Authentication required for ${agentUrl}. No OAuth metadata available - provide auth_token in agent config.`;
 }
 
 /**

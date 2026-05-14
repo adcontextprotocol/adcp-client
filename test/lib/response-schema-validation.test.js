@@ -446,6 +446,100 @@ describe('validateResponseSchema', () => {
     });
   });
 
+  // ---- Constraint vs missing classification (#1736 / adcp#3025) ----
+  describe('constraint violations vs missing required fields (#1736)', () => {
+    it('classifies an invalid enum value as a constraint violation, not a missing field', () => {
+      // `status` violates the enum constraint — the field is present but
+      // the value is rejected. This is a *constraint* failure, not a
+      // *missing field* failure; remediation differs (fix the value vs.
+      // add the field).
+      const result = validateResponseSchema('get_media_buys', {
+        media_buys: [
+          {
+            media_buy_id: 'mb1',
+            status: 'totally_bogus_status',
+            currency: 'USD',
+            total_budget: 1000,
+            packages: [{ package_id: 'pkg1' }],
+          },
+        ],
+      });
+      assert.strictEqual(result.passed, false);
+      assert.ok(
+        result.error.includes('constraint violations'),
+        `Expected constraint violations header, got: ${result.error}`
+      );
+      assert.ok(
+        result.error.includes('/media_buys/0/status'),
+        `Expected JSON Pointer /media_buys/0/status, got: ${result.error}`
+      );
+      assert.ok(
+        !result.error.includes('missing required fields'),
+        `Invalid-enum must not be reported as missing, got: ${result.error}`
+      );
+    });
+
+    it('classifies an absent required field as missing, with JSON Pointer', () => {
+      const { media_buy_id, ...without } = validCreateMediaBuySuccess;
+      const result = validateResponseSchema('create_media_buy', without);
+      assert.strictEqual(result.passed, false);
+      assert.ok(
+        result.error.includes('missing required fields'),
+        `Expected missing required fields header, got: ${result.error}`
+      );
+      assert.ok(result.error.includes('/media_buy_id'), `Expected JSON Pointer /media_buy_id, got: ${result.error}`);
+      assert.ok(
+        !result.error.includes('constraint violations'),
+        `Absent field must not be reported as constraint, got: ${result.error}`
+      );
+    });
+
+    it('emits both groups when a response has missing AND constraint violations', () => {
+      // Missing required `currency`, plus invalid enum value on `status`.
+      const result = validateResponseSchema('get_media_buys', {
+        media_buys: [
+          {
+            media_buy_id: 'mb1',
+            status: 'totally_bogus_status',
+            total_budget: 1000,
+            packages: [{ package_id: 'pkg1' }],
+          },
+        ],
+      });
+      assert.strictEqual(result.passed, false);
+      assert.ok(
+        result.error.includes('missing required fields'),
+        `Expected missing-fields group, got: ${result.error}`
+      );
+      assert.ok(
+        result.error.includes('/media_buys/0/currency'),
+        `Expected currency in missing group, got: ${result.error}`
+      );
+      assert.ok(result.error.includes('constraint violations'), `Expected constraint group, got: ${result.error}`);
+    });
+
+    it('AJV strict validator classifies revision: 0 as keyword=minimum, not missing', async () => {
+      // The Zod-generated schema in `TOOL_RESPONSE_SCHEMAS` does not carry
+      // `minimum` constraints (Zod codegen drops them today), so the
+      // schema-level `minimum: 1` violation for `revision: 0` is caught by
+      // the AJV strict validator in the storyboard pipeline. This test
+      // pins the structured output that downstream evaluators classify on.
+      const { validateResponse } = require('../../dist/lib/validation/schema-validator.js');
+      const payload = {
+        media_buy_id: 'mb1',
+        packages: [{ package_id: 'pkg1' }],
+        revision: 0,
+      };
+      const outcome = validateResponse('create_media_buy', payload);
+      assert.strictEqual(outcome.valid, false);
+      const minimumIssue = outcome.issues.find(i => i.keyword === 'minimum' && i.pointer === '/revision');
+      assert.ok(
+        minimumIssue,
+        `Expected an issue with keyword='minimum' at /revision, got: ${JSON.stringify(outcome.issues)}`
+      );
+    });
+  });
+
   // ---- Union schema error messages ----
   describe('union schema error reporting', () => {
     it('reports specific field errors for create_media_buy instead of (root): Invalid input', () => {

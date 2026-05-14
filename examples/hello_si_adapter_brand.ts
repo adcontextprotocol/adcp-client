@@ -47,6 +47,7 @@ import {
   createUpstreamHttpClient,
   memoryBackend,
   AdcpError,
+  assertNoExampleTlds,
   type AccountStore,
   type Account,
 } from '@adcp/sdk/server';
@@ -81,6 +82,10 @@ const ADCP_AUTH_TOKEN = process.env['ADCP_AUTH_TOKEN'] ?? 'sk_harness_do_not_use
 // tenant), so a hardcoded default is fine. Multi-brand deployments derive
 // from `ctx.authInfo` per-API-key binding instead.
 const DEFAULT_LISTING_BRAND = process.env['DEFAULT_LISTING_BRAND'] ?? 'brand_nova_motors';
+assertNoExampleTlds(
+  { DEFAULT_LISTING_BRAND },
+  { allowIn: ['test', 'development'], checklistPath: 'examples/hello_si_adapter_brand.ts' }
+);
 
 // ---------------------------------------------------------------------------
 // Upstream client — SWAP for production.

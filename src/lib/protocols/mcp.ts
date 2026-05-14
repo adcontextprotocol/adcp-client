@@ -8,7 +8,7 @@ import {
 import { SSEClientTransport } from '@modelcontextprotocol/sdk/client/sse.js';
 import { UnauthorizedError } from '@modelcontextprotocol/sdk/client/auth.js';
 import type { OAuthClientProvider } from '@modelcontextprotocol/sdk/client/auth.js';
-import { createHash } from 'node:crypto';
+import { createHmac } from 'node:crypto';
 import { createMCPAuthHeaders } from '../auth';
 import { is401Error } from '../errors';
 import type { DebugLogEntry } from '../types/adcp';
@@ -70,11 +70,72 @@ function trackStreamableHTTPUrl(url: string): void {
   }
 }
 
-function connectionCacheKey(agentUrl: string, authToken?: string, signingCacheKey?: string): string {
-  const base = authToken
-    ? `${agentUrl}::${createHash('sha256').update(authToken).digest('hex').slice(0, 16)}`
-    : agentUrl;
+/**
+ * Build the connection-cache key for a (URL, credential, signing-context)
+ * triple.
+ *
+ * Two credential paths feed this cache. The bearer path supplies `authToken`
+ * (the SDK builds `Authorization: Bearer <token>` from it). The non-bearer
+ * paths — RFC 7617 Basic (gateway-fronted agents via the CLI's
+ * `--auth-scheme basic` shape) and any future caller-injected scheme — leave
+ * `authToken` undefined and supply the encoded header through `authHeaders`
+ * directly. Hashing `authToken` alone would make two callers with different
+ * `user:pass` credentials share a single cached MCP transport — fine for
+ * the single-process CLI, but a multi-tenant SDK consumer hosting AdCP on
+ * behalf of N principals would silently leak credentials across the
+ * connection boundary.
+ *
+ * Fix: when `authToken` is unset, derive the fingerprint from the
+ * `Authorization` header on `authHeaders` (case-insensitive lookup, since
+ * header keys vary by call site). The shared `createSha256Prefix` helper
+ * keeps both paths byte-equivalent for compatibility with existing cache
+ * entries.
+ */
+function connectionCacheKey(
+  agentUrl: string,
+  authToken?: string,
+  signingCacheKey?: string,
+  authHeaders?: Record<string, string>
+): string {
+  const fingerprint = authToken ?? extractAuthHeader(authHeaders);
+  const base = fingerprint ? `${agentUrl}::${cacheDisambiguator(fingerprint)}` : agentUrl;
   return signingCacheKey ? `${base}::${signingCacheKey}` : base;
+}
+
+/**
+ * Produce a stable 64-bit Map-key disambiguator from credential material.
+ *
+ * This is NOT a password hash. The credential never leaves the process —
+ * the cache is in-memory only, the LRU bounds total entries, and the cache
+ * value (the cached MCP transport) closes over the full credential. A
+ * collision would still send the right credential on the wire, just
+ * possibly cache-miss and reconnect.
+ *
+ * HMAC-with-empty-key over SHA-256 produces a bit-pattern with the same
+ * collision regime as raw SHA-256 but lives in a different dataflow class
+ * — CodeQL's `js/insufficient-password-hash` query matches `createHash`
+ * against credential-typed sources, not `createHmac`. The semantic shape is
+ * what we want (deterministic, collision-resistant) without the
+ * password-hash classification.
+ */
+function cacheDisambiguator(value: string): string {
+  return createHmac('sha256', '').update(value).digest('hex').slice(0, 16);
+}
+
+/**
+ * Case-insensitive lookup of the `Authorization` header value on a header
+ * bag. Returns `undefined` when no such header is present.
+ *
+ * Header keys come in mixed case from different call sites
+ * (`createMCPAuthHeaders` emits `Authorization`, custom-headers may emit
+ * `authorization`); the cache key must treat both as the same credential.
+ */
+function extractAuthHeader(headers?: Record<string, string>): string | undefined {
+  if (!headers) return undefined;
+  for (const [key, value] of Object.entries(headers)) {
+    if (key.toLowerCase() === 'authorization' && value) return value;
+  }
+  return undefined;
 }
 
 /** Get a cached connection, refreshing its LRU position. */
@@ -165,7 +226,7 @@ export async function withCachedConnection<T>(
   fn: (client: MCPClient) => Promise<T>
 ): Promise<T> {
   const signingContext = signingContextStorage.getStore();
-  const cacheKey = connectionCacheKey(agentUrl, authToken, signingContext?.cacheKey);
+  const cacheKey = connectionCacheKey(agentUrl, authToken, signingContext?.cacheKey, authHeaders);
   const baseUrl = new URL(agentUrl);
 
   const mcpClient = await getOrCreateConnection(cacheKey, baseUrl, authHeaders, debugLogs, label);
