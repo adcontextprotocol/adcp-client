@@ -132,12 +132,14 @@ import {
   mergeSeededProductsIntoResponse,
   mergeSeededCreativesIntoResponse,
   mergeSeededMediaBuysIntoResponse,
+  mergeSeededMediaBuyDeliveryIntoResponse,
   mergeSeededAccountsIntoResponse,
   mergeSeededCreativeFormatsIntoResponse,
   replaceAccountFinancialsIfSeeded,
   filterValidSeededProducts,
   filterValidSeededCreatives,
   filterValidSeededMediaBuys,
+  filterValidSeededMediaBuyDeliveries,
   filterValidSeededAccounts,
   filterValidSeededAccountFinancials,
   filterValidSeededCreativeFormats,
@@ -3968,6 +3970,29 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
               } catch (err) {
                 const reason = err instanceof Error ? err.message : String(err);
                 logger.warn('testController.getSeededMediaBuys failed; returning handler response unchanged', {
+                  tool: toolName,
+                  error: reason,
+                });
+              }
+            }
+
+            // get_media_buy_delivery
+            else if (toolName === 'get_media_buy_delivery' && testControllerBridge.getSeededMediaBuyDelivery) {
+              try {
+                const rawSeeded = await testControllerBridge.getSeededMediaBuyDelivery(bridgeCtx);
+                const seeded = filterValidSeededMediaBuyDeliveries(rawSeeded, logger);
+                if (seeded.length > 0) {
+                  const sc = formatted.structuredContent as
+                    | import('../types/tools.generated').GetMediaBuyDeliveryResponse
+                    | undefined;
+                  if (sc && typeof sc === 'object') {
+                    const merged = mergeSeededMediaBuyDeliveryIntoResponse(sc, seeded);
+                    formatted = wrap(merged);
+                  }
+                }
+              } catch (err) {
+                const reason = err instanceof Error ? err.message : String(err);
+                logger.warn('testController.getSeededMediaBuyDelivery failed; returning handler response unchanged', {
                   tool: toolName,
                   error: reason,
                 });
