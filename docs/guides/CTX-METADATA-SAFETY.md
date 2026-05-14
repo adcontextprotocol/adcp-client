@@ -276,6 +276,19 @@ framework's authenticator). Anything that arrives on the args bag is
 either a buyer-supplied non-secret OR a smuggled credential — the
 policy refuses to disambiguate.
 
+#### Build-time sibling: `@adcp/eslint-plugin` (#1541)
+
+`credentialPolicy: 'authInfo-only'` catches credential-bag reads at
+dispatch. `@adcp/eslint-plugin` catches the same antipattern earlier —
+at code-write time, in the editor, in CI — by flagging any read of a
+credential-shaped key off `args` inside `extractContext` /
+`synthesizeFromArgs`. Same regex set (imported from `@adcp/sdk/server`'s
+`DEFAULT_CREDENTIAL_PATTERNS`), two boundaries. Install with
+`npm i -D @adcp/eslint-plugin` and wire the `recommended` config; see
+`packages/eslint-plugin/README.md` for the wire-up snippet. Phase 2 (an
+`adcp doctor` subcommand for adopters who don't run ESLint) is tracked
+in #1541.
+
 ### Operational fan-out: `WireSafe<T>` + `pickWireSpecFields` (L2 of #1529)
 
 `credentialPolicy` is enforced at the *buyer-facing* dispatch boundary
