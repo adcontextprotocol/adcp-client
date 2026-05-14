@@ -1,5 +1,28 @@
 # Changelog
 
+## 7.3.0
+
+### Minor Changes
+
+- 2a265bb: Re-export `BrandJson`, `AdagentsJson`, and their Zod schemas (`BrandJsonSchema`, `AdagentsJsonSchema`) from `@adcp/sdk`. Adopters resolving brand.json / adagents.json can now derive types directly from the canonical schemas instead of hand-rolling interfaces that drift from the spec (e.g. `type BrandDefinition = Extract<BrandJson, { brands: unknown[] }>['brands'][number]`). Closes #1739.
+- 3b2d1e5: feat(server): return IDEMPOTENCY_IN_FLIGHT on in-flight idempotency key (closes #1687)
+
+  Tightens the in-flight retry-hint contract on the AdCP-3.1-held `IDEMPOTENCY_IN_FLIGHT` error code:
+  - `retry_after` is now derived from the in-flight claim's remaining TTL (`expiresAt - now`), capped at 30s. Previously the hint used elapsed time capped at 5s, which meant a freshly-claimed key surfaced `retry_after: 1` and buyers retried instantly. Buyers now wait closer to the expected completion and the hint decays as the claim ages.
+  - `error-compliance.ts` exempts the spec-reserved `IDEMPOTENCY_IN_FLIGHT` code from the `X_` vendor-prefix naming-convention check via a new `SPEC_RESERVED_PENDING_CODES` set. Without the exemption, agents emitting the held code would be flagged as non-standard until 3.1 codegen lands the value in `ErrorCodeValues`.
+
+  Wire shape is otherwise unchanged: `recovery: 'transient'` plus a numeric `retry_after` hint, behaviorally a no-op for buyer SDKs that already honor transient-retry.
+
+### Patch Changes
+
+- 3852429: fix(storyboard): distinguish constraint violations from missing fields; remove spurious confirmed_at advisory (closes #1736)
+
+  Two false positives in the storyboard evaluator are resolved:
+  - **Missing vs constraint, distinct classification.** `validateResponseSchema` (Zod path in `testing/client.ts`) and the storyboard `response_schema` handler (AJV-derived path in `testing/storyboard/validations.ts`) now split violations into two groups: `Response missing required fields: <pointers>` for absent required fields (`keyword: 'required'`) and `Response constraint violations: <pointer> (<keyword>): <message>` for present-but-invalid values (`minimum`, `maximum`, `enum`, `format`, …). Zod's `invalid_type` issue is re-tagged to `keyword: 'required'` when the value is `undefined`, since the remediation differs (add the field vs. fix the value). Each violation carries a JSON Pointer (`/foo/0/bar`) for downstream tooling.
+  - **Spurious `confirmed_at` advisory removed.** The hard-coded "Agent does not return confirmed_at in create_media_buy response" warning had no backing storyboard rule and fired even when `confirmed_at` is optional in the schema. The companion hard-coded `revision` advisory is removed for the same reason — genuine non-conformance (e.g. `revision: 0` violating `minimum: 1`) is caught by the response_schema validator with the structured constraint-violation output above. Upstream resolution: adcp#3025.
+
+  A regression test (`test/lib/comply-advisory-rule-source.test.js`) pins that no advisory fires on `create_media_buy` for any combination of `confirmed_at`/`revision` presence, and the schema-validation test gains cases for the new missing/constraint split.
+
 ## 7.2.0
 
 ### Minor Changes
