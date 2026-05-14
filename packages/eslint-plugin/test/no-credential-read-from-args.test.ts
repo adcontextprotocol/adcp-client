@@ -64,6 +64,47 @@ ruleTester.run('no-credential-read-from-args', rule, {
         };
       `,
     },
+    {
+      name: 'free-standing function named extractContext — not a method binding (no false positive)',
+      code: `
+        function extractContext(args) {
+          return args.access_token;
+        }
+      `,
+    },
+    {
+      name: 'spread aliasing is a documented gap and stays valid in lint',
+      code: `
+        const platform = {
+          extractContext(args) {
+            const ctx = { ...args };
+            return ctx.access_token;
+          },
+        };
+      `,
+    },
+    {
+      name: 'plain aliasing is a documented gap and stays valid in lint',
+      code: `
+        const platform = {
+          extractContext(args) {
+            const a = args;
+            return a.access_token;
+          },
+        };
+      `,
+    },
+    {
+      name: 'destructure-then-read of a non-credential key',
+      code: `
+        const platform = {
+          extractContext(args) {
+            const { session_id } = args;
+            return { sessionId: session_id };
+          },
+        };
+      `,
+    },
   ],
   invalid: [
     {
@@ -173,6 +214,145 @@ ruleTester.run('no-credential-read-from-args', rule, {
         };
       `,
       errors: [{ messageId: 'credentialReadFromArgs', data: { path: 'args.access_token' } }],
+    },
+    {
+      name: 'destructure-then-read inside extractContext',
+      code: `
+        const platform = {
+          extractContext(args) {
+            const { access_token } = args;
+            return { token: access_token };
+          },
+        };
+      `,
+      errors: [{ messageId: 'credentialReadFromArgs', data: { path: 'args.access_token' } }],
+    },
+    {
+      name: 'destructure-then-read with rename — fires on source key, not alias',
+      code: `
+        const platform = {
+          extractContext(args) {
+            const { access_token: tok } = args;
+            return { token: tok };
+          },
+        };
+      `,
+      errors: [{ messageId: 'credentialReadFromArgs', data: { path: 'args.access_token' } }],
+    },
+    {
+      name: 'default-value first param does not silently disable scanning',
+      code: `
+        const platform = {
+          extractContext(args = {}) {
+            return args.access_token;
+          },
+        };
+      `,
+      errors: [{ messageId: 'credentialReadFromArgs', data: { path: 'args.access_token' } }],
+    },
+    {
+      name: 'destructure-with-default first param',
+      code: `
+        const platform = {
+          extractContext({ access_token } = {}) {
+            return { token: access_token };
+          },
+        };
+      `,
+      errors: [{ messageId: 'credentialReadFromArgs', data: { path: 'args.access_token' } }],
+    },
+    {
+      name: 'nested destructure in first param',
+      code: `
+        const platform = {
+          extractContext({ context: { access_token } }) {
+            return { token: access_token };
+          },
+        };
+      `,
+      errors: [{ messageId: 'credentialReadFromArgs', data: { path: 'args.context.access_token' } }],
+    },
+    {
+      name: 'nested destructure with rename — fires on source key, not alias',
+      code: `
+        const platform = {
+          extractContext({ context: { access_token: tok } }) {
+            return { token: tok };
+          },
+        };
+      `,
+      errors: [{ messageId: 'credentialReadFromArgs', data: { path: 'args.context.access_token' } }],
+    },
+    {
+      name: 'additionalPatterns flags a custom upstream credential name',
+      code: `
+        const platform = {
+          extractContext(args) {
+            return { token: args.platform_session_key };
+          },
+        };
+      `,
+      options: [{ additionalPatterns: ['platform_session_key'] }],
+      errors: [{ messageId: 'credentialReadFromArgs', data: { path: 'args.platform_session_key' } }],
+    },
+    {
+      name: 'additionalPatterns flags a destructured custom credential name',
+      code: `
+        const platform = {
+          extractContext(args) {
+            const { vendor_bearer } = args;
+            return { token: vendor_bearer };
+          },
+        };
+      `,
+      options: [{ additionalPatterns: ['vendor_bearer'] }],
+      errors: [{ messageId: 'credentialReadFromArgs', data: { path: 'args.vendor_bearer' } }],
+    },
+    {
+      name: 'destructure-then-read with default value in declarator',
+      code: `
+        const platform = {
+          extractContext(args) {
+            const { access_token = 'fallback' } = args;
+            return { token: access_token };
+          },
+        };
+      `,
+      errors: [{ messageId: 'credentialReadFromArgs', data: { path: 'args.access_token' } }],
+    },
+    {
+      name: 'class method — destructure-then-read still fires (regression for FunctionDeclaration drop)',
+      code: `
+        class MyPlatform {
+          extractContext(args) {
+            const { access_token } = args;
+            return { token: access_token };
+          }
+        }
+      `,
+      errors: [{ messageId: 'credentialReadFromArgs', data: { path: 'args.access_token' } }],
+    },
+    {
+      name: 'class method — default-value param still fires',
+      code: `
+        class MyPlatform {
+          extractContext(args = {}) {
+            return { token: args.access_token };
+          }
+        }
+      `,
+      errors: [{ messageId: 'credentialReadFromArgs', data: { path: 'args.access_token' } }],
+    },
+    {
+      name: 'class method — nested destructure still fires',
+      code: `
+        class MyPlatform {
+          extractContext({ context: { access_token } }) {
+            return { token: access_token };
+          }
+        }
+      `,
+      errors: [{ messageId: 'credentialReadFromArgs', data: { path: 'args.context.access_token' } }],
     },
   ],
 });
