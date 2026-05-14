@@ -215,6 +215,62 @@ describe('responseSizeLimit — wrapFetchWithSizeLimit', () => {
   });
 });
 
+describe('responseSizeLimit — SSE pass-through', () => {
+  it('passes text/event-stream responses through unchanged even when body exceeds the cap', async () => {
+    // SSE responses are legitimately unbounded — a single tool call emits N
+    // status frames + a final result. The cap is intended for one-shot JSON
+    // discovery payloads; applying it to SSE would tear down legitimate
+    // long-lived tool calls mid-stream.
+    const oversized = new Uint8Array(10_000); // 10× the cap
+    const upstream = makeFetch(oversized, { 'content-type': 'text/event-stream' });
+    const wrapped = wrapFetchWithSizeLimit(upstream);
+
+    const out = await withResponseSizeLimit(1000, async () => {
+      const response = await wrapped('https://example.invalid/');
+      return new Uint8Array(await response.arrayBuffer());
+    });
+
+    assert.strictEqual(out.byteLength, 10_000);
+  });
+
+  it('passes text/event-stream with charset parameters through (case-insensitive prefix match)', async () => {
+    // Some servers send `text/event-stream; charset=utf-8` or `Text/Event-Stream`.
+    // Lowercase prefix match covers both variants.
+    for (const contentType of [
+      'text/event-stream; charset=utf-8',
+      'Text/Event-Stream',
+      'TEXT/EVENT-STREAM; charset=utf-8',
+    ]) {
+      const oversized = new Uint8Array(10_000);
+      const upstream = makeFetch(oversized, { 'content-type': contentType });
+      const wrapped = wrapFetchWithSizeLimit(upstream);
+
+      const out = await withResponseSizeLimit(1000, async () => {
+        const response = await wrapped('https://example.invalid/');
+        return new Uint8Array(await response.arrayBuffer());
+      });
+
+      assert.strictEqual(out.byteLength, 10_000, `content-type=${contentType} must pass through`);
+    }
+  });
+
+  it('still enforces the cap on application/json responses 10× the cap (regression check)', async () => {
+    // Negative case: the SSE bypass must not accidentally weaken the cap on
+    // the one-shot JSON discovery path it was designed for.
+    const oversized = new Uint8Array(10_000);
+    const upstream = makeFetch(oversized, { 'content-type': 'application/json' });
+    const wrapped = wrapFetchWithSizeLimit(upstream);
+
+    await assert.rejects(
+      withResponseSizeLimit(1000, async () => {
+        const response = await wrapped('https://hostile.invalid/');
+        return response.arrayBuffer();
+      }),
+      err => err instanceof ResponseTooLargeError
+    );
+  });
+});
+
 describe('responseSizeLimit — gzip-bomb defense', () => {
   it("forces Accept-Encoding: identity when the cap is active so the byte counter sees what's on the wire", async () => {
     // Without this, undici's default `Accept-Encoding: gzip, deflate, br`
