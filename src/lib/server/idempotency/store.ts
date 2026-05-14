@@ -162,11 +162,12 @@ export type IdempotencyCheckResult =
       /** A parallel request is currently executing the same key — the caller should retry the check. */
       kind: 'in-flight';
       /**
-       * Suggested retry delay in seconds, derived from how long the first
-       * request has been running. The middleware surfaces this as the
-       * `retry_after` hint on the `IDEMPOTENCY_IN_FLIGHT` response so a
-       * buyer's transient-retry doesn't slam back instantly when the first
-       * call is long-running. Always `>= 1`.
+       * Suggested retry delay in seconds, derived from the remaining TTL on
+       * the first request's in-flight claim (`expiresAt - now`, capped at
+       * `IN_FLIGHT_RETRY_HINT_CAP_SECONDS`). The middleware surfaces this as
+       * the `retry_after` hint on the `IDEMPOTENCY_IN_FLIGHT` response so a
+       * buyer's transient-retry decays toward the expected completion
+       * instead of slamming back instantly. Always `>= 1`.
        */
       retryAfterSeconds: number;
     }
@@ -329,26 +330,23 @@ const TRANSIENT_ERROR_TTL_SECONDS = 10;
 const IN_FLIGHT_HASH = '__adcp_in_flight__';
 /**
  * Soft cap on the retry hint surfaced to buyers on the in-flight branch.
- * Even if the first request still has 100s left on its claim, telling a
- * buyer to wait 100s is worse than the spec's "retry shortly" intent. 5s
- * is a balance — long enough to amortize a slow handler's tail latency,
- * short enough that a healthy seller's fast handlers don't stall buyer
- * retries.
+ * Without a cap, a freshly-claimed key (120s remaining) would tell the buyer
+ * to wait 120s — worse than the spec's "retry shortly" intent and worse than
+ * the buyer's own retry barrier. 30s amortizes a slow handler's tail latency
+ * without stalling buyers behind a fresh long-tail claim.
  */
-const IN_FLIGHT_RETRY_HINT_CAP_SECONDS = 5;
+const IN_FLIGHT_RETRY_HINT_CAP_SECONDS = 30;
 
 /**
- * Derive the buyer-facing `retry_after` hint from how long the first
- * request has been running. Elapsed since claim = `IN_FLIGHT_TTL_SECONDS - (expiresAt - now)`.
- * We assume the first call is roughly halfway done and suggest the buyer
- * retry after an additional `elapsed` seconds, capped at
- * `IN_FLIGHT_RETRY_HINT_CAP_SECONDS`. Always clamped to `>= 1`.
+ * Derive the buyer-facing `retry_after` hint from how much time is left on
+ * the in-flight claim (`expiresAt - now`). A freshly-claimed key surfaces
+ * `IN_FLIGHT_RETRY_HINT_CAP_SECONDS`; the hint decays as the claim ages so
+ * a buyer retrying just before expiry doesn't over-wait. Always clamped to
+ * `>= 1` so a near-expired claim doesn't tell the buyer to retry instantly.
  */
 function inFlightRetryAfter(expiresAt: number, nowSeconds: number): number {
   const remaining = expiresAt - nowSeconds;
-  const elapsed = IN_FLIGHT_TTL_SECONDS - remaining;
-  const hint = Math.max(1, Math.min(IN_FLIGHT_RETRY_HINT_CAP_SECONDS, Math.ceil(elapsed)));
-  return hint;
+  return Math.max(1, Math.min(IN_FLIGHT_RETRY_HINT_CAP_SECONDS, remaining));
 }
 
 /**
