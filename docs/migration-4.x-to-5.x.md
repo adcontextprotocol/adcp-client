@@ -747,9 +747,11 @@ resolveOperation })` bundles presence-gated signature composition with
 `required_for` enforcement.
 
 `VersionUnsupportedError` has a typed `reason` (`'version' | 'idempotency'
-| 'synthetic'`). `client.requireV3()` now corroborates the v3 claim and
-rejects synthetic capabilities; `requireV3ForMutations: true` gates
-mutating calls before dispatch.
+| 'synthetic'`). `client.requireV3()` corroborates the v3 claim against the
+seller's `get_adcp_capabilities` response; sellers whose capabilities are
+synthesized from `tools/list` route through the v2 adapter with a one-time
+warning rather than throwing. `requireV3ForMutations: true` gates mutating
+calls before dispatch.
 
 ### 5d. Compliance test controller (5.8)
 

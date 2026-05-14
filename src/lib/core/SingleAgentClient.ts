@@ -246,15 +246,22 @@ export interface SingleAgentClientConfig extends ConversationConfig {
    */
   validateFeatures?: boolean;
   /**
-   * Refuse to dispatch mutating tasks unless the seller's capabilities
-   * corroborate AdCP v3. The guard requires all of:
+   * Gate mutating-task dispatch on the seller's declared major version.
+   * When the seller returns an authoritative `get_adcp_capabilities`
+   * response, the guard requires:
    *   1. `major_versions` includes 3
    *   2. `adcp.idempotency.replay_ttl_seconds` is declared (spec-required)
-   *   3. capabilities came from a real `get_adcp_capabilities` response
-   *      (not synthesized from a tool list)
    *
-   * Throws `VersionUnsupportedError` before the request is sent. Bypass
-   * with `allowV2` or — process-wide as a fallback — `ADCP_ALLOW_V2=1`.
+   * Sellers whose capabilities are synthesized from `tools/list` (no
+   * authoritative `get_adcp_capabilities` response) route through the
+   * v2 adapter with a one-time warning — a compliant v3 seller would
+   * declare itself, so absence of a declaration is read as v2. Adopters
+   * who need a hard "definitely-v3" gate should validate
+   * `(await client.getCapabilities())._synthetic === false` directly.
+   *
+   * Throws `VersionUnsupportedError` before the request is sent when
+   * the guard rejects. Bypass with `allowV2` or — process-wide as a
+   * fallback — `ADCP_ALLOW_V2=1`.
    *
    * @default false
    */
@@ -3016,7 +3023,8 @@ export class SingleAgentClient {
     console.warn(
       `[adcp] Warning: agent ${this.agent.agent_uri} does not expose get_adcp_capabilities. ` +
         `Routing as v2 (synthetic) — idempotency-TTL guarantee is unknown. ` +
-        `Ask the agent operator to declare v3 via get_adcp_capabilities if v3 routing is intended.`
+        `Ask the agent operator to declare v3 via get_adcp_capabilities if v3 routing is intended. ` +
+        `Branch on client.isSyntheticV2() to tighten retry policies for these sellers.`
     );
   }
 
@@ -3028,6 +3036,23 @@ export class SingleAgentClient {
   async detectServerVersion(): Promise<'v2' | 'v3'> {
     const capabilities = await this.getCapabilities();
     return capabilities.version;
+  }
+
+  /**
+   * Whether the seller's capabilities are synthesized from `tools/list`
+   * with no authoritative `get_adcp_capabilities` response — i.e. the
+   * dispatcher routes through the v2 adapter and idempotency-TTL is
+   * unknown. Use this to gate retry behavior for sellers whose retry
+   * safety can't be derived from declared capabilities (lower attempt
+   * caps, longer backoff, or fall back to natural-key recovery).
+   *
+   * Returns `false` for declared v2 sellers, declared v3 sellers, and
+   * synthetic v3 sellers (which advertise the v3 discovery tool even
+   * when the call itself failed).
+   */
+  async isSyntheticV2(): Promise<boolean> {
+    const capabilities = await this.getCapabilities();
+    return capabilities._synthetic === true && capabilities.version !== 'v3';
   }
 
   /**

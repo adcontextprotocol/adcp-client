@@ -460,10 +460,11 @@ export class ResponseTooLargeError extends ADCPError {
  * - `version`: seller's `major_versions` does not include 3
  * - `idempotency`: seller reports v3 but omits the required
  *   `adcp.idempotency.replay_ttl_seconds` declaration
- * - `synthetic`: retained for backwards compatibility with consumers that
- *   pattern-match on the union. Sellers whose capabilities are synthesized
- *   from `tools/list` are now routed through the v2 adapter rather than
- *   refused, so the SDK no longer throws this reason.
+ * - `synthetic`: reserved for downstream consumers that construct the
+ *   error to surface unverifiable capabilities. The SDK does not emit
+ *   this reason — sellers whose capabilities are synthesized from
+ *   `tools/list` are routed through the v2 adapter with a one-time
+ *   warning.
  */
 export type VersionUnsupportedReason = 'version' | 'idempotency' | 'synthetic';
 
@@ -499,7 +500,7 @@ export class VersionUnsupportedError extends ADCPError {
       case 'idempotency':
         return `seller reports v3 but omits adcp.idempotency.replay_ttl_seconds (required by spec).`;
       case 'synthetic':
-        return `capabilities were synthesized from a tool list — v3 claim is unverifiable.`;
+        return `seller's capabilities could not be verified against the required major version.`;
     }
   }
 }
