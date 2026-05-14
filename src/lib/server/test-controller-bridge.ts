@@ -378,6 +378,9 @@ export function filterValidSeededMediaBuys(
  *
  * Handler-returned accounts come first; seeded entries append after deduping
  * by `account_id`. On collision the seeded entry wins.
+ *
+ * `ListAccountsResponse` has no top-level `sandbox` field, so no sandbox
+ * stamp is applied (unlike the list-creatives and list-media-buys helpers).
  */
 export function mergeSeededAccountsIntoResponse(
   response: ListAccountsResponse,
@@ -442,6 +445,9 @@ export function filterValidSeededAccounts(
  *
  * This allows proxy sellers to seed the financial values the conformance
  * storyboard expects without needing a live upstream billing API.
+ *
+ * `GetAccountFinancialsSuccess` has no top-level `sandbox` field, so no
+ * sandbox stamp is applied.
  */
 export function mergeSeededAccountFinancialsIntoResponse(
   response: GetAccountFinancialsSuccess,
@@ -478,6 +484,14 @@ export function filterValidSeededAccountFinancials(
     }
     if (typeof e.currency !== 'string' || e.currency.length === 0) {
       logger?.warn('testController.getSeededAccountFinancials entry missing currency; dropping', { index });
+      return;
+    }
+    if (!e.period || typeof e.period !== 'object') {
+      logger?.warn('testController.getSeededAccountFinancials entry missing period; dropping', { index });
+      return;
+    }
+    if (typeof e.timezone !== 'string' || e.timezone.length === 0) {
+      logger?.warn('testController.getSeededAccountFinancials entry missing timezone; dropping', { index });
       return;
     }
     valid.push(entry as GetAccountFinancialsSuccess);
@@ -721,9 +735,10 @@ export interface BridgeFromSessionStoreOptions<TSession> {
  *
  * This helper covers the full set of bridgeable tools: `get_products`,
  * `list_creatives`, `get_media_buys`, `list_accounts`,
- * `get_account_financials`, and `list_creative_formats`. Each entity
- * type has its own optional `select*` callback — omit the ones you don't
- * need.
+ * `get_account_financials`, and `list_creative_formats`. The five new
+ * entity-type selectors (`selectSeededCreatives` et al.) are optional —
+ * omit the ones you don't need. `selectSeededProducts` remains required
+ * for backwards-compatibility with existing callers.
  *
  * Sandbox gating and dedup happen in the dispatcher (same path as the
  * default-store bridge); this helper returns fixtures unconditionally
