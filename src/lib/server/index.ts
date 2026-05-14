@@ -106,6 +106,9 @@ export {
 export { getAccountMode, isSandboxOrMockAccount, assertSandboxAccount } from './account-mode';
 export type { AccountMode } from './account-mode';
 
+export { assertNoExampleTlds } from './assert-no-example-tlds';
+export type { AssertNoExampleTldsOptions } from './assert-no-example-tlds';
+
 export {
   taskToolResponse,
   registerAdcpTaskTool,

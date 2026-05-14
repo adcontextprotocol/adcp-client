@@ -56,6 +56,7 @@
  */
 
 import {
+  assertNoExampleTlds,
   createAdcpServerFromPlatform,
   createMediaBuyStore,
   createInMemoryTaskRegistry,
@@ -101,6 +102,10 @@ const ADCP_AUTH_TOKEN = process.env['ADCP_AUTH_TOKEN'] ?? 'sk_harness_do_not_use
 const PUBLIC_AGENT_URL = process.env['PUBLIC_AGENT_URL'] ?? `http://127.0.0.1:${PORT}`;
 
 const KNOWN_PUBLISHERS = ['acmeoutdoor.example', 'pinnacle-agency.example', 'premium-sports.example'];
+
+// Fail fast if this fork still ships with `.example`-TLD seed data outside
+// of dev/test. See FORK CHECKLIST item 2.
+assertNoExampleTlds({ KNOWN_PUBLISHERS });
 
 // SWAP: the seller's minimum committable max_variance_percent — the
 // buyer-vs-seller billing-count delta this seller will tolerate before

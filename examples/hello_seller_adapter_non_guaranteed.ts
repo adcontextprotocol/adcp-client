@@ -52,6 +52,7 @@
  */
 
 import {
+  assertNoExampleTlds,
   createAdcpServerFromPlatform,
   serve,
   verifyApiKey,
@@ -96,6 +97,10 @@ const ADCP_AUTH_TOKEN = process.env['ADCP_AUTH_TOKEN'] ?? 'sk_harness_do_not_use
 const PUBLIC_AGENT_URL = process.env['PUBLIC_AGENT_URL'] ?? `http://127.0.0.1:${PORT}`;
 
 const KNOWN_PUBLISHERS = ['remnant-network.example', 'acmeoutdoor.example', 'pinnacle-agency.example'];
+
+// Fail fast if this fork still ships with `.example`-TLD seed data outside
+// of dev/test. See FORK CHECKLIST.
+assertNoExampleTlds({ KNOWN_PUBLISHERS });
 
 // TEST-ONLY: id-prefix used by the sandbox arm in `accounts.resolve` so
 // production sellers don't need this; remove the sandbox arm + this

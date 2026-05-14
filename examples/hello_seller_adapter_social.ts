@@ -29,6 +29,7 @@
  */
 
 import {
+  assertNoExampleTlds,
   createAdcpServerFromPlatform,
   serve,
   verifyApiKey,
@@ -303,6 +304,10 @@ interface AdvertiserMeta {
 // AdCP-side identifiers from the mock's seed data. SWAP: replace with a
 // real `/advertiser/list` call.
 const KNOWN_ADVERTISERS = ['acmeoutdoor.example', 'summit-media.example'];
+
+// Fail fast if this fork still ships with `.example`-TLD seed data outside
+// of dev/test. See FORK CHECKLIST.
+assertNoExampleTlds({ KNOWN_ADVERTISERS });
 
 // Buyer event_source_id → upstream pixel_id translation map. The mock
 // ignores buyer-supplied pixel_id and assigns its own (`px_<uuid>`); buyers

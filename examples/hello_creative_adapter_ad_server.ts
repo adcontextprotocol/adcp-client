@@ -54,6 +54,7 @@
 
 import {
   AdcpError,
+  assertNoExampleTlds,
   createAdcpServerFromPlatform,
   createIdempotencyStore,
   createUpstreamHttpClient,
@@ -87,6 +88,10 @@ const PUBLIC_AGENT_URL = process.env['PUBLIC_AGENT_URL'] ?? `http://127.0.0.1:${
 
 const KNOWN_PUBLISHERS = ['creative-network.example', 'acmeoutdoor.example', 'pinnacle-agency.example'];
 const SANDBOX_ID_PREFIX = 'sandbox_';
+
+// Fail fast if this fork still ships with `.example`-TLD seed data outside
+// of dev/test. See FORK CHECKLIST.
+assertNoExampleTlds({ KNOWN_PUBLISHERS });
 
 // ---------------------------------------------------------------------------
 // Upstream client — SWAP for production.
