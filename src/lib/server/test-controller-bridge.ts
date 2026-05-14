@@ -110,7 +110,9 @@ export interface TestControllerBridge<TAccount = unknown> {
    * Returned entries are appended to the handler's `accounts` array; on
    * `account_id` collision the seeded entry wins.
    */
-  getSeededAccounts?: (ctx: TestControllerBridgeContext<TAccount>) => Promise<ListAccountsResponse['accounts'][number][]> | ListAccountsResponse['accounts'][number][];
+  getSeededAccounts?: (
+    ctx: TestControllerBridgeContext<TAccount>
+  ) => Promise<ListAccountsResponse['accounts'][number][]> | ListAccountsResponse['accounts'][number][];
 
   /**
    * Retrieve seeded account financials for the current `get_account_financials`
@@ -121,7 +123,9 @@ export interface TestControllerBridge<TAccount = unknown> {
    * collision). If the handler returns an error arm or no seeded entries are
    * provided, the handler response is returned unchanged.
    */
-  getSeededAccountFinancials?: (ctx: TestControllerBridgeContext<TAccount>) => Promise<GetAccountFinancialsSuccess[]> | GetAccountFinancialsSuccess[];
+  getSeededAccountFinancials?: (
+    ctx: TestControllerBridgeContext<TAccount>
+  ) => Promise<GetAccountFinancialsSuccess[]> | GetAccountFinancialsSuccess[];
 
   /**
    * Retrieve seeded creative formats for the current `list_creative_formats`
@@ -660,21 +664,31 @@ export interface BridgeFromSessionStoreOptions<TSession> {
    * a Promise of one) of {@link SeededCreative} objects, or `null` /
    * `undefined` when nothing is seeded. Each entry must have a `creative_id`.
    */
-  selectSeededCreatives?: (session: TSession) => SeededCreative[] | Promise<SeededCreative[] | null | undefined> | null | undefined;
+  selectSeededCreatives?: (
+    session: TSession
+  ) => SeededCreative[] | Promise<SeededCreative[] | null | undefined> | null | undefined;
 
   /**
    * Extract seeded media buys from a resolved session. Return an array (or
    * a Promise of one) of {@link SeededMediaBuy} objects, or `null` /
    * `undefined` when nothing is seeded. Each entry must have a `media_buy_id`.
    */
-  selectSeededMediaBuys?: (session: TSession) => SeededMediaBuy[] | Promise<SeededMediaBuy[] | null | undefined> | null | undefined;
+  selectSeededMediaBuys?: (
+    session: TSession
+  ) => SeededMediaBuy[] | Promise<SeededMediaBuy[] | null | undefined> | null | undefined;
 
   /**
    * Extract seeded accounts from a resolved session. Return an array (or a
    * Promise of one) of account objects, or `null` / `undefined` when nothing
    * is seeded. Each entry must have an `account_id`.
    */
-  selectSeededAccounts?: (session: TSession) => ListAccountsResponse['accounts'][number][] | Promise<ListAccountsResponse['accounts'][number][] | null | undefined> | null | undefined;
+  selectSeededAccounts?: (
+    session: TSession
+  ) =>
+    | ListAccountsResponse['accounts'][number][]
+    | Promise<ListAccountsResponse['accounts'][number][] | null | undefined>
+    | null
+    | undefined;
 
   /**
    * Extract seeded account financials from a resolved session. Return an
@@ -682,7 +696,9 @@ export interface BridgeFromSessionStoreOptions<TSession> {
    * or `null` / `undefined` when nothing is seeded. The first valid entry is
    * deep-merged onto the handler's response.
    */
-  selectSeededAccountFinancials?: (session: TSession) => GetAccountFinancialsSuccess[] | Promise<GetAccountFinancialsSuccess[] | null | undefined> | null | undefined;
+  selectSeededAccountFinancials?: (
+    session: TSession
+  ) => GetAccountFinancialsSuccess[] | Promise<GetAccountFinancialsSuccess[] | null | undefined> | null | undefined;
 
   /**
    * Extract seeded creative formats from a resolved session. Return an array
@@ -690,7 +706,9 @@ export interface BridgeFromSessionStoreOptions<TSession> {
    * when nothing is seeded. Each entry must have a `format_id` with
    * `agent_url` and `id`.
    */
-  selectSeededCreativeFormats?: (session: TSession) => Format[] | Promise<Format[] | null | undefined> | null | undefined;
+  selectSeededCreativeFormats?: (
+    session: TSession
+  ) => Format[] | Promise<Format[] | null | undefined> | null | undefined;
 }
 
 /**

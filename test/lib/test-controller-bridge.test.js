@@ -421,14 +421,16 @@ describe('mergeSeededCreativesIntoResponse', () => {
   };
 
   it('appends seeded creatives to handler response', () => {
-    const seeded = [{
-      creative_id: 'cr-seeded',
-      name: 'Seeded',
-      format_id: { agent_url: 'https://a.com', id: 'display' },
-      status: 'approved',
-      created_date: '2026-01-01T00:00:00Z',
-      updated_date: '2026-01-01T00:00:00Z',
-    }];
+    const seeded = [
+      {
+        creative_id: 'cr-seeded',
+        name: 'Seeded',
+        format_id: { agent_url: 'https://a.com', id: 'display' },
+        status: 'approved',
+        created_date: '2026-01-01T00:00:00Z',
+        updated_date: '2026-01-01T00:00:00Z',
+      },
+    ];
     const result = mergeSeededCreativesIntoResponse(BASE_RESPONSE, seeded);
     assert.equal(result.creatives.length, 2);
     assert.equal(result.query_summary.returned, 2);
@@ -436,14 +438,16 @@ describe('mergeSeededCreativesIntoResponse', () => {
   });
 
   it('seeded entry wins on creative_id collision', () => {
-    const seeded = [{
-      creative_id: 'cr-existing',
-      name: 'Seeded Override',
-      format_id: { agent_url: 'https://a.com', id: 'display' },
-      status: 'rejected',
-      created_date: '2026-01-01T00:00:00Z',
-      updated_date: '2026-01-01T00:00:00Z',
-    }];
+    const seeded = [
+      {
+        creative_id: 'cr-existing',
+        name: 'Seeded Override',
+        format_id: { agent_url: 'https://a.com', id: 'display' },
+        status: 'rejected',
+        created_date: '2026-01-01T00:00:00Z',
+        updated_date: '2026-01-01T00:00:00Z',
+      },
+    ];
     const result = mergeSeededCreativesIntoResponse(BASE_RESPONSE, seeded);
     assert.equal(result.creatives.length, 1);
     assert.equal(result.creatives[0].name, 'Seeded Override');
@@ -455,10 +459,16 @@ describe('mergeSeededCreativesIntoResponse', () => {
   });
 
   it('preserves existing sandbox: false', () => {
-    const result = mergeSeededCreativesIntoResponse(
-      { ...BASE_RESPONSE, sandbox: false },
-      [{ creative_id: 'cr-2', name: 'X', format_id: { agent_url: 'https://a.com', id: 'd' }, status: 'approved', created_date: '2026-01-01T00:00:00Z', updated_date: '2026-01-01T00:00:00Z' }]
-    );
+    const result = mergeSeededCreativesIntoResponse({ ...BASE_RESPONSE, sandbox: false }, [
+      {
+        creative_id: 'cr-2',
+        name: 'X',
+        format_id: { agent_url: 'https://a.com', id: 'd' },
+        status: 'approved',
+        created_date: '2026-01-01T00:00:00Z',
+        updated_date: '2026-01-01T00:00:00Z',
+      },
+    ]);
     assert.equal(result.sandbox, false);
   });
 });
@@ -534,7 +544,15 @@ describe('mergeSeededAccountFinancialsIntoResponse', () => {
   };
 
   it('overlays seeded entry fields onto handler response', () => {
-    const seeded = [{ account: { account_id: 'acct-1' }, currency: 'USD', period: { start: '2026-01-01', end: '2026-01-31' }, timezone: 'UTC', spend: { total_spend: 500 } }];
+    const seeded = [
+      {
+        account: { account_id: 'acct-1' },
+        currency: 'USD',
+        period: { start: '2026-01-01', end: '2026-01-31' },
+        timezone: 'UTC',
+        spend: { total_spend: 500 },
+      },
+    ];
     const result = mergeSeededAccountFinancialsIntoResponse(BASE, seeded);
     assert.equal(result.spend.total_spend, 500);
     assert.equal(result.timezone, 'UTC');
@@ -542,8 +560,20 @@ describe('mergeSeededAccountFinancialsIntoResponse', () => {
 
   it('uses the first seeded entry only', () => {
     const seeded = [
-      { account: { account_id: 'acct-1' }, currency: 'USD', period: { start: '2026-01-01', end: '2026-01-31' }, timezone: 'UTC', spend: { total_spend: 999 } },
-      { account: { account_id: 'acct-1' }, currency: 'USD', period: { start: '2026-01-01', end: '2026-01-31' }, timezone: 'UTC', spend: { total_spend: 1 } },
+      {
+        account: { account_id: 'acct-1' },
+        currency: 'USD',
+        period: { start: '2026-01-01', end: '2026-01-31' },
+        timezone: 'UTC',
+        spend: { total_spend: 999 },
+      },
+      {
+        account: { account_id: 'acct-1' },
+        currency: 'USD',
+        period: { start: '2026-01-01', end: '2026-01-31' },
+        timezone: 'UTC',
+        spend: { total_spend: 1 },
+      },
     ];
     const result = mergeSeededAccountFinancialsIntoResponse(BASE, seeded);
     assert.equal(result.spend.total_spend, 999);
@@ -589,7 +619,14 @@ describe('mergeSeededCreativeFormatsIntoResponse', () => {
 
 describe('filterValidSeededCreatives', () => {
   it('passes valid entries', () => {
-    const entry = { creative_id: 'cr-1', name: 'X', format_id: { agent_url: 'https://a.com', id: 'd' }, status: 'approved', created_date: '2026-01-01T00:00:00Z', updated_date: '2026-01-01T00:00:00Z' };
+    const entry = {
+      creative_id: 'cr-1',
+      name: 'X',
+      format_id: { agent_url: 'https://a.com', id: 'd' },
+      status: 'approved',
+      created_date: '2026-01-01T00:00:00Z',
+      updated_date: '2026-01-01T00:00:00Z',
+    };
     assert.equal(filterValidSeededCreatives([entry]).length, 1);
   });
 
@@ -632,7 +669,12 @@ describe('filterValidSeededAccounts', () => {
 });
 
 describe('filterValidSeededAccountFinancials', () => {
-  const VALID = { account: { account_id: 'acct-1' }, currency: 'USD', period: { start: '2026-01-01', end: '2026-01-31' }, timezone: 'UTC' };
+  const VALID = {
+    account: { account_id: 'acct-1' },
+    currency: 'USD',
+    period: { start: '2026-01-01', end: '2026-01-31' },
+    timezone: 'UTC',
+  };
 
   it('passes valid entries', () => {
     assert.equal(filterValidSeededAccountFinancials([VALID]).length, 1);
@@ -643,7 +685,10 @@ describe('filterValidSeededAccountFinancials', () => {
   });
 
   it('drops entries missing currency', () => {
-    assert.equal(filterValidSeededAccountFinancials([{ account: { account_id: 'a' }, period: {}, timezone: 'UTC' }]).length, 0);
+    assert.equal(
+      filterValidSeededAccountFinancials([{ account: { account_id: 'a' }, period: {}, timezone: 'UTC' }]).length,
+      0
+    );
   });
 
   it('returns [] for non-array input', () => {
@@ -663,7 +708,10 @@ describe('filterValidSeededCreativeFormats', () => {
   });
 
   it('drops entries with missing format_id.id', () => {
-    assert.equal(filterValidSeededCreativeFormats([{ format_id: { agent_url: 'https://a.com' }, name: 'X' }]).length, 0);
+    assert.equal(
+      filterValidSeededCreativeFormats([{ format_id: { agent_url: 'https://a.com' }, name: 'X' }]).length,
+      0
+    );
   });
 
   it('drops entries with missing format_id.agent_url', () => {
