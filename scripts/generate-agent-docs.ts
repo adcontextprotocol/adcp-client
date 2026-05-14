@@ -1310,6 +1310,30 @@ function generateTypeSummary(index: SchemaIndex, tools: ToolInfo[]): string {
   );
   ln();
 
+  // --- Well-Known Files ---
+  ln(`## Well-Known Files`);
+  ln();
+  ln(
+    `Inferred types and Zod schemas for the AdCP well-known JSON files. Use these when ingesting \`.well-known/brand.json\` or \`.well-known/adagents.json\` instead of hand-rolling interfaces (which drift when the spec bumps).`
+  );
+  ln();
+  ln('```typescript');
+  ln(`import { BrandJsonSchema, type BrandJson, type AdagentsJson } from '@adcp/sdk';`);
+  ln();
+  ln(`// brand.json is a union: redirect | house-redirect | portfolio`);
+  ln(`// Narrow with Extract to get just the portfolio shape:`);
+  ln(`type BrandPortfolio = Extract<BrandJson, { brands: unknown[] }>;`);
+  ln(`type BrandDefinition = BrandPortfolio['brands'][number];`);
+  ln();
+  ln(`// Parse at the boundary with the Zod schema:`);
+  ln(`const brand = BrandJsonSchema.parse(await res.json());`);
+  ln('```');
+  ln();
+  ln(
+    `Source of truth: \`schemas/cache/{version}/brand.json\` and \`adagents.json\` — regenerate with \`npm run generate-wellknown-schemas\` when the spec bumps.`
+  );
+  ln();
+
   // --- Enums ---
   ln(`## Key Enums`);
   ln();
