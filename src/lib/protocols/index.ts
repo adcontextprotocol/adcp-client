@@ -174,6 +174,16 @@ export interface TransportOptions {
    * non-streaming transports) where the body is bounded by definition.
    *
    * @remarks
+   * **Hostile-peer note:** A peer can opt itself out of this cap by responding
+   * with `Content-Type: text/event-stream`. SSE is bypassed because cumulative
+   * event-frame bytes are unbounded by spec — MCP and A2A both stream tool
+   * responses this way. The MCP/A2A SDKs consume SSE incrementally and frame
+   * termination bounds memory in practice, so this is not a memory-bomb risk
+   * for well-formed transports. Adopters relying on `maxResponseBytes` as a
+   * hostile-server defense should treat it as best-effort for non-SSE
+   * responses only.
+   *
+   * @remarks
    * Future hardening knobs (DNS-rebind defense, scheme allow-list, request
    * timeout overrides) will land here as additional fields rather than
    * forcing callers to compose their own `fetch` — wrap order with the SDK's
