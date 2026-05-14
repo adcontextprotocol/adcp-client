@@ -130,7 +130,17 @@ import { createExpressVerifier, type ExpressLike } from '../signing/middleware';
 import {
   isSandboxRequest as isSandboxRequestForSeeding,
   mergeSeededProductsIntoResponse,
+  mergeSeededCreativesIntoResponse,
+  mergeSeededMediaBuysIntoResponse,
+  mergeSeededAccountsIntoResponse,
+  mergeSeededCreativeFormatsIntoResponse,
+  replaceAccountFinancialsIfSeeded,
   filterValidSeededProducts,
+  filterValidSeededCreatives,
+  filterValidSeededMediaBuys,
+  filterValidSeededAccounts,
+  filterValidSeededAccountFinancials,
+  filterValidSeededCreativeFormats,
   type TestControllerBridge,
   type TestControllerBridgeContext,
 } from './test-controller-bridge';
@@ -3866,52 +3876,175 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
             formatted = wrap(result);
           }
 
-          // --- Test-controller bridge: augment get_products with seeded fixtures. ---
-          // Only runs when the seller opted in via `testController.getSeededProducts`
-          // AND the request carries a sandbox marker (account.sandbox === true or
-          // context.sandbox === true). When `resolveAccount` returned a concrete
-          // account, we additionally require `ctx.account.sandbox === true` so a
-          // request that happens to include `account.sandbox: true` can't leak
-          // fixtures into a non-sandbox resolved account (belt-and-suspenders).
-          // Seeded products append to whatever the handler returned; `product_id`
-          // collisions resolve with the seeded entry winning, so storyboards that
-          // override default inventory see their fixture.
+          // --- Test-controller bridge: augment read-side tools with seeded fixtures. ---
+          // Each per-tool callback (`getSeededProducts`, `getSeededCreatives`, ...)
+          // is opt-in by presence on the bridge interface. All callbacks share the
+          // same triply-gated contract:
+          //   1. The bridge is registered AND has the matching callback;
+          //   2. The handler returned a success envelope (not an `adcp_error`);
+          //   3. The request carries a sandbox marker (account.sandbox === true or
+          //      context.sandbox === true) AND, if `resolveAccount` produced a
+          //      record, that record is flagged `sandbox: true` too.
+          // For array-collection tools, seeded entries append to the handler's
+          // response with seeded winning on id collision (same as `getSeededProducts`).
+          // `get_account_financials` is the exception — singleton response, so the
+          // seeded entry REPLACES the handler payload when its `account.account_id`
+          // matches the request's `account.account_id`.
           if (
-            toolName === 'get_products' &&
-            testControllerBridge?.getSeededProducts &&
+            testControllerBridge &&
             !isErrorResponse(formatted) &&
             isSandboxRequestForSeeding(params) &&
-            // If resolveAccount produced a record, require it to be flagged
-            // sandbox too. If no account was resolved, the request-signal
-            // check above is the only line of defense — keep that contract.
             (ctx.account === undefined ||
               (typeof ctx.account === 'object' &&
                 ctx.account !== null &&
                 (ctx.account as { sandbox?: unknown }).sandbox === true))
           ) {
-            try {
-              const bridgeCtx: TestControllerBridgeContext<TAccount> = { input: params };
-              if (ctx.account !== undefined) bridgeCtx.account = ctx.account;
-              const rawSeeded = await testControllerBridge.getSeededProducts(bridgeCtx);
-              const seeded = filterValidSeededProducts(rawSeeded, logger);
-              if (seeded.length > 0) {
-                const sc = formatted.structuredContent as
-                  | import('../types/tools.generated').GetProductsResponse
-                  | undefined;
-                if (sc && typeof sc === 'object') {
-                  const merged = mergeSeededProductsIntoResponse(sc, seeded);
-                  formatted = wrap(merged);
+            const bridgeCtx: TestControllerBridgeContext<TAccount> = { input: params };
+            if (ctx.account !== undefined) bridgeCtx.account = ctx.account;
+
+            // get_products
+            if (toolName === 'get_products' && testControllerBridge.getSeededProducts) {
+              try {
+                const rawSeeded = await testControllerBridge.getSeededProducts(bridgeCtx);
+                const seeded = filterValidSeededProducts(rawSeeded, logger);
+                if (seeded.length > 0) {
+                  const sc = formatted.structuredContent as
+                    | import('../types/tools.generated').GetProductsResponse
+                    | undefined;
+                  if (sc && typeof sc === 'object') {
+                    const merged = mergeSeededProductsIntoResponse(sc, seeded);
+                    formatted = wrap(merged);
+                  }
                 }
+              } catch (err) {
+                // Bridge failures are sandbox-only by construction, so logging +
+                // returning the handler's response is the right default — a broken
+                // test fixture shouldn't tank the request under test.
+                const reason = err instanceof Error ? err.message : String(err);
+                logger.warn('testController.getSeededProducts failed; returning handler response unchanged', {
+                  tool: toolName,
+                  error: reason,
+                });
               }
-            } catch (err) {
-              // Bridge failures are sandbox-only by construction, so logging +
-              // returning the handler's response is the right default — a broken
-              // test fixture shouldn't tank the request under test.
-              const reason = err instanceof Error ? err.message : String(err);
-              logger.warn('testController.getSeededProducts failed; returning handler response unchanged', {
-                tool: toolName,
-                error: reason,
-              });
+            }
+
+            // list_creatives
+            else if (toolName === 'list_creatives' && testControllerBridge.getSeededCreatives) {
+              try {
+                const rawSeeded = await testControllerBridge.getSeededCreatives(bridgeCtx);
+                const seeded = filterValidSeededCreatives(rawSeeded, logger);
+                if (seeded.length > 0) {
+                  const sc = formatted.structuredContent as
+                    | import('../types/tools.generated').ListCreativesResponse
+                    | undefined;
+                  if (sc && typeof sc === 'object') {
+                    const merged = mergeSeededCreativesIntoResponse(sc, seeded);
+                    formatted = wrap(merged);
+                  }
+                }
+              } catch (err) {
+                const reason = err instanceof Error ? err.message : String(err);
+                logger.warn('testController.getSeededCreatives failed; returning handler response unchanged', {
+                  tool: toolName,
+                  error: reason,
+                });
+              }
+            }
+
+            // get_media_buys
+            else if (toolName === 'get_media_buys' && testControllerBridge.getSeededMediaBuys) {
+              try {
+                const rawSeeded = await testControllerBridge.getSeededMediaBuys(bridgeCtx);
+                const seeded = filterValidSeededMediaBuys(rawSeeded, logger);
+                if (seeded.length > 0) {
+                  const sc = formatted.structuredContent as
+                    | import('../types/tools.generated').GetMediaBuysResponse
+                    | undefined;
+                  if (sc && typeof sc === 'object') {
+                    const merged = mergeSeededMediaBuysIntoResponse(sc, seeded);
+                    formatted = wrap(merged);
+                  }
+                }
+              } catch (err) {
+                const reason = err instanceof Error ? err.message : String(err);
+                logger.warn('testController.getSeededMediaBuys failed; returning handler response unchanged', {
+                  tool: toolName,
+                  error: reason,
+                });
+              }
+            }
+
+            // list_accounts
+            else if (toolName === 'list_accounts' && testControllerBridge.getSeededAccounts) {
+              try {
+                const rawSeeded = await testControllerBridge.getSeededAccounts(bridgeCtx);
+                const seeded = filterValidSeededAccounts(rawSeeded, logger);
+                if (seeded.length > 0) {
+                  const sc = formatted.structuredContent as
+                    | import('../types/tools.generated').ListAccountsResponse
+                    | undefined;
+                  if (sc && typeof sc === 'object') {
+                    const merged = mergeSeededAccountsIntoResponse(sc, seeded);
+                    formatted = wrap(merged);
+                  }
+                }
+              } catch (err) {
+                const reason = err instanceof Error ? err.message : String(err);
+                logger.warn('testController.getSeededAccounts failed; returning handler response unchanged', {
+                  tool: toolName,
+                  error: reason,
+                });
+              }
+            }
+
+            // get_account_financials (singleton — replace, not append)
+            else if (toolName === 'get_account_financials' && testControllerBridge.getSeededAccountFinancials) {
+              try {
+                const rawSeeded = await testControllerBridge.getSeededAccountFinancials(bridgeCtx);
+                const seeded = filterValidSeededAccountFinancials(rawSeeded, logger);
+                if (seeded.length > 0) {
+                  const sc = formatted.structuredContent as
+                    | import('../types/tools.generated').GetAccountFinancialsResponse
+                    | undefined;
+                  if (sc && typeof sc === 'object') {
+                    const merged = replaceAccountFinancialsIfSeeded(
+                      params as import('../types/tools.generated').GetAccountFinancialsRequest,
+                      sc,
+                      seeded
+                    );
+                    if (merged !== sc) formatted = wrap(merged);
+                  }
+                }
+              } catch (err) {
+                const reason = err instanceof Error ? err.message : String(err);
+                logger.warn('testController.getSeededAccountFinancials failed; returning handler response unchanged', {
+                  tool: toolName,
+                  error: reason,
+                });
+              }
+            }
+
+            // list_creative_formats
+            else if (toolName === 'list_creative_formats' && testControllerBridge.getSeededCreativeFormats) {
+              try {
+                const rawSeeded = await testControllerBridge.getSeededCreativeFormats(bridgeCtx);
+                const seeded = filterValidSeededCreativeFormats(rawSeeded, logger);
+                if (seeded.length > 0) {
+                  const sc = formatted.structuredContent as
+                    | import('../types/tools.generated').ListCreativeFormatsResponse
+                    | undefined;
+                  if (sc && typeof sc === 'object') {
+                    const merged = mergeSeededCreativeFormatsIntoResponse(sc, seeded);
+                    formatted = wrap(merged);
+                  }
+                }
+              } catch (err) {
+                const reason = err instanceof Error ? err.message : String(err);
+                logger.warn('testController.getSeededCreativeFormats failed; returning handler response unchanged', {
+                  tool: toolName,
+                  error: reason,
+                });
+              }
             }
           }
 

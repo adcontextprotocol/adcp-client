@@ -235,6 +235,41 @@ Omit adapters you don't support — they auto-return `UNKNOWN_SCENARIO`. Throw `
 
 For domain state that carries internal structure (packages, revision, history) read by production tools, use `registerTestController(server, store)` — flat store surface, session-scoped factory. See `examples/seller-test-controller.ts`. Pick by state shape, not by helper tier — both sit on the same primitives and both auto-emit the capability block.
 
+### Platform-proxy sellers (state-of-record lives upstream)
+
+Sellers whose read path proxies to upstream platforms (`snapClient.getCreatives(...)`, `metaClient.getMediaBuy(...)`) don't read seeded fixtures from their own data layer — controller-seeded state is a dead write. Wire `TestControllerBridge` to feed those fixtures back into the read path on sandbox requests, without stubbing 13 upstream clients per adapter.
+
+```typescript
+import { createAdcpServer, bridgeFromSessionStore } from '@adcp/sdk/server';
+
+const server = createAdcpServer({
+  // ... usual config + per-adapter handlers ...
+  testController: bridgeFromSessionStore({
+    loadSession: input => sessionStore.load(sessionKey(input)),
+
+    // Each selector is opt-in by presence — wire the ones whose storyboards
+    // your specialism gates on. Returned entries are validated (warn-and-drop
+    // on shape errors, never throw) and merged into the matching tool's
+    // response on sandbox requests only.
+    selectSeededProducts:          s => s.seededProducts,          // get_products
+    selectSeededCreatives:         s => s.seededCreatives,         // list_creatives
+    selectSeededMediaBuys:         s => s.seededMediaBuys,         // get_media_buys
+    selectSeededAccounts:          s => s.seededAccounts,          // list_accounts
+    selectSeededAccountFinancials: s => s.seededFinancials,        // get_account_financials
+    selectSeededCreativeFormats:   s => s.seededFormats,           // list_creative_formats
+  }),
+});
+```
+
+Bridge contract:
+
+- **Triply gated.** Bridge runs only when the bridge is registered, the request carries a sandbox marker (`account.sandbox === true` or `context.sandbox === true`), and — if `resolveAccount` produced a record — that record is `sandbox: true` too. Production traffic untouched.
+- **Post-handler merge.** The adapter's real handler runs first (so a broken `snapClient.getCreatives()` still fails the conformance gate — the bridge supplements, it does not replace adapter behavior). Seeded entries append; on id collision the seeded fixture wins.
+- **Singleton exception.** `get_account_financials` returns one account's envelope, so the bridge picks the seeded fixture whose `account.account_id` matches the request's `account.account_id` and REPLACES the handler envelope for that account. Other accounts pass through unchanged.
+- **Validation drops invalid fixtures.** Entries missing the dedup id (`creative_id`, `media_buy_id`, `account_id`, `account.account_id`, `format_id.{agent_url,id}`) are warn-and-dropped, not thrown — a broken test fixture shouldn't tank the request under test.
+
+Plain hand-rolled `TestControllerBridge` (no session store) is also supported — wire `getSeededProducts` / `getSeededCreatives` / etc. directly. See `src/lib/server/test-controller-bridge.ts` for the interface.
+
 ---
 
 ## Schema-driven validation (catch field drift at dev time)
