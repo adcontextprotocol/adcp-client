@@ -378,7 +378,7 @@ function zodIssuesToSchemaErrors(
   issues: ReadonlyArray<{ path: ReadonlyArray<PropertyKey>; code: string; message: string }>
 ): SchemaValidationError[] {
   return issues.map(issue => {
-    const keyword = mapZodCodeToSchemaKeyword(issue.code);
+    const keyword = mapZodIssueToSchemaKeyword(issue);
     const instancePointer = issue.path.map(escapeJsonPointerSegment).join('/');
     return {
       instance_path: '/' + instancePointer,
@@ -393,25 +393,36 @@ function zodIssuesToSchemaErrors(
   });
 }
 
-function mapZodCodeToSchemaKeyword(code: string): string {
-  switch (code) {
+/**
+ * Map a Zod issue to the JSON Schema keyword that failed. Critically,
+ * `invalid_type` with `received: 'undefined'` is a missing required field
+ * (keyword `required`), not a type mismatch (keyword `type`). The two cases
+ * call for different remediation — "set the field" vs. "fix the value /
+ * change the type" — so the evaluator must distinguish them.
+ */
+function mapZodIssueToSchemaKeyword(issue: { code: string; message: string }): string {
+  if (issue.code === 'invalid_type' && /received `?undefined`?/i.test(issue.message)) {
+    return 'required';
+  }
+  switch (issue.code) {
     case 'invalid_type':
       return 'type';
-    case 'invalid_literal':
-    case 'invalid_enum_value':
+    case 'invalid_value':
       return 'enum';
     case 'too_small':
       return 'minimum';
     case 'too_big':
       return 'maximum';
-    case 'invalid_string':
+    case 'invalid_format':
       return 'format';
     case 'unrecognized_keys':
       return 'additionalProperties';
     case 'invalid_union':
       return 'oneOf';
+    case 'not_multiple_of':
+      return 'multipleOf';
     default:
-      return code;
+      return issue.code;
   }
 }
 
