@@ -1,0 +1,86 @@
+name: Sync agent roles from adcp
+
+# Mirrors `.agents/roles/` + `scripts/import-claude-agents.mjs` from
+# the canonical source in adcontextprotocol/adcp. Opens a PR if drift
+# is detected. Runs weekly on Mondays and on-demand.
+
+on:
+  schedule:
+    - cron: '17 6 * * 1'  # Mondays, 06:17 UTC (off-peak)
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '22'
+
+      - name: Fetch canonical .agents/roles/ and sync script from adcp
+        run: |
+          set -euo pipefail
+          tmp=$(mktemp -d)
+          curl -fsSL https://github.com/adcontextprotocol/adcp/archive/refs/heads/main.tar.gz \
+            | tar -xz -C "$tmp" --strip-components=1 \
+                adcp-main/.agents/roles \
+                adcp-main/scripts/import-claude-agents.mjs
+          rm -rf .agents/roles
+          mkdir -p .agents scripts
+          cp -r "$tmp/.agents/roles" .agents/roles
+          cp "$tmp/scripts/import-claude-agents.mjs" scripts/import-claude-agents.mjs
+          rm -rf "$tmp"
+
+      - name: Regenerate .claude/agents/ from synced roles
+        run: node scripts/import-claude-agents.mjs
+
+      - name: Detect drift
+        id: diff
+        run: |
+          if git diff --quiet HEAD; then
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+            echo "No drift — nothing to sync."
+          else
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+            echo "Drift detected:"
+            git diff --stat HEAD
+          fi
+
+      - name: Add empty changeset (repos that use changesets)
+        if: steps.diff.outputs.changed == 'true' && hashFiles('.changeset/config.json') != ''
+        run: |
+          mkdir -p .changeset
+          cat > .changeset/sync-agent-roles.md <<'EOF'
+          ---
+          ---
+
+          Sync `.agents/roles/` from canonical source in `adcontextprotocol/adcp`.
+          EOF
+
+      - uses: peter-evans/create-pull-request@v7
+        if: steps.diff.outputs.changed == 'true'
+        with:
+          branch: claude-routine/sync-agent-roles
+          base: main
+          title: 'chore(agents): sync .agents/roles/ from adcp'
+          commit-message: 'chore(agents): sync .agents/roles/ from adcp'
+          delete-branch: true
+          body: |
+            Automated weekly sync from `adcontextprotocol/adcp:.agents/roles/`
+            and `scripts/import-claude-agents.mjs`.
+
+            Run by `.github/workflows/sync-agent-roles.yml`.
+
+            **CI note:** PRs opened by GitHub Actions' default `GITHUB_TOKEN`
+            don't trigger downstream `pull_request` workflows. The same job
+            re-ran `node scripts/import-claude-agents.mjs` before opening
+            this PR, so `.claude/agents/` already matches the synced source.
+            To force a fresh CI run, close and reopen this PR, or push an
+            empty commit.
