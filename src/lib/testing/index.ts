@@ -186,11 +186,25 @@ export {
   mergeSeedMediaBuy,
 } from './seed-merge';
 
-// Test-controller bridge: seeded `get_products` augmentation on sandbox requests.
+// Test-controller bridge: seeded augmentation of read-side responses on sandbox
+// requests. Per-tool callbacks (`getSeededProducts`, `getSeededCreatives`,
+// `getSeededMediaBuys`, `getSeededAccounts`, `getSeededAccountFinancials`,
+// `getSeededCreativeFormats`) opt in by presence — see TestControllerBridge.
 export {
   isSandboxRequest,
   mergeSeededProductsIntoResponse,
   filterValidSeededProducts,
+  filterValidSeededCreatives,
+  filterValidSeededMediaBuys,
+  filterValidSeededAccounts,
+  filterValidSeededAccountFinancials,
+  filterValidSeededCreativeFormats,
+  mergeSeededCreativesIntoResponse,
+  mergeSeededMediaBuysIntoResponse,
+  mergeSeededAccountsIntoResponse,
+  mergeSeededCreativeFormatsIntoResponse,
+  pickSeededAccountFinancialsForRequest,
+  replaceAccountFinancialsIfSeeded,
   bridgeFromTestControllerStore,
   bridgeFromSessionStore,
 } from '../server/test-controller-bridge';
@@ -198,6 +212,9 @@ export type {
   TestControllerBridge,
   TestControllerBridgeContext,
   BridgeFromSessionStoreOptions,
+  SeededCreative,
+  SeededMediaBuy,
+  SeededAccountFinancials,
 } from '../server/test-controller-bridge';
 
 // One-call harness for server-side agents — composes serve() +

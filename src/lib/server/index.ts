@@ -297,6 +297,17 @@ export {
   isSandboxRequest,
   mergeSeededProductsIntoResponse,
   filterValidSeededProducts,
+  filterValidSeededCreatives,
+  filterValidSeededMediaBuys,
+  filterValidSeededAccounts,
+  filterValidSeededAccountFinancials,
+  filterValidSeededCreativeFormats,
+  mergeSeededCreativesIntoResponse,
+  mergeSeededMediaBuysIntoResponse,
+  mergeSeededAccountsIntoResponse,
+  mergeSeededCreativeFormatsIntoResponse,
+  pickSeededAccountFinancialsForRequest,
+  replaceAccountFinancialsIfSeeded,
   bridgeFromTestControllerStore,
   bridgeFromSessionStore,
 } from './test-controller-bridge';
@@ -304,6 +315,9 @@ export type {
   TestControllerBridge,
   TestControllerBridgeContext,
   BridgeFromSessionStoreOptions,
+  SeededCreative,
+  SeededMediaBuy,
+  SeededAccountFinancials,
 } from './test-controller-bridge';
 
 export {
