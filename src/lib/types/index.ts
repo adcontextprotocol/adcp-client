@@ -338,3 +338,12 @@ export * from './inline-enums.aliases';
 // (adcp#3149 / adcp#3566 canonicalized SCREAMING_SNAKE titles into Title Case).
 // Each alias is `@deprecated`; slated for removal in the next major.
 export * from './error-details.aliases';
+
+// Well-known file shapes (brand.json, adagents.json) inferred from the
+// canonical Zod schemas. Re-exported so adopters can derive types like
+// `BrandDefinition` directly from the spec instead of hand-rolling
+// interfaces that drift across versions. Source of truth is the schema
+// cache (`schemas/cache/{version}/{brand,adagents}.json`) — regenerate
+// with `npm run generate-wellknown-schemas` when the spec bumps.
+export type { BrandJson, AdagentsJson } from './wellknown-schemas.generated';
+export { BrandJsonSchema, AdagentsJsonSchema } from './wellknown-schemas.generated';
