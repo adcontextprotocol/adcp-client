@@ -460,8 +460,10 @@ export class ResponseTooLargeError extends ADCPError {
  * - `version`: seller's `major_versions` does not include 3
  * - `idempotency`: seller reports v3 but omits the required
  *   `adcp.idempotency.replay_ttl_seconds` declaration
- * - `synthetic`: capabilities were synthesized from a tool list (no
- *   `get_adcp_capabilities` response) so the v3 claim is unverifiable
+ * - `synthetic`: retained for backwards compatibility with consumers that
+ *   pattern-match on the union. Sellers whose capabilities are synthesized
+ *   from `tools/list` are now routed through the v2 adapter rather than
+ *   refused, so the SDK no longer throws this reason.
  */
 export type VersionUnsupportedReason = 'version' | 'idempotency' | 'synthetic';
 

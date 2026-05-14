@@ -71,19 +71,18 @@ describe('SingleAgentClient.requireV3 — corroborated check', () => {
     // No throw = pass.
   });
 
-  test('still rejects synthetic v2 capabilities (no v3-only tool in tools/list)', async () => {
-    // The synthetic-v3 escape hatch is gated on version === 'v3'. A synthetic
-    // v2 capabilities object (no get_adcp_capabilities tool present) still
-    // fails loudly — that's the case we genuinely don't know the version for.
+  test('accepts synthetic v2 capabilities (no get_adcp_capabilities — routed as v2)', async () => {
+    // A compliant v3 seller would declare itself via get_adcp_capabilities.
+    // Absence of that declaration is read as v2 and routed through the v2
+    // adapter rather than refused. A one-time warning surfaces the routing
+    // decision; idempotency-TTL guarantees are unknown for these sellers.
     const client = clientWithCapabilities({
       version: 'v2',
       majorVersions: [2],
       _synthetic: true,
     });
-    await assert.rejects(
-      () => client.requireV3('sync_creatives'),
-      err => err instanceof VersionUnsupportedError && err.reason === 'synthetic'
-    );
+    await client.requireV3('sync_creatives');
+    // No throw = pass.
   });
 
   test('rejects v2-only seller', async () => {

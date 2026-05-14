@@ -67,13 +67,15 @@ describe('SingleAgentClient.requireSupportedMajor with synthetic capabilities (i
     // No throw = pass.
   });
 
-  it('still throws VersionUnsupportedError on synthetic v2 capabilities (no v3 tool present)', async () => {
-    // No get_adcp_capabilities in tool list → agent is verifiably v2 →
-    // version-compat throws (preserves pre-#1217 safety behavior).
+  it('accepts synthetic v2 capabilities (no get_adcp_capabilities — routed as v2)', async () => {
+    // No get_adcp_capabilities in tool list → a compliant v3 seller would
+    // declare itself, so absence of declaration is read as v2 → request is
+    // routed through the v2 wire-shape adapter rather than refused.
     const client = new SingleAgentClient(stubAgent);
     client.cachedCapabilities = buildSyntheticCapabilities([{ name: 'list_signals' }]);
 
-    await assert.rejects(() => client.requireSupportedMajor('test'), VersionUnsupportedError);
+    await client.requireSupportedMajor('test');
+    // No throw = pass.
   });
 
   it('skips idempotency-TTL check on synthetic v3 (TTL is unknowable until caps endpoint is fixed)', async () => {
@@ -162,6 +164,24 @@ describe('SingleAgentClient.maybeWarnSyntheticV3 — one-time warning when check
 
       const synthV3Warns = warn.calls.filter(c => c.includes('synthetic'));
       assert.equal(synthV3Warns.length, 0, 'real v3 caps must not trigger the synthetic-v3 warning');
+    } finally {
+      warn.restore();
+    }
+  });
+
+  it('emits exactly one warning when requireSupportedMajor routes synthetic v2', async () => {
+    const warn = captureWarnings();
+    try {
+      const client = new SingleAgentClient(stubAgent);
+      client.cachedCapabilities = buildSyntheticCapabilities([{ name: 'list_signals' }]);
+
+      await client.requireSupportedMajor('test');
+      await client.requireSupportedMajor('test');
+      await client.requireSupportedMajor('test');
+
+      const synthV2Warns = warn.calls.filter(c => c.includes('does not expose get_adcp_capabilities'));
+      assert.equal(synthV2Warns.length, 1, 'synthetic-v2 warning must fire once per client');
+      assert.match(synthV2Warns[0], /Routing as v2/);
     } finally {
       warn.restore();
     }
