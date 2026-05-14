@@ -100,6 +100,14 @@ export function wrapFetchWithSizeLimit(upstream: typeof fetch): typeof fetch {
 }
 
 function enforceSizeLimit(response: Response, maxBytes: number, url: string): Response {
+  // SSE responses are legitimately unbounded — a single tool call emits N
+  // status frames + a final result. Pass through; the protocol-level framing
+  // terminates the stream, not byte counts. Case-insensitive prefix match
+  // covers `text/event-stream; charset=utf-8` and `Text/Event-Stream` variants.
+  if (response.headers.get('content-type')?.toLowerCase().startsWith('text/event-stream')) {
+    return response;
+  }
+
   // Cheap pre-check: if the server declares a Content-Length over the cap,
   // tear the connection down before reading any of the body. Servers can
   // omit or lie about Content-Length, which is why the streaming counter
