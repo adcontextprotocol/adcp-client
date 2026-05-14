@@ -60,6 +60,7 @@ import {
   memoryBackend,
   serve,
   verifyApiKey,
+  assertNoExampleTlds,
   type AccountStore,
   type Account,
   type CreativeAdServerPlatform,
@@ -86,6 +87,10 @@ const ADCP_AUTH_TOKEN = process.env['ADCP_AUTH_TOKEN'] ?? 'sk_harness_do_not_use
 const PUBLIC_AGENT_URL = process.env['PUBLIC_AGENT_URL'] ?? `http://127.0.0.1:${PORT}`;
 
 const KNOWN_PUBLISHERS = ['creative-network.example', 'acmeoutdoor.example', 'pinnacle-agency.example'];
+assertNoExampleTlds(
+  { KNOWN_PUBLISHERS },
+  { allowIn: ['test', 'development'], checklistPath: 'examples/hello_creative_adapter_ad_server.ts' }
+);
 const SANDBOX_ID_PREFIX = 'sandbox_';
 
 // ---------------------------------------------------------------------------

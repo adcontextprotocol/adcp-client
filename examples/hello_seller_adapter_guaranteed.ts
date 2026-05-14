@@ -68,6 +68,7 @@ import {
   AdcpError,
   getAccountMode,
   assertMediaBuyTransition,
+  assertNoExampleTlds,
   type DecisioningPlatform,
   type SalesCorePlatform,
   type SalesIngestionPlatform,
@@ -101,6 +102,10 @@ const ADCP_AUTH_TOKEN = process.env['ADCP_AUTH_TOKEN'] ?? 'sk_harness_do_not_use
 const PUBLIC_AGENT_URL = process.env['PUBLIC_AGENT_URL'] ?? `http://127.0.0.1:${PORT}`;
 
 const KNOWN_PUBLISHERS = ['acmeoutdoor.example', 'pinnacle-agency.example', 'premium-sports.example'];
+assertNoExampleTlds(
+  { KNOWN_PUBLISHERS },
+  { allowIn: ['test', 'development'], checklistPath: 'examples/hello_seller_adapter_guaranteed.ts' }
+);
 
 // SWAP: the seller's minimum committable max_variance_percent — the
 // buyer-vs-seller billing-count delta this seller will tolerate before
