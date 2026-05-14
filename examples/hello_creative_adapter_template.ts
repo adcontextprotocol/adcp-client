@@ -38,6 +38,7 @@ import {
   memoryBackend,
   AdcpError,
   defineCreativeBuilderPlatform,
+  assertNoExampleTlds,
   type DecisioningPlatform,
   type CreativeBuilderPlatform,
   type BuildCreativeReturn,
@@ -72,6 +73,10 @@ const PUBLIC_AGENT_URL = process.env['PUBLIC_AGENT_URL'] ?? `http://127.0.0.1:${
 // platforms expose a global format catalog or the workspace tied to the API
 // key's principal; the mock fixture keys templates per workspace.
 const DEFAULT_LISTING_WORKSPACE = process.env['DEFAULT_LISTING_WORKSPACE'] ?? 'ws_acme_studio';
+assertNoExampleTlds(
+  { DEFAULT_LISTING_WORKSPACE, PUBLIC_AGENT_URL },
+  { allowIn: ['test', 'development'], checklistPath: 'examples/hello_creative_adapter_template.ts' }
+);
 
 // ---------------------------------------------------------------------------
 // Upstream client — SWAP for production.

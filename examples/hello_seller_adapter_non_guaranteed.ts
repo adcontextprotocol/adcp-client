@@ -62,6 +62,7 @@ import {
   createMediaBuyStore,
   InMemoryStateStore,
   assertMediaBuyTransition,
+  assertNoExampleTlds,
   type DecisioningPlatform,
   type SalesCorePlatform,
   type SalesIngestionPlatform,
@@ -96,6 +97,10 @@ const ADCP_AUTH_TOKEN = process.env['ADCP_AUTH_TOKEN'] ?? 'sk_harness_do_not_use
 const PUBLIC_AGENT_URL = process.env['PUBLIC_AGENT_URL'] ?? `http://127.0.0.1:${PORT}`;
 
 const KNOWN_PUBLISHERS = ['remnant-network.example', 'acmeoutdoor.example', 'pinnacle-agency.example'];
+assertNoExampleTlds(
+  { KNOWN_PUBLISHERS },
+  { allowIn: ['test', 'development'], checklistPath: 'examples/hello_seller_adapter_non_guaranteed.ts' }
+);
 
 // TEST-ONLY: id-prefix used by the sandbox arm in `accounts.resolve` so
 // production sellers don't need this; remove the sandbox arm + this
