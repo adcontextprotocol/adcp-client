@@ -1179,7 +1179,7 @@ describe('createAdcpServer — getSeededMediaBuyDelivery wiring (get_media_buy_d
     assert.equal(res.structuredContent.aggregated_totals.media_buy_count, 3);
   });
 
-  it('collision dedup: handler wins on shared media_buy_id; aggregated_totals reflect handler value', async () => {
+  it('collision dedup: seeded wins on shared media_buy_id; aggregated_totals reflect seeded value', async () => {
     const server = createAdcpServer({
       name: 'Test',
       version: '1.0.0',
@@ -1192,12 +1192,13 @@ describe('createAdcpServer — getSeededMediaBuyDelivery wiring (get_media_buy_d
     });
     const res = await dispatch(server, 'get_media_buy_delivery', { account: SANDBOX_ACCOUNT });
     assert.equal(res.structuredContent.media_buy_deliveries.length, 1, 'collision deduped');
-    assert.equal(res.structuredContent.media_buy_deliveries[0].totals.impressions, 999, 'handler wins on collision');
-    assert.equal(res.structuredContent.aggregated_totals.impressions, 999);
+    assert.equal(res.structuredContent.media_buy_deliveries[0].totals.impressions, 1, 'seeded wins on collision');
+    assert.equal(res.structuredContent.aggregated_totals.impressions, 1);
+    assert.equal(res.structuredContent.aggregated_totals.spend, 1);
     assert.equal(res.structuredContent.aggregated_totals.media_buy_count, 1);
   });
 
-  it('mixed collision: handler [A,B] + bridge [B,C] → merged [A,B,C] with aggregated_totals from merged set', async () => {
+  it('mixed collision: handler [A,B] + bridge [B,C] → merged [A,B,C] with seeded-wins on B and aggregated_totals from merged set', async () => {
     const server = createAdcpServer({
       name: 'Test',
       version: '1.0.0',
@@ -1209,7 +1210,7 @@ describe('createAdcpServer — getSeededMediaBuyDelivery wiring (get_media_buy_d
       },
       testController: {
         getSeededMediaBuyDelivery: () => [
-          makeDelivery('B', { impressions: 99, spend: 99 }), // collides → dropped
+          makeDelivery('B', { impressions: 99, spend: 99 }), // collides → seeded wins
           makeDelivery('C', { impressions: 30, spend: 3 }), // new → appended
         ],
       },
@@ -1219,9 +1220,10 @@ describe('createAdcpServer — getSeededMediaBuyDelivery wiring (get_media_buy_d
       res.structuredContent.media_buy_deliveries.map(d => d.media_buy_id),
       ['A', 'B', 'C']
     );
-    // B's totals = handler's (20/2), not the seeded (99/99). Sum is 10+20+30 = 60.
-    assert.equal(res.structuredContent.aggregated_totals.impressions, 60);
-    assert.equal(res.structuredContent.aggregated_totals.spend, 6);
+    // B in merged is the SEEDED one (99/99), not the handler's (20/2).
+    // aggregated_totals reflects A.totals (handler 10/1) + B.totals (seeded 99/99) + C.totals (seeded 30/3) = 139/103.
+    assert.equal(res.structuredContent.aggregated_totals.impressions, 139);
+    assert.equal(res.structuredContent.aggregated_totals.spend, 103);
     assert.equal(res.structuredContent.aggregated_totals.media_buy_count, 3);
   });
 

@@ -6,7 +6,7 @@ feat(testing): `getSeededMediaBuyDelivery` bridge callback + nit-test coverage o
 
 Adds a sixth opt-in callback to `TestControllerBridge<TAccount>` for the `get_media_buy_delivery` read path so platform-proxy sellers can seed delivery-snapshot fixtures into conformance storyboards without driving real measurement through the upstream adapter:
 
-- `getSeededMediaBuyDelivery(ctx)` → appended into `get_media_buy_delivery` response (dedup by `media_buy_id`, **handler wins on collision** — measurement stays authoritative on the handler; the bridge supplements). Same sandbox + resolved-account + controller-present gating as the other bridges. `BridgeFromSessionStoreOptions` gains a matching `selectSeededMediaBuyDelivery` selector.
+- `getSeededMediaBuyDelivery(ctx)` → merged into `get_media_buy_delivery` response (dedup by `media_buy_id`, **seeded wins on collision** — follows the established collision precedent set by `mergeSeededMediaBuys` / `mergeSeededCreatives` / `mergeSeededAccounts`: storyboards seed deliberately, so a seeded fixture for an existing `media_buy_id` is an explicit author override). Same sandbox + resolved-account + controller-present gating as the other bridges. `BridgeFromSessionStoreOptions` gains a matching `selectSeededMediaBuyDelivery` selector.
 
 After the merge, `aggregated_totals` is recomputed from the merged per-delivery `totals` so `media_buy_count` / `impressions` / `spend` reflect the merged set (otherwise the response would be wire-incorrect). Policy:
 

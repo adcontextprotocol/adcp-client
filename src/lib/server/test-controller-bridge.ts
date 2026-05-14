@@ -126,11 +126,12 @@ export interface TestControllerBridge<TAccount = unknown> {
   getSeededMediaBuys?: (ctx: TestControllerBridgeContext<TAccount>) => Promise<SeededMediaBuy[]> | SeededMediaBuy[];
 
   /**
-   * Retrieve seeded media-buy delivery snapshots. Returned entries are appended
-   * to the handler's `get_media_buy_delivery` response (`media_buy_deliveries`
-   * array); on `media_buy_id` collision the handler entry wins (same precedent
-   * as the other array bridges' on-collision-seeded-wins, but here the handler
-   * is treated as authoritative — see {@link mergeSeededMediaBuyDeliveryIntoResponse}).
+   * Retrieve seeded media-buy delivery snapshots. Returned entries are merged
+   * into the handler's `get_media_buy_delivery` response (`media_buy_deliveries`
+   * array); on `media_buy_id` collision the seeded entry wins, matching the
+   * precedent set by `mergeSeededMediaBuys` / `mergeSeededCreatives` /
+   * `mergeSeededAccounts` — storyboards seed deliberately, so a seeded fixture
+   * for an existing `media_buy_id` is an explicit author override.
    *
    * After the merge, the response's `aggregated_totals` block is recomputed
    * from the merged per-delivery `totals` so `media_buy_count` /
@@ -702,11 +703,10 @@ export function recomputeAggregatedTotals(
 /**
  * Merge seeded media-buy-delivery entries into a `get_media_buy_delivery`
  * response. Existing handler entries come first; seeded entries append after
- * deduping by `media_buy_id`. On collision the HANDLER wins — the handler is
- * the authoritative source of delivery measurement; seeded fixtures supplement
- * it for storyboards that need a delivery snapshot the handler can't produce
- * yet. (This deviates from the seeded-wins precedent on the other array
- * bridges where the seeded fixture is the authoritative one.)
+ * deduping by `media_buy_id`. On collision the SEEDED entry wins, matching the
+ * precedent set by `mergeSeededMediaBuys` / `mergeSeededCreatives` /
+ * `mergeSeededAccounts` — storyboards seed deliberately, so a seeded fixture
+ * for an existing `media_buy_id` is an explicit author override.
  *
  * After merging, `aggregated_totals` is recomputed via
  * {@link recomputeAggregatedTotals} so `media_buy_count` / `impressions` /
@@ -725,14 +725,14 @@ export function mergeSeededMediaBuyDeliveryIntoResponse(
   if (!seeded.length) return response;
 
   const handlerDeliveries = Array.isArray(response.media_buy_deliveries) ? response.media_buy_deliveries : [];
-  const handlerIds = new Set<string>();
-  for (const d of handlerDeliveries) {
-    if (d && typeof d.media_buy_id === 'string') handlerIds.add(d.media_buy_id);
-  }
-  // Handler wins on collision: only append seeded entries whose id isn't in
-  // the handler set.
-  const appended = seeded.filter(d => !handlerIds.has(d.media_buy_id));
-  const final = [...handlerDeliveries, ...appended];
+  const seededIds = new Set<string>();
+  for (const d of seeded) seededIds.add(d.media_buy_id);
+  // Seeded wins on collision: drop handler entries whose `media_buy_id` is in
+  // the seeded set, then append seeded entries. Order mirrors
+  // `mergeSeededMediaBuysIntoResponse` — retained handler entries first,
+  // seeded entries (including overrides) last.
+  const retained = handlerDeliveries.filter(d => !seededIds.has(d?.media_buy_id));
+  const final = [...retained, ...seeded];
 
   const merged: GetMediaBuyDeliveryResponse = {
     ...response,
