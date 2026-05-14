@@ -1083,10 +1083,11 @@ describe('get_media_buys — pagination.total_count updates on merge', () => {
 //
 // Unlike the other array bridges, the merge here recomputes
 // `aggregated_totals` from the merged per-delivery `totals` so the response
-// stays wire-correct after the merge. On collision the HANDLER wins (delivery
-// measurement is authoritative on the handler — the bridge supplements with
-// snapshots for storyboards that can't drive real measurement through the
-// adapter).
+// stays wire-correct after the merge. On collision the SEEDED entry wins —
+// matches the precedent set by mergeSeededMediaBuys / mergeSeededCreatives /
+// mergeSeededAccounts. Storyboards seed deliberately; a seeded fixture for
+// an existing media_buy_id is an explicit author override.
+// aggregated_totals are then recomputed from the final merged list.
 // ---------------------------------------------------------------------------
 
 describe('createAdcpServer — getSeededMediaBuyDelivery wiring (get_media_buy_delivery)', () => {
