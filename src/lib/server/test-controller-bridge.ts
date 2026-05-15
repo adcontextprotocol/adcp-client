@@ -224,9 +224,10 @@ export interface TestControllerBridge<TAccount = unknown> {
    * both `list_content_standards` (success arm `standards: ContentStandards[]`,
    * append-merge with seeded winning on `standards_id` collision) and
    * `get_content_standards` (singleton — pick by `standards_id` and replace
-   * the entire response envelope, since the spec's success arm IS
-   * `ContentStandards` directly with no envelope wrapper; the handler's `ext`
-   * is preserved — `context` is not part of the success arm shape).
+   * the `ContentStandards` body). Seeded fixture is authoritative on the
+   * `ContentStandards` body. Framework-managed envelope fields (`context`,
+   * `ext`) round-trip from the handler — matches the precedent set by
+   * {@link replaceAccountFinancialsIfSeeded}.
    *
    * Unblocks the `content-standards` storyboard. Same sandbox gating contract
    * as {@link TestControllerBridge.getSeededProducts}.
@@ -1249,12 +1250,9 @@ export function pickSeededContentStandardsForRequest(
 
 /**
  * Replace a `get_content_standards` response with a seeded fixture when one
- * matches. Unlike PropertyList / CollectionList, the success arm of
- * `GetContentStandardsResponse` IS `ContentStandards` directly (no envelope
- * wrapper) — there's no `context` field in the success shape, only `ext`.
- * The handler's `ext` is preserved across the replace; the seeded fixture's
- * `ext` (if any) loses, mirroring {@link replaceAccountFinancialsIfSeeded}'s
- * "framework-managed envelope fields win" policy.
+ * matches. Seeded fixture is authoritative on the `ContentStandards` body.
+ * Framework-managed envelope fields (`context`, `ext`) round-trip from the
+ * handler — matches the precedent set by {@link replaceAccountFinancialsIfSeeded}.
  *
  * When no fixture matches, returns the handler response unchanged. The
  * caller is responsible for skipping the error arm (the dispatcher gates on
@@ -1267,13 +1265,14 @@ export function replaceContentStandardsIfSeeded(
 ): GetContentStandardsResponse {
   const picked = pickSeededContentStandardsForRequest(request, seeded);
   if (!picked) return response;
-  // Success arm is `ContentStandards`; error arm has `errors`. Only the
-  // success arm reaches this code path (dispatcher pre-filter). Preserve
-  // handler `ext` if present; everything else comes from the fixture.
+  // Both context and ext are framework-managed envelope fields.
+  // Seeded fixture is authoritative on the ContentStandards body only.
+  const handlerContext = (response as { context?: unknown }).context;
   const handlerExt = (response as { ext?: unknown }).ext;
-  const merged: ContentStandards = { ...picked };
-  if (handlerExt !== undefined) (merged as { ext?: unknown }).ext = handlerExt;
-  return merged;
+  const replaced: ContentStandards = { ...picked };
+  if (handlerContext !== undefined) (replaced as { context?: unknown }).context = handlerContext;
+  if (handlerExt !== undefined) (replaced as { ext?: unknown }).ext = handlerExt;
+  return replaced;
 }
 
 /**

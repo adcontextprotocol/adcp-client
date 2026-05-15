@@ -4180,8 +4180,9 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
             // list_content_standards / get_content_standards — list returns
             // `{ standards: ContentStandards[] }` (success arm of a union; the
             // error arm is gated out upstream). Get returns `ContentStandards`
-            // directly (success arm); replace the entire envelope, preserving
-            // only handler `ext`. No `context` field in the success arm.
+            // directly (success arm); replace the ContentStandards body and
+            // round-trip handler's `context` / `ext` (both are framework-
+            // managed envelope fields per the spec).
             else if (
               (toolName === 'list_content_standards' || toolName === 'get_content_standards') &&
               testControllerBridge.getSeededContentStandards

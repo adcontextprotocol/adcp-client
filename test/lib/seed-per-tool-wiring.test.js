@@ -2086,6 +2086,42 @@ describe('createAdcpServer — getSeededContentStandards wiring (get_content_sta
     assert.deepEqual(res.structuredContent.ext, { audit: { trace_id: 't-cs' } }, 'handler ext preserved');
   });
 
+  it('getSeededContentStandards: replace preserves handler context and ext', async () => {
+    const server = createAdcpServer({
+      name: 'Test',
+      version: '1.0.0',
+      governance: {
+        getContentStandards: async () => ({
+          // Handler returns envelope with context echo + ext, alongside the body.
+          context: { adcp_version: '3.0.11', request_id: 'req-cs-ctx' },
+          ext: { audit: { trace_id: 't-cs-ctx' } },
+          ...cs('cs-1', { name: 'Handler' }),
+        }),
+      },
+      testController: {
+        // Seeded fixture has NO context / NO ext — just the standards body.
+        // Replace must preserve the handler's context echo, not strip it.
+        getSeededContentStandards: () => [cs('cs-1', { name: 'Seeded' })],
+      },
+    });
+    const res = await dispatch(server, 'get_content_standards', {
+      standards_id: 'cs-1',
+      account: SANDBOX_ACCOUNT,
+    });
+    assert.equal(res.structuredContent.name, 'Seeded', 'standards body replaced by seeded fixture');
+    assert.equal(res.structuredContent.standards_id, 'cs-1');
+    assert.deepEqual(
+      res.structuredContent.context,
+      { adcp_version: '3.0.11', request_id: 'req-cs-ctx' },
+      'handler context preserved across replace'
+    );
+    assert.deepEqual(
+      res.structuredContent.ext,
+      { audit: { trace_id: 't-cs-ctx' } },
+      'handler ext preserved across replace'
+    );
+  });
+
   it('skipped on non-sandbox requests', async () => {
     let called = false;
     const server = createAdcpServer({
