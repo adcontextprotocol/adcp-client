@@ -389,16 +389,43 @@ export class RegistryClient {
 
   // ====== Operator & Publisher Lookups ======
 
-  /** Look up which agents a domain operates and which publishers trust them. Returns null if not found. */
-  async lookupOperator(domain: string): Promise<OperatorLookupResult | null> {
+  /**
+   * Look up which agents a domain operates and which publishers trust them.
+   * Returns null if not found.
+   *
+   * Pass `{ scope: 'public' }` to surface only agents the profile owner has
+   * made public, regardless of the caller's auth tier. Useful for
+   * anonymous-equivalent picker views where the caller has a member or
+   * admin API key but wants the same result an unauthenticated visitor
+   * would see. Omit `scope` (or pass `'all'`) to honor the caller's
+   * tier (public + members_only + owner's private).
+   */
+  async lookupOperator(
+    domain: string,
+    opts?: { scope?: 'public' | 'all' },
+  ): Promise<OperatorLookupResult | null> {
     if (!domain?.trim()) throw new Error('domain is required');
-    return this.get(`${this.baseUrl}/api/registry/operator?domain=${encodeURIComponent(domain)}`, { nullOn404: true });
+    const params = new URLSearchParams({ domain });
+    if (opts?.scope === 'public') params.set('scope', 'public');
+    return this.get(`${this.baseUrl}/api/registry/operator?${params.toString()}`, { nullOn404: true });
   }
 
-  /** Look up the inventory a domain publishes and which agents it authorizes. Returns null if not found. */
-  async lookupPublisher(domain: string): Promise<PublisherLookupResult | null> {
+  /**
+   * Look up the inventory a domain publishes and which agents it authorizes.
+   * Returns null if not found.
+   *
+   * `scope` is forwarded for symmetry with `lookupOperator`; today the
+   * publisher endpoint does not vary by visibility tier, so the option is
+   * a no-op there but reserved for future visibility-aware filtering.
+   */
+  async lookupPublisher(
+    domain: string,
+    opts?: { scope?: 'public' | 'all' },
+  ): Promise<PublisherLookupResult | null> {
     if (!domain?.trim()) throw new Error('domain is required');
-    return this.get(`${this.baseUrl}/api/registry/publisher?domain=${encodeURIComponent(domain)}`, { nullOn404: true });
+    const params = new URLSearchParams({ domain });
+    if (opts?.scope === 'public') params.set('scope', 'public');
+    return this.get(`${this.baseUrl}/api/registry/publisher?${params.toString()}`, { nullOn404: true });
   }
 
   // ====== Authorization Lookups ======
