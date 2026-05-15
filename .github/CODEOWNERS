@@ -3,9 +3,9 @@
 # approves. Prevents prompt-injection rewrites of agent behavior,
 # workflow hijacking, or dep-chain tampering from ever reaching main.
 
-/.agents/                   @bokelley
-/.github/                   @bokelley
-/.github/workflows/         @bokelley
-/.changeset/                @bokelley
-/package.json               @bokelley
-/package-lock.json          @bokelley
+/.agents/                   @adcontextprotocol/maintainers
+/.github/                   @adcontextprotocol/maintainers
+/.github/workflows/         @adcontextprotocol/maintainers
+/.changeset/                @adcontextprotocol/maintainers
+/package.json               @adcontextprotocol/maintainers
+/package-lock.json          @adcontextprotocol/maintainers
