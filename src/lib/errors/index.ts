@@ -460,13 +460,17 @@ export class ResponseTooLargeError extends ADCPError {
  * - `version`: seller's `major_versions` does not include 3
  * - `idempotency`: seller reports v3 but omits the required
  *   `adcp.idempotency.replay_ttl_seconds` declaration
- * - `synthetic`: reserved for downstream consumers that construct the
- *   error to surface unverifiable capabilities. The SDK does not emit
- *   this reason — sellers whose capabilities are synthesized from
+ * - `synthetic`: @deprecated — kept in the union for downstream
+ *   consumers that pattern-match on the union literal, but the SDK no
+ *   longer emits it. Sellers whose capabilities are synthesized from
  *   `tools/list` are routed through the v2 adapter with a one-time
- *   warning.
+ *   warning; gate retry behavior on `SingleAgentClient.isSyntheticV2()`.
  */
-export type VersionUnsupportedReason = 'version' | 'idempotency' | 'synthetic';
+export type VersionUnsupportedReason =
+  | 'version'
+  | 'idempotency'
+  /** @deprecated SDK no longer emits this reason. See union JSDoc. */
+  | 'synthetic';
 
 /**
  * Error thrown when a mutating call would dispatch to a seller whose

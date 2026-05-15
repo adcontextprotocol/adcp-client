@@ -3049,6 +3049,12 @@ export class SingleAgentClient {
    * Returns `false` for declared v2 sellers, declared v3 sellers, and
    * synthetic v3 sellers (which advertise the v3 discovery tool even
    * when the call itself failed).
+   *
+   * Caveat for synthetic v3: the predicate returns `false`, but TTL is
+   * still unknown for those sellers — `getIdempotencyReplayTtlSeconds()`
+   * throws until the agent's capabilities endpoint is fixed (issue
+   * #1217). Retry-policy consumers that need a complete "TTL unknown"
+   * gate should additionally check `getCapabilities()._synthetic`.
    */
   async isSyntheticV2(): Promise<boolean> {
     const capabilities = await this.getCapabilities();
