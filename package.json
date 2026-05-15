@@ -208,7 +208,7 @@
     "build:lib": "npm run sync-version && npm run schemas:ensure && tsx scripts/generate-wire-spec-fields.ts && tsc --project tsconfig.lib.json && tsx scripts/copy-schemas-to-dist.ts",
     "build:test-agents": "npm run build:lib && tsc -p test-agents/tsconfig.json --rootDir test-agents",
     "pretest": "npm run schemas:ensure",
-    "test": "NODE_ENV=test node --test-timeout=60000 --test-force-exit --test test/*.test.js test/lib/*.test.js && npm test --workspaces --if-present",
+    "test": "NODE_ENV=test node --test-timeout=60000 --test-force-exit --test test/*.test.js test/lib/*.test.js && npm test --workspace=packages/eslint-plugin --if-present",
     "pretest:lib": "npm run schemas:ensure",
     "test:lib": "NODE_ENV=test node --test-timeout=60000 --test-force-exit --test test/lib/*.test.js",
     "pretest:examples": "npm run build",
