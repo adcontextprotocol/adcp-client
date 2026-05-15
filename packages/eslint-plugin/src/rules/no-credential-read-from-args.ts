@@ -31,8 +31,24 @@ const createRule = ESLintUtils.RuleCreator(
 
 type MessageIds = 'credentialReadFromArgs';
 
-function isCredentialName(name: string): boolean {
-  return DEFAULT_CREDENTIAL_PATTERNS.some(rx => rx.test(name));
+type Options = [
+  {
+    additionalPatterns?: string[];
+  }?,
+];
+
+/**
+ * Build the active pattern set from the SDK defaults plus any
+ * adopter-supplied `additionalPatterns`. Adopters using
+ * `credentialPolicy.patterns.extend(...)` at runtime mirror the same
+ * strings here for lint parity. A fully-replaceable
+ * `credentialPolicy.matcher` function has no lint analogue — that's a
+ * known gap documented in the README.
+ */
+function buildPatternMatcher(extra: string[]): (name: string) => boolean {
+  const extraRegexes = extra.map(p => new RegExp(p, 'i'));
+  const patterns = [...DEFAULT_CREDENTIAL_PATTERNS, ...extraRegexes];
+  return (name: string) => patterns.some(rx => rx.test(name));
 }
 
 /**
@@ -76,10 +92,13 @@ function isRootedAtIdentifier(expr: TSESTree.Expression, name: string): boolean 
  * Handles:
  *   - Plain identifier: `(args) => …`
  *   - Typed identifier: `(args: Foo) => …`
- *   - Destructured first param: `({ access_token }) => …` (flagged directly
- *     at the destructure)
+ *   - Default-value: `(args = {}) => …` — unwrap `AssignmentPattern.left`
+ *   - Destructured first param: `({ access_token }) => …` (flagged via
+ *     the destructure scan, not via this name)
+ *   - Destructured with default: `({ access_token } = {}) => …` (same)
  *
- * Returns `null` when the function takes no params; the caller skips.
+ * Returns `null` when the function takes no params or when the first
+ * param has no nameable identifier (pure destructure).
  */
 function firstParamIdentifierName(
   fn: TSESTree.FunctionExpression | TSESTree.ArrowFunctionExpression | TSESTree.FunctionDeclaration
@@ -87,33 +106,92 @@ function firstParamIdentifierName(
   const first = fn.params[0];
   if (!first) return null;
   if (first.type === AST_NODE_TYPES.Identifier) return first.name;
-  // ObjectPattern / AssignmentPattern wrapping an Identifier — destructure
-  // cases are caught by the ObjectPattern scan below, not here.
+  if (first.type === AST_NODE_TYPES.AssignmentPattern) {
+    const left = first.left;
+    if (left.type === AST_NODE_TYPES.Identifier) return left.name;
+  }
+  // ObjectPattern / ArrayPattern — destructure cases are caught by the
+  // ObjectPattern scan below, not here.
   return null;
 }
 
 /**
- * If the function's first parameter is an ObjectPattern (destructured),
- * return the list of property names destructured. `({ access_token, foo })`
- * → `['access_token', 'foo']`. Used to flag the destructure form, which
- * never reaches a MemberExpression access.
+ * Walk the first parameter's `ObjectPattern` (including when wrapped in
+ * an `AssignmentPattern` for default-value forms like
+ * `({ access_token } = {})`) and collect every destructured key, including
+ * nested patterns. Reports paths like `args.context.access_token` so the
+ * error message reflects the depth of the destructure.
+ *
+ * Recurses through nested `ObjectPattern`s (`{ context: { access_token } }`)
+ * and handles renamed properties (`{ access_token: tok }` — fires on
+ * `access_token`, the source key, not the alias). `RestElement` is
+ * recorded as a binding but never matched against credential patterns:
+ * the post-extraction `rest.access_token` read is an aliasing pattern
+ * documented as out-of-scope.
  */
 function destructuredKeys(
   fn: TSESTree.FunctionExpression | TSESTree.ArrowFunctionExpression | TSESTree.FunctionDeclaration
-): { name: string; node: TSESTree.Node }[] {
+): { path: string; node: TSESTree.Node }[] {
   const first = fn.params[0];
-  if (!first || first.type !== AST_NODE_TYPES.ObjectPattern) return [];
-  const out: { name: string; node: TSESTree.Node }[] = [];
-  for (const prop of first.properties) {
-    if (prop.type !== AST_NODE_TYPES.Property) continue;
-    const key = prop.key;
-    if (key.type === AST_NODE_TYPES.Identifier) {
-      out.push({ name: key.name, node: key });
-    } else if (key.type === AST_NODE_TYPES.Literal && typeof key.value === 'string') {
-      out.push({ name: key.value, node: key });
-    }
+  if (!first) return [];
+
+  let pattern: TSESTree.Node = first;
+  if (pattern.type === AST_NODE_TYPES.AssignmentPattern) {
+    pattern = pattern.left;
   }
+  if (pattern.type !== AST_NODE_TYPES.ObjectPattern) return [];
+
+  const out: { path: string; node: TSESTree.Node }[] = [];
+  collectObjectPatternKeys(pattern, ['args'], out);
   return out;
+}
+
+/**
+ * Walk an ObjectPattern's properties, recursing into nested
+ * ObjectPatterns. `pathSoFar` accumulates the dotted-path segments used
+ * to render the error message (e.g. `['args', 'context']` →
+ * `args.context.access_token`).
+ */
+function collectObjectPatternKeys(
+  pattern: TSESTree.ObjectPattern,
+  pathSoFar: string[],
+  out: { path: string; node: TSESTree.Node }[]
+): void {
+  for (const prop of pattern.properties) {
+    if (prop.type === AST_NODE_TYPES.RestElement) continue;
+    if (prop.type !== AST_NODE_TYPES.Property) continue;
+
+    const keyName = propertyKeyName(prop.key, prop.computed);
+    if (keyName === null) continue;
+
+    // `prop.value` is the binding target — either an Identifier (plain or
+    // renamed), an ObjectPattern (nested destructure), or an
+    // AssignmentPattern wrapping either of those.
+    let valueNode: TSESTree.Node = prop.value;
+    if (valueNode.type === AST_NODE_TYPES.AssignmentPattern) {
+      valueNode = valueNode.left;
+    }
+
+    if (valueNode.type === AST_NODE_TYPES.ObjectPattern) {
+      collectObjectPatternKeys(valueNode, [...pathSoFar, keyName], out);
+      continue;
+    }
+
+    // Leaf binding — report at the source key (`prop.key`), not the
+    // alias (`prop.value`), so the error highlights the credential name
+    // the buyer would supply, not the local variable name the adopter
+    // chose.
+    out.push({
+      path: [...pathSoFar, keyName].join('.'),
+      node: prop.key,
+    });
+  }
+}
+
+function propertyKeyName(key: TSESTree.PropertyName | TSESTree.Expression, computed: boolean): string | null {
+  if (!computed && key.type === AST_NODE_TYPES.Identifier) return key.name;
+  if (key.type === AST_NODE_TYPES.Literal && typeof key.value === 'string') return key.value;
+  return null;
 }
 
 /**
@@ -127,13 +205,17 @@ function destructuredKeys(
  * Cases handled:
  *   - Object property: `{ extractContext: (args) => … }` / `{ extractContext(args) { … } }`
  *   - Class method: `class Foo { extractContext(args) { … } }`
- *   - Function declaration: `function extractContext(args) { … }`
+ *
+ * `FunctionDeclaration`s (`function extractContext(args) { … }`) are
+ * intentionally NOT matched — free-standing functions named
+ * `extractContext` are rare and the false-positive cost outweighs the
+ * duck-typed coverage win.
  */
 function methodNameForFunction(
   fn: TSESTree.FunctionExpression | TSESTree.ArrowFunctionExpression | TSESTree.FunctionDeclaration
 ): string | null {
-  if (fn.type === AST_NODE_TYPES.FunctionDeclaration && fn.id) {
-    return fn.id.name;
+  if (fn.type === AST_NODE_TYPES.FunctionDeclaration) {
+    return null;
   }
   const parent = (fn as unknown as { parent?: TSESTree.Node }).parent;
   if (!parent) return null;
@@ -155,7 +237,7 @@ function methodNameForFunction(
   return null;
 }
 
-export default createRule<[], MessageIds>({
+export default createRule<Options, MessageIds>({
   name: 'no-credential-read-from-args',
   meta: {
     type: 'problem',
@@ -167,10 +249,26 @@ export default createRule<[], MessageIds>({
       credentialReadFromArgs:
         'Reading credential-shaped key {{path}} from `args` trusts buyer-supplied identity. Re-derive bearers per request from `ctx.authInfo` + your token cache; embed only non-secret upstream IDs in `args`.',
     },
-    schema: [],
+    schema: [
+      {
+        type: 'object',
+        properties: {
+          additionalPatterns: {
+            type: 'array',
+            items: { type: 'string' },
+            description:
+              'Extra regex patterns appended to DEFAULT_CREDENTIAL_PATTERNS. Mirror your credentialPolicy.patterns.extend contents here for lint parity.',
+          },
+        },
+        additionalProperties: false,
+      },
+    ],
   },
-  defaultOptions: [],
+  defaultOptions: [{}],
   create(context) {
+    const options = context.options[0] ?? {};
+    const isCredentialName = buildPatternMatcher(options.additionalPatterns ?? []);
+
     /**
      * Stack of `{ argsParamName }` frames for the platform methods we're
      * currently inside. The rule fires only when the stack is non-empty.
@@ -187,15 +285,21 @@ export default createRule<[], MessageIds>({
         const argsParamName = firstParamIdentifierName(fn);
         stack.push({ argsParamName });
 
-        // Destructure form: `({ access_token, ... }) => …` — flag at the
-        // destructure site directly. MemberExpression traversal can't see
-        // these because the access never happens.
-        for (const { name, node } of destructuredKeys(fn)) {
-          if (isCredentialName(name)) {
+        // Destructure form: `({ access_token, ... }) => …` (with or
+        // without an `AssignmentPattern` default-value wrapper, and
+        // including nested patterns) — flag at each leaf destructure
+        // site. MemberExpression traversal can't see these because the
+        // access never happens.
+        for (const { path, node } of destructuredKeys(fn)) {
+          // `path` is `args.<...>.<key>`; the leaf segment is the key
+          // whose name decides credential-shape.
+          const segments = path.split('.');
+          const leaf = segments[segments.length - 1];
+          if (leaf && isCredentialName(leaf)) {
             context.report({
               node,
               messageId: 'credentialReadFromArgs',
-              data: { path: `args.${name}` },
+              data: { path },
             });
           }
         }
@@ -223,6 +327,31 @@ export default createRule<[], MessageIds>({
       'FunctionExpression:exit': exitFunction,
       ArrowFunctionExpression: enterFunction,
       'ArrowFunctionExpression:exit': exitFunction,
+
+      VariableDeclarator(node: TSESTree.VariableDeclarator): void {
+        const frame = currentFrame();
+        if (!frame || frame.argsParamName === null) return;
+
+        // Only handle `const { ... } = args` shapes — the args parameter
+        // name has to appear on the right-hand side as an Identifier.
+        if (!node.init || node.init.type !== AST_NODE_TYPES.Identifier) return;
+        if (node.init.name !== frame.argsParamName) return;
+        if (node.id.type !== AST_NODE_TYPES.ObjectPattern) return;
+
+        const out: { path: string; node: TSESTree.Node }[] = [];
+        collectObjectPatternKeys(node.id, [frame.argsParamName], out);
+        for (const entry of out) {
+          const segments = entry.path.split('.');
+          const leaf = segments[segments.length - 1];
+          if (leaf && isCredentialName(leaf)) {
+            context.report({
+              node: entry.node,
+              messageId: 'credentialReadFromArgs',
+              data: { path: entry.path },
+            });
+          }
+        }
+      },
 
       MemberExpression(node: TSESTree.MemberExpression): void {
         const frame = currentFrame();

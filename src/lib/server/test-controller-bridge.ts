@@ -32,6 +32,18 @@ import type {
   GetAccountFinancialsResponse,
   GetAccountFinancialsSuccess,
   GetAccountFinancialsRequest,
+  PropertyList,
+  ListPropertyListsResponse,
+  GetPropertyListResponse,
+  GetPropertyListRequest,
+  CollectionList,
+  ListCollectionListsResponse,
+  GetCollectionListResponse,
+  GetCollectionListRequest,
+  ContentStandards,
+  ListContentStandardsResponse,
+  GetContentStandardsResponse,
+  GetContentStandardsRequest,
 } from '../types/tools.generated';
 import { mergeSeedProduct } from '../testing/seed-merge';
 
@@ -188,6 +200,58 @@ export interface TestControllerBridge<TAccount = unknown> {
    * formats without rewriting the adapter.
    */
   getSeededCreativeFormats?: (ctx: TestControllerBridgeContext<TAccount>) => Promise<Format[]> | Format[];
+
+  /**
+   * Retrieve seeded property lists. The same callback feeds both
+   * `list_property_lists` (append-merge into `lists: PropertyList[]`, dedup
+   * by `list_id` with seeded winning on collision) and `get_property_list`
+   * (singleton — pick the entry whose `list_id` matches the request's
+   * `list_id` and REPLACE the handler response's `list` field; the handler's
+   * auxiliary fields — `identifiers`, `pagination`, `resolved_at`,
+   * `cache_valid_until`, `coverage_gaps`, `context`, `ext` — pass through
+   * verbatim because they depend on request-time pagination / resolve
+   * params that a static fixture can't know).
+   *
+   * Unblocks the `property-lists` and `governance-aware-seller` storyboards
+   * (property catalog seeding) on platform-proxy sellers whose state of
+   * record is upstream. Same sandbox gating contract as
+   * {@link TestControllerBridge.getSeededProducts}.
+   */
+  getSeededPropertyLists?: (ctx: TestControllerBridgeContext<TAccount>) => Promise<PropertyList[]> | PropertyList[];
+
+  /**
+   * Retrieve seeded content-standards configurations. The same callback feeds
+   * both `list_content_standards` (success arm `standards: ContentStandards[]`,
+   * append-merge with seeded winning on `standards_id` collision) and
+   * `get_content_standards` (singleton — pick by `standards_id` and replace
+   * the `ContentStandards` body). Seeded fixture is authoritative on the
+   * `ContentStandards` body. Framework-managed envelope fields (`context`,
+   * `ext`) round-trip from the handler — matches the precedent set by
+   * {@link replaceAccountFinancialsIfSeeded}.
+   *
+   * Unblocks the `content-standards` storyboard. Same sandbox gating contract
+   * as {@link TestControllerBridge.getSeededProducts}.
+   */
+  getSeededContentStandards?: (
+    ctx: TestControllerBridgeContext<TAccount>
+  ) => Promise<ContentStandards[]> | ContentStandards[];
+
+  /**
+   * Retrieve seeded collection lists. The same callback feeds both
+   * `list_collection_lists` (append-merge into `lists: CollectionList[]`,
+   * dedup by `list_id` with seeded winning on collision) and
+   * `get_collection_list` (singleton — pick by `list_id` and replace the
+   * `list` field; the handler's `collections`, `pagination`, `resolved_at`,
+   * `cache_valid_until`, `coverage_gaps`, `context`, `ext` pass through
+   * verbatim).
+   *
+   * Unblocks the `collection-lists` storyboard (program-level brand safety
+   * via IMDb/Gracenote/EIDR IDs). Same sandbox gating contract as
+   * {@link TestControllerBridge.getSeededProducts}.
+   */
+  getSeededCollectionLists?: (
+    ctx: TestControllerBridgeContext<TAccount>
+  ) => Promise<CollectionList[]> | CollectionList[];
 }
 
 /**
@@ -920,6 +984,297 @@ export function mergeSeededCreativeFormatsIntoResponse(
   return merged;
 }
 
+// ---------------------------------------------------------------------------
+// Property lists / collection lists / content standards
+//
+// Each entity has a "list" tool (returns `T[]` under a top-level key) AND a
+// "get" tool (returns a singleton). The same seeded fixture array feeds both
+// tools — the list tool merges with seeded-wins on collision; the get tool
+// picks by id and replaces. PropertyList and CollectionList wrap the picked
+// entity into the response's `list` field; ContentStandards' success arm IS
+// the entity directly.
+//
+// All three follow the same dedup contract:
+//   PropertyList     → top-level `list_id` (string, required)
+//   CollectionList   → top-level `list_id` (string, required)
+//   ContentStandards → top-level `standards_id` (string, required)
+// ---------------------------------------------------------------------------
+
+/**
+ * Validate seeded property-list entries. Drops entries missing a non-empty
+ * string `list_id`.
+ */
+export function filterValidSeededPropertyLists(
+  raw: unknown,
+  logger?: { warn: (message: string, meta?: Record<string, unknown>) => void }
+): PropertyList[] {
+  return filterValidById<PropertyList>(raw, 'list_id', 'getSeededPropertyLists', logger);
+}
+
+/**
+ * Validate seeded collection-list entries. Drops entries missing a non-empty
+ * string `list_id`.
+ */
+export function filterValidSeededCollectionLists(
+  raw: unknown,
+  logger?: { warn: (message: string, meta?: Record<string, unknown>) => void }
+): CollectionList[] {
+  return filterValidById<CollectionList>(raw, 'list_id', 'getSeededCollectionLists', logger);
+}
+
+/**
+ * Validate seeded content-standards entries. Drops entries missing a
+ * non-empty string `standards_id`.
+ */
+export function filterValidSeededContentStandards(
+  raw: unknown,
+  logger?: { warn: (message: string, meta?: Record<string, unknown>) => void }
+): ContentStandards[] {
+  return filterValidById<ContentStandards>(raw, 'standards_id', 'getSeededContentStandards', logger);
+}
+
+/**
+ * Merge seeded property lists into a `list_property_lists` response.
+ * Existing entries come first; seeded entries append after deduping by
+ * `list_id`. On collision the seeded entry wins. Returns a NEW response
+ * object. When the handler set `pagination.total_count`, it's incremented
+ * by the count of new (non-colliding) seeded entries.
+ *
+ * `list_property_lists` does not carry a `query_summary` block (per AdCP
+ * 3.0.11) — pagination.total_count is the only count field to update.
+ */
+export function mergeSeededPropertyListsIntoResponse(
+  response: ListPropertyListsResponse,
+  seeded: readonly PropertyList[]
+): ListPropertyListsResponse {
+  if (!seeded.length) return response;
+  const seededIds = new Set<string>();
+  for (const l of seeded) seededIds.add(l.list_id);
+  const existing = Array.isArray(response.lists) ? response.lists : [];
+  const existingIds = new Set<string>();
+  for (const l of existing) {
+    if (l && typeof l.list_id === 'string') existingIds.add(l.list_id);
+  }
+  const retained = existing.filter(l => !seededIds.has(l?.list_id));
+  let newCount = 0;
+  for (const l of seeded) if (!existingIds.has(l.list_id)) newCount += 1;
+  const merged: ListPropertyListsResponse = {
+    ...response,
+    lists: [...retained, ...seeded],
+  };
+  const pagination = (response as { pagination?: { total_count?: unknown } }).pagination;
+  if (pagination && typeof pagination === 'object' && typeof pagination.total_count === 'number') {
+    (merged as { pagination?: unknown }).pagination = {
+      ...pagination,
+      total_count: pagination.total_count + newCount,
+    };
+  }
+  return merged;
+}
+
+/**
+ * Merge seeded collection lists into a `list_collection_lists` response.
+ * Symmetric with {@link mergeSeededPropertyListsIntoResponse} — same dedup
+ * key (`list_id`), same pagination update policy.
+ */
+export function mergeSeededCollectionListsIntoResponse(
+  response: ListCollectionListsResponse,
+  seeded: readonly CollectionList[]
+): ListCollectionListsResponse {
+  if (!seeded.length) return response;
+  const seededIds = new Set<string>();
+  for (const l of seeded) seededIds.add(l.list_id);
+  const existing = Array.isArray(response.lists) ? response.lists : [];
+  const existingIds = new Set<string>();
+  for (const l of existing) {
+    if (l && typeof l.list_id === 'string') existingIds.add(l.list_id);
+  }
+  const retained = existing.filter(l => !seededIds.has(l?.list_id));
+  let newCount = 0;
+  for (const l of seeded) if (!existingIds.has(l.list_id)) newCount += 1;
+  const merged: ListCollectionListsResponse = {
+    ...response,
+    lists: [...retained, ...seeded],
+  };
+  const pagination = (response as { pagination?: { total_count?: unknown } }).pagination;
+  if (pagination && typeof pagination === 'object' && typeof pagination.total_count === 'number') {
+    (merged as { pagination?: unknown }).pagination = {
+      ...pagination,
+      total_count: pagination.total_count + newCount,
+    };
+  }
+  return merged;
+}
+
+/**
+ * Merge seeded content-standards into a `list_content_standards` response
+ * (success arm). Drops to a no-op if the response is the error arm (no
+ * `standards` array). On `standards_id` collision the seeded entry wins.
+ * Updates `pagination.total_count` when the handler set it. Returns a NEW
+ * response object.
+ */
+export function mergeSeededContentStandardsIntoResponse(
+  response: ListContentStandardsResponse,
+  seeded: readonly ContentStandards[]
+): ListContentStandardsResponse {
+  if (!seeded.length) return response;
+  // Skip the error arm — the dispatcher already gates on !isErrorResponse,
+  // but the type is a union so we re-narrow defensively.
+  const successArm = response as { standards?: ContentStandards[]; pagination?: { total_count?: unknown } };
+  if (!Array.isArray(successArm.standards)) return response;
+  const seededIds = new Set<string>();
+  for (const s of seeded) seededIds.add(s.standards_id);
+  const existing = successArm.standards;
+  const existingIds = new Set<string>();
+  for (const s of existing) {
+    if (s && typeof s.standards_id === 'string') existingIds.add(s.standards_id);
+  }
+  const retained = existing.filter(s => !seededIds.has(s?.standards_id));
+  let newCount = 0;
+  for (const s of seeded) if (!existingIds.has(s.standards_id)) newCount += 1;
+  const merged = {
+    ...successArm,
+    standards: [...retained, ...seeded],
+  } as ListContentStandardsResponse;
+  const pagination = successArm.pagination;
+  if (pagination && typeof pagination === 'object' && typeof pagination.total_count === 'number') {
+    (merged as { pagination?: unknown }).pagination = {
+      ...pagination,
+      total_count: pagination.total_count + newCount,
+    };
+  }
+  return merged;
+}
+
+/**
+ * Read the `list_id` from a `get_property_list` request. Required field per
+ * spec; this helper is defensive about runtime input.
+ */
+function readRequestListId(req: Record<string, unknown> | undefined): string | undefined {
+  const id = (req as { list_id?: unknown } | undefined)?.list_id;
+  return typeof id === 'string' && id.length > 0 ? id : undefined;
+}
+
+/**
+ * Read the `standards_id` from a `get_content_standards` request.
+ */
+function readRequestStandardsId(req: Record<string, unknown> | undefined): string | undefined {
+  const id = (req as { standards_id?: unknown } | undefined)?.standards_id;
+  return typeof id === 'string' && id.length > 0 ? id : undefined;
+}
+
+/**
+ * Pick the seeded property list whose `list_id` matches the request.
+ * Returns `undefined` when nothing matches.
+ */
+export function pickSeededPropertyListForRequest(
+  request: GetPropertyListRequest | Record<string, unknown>,
+  seeded: readonly PropertyList[]
+): PropertyList | undefined {
+  if (!seeded.length) return undefined;
+  const requestedId = readRequestListId(request as Record<string, unknown>);
+  if (requestedId == null) return undefined;
+  for (const entry of seeded) {
+    if (entry.list_id === requestedId) return entry;
+  }
+  return undefined;
+}
+
+/**
+ * Replace a `get_property_list` response's `list` field with a seeded fixture
+ * when one matches. The handler's auxiliary fields (`identifiers`,
+ * `pagination`, `resolved_at`, `cache_valid_until`, `coverage_gaps`,
+ * `context`, `ext`) pass through verbatim — those depend on request-time
+ * pagination / resolve params that a static fixture can't know. Only `list`
+ * is replaced. When no fixture matches, returns the handler response
+ * unchanged.
+ */
+export function replacePropertyListIfSeeded(
+  request: GetPropertyListRequest | Record<string, unknown>,
+  response: GetPropertyListResponse,
+  seeded: readonly PropertyList[]
+): GetPropertyListResponse {
+  const picked = pickSeededPropertyListForRequest(request, seeded);
+  if (!picked) return response;
+  return { ...response, list: picked };
+}
+
+/**
+ * Pick the seeded collection list whose `list_id` matches the request.
+ * Returns `undefined` when nothing matches.
+ */
+export function pickSeededCollectionListForRequest(
+  request: GetCollectionListRequest | Record<string, unknown>,
+  seeded: readonly CollectionList[]
+): CollectionList | undefined {
+  if (!seeded.length) return undefined;
+  const requestedId = readRequestListId(request as Record<string, unknown>);
+  if (requestedId == null) return undefined;
+  for (const entry of seeded) {
+    if (entry.list_id === requestedId) return entry;
+  }
+  return undefined;
+}
+
+/**
+ * Replace a `get_collection_list` response's `list` field with a seeded
+ * fixture when one matches. Same envelope-preservation policy as
+ * {@link replacePropertyListIfSeeded}.
+ */
+export function replaceCollectionListIfSeeded(
+  request: GetCollectionListRequest | Record<string, unknown>,
+  response: GetCollectionListResponse,
+  seeded: readonly CollectionList[]
+): GetCollectionListResponse {
+  const picked = pickSeededCollectionListForRequest(request, seeded);
+  if (!picked) return response;
+  return { ...response, list: picked };
+}
+
+/**
+ * Pick the seeded content-standards entry whose `standards_id` matches the
+ * request. Returns `undefined` when nothing matches.
+ */
+export function pickSeededContentStandardsForRequest(
+  request: GetContentStandardsRequest | Record<string, unknown>,
+  seeded: readonly ContentStandards[]
+): ContentStandards | undefined {
+  if (!seeded.length) return undefined;
+  const requestedId = readRequestStandardsId(request as Record<string, unknown>);
+  if (requestedId == null) return undefined;
+  for (const entry of seeded) {
+    if (entry.standards_id === requestedId) return entry;
+  }
+  return undefined;
+}
+
+/**
+ * Replace a `get_content_standards` response with a seeded fixture when one
+ * matches. Seeded fixture is authoritative on the `ContentStandards` body.
+ * Framework-managed envelope fields (`context`, `ext`) round-trip from the
+ * handler — matches the precedent set by {@link replaceAccountFinancialsIfSeeded}.
+ *
+ * When no fixture matches, returns the handler response unchanged. The
+ * caller is responsible for skipping the error arm (the dispatcher gates on
+ * `!isErrorResponse`).
+ */
+export function replaceContentStandardsIfSeeded(
+  request: GetContentStandardsRequest | Record<string, unknown>,
+  response: GetContentStandardsResponse,
+  seeded: readonly ContentStandards[]
+): GetContentStandardsResponse {
+  const picked = pickSeededContentStandardsForRequest(request, seeded);
+  if (!picked) return response;
+  // Both context and ext are framework-managed envelope fields.
+  // Seeded fixture is authoritative on the ContentStandards body only.
+  const handlerContext = (response as { context?: unknown }).context;
+  const handlerExt = (response as { ext?: unknown }).ext;
+  const replaced: ContentStandards = { ...picked };
+  if (handlerContext !== undefined) (replaced as { context?: unknown }).context = handlerContext;
+  if (handlerExt !== undefined) (replaced as { ext?: unknown }).ext = handlerExt;
+  return replaced;
+}
+
 /**
  * Bridge the default test-controller store (a `Map<string, unknown>` that
  * holds seeded fixtures by `product_id`, populated by `seed_product` scenarios)
@@ -1074,6 +1429,37 @@ export interface BridgeFromSessionStoreOptions<TSession> {
   selectSeededCreativeFormats?: (
     session: TSession
   ) => Iterable<Format> | Promise<Iterable<Format> | null | undefined> | null | undefined;
+
+  /**
+   * Extract seeded property lists from a resolved session. Each entry MUST
+   * carry a non-empty string `list_id`. Feeds both `list_property_lists`
+   * (append-merge into `lists`) and `get_property_list` (singleton replace
+   * of the `list` field; handler's `identifiers` / `pagination` / etc. pass
+   * through).
+   */
+  selectSeededPropertyLists?: (
+    session: TSession
+  ) => Iterable<PropertyList> | Promise<Iterable<PropertyList> | null | undefined> | null | undefined;
+
+  /**
+   * Extract seeded content-standards from a resolved session. Each entry MUST
+   * carry a non-empty string `standards_id`. Feeds `list_content_standards`
+   * (append-merge into `standards`) and `get_content_standards` (singleton
+   * replace of the whole response envelope, preserving handler `ext`).
+   */
+  selectSeededContentStandards?: (
+    session: TSession
+  ) => Iterable<ContentStandards> | Promise<Iterable<ContentStandards> | null | undefined> | null | undefined;
+
+  /**
+   * Extract seeded collection lists from a resolved session. Each entry MUST
+   * carry a non-empty string `list_id`. Feeds both `list_collection_lists`
+   * (append-merge into `lists`) and `get_collection_list` (singleton replace
+   * of the `list` field).
+   */
+  selectSeededCollectionLists?: (
+    session: TSession
+  ) => Iterable<CollectionList> | Promise<Iterable<CollectionList> | null | undefined> | null | undefined;
 }
 
 /**
@@ -1116,6 +1502,9 @@ export function bridgeFromSessionStore<TSession, TAccount = unknown>(
     selectSeededAccounts,
     selectSeededAccountFinancials,
     selectSeededCreativeFormats,
+    selectSeededPropertyLists,
+    selectSeededContentStandards,
+    selectSeededCollectionLists,
   } = opts;
 
   // Each per-tool callback resolves the session per-request (no memoisation —
@@ -1180,6 +1569,27 @@ export function bridgeFromSessionStore<TSession, TAccount = unknown>(
     bridge.getSeededCreativeFormats = async ctx => {
       const session = await loadSession(ctx.input);
       const entries = await selectSeededCreativeFormats(session);
+      return entries ? Array.from(entries) : [];
+    };
+  }
+  if (selectSeededPropertyLists) {
+    bridge.getSeededPropertyLists = async ctx => {
+      const session = await loadSession(ctx.input);
+      const entries = await selectSeededPropertyLists(session);
+      return entries ? Array.from(entries) : [];
+    };
+  }
+  if (selectSeededContentStandards) {
+    bridge.getSeededContentStandards = async ctx => {
+      const session = await loadSession(ctx.input);
+      const entries = await selectSeededContentStandards(session);
+      return entries ? Array.from(entries) : [];
+    };
+  }
+  if (selectSeededCollectionLists) {
+    bridge.getSeededCollectionLists = async ctx => {
+      const session = await loadSession(ctx.input);
+      const entries = await selectSeededCollectionLists(session);
       return entries ? Array.from(entries) : [];
     };
   }
