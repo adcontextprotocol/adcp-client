@@ -504,7 +504,7 @@ export class VersionUnsupportedError extends ADCPError {
       case 'idempotency':
         return `seller reports v3 but omits adcp.idempotency.replay_ttl_seconds (required by spec).`;
       case 'synthetic':
-        return `seller's capabilities could not be verified against the required major version.`;
+        return `capabilities were synthesized from a tool list, v3 claim is unverifiable.`;
     }
   }
 }

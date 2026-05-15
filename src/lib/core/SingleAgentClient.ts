@@ -3058,7 +3058,7 @@ export class SingleAgentClient {
    */
   async isSyntheticV2(): Promise<boolean> {
     const capabilities = await this.getCapabilities();
-    return capabilities._synthetic === true && capabilities.version !== 'v3';
+    return capabilities._synthetic === true && capabilities.version === 'v2';
   }
 
   /**
