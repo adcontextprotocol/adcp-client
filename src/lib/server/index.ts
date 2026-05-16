@@ -291,6 +291,7 @@ export type {
 export { DEFAULT_REPORTING_CAPABILITIES } from './product-defaults';
 
 export {
+  applySeededBridge,
   isSandboxRequest,
   mergeSeededProductsIntoResponse,
   filterValidSeededProducts,
@@ -313,6 +314,7 @@ export type {
   BridgeFromSessionStoreOptions,
   SeededCreative,
   SeededMediaBuy,
+  SeededAccount,
 } from './test-controller-bridge';
 
 export {

@@ -39,6 +39,24 @@
  * sandbox URL with live credentials. The two together — storyboard-via-
  * bridge plus live-OAuth runner — give wire conformance and adapter
  * health respectively.
+ *
+ * ## Adopter responsibilities
+ *
+ * **`resolveAccount` is the trust boundary.** The dispatcher's sandbox gate
+ * is "request carries a sandbox marker AND (resolved account is sandbox OR
+ * no account was resolved)." If you deploy a server with this bridge
+ * registered but no `resolveAccount` configured, a buyer can stamp
+ * `context.sandbox: true` on a request and trigger the merge. That's the
+ * intended behavior for storyboard runners with no account scoping, but
+ * means **production bindings must always configure `resolveAccount`** —
+ * otherwise the request-signal check is the only line of defense.
+ *
+ * **Multi-tenant isolation is the adopter's job.** Callbacks receive
+ * `ctx.account` and must key their fixture store on it. The SDK does no
+ * defensive cross-check between the account on the response entries and
+ * the `ctx.account` that asked for them. A sloppy session-store keying
+ * can return tenant A's fixtures to tenant B; nothing in this module will
+ * notice. Treat fixture stores like any other multi-tenant data layer.
  */
 
 import type {
@@ -57,6 +75,9 @@ export type SeededCreative = ListCreativesResponse['creatives'][number];
 
 /** Element type of `GetMediaBuysResponse.media_buys`. */
 export type SeededMediaBuy = GetMediaBuysResponse['media_buys'][number];
+
+/** Element type of `ListAccountsResponse.accounts`. */
+export type SeededAccount = ListAccountsResponse['accounts'][number];
 
 /** Account type used in `ListAccountsResponse.accounts`. */
 export type { Format };
@@ -127,9 +148,7 @@ export interface TestControllerBridge<TAccount = unknown> {
    * Returned entries are appended to the handler's `accounts` array; on
    * `account_id` collision the seeded entry wins.
    */
-  getSeededAccounts?: (
-    ctx: TestControllerBridgeContext<TAccount>
-  ) => Promise<ListAccountsResponse['accounts'][number][]> | ListAccountsResponse['accounts'][number][];
+  getSeededAccounts?: (ctx: TestControllerBridgeContext<TAccount>) => Promise<SeededAccount[]> | SeededAccount[];
 
   /**
    * Retrieve seeded account financials for the current `get_account_financials`
@@ -179,6 +198,71 @@ export function isSandboxRequest(input: Record<string, unknown>): boolean {
   return false;
 }
 
+/**
+ * Guard against the async-envelope shape (`{status: 'submitted', task_id, ...}`)
+ * a handler may return when a tool call defers to a long-running task. The
+ * merge helpers expect the success arm of the response schema; spreading a
+ * `creatives: [...]` field into a submitted envelope produces a hybrid wire
+ * shape that violates the async schema.
+ *
+ * Returns `true` only when `response` looks like the synchronous success
+ * arm — the discriminant field exists and the expected list key is an array.
+ * Anything that looks like an async / submitted / working envelope returns
+ * `false` and the dispatcher leaves the handler response untouched.
+ */
+function isListSuccessShape(response: unknown, listKey: string): boolean {
+  if (!response || typeof response !== 'object') return false;
+  const r = response as Record<string, unknown>;
+  // Async/in-flight envelopes carry a `task_id` and a non-terminal `status`.
+  // Treat their presence as "not the success arm" regardless of list key.
+  if (typeof r.task_id === 'string' && r.task_id.length > 0) return false;
+  if (typeof r.status === 'string' && r.status !== 'completed') return false;
+  return Array.isArray(r[listKey]);
+}
+
+/**
+ * Variant of {@link isListSuccessShape} for `get_account_financials`, which
+ * has no list field — the success arm is discriminated by the presence of
+ * the required `account`, `currency`, `period`, and `timezone` fields.
+ */
+function isFinancialsSuccessShape(response: unknown): boolean {
+  if (!response || typeof response !== 'object') return false;
+  const r = response as Record<string, unknown>;
+  if (typeof r.task_id === 'string' && r.task_id.length > 0) return false;
+  if (typeof r.status === 'string' && r.status !== 'completed') return false;
+  return (
+    typeof r.account === 'object' &&
+    r.account !== null &&
+    typeof r.currency === 'string' &&
+    typeof r.timezone === 'string'
+  );
+}
+
+/**
+ * Bump a `total_matching` / `total_count` integer by `delta`. Returns
+ * `undefined` when the original was undefined (handlers that can't compute
+ * a total stay opted-out), or the original when `delta` is zero. Otherwise
+ * returns the sum, floor-clamped at the original value — drift safety in
+ * case a malformed handler returned a count lower than its own array length.
+ */
+function bumpCount(original: number | undefined, delta: number): number | undefined {
+  if (original === undefined) return undefined;
+  if (delta <= 0) return original;
+  return original + delta;
+}
+
+/**
+ * Bump `pagination.total_count` by `delta` when present. Leaves
+ * `has_more` and `cursor` untouched — seeded entries land on the current
+ * page, the handler's cursor (if any) still points to its next page, and
+ * `has_more: true` remains true after the merge.
+ */
+function bumpPaginationTotal<T extends { total_count?: number } | undefined>(pagination: T, delta: number): T {
+  if (!pagination || delta <= 0) return pagination;
+  if (pagination.total_count === undefined) return pagination;
+  return { ...pagination, total_count: pagination.total_count + delta } as T;
+}
+
 // ---------------------------------------------------------------------------
 // get_products merge helpers
 // ---------------------------------------------------------------------------
@@ -201,6 +285,7 @@ export function mergeSeededProductsIntoResponse(
   seeded: readonly Product[]
 ): GetProductsResponse {
   if (!seeded.length) return response;
+  if (!isListSuccessShape(response, 'products')) return response;
 
   const seededIds = new Set<string>();
   for (const p of seeded) seededIds.add(p.product_id);
@@ -268,7 +353,14 @@ export function filterValidSeededProducts(
  *
  * Handler-returned creatives come first; seeded entries append after deduping
  * by `creative_id`. On collision the seeded entry wins. The
- * `query_summary.returned` count is updated to match the merged array length.
+ * `query_summary.returned` count is updated to match the merged array length;
+ * `query_summary.total_matching` and `pagination.total_count` are bumped by
+ * the number of genuinely-new seeded entries (collisions don't count, since
+ * they replace existing handler entries that were already accounted for).
+ * `pagination.cursor` / `pagination.has_more` are left untouched — seeded
+ * entries land on the current page; the handler's cursor still points to its
+ * next page if any.
+ *
  * The `sandbox: true` flag is stamped unless the handler explicitly set
  * `sandbox: false`.
  */
@@ -277,11 +369,17 @@ export function mergeSeededCreativesIntoResponse(
   seeded: readonly SeededCreative[]
 ): ListCreativesResponse {
   if (!seeded.length) return response;
+  if (!isListSuccessShape(response, 'creatives')) return response;
 
   const seededIds = new Set<string>();
   for (const c of seeded) seededIds.add(c.creative_id);
 
   const handlerCreatives = Array.isArray(response.creatives) ? response.creatives : [];
+  const handlerIds = new Set<string>();
+  for (const c of handlerCreatives) {
+    if (c?.creative_id) handlerIds.add(c.creative_id);
+  }
+  const newlyAdded = seeded.reduce((n, c) => (handlerIds.has(c.creative_id) ? n : n + 1), 0);
   const retained = handlerCreatives.filter(c => !seededIds.has(c?.creative_id));
   const mergedList = [...retained, ...seeded];
 
@@ -291,7 +389,12 @@ export function mergeSeededCreativesIntoResponse(
     query_summary: {
       ...response.query_summary,
       returned: mergedList.length,
+      total_matching:
+        typeof response.query_summary?.total_matching === 'number'
+          ? response.query_summary.total_matching + newlyAdded
+          : response.query_summary?.total_matching,
     },
+    pagination: bumpPaginationTotal(response.pagination, newlyAdded),
     sandbox: response.sandbox !== false ? true : response.sandbox,
   };
 }
@@ -334,24 +437,34 @@ export function filterValidSeededCreatives(
  * Merge seeded media buys into a `get_media_buys` response payload.
  *
  * Handler-returned media buys come first; seeded entries append after deduping
- * by `media_buy_id`. On collision the seeded entry wins. The `sandbox: true`
- * flag is stamped unless the handler explicitly set `sandbox: false`.
+ * by `media_buy_id`. On collision the seeded entry wins.
+ * `pagination.total_count` (if present) is bumped by the number of genuinely-
+ * new seeded entries; `pagination.cursor` / `has_more` are left untouched. The
+ * `sandbox: true` flag is stamped unless the handler explicitly set
+ * `sandbox: false`.
  */
 export function mergeSeededMediaBuysIntoResponse(
   response: GetMediaBuysResponse,
   seeded: readonly SeededMediaBuy[]
 ): GetMediaBuysResponse {
   if (!seeded.length) return response;
+  if (!isListSuccessShape(response, 'media_buys')) return response;
 
   const seededIds = new Set<string>();
   for (const m of seeded) seededIds.add(m.media_buy_id);
 
   const handlerBuys = Array.isArray(response.media_buys) ? response.media_buys : [];
+  const handlerIds = new Set<string>();
+  for (const m of handlerBuys) {
+    if (m?.media_buy_id) handlerIds.add(m.media_buy_id);
+  }
+  const newlyAdded = seeded.reduce((n, m) => (handlerIds.has(m.media_buy_id) ? n : n + 1), 0);
   const retained = handlerBuys.filter(m => !seededIds.has(m?.media_buy_id));
 
   return {
     ...response,
     media_buys: [...retained, ...seeded],
+    pagination: bumpPaginationTotal(response.pagination, newlyAdded),
     sandbox: response.sandbox !== false ? true : response.sandbox,
   };
 }
@@ -395,25 +508,35 @@ export function filterValidSeededMediaBuys(
  *
  * Handler-returned accounts come first; seeded entries append after deduping
  * by `account_id`. On collision the seeded entry wins.
+ * `pagination.total_count` (if present) is bumped by the number of
+ * genuinely-new seeded entries; `pagination.cursor` / `has_more` are
+ * left untouched.
  *
  * `ListAccountsResponse` has no top-level `sandbox` field, so no sandbox
  * stamp is applied (unlike the list-creatives and list-media-buys helpers).
  */
 export function mergeSeededAccountsIntoResponse(
   response: ListAccountsResponse,
-  seeded: readonly ListAccountsResponse['accounts'][number][]
+  seeded: readonly SeededAccount[]
 ): ListAccountsResponse {
   if (!seeded.length) return response;
+  if (!isListSuccessShape(response, 'accounts')) return response;
 
   const seededIds = new Set<string>();
   for (const a of seeded) seededIds.add(a.account_id);
 
   const handlerAccounts = Array.isArray(response.accounts) ? response.accounts : [];
+  const handlerIds = new Set<string>();
+  for (const a of handlerAccounts) {
+    if (a?.account_id) handlerIds.add(a.account_id);
+  }
+  const newlyAdded = seeded.reduce((n, a) => (handlerIds.has(a.account_id) ? n : n + 1), 0);
   const retained = handlerAccounts.filter(a => !seededIds.has(a?.account_id));
 
   return {
     ...response,
     accounts: [...retained, ...seeded],
+    pagination: bumpPaginationTotal(response.pagination, newlyAdded),
   };
 }
 
@@ -424,14 +547,14 @@ export function mergeSeededAccountsIntoResponse(
 export function filterValidSeededAccounts(
   raw: unknown,
   logger?: { warn: (message: string, meta?: Record<string, unknown>) => void }
-): ListAccountsResponse['accounts'][number][] {
+): SeededAccount[] {
   if (!Array.isArray(raw)) {
     logger?.warn('testController.getSeededAccounts did not return an array; skipping bridge', {
       received: typeof raw,
     });
     return [];
   }
-  const valid: ListAccountsResponse['accounts'][number][] = [];
+  const valid: SeededAccount[] = [];
   raw.forEach((entry, index) => {
     if (!entry || typeof entry !== 'object' || Array.isArray(entry)) {
       logger?.warn('testController.getSeededAccounts entry is not an object; dropping', { index });
@@ -442,7 +565,7 @@ export function filterValidSeededAccounts(
       logger?.warn('testController.getSeededAccounts entry missing account_id; dropping', { index });
       return;
     }
-    valid.push(entry as ListAccountsResponse['accounts'][number]);
+    valid.push(entry as SeededAccount);
   });
   return valid;
 }
@@ -468,9 +591,16 @@ export function filterValidSeededAccounts(
  */
 export function mergeSeededAccountFinancialsIntoResponse(
   response: GetAccountFinancialsSuccess,
-  seeded: readonly GetAccountFinancialsSuccess[]
+  seeded: readonly GetAccountFinancialsSuccess[],
+  logger?: { warn: (message: string, meta?: Record<string, unknown>) => void }
 ): GetAccountFinancialsSuccess {
   if (!seeded.length) return response;
+  if (!isFinancialsSuccessShape(response)) return response;
+  if (seeded.length > 1) {
+    logger?.warn('mergeSeededAccountFinancialsIntoResponse received >1 seeded entry; only the first is applied', {
+      receivedCount: seeded.length,
+    });
+  }
   return mergeSeed(response, seeded[0] as Partial<GetAccountFinancialsSuccess>) as GetAccountFinancialsSuccess;
 }
 
@@ -525,15 +655,21 @@ export function filterValidSeededAccountFinancials(
  * payload.
  *
  * Handler-returned formats come first; seeded entries append after deduping
- * by `format_id.agent_url + format_id.id` composite. On collision the seeded
- * entry wins. The `sandbox: true` flag is stamped unless the handler
- * explicitly set `sandbox: false`.
+ * by `format_id.agent_url + format_id.id` composite (`\0` separator — never
+ * appears in URLs or IDs). On collision the seeded entry wins.
+ * `pagination.total_count` (if present) is bumped by the number of
+ * genuinely-new seeded entries.
+ *
+ * `ListCreativeFormatsResponse` has no top-level `sandbox` field per the
+ * AdCP spec — no sandbox stamp is applied (matching the `list_accounts` /
+ * `get_account_financials` pattern).
  */
 export function mergeSeededCreativeFormatsIntoResponse(
   response: import('../types/tools.generated').ListCreativeFormatsResponse,
   seeded: readonly Format[]
 ): import('../types/tools.generated').ListCreativeFormatsResponse {
   if (!seeded.length) return response;
+  if (!isListSuccessShape(response, 'formats')) return response;
 
   const seededKeys = new Set<string>();
   for (const f of seeded) {
@@ -541,6 +677,14 @@ export function mergeSeededCreativeFormatsIntoResponse(
   }
 
   const handlerFormats = Array.isArray(response.formats) ? response.formats : [];
+  const handlerKeys = new Set<string>();
+  for (const f of handlerFormats) {
+    if (f?.format_id) handlerKeys.add(`${f.format_id.agent_url}\0${f.format_id.id}`);
+  }
+  const newlyAdded = seeded.reduce(
+    (n, f) => (handlerKeys.has(`${f.format_id.agent_url}\0${f.format_id.id}`) ? n : n + 1),
+    0
+  );
   const retained = handlerFormats.filter(f => {
     if (!f?.format_id) return true;
     return !seededKeys.has(`${f.format_id.agent_url}\0${f.format_id.id}`);
@@ -549,7 +693,7 @@ export function mergeSeededCreativeFormatsIntoResponse(
   return {
     ...response,
     formats: [...retained, ...seeded],
-    sandbox: response.sandbox !== false ? true : response.sandbox,
+    pagination: bumpPaginationTotal(response.pagination, newlyAdded),
   };
 }
 
@@ -590,6 +734,158 @@ export function filterValidSeededCreativeFormats(
     valid.push(entry as Format);
   });
   return valid;
+}
+
+// ---------------------------------------------------------------------------
+// applySeededBridge — dispatcher entry point used by createAdcpServer
+// ---------------------------------------------------------------------------
+
+/**
+ * Table mapping each bridgeable tool to its callback, validator, and merge
+ * helper. Used by {@link applySeededBridge} to consolidate the per-tool
+ * dispatcher branches.
+ *
+ * The internal types use `any` because each row's callback/filter/merge are
+ * type-aligned to a different success-response shape — bridging six row
+ * shapes into one strongly-typed table costs more in conditional-type
+ * complexity than the dispatcher gains. The merge helpers themselves are
+ * strongly typed at their definition sites.
+ */
+type BridgeTableEntry = {
+  toolName: string;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  callback: (bridge: TestControllerBridge<any>) => ((ctx: TestControllerBridgeContext<any>) => any) | undefined;
+  filter: (raw: unknown, logger?: { warn: (message: string, meta?: Record<string, unknown>) => void }) => unknown[];
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  merge: (
+    sc: any,
+    seeded: any,
+    logger?: { warn: (message: string, meta?: Record<string, unknown>) => void }
+  ) => unknown;
+};
+
+const BRIDGE_TABLE: readonly BridgeTableEntry[] = [
+  {
+    toolName: 'get_products',
+    callback: b => b.getSeededProducts,
+    filter: filterValidSeededProducts,
+    merge: (sc, seeded) => mergeSeededProductsIntoResponse(sc, seeded),
+  },
+  {
+    toolName: 'list_creatives',
+    callback: b => b.getSeededCreatives,
+    filter: filterValidSeededCreatives,
+    merge: (sc, seeded) => mergeSeededCreativesIntoResponse(sc, seeded),
+  },
+  {
+    toolName: 'get_media_buys',
+    callback: b => b.getSeededMediaBuys,
+    filter: filterValidSeededMediaBuys,
+    merge: (sc, seeded) => mergeSeededMediaBuysIntoResponse(sc, seeded),
+  },
+  {
+    toolName: 'list_accounts',
+    callback: b => b.getSeededAccounts,
+    filter: filterValidSeededAccounts,
+    merge: (sc, seeded) => mergeSeededAccountsIntoResponse(sc, seeded),
+  },
+  {
+    toolName: 'get_account_financials',
+    callback: b => b.getSeededAccountFinancials,
+    filter: filterValidSeededAccountFinancials,
+    merge: (sc, seeded, logger) => mergeSeededAccountFinancialsIntoResponse(sc, seeded, logger),
+  },
+  {
+    toolName: 'list_creative_formats',
+    callback: b => b.getSeededCreativeFormats,
+    filter: filterValidSeededCreativeFormats,
+    merge: (sc, seeded) => mergeSeededCreativeFormatsIntoResponse(sc, seeded),
+  },
+];
+
+/**
+ * Apply the test-controller bridge to a tool response, if one is registered
+ * for `toolName` and the sandbox gate passes.
+ *
+ * Returns the (possibly augmented) wrapped response. The contract:
+ *
+ *   - If the tool is not in the bridge table, the bridge has no callback for
+ *     it, the response is an error envelope, the request is not sandbox-
+ *     flagged, or the resolved account is not sandbox: returns the original
+ *     `formatted` unchanged.
+ *   - If the callback throws or returns malformed data: logs a `warn` and
+ *     returns the original `formatted`. Sandbox-only failures must not tank
+ *     the request under test.
+ *   - If the merge helper short-circuits (async/error arm, no genuinely-new
+ *     seeded entries): the merged response is reference-equal to the input,
+ *     and the original wrapped `formatted` is returned without re-wrapping
+ *     (re-wrapping the same payload can produce a subtly different
+ *     `content[].text` summary).
+ *   - Otherwise: wraps the merged response and returns it.
+ *
+ * Gate-rejection (sandbox input but non-sandbox resolved account) emits a
+ * `debug` log so adopters chasing "why aren't my fixtures showing" have a
+ * diagnostic surface.
+ */
+export async function applySeededBridge<TAccount, Wrapped = unknown>(opts: {
+  bridge: TestControllerBridge<TAccount>;
+  toolName: string;
+  formatted: Wrapped & { structuredContent?: unknown };
+  params: Record<string, unknown>;
+  account: TAccount | undefined;
+  isError: boolean;
+  isSandboxInput: boolean;
+  logger: {
+    warn: (message: string, meta?: Record<string, unknown>) => void;
+    debug?: (message: string, meta?: Record<string, unknown>) => void;
+  };
+  wrap: (data: unknown) => Wrapped;
+}): Promise<Wrapped> {
+  const { bridge, toolName, formatted, params, account, isError, isSandboxInput, logger, wrap } = opts;
+
+  const entry = BRIDGE_TABLE.find(e => e.toolName === toolName);
+  if (!entry) return formatted;
+
+  const callback = entry.callback(bridge);
+  if (!callback) return formatted;
+  if (isError) return formatted;
+  if (!isSandboxInput) return formatted;
+
+  // Sandbox-account gate: if resolveAccount produced a record, it MUST be
+  // flagged sandbox. If undefined, isSandboxInput is the only defense.
+  const accountIsSandbox =
+    account === undefined ||
+    (typeof account === 'object' && account !== null && (account as { sandbox?: unknown }).sandbox === true);
+  if (!accountIsSandbox) {
+    logger.debug?.('test-controller bridge: sandbox input but resolved account is not sandbox; skipping merge', {
+      tool: toolName,
+    });
+    return formatted;
+  }
+
+  try {
+    const bridgeCtx: TestControllerBridgeContext<TAccount> = { input: params };
+    if (account !== undefined) bridgeCtx.account = account;
+    const rawSeeded = await callback(bridgeCtx);
+    const seeded = entry.filter(rawSeeded, logger);
+    if (seeded.length === 0) return formatted;
+
+    const sc = formatted.structuredContent;
+    if (!sc || typeof sc !== 'object') return formatted;
+
+    const merged = entry.merge(sc, seeded, logger);
+    // Reference-equal means the helper short-circuited (async envelope,
+    // wrong shape, etc.). Don't re-wrap or we mutate the `content[].text`.
+    if (merged === sc) return formatted;
+    return wrap(merged);
+  } catch (err) {
+    const reason = err instanceof Error ? err.message : String(err);
+    logger.warn(`testController.${toolName} bridge failed; returning handler response unchanged`, {
+      tool: toolName,
+      error: reason,
+    });
+    return formatted;
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -715,11 +1011,7 @@ export interface BridgeFromSessionStoreOptions<TSession> {
    */
   selectSeededAccounts?: (
     session: TSession
-  ) =>
-    | ListAccountsResponse['accounts'][number][]
-    | Promise<ListAccountsResponse['accounts'][number][] | null | undefined>
-    | null
-    | undefined;
+  ) => SeededAccount[] | Promise<SeededAccount[] | null | undefined> | null | undefined;
 
   /**
    * Extract seeded account financials from a resolved session. Return an

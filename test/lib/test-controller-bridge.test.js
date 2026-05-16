@@ -596,7 +596,11 @@ describe('mergeSeededCreativeFormatsIntoResponse', () => {
   it('appends seeded formats to handler response', () => {
     const result = mergeSeededCreativeFormatsIntoResponse(BASE_RESPONSE, [FORMAT_B]);
     assert.equal(result.formats.length, 2);
-    assert.equal(result.sandbox, true);
+    // ListCreativeFormatsResponse has no top-level `sandbox` field per the
+    // AdCP spec — match the list_accounts / get_account_financials pattern
+    // and don't invent a wire field. Sandbox semantics still flow through
+    // the dispatcher gate (account.sandbox + context.sandbox checks).
+    assert.equal(result.sandbox, undefined);
   });
 
   it('seeded entry wins on format_id composite collision', () => {
@@ -719,5 +723,364 @@ describe('filterValidSeededCreativeFormats', () => {
 
   it('returns [] for non-array input', () => {
     assert.deepEqual(filterValidSeededCreativeFormats('bad'), []);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Pagination & count bookkeeping (adcp-client#1754 expert review)
+//
+// Storyboards that page through list responses or assert across-page totals
+// will fail if a merge appends seeded entries without bumping `total_matching`
+// / `total_count`. Verify each list helper updates the count by the count of
+// genuinely-new entries (collisions don't count — they replace handler entries
+// that were already in the total).
+// ---------------------------------------------------------------------------
+
+describe('pagination/count bookkeeping', () => {
+  it('mergeSeededCreativesIntoResponse bumps query_summary.total_matching', () => {
+    const handler = {
+      creatives: [{ creative_id: 'c-1' }],
+      query_summary: { total_matching: 1, returned: 1 },
+    };
+    const result = mergeSeededCreativesIntoResponse(handler, [{ creative_id: 'c-2' }]);
+    assert.equal(result.query_summary.total_matching, 2);
+    assert.equal(result.query_summary.returned, 2);
+  });
+
+  it('mergeSeededCreativesIntoResponse does not double-count collisions', () => {
+    const handler = {
+      creatives: [{ creative_id: 'c-1', name: 'orig' }],
+      query_summary: { total_matching: 5, returned: 1 },
+    };
+    const result = mergeSeededCreativesIntoResponse(handler, [{ creative_id: 'c-1', name: 'override' }]);
+    // c-1 collides with handler entry, so total_matching stays at 5
+    assert.equal(result.query_summary.total_matching, 5);
+    assert.equal(result.query_summary.returned, 1);
+    assert.equal(result.creatives[0].name, 'override');
+  });
+
+  it('mergeSeededCreativesIntoResponse leaves undefined total_matching alone', () => {
+    const handler = { creatives: [{ creative_id: 'c-1' }], query_summary: { returned: 1 } };
+    const result = mergeSeededCreativesIntoResponse(handler, [{ creative_id: 'c-2' }]);
+    assert.equal(result.query_summary.total_matching, undefined);
+  });
+
+  it('mergeSeededCreativesIntoResponse bumps pagination.total_count when present', () => {
+    const handler = {
+      creatives: [{ creative_id: 'c-1' }],
+      query_summary: { total_matching: 1, returned: 1 },
+      pagination: { has_more: false, total_count: 1 },
+    };
+    const result = mergeSeededCreativesIntoResponse(handler, [{ creative_id: 'c-2' }]);
+    assert.equal(result.pagination.total_count, 2);
+    assert.equal(result.pagination.has_more, false);
+  });
+
+  it('mergeSeededMediaBuysIntoResponse bumps pagination.total_count', () => {
+    const handler = {
+      media_buys: [{ media_buy_id: 'mb-1' }],
+      pagination: { has_more: true, cursor: 'abc', total_count: 10 },
+    };
+    const result = mergeSeededMediaBuysIntoResponse(handler, [{ media_buy_id: 'mb-2' }]);
+    assert.equal(result.pagination.total_count, 11);
+    assert.equal(result.pagination.has_more, true);
+    assert.equal(result.pagination.cursor, 'abc');
+  });
+
+  it('mergeSeededAccountsIntoResponse bumps pagination.total_count', () => {
+    const handler = {
+      accounts: [{ account_id: 'a-1' }],
+      pagination: { has_more: false, total_count: 1 },
+    };
+    const result = mergeSeededAccountsIntoResponse(handler, [{ account_id: 'a-2' }]);
+    assert.equal(result.pagination.total_count, 2);
+  });
+
+  it('mergeSeededCreativeFormatsIntoResponse bumps pagination.total_count', () => {
+    const handler = {
+      formats: [{ format_id: { agent_url: 'https://a.com', id: 'display' } }],
+      pagination: { has_more: false, total_count: 1 },
+    };
+    const result = mergeSeededCreativeFormatsIntoResponse(handler, [
+      { format_id: { agent_url: 'https://a.com', id: 'video' } },
+    ]);
+    assert.equal(result.pagination.total_count, 2);
+  });
+
+  it('list helpers leave pagination undefined when handler omitted it', () => {
+    const handler = { media_buys: [{ media_buy_id: 'mb-1' }] };
+    const result = mergeSeededMediaBuysIntoResponse(handler, [{ media_buy_id: 'mb-2' }]);
+    assert.equal(result.pagination, undefined);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Async-envelope guard (adcp-client#1754 expert review)
+//
+// `isErrorResponse` returns false for `{status:'submitted', task_id}` and
+// `{status:'working'}` handoff envelopes. Without a success-arm guard, the
+// merge helpers spread list fields into the async envelope, producing an
+// invalid hybrid wire shape. Each helper must short-circuit when the response
+// doesn't look like its success arm and return the handler response unchanged
+// (reference-equal — the dispatcher uses ref-equality to skip re-wrap).
+// ---------------------------------------------------------------------------
+
+describe('async-envelope guard', () => {
+  const submittedEnvelope = { status: 'submitted', task_id: 'tk-1' };
+  const workingEnvelope = { status: 'working', task_id: 'tk-2' };
+
+  it('mergeSeededCreativesIntoResponse short-circuits on submitted envelope', () => {
+    const result = mergeSeededCreativesIntoResponse(submittedEnvelope, [{ creative_id: 'c-1' }]);
+    assert.equal(result, submittedEnvelope);
+  });
+
+  it('mergeSeededCreativesIntoResponse short-circuits on working envelope', () => {
+    const result = mergeSeededCreativesIntoResponse(workingEnvelope, [{ creative_id: 'c-1' }]);
+    assert.equal(result, workingEnvelope);
+  });
+
+  it('mergeSeededMediaBuysIntoResponse short-circuits on submitted envelope', () => {
+    const result = mergeSeededMediaBuysIntoResponse(submittedEnvelope, [{ media_buy_id: 'mb-1' }]);
+    assert.equal(result, submittedEnvelope);
+  });
+
+  it('mergeSeededAccountsIntoResponse short-circuits on submitted envelope', () => {
+    const result = mergeSeededAccountsIntoResponse(submittedEnvelope, [{ account_id: 'a-1' }]);
+    assert.equal(result, submittedEnvelope);
+  });
+
+  it('mergeSeededCreativeFormatsIntoResponse short-circuits on submitted envelope', () => {
+    const result = mergeSeededCreativeFormatsIntoResponse(submittedEnvelope, [
+      { format_id: { agent_url: 'https://a.com', id: 'display' } },
+    ]);
+    assert.equal(result, submittedEnvelope);
+  });
+
+  it('mergeSeededAccountFinancialsIntoResponse short-circuits on submitted envelope', () => {
+    const result = mergeSeededAccountFinancialsIntoResponse(submittedEnvelope, [
+      { account: { account_id: 'a-1' }, currency: 'USD', period: {}, timezone: 'UTC' },
+    ]);
+    assert.equal(result, submittedEnvelope);
+  });
+
+  it('mergeSeededAccountFinancialsIntoResponse short-circuits on success arm missing required fields', () => {
+    const partial = { account: { account_id: 'a-1' } };
+    const result = mergeSeededAccountFinancialsIntoResponse(partial, [
+      { account: { account_id: 'a-2' }, currency: 'EUR', period: {}, timezone: 'UTC' },
+    ]);
+    assert.equal(result, partial);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// AccountFinancials multi-entry warning (adcp-client#1754 expert review)
+// ---------------------------------------------------------------------------
+
+describe('mergeSeededAccountFinancialsIntoResponse multi-entry handling', () => {
+  it('uses only the first seeded entry and warns when more are passed', () => {
+    const warnings = [];
+    const logger = { warn: (msg, meta) => warnings.push({ msg, meta }) };
+    const handler = {
+      account: { account_id: 'a-1' },
+      currency: 'USD',
+      period: { start: '2026-01-01', end: '2026-01-31' },
+      timezone: 'UTC',
+    };
+    const result = mergeSeededAccountFinancialsIntoResponse(
+      handler,
+      [
+        { account: { account_id: 'a-2' }, currency: 'EUR', period: {}, timezone: 'UTC' },
+        { account: { account_id: 'a-3' }, currency: 'GBP', period: {}, timezone: 'UTC' },
+      ],
+      logger
+    );
+    assert.equal(result.currency, 'EUR');
+    assert.equal(warnings.length, 1);
+    assert.match(warnings[0].msg, /only the first is applied/);
+    assert.equal(warnings[0].meta.receivedCount, 2);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// applySeededBridge dispatcher (adcp-client#1754 expert review)
+//
+// The dispatcher helper consolidates six per-tool branches in the server.
+// Verify: gate-rejection on non-sandbox account, callback-throws degrade,
+// non-array callback return drops, async-envelope leaves formatted unchanged
+// (no re-wrap), missing tool entry is a no-op.
+// ---------------------------------------------------------------------------
+
+const { applySeededBridge } = require('../../dist/lib/server/index.js');
+
+function makeLogger() {
+  const records = { warn: [], debug: [] };
+  return {
+    logger: {
+      warn: (msg, meta) => records.warn.push({ msg, meta }),
+      debug: (msg, meta) => records.debug.push({ msg, meta }),
+    },
+    records,
+  };
+}
+
+describe('applySeededBridge', () => {
+  it('returns formatted unchanged when bridge has no callback for the tool', async () => {
+    const { logger } = makeLogger();
+    const formatted = { structuredContent: { creatives: [], query_summary: { total_matching: 0, returned: 0 } } };
+    const result = await applySeededBridge({
+      bridge: {},
+      toolName: 'list_creatives',
+      formatted,
+      params: { context: { sandbox: true } },
+      account: undefined,
+      isError: false,
+      isSandboxInput: true,
+      logger,
+      wrap: data => ({ structuredContent: data, content: [{ type: 'text', text: 'rewrapped' }] }),
+    });
+    assert.equal(result, formatted);
+  });
+
+  it('returns formatted unchanged on error envelope', async () => {
+    const { logger } = makeLogger();
+    const formatted = { structuredContent: { error: 'boom' } };
+    const result = await applySeededBridge({
+      bridge: { getSeededCreatives: () => [{ creative_id: 'c-1' }] },
+      toolName: 'list_creatives',
+      formatted,
+      params: { context: { sandbox: true } },
+      account: undefined,
+      isError: true,
+      isSandboxInput: true,
+      logger,
+      wrap: data => ({ structuredContent: data }),
+    });
+    assert.equal(result, formatted);
+  });
+
+  it('returns formatted unchanged on non-sandbox input', async () => {
+    const { logger } = makeLogger();
+    const formatted = { structuredContent: { creatives: [], query_summary: { total_matching: 0, returned: 0 } } };
+    const result = await applySeededBridge({
+      bridge: { getSeededCreatives: () => [{ creative_id: 'c-1' }] },
+      toolName: 'list_creatives',
+      formatted,
+      params: {},
+      account: undefined,
+      isError: false,
+      isSandboxInput: false,
+      logger,
+      wrap: data => ({ structuredContent: data }),
+    });
+    assert.equal(result, formatted);
+  });
+
+  it('rejects with debug log when sandbox input but resolved account is not sandbox', async () => {
+    const { logger, records } = makeLogger();
+    const formatted = { structuredContent: { creatives: [], query_summary: { total_matching: 0, returned: 0 } } };
+    const result = await applySeededBridge({
+      bridge: { getSeededCreatives: () => [{ creative_id: 'c-1' }] },
+      toolName: 'list_creatives',
+      formatted,
+      params: { context: { sandbox: true } },
+      account: { account_id: 'prod-acct', sandbox: false },
+      isError: false,
+      isSandboxInput: true,
+      logger,
+      wrap: data => ({ structuredContent: data }),
+    });
+    assert.equal(result, formatted);
+    assert.equal(records.debug.length, 1);
+    assert.match(records.debug[0].msg, /resolved account is not sandbox/);
+  });
+
+  it('warns and degrades when callback throws', async () => {
+    const { logger, records } = makeLogger();
+    const formatted = { structuredContent: { creatives: [], query_summary: { total_matching: 0, returned: 0 } } };
+    const result = await applySeededBridge({
+      bridge: {
+        getSeededCreatives: () => {
+          throw new Error('fixture store down');
+        },
+      },
+      toolName: 'list_creatives',
+      formatted,
+      params: { context: { sandbox: true } },
+      account: { sandbox: true },
+      isError: false,
+      isSandboxInput: true,
+      logger,
+      wrap: data => ({ structuredContent: data }),
+    });
+    assert.equal(result, formatted);
+    assert.equal(records.warn.length, 1);
+    assert.match(records.warn[0].msg, /list_creatives bridge failed/);
+    assert.equal(records.warn[0].meta.error, 'fixture store down');
+  });
+
+  it('warns and degrades when callback returns non-array', async () => {
+    const { logger, records } = makeLogger();
+    const formatted = { structuredContent: { creatives: [], query_summary: { total_matching: 0, returned: 0 } } };
+    const result = await applySeededBridge({
+      bridge: { getSeededCreatives: () => ({ not: 'an array' }) },
+      toolName: 'list_creatives',
+      formatted,
+      params: { context: { sandbox: true } },
+      account: { sandbox: true },
+      isError: false,
+      isSandboxInput: true,
+      logger,
+      wrap: data => ({ structuredContent: data }),
+    });
+    assert.equal(result, formatted);
+    assert.equal(records.warn.length, 1);
+    assert.match(records.warn[0].msg, /did not return an array/);
+  });
+
+  it('does not re-wrap when merge short-circuits on async envelope', async () => {
+    const { logger } = makeLogger();
+    const submitted = { status: 'submitted', task_id: 'tk-1' };
+    const formatted = { structuredContent: submitted, content: [{ type: 'text', text: 'original' }] };
+    let wrapCalls = 0;
+    const result = await applySeededBridge({
+      bridge: { getSeededCreatives: () => [{ creative_id: 'c-1' }] },
+      toolName: 'list_creatives',
+      formatted,
+      params: { context: { sandbox: true } },
+      account: { sandbox: true },
+      isError: false,
+      isSandboxInput: true,
+      logger,
+      wrap: data => {
+        wrapCalls += 1;
+        return { structuredContent: data, content: [{ type: 'text', text: 'rewrapped' }] };
+      },
+    });
+    assert.equal(result, formatted);
+    assert.equal(wrapCalls, 0);
+    assert.equal(result.content[0].text, 'original');
+  });
+
+  it('merges and re-wraps on success-arm response', async () => {
+    const { logger } = makeLogger();
+    const formatted = {
+      structuredContent: { creatives: [], query_summary: { total_matching: 0, returned: 0 } },
+      content: [{ type: 'text', text: 'original' }],
+    };
+    const result = await applySeededBridge({
+      bridge: { getSeededCreatives: () => [{ creative_id: 'c-1' }] },
+      toolName: 'list_creatives',
+      formatted,
+      params: { context: { sandbox: true } },
+      account: { sandbox: true },
+      isError: false,
+      isSandboxInput: true,
+      logger,
+      wrap: data => ({ structuredContent: data, content: [{ type: 'text', text: 'rewrapped' }] }),
+    });
+    assert.notEqual(result, formatted);
+    assert.equal(result.structuredContent.creatives.length, 1);
+    assert.equal(result.structuredContent.creatives[0].creative_id, 'c-1');
+    assert.equal(result.structuredContent.query_summary.total_matching, 1);
   });
 });
