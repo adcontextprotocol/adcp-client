@@ -3388,3 +3388,112 @@ describe('bridgeFromSessionStore — brand-rights + SI selectors', () => {
     assert.equal(bridge.getSeededSiOffering, undefined);
   });
 });
+
+// ---------------------------------------------------------------------------
+// Sandbox-gate diagnostic
+//
+// When the request carries a sandbox marker (`account.sandbox === true` or
+// `context.sandbox === true`) but the resolved `ctx.account` is explicitly
+// non-sandbox, the dispatcher rejects the merge silently. Emit a `debug`
+// line so dev logs surface the rejection without adding production-traffic
+// noise (the first gate, `isSandboxRequest`, fails first there and never
+// reaches this branch).
+// ---------------------------------------------------------------------------
+
+describe('createAdcpServer — sandbox-gate debug log on resolved-account mismatch', () => {
+  function makeRecordingLogger() {
+    const records = { debug: [], info: [], warn: [], error: [] };
+    return {
+      logger: {
+        debug: (msg, data) => records.debug.push({ msg, data }),
+        info: (msg, data) => records.info.push({ msg, data }),
+        warn: (msg, data) => records.warn.push({ msg, data }),
+        error: (msg, data) => records.error.push({ msg, data }),
+      },
+      records,
+    };
+  }
+
+  function handlerListCreatives() {
+    return async () => ({
+      query_summary: { total_matching: 0, returned: 0 },
+      pagination: { limit: 50, offset: 0, has_more: false },
+      creatives: [],
+    });
+  }
+
+  it('emits debug when request is sandbox-flagged but resolved account is sandbox:false', async () => {
+    const { logger, records } = makeRecordingLogger();
+    let bridgeCalled = false;
+    const server = createAdcpServer({
+      name: 'Test',
+      version: '1.0.0',
+      logger,
+      resolveAccount: () => ({ account_id: 'prod-acct', sandbox: false }),
+      creative: { listCreatives: handlerListCreatives() },
+      testController: {
+        getSeededCreatives: () => {
+          bridgeCalled = true;
+          return [{ creative_id: 'leaked-fixture', name: 'should not appear' }];
+        },
+      },
+    });
+
+    await dispatch(server, 'list_creatives', { account: SANDBOX_ACCOUNT });
+
+    assert.equal(bridgeCalled, false);
+    const hit = records.debug.find(r =>
+      r.msg.includes('request is sandbox-flagged but resolved account is not sandbox')
+    );
+    assert.ok(hit, 'expected sandbox-gate debug log');
+    assert.equal(hit.data.tool, 'list_creatives');
+    assert.equal(hit.data.resolved_account_id, 'prod-acct', 'log should include resolved account_id for diagnostics');
+  });
+
+  it('does not emit debug when request lacks sandbox marker (gate fails first)', async () => {
+    const { logger, records } = makeRecordingLogger();
+    const server = createAdcpServer({
+      name: 'Test',
+      version: '1.0.0',
+      logger,
+      resolveAccount: () => ({ account_id: 'prod-acct', sandbox: false }),
+      creative: { listCreatives: handlerListCreatives() },
+      testController: {
+        getSeededCreatives: () => [{ creative_id: 's-1', name: 'X' }],
+      },
+    });
+
+    await dispatch(server, 'list_creatives', {
+      account: { brand: { domain: 'example.com' }, operator: 'example.com' /* no sandbox */ },
+    });
+
+    const hit = records.debug.find(r =>
+      r.msg.includes('request is sandbox-flagged but resolved account is not sandbox')
+    );
+    assert.equal(hit, undefined, 'should not log gate-mismatch when production traffic');
+  });
+
+  it('does not emit debug when resolved account is sandbox (gate passes)', async () => {
+    const { logger, records } = makeRecordingLogger();
+    const server = createAdcpServer({
+      name: 'Test',
+      version: '1.0.0',
+      logger,
+      resolveAccount: () => ({ account_id: 'sandbox-acct', sandbox: true }),
+      creative: { listCreatives: handlerListCreatives() },
+      testController: {
+        getSeededCreatives: () => [{ creative_id: 's-1', name: 'X' }],
+      },
+    });
+
+    const res = await dispatch(server, 'list_creatives', { account: SANDBOX_ACCOUNT });
+    const hit = records.debug.find(r =>
+      r.msg.includes('request is sandbox-flagged but resolved account is not sandbox')
+    );
+    assert.equal(hit, undefined, 'should not log when the gate passes');
+    assert.deepEqual(
+      res.structuredContent.creatives.map(c => c.creative_id),
+      ['s-1']
+    );
+  });
+});
