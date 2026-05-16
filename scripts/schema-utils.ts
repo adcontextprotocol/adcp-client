@@ -126,9 +126,32 @@ export function injectJsdocConstraints(schema: any): any {
     if (typeof out.minLength === 'number') addTag('minLength', out.minLength);
     if (typeof out.maxLength === 'number') addTag('maxLength', out.maxLength);
     if (typeof out.pattern === 'string' && !/[\n\r]/.test(out.pattern)) {
-      // Escape `/` so ts-to-zod's `/PATTERN/` wrapper stays a valid literal.
-      const escaped = out.pattern.replace(/\//g, '\\/');
-      addTag('pattern', escaped);
+      // ts-to-zod wraps the JSDoc `@pattern` value as `/PATTERN/`, so we
+      // need to escape any unescaped `/` to keep the regex literal valid.
+      // The input is already in JS-regex source form (e.g. `\d`, `\.`),
+      // so we must NOT double-escape `\` — `\d` would become `\\d`, which
+      // means "literal backslash then d" instead of the digit class.
+      //
+      // Walk the string once, treating `\X` as a single regex token that
+      // passes through verbatim. Bare `/` becomes `\/`. A trailing unpaired
+      // `\` would consume the closing delimiter of `/PATTERN/`, so the
+      // pattern is skipped entirely (Ajv still enforces it at runtime
+      // against the unstripped schema).
+      const pattern = out.pattern;
+      const trailingBackslashes = pattern.match(/\\*$/)?.[0].length ?? 0;
+      if (trailingBackslashes % 2 === 0) {
+        let escaped = '';
+        for (let i = 0; i < pattern.length; i++) {
+          const ch = pattern[i];
+          if (ch === '\\' && i + 1 < pattern.length) {
+            escaped += ch + pattern[i + 1];
+            i++;
+            continue;
+          }
+          escaped += ch === '/' ? '\\/' : ch;
+        }
+        addTag('pattern', escaped);
+      }
     }
     if (typeof out.format === 'string' && TS_TO_ZOD_SUPPORTED_FORMATS.has(out.format)) {
       addTag('format', out.format);

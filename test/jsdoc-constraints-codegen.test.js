@@ -146,6 +146,40 @@ describe('injectJsdocConstraints — synthetic end-to-end', () => {
     assert.match(zod, /\.regex\(\/\^\\\/schemas\\\//);
   });
 
+  it('preserves regex escape sequences inside @pattern (no double-escape of `\\`)', () => {
+    // JSON Schema pattern `\d+\.\d+` — `\d` is the digit class, `\.` is an
+    // escaped dot. Naive `\\` escaping would turn `\d` into `\\d` (literal
+    // backslash then `d`), breaking validation. ts-to-zod must see the
+    // single-backslash form so the emitted regex still means "digits".
+    const schema = {
+      title: 'Fixture',
+      type: 'object',
+      properties: {
+        version: { type: 'string', pattern: '^\\d+\\.\\d+$' },
+      },
+    };
+    const { ts, zod, errors } = runCodegenPipeline(schema);
+    assert.deepEqual(errors, []);
+    // JSDoc keeps single backslashes (regex-source form).
+    assert.match(ts, /@pattern \^\\d\+\\\.\\d\+\$/);
+    // Emitted Zod regex literal still has single backslashes too.
+    assert.match(zod, /\.regex\(\/\^\\d\+\\\.\\d\+\$\//);
+  });
+
+  it('skips a pattern with an unpaired trailing backslash (would break /PATTERN/ delimiter)', () => {
+    const schema = {
+      title: 'Fixture',
+      type: 'object',
+      properties: {
+        weird: { type: 'string', pattern: 'abc\\' },
+      },
+    };
+    const { ts, zod } = runCodegenPipeline(schema);
+    assert.doesNotMatch(ts, /@pattern abc/);
+    // Zod still emits a string type, just without the .regex() chain.
+    assert.match(zod, /weird: z\.string\(\)\.optional\(\)/);
+  });
+
   it('preserves the existing description when appending tags', () => {
     const schema = {
       title: 'Fixture',
