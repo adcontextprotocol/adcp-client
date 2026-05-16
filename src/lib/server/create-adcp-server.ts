@@ -1676,6 +1676,12 @@ export interface AdcpServerConfig<TAccount = unknown> {
    * See `src/lib/server/test-controller-bridge.ts` for the sandbox-marker
    * predicate and the merge contract.
    *
+   * **Trust boundary:** production bindings MUST also configure
+   * `resolveAccount`. Without it, the sandbox gate falls through to
+   * the buyer-supplied marker and the bridge can be triggered by any
+   * authenticated buyer. See the top-of-file JSDoc on `TestControllerBridge`
+   * for the full adopter-responsibility note (#1779).
+   *
    * @example
    * ```ts
    * import { createAdcpServer, bridgeFromTestControllerStore } from '@adcp/sdk/server/legacy/v5';

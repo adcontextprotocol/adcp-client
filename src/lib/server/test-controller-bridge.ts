@@ -24,8 +24,9 @@
  * the response verifies **protocol conformance against fixture data**:
  * wire shape, error envelopes, idempotency, signed-request handling,
  * sandbox stamping. It does **not** verify that the seller's adapter
- * against the real upstream (Snap, Meta, TikTok, Google Ads, etc.) is
- * working — the upstream code path is bypassed by the post-handler merge.
+ * against the real upstream (e.g., social / search / programmatic
+ * inventory APIs) is working — the upstream response is shadowed by the
+ * post-handler merge.
  *
  * Treat this bridge as the conformance equivalent of a recorded-fixtures
  * unit test, not an end-to-end integration test. Sellers should still
@@ -46,7 +47,7 @@
  * `context.sandbox: true` on a request and trigger the merge. That's the
  * intended behavior for storyboard runners with no account scoping, but
  * means **production bindings must always configure `resolveAccount`** —
- * otherwise the request-signal check is the only line of defense.
+ * otherwise the buyer-supplied sandbox marker is the only gate.
  *
  * **Multi-tenant isolation is the adopter's job.** Callbacks receive
  * `ctx.account` and must key their fixture store on it. The SDK does no
