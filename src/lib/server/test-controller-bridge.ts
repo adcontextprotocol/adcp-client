@@ -22,6 +22,23 @@
  * read path calls an upstream API rather than a local store) use these
  * callbacks to inject seeded fixtures so conformance storyboards see the
  * expected data without needing live upstream OAuth.
+ *
+ * ## What a storyboard pass through this bridge proves — and doesn't
+ *
+ * A storyboard run that succeeds because seeded fixtures were merged into
+ * the response verifies **protocol conformance against fixture data**:
+ * wire shape, error envelopes, idempotency, signed-request handling,
+ * sandbox stamping. It does **not** verify that the seller's adapter
+ * against the real upstream (Snap, Meta, TikTok, Google Ads, etc.) is
+ * working — the upstream code path is bypassed by the post-handler merge.
+ *
+ * Treat this bridge as the conformance equivalent of a recorded-fixtures
+ * unit test, not an end-to-end integration test. Sellers should still
+ * exercise their adapters against a real (or sandbox) upstream OAuth tier
+ * separately; the typical pattern is a CLI runner pointed at a deployed
+ * sandbox URL with live credentials. The two together — storyboard-via-
+ * bridge plus live-OAuth runner — give wire conformance and adapter
+ * health respectively.
  */
 
 import type {
