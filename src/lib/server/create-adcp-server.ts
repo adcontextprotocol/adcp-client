@@ -3913,6 +3913,30 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
           // `get_account_financials` is the exception — singleton response, so the
           // seeded entry REPLACES the handler payload when its `account.account_id`
           // matches the request's `account.account_id`.
+          // Diagnostic for adopters chasing "why aren't my fixtures showing":
+          // when the request carries a sandbox marker but the resolved account
+          // is explicitly non-sandbox, the gate rejects silently. Emit a
+          // `debug` line so the rejection is observable in dev logs without
+          // adding noise to production traffic (where the gate's first check
+          // — `isSandboxRequestForSeeding` — fails first and never reaches
+          // this branch).
+          if (
+            testControllerBridge &&
+            !isErrorResponse(formatted) &&
+            isSandboxRequestForSeeding(params) &&
+            ctx.account !== undefined &&
+            !(
+              typeof ctx.account === 'object' &&
+              ctx.account !== null &&
+              (ctx.account as { sandbox?: unknown }).sandbox === true
+            )
+          ) {
+            logger.debug(
+              'test-controller bridge: request is sandbox-flagged but resolved account is not sandbox; skipping merge',
+              { tool: toolName }
+            );
+          }
+
           if (
             testControllerBridge &&
             !isErrorResponse(formatted) &&
