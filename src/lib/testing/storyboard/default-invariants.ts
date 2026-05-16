@@ -1051,6 +1051,18 @@ interface ResourceObservation {
 }
 
 /**
+ * Resource families the inverse rule does NOT yet grade — the buy-side
+ * reference shape for these in `media_buy.packages` isn't stable in the
+ * cached schema, so we can't reliably tell which buys reference which
+ * resources. Tracked in adcontextprotocol/adcp#2860. Listed here so the
+ * onEnd summary can emit a runtime "partial inverse coverage" signal when
+ * the run actually observed offline resources in one of these families —
+ * making the deferral visible to storyboard authors and reviewers rather
+ * than burying it in PR prose and JSDoc.
+ */
+const INVERSE_DEFERRED_FAMILIES: ReadonlySet<string> = new Set(['audience', 'catalog_item', 'event_source']);
+
+/**
  * Private per-run scratch state. Namespaced under
  * `ctx.state.impairmentCoherence` so generic field names (`offlineResources`,
  * `observedTransition`) can't collide with another assertion that lands
@@ -1065,6 +1077,14 @@ interface ImpairmentCoherenceState {
   observedTransition: boolean;
   /** Run actually observed at least one media-buy snapshot read. */
   observedBuySnapshot: boolean;
+  /**
+   * Per-family count of offline observations the run saw, used by the
+   * onEnd summary to flag deferred inverse-rule coverage. A non-zero
+   * count for any family in `INVERSE_DEFERRED_FAMILIES` means the run
+   * exercised the cross-resource path for a family the runner can't yet
+   * grade — surfaced so reviewers see the gap at run-time.
+   */
+  offlineObservationsByFamily: Map<string, number>;
 }
 
 const IMPAIRMENT_STATE_KEY = 'impairmentCoherence';
@@ -1086,6 +1106,7 @@ registerOnce('impairment.coherence', {
       offlineResources: new Map(),
       observedTransition: false,
       observedBuySnapshot: false,
+      offlineObservationsByFamily: new Map(),
     };
     ctx.state[IMPAIRMENT_STATE_KEY] = state;
   },
@@ -1113,6 +1134,10 @@ registerOnce('impairment.coherence', {
       if (offline?.has(ob.status)) {
         state.offlineResources.set(key, { status: ob.status, stepId: stepResult.step_id });
         state.observedTransition = true;
+        state.offlineObservationsByFamily.set(
+          ob.resource_type,
+          (state.offlineObservationsByFamily.get(ob.resource_type) ?? 0) + 1
+        );
       } else {
         // Resource recovered from offline → drop the entry so the inverse
         // rule no longer expects it in impairments[].
@@ -1266,13 +1291,39 @@ registerOnce('impairment.coherence', {
   onEnd: ctx => {
     const state = ctx.state[IMPAIRMENT_STATE_KEY] as ImpairmentCoherenceState | undefined;
     const exercised = Boolean(state?.observedTransition && state?.observedBuySnapshot);
-    return [
+    const results: Omit<import('./types').AssertionResult, 'assertion_id' | 'scope'>[] = [
       {
         passed: true,
         description: 'media_buy.impairments[] coheres with resource state and buy health',
         observation_count: exercised ? 1 : 0,
       },
     ];
+
+    // Surface partial inverse-rule coverage. If the run observed at least
+    // one offline resource in a deferred family (audience, catalog_item,
+    // event_source), the inverse rule's silence on those families is
+    // material to this run — naming the gap loudly at the end of the run
+    // beats burying it in PR prose and JSDoc.
+    if (state) {
+      const deferredCounts: { family: string; count: number }[] = [];
+      for (const family of INVERSE_DEFERRED_FAMILIES) {
+        const count = state.offlineObservationsByFamily.get(family) ?? 0;
+        if (count > 0) deferredCounts.push({ family, count });
+      }
+      if (deferredCounts.length > 0) {
+        const summary = deferredCounts.map(d => `${d.family} (${d.count})`).join(', ');
+        results.push({
+          passed: true,
+          description:
+            'inverse coverage gap: offline resources observed for families the runner does not yet grade ' +
+            'on the inverse rule (creative is graded; audience/catalog_item/event_source are forward-only). ' +
+            `Observed: ${summary}. Tracked in adcontextprotocol/adcp#2860.`,
+          observation_count: 0,
+        });
+      }
+    }
+
+    return results;
   },
 });
 

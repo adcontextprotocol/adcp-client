@@ -2002,4 +2002,59 @@ describe('default-invariants: impairment.coherence', () => {
     spec.onStep(ctx, step({ step_id: 'buy', task: 'create_media_buy', response: mb('mb-1') }));
     assert.equal(spec.onEnd(ctx)[0].observation_count, 1);
   });
+
+  test('onEnd: surfaces partial inverse coverage when a deferred-family offline observation lands', () => {
+    // adcp#2860: inverse rule only grades creative today; audience /
+    // catalog_item / event_source references on a buy are forward-only.
+    // When the run actually observes an offline resource in one of those
+    // families, the deferral is materially relevant — onEnd emits a
+    // second result naming the gap so storyboard authors see it at run
+    // time instead of having to read the PR description.
+    const ctx = makeCtx();
+    spec.onStart(ctx);
+    spec.onStep(
+      ctx,
+      step({
+        step_id: 'aud',
+        task: 'sync_audiences',
+        response: { audiences: [{ audience_id: 'aud-1', status: 'suspended' }] },
+      })
+    );
+    spec.onStep(
+      ctx,
+      step({
+        step_id: 'cat',
+        task: 'sync_catalogs',
+        response: { catalogs: [{ items: [{ item_id: 'cat-1', status: 'withdrawn' }] }] },
+      })
+    );
+    spec.onStep(ctx, step({ step_id: 'buy', task: 'create_media_buy', response: mb('mb-1') }));
+    const out = spec.onEnd(ctx);
+    assert.equal(out.length, 2, 'expected primary summary + deferred-coverage notice');
+    const notice = out[1];
+    assert.equal(notice.passed, true);
+    assert.match(notice.description, /inverse coverage gap/);
+    assert.match(notice.description, /audience \(1\)/);
+    assert.match(notice.description, /catalog_item \(1\)/);
+    assert.match(notice.description, /adcp#2860/);
+  });
+
+  test('onEnd: no deferred-coverage notice when only creative offline observations land', () => {
+    // The notice fires only when the gap matters for THIS run. A run
+    // that only ever sees creative-typed offline resources doesn't
+    // surface it — inverse coverage for that family is complete.
+    const ctx = makeCtx();
+    spec.onStart(ctx);
+    spec.onStep(
+      ctx,
+      step({
+        step_id: 'reject',
+        task: 'sync_creatives',
+        response: { creatives: [{ creative_id: 'cr-1', status: 'rejected' }] },
+      })
+    );
+    spec.onStep(ctx, step({ step_id: 'buy', task: 'create_media_buy', response: mb('mb-1') }));
+    const out = spec.onEnd(ctx);
+    assert.equal(out.length, 1, 'no deferred-coverage notice expected');
+  });
 });
