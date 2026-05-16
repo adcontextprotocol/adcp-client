@@ -2,7 +2,7 @@
 '@adcp/sdk': minor
 ---
 
-feat(testing): signals/audiences/targeting/creative-delivery/creative-features seeded bridges (#1755 phase 3)
+feat(testing): signals/creative-delivery/creative-features seeded bridges (#1755 phase 3)
 
 Extends `TestControllerBridge<TAccount>` with three opt-in callbacks so platform-proxy sellers can seed signals + creative read-path fixtures into conformance storyboards without driving real upstream calls:
 

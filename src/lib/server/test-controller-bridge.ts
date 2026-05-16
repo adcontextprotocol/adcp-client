@@ -288,10 +288,13 @@ export interface TestControllerBridge<TAccount = unknown> {
    * specialisms — both use the same response envelope; the discriminator
    * lives on each entry's `signal_type` field.
    *
-   * `get_signals` does not carry a `query_summary` block (per AdCP 3.0.11);
-   * `pagination` is optional and uses `PaginationResponse` (no `total_count`),
-   * so no count drift is recomputed — the merge is purely additive on the
-   * array. Same sandbox gating contract as
+   * `get_signals` does not carry a `query_summary` block (per AdCP 3.0.11).
+   * Pagination is not recomputed on the merge. `PaginationResponse.total_count`
+   * is optional; recomputing it on partial pages would mis-represent the
+   * cross-page total (the handler may have served page 1 of N, and the seeded
+   * fixture sits outside that pagination context). Storyboards asserting on
+   * totals should seed the handler's response, not the post-merge envelope.
+   * Same sandbox gating contract as
    * {@link TestControllerBridge.getSeededProducts}.
    */
   getSeededSignals?: (ctx: TestControllerBridgeContext<TAccount>) => Promise<SeededSignal[]> | SeededSignal[];
@@ -1460,10 +1463,12 @@ export function filterValidSeededCreativeFeatures(
  * collision the seeded entry wins. Stamps `sandbox: true` unless the handler
  * explicitly declared `sandbox: false`.
  *
- * `get_signals` carries `pagination: PaginationResponse` (no `total_count` —
- * `PaginationResponse` exposes `has_more` / `limit` / `offset`), and no
- * `query_summary`. The merge is purely additive on the array; no count drift
- * is recomputed.
+ * `get_signals` carries `pagination: PaginationResponse` and no `query_summary`.
+ * Pagination is not recomputed on the merge. `PaginationResponse.total_count`
+ * is optional; recomputing it on partial pages would mis-represent the
+ * cross-page total (the handler may have served page 1 of N, and the seeded
+ * fixture sits outside that pagination context). Storyboards asserting on
+ * totals should seed the handler's response, not the post-merge envelope.
  */
 export function mergeSeededSignalsIntoResponse(
   response: GetSignalsResponse,
@@ -1501,7 +1506,8 @@ export function mergeSeededSignalsIntoResponse(
  * `pagination.total` (optional per the AdCP 3.0.11 schema) is incremented by
  * the count of new non-colliding seeded entries. There is no top-level
  * aggregated-totals envelope on this response (unlike `get_media_buy_delivery`),
- * so no further recomputation is performed. Returns a NEW response object.
+ * so no further recomputation is performed. Stamps `sandbox: true` unless the
+ * handler explicitly declared `sandbox: false`. Returns a NEW response object.
  */
 export function mergeSeededCreativeDeliveryIntoResponse(
   response: GetCreativeDeliveryResponse,
@@ -1522,6 +1528,9 @@ export function mergeSeededCreativeDeliveryIntoResponse(
     ...response,
     creatives: [...retained, ...seeded],
   };
+  if ((response as { sandbox?: unknown }).sandbox !== false) {
+    (merged as { sandbox?: boolean }).sandbox = true;
+  }
   // `pagination.total` is the schema-correct field name on
   // GetCreativeDeliveryResponse (distinct from `pagination.total_count` used
   // by list_creatives / get_media_buys / list_accounts).
