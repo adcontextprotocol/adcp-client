@@ -1698,11 +1698,12 @@ export interface AdcpServerConfig<TAccount = unknown> {
    * is *not* a separate certification category. Live-integration credit
    * requires marker-free passes against a real test surface (sandbox
    * credentials, real catalog data, real adapter traffic) — independent
-   * of whether the bridge is wired. See
+   * of whether the bridge is wired. See `docs/guides/VALIDATE-YOUR-AGENT.md`
+   * § "Platform-proxy sellers" for the wiring mechanics, and
    * [`adcp-client#1782`](https://github.com/adcontextprotocol/adcp-client/issues/1782)
-   * and the upstream taxonomy proposal at
+   * plus the upstream taxonomy proposal at
    * [`adcontextprotocol/adcp#4593`](https://github.com/adcontextprotocol/adcp/issues/4593)
-   * for the certification model.
+   * for the certification model under review.
    *
    * ## Security — trust boundary
    *
