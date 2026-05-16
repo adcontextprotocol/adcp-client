@@ -1,5 +1,211 @@
 # Changelog
 
+## 7.4.0
+
+### Minor Changes
+
+- bea09b9: feat(testing): stamp `_bridge` marker on responses augmented by the test-controller bridge (#1775)
+
+  When the `TestControllerBridge` merges seeded fixtures into a handler response, the framework now stamps a non-normative `_bridge: { callback, tool, merged_count }` field on `structuredContent` (mirrored to `content[0].text` when that body is JSON). This is the runner-visible signal that distinguishes _"this pass exercised the adopter's adapter against upstream"_ from _"this pass exercised wire conformance against fixture data merged by the SDK"_. Storyboard runners and compliance leaderboards read the marker to attribute bridge participation in run records — without it, a green storyboard step through fixture-merge reads identically to one that ran through a real adapter (the gap that widens fastest for walled-garden proxies, where it matters most).
+
+  Coverage: every bridge dispatch site emits the marker per-tool with the originating callback name, so runners can attribute participation at the `getSeededCreatives` / `getSeededMediaBuys` / etc. granularity — 19 sites across 16 callbacks (list + get pairs for `property_lists`, `collection_lists`, `content_standards` count twice). Append-merge tools stamp when the callback returned ≥ 1 valid entry; singleton-replace tools (`get_account_financials`, `get_brand_identity`, `si_get_offering`, `get_property_list`, `get_collection_list`, `get_content_standards`) stamp only when a seeded fixture actually matched the request id and replaced the handler payload. Marker absent on non-sandbox traffic and when the callback is omitted.
+
+  Schema safety: AdCP 3.0 response envelopes all set `additionalProperties: true` on the top level (verified across the 13 bridge-touching response schemas), and the underscore prefix advertises "internal / out-of-spec" to validators that round-trip unknown fields. The marker mirrors the established `stampReplayed` pattern (envelope + opportunistic text-body JSON mirror) so adopters who consume the L2 text body see the same envelope MCP does.
+
+  The new `BridgeMarker` type is exported from `src/lib/server/create-adcp-server.ts` for adopters who want to type-check marker reads. Public docs in [`docs/guides/VALIDATE-YOUR-AGENT.md`](./docs/guides/VALIDATE-YOUR-AGENT.md) explain how to interpret a bridge-augmented pass: wire conformance against fixture data, _not_ adapter-against-upstream health. Pair the conformance suite with a separate live-OAuth run before promoting an adapter to production.
+
+  Also drops three unreachable duplicate dispatch blocks (`get_brand_identity`, `get_rights`, `si_get_offering`) that were appended below the canonical chain — dead code in a continuous `else if` chain. No behavior change; only the first block ever fired.
+
+  Cross-repo coordination: the storyboard runner surfacing of this marker lives in [`adcontextprotocol/adcp`](https://github.com/adcontextprotocol/adcp); the leaderboard policy that consumes it is tracked in [`adcp-client#1782`](https://github.com/adcontextprotocol/adcp-client/issues/1782). The SDK side ships the signal; the consumer side is half of the contract and must follow.
+
+- 7c88567: feat(server): construction-time warn when `testController` is registered without an account resolver (#1784)
+
+  `createAdcpServer` now emits a one-shot construction-time warning when `config.testController` is present but neither `config.resolveAccount` nor `config.resolveAccountFromAuth` is configured. In that setup, the dispatch-time sandbox gate's account-side check has no teeth — the gate admits requests where `ctx.account === undefined`, so the only remaining check is buyer-supplied `account.sandbox` / `context.sandbox` on the request body, which is caller-controlled and not a trust boundary.
+
+  The warning **dual-emits** via `process.emitWarning(message, { type: 'AdcpServerConfigWarning', code: 'ADCP_BRIDGE_NO_RESOLVER' })` AND `logger.warn(message)`. The `process.emitWarning` channel writes to stderr by default so the signal is visible even when `logger` is the default `noopLogger` (the day-one case where the misconfig is most likely). The `logger.warn` channel routes the same signal through any adopter-configured logging pipeline. Storyboard runners that knowingly run without account scoping can silence via `node --no-warnings=ADCP_BRIDGE_NO_RESOLVER`.
+
+  **Warning-code convention** (established by this PR): `ADCP_*` prefix for any framework-emitted `process.emitWarning` code, scoped further by subsystem (`ADCP_BRIDGE_*` for `TestControllerBridge`-related, `ADCP_<subsystem>_*` for future). The `type` field stays consistent at `'AdcpServerConfigWarning'` for `createAdcpServer`-level misconfig signals so adopters can install one `process.on('warning')` handler that routes all framework warnings.
+
+  It's deliberately not a hard error: storyboard-runner deployments without account scoping are a legitimate and intentional configuration (the runner drives state directly, no buyer authentication path needed), and failing construction would break that case. The warning message tells storyboard runners they can ignore it.
+
+  The check gates on `resolveAccountFromAuth` as well as `resolveAccount`, so OAuth-passthrough setups (`createOAuthPassthroughResolver`, the canonical Shape-B adopter path) don't get a spurious warn — either resolver populates `ctx.account` at dispatch time and gives the gate its account-side teeth.
+
+  JSDoc on `TestControllerBridge` (in `test-controller-bridge.ts`) and on `AdcpServerConfig.testController` (in `create-adcp-server.ts` § "Security — trust boundary") already document the trust model from #1779 and #1786; this PR adds the runtime equivalent so the failure mode surfaces before an adopter discovers it from a security review or a misconfigured prod deployment.
+
+- 4348d51: feat(testing): brand-rights + SI seeded bridges (#1755 phase 4)
+
+  Extends `TestControllerBridge<TAccount>` with three opt-in callbacks so platform-proxy sellers can seed brand-rights and sponsored-intelligence fixtures into conformance storyboards without driving real upstream calls:
+  - `getSeededBrandIdentity(ctx) → GetBrandIdentitySuccess[]` — feeds `get_brand_identity` via singleton replace: pick by `request.brand_id` matching entry `brand_id`, replace the success body and preserve handler `context` / `ext` (framework-managed envelope fields, mirrors `replaceContentStandardsIfSeeded`). Unblocks the `brand-rights` storyboard identity-discovery phase.
+  - `getSeededRights(ctx) → GetRightsSuccess['rights'][number][]` — feeds `get_rights` via append-merge by `rights_id`, seeded wins on collision (mirrors `getSeededProducts` — `get_rights` is a discovery / search tool with an NL `query`, so the response carries an array; no `pagination` / `query_summary` blocks per AdCP 3.0.11). Unblocks the `brand-rights` storyboard rights-discovery phase.
+  - `getSeededSiOffering(ctx) → SIGetOfferingResponse[]` — feeds `si_get_offering` via singleton replace: pick by `request.offering_id` matching entry's nested `offering.offering_id`, replace the response body and preserve handler `context` / `ext`. Stateless lookup despite the broader SI flow being session-keyed: `si_get_offering` PRODUCES an `offering_token` for a future session but does not CONSUME one, so the singleton-replace pattern fits cleanly. Unblocks the `sponsored-intelligence` storyboard offering-lookup phase.
+
+  All three bridges follow the established triply-gated sandbox check (controller present + sandbox marker on request + resolved account is `sandbox: true` when `resolveAccount` produced one), seeded-wins collision precedent, warn-and-drop validation contract (never throws), and `context` / `ext` preservation policy on singleton replace. `BridgeFromSessionStoreOptions` gains matching `selectSeededBrandIdentity` / `selectSeededRights` / `selectSeededSiOffering` selectors.
+
+  The session-stateful SI tools (`si_initiate_session`, `si_send_message`, `si_terminate_session`) are intentionally NOT bridged — they consume session state that a static fixture can't honestly serve. The mutating brand-rights tools (`acquire_rights`, `update_rights`) are NOT bridged either — seeded read paths only, per phase 4 scope.
+
+- b7aed85: feat(testing): governance/property-lists/content-standards/collection-lists seeded bridges (#1755 phase 2)
+
+  Extends `TestControllerBridge<TAccount>` with three opt-in callbacks so platform-proxy sellers can seed governance-domain fixtures into conformance storyboards without driving real upstream calls. The same seeded array feeds the list AND get path for each entity:
+  - `getSeededPropertyLists(ctx) → PropertyList[]` — feeds both `list_property_lists` (append-merge by `list_id`, seeded wins on collision; updates `pagination.total_count` by the non-colliding seeded count) and `get_property_list` (singleton replace: pick by `request.list_id` matching entry `list_id`, replace the response's `list` field while preserving handler's `identifiers` / `pagination` / `resolved_at` / `cache_valid_until` / `coverage_gaps` / `context` / `ext`). Unblocks the `property-lists` and `governance-aware-seller` storyboards.
+  - `getSeededCollectionLists(ctx) → CollectionList[]` — feeds both `list_collection_lists` and `get_collection_list` with the same shape as property lists (dedup key `list_id`, identical envelope-preservation policy on singleton replace). Unblocks the `collection-lists` storyboard (program-level brand safety via IMDb/Gracenote/EIDR IDs).
+  - `getSeededContentStandards(ctx) → ContentStandards[]` — feeds both `list_content_standards` (success arm `standards: ContentStandards[]`, append-merge by `standards_id`, seeded wins on collision; `pagination.total_count` updates) and `get_content_standards` (singleton replace: pick by `standards_id` and replace the `ContentStandards` body while preserving handler's `context` and `ext` — both are framework-managed envelope fields per the spec, mirroring `replaceAccountFinancialsIfSeeded`'s framework-managed-envelope-fields-win policy). Unblocks the `content-standards` storyboard.
+
+  All three bridges follow the existing collision precedent (seeded wins) and the established triply-gated sandbox check (controller present + sandbox marker on request + resolved account is `sandbox: true` when `resolveAccount` produced one). `BridgeFromSessionStoreOptions` gains matching `selectSeededPropertyLists` / `selectSeededCollectionLists` / `selectSeededContentStandards` selectors.
+
+  `list_authorized_properties` was deliberately NOT added — that tool was removed from AdCP and replaced by the `get_adcp_capabilities` discovery path; no schema exists in `schemas/cache/3.0.11/`.
+
+- 22f5cd4: feat(testing): `getSeededMediaBuyDelivery` bridge callback + nit-test coverage on existing bridges (closes #1755 phase 1)
+
+  Adds a sixth opt-in callback to `TestControllerBridge<TAccount>` for the `get_media_buy_delivery` read path so platform-proxy sellers can seed delivery-snapshot fixtures into conformance storyboards without driving real measurement through the upstream adapter:
+  - `getSeededMediaBuyDelivery(ctx)` → merged into `get_media_buy_delivery` response (dedup by `media_buy_id`, **seeded wins on collision** — follows the established collision precedent set by `mergeSeededMediaBuys` / `mergeSeededCreatives` / `mergeSeededAccounts`: storyboards seed deliberately, so a seeded fixture for an existing `media_buy_id` is an explicit author override). Same sandbox + resolved-account + controller-present gating as the other bridges. `BridgeFromSessionStoreOptions` gains a matching `selectSeededMediaBuyDelivery` selector.
+
+  After the merge, `aggregated_totals` is recomputed from the merged per-delivery `totals` so `media_buy_count` / `impressions` / `spend` reflect the merged set (otherwise the response would be wire-incorrect). Policy:
+  - **Required sums** (`impressions`, `spend`, `media_buy_count`) always recompute.
+  - **Optional sums** (`clicks`, `completed_views`, `views`, `conversions`, `conversion_value`) recompute only when every merged delivery populates the field; partial population falls back to the handler's value (no silent under-counting).
+  - **Derived ratios** (`roas`, `completion_rate`, `cost_per_acquisition`) recompute only when both inputs recomputed AND divisor is non-zero (no `Infinity` / `NaN`).
+  - **Pass-through** (`reach`, `reach_unit`, `frequency`, `new_to_brand_rate`) keep the handler's value verbatim — not derivable from per-delivery `totals`.
+
+  Also adds regression coverage on the bridges that landed in `7.3.0`:
+  - `getSeededAccountFinancials` now has an explicit assertion that the resolved `ctx.account.account_id` wins over the request's `account.account_id` when both are present (so fixtures are interchangeable across `AccountReference` variants).
+  - `list_creatives` mixed-collision math has explicit coverage: when handler and bridge overlap partially, `query_summary.total_matching` grows only by the non-colliding subset (`+= newCount`, not `+= seededCount`).
+
+- eb0cede: feat(testing): signals/creative-delivery/creative-features seeded bridges (#1755 phase 3)
+
+  Extends `TestControllerBridge<TAccount>` with three opt-in callbacks so platform-proxy sellers can seed signals + creative read-path fixtures into conformance storyboards without driving real upstream calls:
+  - `getSeededSignals(ctx) → SeededSignal[]` — feeds `get_signals` (append-merge into `signals: SeededSignal[]`). Dedup key is canonical over the `signal_id` discriminated union: `${source}|${data_provider_domain|agent_url}|${id}` — catalog and agent signals with the same id remain distinct because their source discriminator differs. Works uniformly across `signal-marketplace` and `signal-owned` specialisms (one bridge, one dispatched tool; per-entry `signal_type` is the spec-level marketplace-vs-owned discriminator on the response side). No `pagination.total_count` mirror (`PaginationResponse` has none); no `query_summary` block (this tool doesn't carry one in 3.0.11). Validation drops entries with malformed or missing `signal_id` discriminators.
+  - `getSeededCreativeDelivery(ctx) → SeededCreativeDelivery[]` — feeds `get_creative_delivery` (append-merge into `creatives[]`, dedup by `creative_id`, seeded wins on collision). `pagination.total` (when set by the handler) updates by the count of new non-colliding seeded entries — the schema-correct field name on `GetCreativeDeliveryResponse` is `total` (distinct from `total_count` used on other list responses). No top-level aggregated-totals envelope to recompute on this response, unlike `get_media_buy_delivery`. Unblocks creative delivery readback storyboards across `creative-ad-server` / `creative-template` / `creative-generative`.
+  - `getSeededCreativeFeatures(ctx) → SeededCreativeFeature[]` — feeds `get_creative_features`. The response is a `oneOf` envelope: success arm carries `results: CreativeFeatureResult[]`, error arm carries `errors: Error[]`. When the handler returned the success arm, seeded `CreativeFeatureResult[]` merge into the `results` array (dedup by `feature_id`, seeded wins on collision); framework-managed envelope fields (`context`, `ext`, `detail_url`, `pricing_option_id`, `vendor_cost`, `currency`, `consumption`) round-trip from the handler verbatim — the bridge only augments per-feature evaluations. When the handler returned the error arm, the bridge is a no-op; the error envelope passes through unchanged. This is the first nested-array merge bridge (the seeded array merges into a property of the success arm, not the top-level response).
+
+  All three bridges follow the existing collision precedent (seeded wins) and the established triply-gated sandbox check (controller present + sandbox marker on request + resolved account is `sandbox: true` when `resolveAccount` produced one). `BridgeFromSessionStoreOptions` gains matching `selectSeededSignals` / `selectSeededCreativeDelivery` / `selectSeededCreativeFeatures` selectors.
+
+  `list_audiences` and `list_targeting_categories` were deliberately NOT added — neither tool exists in AdCP 3.0.11. Audience discovery is folded into `sync_audiences` (the discovery-only call omits the request `audiences` array but still returns `audiences[]`); targeting capabilities are surfaced via `get_adcp_capabilities`. No schemas exist for those names in `schemas/cache/3.0.11/`.
+
+- 7fe990c: fix(client): route synthetic-v2 sellers through the v2 adapter; expose `isSyntheticV2()` for retry policies
+
+  `requireSupportedMajor` (called by `requireV3ForMutations: true` before every mutating task) used to throw `VersionUnsupportedError(reason: 'synthetic')` when a seller's capabilities were synthesized from `tools/list` and the synthesized version was `'v2'` (no `get_adcp_capabilities` tool present). The throw blocked legitimate buyers from calling sellers that simply hadn't implemented the v3 discovery tool.
+
+  A compliant v3 seller would declare itself via `get_adcp_capabilities`. Absence of that declaration is now read as v2: the SDK emits a one-time per-client warning (`maybeWarnSyntheticV2`) explaining the routing decision and dispatches through the v2 wire-shape adapter.
+
+  New public method `SingleAgentClient.isSyntheticV2()` returns `true` when the seller's capabilities were synthesized and the version was inferred as v2. Retry frameworks should branch on this to tighten attempt caps and backoff for sellers whose idempotency-TTL guarantee can't be derived from declared capabilities. Adopters who need a hard "definitely-v3" gate can validate `(await client.getCapabilities())._synthetic === false` directly.
+
+  Synthetic-v3 behavior is unchanged (still accepts with `maybeWarnSyntheticV3`). Real declared-v2 sellers and real-v3-missing-idempotency-TTL sellers are still refused with their respective `VersionUnsupportedError` reasons. The `'synthetic'` member of `VersionUnsupportedReason` is retained for downstream consumers that construct the error; no SDK call site emits it.
+
+- 12e4a7f: feat(testing): per-tool seeded callbacks on `TestControllerBridge` for platform-proxy sellers (closes #1002)
+
+  `TestControllerBridge` previously exposed only `getSeededProducts`, leaving platform-proxy sellers (DSPs, walled gardens, retail-media networks) without a way to feed seeded fixtures into the read path of every other read tool — storyboard seeds against `seed_creative` / `seed_media_buy` were dead writes when the adapter proxied to upstream APIs.
+
+  Extends `TestControllerBridge<TAccount>` with five opt-in callbacks mirroring `getSeededProducts` (post-handler merge, sandbox + resolved-account + controller-present gating, warn-and-drop validation, never throws):
+  - `getSeededCreatives(ctx)` → merged into `list_creatives` (dedup by `creative_id`)
+  - `getSeededMediaBuys(ctx)` → merged into `get_media_buys` (dedup by `media_buy_id`)
+  - `getSeededAccounts(ctx)` → merged into `list_accounts` (dedup by `account_id`)
+  - `getSeededAccountFinancials(ctx)` → replaces `get_account_financials` envelope when seeded `account.account_id` matches the request (singleton response, replace semantics)
+  - `getSeededCreativeFormats(ctx)` → merged into `list_creative_formats` (dedup by canonical `format_id.agent_url|format_id.id`)
+
+  `BridgeFromSessionStoreOptions` gains matching `selectSeeded*` selectors so adopters wiring storyboards via the session-store pattern get all bridges in one helper. Per-tool callbacks are omitted from the returned bridge when no selector is provided.
+
+  Production traffic is unchanged: bridges run only on sandbox-flagged requests against a registered controller.
+
+- f24f6d0: fix(codegen): bridge JSON Schema validation constraints across the lossy TS → Zod hop
+
+  Generated Zod schemas now enforce the `minimum`, `maximum`, `minLength`, `maxLength`, `pattern`, and `format` keywords from the upstream JSON Schemas. Before this change, those keywords were silently lost during the `JSON Schema → TypeScript (json-schema-to-typescript) → Zod (ts-to-zod)` codegen because TypeScript can't carry a numeric range or a regex on a `number` / `string` field. The emitted Zod for `MediaBuy.revision` was `z.number().optional()` instead of `z.number().min(1).optional()`, so typed validators accepted constraint-violating values that Ajv (which loads the raw JSON Schema) correctly rejected.
+
+  The codegen now pre-processes each schema before it reaches `json-schema-to-typescript`, encoding each property's constraints into the JSDoc-bound `description` field as `@minimum` / `@maximum` / `@minLength` / `@maxLength` / `@pattern` / `@format` tags. `ts-to-zod` natively reads those JSDoc tags, so the constraints round-trip into `.min()` / `.max()` / `.regex()` / `.iso.datetime()` / `.email()` / etc. on the emitted Zod schemas. About 900 new validator chains land across `schemas.generated.ts` covering currency codes, ISO country codes, ISBN/IBAN/BIC patterns, RFC-conformant URLs, ISO-8601 timestamps, and numeric ranges (`revision >= 1`, `priority >= 1`, all monetary `total_budget`/`rate` >= 0, etc.).
+
+  Behavioral impact for adopters: typed SDK validators (`MediaBuySchema.parse(...)`, etc.) now reject inputs they previously silently accepted. This matches what real Ajv-driven server-side validation already did — the SDK no longer hands a typed buyer payload the wire would refuse. Adopters who relied on the looser typed validators to construct fixtures or intermediate stages will need to populate the constraint-valid values.
+
+  `exclusiveMinimum` / `exclusiveMaximum` are not injected (ts-to-zod has no exclusive variant); they continue to be enforced at runtime by Ajv against the unstripped schema. Pattern values containing newlines or unsupported `format` keywords (e.g. `iri-reference`) are likewise skipped — same Ajv fallback.
+
+  Fixes #1745.
+
+### Patch Changes
+
+- c02406a: fix(bridge): emit `logger.debug` when sandbox-gate rejects a sandbox-flagged request
+
+  When an adopter sets `account.sandbox: true` (or `context.sandbox: true`) on a request but the resolved `ctx.account` is explicitly `sandbox: false`, the dispatcher's `TestControllerBridge` gate rejects the merge silently. Adopters chasing "why aren't my fixtures showing in storyboards" had no diagnostic surface — the request looked sandbox-shaped but no fixtures appeared and no logs explained the gap. That was the #1 adopter support question after #1753 shipped.
+
+  Adds a single `logger.debug` line inside `src/lib/server/create-adcp-server.ts` covering all 13 dispatcher branches in one shot — the diagnostic fires after the request-sandbox check passes but before the resolved-account check. Production traffic (no sandbox marker on request) fails the first gate and never reaches this branch, so the log surface is dev-only.
+
+  Three regression tests verify: gate-mismatch fires `debug`; production traffic does not fire `debug`; gate-pass does not fire `debug` and merge proceeds normally.
+
+  Product-review-driven during the post-merge review of (now-closed) #1754.
+
+- 7a6a6c9: fix(bridge): `mergeSeededProductsIntoResponse` short-circuits on the Submitted arm
+
+  `get_products` formally permits an async Submitted arm in the AdCP 3.0.11 spec (`schemas/cache/3.0.11/media-buy/get-products-async-response-submitted.json`) for queued custom / bespoke product curation. When a handler returns `{ status: 'submitted', task_id, message? }`, the dispatcher's `isSubmittedEnvelope` predicate routes the response through `wrapSubmittedEnvelope` rather than the success-arm builder — but the `TestControllerBridge` merge runs after that wrap step, and without a guard `mergeSeededProductsIntoResponse` would spread `products: [...]` into the Submitted envelope, producing a `{ status: 'submitted', task_id, products: [...], sandbox: true }` hybrid that violates the wire schema (no Submitted arm carries a `products` field, and `sandbox: true` shouldn't stamp onto a tasking acknowledgement).
+
+  Detect the Submitted shape (`{ status: 'submitted', task_id: string }`) in the merge helper and return the handler response reference-equal so the dispatcher's existing skip-on-reference-equality wrap-avoidance kicks in. No other behavior change; sync success-arm responses merge exactly as before.
+
+  Scope is `get_products`-specific by design — none of the other 12 bridged read tools (`list_creatives`, `get_media_buys`, `get_media_buy_delivery`, `list_accounts`, `get_account_financials`, `list_creative_formats`, `list_property_lists`, `get_property_list`, `list_collection_lists`, `get_collection_list`, `list_content_standards`, `get_content_standards`, `get_signals`, `get_creative_delivery`, `get_creative_features`) have a formal Submitted arm in 3.0.11, so applying the same guard uniformly would defend against a spec violation the SDK should surface via response validation rather than silently route around.
+
+  Regression test in `test/lib/seed-get-products-wiring.test.js` verifies the bridge leaves a `{ status: 'submitted', task_id, message }` envelope unmodified — no `products` spread, no `sandbox` stamp.
+
+- cfa6a0f: docs(bridge): name `resolveAccount` as the trust boundary + multi-tenant keying as adopter responsibility
+
+  Adds two paragraphs to the top-of-file JSDoc on `src/lib/server/test-controller-bridge.ts`:
+  - **Scope of verification.** A storyboard pass through this bridge proves protocol conformance against fixture data — wire shape, error envelopes, idempotency, signed-request handling, sandbox stamping. It does **not** prove the seller's adapter against the real upstream platform works; that code path is bypassed by the post-handler merge. Sellers should pair this with a live-OAuth sandbox-runner to cover adapter health. Cross-references the runner-visible-bridge-marker ask at adcp-client#1775.
+  - **Adopter responsibilities.** Names two patterns the SDK can't enforce: (1) `resolveAccount` is the trust boundary — production bindings MUST configure it or the request-signal check (`account.sandbox === true` OR `context.sandbox === true`) is the only line of defense, because the dispatcher gate falls through to permissive when `ctx.account === undefined`; (2) multi-tenant keying is the adopter's job — callbacks must key their fixture store on `ctx.account` and the SDK does no defensive cross-check between fixture-entry account IDs and the resolved `ctx.account`.
+
+  No code change. Security-review-driven (4 of 4 experts during PR #1754 post-merge review flagged the missing public-surface warning).
+
+- 098f497: docs(server): clarify `testController` JSDoc — bridge is for upstream-proxy sellers only
+
+  JSDoc on `AdcpServerConfig.testController` now names the audience explicitly: the bridge is **test mode's adapter for upstream-proxy sellers** (DSPs proxying to Meta/Snap/TikTok, retail-media networks reading retailer catalogs, signals agents brokering third-party data marketplaces). State-local sellers (most SSPs, most creative agents) shouldn't wire it — `comply_test_controller` alone covers them because the seed→read loop closes locally. Cross-links the upstream taxonomy proposal at [`adcontextprotocol/adcp#4593`](https://github.com/adcontextprotocol/adcp/issues/4593) and the leaderboard policy at [`adcp-client#1782`](https://github.com/adcontextprotocol/adcp-client/issues/1782).
+
+  Also collapses a duplicate trust-boundary blurb (added by #1779 alongside the security-review note in #1786) into a single coherent section.
+
+- c867257: fix(ci): run `packages/eslint-plugin/` tests as part of root `npm test` (#1766)
+
+  The root `npm test` script now invokes `npm test --workspaces --if-present` after the SDK tests, so CI's `Test & Build` step (which runs `npm test`) exercises the ESLint plugin's rule tests. Plugin tests landed in PR #1762 but weren't running in CI, so plugin regressions could land on main silently.
+
+  `--workspaces --if-present` is forward-compatible: any future workspace under `packages/*` that adds a `test` script is automatically picked up. `packages/client-shim` has no `test` script and is skipped (no behavior change there).
+
+- 98b52eb: fix(codegen): pre-merge `allOf: [{ $ref }]` siblings into parent shape (#1756)
+
+  `json-schema-to-typescript` mishandles JSON Schema objects that combine `properties` / `required` at their own level with an `allOf: [{ $ref }]` sibling — instead of emitting `BaseFields & { variant-specific }` it emits a broken union `( BaseFields | { variant-specific + duplicated base fields } )`. This is most visible inside `oneOf` discriminator variants, where the success arm of `get_content_standards` collapsed to bare `ContentStandards`, silently dropping the variant's own `context` and `ext` fields.
+
+  `enforceStrictSchema` now pre-merges any `allOf` member that is a single `$ref` into the parent schema when the parent already declares its own `properties` / `required` — variant-level fields win on collision, and the base schema's `additionalProperties` is inherited only when the variant didn't override it. Refs we can't resolve through the cache (local `#/$defs/...` fragments, missing schemas) are left in place for jsts to handle as before. The `vendor-pricing-option`-style schemas — allOf-only at root, no sibling properties — are intentionally untouched.
+
+  Side effects on existing emitted types:
+  - `BriefAsset` and `CatalogAsset` change from `CreativeBrief & { asset_type: 'brief' }` / `Catalog & { asset_type: 'catalog' }` aliases to flat interfaces with the merged shape. Field set is identical; the named base reference is gone. Tracked as option 2 in the adcp#4510 acceptance criteria.
+  - `GetContentStandardsResponse` success variant now correctly includes its own `context?` and `ext?` fields alongside the merged `ContentStandards` shape (the bug this PR fixes).
+  - `CreativeBrief` is no longer transitively pulled into `tools.generated.ts` (it's still emitted in `core.generated.ts`); `src/lib/index.ts` re-exports it from `core.generated` instead.
+
+  Unblocks adcp#4510 (schema dedup spike), which the spec team reverted on the bug surfaced by this codegen path.
+
+- 286716b: fix(codegen): guard `generate-wire-spec-fields` against fresh-clone empty cache
+
+  When `schemas/cache/` is gitignored and not yet downloaded (e.g. fresh clone before `npm run sync-schemas`), the codegen previously overwrote the committed `src/lib/server/wire-spec-fields.generated.ts` with an empty stub, breaking `tsc` for every consuming module until the dev manually re-synced. The script now detects the empty-cache + pre-existing-non-empty-output case and leaves the committed file unchanged, with a console line explaining the skip.
+
+  No runtime behavior change; build-time only.
+
+- 68dacf2: chore(eslint-plugin): bump `@adcp/sdk` dep range to `^7.3.0` (#1768)
+
+  `packages/eslint-plugin/package.json` declared `"@adcp/sdk": "^7.1.0"` while the CLI workspace already declared `^7.3.0`. The plugin's range now matches so both workspaces resolve against the same minor and lockfile syncs no longer surface an apparent downgrade. No behavior change.
+
+- 8f3511d: Add a server-side guard that fails fast when forked adapter examples still contain `.example` tenant domains outside test or development.
+- 09ff76b: docs(client): note hostile-peer SSE bypass on `maxResponseBytes` (#1757)
+- db59a53: feat(registry): add `scope` narrowing filter to `lookupOperator` (#1769, adcp#4581)
+
+  `RegistryClient.lookupOperator(domain, opts?)` now accepts an optional `{ scope?: 'public' | 'member' | 'private' | 'all' }` argument that maps 1:1 to the server's `?scope=` query param. `scope` is a **narrowing filter** — it never widens the view beyond what the caller's auth would otherwise return.
+  - `'public'` — only `visibility=public`. Anonymous-equivalent view; useful for pre-sign-in pickers driven by an admin-tier API key whose only purpose is rate-limit + audit attribution.
+  - `'member'` — public + `members_only`. `members_only` requires API tier; anonymous / explorer-tier callers silently fall through to public-only (no 403). Note: the bucket name `'member'` is distinct from the underlying `visibility: 'members_only'` enum literal.
+  - `'private'` — only `visibility=private`. Profile-owner only; non-owners get an empty agents array rather than 403.
+  - omitted / `'all'` — tier-aware union (public + members_only when authorized + owner's private). Preserves historical behavior.
+
+  Older AAO servers that predate this enum will silently ignore unknown `?scope=` values and return the historical tier-aware union, so passing `'public'` against an older server does NOT enforce the public-only view client-side.
+
+  `lookupPublisher` does not accept `scope`: the spec's PR (adcp#4581) widens only `/api/registry/operator`, and the publisher endpoint has no visibility-tier semantics today. The option will be added in lockstep with a spec PR if and when publisher visibility filtering lands.
+
+- ba56164: fix(client): pass `text/event-stream` responses through `enforceSizeLimit` (#1176)
+
+  The response-body byte cap was designed for one-shot JSON discovery responses
+  (`get_adcp_capabilities`, agent-card lookup). SSE responses legitimately stream
+  N status frames + a final result frame whose cumulative bytes can exceed any
+  reasonable cap, but each frame is bounded by protocol-level framing. Bypass the
+  cap for `text/event-stream` (case-insensitive prefix match, covers `; charset=utf-8`
+  variants). Adopters can now safely set `maxResponseBytes` on long-lived buyer
+  sessions without tearing down legitimate streams.
+
 ## 7.3.0
 
 ### Minor Changes
