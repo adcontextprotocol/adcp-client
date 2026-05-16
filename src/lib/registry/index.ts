@@ -402,11 +402,18 @@ export class RegistryClient {
    *   purpose is rate-limit + audit attribution.
    * - `'member'` — public + `members_only`. `members_only` requires API tier;
    *   anonymous / explorer-tier callers silently fall through to public-only
-   *   (no 403).
+   *   (no 403). Note: `scope: 'member'` is the *bucket name* and is distinct
+   *   from the underlying `visibility: 'members_only'` enum literal — don't
+   *   grep for the wrong term.
    * - `'private'` — only `visibility=private`. Profile-owner only; non-owners
    *   get an empty agents array rather than 403.
    * - omitted / `'all'` — tier-aware union (public + members_only when
    *   authorized + owner's private). Preserves historical behavior.
+   *
+   * Older AAO servers that predate this enum will silently ignore unknown
+   * `?scope=` values and return the historical tier-aware union — passing
+   * `'public'` against an older server will NOT enforce the public-only
+   * view client-side.
    */
   async lookupOperator(
     domain: string,
@@ -421,19 +428,12 @@ export class RegistryClient {
   /**
    * Look up the inventory a domain publishes and which agents it authorizes.
    * Returns null if not found.
-   *
-   * `scope` is forwarded for symmetry with `lookupOperator`; today the
-   * publisher endpoint does not vary by visibility tier, so the option is
-   * a no-op there but reserved for future visibility-aware filtering.
    */
-  async lookupPublisher(
-    domain: string,
-    opts?: { scope?: 'public' | 'member' | 'private' | 'all' }
-  ): Promise<PublisherLookupResult | null> {
+  async lookupPublisher(domain: string): Promise<PublisherLookupResult | null> {
     if (!domain?.trim()) throw new Error('domain is required');
-    const params = new URLSearchParams({ domain });
-    if (opts?.scope && opts.scope !== 'all') params.set('scope', opts.scope);
-    return this.get(`${this.baseUrl}/api/registry/publisher?${params.toString()}`, { nullOn404: true });
+    return this.get(`${this.baseUrl}/api/registry/publisher?domain=${encodeURIComponent(domain)}`, {
+      nullOn404: true,
+    });
   }
 
   // ====== Authorization Lookups ======
