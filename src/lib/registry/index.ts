@@ -393,17 +393,35 @@ export class RegistryClient {
    * Look up which agents a domain operates and which publishers trust them.
    * Returns null if not found.
    *
-   * Pass `{ scope: 'public' }` to surface only agents the profile owner has
-   * made public, regardless of the caller's auth tier. Useful for
-   * anonymous-equivalent picker views where the caller has a member or
-   * admin API key but wants the same result an unauthenticated visitor
-   * would see. Omit `scope` (or pass `'all'`) to honor the caller's
-   * tier (public + members_only + owner's private).
+   * The optional `scope` argument names a single agent-visibility bucket and
+   * acts as a narrowing filter over the caller's auth — it can never widen
+   * the view beyond what the caller's tier would otherwise return.
+   *
+   * - `'public'` — only `visibility=public`. Anonymous-equivalent view; useful
+   *   for pre-sign-in pickers driven by an admin-tier API key whose only
+   *   purpose is rate-limit + audit attribution.
+   * - `'member'` — public + `members_only`. `members_only` requires API tier;
+   *   anonymous / explorer-tier callers silently fall through to public-only
+   *   (no 403).
+   * - `'private'` — only `visibility=private`. Profile-owner only; non-owners
+   *   get an empty agents array rather than 403. An empty result with this
+   *   scope means *either* "you are the owner and have no drafts" *or* "you
+   *   are not the owner" — the SDK can't tell them apart, only the caller can.
+   * - omitted / `'all'` — tier-aware union (public + members_only when
+   *   authorized + owner's private). Preserves historical behavior.
+   *
+   * Older AAO servers that predate this enum silently ignore unknown `?scope=`
+   * values and return the tier-aware union; the filter is server-enforced.
+   *
+   * @see https://github.com/adcontextprotocol/adcp/pull/4581
    */
-  async lookupOperator(domain: string, opts?: { scope?: 'public' | 'all' }): Promise<OperatorLookupResult | null> {
+  async lookupOperator(
+    domain: string,
+    opts?: { scope?: 'public' | 'member' | 'private' | 'all' }
+  ): Promise<OperatorLookupResult | null> {
     if (!domain?.trim()) throw new Error('domain is required');
     const params = new URLSearchParams({ domain });
-    if (opts?.scope === 'public') params.set('scope', 'public');
+    if (opts?.scope && opts.scope !== 'all') params.set('scope', opts.scope);
     return this.get(`${this.baseUrl}/api/registry/operator?${params.toString()}`, { nullOn404: true });
   }
 
@@ -411,15 +429,14 @@ export class RegistryClient {
    * Look up the inventory a domain publishes and which agents it authorizes.
    * Returns null if not found.
    *
-   * `scope` is forwarded for symmetry with `lookupOperator`; today the
-   * publisher endpoint does not vary by visibility tier, so the option is
-   * a no-op there but reserved for future visibility-aware filtering.
+   * Unlike `lookupOperator`, this endpoint has no visibility-tier semantics;
+   * there is no `scope` filter.
    */
-  async lookupPublisher(domain: string, opts?: { scope?: 'public' | 'all' }): Promise<PublisherLookupResult | null> {
+  async lookupPublisher(domain: string): Promise<PublisherLookupResult | null> {
     if (!domain?.trim()) throw new Error('domain is required');
-    const params = new URLSearchParams({ domain });
-    if (opts?.scope === 'public') params.set('scope', 'public');
-    return this.get(`${this.baseUrl}/api/registry/publisher?${params.toString()}`, { nullOn404: true });
+    return this.get(`${this.baseUrl}/api/registry/publisher?domain=${encodeURIComponent(domain)}`, {
+      nullOn404: true,
+    });
   }
 
   // ====== Authorization Lookups ======

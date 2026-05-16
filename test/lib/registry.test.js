@@ -2264,6 +2264,30 @@ describe('RegistryClient', () => {
       assert.ok(capturedUrl.includes('scope=public'));
     });
 
+    test('appends scope=member when opts.scope is "member"', async () => {
+      let capturedUrl;
+      restore = mockFetch(async url => {
+        capturedUrl = url;
+        return new Response(JSON.stringify(OPERATOR), { status: 200 });
+      });
+
+      const client = new RegistryClient();
+      await client.lookupOperator('pubmatic.com', { scope: 'member' });
+      assert.ok(capturedUrl.includes('scope=member'));
+    });
+
+    test('appends scope=private when opts.scope is "private"', async () => {
+      let capturedUrl;
+      restore = mockFetch(async url => {
+        capturedUrl = url;
+        return new Response(JSON.stringify(OPERATOR), { status: 200 });
+      });
+
+      const client = new RegistryClient();
+      await client.lookupOperator('pubmatic.com', { scope: 'private' });
+      assert.ok(capturedUrl.includes('scope=private'));
+    });
+
     test('omits scope param when opts.scope is "all"', async () => {
       let capturedUrl;
       restore = mockFetch(async url => {
@@ -2332,20 +2356,7 @@ describe('RegistryClient', () => {
       );
     });
 
-    test('appends scope=public when opts.scope is "public"', async () => {
-      let capturedUrl;
-      restore = mockFetch(async url => {
-        capturedUrl = url;
-        return new Response(JSON.stringify(PUBLISHER), { status: 200 });
-      });
-
-      const client = new RegistryClient();
-      await client.lookupPublisher('voxmedia.com', { scope: 'public' });
-      assert.ok(capturedUrl.includes('domain=voxmedia.com'));
-      assert.ok(capturedUrl.includes('scope=public'));
-    });
-
-    test('omits scope param when no opts passed', async () => {
+    test('does not send a scope param', async () => {
       let capturedUrl;
       restore = mockFetch(async url => {
         capturedUrl = url;
