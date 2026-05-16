@@ -229,7 +229,9 @@ function main(): void {
   if (sorted.length === 0 && existsSync(OUTPUT_FILE)) {
     const existing = readFileSync(OUTPUT_FILE, 'utf8');
     if (existing.includes('WIRE_SPEC_FIELDS') && existing.includes('fields:')) {
-      console.log(`[generate-wire-spec-fields] schema cache empty; keeping existing generated file unchanged`);
+      console.log(
+        `[generate-wire-spec-fields] schema cache empty; keeping existing generated file unchanged: ${path.relative(REPO_ROOT, OUTPUT_FILE)}`
+      );
       return;
     }
   }
