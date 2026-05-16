@@ -3,7 +3,7 @@
 import { writeFileSync, mkdirSync, readFileSync, existsSync, readdirSync, statSync } from 'fs';
 import { compile } from 'json-schema-to-typescript';
 import path from 'path';
-import { removeArrayLengthConstraints } from './schema-utils';
+import { injectJsdocConstraints, removeArrayLengthConstraints } from './schema-utils';
 
 // Write file only if content differs (excluding timestamp)
 function writeFileIfChanged(filePath: string, newContent: string): boolean {
@@ -913,7 +913,7 @@ async function generateToolTypes(tools: ToolDefinition[]) {
       if (url.startsWith('/schemas/')) {
         const schema = loadCachedSchema(url);
         if (schema) {
-          return Promise.resolve(enforceStrictSchema(removeArrayLengthConstraints(schema)));
+          return Promise.resolve(enforceStrictSchema(removeArrayLengthConstraints(injectJsdocConstraints(schema))));
         }
       }
       return Promise.reject(new Error(`Cannot resolve $ref: ${url}`));
@@ -930,7 +930,9 @@ async function generateToolTypes(tools: ToolDefinition[]) {
       if (tool.paramsSchema) {
         const paramTypeName = `${tool.methodName.charAt(0).toUpperCase() + tool.methodName.slice(1)}Request`;
         // Process schema: remove additionalProperties and minItems constraints
-        const strictParamsSchema = enforceStrictSchema(removeArrayLengthConstraints(tool.paramsSchema));
+        const strictParamsSchema = enforceStrictSchema(
+          removeArrayLengthConstraints(injectJsdocConstraints(tool.paramsSchema))
+        );
         const paramTypes = await compile(strictParamsSchema, paramTypeName, {
           bannerComment: '',
           style: { semi: true, singleQuote: true },
@@ -953,7 +955,9 @@ async function generateToolTypes(tools: ToolDefinition[]) {
       if (tool.responseSchema) {
         const responseTypeName = `${tool.methodName.charAt(0).toUpperCase() + tool.methodName.slice(1)}Response`;
         // Process schema: remove additionalProperties and minItems constraints
-        const strictResponseSchema = enforceStrictSchema(removeArrayLengthConstraints(tool.responseSchema));
+        const strictResponseSchema = enforceStrictSchema(
+          removeArrayLengthConstraints(injectJsdocConstraints(tool.responseSchema))
+        );
         const responseTypes = await compile(strictResponseSchema, responseTypeName, {
           bannerComment: '',
           style: { semi: true, singleQuote: true },
@@ -1934,7 +1938,7 @@ async function compileGapSchemas(generatedTypes: Set<string>, refResolver: any):
         schema = makeFieldsOptional(schema, BACKWARD_COMPAT_OPTIONAL_FIELDS[pascalName]);
       }
 
-      const strictSchema = enforceStrictSchema(removeArrayLengthConstraints(schema));
+      const strictSchema = enforceStrictSchema(removeArrayLengthConstraints(injectJsdocConstraints(schema)));
       const types = await compile(strictSchema, typeName, {
         bannerComment: '',
         style: { semi: true, singleQuote: true },
@@ -1990,7 +1994,7 @@ async function generateTypes() {
       if (url.startsWith('/schemas/')) {
         const schema = loadCachedSchema(url);
         if (schema) {
-          return Promise.resolve(enforceStrictSchema(removeArrayLengthConstraints(schema)));
+          return Promise.resolve(enforceStrictSchema(removeArrayLengthConstraints(injectJsdocConstraints(schema))));
         }
       }
       return Promise.reject(new Error(`Cannot resolve $ref: ${url}`));
@@ -2008,7 +2012,7 @@ async function generateTypes() {
       if (schema) {
         console.log(`🔧 Generating TypeScript types for ${schemaName}...`);
         // Process schema: remove additionalProperties and minItems constraints
-        const strictSchema = enforceStrictSchema(removeArrayLengthConstraints(schema));
+        const strictSchema = enforceStrictSchema(removeArrayLengthConstraints(injectJsdocConstraints(schema)));
         const types = await compile(strictSchema, schemaName, {
           bannerComment: '',
           style: {
@@ -2060,7 +2064,7 @@ async function generateTypes() {
       if (schema) {
         console.log(`🔧 Generating TypeScript types for ${schemaName}...`);
         // Process schema: remove additionalProperties and minItems constraints
-        const strictSchema = enforceStrictSchema(removeArrayLengthConstraints(schema));
+        const strictSchema = enforceStrictSchema(removeArrayLengthConstraints(injectJsdocConstraints(schema)));
         const types = await compile(strictSchema, schemaName, {
           bannerComment: '',
           style: {
