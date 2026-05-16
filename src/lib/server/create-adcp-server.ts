@@ -1673,34 +1673,36 @@ export interface AdcpServerConfig<TAccount = unknown> {
    * account) bypasses the bridge entirely; omit the field in production
    * configs to be explicit about it.
    *
-   * ## Do you need the bridge? — only upstream-proxy sellers
+   * ## Do you need the bridge?
    *
-   * The bridge is **test mode's adapter for upstream-proxy sellers** — it
-   * is NOT a generic test pattern that every adopter should wire. Decide
-   * by where your read handlers fetch from:
+   * The bridge is one of two mechanisms for closing the seed→read loop in
+   * compliance testing. Pick by where your read handlers fetch from — not
+   * by seller class:
    *
-   *   - **State-local sellers** — most SSPs, most creative agents. Your
-   *     read handlers (`getProducts`, `listCreatives`, ...) read from a
-   *     database you control. `comply_test_controller.seed_product` writes
-   *     to your DB; your handler reads from your DB; the seed→read loop
-   *     closes naturally. **Don't wire the bridge.** Test mode alone
+   *   - **Handler reads from a store you control** (most SSPs, most
+   *     creative agents). `comply_test_controller.seed_product` writes to
+   *     your DB; your handler reads from your DB; the seed→read loop
+   *     closes naturally. **Don't wire the bridge** — test mode alone
    *     covers you.
-   *   - **Upstream-proxy sellers** — DSPs proxying to Meta/Snap/TikTok,
-   *     retail-media networks reading retailer catalog APIs, signals
-   *     agents brokering third-party data marketplaces, walled-garden
-   *     brokers. Your read handlers fetch from a system you don't control;
-   *     `comply_test_controller.seed_product` is a dead write for you
-   *     because the handler will never see it. **Wire the bridge.** The
-   *     real handler still runs first (so a broken upstream call still
-   *     fails the conformance gate — adapter exercise is preserved), and
-   *     the SDK merges seeded fixtures into the response after.
+   *   - **Handler reads from a system you don't control** (DSPs proxying
+   *     to Meta/Snap/TikTok, retail-media networks reading retailer
+   *     catalog APIs, signals agents brokering third-party data
+   *     marketplaces). `comply_test_controller.seed_product` is a dead
+   *     write for you because the handler will never see it. **Wire the
+   *     bridge.** The real handler still runs first (so a broken upstream
+   *     call still fails the conformance gate — adapter exercise is
+   *     preserved), and the SDK merges seeded fixtures into the response
+   *     after.
    *
-   * The signal class is "read handlers go to a system the seller doesn't
-   * control," not "exposes `list_accounts`" — the latter is the most
-   * common but not the defining feature. See
+   * Either path earns wire-conformance credit when storyboards pass; it
+   * is *not* a separate certification category. Live-integration credit
+   * requires marker-free passes against a real test surface (sandbox
+   * credentials, real catalog data, real adapter traffic) — independent
+   * of whether the bridge is wired. See
    * [`adcp-client#1782`](https://github.com/adcontextprotocol/adcp-client/issues/1782)
    * and the upstream taxonomy proposal at
-   * [`adcontextprotocol/adcp#4593`](https://github.com/adcontextprotocol/adcp/issues/4593).
+   * [`adcontextprotocol/adcp#4593`](https://github.com/adcontextprotocol/adcp/issues/4593)
+   * for the certification model.
    *
    * ## Security — trust boundary
    *
