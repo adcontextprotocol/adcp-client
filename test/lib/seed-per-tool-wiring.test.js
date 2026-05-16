@@ -3497,3 +3497,113 @@ describe('createAdcpServer — sandbox-gate debug log on resolved-account mismat
     );
   });
 });
+
+// ---------------------------------------------------------------------------
+// #1784 — construction-time warn when `testController` is registered without
+// any account resolver. The dispatch-time sandbox gate admits requests where
+// `ctx.account === undefined`, so without `resolveAccount` (or
+// `resolveAccountFromAuth`) the only remaining check is the buyer-supplied
+// `account.sandbox` / `context.sandbox` marker — caller-controlled, not a
+// trust boundary. The warn makes that silent failure mode loud once, without
+// breaking the legitimate storyboard-runner case (runner-without-resolver
+// configs simply ignore the warning).
+// ---------------------------------------------------------------------------
+
+describe('createAdcpServer — trust-boundary warn when testController lacks resolveAccount (#1784)', () => {
+  function makeRecordingLogger() {
+    const records = { debug: [], info: [], warn: [], error: [] };
+    return {
+      logger: {
+        debug: (msg, data) => records.debug.push({ msg, data }),
+        info: (msg, data) => records.info.push({ msg, data }),
+        warn: (msg, data) => records.warn.push({ msg, data }),
+        error: (msg, data) => records.error.push({ msg, data }),
+      },
+      records,
+    };
+  }
+
+  const MATCH = /testController is registered but no account resolver is configured/;
+
+  it('warns once at construction when testController is set and neither resolver is configured', () => {
+    const { logger, records } = makeRecordingLogger();
+    _createAdcpServer({
+      name: 'Test',
+      version: '1.0.0',
+      logger,
+      validation: { requests: 'off', responses: 'off' },
+      mediaBuy: { getProducts: async () => ({ products: [] }) },
+      testController: { getSeededProducts: () => [] },
+    });
+    const hits = records.warn.filter(r => MATCH.test(r.msg));
+    assert.equal(hits.length, 1, 'warn fires exactly once');
+  });
+
+  it('does not warn when testController is omitted (state-local seller)', () => {
+    const { logger, records } = makeRecordingLogger();
+    _createAdcpServer({
+      name: 'Test',
+      version: '1.0.0',
+      logger,
+      validation: { requests: 'off', responses: 'off' },
+      mediaBuy: { getProducts: async () => ({ products: [] }) },
+      // no testController, no resolver — state-local seller path
+    });
+    const hits = records.warn.filter(r => MATCH.test(r.msg));
+    assert.equal(hits.length, 0);
+  });
+
+  it('does not warn when resolveAccount is configured', () => {
+    const { logger, records } = makeRecordingLogger();
+    _createAdcpServer({
+      name: 'Test',
+      version: '1.0.0',
+      logger,
+      validation: { requests: 'off', responses: 'off' },
+      resolveAccount: () => ({ account_id: 'a', sandbox: true }),
+      mediaBuy: { getProducts: async () => ({ products: [] }) },
+      testController: { getSeededProducts: () => [] },
+    });
+    const hits = records.warn.filter(r => MATCH.test(r.msg));
+    assert.equal(hits.length, 0);
+  });
+
+  it('does not warn when resolveAccountFromAuth is configured (OAuth-passthrough setups)', () => {
+    const { logger, records } = makeRecordingLogger();
+    _createAdcpServer({
+      name: 'Test',
+      version: '1.0.0',
+      logger,
+      validation: { requests: 'off', responses: 'off' },
+      resolveAccountFromAuth: () => ({ account_id: 'a', sandbox: true }),
+      mediaBuy: { getProducts: async () => ({ products: [] }) },
+      testController: { getSeededProducts: () => [] },
+    });
+    const hits = records.warn.filter(r => MATCH.test(r.msg));
+    assert.equal(hits.length, 0);
+  });
+
+  it('does not re-warn on subsequent dispatches', async () => {
+    const { logger, records } = makeRecordingLogger();
+    const server = _createAdcpServer({
+      name: 'Test',
+      version: '1.0.0',
+      logger,
+      validation: { requests: 'off', responses: 'off' },
+      mediaBuy: { getProducts: async () => ({ products: [] }) },
+      testController: { getSeededProducts: () => [] },
+    });
+    await dispatch(server, 'get_products', {
+      brief: 'x',
+      buying_mode: 'brief',
+      account: SANDBOX_ACCOUNT,
+    });
+    await dispatch(server, 'get_products', {
+      brief: 'x',
+      buying_mode: 'brief',
+      account: SANDBOX_ACCOUNT,
+    });
+    const hits = records.warn.filter(r => MATCH.test(r.msg));
+    assert.equal(hits.length, 1, 'warn fires once across construction + N requests');
+  });
+});

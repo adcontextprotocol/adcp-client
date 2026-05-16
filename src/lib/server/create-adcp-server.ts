@@ -2940,6 +2940,22 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
     testController: testControllerBridge,
   } = config;
 
+  // One-shot construction-time warn when `testController` is wired without
+  // any account resolver. The dispatch-time sandbox gate admits requests
+  // where `ctx.account === undefined`, so without a resolver the only
+  // remaining check is buyer-supplied `account.sandbox` / `context.sandbox`
+  // on the request — caller-controlled, not a trust boundary. Storyboard
+  // runners legitimately have no account scoping and should ignore this
+  // warning; production bindings need to wire `resolveAccount` (or
+  // `resolveAccountFromAuth` for OAuth-passthrough setups) so the gate's
+  // account-side check has teeth. See `AdcpServerConfig.testController`
+  // JSDoc § "Security — trust boundary" and #1784.
+  if (testControllerBridge != null && resolveAccount === undefined && resolveAccountFromAuth === undefined) {
+    logger.warn(
+      'testController is registered but no account resolver is configured. The sandbox gate falls through to the buyer-supplied `account.sandbox` / `context.sandbox` marker — caller-controlled, not a trust boundary. Production bindings should configure `resolveAccount` (or `resolveAccountFromAuth`); storyboard-runner bindings without account scoping can ignore this warning. See `AdcpServerConfig.testController` JSDoc § "Security — trust boundary" for the full model.'
+    );
+  }
+
   // Pre-resolve credential-policy patterns once. The patterns config is
   // a stable property of `CredentialPolicyConfig`; pulling it out here
   // keeps the per-call hot path (`scanArgsForCredentials`) free of the

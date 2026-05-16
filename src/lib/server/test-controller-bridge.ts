@@ -207,6 +207,16 @@ export interface TestControllerBridgeContext<TAccount = unknown> {
  * Set on `AdcpServerConfig.testController`; when absent, behavior is
  * unchanged. The bridge is opt-in via the presence of `getSeededProducts`
  * — omit it to hold seeded state without changing response shape.
+ *
+ * **Construction-time misconfiguration warn.** `createAdcpServer` emits a
+ * one-shot `logger.warn` at construction when this bridge is registered
+ * without either `resolveAccount` or `resolveAccountFromAuth` configured —
+ * the dispatch-time sandbox gate's account-side check has no teeth in that
+ * setup, so caller-supplied `account.sandbox` becomes the only line of
+ * defense against fixture leakage. Storyboard runners without account
+ * scoping can ignore the warning; production bindings should wire a
+ * resolver. See `AdcpServerConfig.testController` JSDoc § "Security —
+ * trust boundary" and `adcp-client#1784`.
  */
 export interface TestControllerBridge<TAccount = unknown> {
   /**
