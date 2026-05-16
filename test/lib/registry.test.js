@@ -2250,6 +2250,44 @@ describe('RegistryClient', () => {
         }
       );
     });
+
+    test('appends scope=public when opts.scope is "public"', async () => {
+      let capturedUrl;
+      restore = mockFetch(async url => {
+        capturedUrl = url;
+        return new Response(JSON.stringify(OPERATOR), { status: 200 });
+      });
+
+      const client = new RegistryClient();
+      await client.lookupOperator('pubmatic.com', { scope: 'public' });
+      assert.ok(capturedUrl.includes('domain=pubmatic.com'));
+      assert.ok(capturedUrl.includes('scope=public'));
+    });
+
+    test('omits scope param when opts.scope is "all"', async () => {
+      let capturedUrl;
+      restore = mockFetch(async url => {
+        capturedUrl = url;
+        return new Response(JSON.stringify(OPERATOR), { status: 200 });
+      });
+
+      const client = new RegistryClient();
+      await client.lookupOperator('pubmatic.com', { scope: 'all' });
+      assert.ok(capturedUrl.includes('domain=pubmatic.com'));
+      assert.ok(!capturedUrl.includes('scope='));
+    });
+
+    test('omits scope param when no opts passed', async () => {
+      let capturedUrl;
+      restore = mockFetch(async url => {
+        capturedUrl = url;
+        return new Response(JSON.stringify(OPERATOR), { status: 200 });
+      });
+
+      const client = new RegistryClient();
+      await client.lookupOperator('pubmatic.com');
+      assert.ok(!capturedUrl.includes('scope='));
+    });
   });
 
   // ============ lookupPublisher ============
@@ -2292,6 +2330,31 @@ describe('RegistryClient', () => {
           return true;
         }
       );
+    });
+
+    test('appends scope=public when opts.scope is "public"', async () => {
+      let capturedUrl;
+      restore = mockFetch(async url => {
+        capturedUrl = url;
+        return new Response(JSON.stringify(PUBLISHER), { status: 200 });
+      });
+
+      const client = new RegistryClient();
+      await client.lookupPublisher('voxmedia.com', { scope: 'public' });
+      assert.ok(capturedUrl.includes('domain=voxmedia.com'));
+      assert.ok(capturedUrl.includes('scope=public'));
+    });
+
+    test('omits scope param when no opts passed', async () => {
+      let capturedUrl;
+      restore = mockFetch(async url => {
+        capturedUrl = url;
+        return new Response(JSON.stringify(PUBLISHER), { status: 200 });
+      });
+
+      const client = new RegistryClient();
+      await client.lookupPublisher('voxmedia.com');
+      assert.ok(!capturedUrl.includes('scope='));
     });
   });
 });
