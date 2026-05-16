@@ -17,6 +17,44 @@
  * Sellers provide a `getSeededProducts` callback that returns the list the
  * SDK should merge — which lets the same wiring work whether the backing
  * store is in-memory, Postgres, Redis, or a mock.
+ *
+ * ## Scope of verification (storyboard pass through this bridge)
+ *
+ * A storyboard run that succeeds because seeded fixtures were merged into
+ * the response verifies **protocol conformance against fixture data**:
+ * wire shape, error envelopes, idempotency, signed-request handling,
+ * sandbox stamping. It does **not** verify that the seller's adapter
+ * against the real upstream (Snap, Meta, TikTok, Google Ads, etc.) is
+ * working — the upstream code path is bypassed by the post-handler merge.
+ *
+ * Treat this bridge as the conformance equivalent of a recorded-fixtures
+ * unit test, not an end-to-end integration test. Sellers should still
+ * exercise their adapters against a real (or sandbox) upstream OAuth tier
+ * separately; the typical pattern is a CLI runner pointed at a deployed
+ * sandbox URL with live credentials. The two together — storyboard-via-
+ * bridge plus live-OAuth runner — give wire conformance and adapter
+ * health respectively. See adcp-client#1775 for the cross-repo
+ * coordination on making bridge participation visible in storyboard
+ * run records.
+ *
+ * ## Adopter responsibilities
+ *
+ * **`resolveAccount` is the trust boundary.** The dispatcher's sandbox
+ * gate is "request carries a sandbox marker AND (resolved account is
+ * sandbox OR no account was resolved)." If you deploy a server with this
+ * bridge registered but no `resolveAccount` configured, a buyer can stamp
+ * `context.sandbox: true` on a request and trigger the merge. That's the
+ * intended behavior for storyboard runners with no account scoping, but
+ * means **production bindings must always configure `resolveAccount`** —
+ * otherwise the request-signal check is the only line of defense.
+ *
+ * **Multi-tenant isolation is the adopter's job.** Callbacks receive
+ * `ctx.account` and must key their fixture store on it. The SDK does no
+ * defensive cross-check between the account on the response entries and
+ * the `ctx.account` that asked for them. A sloppy session-store keying
+ * can return tenant A's fixtures to tenant B; nothing in this module
+ * will notice. Treat fixture stores like any other multi-tenant data
+ * layer.
  */
 
 import type {
