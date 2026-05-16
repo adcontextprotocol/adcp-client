@@ -490,13 +490,19 @@ function isSubmittedArm(value: unknown): boolean {
  *
  * **Submitted-arm short-circuit.** `get_products` formally permits an
  * async Submitted arm per `schemas/cache/3.0.11/media-buy/get-products-async-response-submitted.json`
- * (queued custom/bespoke curation). When the handler returns
- * `{ status: 'submitted', task_id }`, spreading `products: [...]` into
- * that envelope produces an invalid hybrid wire shape. Detect the
- * Submitted shape and return the handler response reference-equal,
- * which signals the dispatcher to skip the re-wrap. None of the other
- * 12 bridged read tools have a formal Submitted arm in 3.0.11; this
- * guard is `get_products`-specific defense rather than a uniform
+ * (queued custom/bespoke curation). The dispatcher routes
+ * `{ status: 'submitted', task_id }` handler returns through
+ * `wrapSubmittedEnvelope`, but the bridge merge then receives the
+ * unwrapped Submitted body from `formatted.structuredContent`. Without
+ * this guard, the merge would spread `products: [...]` into that body
+ * and produce a `{ status: 'submitted', task_id, products: [...], sandbox: true }`
+ * hybrid that violates the wire schema. Detect the Submitted shape and
+ * return the handler response reference-equal so the dispatcher's
+ * skip-on-reference-equality wrap-avoidance kicks in.
+ *
+ * None of the other 12 bridged read tools have a formal Submitted arm
+ * in 3.0.11 per `schemas/cache/3.0.11/core/async-response-data.json`;
+ * this guard is `get_products`-specific defense rather than a uniform
  * pattern across helpers.
  */
 export function mergeSeededProductsIntoResponse(
