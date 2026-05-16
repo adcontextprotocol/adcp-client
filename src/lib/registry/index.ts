@@ -400,10 +400,7 @@ export class RegistryClient {
    * would see. Omit `scope` (or pass `'all'`) to honor the caller's
    * tier (public + members_only + owner's private).
    */
-  async lookupOperator(
-    domain: string,
-    opts?: { scope?: 'public' | 'all' },
-  ): Promise<OperatorLookupResult | null> {
+  async lookupOperator(domain: string, opts?: { scope?: 'public' | 'all' }): Promise<OperatorLookupResult | null> {
     if (!domain?.trim()) throw new Error('domain is required');
     const params = new URLSearchParams({ domain });
     if (opts?.scope === 'public') params.set('scope', 'public');
@@ -418,10 +415,7 @@ export class RegistryClient {
    * publisher endpoint does not vary by visibility tier, so the option is
    * a no-op there but reserved for future visibility-aware filtering.
    */
-  async lookupPublisher(
-    domain: string,
-    opts?: { scope?: 'public' | 'all' },
-  ): Promise<PublisherLookupResult | null> {
+  async lookupPublisher(domain: string, opts?: { scope?: 'public' | 'all' }): Promise<PublisherLookupResult | null> {
     if (!domain?.trim()) throw new Error('domain is required');
     const params = new URLSearchParams({ domain });
     if (opts?.scope === 'public') params.set('scope', 'public');
