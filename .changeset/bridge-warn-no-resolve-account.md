@@ -8,6 +8,8 @@ feat(server): construction-time warn when `testController` is registered without
 
 The warning **dual-emits** via `process.emitWarning(message, { type: 'AdcpServerConfigWarning', code: 'ADCP_BRIDGE_NO_RESOLVER' })` AND `logger.warn(message)`. The `process.emitWarning` channel writes to stderr by default so the signal is visible even when `logger` is the default `noopLogger` (the day-one case where the misconfig is most likely). The `logger.warn` channel routes the same signal through any adopter-configured logging pipeline. Storyboard runners that knowingly run without account scoping can silence via `node --no-warnings=ADCP_BRIDGE_NO_RESOLVER`.
 
+**Warning-code convention** (established by this PR): `ADCP_*` prefix for any framework-emitted `process.emitWarning` code, scoped further by subsystem (`ADCP_BRIDGE_*` for `TestControllerBridge`-related, `ADCP_<subsystem>_*` for future). The `type` field stays consistent at `'AdcpServerConfigWarning'` for `createAdcpServer`-level misconfig signals so adopters can install one `process.on('warning')` handler that routes all framework warnings.
+
 It's deliberately not a hard error: storyboard-runner deployments without account scoping are a legitimate and intentional configuration (the runner drives state directly, no buyer authentication path needed), and failing construction would break that case. The warning message tells storyboard runners they can ignore it.
 
 The check gates on `resolveAccountFromAuth` as well as `resolveAccount`, so OAuth-passthrough setups (`createOAuthPassthroughResolver`, the canonical Shape-B adopter path) don't get a spurious warn — either resolver populates `ctx.account` at dispatch time and gives the gate its account-side teeth.
