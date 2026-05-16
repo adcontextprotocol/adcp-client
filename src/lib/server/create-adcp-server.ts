@@ -1673,6 +1673,28 @@ export interface AdcpServerConfig<TAccount = unknown> {
    * account) bypasses the bridge entirely; omit the field in production
    * configs to be explicit about it.
    *
+   * ## Security — trust boundary
+   *
+   * The bridge is gated by `isSandboxRequest(params) && (ctx.account ===
+   * undefined || ctx.account.sandbox === true)`. The second clause is the
+   * authority boundary; the first is caller-supplied (`account.sandbox` or
+   * `context.sandbox` on the request body) and is NOT a trust boundary on
+   * its own. If you register `testController` WITHOUT configuring
+   * `resolveAccount` (so `ctx.account` stays `undefined`), an attacker who
+   * sets `account.sandbox = true` on production traffic gets seeded
+   * fixtures merged into responses and the `_bridge` marker stamped.
+   *
+   * Production deployments that register `testController` MUST:
+   *   1. Configure `resolveAccount` so the framework can refuse the merge
+   *      when the resolved account is not flagged `sandbox: true`, or
+   *   2. Omit `testController` entirely outside test / staging environments.
+   *
+   * The `createAdcpServerFromPlatform` flow already enforces this via the
+   * sandbox-authority gate (see Phase 2 of #1435 — resolved-account `mode`
+   * is the trust boundary, not buyer-supplied `account.sandbox`). The
+   * direct `createAdcpServer` flow does not; adopters wiring the bridge
+   * here are responsible for the gate.
+   *
    * See `src/lib/server/test-controller-bridge.ts` for the sandbox-marker
    * predicate and the merge contract.
    *
@@ -1799,13 +1821,35 @@ function stampReplayed(response: McpToolResponse): void {
  * `testController` bridge merged seeded fixtures into the handler's reply.
  *
  * The marker is non-normative — every bridge-augmented response schema in
- * AdCP 3.0 allows additional top-level properties, and the underscore prefix
- * advertises "internal / out-of-spec" to validators that round-trip unknown
- * fields. Consumers (storyboard runners, compliance leaderboards, audit
- * pipelines) read this marker to distinguish "this pass exercised the
- * adopter's adapter against upstream" from "this pass exercised wire
- * conformance against fixture data merged by the SDK". See
- * `adcp-client#1775` for the cross-repo coordination context.
+ * AdCP 3.0 allows additional top-level properties (verified across the 13
+ * bridge-touching response schemas), and the underscore prefix advertises
+ * "internal / out-of-spec" to validators that round-trip unknown fields.
+ * Consumers (storyboard runners, compliance leaderboards, audit pipelines)
+ * read this marker to distinguish "this pass exercised the adopter's
+ * adapter against upstream" from "this pass exercised wire conformance
+ * against fixture data merged by the SDK". See `adcp-client#1775` for the
+ * cross-repo coordination context.
+ *
+ * ## Why on the response body, not MCP `_meta`?
+ *
+ * MCP defines `result._meta` as the canonical place for non-normative
+ * server-side annotations, and `_meta` would be the textbook home for this
+ * marker on MCP-only deployments. We put it on the response body instead
+ * for three reasons:
+ *
+ *   1. **Cross-transport parity.** A2A has no `_meta` equivalent —
+ *      `structuredContent` passes through the A2A artifact pipeline
+ *      verbatim, but a hypothetical envelope-level marker would have to be
+ *      duplicated or lost. One wire location across both transports keeps
+ *      the storyboard runner's read logic uniform.
+ *   2. **L2-text-body parity.** Buyers consuming the L2 text body (the
+ *      JSON-stringified `content[0].text`) see the same envelope MCP does,
+ *      because the opportunistic text-body mirror copies the marker into
+ *      both.
+ *   3. **Precedent.** `replayed: true` already lives on the response body
+ *      via the same `stampReplayed` pattern this marker mirrors. Splitting
+ *      framework-emitted annotations across `_meta` and the body would
+ *      create two conventions for the same job.
  */
 export interface BridgeMarker {
   /** Bridge callback that produced the seeded entries (e.g. `getSeededCreatives`). */
