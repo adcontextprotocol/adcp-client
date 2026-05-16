@@ -402,18 +402,18 @@ export class RegistryClient {
    *   purpose is rate-limit + audit attribution.
    * - `'member'` — public + `members_only`. `members_only` requires API tier;
    *   anonymous / explorer-tier callers silently fall through to public-only
-   *   (no 403). Note: `scope: 'member'` is the *bucket name* and is distinct
-   *   from the underlying `visibility: 'members_only'` enum literal — don't
-   *   grep for the wrong term.
+   *   (no 403).
    * - `'private'` — only `visibility=private`. Profile-owner only; non-owners
-   *   get an empty agents array rather than 403.
+   *   get an empty agents array rather than 403. An empty result with this
+   *   scope means *either* "you are the owner and have no drafts" *or* "you
+   *   are not the owner" — the SDK can't tell them apart, only the caller can.
    * - omitted / `'all'` — tier-aware union (public + members_only when
    *   authorized + owner's private). Preserves historical behavior.
    *
-   * Older AAO servers that predate this enum will silently ignore unknown
-   * `?scope=` values and return the historical tier-aware union — passing
-   * `'public'` against an older server will NOT enforce the public-only
-   * view client-side.
+   * Older AAO servers that predate this enum silently ignore unknown `?scope=`
+   * values and return the tier-aware union; the filter is server-enforced.
+   *
+   * @see https://github.com/adcontextprotocol/adcp/pull/4581
    */
   async lookupOperator(
     domain: string,
@@ -428,6 +428,9 @@ export class RegistryClient {
   /**
    * Look up the inventory a domain publishes and which agents it authorizes.
    * Returns null if not found.
+   *
+   * Unlike `lookupOperator`, this endpoint has no visibility-tier semantics;
+   * there is no `scope` filter.
    */
   async lookupPublisher(domain: string): Promise<PublisherLookupResult | null> {
     if (!domain?.trim()) throw new Error('domain is required');
