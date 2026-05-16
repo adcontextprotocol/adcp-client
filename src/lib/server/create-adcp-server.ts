@@ -3931,9 +3931,21 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
               (ctx.account as { sandbox?: unknown }).sandbox === true
             )
           ) {
+            // Include the resolved account_id so the log line is self-
+            // diagnostic — an adopter chasing "why aren't my fixtures
+            // showing" can match the rejected account against their
+            // resolveAccount source without correlating across log lines.
+            // account_ids appear in normal request logs already; no new
+            // PII surface.
+            const resolvedAccountId =
+              typeof ctx.account === 'object' &&
+              ctx.account !== null &&
+              typeof (ctx.account as { account_id?: unknown }).account_id === 'string'
+                ? ((ctx.account as { account_id?: unknown }).account_id as string)
+                : undefined;
             logger.debug(
               'test-controller bridge: request is sandbox-flagged but resolved account is not sandbox; skipping merge',
-              { tool: toolName }
+              { tool: toolName, resolved_account_id: resolvedAccountId }
             );
           }
 

@@ -3447,6 +3447,7 @@ describe('createAdcpServer — sandbox-gate debug log on resolved-account mismat
     );
     assert.ok(hit, 'expected sandbox-gate debug log');
     assert.equal(hit.data.tool, 'list_creatives');
+    assert.equal(hit.data.resolved_account_id, 'prod-acct', 'log should include resolved account_id for diagnostics');
   });
 
   it('does not emit debug when request lacks sandbox marker (gate fails first)', async () => {
