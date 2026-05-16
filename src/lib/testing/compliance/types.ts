@@ -61,6 +61,28 @@ export interface TrackResult {
   duration_ms: number;
   /** Compliance testing mode: observational (default) or deterministic (test controller available) */
   mode?: 'observational' | 'deterministic';
+  /**
+   * View marker disambiguating the same `TrackResult` appearing in
+   * both `ComplianceResult.tracks` (canonical source of truth) and
+   * `ComplianceResult.tested_tracks` (the filtered subset of passing/
+   * failing/partial/silent tracks). Because `tested_tracks` is built
+   * by filtering `tracks`, every passing track appears in both arrays.
+   * JSON output of a `ComplianceResult` therefore serializes each
+   * scenario twice — triagers grepping the output without this marker
+   * saw spurious "duplicate execution" signals (adcp-client#1674).
+   *
+   * - `'canonical'` — entry appears in `tracks` (the source of truth).
+   * - `'reference'` — entry appears in `tested_tracks` (a filtered view).
+   *
+   * Consumers that want a deduplicated view should iterate `tracks`
+   * and ignore `tested_tracks`, or filter on `_view === 'canonical'`.
+   * CI pipelines that pin on a stable, dedupe-by-design surface should
+   * read `buildComplianceSummary()` / `--summary-output` instead.
+   *
+   * The breaking type-split that fully removes the duplication is
+   * tracked at adcp-client#1791.
+   */
+  _view?: 'canonical' | 'reference';
 }
 
 /**
@@ -210,6 +232,49 @@ export type ObservationCategory =
 
 export type ObservationSeverity = 'info' | 'suggestion' | 'warning' | 'error';
 
+/**
+ * Provenance for an `AdvisoryObservation`. Every observation must carry
+ * a `source` so triagers can trace the finding back to the rule that
+ * fired and the storyboard/step coordinates that produced it.
+ *
+ * The discriminated union distinguishes:
+ *
+ * - `storyboard_step` — observation came from inspecting a specific
+ *   step in a storyboard run. Has both `storyboard_id` and `step_id`,
+ *   so a triager can grep the storyboard YAML directly.
+ * - `storyboard` — observation aggregates across a storyboard's
+ *   scenarios (e.g. "lifecycle scenario revealed missing pause/resume").
+ *   Has `storyboard_id` but no specific step.
+ * - `profile` — observation derived from the agent's discovered
+ *   capability profile, not from any storyboard step (e.g. "agent
+ *   exposes only 2 tools"). No storyboard coordinates apply.
+ * - `probe` — observation came from a network probe outside the
+ *   storyboard pipeline (e.g. auth-failure detection on a 401
+ *   discovery response). No storyboard coordinates apply.
+ *
+ * **`storyboard_id` shape note.** This field is sourced from
+ * `TestResult.scenario`, which the storyboard runner constructs as
+ * `${storyboard_id}/${phase_id}` (see `storyboard-tracks.ts`). So
+ * `source.storyboard_id` is a composite "storyboard/phase" identifier,
+ * not the bare storyboard ID. Greppable against the storyboard YAML
+ * either way; the composite form gives extra phase-level specificity
+ * even when `step_id` is also present.
+ *
+ * **`code` casing note.** `code` is intentionally kebab-case
+ * (e.g. `slow-response`, `missing-valid-actions`) to match storyboard
+ * step-id conventions in the compliance YAML cache, even though the
+ * rest of the public SDK surface (`storyboard_id`, `step_id`,
+ * `agent_url`, …) is snake_case. Adopters greppable-searching
+ * compliance reports should expect the kebab form.
+ *
+ * adcp-client#1746.
+ */
+export type ObservationSource =
+  | { kind: 'storyboard_step'; code: string; storyboard_id: string; step_id: string }
+  | { kind: 'storyboard'; code: string; storyboard_id: string }
+  | { kind: 'profile'; code: string }
+  | { kind: 'probe'; code: string };
+
 export interface AdvisoryObservation {
   category: ObservationCategory;
   severity: ObservationSeverity;
@@ -226,6 +291,14 @@ export interface AdvisoryObservation {
    * LLM summarizers, since it bypasses the fencing applied to `message`.
    */
   evidence?: Record<string, unknown>;
+  /**
+   * Required provenance. Every emission site populates this; the regression
+   * test in `test/lib/comply-advisory-rule-source.test.js` fails the build
+   * if any observation slips through without it. See `ObservationSource`.
+   *
+   * adcp-client#1746.
+   */
+  source: ObservationSource;
 }
 
 // ============================================================

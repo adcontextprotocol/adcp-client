@@ -111,6 +111,7 @@ export {
   type ComplianceResult,
   type ComplianceSummary,
   type AdvisoryObservation,
+  type ObservationSource,
   type SampleBrief,
 } from './compliance';
 

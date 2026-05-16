@@ -40,5 +40,6 @@ export type {
   AdvisoryObservation,
   ObservationCategory,
   ObservationSeverity,
+  ObservationSource,
   SampleBrief,
 } from './types';
