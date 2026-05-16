@@ -4014,24 +4014,6 @@ export type DAASTTrackingEvent =
  */
 export type MarkdownFlavor = 'commonmark' | 'gfm';
 /**
- * Campaign-level creative context as an asset. Carries the creative brief through the manifest so it travels with the creative through regeneration, resizing, and auditing.
- */
-export type BriefAsset = CreativeBrief & {
-  /**
-   * Discriminator identifying this as a brief asset. See /schemas/creative/asset-types for the registry.
-   */
-  asset_type: 'brief';
-};
-/**
- * A typed data feed as a creative asset. Carries catalog context (products, stores, jobs, etc.) within the manifest's assets map.
- */
-export type CatalogAsset = Catalog & {
-  /**
-   * Discriminator identifying this as a catalog asset. See /schemas/creative/asset-types for the registry.
-   */
-  asset_type: 'catalog';
-};
-/**
  * For generative creatives: set to 'approved' to finalize, 'rejected' to request regeneration with updated assets/message. Omit for non-generative creatives (system will set based on processing state).
  */
 export type CreativeStatus = 'processing' | 'pending_review' | 'approved' | 'rejected' | 'archived';
@@ -5153,9 +5135,9 @@ export interface MarkdownAsset {
   allow_raw_html?: boolean;
 }
 /**
- * Campaign-level creative context for AI-powered creative generation. Provides the layer between brand identity (stable across campaigns) and individual creative execution (per-request). A brand has one identity (defined in brand.json) but different creative briefs for each campaign or flight.
+ * Campaign-level creative context as an asset. Carries the creative brief through the manifest so it travels with the creative through regeneration, resizing, and auditing.
  */
-export interface CreativeBrief {
+export interface BriefAsset {
   /**
    * Campaign or flight name for identification
    */
@@ -5224,7 +5206,6 @@ export interface CreativeBrief {
       regulation?: string;
       /**
        * Minimum display duration in milliseconds. For video/audio disclosures, how long the disclosure must be visible or audible. For static formats, how long the disclosure must remain on screen before any auto-advance.
-       * @minimum 1
        */
       min_duration_ms?: number;
       /**
@@ -5238,6 +5219,10 @@ export interface CreativeBrief {
      */
     prohibited_claims?: string[];
   };
+  /**
+   * Discriminator identifying this as a brief asset. See /schemas/creative/asset-types for the registry.
+   */
+  asset_type: 'brief';
 }
 /**
  * A reference asset that provides creative context. Carries visual materials (mood boards, product shots, example creatives) with semantic roles that tell creative agents how to use them.
@@ -5255,6 +5240,63 @@ export interface ReferenceAsset {
    * Human-readable description of the asset and how it should inform creative generation
    */
   description?: string;
+}
+/**
+ * A typed data feed as a creative asset. Carries catalog context (products, stores, jobs, etc.) within the manifest's assets map.
+ */
+export interface CatalogAsset {
+  /**
+   * Buyer's identifier for this catalog. Required when syncing via sync_catalogs. When used in creatives, references a previously synced catalog on the account.
+   */
+  catalog_id?: string;
+  /**
+   * Human-readable name for this catalog (e.g., 'Summer Products 2025', 'Amsterdam Store Locations').
+   */
+  name?: string;
+  type: CatalogType;
+  /**
+   * URL to an external catalog feed. The platform fetches and resolves items from this URL. For offering-type catalogs, the feed contains an array of Offering objects. For other types, the feed format is determined by feed_format. When omitted with type 'product', the platform uses its synced copy of the brand's product catalog.
+   */
+  url?: string;
+  feed_format?: FeedFormat;
+  update_frequency?: UpdateFrequency;
+  /**
+   * Inline catalog data. The item schema depends on the catalog type: Offering objects for 'offering', StoreItem for 'store', HotelItem for 'hotel', FlightItem for 'flight', JobItem for 'job', VehicleItem for 'vehicle', RealEstateItem for 'real_estate', EducationItem for 'education', DestinationItem for 'destination', AppItem for 'app', or freeform objects for 'product', 'inventory', and 'promotion'. Mutually exclusive with url — provide one or the other, not both. Implementations should validate items against the type-specific schema.
+   */
+  items?: {}[];
+  /**
+   * Filter catalog to specific item IDs. For offering-type catalogs, these are offering_id values. For product-type catalogs, these are SKU identifiers.
+   */
+  ids?: string[];
+  /**
+   * Filter product-type catalogs by GTIN identifiers for cross-retailer catalog matching. Accepts standard GTIN formats (GTIN-8, UPC-A/GTIN-12, EAN-13/GTIN-13, GTIN-14). Only applicable when type is 'product'.
+   */
+  gtins?: string[];
+  /**
+   * Filter catalog to items with these tags. Tags are matched using OR logic — items matching any tag are included.
+   */
+  tags?: string[];
+  /**
+   * Filter catalog to items in this category (e.g., 'beverages/soft-drinks', 'chef-positions').
+   */
+  category?: string;
+  /**
+   * Natural language filter for catalog items (e.g., 'all pasta sauces under $5', 'amsterdam vacancies').
+   */
+  query?: string;
+  /**
+   * Event types that represent conversions for items in this catalog. Declares what events the platform should attribute to catalog items — e.g., a job catalog converts via submit_application, a product catalog via purchase. The event's content_ids field carries the item IDs that connect back to catalog items. Use content_id_type to declare what identifier type content_ids values represent.
+   */
+  conversion_events?: EventType[];
+  content_id_type?: ContentIDType;
+  /**
+   * Declarative normalization rules for external feeds. Maps non-standard feed field names, date formats, price encodings, and image URLs to the AdCP catalog item schema. Applied during sync_catalogs ingestion. Supports field renames, named transforms (date, divide, boolean, split), static literal injection, and assignment of image URLs to typed asset pools.
+   */
+  feed_field_mappings?: CatalogFieldMapping[];
+  /**
+   * Discriminator identifying this as a catalog asset. See /schemas/creative/asset-types for the registry.
+   */
+  asset_type: 'catalog';
 }
 /**
  * An industry-standard identifier for an advertising creative (e.g., Ad-ID, ISCI, Clearcast clock number). These identifiers are managed by external registries and used across the supply chain to track and reference specific creative assets.
@@ -11580,7 +11622,51 @@ export interface GetContentStandardsRequest {
  * Response payload with content safety policies
  */
 export type GetContentStandardsResponse =
-  | ContentStandards
+  | {
+      /**
+       * Unique identifier for this standards configuration
+       */
+      standards_id: string;
+      /**
+       * Human-readable name for this standards configuration
+       */
+      name?: string;
+      /**
+       * ISO 3166-1 alpha-2 country codes. Standards apply in ALL listed countries (AND logic).
+       */
+      countries_all?: string[];
+      /**
+       * Advertising channels. Standards apply to ANY of the listed channels (OR logic).
+       */
+      channels_any?: MediaChannel[];
+      /**
+       * BCP 47 language tags (e.g., 'en', 'de', 'fr'). Standards apply to content in ANY of these languages (OR logic). Content in unlisted languages is not covered by these standards.
+       */
+      languages_any?: string[];
+      /**
+       * Bespoke policies for this content-standards configuration, using the same shape as registry entries. Each policy is addressable by policy_id; governance findings reference the policy_id that triggered them.
+       */
+      policies?: PolicyEntry[];
+      /**
+       * Training/test set to calibrate policy interpretation. Provides concrete examples of pass/fail decisions.
+       */
+      calibration_exemplars?: {
+        /**
+         * Artifacts that pass the content standards
+         */
+        pass?: Artifact[];
+        /**
+         * Artifacts that fail the content standards
+         */
+        fail?: Artifact[];
+      };
+      /**
+       * Pricing options for this content standards service. The buyer passes the selected pricing_option_id in report_usage for billing verification.
+       */
+      pricing_options?: VendorPricingOption[];
+      ext?: ExtensionObject;
+      context?: ContextObject;
+    }
   | {
       errors: Error[];
       context?: ContextObject;

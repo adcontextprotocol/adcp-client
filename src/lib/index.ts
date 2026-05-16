@@ -477,7 +477,6 @@ export type {
   // Format Assets
   Overlay,
   // Creative Agent Domain
-  CreativeBrief,
   CreativeManifest,
   CreativeVariable,
   BuildCreativeRequest,
@@ -542,6 +541,10 @@ export type {
   CatalogAction,
   CatalogItemStatus,
   MediaBuyStatus,
+  // CreativeBrief is its own top-level schema (creative-brief.json) — emitted
+  // in core.generated, no longer transitively pulled into tools.generated now
+  // that BriefAsset merges its allOf[$ref] base inline.
+  CreativeBrief,
 } from './types/core.generated';
 
 // ====== ERROR CODES ======

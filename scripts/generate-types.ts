@@ -192,6 +192,47 @@ function tightenMutualExclusionOneOf(schema: any): any {
 }
 
 /**
+ * Resolve an external `$ref` for the purpose of pre-merging an
+ * `allOf: [{ $ref }]` member into its parent. Returns `null` for
+ * unresolvable refs (including local `#/$defs/...` refs, which require
+ * document context this helper doesn't have). Suppresses the warning that
+ * `loadCachedSchema` would emit for unresolvable paths — a miss here just
+ * means we leave the `allOf` member in place for jsts to handle.
+ */
+function resolveAllOfRefForMerge(ref: string): any | null {
+  if (!ref || typeof ref !== 'string') return null;
+  // Only external schema refs are resolvable through the cache. Local
+  // `#/$defs/...` and other fragment-only refs are left to jsts.
+  if (!ref.startsWith('/schemas/')) return null;
+  // Suppress the warn from loadCachedSchema for legitimate misses (e.g. a
+  // schema path we don't have cached yet). The original `allOf` member stays
+  // in place if resolution fails.
+  const originalWarn = console.warn;
+  console.warn = () => {};
+  let raw: any;
+  try {
+    raw = loadCachedSchema(ref);
+  } finally {
+    console.warn = originalWarn;
+  }
+  if (!raw) return null;
+  // Apply the same preprocessing the ref resolver uses for normal $ref reads —
+  // otherwise minItems/maxItems constraints from the base schema would leak
+  // through the merge and resurrect as `@minItems`/tuple types in jsts output.
+  const preprocessed = removeArrayLengthConstraints(raw);
+  // Normalize the resolved base through the same strict-schema pipeline the
+  // parent went through. Without this, a base schema's top-level
+  // `additionalProperties: true` (e.g. creative-brief.json, catalog.json)
+  // would propagate into the merged shape and emit a
+  // `[k: string]: unknown | undefined` index signature on the resulting flat
+  // interface — wider than the pre-merge intersection form. Recursion is
+  // safe: `loadCachedSchema` reads a fresh JSON document per call (no shared
+  // mutable cache), and AdCP schemas aren't cyclic at the `allOf:[{ $ref }]`
+  // sibling level, so transitive base resolution terminates.
+  return enforceStrictSchema(preprocessed);
+}
+
+/**
  * Recursively remove additionalProperties: true from schema to enforce strict typing
  * This prevents [k: string]: unknown in generated TypeScript types
  *
@@ -298,6 +339,69 @@ export function enforceStrictSchema(schema: any): any {
       strictSchema.items = strictSchema.items.map(enforceStrictSchema);
     } else {
       strictSchema.items = enforceStrictSchema(strictSchema.items);
+    }
+  }
+
+  // Pre-merge `allOf: [{ $ref }, ...]` members when the parent has its own
+  // `properties` or `required` at the same level. json-schema-to-typescript
+  // mishandles this pattern (especially inside `oneOf` variants) and emits a
+  // broken union `( BaseFields | { variant-specific + duplicated base fields } )`
+  // where the intent is an intersection `BaseFields & { variant-specific }`.
+  //
+  // Resolving the `$ref` at the JSON Schema level lets jsts see a single flat
+  // shape and emit a clean discriminated-union variant. We only resolve refs
+  // we can load (external `/schemas/...` paths via the cache). Local
+  // `#/$defs/...` refs are left in place — without the parent document we
+  // can't resolve them here, and the existing post-processors handle the
+  // common Individual*Asset alias case.
+  //
+  // The merged shape loses the named base type alias in the emitted TS
+  // (option 2 in the adcp#4510 acceptance criteria: "flattens the allOf into
+  // a single merged shape — less ideal but acceptable"). Recovering the
+  // intersection form would be a follow-up polish pass.
+  //
+  // We only apply this merge when the parent already declares its own
+  // `properties` or `required` siblings — the `vendor-pricing-option` style
+  // (allOf-only at root, no sibling properties) compiles correctly today and
+  // is left untouched.
+  if (
+    Array.isArray(strictSchema.allOf) &&
+    (strictSchema.properties || strictSchema.required) &&
+    !mustPreserveProperties
+  ) {
+    const remaining: any[] = [];
+    for (const member of strictSchema.allOf) {
+      if (member && typeof member === 'object' && typeof member.$ref === 'string' && Object.keys(member).length === 1) {
+        const resolved = resolveAllOfRefForMerge(member.$ref);
+        if (resolved) {
+          // Variant-level fields win on collision — `properties`, `required`,
+          // and `additionalProperties` are merged with variant precedence.
+          strictSchema.properties = {
+            ...(resolved.properties ?? {}),
+            ...(strictSchema.properties ?? {}),
+          };
+          const mergedRequired = [...(resolved.required ?? []), ...(strictSchema.required ?? [])];
+          if (mergedRequired.length > 0) {
+            strictSchema.required = [...new Set(mergedRequired)];
+          }
+          if (strictSchema.additionalProperties === undefined && resolved.additionalProperties !== undefined) {
+            strictSchema.additionalProperties = resolved.additionalProperties;
+          }
+          continue;
+        }
+      }
+      remaining.push(member);
+    }
+    strictSchema.allOf = remaining;
+    if (strictSchema.allOf.length === 0) {
+      delete strictSchema.allOf;
+    }
+    // Re-run property recursion now that we've merged in base properties —
+    // they may themselves carry allOf/$ref patterns that need normalizing.
+    if (strictSchema.properties) {
+      strictSchema.properties = Object.fromEntries(
+        Object.entries(strictSchema.properties).map(([key, value]) => [key, enforceStrictSchema(value)])
+      );
     }
   }
 

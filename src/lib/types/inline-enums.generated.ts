@@ -39,6 +39,11 @@ export const AudioAssetRequirements_FormatsValues = ["mp3", "aac", "wav", "ogg",
 /** single | AuthorizationResult.status */
 export const AuthorizationResult_StatusValues = ["authorized", "unauthorized", "unknown"] as const;
 
+// ====== BriefAsset ======
+
+/** single | BriefAsset.objective */
+export const BriefAsset_ObjectiveValues = ["awareness", "consideration", "conversion", "retention", "engagement"] as const;
+
 // ====== BuildCreativeAsyncInputRequired ======
 
 /** single | BuildCreativeAsyncInputRequired.reason */
@@ -63,11 +68,6 @@ export const ControllerError_ErrorValues = ["INVALID_TRANSITION", "INVALID_STATE
 
 /** single | CreateMediaBuyAsyncInputRequired.reason */
 export const CreateMediaBuyAsyncInputRequired_ReasonValues = ["APPROVAL_REQUIRED", "BUDGET_EXCEEDS_LIMIT"] as const;
-
-// ====== CreativeBrief ======
-
-/** single | CreativeBrief.objective */
-export const CreativeBrief_ObjectiveValues = ["awareness", "consideration", "conversion", "retention", "engagement"] as const;
 
 // ====== CreativeVariable ======
 
@@ -355,6 +355,12 @@ export const VideoAssetRequirements_ContainersValues = ["mp4", "webm", "mov", "a
 // imports to the canonical name; aliases remain for one minor
 // version. (adcp-client#941)
 
+// --- BriefAsset1 ---
+/** @deprecated use `BriefAsset_ObjectiveValues` — same literal set, BriefAsset1.objective duplicates the canonical export. */
+export const BriefAsset1_ObjectiveValues = BriefAsset_ObjectiveValues;
+// --- CreativeBrief ---
+/** @deprecated use `BriefAsset_ObjectiveValues` — same literal set, CreativeBrief.objective duplicates the canonical export. */
+export const CreativeBrief_ObjectiveValues = BriefAsset_ObjectiveValues;
 // --- GetBrandIdentitySuccess ---
 /** @deprecated use `GetBrandIdentityRequest_FieldsValues` — same literal set, GetBrandIdentitySuccess.available_fields duplicates the canonical export. */
 export const GetBrandIdentitySuccess_AvailableFieldsValues = GetBrandIdentityRequest_FieldsValues;
