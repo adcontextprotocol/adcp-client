@@ -2940,6 +2940,31 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
     testController: testControllerBridge,
   } = config;
 
+  // One-shot construction-time warn when `testController` is wired without
+  // any account resolver. The dispatch-time sandbox gate admits requests
+  // where `ctx.account === undefined`, so without a resolver the only
+  // remaining check is buyer-supplied `account.sandbox` / `context.sandbox`
+  // on the request — caller-controlled, not a trust boundary. Storyboard
+  // runners legitimately have no account scoping and should ignore this
+  // warning; production bindings need to wire `resolveAccount` (or
+  // `resolveAccountFromAuth` for OAuth-passthrough setups) so the gate's
+  // account-side check has teeth.
+  //
+  // Dual-emit: `process.emitWarning` writes to stderr by default so the
+  // signal is visible even when `logger` is the default `noopLogger`
+  // (the day-one case where the misconfig is most likely). `logger.warn`
+  // also fires so adopters with configured logging pipelines see it in
+  // their normal channel. The `code` lets adopters silence it via
+  // `--no-warnings=ADCP_BRIDGE_NO_RESOLVER` if they're knowingly running
+  // a storyboard-runner config. See `AdcpServerConfig.testController`
+  // JSDoc § "Security — trust boundary" and #1784.
+  if (testControllerBridge != null && resolveAccount === undefined && resolveAccountFromAuth === undefined) {
+    const message =
+      '[adcp/createAdcpServer] testController is wired but no account resolver — configure resolveAccount (or resolveAccountFromAuth) for production. Storyboard runners without account scoping can ignore. Details: https://github.com/adcontextprotocol/adcp-client/blob/main/docs/guides/VALIDATE-YOUR-AGENT.md';
+    process.emitWarning(message, { type: 'AdcpServerConfigWarning', code: 'ADCP_BRIDGE_NO_RESOLVER' });
+    logger.warn(message);
+  }
+
   // Pre-resolve credential-policy patterns once. The patterns config is
   // a stable property of `CredentialPolicyConfig`; pulling it out here
   // keeps the per-call hot path (`scanArgsForCredentials`) free of the

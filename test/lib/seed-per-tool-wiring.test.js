@@ -3497,3 +3497,144 @@ describe('createAdcpServer — sandbox-gate debug log on resolved-account mismat
     );
   });
 });
+
+// ---------------------------------------------------------------------------
+// #1784 — construction-time warn when `testController` is registered without
+// any account resolver. The dispatch-time sandbox gate admits requests where
+// `ctx.account === undefined`, so without `resolveAccount` (or
+// `resolveAccountFromAuth`) the only remaining check is the buyer-supplied
+// `account.sandbox` / `context.sandbox` marker — caller-controlled, not a
+// trust boundary. The warn makes that silent failure mode loud once, without
+// breaking the legitimate storyboard-runner case (runner-without-resolver
+// configs simply ignore the warning).
+// ---------------------------------------------------------------------------
+
+describe('createAdcpServer — trust-boundary warn when testController lacks resolveAccount (#1784)', () => {
+  function makeRecordingLogger() {
+    const records = { debug: [], info: [], warn: [], error: [] };
+    return {
+      logger: {
+        debug: (msg, data) => records.debug.push({ msg, data }),
+        info: (msg, data) => records.info.push({ msg, data }),
+        warn: (msg, data) => records.warn.push({ msg, data }),
+        error: (msg, data) => records.error.push({ msg, data }),
+      },
+      records,
+    };
+  }
+
+  const MATCH = /testController is wired but no account resolver/;
+
+  it('warns once at construction when testController is set and neither resolver is configured', () => {
+    const { logger, records } = makeRecordingLogger();
+    _createAdcpServer({
+      name: 'Test',
+      version: '1.0.0',
+      logger,
+      validation: { requests: 'off', responses: 'off' },
+      mediaBuy: { getProducts: async () => ({ products: [] }) },
+      testController: { getSeededProducts: () => [] },
+    });
+    const hits = records.warn.filter(r => MATCH.test(r.msg));
+    assert.equal(hits.length, 1, 'warn fires exactly once');
+  });
+
+  it('does not warn when testController is omitted (state-local seller)', () => {
+    const { logger, records } = makeRecordingLogger();
+    _createAdcpServer({
+      name: 'Test',
+      version: '1.0.0',
+      logger,
+      validation: { requests: 'off', responses: 'off' },
+      mediaBuy: { getProducts: async () => ({ products: [] }) },
+      // no testController, no resolver — state-local seller path
+    });
+    const hits = records.warn.filter(r => MATCH.test(r.msg));
+    assert.equal(hits.length, 0);
+  });
+
+  it('does not warn when resolveAccount is configured', () => {
+    const { logger, records } = makeRecordingLogger();
+    _createAdcpServer({
+      name: 'Test',
+      version: '1.0.0',
+      logger,
+      validation: { requests: 'off', responses: 'off' },
+      resolveAccount: () => ({ account_id: 'a', sandbox: true }),
+      mediaBuy: { getProducts: async () => ({ products: [] }) },
+      testController: { getSeededProducts: () => [] },
+    });
+    const hits = records.warn.filter(r => MATCH.test(r.msg));
+    assert.equal(hits.length, 0);
+  });
+
+  it('does not warn when resolveAccountFromAuth is configured (OAuth-passthrough setups)', () => {
+    const { logger, records } = makeRecordingLogger();
+    _createAdcpServer({
+      name: 'Test',
+      version: '1.0.0',
+      logger,
+      validation: { requests: 'off', responses: 'off' },
+      resolveAccountFromAuth: () => ({ account_id: 'a', sandbox: true }),
+      mediaBuy: { getProducts: async () => ({ products: [] }) },
+      testController: { getSeededProducts: () => [] },
+    });
+    const hits = records.warn.filter(r => MATCH.test(r.msg));
+    assert.equal(hits.length, 0);
+  });
+
+  it('does not re-warn on subsequent dispatches', async () => {
+    const { logger, records } = makeRecordingLogger();
+    const server = _createAdcpServer({
+      name: 'Test',
+      version: '1.0.0',
+      logger,
+      validation: { requests: 'off', responses: 'off' },
+      mediaBuy: { getProducts: async () => ({ products: [] }) },
+      testController: { getSeededProducts: () => [] },
+    });
+    await dispatch(server, 'get_products', {
+      brief: 'x',
+      buying_mode: 'brief',
+      account: SANDBOX_ACCOUNT,
+    });
+    await dispatch(server, 'get_products', {
+      brief: 'x',
+      buying_mode: 'brief',
+      account: SANDBOX_ACCOUNT,
+    });
+    const hits = records.warn.filter(r => MATCH.test(r.msg));
+    assert.equal(hits.length, 1, 'warn fires once across construction + N requests');
+  });
+
+  // The default `logger` is `noopLogger`, which swallows `.warn`. The
+  // misconfig is most likely on day one when no logger is wired yet —
+  // so the warn also goes through `process.emitWarning` (stderr by
+  // default, dedupable via `code`). Spy on `process.emitWarning` itself
+  // for synchronous capture — `process.on('warning')` would also work
+  // but adds event-loop-flush timing dependencies.
+  it('also emits via process.emitWarning so the signal is visible without configured logging', () => {
+    const calls = [];
+    const original = process.emitWarning;
+    process.emitWarning = (...args) => {
+      calls.push(args);
+      return original.apply(process, args);
+    };
+    try {
+      _createAdcpServer({
+        name: 'Test',
+        version: '1.0.0',
+        // no `logger` → defaults to noopLogger
+        validation: { requests: 'off', responses: 'off' },
+        mediaBuy: { getProducts: async () => ({ products: [] }) },
+        testController: { getSeededProducts: () => [] },
+      });
+      const ours = calls.filter(args => args[1]?.code === 'ADCP_BRIDGE_NO_RESOLVER');
+      assert.equal(ours.length, 1, 'exactly one process.emitWarning call');
+      assert.match(ours[0][0], MATCH);
+      assert.equal(ours[0][1].type, 'AdcpServerConfigWarning');
+    } finally {
+      process.emitWarning = original;
+    }
+  });
+});
