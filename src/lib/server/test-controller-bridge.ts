@@ -496,6 +496,25 @@ export function isSandboxRequest(input: Record<string, unknown>): boolean {
 }
 
 /**
+ * Detect the Submitted-arm shape (`{ status: 'submitted', task_id }`) on a
+ * read-tool response payload. `get_products` formally permits this arm per
+ * `schemas/cache/3.0.11/media-buy/get-products-async-response-submitted.json`
+ * (queued custom/bespoke product curation); the dispatcher's
+ * `isSubmittedEnvelope` routes the wrap, but the bridge merge runs after
+ * wrap and would spread `products: [...]` into the Submitted envelope
+ * without this guard.
+ *
+ * Mirrors the `isSubmittedEnvelope` predicate at
+ * `src/lib/server/create-adcp-server.ts` — kept local rather than imported
+ * because that helper lives inside the dispatcher closure.
+ */
+function isSubmittedArm(value: unknown): boolean {
+  if (value == null || typeof value !== 'object') return false;
+  const obj = value as Record<string, unknown>;
+  return obj.status === 'submitted' && typeof obj.task_id === 'string';
+}
+
+/**
  * Merge seeded products into a `get_products` response payload.
  *
  * Existing products from the handler come first; seeded entries append
@@ -507,12 +526,30 @@ export function isSandboxRequest(input: Record<string, unknown>): boolean {
  * handler explicitly declared `sandbox: false` (which stays authoritative
  * — a handler that has already decided the request is non-sandbox
  * shouldn't be overridden by the bridge).
+ *
+ * **Submitted-arm short-circuit.** `get_products` formally permits an
+ * async Submitted arm per `schemas/cache/3.0.11/media-buy/get-products-async-response-submitted.json`
+ * (queued custom/bespoke curation). The dispatcher routes
+ * `{ status: 'submitted', task_id }` handler returns through
+ * `wrapSubmittedEnvelope`, but the bridge merge then receives the
+ * unwrapped Submitted body from `formatted.structuredContent`. Without
+ * this guard, the merge would spread `products: [...]` into that body
+ * and produce a `{ status: 'submitted', task_id, products: [...], sandbox: true }`
+ * hybrid that violates the wire schema. Detect the Submitted shape and
+ * return the handler response reference-equal so the dispatcher's
+ * skip-on-reference-equality wrap-avoidance kicks in.
+ *
+ * None of the other 12 bridged read tools have a formal Submitted arm
+ * in 3.0.11 per `schemas/cache/3.0.11/core/async-response-data.json`;
+ * this guard is `get_products`-specific defense rather than a uniform
+ * pattern across helpers.
  */
 export function mergeSeededProductsIntoResponse(
   response: GetProductsResponse,
   seeded: readonly Product[]
 ): GetProductsResponse {
   if (!seeded.length) return response;
+  if (isSubmittedArm(response)) return response;
 
   const seededIds = new Set<string>();
   for (const p of seeded) seededIds.add(p.product_id);

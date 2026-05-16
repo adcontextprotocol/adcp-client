@@ -391,4 +391,51 @@ describe('createAdcpServer — seeded get_products under strict response validat
     );
     assert.strictEqual(payload.sandbox, true);
   });
+
+  // ---------------------------------------------------------------------------
+  // Submitted-arm guard
+  //
+  // `get_products` formally permits an async Submitted arm per
+  // `schemas/cache/3.0.11/media-buy/get-products-async-response-submitted.json`
+  // (queued custom / bespoke product curation). When the handler returns
+  // `{ status: 'submitted', task_id }`, the dispatcher's `isSubmittedEnvelope`
+  // routes it through `wrapSubmittedEnvelope` rather than the success-arm
+  // builder — but the bridge merge runs after that, and without a guard would
+  // spread `products: [...]` into the Submitted envelope, producing a
+  // `{ status: 'submitted', task_id, products: [...], sandbox: true }`
+  // hybrid that violates the wire schema. Verify the merge helper detects
+  // the Submitted shape and leaves the envelope unmodified.
+  // ---------------------------------------------------------------------------
+  it('leaves a Submitted envelope unmodified (does not spread products into async arm)', async () => {
+    const server = createAdcpServer({
+      name: 'Test',
+      version: '1.0.0',
+      mediaBuy: {
+        getProducts: async () => ({
+          status: 'submitted',
+          task_id: 'task-abc-123',
+          message: 'Custom product curation queued',
+        }),
+      },
+      testController: {
+        getSeededProducts: () => [makeSeededProduct('seed-leaked', { name: 'Should not appear' })],
+      },
+    });
+    const result = await server.dispatchTestRequest({
+      method: 'tools/call',
+      params: {
+        name: 'get_products',
+        arguments: {
+          brief: 'premium',
+          buying_mode: 'brief',
+          account: { brand: { domain: 'example.com' }, operator: 'example.com', sandbox: true },
+        },
+      },
+    });
+    const payload = result.structuredContent;
+    assert.strictEqual(payload.status, 'submitted');
+    assert.strictEqual(payload.task_id, 'task-abc-123');
+    assert.strictEqual(payload.products, undefined, 'merge must not spread products into Submitted envelope');
+    assert.strictEqual(payload.sandbox, undefined, 'merge must not stamp sandbox onto Submitted envelope');
+  });
 });
