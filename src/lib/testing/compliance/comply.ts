@@ -84,6 +84,7 @@ export function collectObservations(
         track,
         message: 'Agent does not declare v3 protocol support. V3 provides richer capabilities and is recommended.',
         evidence: { detected_version: profile.adcp_version || 'unknown' },
+        source: { kind: 'profile', code: 'v3-not-declared' },
       });
     }
     if (profile.tools.length < 3) {
@@ -93,6 +94,7 @@ export function collectObservations(
         track,
         message: `Agent exposes ${profile.tools.length} tool(s). Most production agents expose 5+.`,
         evidence: { tool_count: profile.tools.length, tools: profile.tools },
+        source: { kind: 'profile', code: 'low-tool-count' },
       });
     }
   }
@@ -111,6 +113,12 @@ export function collectObservations(
                 track,
                 message: 'Agent returned 0 products. Buyers cannot transact without product inventory.',
                 evidence: { products_count: 0 },
+                source: {
+                  kind: 'storyboard_step',
+                  code: 'zero-products',
+                  storyboard_id: result.scenario,
+                  step_id: step.step,
+                },
               });
             } else if (obs.products_count > 50) {
               observations.push({
@@ -119,6 +127,12 @@ export function collectObservations(
                 track,
                 message: `Agent returned ${obs.products_count} products for a single brief. Consider curating to 5-15 most relevant products.`,
                 evidence: { products_count: obs.products_count },
+                source: {
+                  kind: 'storyboard_step',
+                  code: 'too-many-products',
+                  storyboard_id: result.scenario,
+                  step_id: step.step,
+                },
               });
             }
           }
@@ -129,6 +143,12 @@ export function collectObservations(
               track,
               message: `Agent only serves ${obs.channels[0]} channel. Multi-channel inventory broadens demand.`,
               evidence: { channels: obs.channels },
+              source: {
+                kind: 'storyboard_step',
+                code: 'single-channel',
+                storyboard_id: result.scenario,
+                step_id: step.step,
+              },
             });
           }
         }
@@ -159,6 +179,12 @@ export function collectObservations(
               message:
                 'Agent does not return valid_actions in get_media_buys response. ' +
                 'Without valid_actions, buyer agents must hardcode the state machine to know what operations are permitted.',
+              source: {
+                kind: 'storyboard_step',
+                code: 'missing-valid-actions',
+                storyboard_id: result.scenario,
+                step_id: step.step,
+              },
             });
           }
 
@@ -170,6 +196,12 @@ export function collectObservations(
               message:
                 'Agent does not return creative_deadline on media buys or packages. ' +
                 'Buyers need to know when creative uploads must be finalized to avoid rejected submissions.',
+              source: {
+                kind: 'storyboard_step',
+                code: 'missing-creative-deadline',
+                storyboard_id: result.scenario,
+                step_id: step.step,
+              },
             });
           }
 
@@ -181,6 +213,12 @@ export function collectObservations(
               message:
                 'Agent returns history entries but some lack required fields (timestamp, action). ' +
                 'History entries must include at least timestamp and action to be useful for audit.',
+              source: {
+                kind: 'storyboard_step',
+                code: 'invalid-history-entries',
+                storyboard_id: result.scenario,
+                step_id: step.step,
+              },
             });
           }
 
@@ -192,6 +230,12 @@ export function collectObservations(
               message:
                 'Agent does not confirm sandbox mode in get_media_buys response. ' +
                 'Include sandbox: true so buyers can verify the agent honored sandbox mode.',
+              source: {
+                kind: 'storyboard_step',
+                code: 'missing-sandbox-echo',
+                storyboard_id: result.scenario,
+                step_id: step.step,
+              },
             });
           }
 
@@ -223,6 +267,12 @@ export function collectObservations(
               message:
                 'Agent does not return revision history when include_history is requested. ' +
                 'History enables audit trails and helps buyers understand what changed.',
+              source: {
+                kind: 'storyboard_step',
+                code: 'no-revision-history',
+                storyboard_id: result.scenario,
+                step_id: step.step,
+              },
             });
           }
           checkedHistory = true;
@@ -251,6 +301,12 @@ export function collectObservations(
                 message:
                   'Agent transitions to canceled status but does not include canceled_by field. ' +
                   'Buyers need to distinguish buyer-initiated from seller-initiated cancellations.',
+                source: {
+                  kind: 'storyboard_step',
+                  code: 'missing-canceled-by',
+                  storyboard_id: result.scenario,
+                  step_id: step.step,
+                },
               });
             }
             if (!obs.canceled_at) {
@@ -261,6 +317,12 @@ export function collectObservations(
                 message:
                   'Agent transitions to canceled status but does not include canceled_at timestamp. ' +
                   'A cancellation timestamp is required for audit and reconciliation.',
+                source: {
+                  kind: 'storyboard_step',
+                  code: 'missing-canceled-at',
+                  storyboard_id: result.scenario,
+                  step_id: step.step,
+                },
               });
             }
             checkedCancellation = true;
@@ -280,6 +342,12 @@ export function collectObservations(
           track,
           message: 'Agent does not support pause/resume operations on media buys.',
           evidence: { error: pauseFailed.error },
+          source: {
+            kind: 'storyboard_step',
+            code: 'pause-resume-unsupported',
+            storyboard_id: lifecycleResult.scenario,
+            step_id: pauseFailed.step,
+          },
         });
       }
     }
@@ -297,6 +365,7 @@ export function collectObservations(
         message:
           'Agent supports sync_creatives but not list_creative_formats. ' +
           'Buyers need to know what formats you accept before sending creatives.',
+        source: { kind: 'profile', code: 'sync-creatives-without-formats' },
       });
     }
   }
@@ -318,6 +387,12 @@ export function collectObservations(
                   `Error compliance at L${level}. L3 (structuredContent.adcp_error) is recommended. ` +
                   `Use adcpError() from @adcp/sdk for automatic L3 compliance.`,
                 evidence: { compliance_level: level, step: step.step },
+                source: {
+                  kind: 'storyboard_step',
+                  code: 'low-error-compliance-level',
+                  storyboard_id: result.scenario,
+                  step_id: step.step,
+                },
               });
             }
           }
@@ -328,17 +403,19 @@ export function collectObservations(
 
   // Campaign governance track observations
   if (track === 'campaign_governance') {
-    let anyCheckMissingContext = false;
+    // Capture the first step that produced the gap so the rollup
+    // observation can point a triager back at a concrete coordinate.
+    let firstMissing: { storyboard_id: string; step_id: string } | undefined;
     for (const result of results) {
       for (const step of result.steps ?? []) {
         if (step.task === 'check_governance' && step.passed && !step.skipped && step.observation_data) {
-          if (!step.observation_data.governance_context) {
-            anyCheckMissingContext = true;
+          if (!step.observation_data.governance_context && !firstMissing) {
+            firstMissing = { storyboard_id: result.scenario, step_id: step.step };
           }
         }
       }
     }
-    if (anyCheckMissingContext) {
+    if (firstMissing) {
       observations.push({
         category: 'best_practice',
         severity: 'warning',
@@ -346,6 +423,12 @@ export function collectObservations(
         message:
           'Governance agent did not return governance_context on check_governance response. ' +
           'Without it, sellers cannot maintain governance continuity across the media buy lifecycle.',
+        source: {
+          kind: 'storyboard_step',
+          code: 'missing-governance-context',
+          storyboard_id: firstMissing.storyboard_id,
+          step_id: firstMissing.step_id,
+        },
       });
     }
   }
@@ -365,6 +448,12 @@ export function collectObservations(
           track,
           message: `Step "${step.step}" took ${(step.duration_ms / 1000).toFixed(1)}s. Buyers expect sub-5s responses.`,
           evidence: { step: step.step, duration_ms: step.duration_ms },
+          source: {
+            kind: 'storyboard_step',
+            code: 'slow-response',
+            storyboard_id: result.scenario,
+            step_id: step.step,
+          },
         });
       }
     }
@@ -829,6 +918,7 @@ async function complyImpl(agentUrl: string, options: ComplyOptions): Promise<Com
         severity: 'info',
         message: `Discovered ${profile.tools.length} tools: [${profile.tools.join(', ')}]`,
         evidence: { tools: profile.tools },
+        source: { kind: 'profile', code: 'tools-discovered' },
       });
     }
 
@@ -851,6 +941,7 @@ async function complyImpl(agentUrl: string, options: ComplyOptions): Promise<Com
             `Only universal storyboards ran — domain and specialism bundles were skipped. ` +
             `Agent-reported error: ${fenceAgentText(profile.capabilities_probe_error)}`,
           evidence: { agent_reported_error: profile.capabilities_probe_error },
+          source: { kind: 'profile', code: 'capabilities-probe-failed' },
         });
       } else if (!profile.tools.includes('get_adcp_capabilities')) {
         allObservations.push({
@@ -859,6 +950,7 @@ async function complyImpl(agentUrl: string, options: ComplyOptions): Promise<Com
           message:
             'Agent does not implement get_adcp_capabilities — ran universal storyboards only. ' +
             'Domain baselines and specialisms cannot be tested without a capabilities response.',
+          source: { kind: 'profile', code: 'capabilities-missing' },
         });
       } else if (!profile.supported_protocols?.length) {
         allObservations.push({
@@ -867,6 +959,7 @@ async function complyImpl(agentUrl: string, options: ComplyOptions): Promise<Com
           message:
             'get_adcp_capabilities returned no supported_protocols — ran universal storyboards only. ' +
             'Agent must declare at least one domain protocol to be fully tested.',
+          source: { kind: 'profile', code: 'no-supported-protocols' },
         });
       }
     }
@@ -1190,12 +1283,14 @@ export async function detectAuthRejection(
           `Inline: adcp storyboard run ${agentUrl} --oauth (requires a saved alias). ` +
           `Save once: adcp --save-auth <alias> ${agentUrl} --oauth.`,
         ...(oauthMeta?.issuer && { evidence: { oauth_issuer: oauthMeta.issuer } }),
+        source: { kind: 'probe', code: 'auth-oauth-required' },
       });
     } else {
       observations.push({
         category: 'auth',
         severity: 'error',
         message: 'Agent returned 401. Check your --auth token.',
+        source: { kind: 'probe', code: 'auth-401' },
       });
     }
   }
@@ -1533,6 +1628,20 @@ export function formatComplianceResults(result: ComplianceResult): string {
                 ? '💡'
                 : 'ℹ️';
         output += `${icon}  ${obs.message}\n`;
+        // Source coordinates: greppable rule code + storyboard/step
+        // pointers when applicable. Keeps the text surface scannable
+        // while making triage one keystroke away from the storyboard
+        // YAML that produced the finding (#1746).
+        if (obs.source) {
+          const src = obs.source;
+          const coord =
+            src.kind === 'storyboard_step'
+              ? ` (${src.code} · ${src.storyboard_id}/${src.step_id})`
+              : src.kind === 'storyboard'
+                ? ` (${src.code} · ${src.storyboard_id})`
+                : ` (${src.code})`;
+          output += `   ↳ source:${coord}\n`;
+        }
       }
     }
   }

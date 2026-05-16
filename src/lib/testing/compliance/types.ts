@@ -210,6 +210,38 @@ export type ObservationCategory =
 
 export type ObservationSeverity = 'info' | 'suggestion' | 'warning' | 'error';
 
+/**
+ * Provenance for an `AdvisoryObservation`. Every observation must carry
+ * a `source` so triagers can trace the finding back to the rule that
+ * fired and the storyboard/step coordinates that produced it.
+ *
+ * The discriminated union distinguishes:
+ *
+ * - `storyboard_step` — observation came from inspecting a specific
+ *   step in a storyboard run. Has both `storyboard_id` and `step_id`,
+ *   so a triager can grep the storyboard YAML directly.
+ * - `storyboard` — observation aggregates across a storyboard's
+ *   scenarios (e.g. "lifecycle scenario revealed missing pause/resume").
+ *   Has `storyboard_id` but no specific step.
+ * - `profile` — observation derived from the agent's discovered
+ *   capability profile, not from any storyboard step (e.g. "agent
+ *   exposes only 2 tools"). No storyboard coordinates apply.
+ * - `probe` — observation came from a network probe outside the
+ *   storyboard pipeline (e.g. auth-failure detection on a 401
+ *   discovery response). No storyboard coordinates apply.
+ *
+ * `code` is a stable, kebab-case identifier for the evaluator rule
+ * that produced the observation (e.g. `slow-response`, `missing-valid-actions`).
+ * It's the load-bearing field for greppable triage and CI gating.
+ *
+ * adcp-client#1746.
+ */
+export type ObservationSource =
+  | { kind: 'storyboard_step'; code: string; storyboard_id: string; step_id: string }
+  | { kind: 'storyboard'; code: string; storyboard_id: string }
+  | { kind: 'profile'; code: string }
+  | { kind: 'probe'; code: string };
+
 export interface AdvisoryObservation {
   category: ObservationCategory;
   severity: ObservationSeverity;
@@ -226,6 +258,14 @@ export interface AdvisoryObservation {
    * LLM summarizers, since it bypasses the fencing applied to `message`.
    */
   evidence?: Record<string, unknown>;
+  /**
+   * Required provenance. Every emission site populates this; the regression
+   * test in `test/lib/comply-advisory-rule-source.test.js` fails the build
+   * if any observation slips through without it. See `ObservationSource`.
+   *
+   * adcp-client#1746.
+   */
+  source: ObservationSource;
 }
 
 // ============================================================

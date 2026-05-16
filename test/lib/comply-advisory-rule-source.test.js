@@ -121,3 +121,151 @@ describe('collectObservations — create_media_buy advisories (#1736)', () => {
     }
   });
 });
+
+// ────────────────────────────────────────────────────────────────────────────
+// #1746 — Every advisory carries traceable source coordinates.
+//
+// Builds on the original #1736 fix: it's not enough that the message is
+// populated and the category/severity are set; every observation must
+// trace back to either a storyboard step (with grep-able storyboard_id +
+// step_id), a storyboard rollup (storyboard_id only), the agent's
+// discovered profile, or a network probe. This test fixture covers each
+// emission site in `collectObservations` and asserts the `source` field
+// is structurally valid.
+//
+// If a future contributor adds a `observations.push({...})` without a
+// `source`, this test fails the build before the regression ships.
+// ────────────────────────────────────────────────────────────────────────────
+
+const VALID_KINDS = new Set(['storyboard_step', 'storyboard', 'profile', 'probe']);
+
+function assertValidSource(source, label) {
+  assert.ok(source, `${label}: missing source`);
+  assert.ok(VALID_KINDS.has(source.kind), `${label}: invalid source.kind="${source.kind}"`);
+  assert.ok(typeof source.code === 'string' && source.code.length > 0, `${label}: missing source.code`);
+  if (source.kind === 'storyboard_step') {
+    assert.ok(source.storyboard_id, `${label}: storyboard_step missing storyboard_id`);
+    assert.ok(source.step_id, `${label}: storyboard_step missing step_id`);
+  }
+  if (source.kind === 'storyboard') {
+    assert.ok(source.storyboard_id, `${label}: storyboard missing storyboard_id`);
+  }
+}
+
+describe('AdvisoryObservation.source — every emission populates provenance (#1746)', () => {
+  test('profile-track observations have kind=profile', () => {
+    // No tools, no version → triggers both profile observations
+    const observations = collectObservations('core', [], { name: 'Bare Agent', tools: ['x'] /* fewer than 3 */ });
+    assert.ok(observations.length > 0, 'expected at least one core-track observation');
+    for (const o of observations) {
+      assertValidSource(o.source, `core-track: ${o.message}`);
+      assert.equal(o.source.kind, 'profile', `core-track: expected kind=profile, got ${o.source.kind}`);
+    }
+  });
+
+  test('product-step observations carry storyboard_id + step_id', () => {
+    const result = {
+      agent_url: 'https://example.com/mcp',
+      scenario: 'product_discovery',
+      overall_passed: true,
+      summary: '',
+      total_duration_ms: 100,
+      tested_at: '2026-01-01T00:00:00.000Z',
+      steps: [
+        {
+          step: 'Get products',
+          task: 'get_products',
+          passed: true,
+          duration_ms: 100,
+          observation_data: { products_count: 0 },
+        },
+      ],
+    };
+    const observations = collectObservations('products', [result], dummyProfile);
+    const zeroProducts = observations.find(o => o.source?.code === 'zero-products');
+    assert.ok(zeroProducts, 'expected zero-products advisory');
+    assertValidSource(zeroProducts.source, 'zero-products');
+    assert.equal(zeroProducts.source.storyboard_id, 'product_discovery');
+    assert.equal(zeroProducts.source.step_id, 'Get products');
+  });
+
+  test('slow-response advisory carries storyboard_id + step_id', () => {
+    const result = {
+      agent_url: 'https://example.com/mcp',
+      scenario: 'slow_test',
+      overall_passed: true,
+      summary: '',
+      total_duration_ms: 12000,
+      tested_at: '2026-01-01T00:00:00.000Z',
+      steps: [
+        {
+          step: 'Glacial step',
+          task: 'get_products',
+          passed: true,
+          duration_ms: 12000,
+        },
+      ],
+    };
+    const observations = collectObservations('products', [result], dummyProfile);
+    const slow = observations.find(o => o.source?.code === 'slow-response');
+    assert.ok(slow, 'expected slow-response advisory');
+    assert.equal(slow.source.kind, 'storyboard_step');
+    assert.equal(slow.source.storyboard_id, 'slow_test');
+    assert.equal(slow.source.step_id, 'Glacial step');
+  });
+
+  test('every advisory across every track has a structurally valid source', () => {
+    // Exercise enough surface to hit a representative cross-section of
+    // emission sites. Any new site that ships without a `source` will
+    // fail the structural check below.
+    const richResults = [
+      {
+        agent_url: 'https://example.com/mcp',
+        scenario: 'media_buy',
+        overall_passed: true,
+        summary: '',
+        total_duration_ms: 100,
+        tested_at: '2026-01-01T00:00:00.000Z',
+        steps: [
+          {
+            step: 'Get media buys',
+            task: 'get_media_buys',
+            passed: true,
+            duration_ms: 100,
+            observation_data: {
+              valid_actions: undefined,
+              has_creative_deadline: false,
+              history_entries: 2,
+              history_valid: false,
+              sandbox: undefined,
+            },
+          },
+          {
+            step: 'Cancel media buy',
+            task: 'update_media_buy',
+            passed: true,
+            duration_ms: 50,
+            observation_data: { status: 'canceled' },
+          },
+        ],
+      },
+      {
+        agent_url: 'https://example.com/mcp',
+        scenario: 'media_buy_lifecycle',
+        overall_passed: false,
+        summary: '',
+        total_duration_ms: 100,
+        tested_at: '2026-01-01T00:00:00.000Z',
+        steps: [
+          { step: 'Pause media buy', task: 'update_media_buy', passed: false, duration_ms: 30, error: 'not supported' },
+        ],
+      },
+    ];
+
+    const observations = collectObservations('media_buy', richResults, dummyProfile);
+    assert.ok(observations.length >= 5, `expected several media_buy observations, got ${observations.length}`);
+    for (const o of observations) {
+      assertValidSource(o.source, `media_buy: ${o.message}`);
+    }
+  });
+});

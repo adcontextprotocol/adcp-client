@@ -161,7 +161,14 @@ const mockResult = {
     tracks_partial: 0,
     headline: '1 passing, 1 failing',
   },
-  observations: [{ category: 'completeness', severity: 'warning', message: 'Missing fields' }],
+  observations: [
+    {
+      category: 'completeness',
+      severity: 'warning',
+      message: 'Missing fields',
+      source: { kind: 'profile', code: 'test-fixture' },
+    },
+  ],
   storyboards_executed: ['capability_discovery', 'schema_validation'],
   tested_at: new Date().toISOString(),
   total_duration_ms: 150,
