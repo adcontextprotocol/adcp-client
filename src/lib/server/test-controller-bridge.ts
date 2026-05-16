@@ -44,8 +44,35 @@ import type {
   ListContentStandardsResponse,
   GetContentStandardsResponse,
   GetContentStandardsRequest,
+  GetSignalsResponse,
+  GetCreativeDeliveryResponse,
+  GetCreativeFeaturesResponse,
+  CreativeFeatureResult,
 } from '../types/tools.generated';
 import { mergeSeedProduct } from '../testing/seed-merge';
+
+/**
+ * Seeded signal entry — the inline element type of `GetSignalsResponse.signals`.
+ * Derived via lookup so it stays in lockstep with the generated wire schema.
+ * Dedup key: `signal_id`.
+ */
+export type SeededSignal = GetSignalsResponse['signals'][number];
+
+/**
+ * Seeded creative-delivery entry — the inline element type of
+ * `GetCreativeDeliveryResponse.creatives`. Derived via lookup so it stays in
+ * lockstep with the generated wire schema. Dedup key: `creative_id`.
+ */
+export type SeededCreativeDelivery = GetCreativeDeliveryResponse['creatives'][number];
+
+/**
+ * Seeded creative-feature result — alias for the per-feature evaluation entry.
+ * `get_creative_features` returns a `results: CreativeFeatureResult[]` array
+ * on the success arm; the bridge seeds at the feature granularity (not the
+ * whole envelope) so adopters can override specific feature scores while the
+ * handler computes everything else. Dedup key: `feature_id`.
+ */
+export type SeededCreativeFeature = CreativeFeatureResult;
 
 /**
  * Seeded creative entry — the inline element type of `ListCreativesResponse.creatives`.
@@ -252,6 +279,66 @@ export interface TestControllerBridge<TAccount = unknown> {
   getSeededCollectionLists?: (
     ctx: TestControllerBridgeContext<TAccount>
   ) => Promise<CollectionList[]> | CollectionList[];
+
+  /**
+   * Retrieve seeded signals for the current request. Returned entries are
+   * appended to the handler's `get_signals` response (`signals` array); on
+   * `signal_id` collision the seeded entry wins. The signal_id-keyed dedup
+   * works uniformly across `signal-marketplace` and `signal-owned`
+   * specialisms — both use the same response envelope; the discriminator
+   * lives on each entry's `signal_type` field.
+   *
+   * `get_signals` does not carry a `query_summary` block (per AdCP 3.0.11).
+   * Pagination is not recomputed on the merge. `PaginationResponse.total_count`
+   * is optional; recomputing it on partial pages would mis-represent the
+   * cross-page total (the handler may have served page 1 of N, and the seeded
+   * fixture sits outside that pagination context). Storyboards asserting on
+   * totals should seed the handler's response, not the post-merge envelope.
+   * Same sandbox gating contract as
+   * {@link TestControllerBridge.getSeededProducts}.
+   */
+  getSeededSignals?: (ctx: TestControllerBridgeContext<TAccount>) => Promise<SeededSignal[]> | SeededSignal[];
+
+  /**
+   * Retrieve seeded creative-delivery entries for `get_creative_delivery`.
+   * Returned entries are appended to the handler response's `creatives` array;
+   * on `creative_id` collision the seeded entry wins (storyboards seed
+   * deliberately — a seeded fixture for an existing creative_id is an explicit
+   * author override, matching the precedent set by other list-shaped bridges).
+   *
+   * After the merge, `pagination.total` (when set by the handler) is updated
+   * by the count of new non-colliding seeded entries. `get_creative_delivery`
+   * does not carry a `query_summary` block, and there is no top-level
+   * aggregated-totals envelope (unlike `get_media_buy_delivery`), so no other
+   * recomputation is performed.
+   *
+   * Unblocks the `creative-template` / `creative-generative` /
+   * `creative-ad-server` delivery-readback storyboards. Same sandbox gating
+   * contract as {@link TestControllerBridge.getSeededProducts}.
+   */
+  getSeededCreativeDelivery?: (
+    ctx: TestControllerBridgeContext<TAccount>
+  ) => Promise<SeededCreativeDelivery[]> | SeededCreativeDelivery[];
+
+  /**
+   * Retrieve seeded creative-feature results for `get_creative_features`.
+   * `get_creative_features` returns a `oneOf` envelope — the success arm
+   * carries `results: CreativeFeatureResult[]` (one entry per evaluated
+   * feature). The bridge seeds at the per-feature granularity: returned
+   * entries are merged into the success arm's `results` array, dedup by
+   * `feature_id`, seeded wins on collision. Adopters can override specific
+   * feature scores (e.g., brand-safety policy outcomes) without rewriting
+   * the entire evaluation handler.
+   *
+   * When the handler returned the error arm (`errors[]`), the bridge is a
+   * no-op — error envelopes pass through unchanged. When the handler
+   * returned the success arm, framework-managed `context` / `ext` round-trip
+   * from the handler verbatim. Same sandbox gating contract as
+   * {@link TestControllerBridge.getSeededProducts}.
+   */
+  getSeededCreativeFeatures?: (
+    ctx: TestControllerBridgeContext<TAccount>
+  ) => Promise<SeededCreativeFeature[]> | SeededCreativeFeature[];
 }
 
 /**
@@ -1275,6 +1362,224 @@ export function replaceContentStandardsIfSeeded(
   return replaced;
 }
 
+// ---------------------------------------------------------------------------
+// Signals / creative delivery / creative features
+//
+// `get_signals` (signal-marketplace + signal-owned)   → list-merge by signal_id
+// `get_creative_delivery` (creative-* delivery)        → list-merge by creative_id, pagination.total update
+// `get_creative_features` (creative-* governance)      → list-merge into success-arm `results` by feature_id
+//
+// All three follow the validate-and-drop / dedupe-and-stamp-sandbox
+// precedent set by the earlier bridges. The features bridge gates on the
+// success arm — error envelopes pass through unchanged.
+// ---------------------------------------------------------------------------
+
+/**
+ * Canonical dedup key for a `SignalID`. `SignalID` is a discriminated union
+ * (`{source:'catalog', data_provider_domain, id}` vs `{source:'agent',
+ * agent_url, id}`) — two signals with the same `id` from different sources
+ * are distinct, so dedup keys on the full source+origin+id tuple.
+ */
+function signalIdDedupKey(signal: SeededSignal): string | undefined {
+  const sid = signal.signal_id as unknown;
+  if (!sid || typeof sid !== 'object' || Array.isArray(sid)) return undefined;
+  const source = (sid as { source?: unknown }).source;
+  const id = (sid as { id?: unknown }).id;
+  if (typeof source !== 'string' || typeof id !== 'string' || id.length === 0) return undefined;
+  if (source === 'catalog') {
+    const origin = (sid as { data_provider_domain?: unknown }).data_provider_domain;
+    if (typeof origin !== 'string' || origin.length === 0) return undefined;
+    return `catalog|${origin}|${id}`;
+  }
+  if (source === 'agent') {
+    const origin = (sid as { agent_url?: unknown }).agent_url;
+    if (typeof origin !== 'string' || origin.length === 0) return undefined;
+    return `agent|${origin}|${id}`;
+  }
+  return undefined;
+}
+
+/**
+ * Validate seeded signals. Drops entries whose `signal_id` is not a valid
+ * `SignalID` discriminated-union shape (`{source:'catalog',
+ * data_provider_domain, id}` or `{source:'agent', agent_url, id}`). A missing
+ * or malformed `signal_id` collides on `undefined === undefined` when
+ * deduping, so we drop early.
+ */
+export function filterValidSeededSignals(
+  raw: unknown,
+  logger?: { warn: (message: string, meta?: Record<string, unknown>) => void }
+): SeededSignal[] {
+  if (!Array.isArray(raw)) {
+    logger?.warn('testController.getSeededSignals did not return an array; skipping bridge', {
+      received: typeof raw,
+    });
+    return [];
+  }
+  const valid: SeededSignal[] = [];
+  raw.forEach((entry, index) => {
+    if (!entry || typeof entry !== 'object' || Array.isArray(entry)) {
+      logger?.warn('testController.getSeededSignals entry is not an object; dropping', { index });
+      return;
+    }
+    const key = signalIdDedupKey(entry as SeededSignal);
+    if (!key) {
+      logger?.warn(
+        'testController.getSeededSignals entry has invalid signal_id (expected {source:catalog,data_provider_domain,id} or {source:agent,agent_url,id}); dropping',
+        { index }
+      );
+      return;
+    }
+    valid.push(entry as SeededSignal);
+  });
+  return valid;
+}
+
+/**
+ * Validate seeded creative-delivery entries. Drops entries missing a non-empty
+ * string `creative_id`.
+ */
+export function filterValidSeededCreativeDelivery(
+  raw: unknown,
+  logger?: { warn: (message: string, meta?: Record<string, unknown>) => void }
+): SeededCreativeDelivery[] {
+  return filterValidById<SeededCreativeDelivery>(raw, 'creative_id', 'getSeededCreativeDelivery', logger);
+}
+
+/**
+ * Validate seeded creative-feature results. Drops entries missing a non-empty
+ * string `feature_id` (the dedup key against the handler's `results` array).
+ */
+export function filterValidSeededCreativeFeatures(
+  raw: unknown,
+  logger?: { warn: (message: string, meta?: Record<string, unknown>) => void }
+): SeededCreativeFeature[] {
+  return filterValidById<SeededCreativeFeature>(raw, 'feature_id', 'getSeededCreativeFeatures', logger);
+}
+
+/**
+ * Merge seeded signals into a `get_signals` response. Existing handler signals
+ * come first; seeded entries append after deduping by `signal_id`. On
+ * collision the seeded entry wins. Stamps `sandbox: true` unless the handler
+ * explicitly declared `sandbox: false`.
+ *
+ * `get_signals` carries `pagination: PaginationResponse` and no `query_summary`.
+ * Pagination is not recomputed on the merge. `PaginationResponse.total_count`
+ * is optional; recomputing it on partial pages would mis-represent the
+ * cross-page total (the handler may have served page 1 of N, and the seeded
+ * fixture sits outside that pagination context). Storyboards asserting on
+ * totals should seed the handler's response, not the post-merge envelope.
+ */
+export function mergeSeededSignalsIntoResponse(
+  response: GetSignalsResponse,
+  seeded: readonly SeededSignal[]
+): GetSignalsResponse {
+  if (!seeded.length) return response;
+  const seededKeys = new Set<string>();
+  for (const s of seeded) {
+    const key = signalIdDedupKey(s);
+    if (key) seededKeys.add(key);
+  }
+  const existing = Array.isArray(response.signals) ? response.signals : [];
+  const retained = existing.filter(s => {
+    const key = s ? signalIdDedupKey(s) : undefined;
+    return key == null || !seededKeys.has(key);
+  });
+  const merged: GetSignalsResponse = {
+    ...response,
+    signals: [...retained, ...seeded],
+  };
+  if ((response as { sandbox?: unknown }).sandbox !== false) {
+    (merged as { sandbox?: boolean }).sandbox = true;
+  }
+  return merged;
+}
+
+/**
+ * Merge seeded creative-delivery entries into a `get_creative_delivery`
+ * response. Existing handler creatives come first; seeded entries append after
+ * deduping by `creative_id`. On collision the seeded entry wins (matches the
+ * precedent set by `mergeSeededMediaBuyDelivery` — storyboards seed
+ * deliberately, so a seeded fixture for an existing id is an explicit author
+ * override).
+ *
+ * `pagination.total` (optional per the AdCP 3.0.11 schema) is incremented by
+ * the count of new non-colliding seeded entries. There is no top-level
+ * aggregated-totals envelope on this response (unlike `get_media_buy_delivery`),
+ * so no further recomputation is performed. Stamps `sandbox: true` unless the
+ * handler explicitly declared `sandbox: false`. Returns a NEW response object.
+ */
+export function mergeSeededCreativeDeliveryIntoResponse(
+  response: GetCreativeDeliveryResponse,
+  seeded: readonly SeededCreativeDelivery[]
+): GetCreativeDeliveryResponse {
+  if (!seeded.length) return response;
+  const seededIds = new Set<string>();
+  for (const c of seeded) seededIds.add(c.creative_id);
+  const existing = Array.isArray(response.creatives) ? response.creatives : [];
+  const existingIds = new Set<string>();
+  for (const c of existing) {
+    if (c && typeof c.creative_id === 'string') existingIds.add(c.creative_id);
+  }
+  const retained = existing.filter(c => !seededIds.has(c?.creative_id));
+  let newCount = 0;
+  for (const c of seeded) if (!existingIds.has(c.creative_id)) newCount += 1;
+  const merged: GetCreativeDeliveryResponse = {
+    ...response,
+    creatives: [...retained, ...seeded],
+  };
+  if ((response as { sandbox?: unknown }).sandbox !== false) {
+    (merged as { sandbox?: boolean }).sandbox = true;
+  }
+  // `pagination.total` is the schema-correct field name on
+  // GetCreativeDeliveryResponse (distinct from `pagination.total_count` used
+  // by list_creatives / get_media_buys / list_accounts).
+  const pagination = (response as { pagination?: { total?: unknown } }).pagination;
+  if (pagination && typeof pagination === 'object' && typeof pagination.total === 'number') {
+    (merged as { pagination?: unknown }).pagination = {
+      ...pagination,
+      total: pagination.total + newCount,
+    };
+  }
+  return merged;
+}
+
+/**
+ * Merge seeded creative-feature results into a `get_creative_features`
+ * response. The response is a `oneOf` envelope — success arm carries
+ * `results: CreativeFeatureResult[]`, error arm carries `errors: Error[]`.
+ * When the handler returned the error arm, this helper is a no-op; the error
+ * envelope passes through unchanged. When the handler returned the success
+ * arm, seeded results merge into the `results` array (dedup by `feature_id`,
+ * seeded wins on collision).
+ *
+ * Framework-managed envelope fields (`context`, `ext`, `detail_url`,
+ * `pricing_option_id`, `vendor_cost`, `currency`, `consumption`) round-trip
+ * from the handler verbatim — the bridge only augments the per-feature
+ * results array.
+ *
+ * Returns a NEW response object.
+ */
+export function mergeSeededCreativeFeaturesIntoResponse(
+  response: GetCreativeFeaturesResponse,
+  seeded: readonly SeededCreativeFeature[]
+): GetCreativeFeaturesResponse {
+  if (!seeded.length) return response;
+  // Discriminate the success vs error arms. The error arm carries `errors`
+  // and no `results`; the success arm carries `results` (required per spec).
+  const successArm = response as { results?: CreativeFeatureResult[] };
+  if (!Array.isArray(successArm.results)) return response;
+  const seededIds = new Set<string>();
+  for (const r of seeded) seededIds.add(r.feature_id);
+  const existing = successArm.results;
+  const retained = existing.filter(r => !seededIds.has(r?.feature_id));
+  const merged = {
+    ...successArm,
+    results: [...retained, ...seeded],
+  } as GetCreativeFeaturesResponse;
+  return merged;
+}
+
 /**
  * Bridge the default test-controller store (a `Map<string, unknown>` that
  * holds seeded fixtures by `product_id`, populated by `seed_product` scenarios)
@@ -1460,6 +1765,40 @@ export interface BridgeFromSessionStoreOptions<TSession> {
   selectSeededCollectionLists?: (
     session: TSession
   ) => Iterable<CollectionList> | Promise<Iterable<CollectionList> | null | undefined> | null | undefined;
+
+  /**
+   * Extract seeded signals from a resolved session. Each entry MUST carry a
+   * non-empty string `signal_id`. Feeds `get_signals` (append-merge into
+   * `signals`, dedup by `signal_id`, seeded wins). Works uniformly across
+   * `signal-marketplace` and `signal-owned` specialisms.
+   */
+  selectSeededSignals?: (
+    session: TSession
+  ) => Iterable<SeededSignal> | Promise<Iterable<SeededSignal> | null | undefined> | null | undefined;
+
+  /**
+   * Extract seeded creative-delivery entries from a resolved session. Each
+   * entry MUST carry a non-empty string `creative_id`. Feeds
+   * `get_creative_delivery` (append-merge into `creatives`, dedup by
+   * `creative_id`, seeded wins; `pagination.total` updated when set).
+   */
+  selectSeededCreativeDelivery?: (
+    session: TSession
+  ) =>
+    | Iterable<SeededCreativeDelivery>
+    | Promise<Iterable<SeededCreativeDelivery> | null | undefined>
+    | null
+    | undefined;
+
+  /**
+   * Extract seeded creative-feature results from a resolved session. Each
+   * entry MUST carry a non-empty string `feature_id`. Feeds
+   * `get_creative_features` (merge into success-arm `results` by `feature_id`,
+   * seeded wins; no-op when the handler returned the error arm).
+   */
+  selectSeededCreativeFeatures?: (
+    session: TSession
+  ) => Iterable<SeededCreativeFeature> | Promise<Iterable<SeededCreativeFeature> | null | undefined> | null | undefined;
 }
 
 /**
@@ -1505,6 +1844,9 @@ export function bridgeFromSessionStore<TSession, TAccount = unknown>(
     selectSeededPropertyLists,
     selectSeededContentStandards,
     selectSeededCollectionLists,
+    selectSeededSignals,
+    selectSeededCreativeDelivery,
+    selectSeededCreativeFeatures,
   } = opts;
 
   // Each per-tool callback resolves the session per-request (no memoisation —
@@ -1590,6 +1932,27 @@ export function bridgeFromSessionStore<TSession, TAccount = unknown>(
     bridge.getSeededCollectionLists = async ctx => {
       const session = await loadSession(ctx.input);
       const entries = await selectSeededCollectionLists(session);
+      return entries ? Array.from(entries) : [];
+    };
+  }
+  if (selectSeededSignals) {
+    bridge.getSeededSignals = async ctx => {
+      const session = await loadSession(ctx.input);
+      const entries = await selectSeededSignals(session);
+      return entries ? Array.from(entries) : [];
+    };
+  }
+  if (selectSeededCreativeDelivery) {
+    bridge.getSeededCreativeDelivery = async ctx => {
+      const session = await loadSession(ctx.input);
+      const entries = await selectSeededCreativeDelivery(session);
+      return entries ? Array.from(entries) : [];
+    };
+  }
+  if (selectSeededCreativeFeatures) {
+    bridge.getSeededCreativeFeatures = async ctx => {
+      const session = await loadSession(ctx.input);
+      const entries = await selectSeededCreativeFeatures(session);
       return entries ? Array.from(entries) : [];
     };
   }

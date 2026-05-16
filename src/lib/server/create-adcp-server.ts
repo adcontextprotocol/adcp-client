@@ -138,6 +138,9 @@ import {
   mergeSeededPropertyListsIntoResponse,
   mergeSeededCollectionListsIntoResponse,
   mergeSeededContentStandardsIntoResponse,
+  mergeSeededSignalsIntoResponse,
+  mergeSeededCreativeDeliveryIntoResponse,
+  mergeSeededCreativeFeaturesIntoResponse,
   replaceAccountFinancialsIfSeeded,
   replacePropertyListIfSeeded,
   replaceCollectionListIfSeeded,
@@ -152,6 +155,9 @@ import {
   filterValidSeededPropertyLists,
   filterValidSeededCollectionLists,
   filterValidSeededContentStandards,
+  filterValidSeededSignals,
+  filterValidSeededCreativeDelivery,
+  filterValidSeededCreativeFeatures,
   type TestControllerBridge,
   type TestControllerBridgeContext,
 } from './test-controller-bridge';
@@ -4171,6 +4177,84 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
               } catch (err) {
                 const reason = err instanceof Error ? err.message : String(err);
                 logger.warn('testController.getSeededCollectionLists failed; returning handler response unchanged', {
+                  tool: toolName,
+                  error: reason,
+                });
+              }
+            }
+
+            // get_signals — append-merge by signal_id. Works uniformly across
+            // signal-marketplace and signal-owned specialisms (one bridge, both
+            // dispatched on the same tool; the per-signal `signal_type` field
+            // is the marketplace-vs-owned discriminator).
+            else if (toolName === 'get_signals' && testControllerBridge.getSeededSignals) {
+              try {
+                const rawSeeded = await testControllerBridge.getSeededSignals(bridgeCtx);
+                const seeded = filterValidSeededSignals(rawSeeded, logger);
+                if (seeded.length > 0) {
+                  const sc = formatted.structuredContent as
+                    | import('../types/tools.generated').GetSignalsResponse
+                    | undefined;
+                  if (sc && typeof sc === 'object') {
+                    const merged = mergeSeededSignalsIntoResponse(sc, seeded);
+                    formatted = wrap(merged);
+                  }
+                }
+              } catch (err) {
+                const reason = err instanceof Error ? err.message : String(err);
+                logger.warn('testController.getSeededSignals failed; returning handler response unchanged', {
+                  tool: toolName,
+                  error: reason,
+                });
+              }
+            }
+
+            // get_creative_delivery — append-merge by creative_id;
+            // `pagination.total` (when set by the handler) updates by the
+            // count of new non-colliding seeded entries. No aggregated-totals
+            // recomputation — this response has no top-level totals envelope.
+            else if (toolName === 'get_creative_delivery' && testControllerBridge.getSeededCreativeDelivery) {
+              try {
+                const rawSeeded = await testControllerBridge.getSeededCreativeDelivery(bridgeCtx);
+                const seeded = filterValidSeededCreativeDelivery(rawSeeded, logger);
+                if (seeded.length > 0) {
+                  const sc = formatted.structuredContent as
+                    | import('../types/tools.generated').GetCreativeDeliveryResponse
+                    | undefined;
+                  if (sc && typeof sc === 'object') {
+                    const merged = mergeSeededCreativeDeliveryIntoResponse(sc, seeded);
+                    formatted = wrap(merged);
+                  }
+                }
+              } catch (err) {
+                const reason = err instanceof Error ? err.message : String(err);
+                logger.warn('testController.getSeededCreativeDelivery failed; returning handler response unchanged', {
+                  tool: toolName,
+                  error: reason,
+                });
+              }
+            }
+
+            // get_creative_features — `oneOf` envelope. Success arm: merge
+            // seeded `CreativeFeatureResult[]` into `results` (dedup by
+            // `feature_id`, seeded wins). Error arm: no-op (the helper
+            // discriminates by presence of `results: []`).
+            else if (toolName === 'get_creative_features' && testControllerBridge.getSeededCreativeFeatures) {
+              try {
+                const rawSeeded = await testControllerBridge.getSeededCreativeFeatures(bridgeCtx);
+                const seeded = filterValidSeededCreativeFeatures(rawSeeded, logger);
+                if (seeded.length > 0) {
+                  const sc = formatted.structuredContent as
+                    | import('../types/tools.generated').GetCreativeFeaturesResponse
+                    | undefined;
+                  if (sc && typeof sc === 'object') {
+                    const merged = mergeSeededCreativeFeaturesIntoResponse(sc, seeded);
+                    if (merged !== sc) formatted = wrap(merged);
+                  }
+                }
+              } catch (err) {
+                const reason = err instanceof Error ? err.message : String(err);
+                logger.warn('testController.getSeededCreativeFeatures failed; returning handler response unchanged', {
                   tool: toolName,
                   error: reason,
                 });
