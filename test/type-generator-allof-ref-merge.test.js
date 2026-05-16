@@ -116,6 +116,48 @@ writeFileSync(__OUT_PATH__, JSON.stringify({
   );
 });
 
+test('enforceStrictSchema drops resolved-base additionalProperties:true when merging', () => {
+  // Regression: creative-brief.json and catalog.json both declare top-level
+  // `additionalProperties: true`. Without normalizing the resolved base, that
+  // flag propagated into the merged shape and emitted a
+  // `[k: string]: unknown | undefined` index signature on `BriefAsset` /
+  // `CatalogAsset` — wider than the pre-merge intersection form. The fix
+  // applies `enforceStrictSchema` to the resolved base inside
+  // `resolveAllOfRefForMerge` so the strip happens before the merge.
+  const result = runHarness(`
+import { writeFileSync } from 'fs';
+import { enforceStrictSchema } from '__GENERATE_TYPES__';
+
+const input = {
+  type: 'object',
+  properties: {
+    asset_type: { type: 'string', const: 'brief' },
+  },
+  required: ['asset_type'],
+  allOf: [
+    { $ref: '/schemas/3.0.11/core/creative-brief.json' },
+  ],
+};
+const out = enforceStrictSchema(JSON.parse(JSON.stringify(input)));
+writeFileSync(__OUT_PATH__, JSON.stringify({
+  hasAllOf: !!out.allOf,
+  additionalProperties: out.additionalProperties,
+  hasIndexSignatureFlag: out.additionalProperties === true,
+}));
+`);
+  assert.strictEqual(result.hasAllOf, false, 'allOf must be consumed by the merge');
+  assert.notStrictEqual(
+    result.additionalProperties,
+    true,
+    'resolved base additionalProperties:true must not propagate into merged shape'
+  );
+  assert.strictEqual(
+    result.hasIndexSignatureFlag,
+    false,
+    'merged shape must not carry the index-signature widening flag'
+  );
+});
+
 test('compiled oneOf with two broken-pattern variants emits a clean discriminated union', () => {
   // Uses a real cached schema (signal-pricing.json) so the cache resolver
   // path is exercised end-to-end without depending on every $ref the base

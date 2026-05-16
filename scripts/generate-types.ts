@@ -219,7 +219,17 @@ function resolveAllOfRefForMerge(ref: string): any | null {
   // Apply the same preprocessing the ref resolver uses for normal $ref reads —
   // otherwise minItems/maxItems constraints from the base schema would leak
   // through the merge and resurrect as `@minItems`/tuple types in jsts output.
-  return removeArrayLengthConstraints(raw);
+  const preprocessed = removeArrayLengthConstraints(raw);
+  // Normalize the resolved base through the same strict-schema pipeline the
+  // parent went through. Without this, a base schema's top-level
+  // `additionalProperties: true` (e.g. creative-brief.json, catalog.json)
+  // would propagate into the merged shape and emit a
+  // `[k: string]: unknown | undefined` index signature on the resulting flat
+  // interface — wider than the pre-merge intersection form. Recursion is
+  // safe: `loadCachedSchema` reads a fresh JSON document per call (no shared
+  // mutable cache), and AdCP schemas aren't cyclic at the `allOf:[{ $ref }]`
+  // sibling level, so transitive base resolution terminates.
+  return enforceStrictSchema(preprocessed);
 }
 
 /**

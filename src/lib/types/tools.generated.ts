@@ -5206,7 +5206,6 @@ export interface BriefAsset {
       regulation?: string;
       /**
        * Minimum display duration in milliseconds. For video/audio disclosures, how long the disclosure must be visible or audible. For static formats, how long the disclosure must remain on screen before any auto-advance.
-       * @minimum 1
        */
       min_duration_ms?: number;
       /**
@@ -5224,7 +5223,6 @@ export interface BriefAsset {
    * Discriminator identifying this as a brief asset. See /schemas/creative/asset-types for the registry.
    */
   asset_type: 'brief';
-  [k: string]: unknown | undefined;
 }
 /**
  * A reference asset that provides creative context. Carries visual materials (mood boards, product shots, example creatives) with semantic roles that tell creative agents how to use them.
@@ -5299,7 +5297,6 @@ export interface CatalogAsset {
    * Discriminator identifying this as a catalog asset. See /schemas/creative/asset-types for the registry.
    */
   asset_type: 'catalog';
-  [k: string]: unknown | undefined;
 }
 /**
  * An industry-standard identifier for an advertising creative (e.g., Ad-ID, ISCI, Clearcast clock number). These identifiers are managed by external registries and used across the supply chain to track and reference specific creative assets.
