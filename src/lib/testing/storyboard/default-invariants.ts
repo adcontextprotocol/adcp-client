@@ -31,6 +31,13 @@
  *     per-step validations miss. Scoped by `(resource_type, resource_id)`
  *     so unrelated resources don't interfere. Tables below cite the spec
  *     enum schemas in `static/schemas/source/enums/*-status.json`.
+ *   - `impairment.coherence` — cross-resource invariant: every entry in
+ *     `media_buy.impairments[]` MUST reference a resource the seller has
+ *     reported in an offline state (forward); any resource the run
+ *     transitioned to an offline state AND that the buy references MUST
+ *     appear in `impairments[]` while the buy is non-terminal (inverse);
+ *     `health == "impaired"` iff `impairments[]` is non-empty. See
+ *     adcontextprotocol/adcp#2859 for the originating spec issue.
  */
 
 import { ADCP_VERSION } from '../../version';
@@ -980,4 +987,396 @@ function asArray(v: unknown): unknown[] {
 
 function asString(v: unknown): string | undefined {
   return typeof v === 'string' && v.length > 0 ? v : undefined;
+}
+
+// ────────────────────────────────────────────────────────────
+// impairment.coherence
+// ────────────────────────────────────────────────────────────
+
+/**
+ * Per-resource-type offline status sets. An impairment entry referencing
+ * `(resource_type, resource_id)` is coherent when the runner's last
+ * observation for that resource matches one of these values.
+ *
+ * Sourced from spec issue #2859 plus the resource-status enum schemas:
+ *   - audience:     `suspended`    (audience-status.json)
+ *   - creative:     `rejected`     (creative-status.json — terminal)
+ *   - catalog_item: `withdrawn`    (catalog-item-status.json)
+ *   - event_source: `insufficient` (assessment-status.json, on
+ *                                   event-source-health.status)
+ *
+ * `property` is intentionally absent — offline state is sourced from
+ * `brand.json` / `adagents.json` depublishing, not from a status enum on
+ * the wire. The runner has no observation hook for that transition today,
+ * so property-typed impairments grade silent rather than emitting a forward
+ * pass / fail. The spec issue calls this out explicitly.
+ */
+const IMPAIRMENT_OFFLINE_STATUS: ReadonlyMap<string, ReadonlySet<string>> = new Map([
+  ['audience', new Set(['suspended'])],
+  ['creative', new Set(['rejected'])],
+  ['catalog_item', new Set(['withdrawn'])],
+  ['event_source', new Set(['insufficient'])],
+]);
+
+/**
+ * Media-buy statuses that are non-terminal — the inverse rule only applies
+ * while the buy is still serving (or about to). The spec issue carves out
+ * `completed`, `canceled`, `rejected` as the terminal set that MAY remain
+ * unreported because the buy is no longer accruing impressions.
+ */
+const NON_TERMINAL_MEDIA_BUY_STATUSES: ReadonlySet<string> = new Set([
+  'pending_creatives',
+  'pending_start',
+  'active',
+  'paused',
+]);
+
+interface ImpairmentEntry {
+  resource_type: string;
+  resource_id: string;
+}
+
+interface BuySnapshot {
+  media_buy_id: string;
+  status: string | undefined;
+  health: string | undefined;
+  impairments: ImpairmentEntry[];
+  referencedCreativeIds: Set<string>;
+  stepId: string;
+}
+
+interface ResourceObservation {
+  status: string;
+  stepId: string;
+}
+
+/**
+ * Private per-run scratch state. Namespaced under
+ * `ctx.state.impairmentCoherence` so generic field names (`offlineResources`,
+ * `observedTransition`) can't collide with another assertion that lands
+ * later and pokes the same shared `ctx.state` bag.
+ */
+interface ImpairmentCoherenceState {
+  /** `${resource_type}:${resource_id}` → last observation, offline or not. */
+  resourceStatus: Map<string, ResourceObservation>;
+  /** `${resource_type}:${resource_id}` for entries currently in an offline status. */
+  offlineResources: Map<string, ResourceObservation>;
+  /** Run actually observed at least one resource status transition. */
+  observedTransition: boolean;
+  /** Run actually observed at least one media-buy snapshot read. */
+  observedBuySnapshot: boolean;
+}
+
+const IMPAIRMENT_STATE_KEY = 'impairmentCoherence';
+
+function getImpairmentState(ctx: import('./assertions').AssertionContext): ImpairmentCoherenceState {
+  // onStart populates the namespaced slot; the cast is safe because no other
+  // assertion writes there.
+  return ctx.state[IMPAIRMENT_STATE_KEY] as ImpairmentCoherenceState;
+}
+
+registerOnce('impairment.coherence', {
+  id: 'impairment.coherence',
+  default: true,
+  description:
+    'media_buy.impairments[] MUST reference currently-offline resources (forward); any offline resource referenced by a non-terminal buy MUST appear in impairments[] (inverse); health == "impaired" iff impairments[] is non-empty.',
+  onStart: ctx => {
+    const state: ImpairmentCoherenceState = {
+      resourceStatus: new Map(),
+      offlineResources: new Map(),
+      observedTransition: false,
+      observedBuySnapshot: false,
+    };
+    ctx.state[IMPAIRMENT_STATE_KEY] = state;
+  },
+  onStep: (ctx, stepResult) => {
+    if (stepResult.skipped) return [];
+    if (stepResult.expect_error) return [];
+    if (!stepResult.passed) return [];
+    const body = (stepResult as unknown as { response?: unknown }).response;
+    if (!body || typeof body !== 'object') return [];
+    if (extractAdcpError(stepResult)) return [];
+
+    const state = getImpairmentState(ctx);
+
+    // Direct, dedicated extractor for the four families this invariant cares
+    // about. NOT routed through `extractStatusObservations` (which is bound
+    // to the `status.monotonic` transition graphs and therefore excludes
+    // the new offline values `suspended` / `withdrawn` / `insufficient`):
+    // monotonic's graphs intentionally enumerate only spec-stable enum
+    // values, but those new offline states are exactly what this invariant
+    // needs to observe.
+    for (const ob of extractImpairmentObservations(stepResult.task, body as Record<string, unknown>)) {
+      const key = `${ob.resource_type}:${ob.resource_id}`;
+      state.resourceStatus.set(key, { status: ob.status, stepId: stepResult.step_id });
+      const offline = IMPAIRMENT_OFFLINE_STATUS.get(ob.resource_type);
+      if (offline?.has(ob.status)) {
+        state.offlineResources.set(key, { status: ob.status, stepId: stepResult.step_id });
+        state.observedTransition = true;
+      } else {
+        // Resource recovered from offline → drop the entry so the inverse
+        // rule no longer expects it in impairments[].
+        state.offlineResources.delete(key);
+      }
+    }
+
+    // Extract media-buy snapshots and run the three coherence checks.
+    const snapshots = extractBuySnapshots(stepResult.task, body as Record<string, unknown>, stepResult.step_id);
+    if (snapshots.length === 0) return [];
+    state.observedBuySnapshot = true;
+
+    const description = 'media_buy.impairments[] coheres with resource state and buy health';
+    type CoherenceResult = {
+      passed: boolean;
+      description: string;
+      step_id: string;
+      error?: string;
+      hint?: import('./types').ImpairmentCoherenceHint;
+    };
+    const results: CoherenceResult[] = [];
+
+    for (const snap of snapshots) {
+      const isTerminal = Boolean(snap.status && !NON_TERMINAL_MEDIA_BUY_STATUSES.has(snap.status));
+
+      // Health-iff-impairments check. The spec ties the two together — a
+      // buy with non-empty impairments[] MUST report `health: "impaired"`,
+      // and an `impaired` health MUST have at least one impairment entry.
+      // Skip on terminal buys (the spec's terminal carve-out lets the
+      // seller stop tracking impairments, which makes the biconditional
+      // moot) and on snapshots that omit `health` entirely (sellers
+      // without health scoring grade silent).
+      if (!isTerminal && snap.health !== undefined) {
+        const hasImpairments = snap.impairments.length > 0;
+        const isImpaired = snap.health === 'impaired';
+        if (hasImpairments !== isImpaired) {
+          const message =
+            `media_buy ${snap.media_buy_id} health="${snap.health}" but impairments[] has ` +
+            `${snap.impairments.length} entries. ` +
+            `Spec: health MUST be "impaired" iff impairments[] is non-empty (adcp#2859).`;
+          results.push({
+            passed: false,
+            description,
+            step_id: stepResult.step_id,
+            error: message,
+            hint: {
+              kind: 'impairment_coherence_violation',
+              violation: 'health',
+              message,
+              media_buy_id: snap.media_buy_id,
+              buy_step_id: snap.stepId,
+              buy_health: snap.health,
+              impairments_count: snap.impairments.length,
+            },
+          });
+        }
+      }
+
+      // Forward check. Every impairment entry must reference a resource the
+      // runner has observed in an offline state. If we have an observation
+      // and it's NOT offline, the seller is reporting a phantom impairment;
+      // if we have no observation at all, grade silent (can't disprove).
+      for (const entry of snap.impairments) {
+        const key = `${entry.resource_type}:${entry.resource_id}`;
+        const offline = IMPAIRMENT_OFFLINE_STATUS.get(entry.resource_type);
+        if (!offline) continue; // property or unknown family — skip silently
+        if (state.offlineResources.has(key)) continue; // ok, we agree it's offline
+
+        const lastStatus = state.resourceStatus.get(key);
+        if (!lastStatus) continue; // never observed — can't grade
+
+        const offlineList = [...offline].sort().join(', ');
+        const message =
+          `media_buy ${snap.media_buy_id} impairments[] references ${entry.resource_type} ` +
+          `${entry.resource_id}, but its last observed status is "${lastStatus.status}" (step "${lastStatus.stepId}"). ` +
+          `Offline statuses for ${entry.resource_type}: ${offlineList}.`;
+        results.push({
+          passed: false,
+          description,
+          step_id: stepResult.step_id,
+          error: message,
+          hint: {
+            kind: 'impairment_coherence_violation',
+            violation: 'forward',
+            message,
+            media_buy_id: snap.media_buy_id,
+            buy_step_id: snap.stepId,
+            resource_type: entry.resource_type,
+            resource_id: entry.resource_id,
+            resource_status: lastStatus.status,
+            resource_step_id: lastStatus.stepId,
+            impairments_count: snap.impairments.length,
+          },
+        });
+      }
+
+      // Inverse check (creative only). For each creative_id the buy
+      // references via packages[].creative_assignments[].creative_id, if
+      // the runner has it in the offline set AND the buy is non-terminal
+      // AND the impairments[] list doesn't mention it, the seller failed
+      // to propagate the resource state into the buy. Audience / catalog /
+      // event-source inverse coverage is intentionally deferred: their
+      // buy-side reference shape isn't yet stable enough in the cached
+      // schema to extract without ambiguity. Tracked in adcp#2860.
+      if (isTerminal) continue;
+
+      const impairedCreativeIds = new Set(
+        snap.impairments.filter(e => e.resource_type === 'creative').map(e => e.resource_id)
+      );
+      for (const creativeId of snap.referencedCreativeIds) {
+        const key = `creative:${creativeId}`;
+        const offline = state.offlineResources.get(key);
+        if (!offline) continue;
+        if (impairedCreativeIds.has(creativeId)) continue;
+        const message =
+          `media_buy ${snap.media_buy_id} (status="${snap.status ?? 'unknown'}") references creative ` +
+          `${creativeId} which is offline (status="${offline.status}", step "${offline.stepId}"), ` +
+          `but impairments[] does not list it. Spec: any offline resource referenced by a ` +
+          `non-terminal buy MUST appear in impairments[] (adcp#2859).`;
+        results.push({
+          passed: false,
+          description,
+          step_id: stepResult.step_id,
+          error: message,
+          hint: {
+            kind: 'impairment_coherence_violation',
+            violation: 'inverse',
+            message,
+            media_buy_id: snap.media_buy_id,
+            buy_step_id: snap.stepId,
+            resource_type: 'creative',
+            resource_id: creativeId,
+            resource_status: offline.status,
+            resource_step_id: offline.stepId,
+            impairments_count: snap.impairments.length,
+          },
+        });
+      }
+    }
+
+    if (results.length === 0) {
+      return [{ passed: true, description, step_id: stepResult.step_id }];
+    }
+    return results;
+  },
+  // Emit a run-level summary so the track rollup can distinguish
+  // "wired and exercised" from "wired but neither side observed". When
+  // either side is missing the assertion is functionally NA — the spec
+  // issue explicitly carves out that case rather than treating it as a
+  // silent pass with false confidence.
+  onEnd: ctx => {
+    const state = ctx.state[IMPAIRMENT_STATE_KEY] as ImpairmentCoherenceState | undefined;
+    const exercised = Boolean(state?.observedTransition && state?.observedBuySnapshot);
+    return [
+      {
+        passed: true,
+        description: 'media_buy.impairments[] coheres with resource state and buy health',
+        observation_count: exercised ? 1 : 0,
+      },
+    ];
+  },
+});
+
+/**
+ * Dedicated status extractor for the resource families this invariant
+ * grades. Returns `(resource_type, resource_id, status)` triples for every
+ * shape the spec carries an offline value on. Independent of
+ * `status.monotonic`'s `extractStatusObservations` so the new offline
+ * statuses (`suspended`, `withdrawn`, `insufficient`) — which monotonic's
+ * graphs intentionally don't enumerate — are still observable here.
+ */
+function extractImpairmentObservations(
+  task: string,
+  body: Record<string, unknown>
+): { resource_type: string; resource_id: string; status: string }[] {
+  const out: { resource_type: string; resource_id: string; status: string }[] = [];
+  if (task === 'sync_creatives' || task === 'list_creatives') {
+    for (const c of asArray(body.creatives)) {
+      if (!isObject(c)) continue;
+      const id = asString(c.creative_id);
+      const status = asString(c.status);
+      if (id && status) out.push({ resource_type: 'creative', resource_id: id, status });
+    }
+  } else if (task === 'sync_audiences') {
+    for (const a of asArray(body.audiences)) {
+      if (!isObject(a)) continue;
+      const id = asString(a.audience_id);
+      const status = asString(a.status);
+      if (id && status) out.push({ resource_type: 'audience', resource_id: id, status });
+    }
+  } else if (task === 'sync_catalogs' || task === 'list_catalogs') {
+    // Two response shapes: catalogs[].items[] (nested) or items[] (flat).
+    // Heterogeneous item ids — prefer `item_id` (spec-canonical), then
+    // `offering_id` (SI), `sku` (retail), else `id`. Matches the fallback
+    // chain in `pushCatalogItem`.
+    const collect = (item: Record<string, unknown>) => {
+      const id = asString(item.item_id) ?? asString(item.offering_id) ?? asString(item.sku) ?? asString(item.id);
+      const status = asString(item.status);
+      if (id && status) out.push({ resource_type: 'catalog_item', resource_id: id, status });
+    };
+    for (const cat of asArray(body.catalogs)) {
+      if (!isObject(cat)) continue;
+      for (const item of asArray(cat.items)) if (isObject(item)) collect(item);
+    }
+    for (const item of asArray(body.items)) if (isObject(item)) collect(item);
+  } else if (task === 'sync_event_sources') {
+    for (const es of asArray(body.event_sources)) {
+      if (!isObject(es)) continue;
+      const id = asString(es.event_source_id);
+      // event_source health lives under `health.status` per
+      // `core/event-source-health.json`; the top-level enum is
+      // `assessment-status.json` (`insufficient | minimum | good | excellent`).
+      const health = isObject(es.health) ? es.health : undefined;
+      const status = health ? asString(health.status) : undefined;
+      if (id && status) out.push({ resource_type: 'event_source', resource_id: id, status });
+    }
+  }
+  return out;
+}
+
+/**
+ * Extract every media-buy snapshot present on a step response. Walks
+ * `create_media_buy` / `update_media_buy` (top-level buy object) and
+ * `get_media_buys` (`media_buys[]` array). Returns each snapshot's
+ * impairments[], health, status, and the set of `creative_id`s the buy
+ * references through `packages[].creative_assignments[]` — used by the
+ * inverse rule.
+ */
+function extractBuySnapshots(task: string, body: Record<string, unknown>, stepId: string): BuySnapshot[] {
+  const out: BuySnapshot[] = [];
+  if (task === 'create_media_buy' || task === 'update_media_buy') {
+    const snap = readBuySnapshot(body, stepId);
+    if (snap) out.push(snap);
+  } else if (task === 'get_media_buys') {
+    for (const mb of asArray(body.media_buys)) {
+      if (!isObject(mb)) continue;
+      const snap = readBuySnapshot(mb, stepId);
+      if (snap) out.push(snap);
+    }
+  }
+  return out;
+}
+
+function readBuySnapshot(record: Record<string, unknown>, stepId: string): BuySnapshot | undefined {
+  const media_buy_id = asString(record.media_buy_id);
+  if (!media_buy_id) return undefined;
+  const status = asString(record.status);
+  const health = asString(record.health);
+  const impairments: ImpairmentEntry[] = [];
+  for (const entry of asArray(record.impairments)) {
+    if (!isObject(entry)) continue;
+    const resource_type = asString(entry.resource_type);
+    const resource_id = asString(entry.resource_id);
+    if (!resource_type || !resource_id) continue;
+    impairments.push({ resource_type, resource_id });
+  }
+  const referencedCreativeIds = new Set<string>();
+  for (const pkg of asArray(record.packages)) {
+    if (!isObject(pkg)) continue;
+    for (const ca of asArray(pkg.creative_assignments)) {
+      if (!isObject(ca)) continue;
+      const cid = asString(ca.creative_id);
+      if (cid) referencedCreativeIds.add(cid);
+    }
+  }
+  return { media_buy_id, status, health, impairments, referencedCreativeIds, stepId };
 }
