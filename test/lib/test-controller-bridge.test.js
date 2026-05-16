@@ -19,7 +19,6 @@ const assert = require('node:assert/strict');
 const {
   bridgeFromTestControllerStore,
   bridgeFromSessionStore,
-  mergeSeededProductsIntoResponse,
   mergeSeededCreativesIntoResponse,
   mergeSeededMediaBuysIntoResponse,
   mergeSeededAccountsIntoResponse,
