@@ -48,7 +48,17 @@ import type {
   GetCreativeDeliveryResponse,
   GetCreativeFeaturesResponse,
   CreativeFeatureResult,
+  SIGetOfferingRequest,
+  SIGetOfferingResponse,
 } from '../types/tools.generated';
+import type {
+  GetBrandIdentityRequest,
+  GetBrandIdentityResponse,
+  GetBrandIdentitySuccess,
+  GetRightsRequest,
+  GetRightsResponse,
+  GetRightsSuccess,
+} from '../types/core.generated';
 import { mergeSeedProduct } from '../testing/seed-merge';
 
 /**
@@ -102,6 +112,34 @@ export type SeededAccountFinancials = GetAccountFinancialsSuccess;
  * stays in lockstep with the generated wire schema.
  */
 export type SeededMediaBuyDelivery = GetMediaBuyDeliveryResponse['media_buy_deliveries'][number];
+
+/**
+ * Seeded brand-identity record. The `get_brand_identity` response is a
+ * singleton keyed by `brand_id` (request requires `brand_id`); the bridge
+ * picks the seeded fixture matching `request.brand_id` and replaces the
+ * handler response body, preserving framework-managed `context` / `ext`.
+ */
+export type SeededBrandIdentity = GetBrandIdentitySuccess;
+
+/**
+ * Seeded rights entry — the inline element type of `GetRightsSuccess.rights`.
+ * `get_rights` is a discovery / search tool (natural-language `query`), so the
+ * response carries an array; the bridge appends seeded entries with dedup by
+ * `rights_id`.
+ */
+export type SeededRight = GetRightsSuccess['rights'][number];
+
+/**
+ * Seeded SI offering record. The `si_get_offering` response is a singleton
+ * keyed by `offering_id` (request requires `offering_id`). Although the
+ * sponsored-intelligence flow has session-keyed state in subsequent tools
+ * (`si_initiate_session` issues a session, `si_send_message` advances it),
+ * `si_get_offering` itself is a stateless catalog lookup — the response's
+ * `offering_token` SEEDS a future session but the lookup does not consume
+ * one. That's why the singleton-replace pattern fits cleanly here while
+ * the session-stateful SI tools are intentionally out of scope.
+ */
+export type SeededSiOffering = SIGetOfferingResponse;
 
 /**
  * The shape of `GetMediaBuyDeliveryResponse.aggregated_totals` (optional on the
@@ -339,6 +377,58 @@ export interface TestControllerBridge<TAccount = unknown> {
   getSeededCreativeFeatures?: (
     ctx: TestControllerBridgeContext<TAccount>
   ) => Promise<SeededCreativeFeature[]> | SeededCreativeFeature[];
+
+  /**
+   * Retrieve seeded brand-identity records. `get_brand_identity` returns a
+   * singleton response keyed by `brand_id` (request requires `brand_id`).
+   * The callback returns an array of seeded fixtures keyed by their own
+   * `brand_id`; the framework picks the entry matching the request and
+   * REPLACES the handler response body with that fixture. Framework-managed
+   * envelope fields (`context`, `ext`) round-trip from the handler — matches
+   * the precedent set by {@link replaceContentStandardsIfSeeded} and
+   * {@link replaceAccountFinancialsIfSeeded}.
+   *
+   * When no seeded entry matches, the handler response passes through. Same
+   * sandbox gating contract as {@link TestControllerBridge.getSeededProducts}.
+   * Unblocks the `brand-rights` storyboard identity-discovery phase.
+   */
+  getSeededBrandIdentity?: (
+    ctx: TestControllerBridgeContext<TAccount>
+  ) => Promise<SeededBrandIdentity[]> | SeededBrandIdentity[];
+
+  /**
+   * Retrieve seeded rights entries. `get_rights` is a discovery / search tool
+   * (natural-language `query`); the response carries an array of matching
+   * rights, so the bridge follows the array-collection pattern. Returned
+   * entries are appended to the handler's `rights` array (success arm) with
+   * dedup by `rights_id` — on collision the seeded entry wins, matching the
+   * precedent set by `getSeededProducts` (storyboards seed deliberately).
+   *
+   * Same sandbox gating contract as {@link TestControllerBridge.getSeededProducts}.
+   * Unblocks the `brand-rights` storyboard rights-discovery phase.
+   */
+  getSeededRights?: (ctx: TestControllerBridgeContext<TAccount>) => Promise<SeededRight[]> | SeededRight[];
+
+  /**
+   * Retrieve seeded SI offering records. `si_get_offering` returns a singleton
+   * response keyed by `offering_id` (request requires `offering_id`). The
+   * callback returns an array of seeded fixtures, each carrying an
+   * `offering.offering_id`; the framework picks the entry matching the
+   * request and REPLACES the handler response with that fixture. Handler's
+   * `context` and `ext` round-trip.
+   *
+   * Stateless lookup: although the broader sponsored-intelligence flow has
+   * session-keyed state in `si_initiate_session` / `si_send_message`, the
+   * `si_get_offering` response only PRODUCES an `offering_token` for a
+   * future session — it does not consume one. The singleton-replace pattern
+   * fits here; the session-stateful tools are out of scope by design.
+   *
+   * Same sandbox gating contract as {@link TestControllerBridge.getSeededProducts}.
+   * Unblocks the `sponsored-intelligence` storyboard offering-lookup phase.
+   */
+  getSeededSiOffering?: (
+    ctx: TestControllerBridgeContext<TAccount>
+  ) => Promise<SeededSiOffering[]> | SeededSiOffering[];
 }
 
 /**
@@ -1580,6 +1670,248 @@ export function mergeSeededCreativeFeaturesIntoResponse(
   return merged;
 }
 
+// ---------------------------------------------------------------------------
+// Brand rights / sponsored intelligence
+//
+// `get_brand_identity` and `si_get_offering` are stateless singleton lookups
+// keyed by a top-level request id; the bridge picks the matching seeded
+// fixture and REPLACES the handler response body, preserving framework-managed
+// `context` / `ext`. `get_rights` is a discovery / search tool with an array
+// response; the bridge appends seeded entries with dedup by `rights_id`,
+// matching the `getSeededProducts` precedent.
+//
+// Mutating siblings (`acquire_rights`, `update_rights`, `si_initiate_session`,
+// `si_send_message`, `si_terminate_session`) are intentionally NOT bridged —
+// seeded read paths only.
+// ---------------------------------------------------------------------------
+
+/**
+ * Validate seeded brand-identity entries. Drops entries missing a non-empty
+ * string `brand_id`, and warn-drops duplicates (first occurrence wins) since
+ * a fixture array with two entries for the same `brand_id` is almost always
+ * a seed-store bug.
+ */
+export function filterValidSeededBrandIdentity(
+  raw: unknown,
+  logger?: { warn: (message: string, meta?: Record<string, unknown>) => void }
+): SeededBrandIdentity[] {
+  if (!Array.isArray(raw)) {
+    logger?.warn('testController.getSeededBrandIdentity did not return an array; skipping bridge', {
+      received: typeof raw,
+    });
+    return [];
+  }
+  const valid: SeededBrandIdentity[] = [];
+  const seen = new Set<string>();
+  raw.forEach((entry, index) => {
+    if (!entry || typeof entry !== 'object' || Array.isArray(entry)) {
+      logger?.warn('testController.getSeededBrandIdentity entry is not an object; dropping', { index });
+      return;
+    }
+    const brandId = (entry as { brand_id?: unknown }).brand_id;
+    if (typeof brandId !== 'string' || brandId.length === 0) {
+      logger?.warn('testController.getSeededBrandIdentity entry missing brand_id; dropping', { index });
+      return;
+    }
+    if (seen.has(brandId)) {
+      logger?.warn('testController.getSeededBrandIdentity duplicate brand_id; dropping (first occurrence wins)', {
+        index,
+        brand_id: brandId,
+      });
+      return;
+    }
+    seen.add(brandId);
+    valid.push(entry as SeededBrandIdentity);
+  });
+  return valid;
+}
+
+/**
+ * Validate seeded rights entries. Drops entries missing a non-empty string
+ * `rights_id` (the dedup key against the handler set).
+ */
+export function filterValidSeededRights(
+  raw: unknown,
+  logger?: { warn: (message: string, meta?: Record<string, unknown>) => void }
+): SeededRight[] {
+  return filterValidById<SeededRight>(raw, 'rights_id', 'getSeededRights', logger);
+}
+
+/**
+ * Validate seeded SI offering entries. Each entry must carry a non-empty
+ * string at `offering.offering_id` — that's the field the bridge matches
+ * against `request.offering_id`. Warn-drops duplicates by that key.
+ *
+ * An entry without `offering` (e.g. an `available: false` fixture from a
+ * different storyboard) can't be matched by the bridge and is dropped — a
+ * seeded fixture that can't address a request would be a dead write.
+ */
+export function filterValidSeededSiOffering(
+  raw: unknown,
+  logger?: { warn: (message: string, meta?: Record<string, unknown>) => void }
+): SeededSiOffering[] {
+  if (!Array.isArray(raw)) {
+    logger?.warn('testController.getSeededSiOffering did not return an array; skipping bridge', {
+      received: typeof raw,
+    });
+    return [];
+  }
+  const valid: SeededSiOffering[] = [];
+  const seen = new Set<string>();
+  raw.forEach((entry, index) => {
+    if (!entry || typeof entry !== 'object' || Array.isArray(entry)) {
+      logger?.warn('testController.getSeededSiOffering entry is not an object; dropping', { index });
+      return;
+    }
+    const offering = (entry as { offering?: unknown }).offering;
+    const offeringId =
+      offering && typeof offering === 'object' && !Array.isArray(offering)
+        ? (offering as { offering_id?: unknown }).offering_id
+        : undefined;
+    if (typeof offeringId !== 'string' || offeringId.length === 0) {
+      logger?.warn('testController.getSeededSiOffering entry missing offering.offering_id; dropping', { index });
+      return;
+    }
+    if (seen.has(offeringId)) {
+      logger?.warn(
+        'testController.getSeededSiOffering duplicate offering.offering_id; dropping (first occurrence wins)',
+        { index, offering_id: offeringId }
+      );
+      return;
+    }
+    seen.add(offeringId);
+    valid.push(entry as SeededSiOffering);
+  });
+  return valid;
+}
+
+/**
+ * Merge seeded rights entries into a `get_rights` response (success arm).
+ * Existing entries come first; seeded entries append after deduping by
+ * `rights_id`. On collision the seeded entry wins. Returns a NEW response
+ * object. `get_rights` does not carry `pagination` / `query_summary` blocks
+ * per AdCP 3.0.11 — no count fields to update.
+ *
+ * Drops to a no-op if the response is the error arm (no `rights` array). The
+ * dispatcher gates on `!isErrorResponse` upstream; we re-narrow defensively.
+ */
+export function mergeSeededRightsIntoResponse(
+  response: GetRightsResponse,
+  seeded: readonly SeededRight[]
+): GetRightsResponse {
+  if (!seeded.length) return response;
+  const successArm = response as { rights?: SeededRight[] };
+  if (!Array.isArray(successArm.rights)) return response;
+  const seededIds = new Set<string>();
+  for (const r of seeded) seededIds.add(r.rights_id);
+  const existing = successArm.rights;
+  const retained = existing.filter(r => !seededIds.has(r?.rights_id));
+  return { ...response, rights: [...retained, ...seeded] } as GetRightsResponse;
+}
+
+/**
+ * Read the `brand_id` from a `get_brand_identity` request. Required field per
+ * spec; defensive about runtime input.
+ */
+function readRequestBrandId(req: Record<string, unknown> | undefined): string | undefined {
+  const id = (req as { brand_id?: unknown } | undefined)?.brand_id;
+  return typeof id === 'string' && id.length > 0 ? id : undefined;
+}
+
+/**
+ * Pick the seeded brand-identity entry whose `brand_id` matches the request.
+ * Returns `undefined` when nothing matches.
+ */
+export function pickSeededBrandIdentityForRequest(
+  request: GetBrandIdentityRequest | Record<string, unknown>,
+  seeded: readonly SeededBrandIdentity[]
+): SeededBrandIdentity | undefined {
+  if (!seeded.length) return undefined;
+  const requestedId = readRequestBrandId(request as Record<string, unknown>);
+  if (requestedId == null) return undefined;
+  for (const entry of seeded) {
+    if (entry.brand_id === requestedId) return entry;
+  }
+  return undefined;
+}
+
+/**
+ * Replace a `get_brand_identity` response with a seeded fixture when one
+ * matches the request's `brand_id`. Seeded fixture is authoritative on the
+ * `GetBrandIdentitySuccess` body. Framework-managed envelope fields
+ * (`context`, `ext`) round-trip from the handler — matches the precedent set
+ * by {@link replaceContentStandardsIfSeeded}.
+ *
+ * When no fixture matches, returns the handler response unchanged. Caller
+ * is responsible for skipping the error arm (the dispatcher gates on
+ * `!isErrorResponse`).
+ */
+export function replaceBrandIdentityIfSeeded(
+  request: GetBrandIdentityRequest | Record<string, unknown>,
+  response: GetBrandIdentityResponse,
+  seeded: readonly SeededBrandIdentity[]
+): GetBrandIdentityResponse {
+  const picked = pickSeededBrandIdentityForRequest(request, seeded);
+  if (!picked) return response;
+  const handlerContext = (response as { context?: unknown }).context;
+  const handlerExt = (response as { ext?: unknown }).ext;
+  const replaced: SeededBrandIdentity = { ...picked };
+  if (handlerContext !== undefined) (replaced as { context?: unknown }).context = handlerContext;
+  if (handlerExt !== undefined) (replaced as { ext?: unknown }).ext = handlerExt;
+  return replaced;
+}
+
+/**
+ * Read the `offering_id` from an `si_get_offering` request. Required field
+ * per spec; defensive about runtime input.
+ */
+function readRequestOfferingId(req: Record<string, unknown> | undefined): string | undefined {
+  const id = (req as { offering_id?: unknown } | undefined)?.offering_id;
+  return typeof id === 'string' && id.length > 0 ? id : undefined;
+}
+
+/**
+ * Pick the seeded SI offering entry whose `offering.offering_id` matches the
+ * request's `offering_id`. Returns `undefined` when nothing matches.
+ */
+export function pickSeededSiOfferingForRequest(
+  request: SIGetOfferingRequest | Record<string, unknown>,
+  seeded: readonly SeededSiOffering[]
+): SeededSiOffering | undefined {
+  if (!seeded.length) return undefined;
+  const requestedId = readRequestOfferingId(request as Record<string, unknown>);
+  if (requestedId == null) return undefined;
+  for (const entry of seeded) {
+    const id = (entry.offering as { offering_id?: unknown } | undefined)?.offering_id;
+    if (typeof id === 'string' && id === requestedId) return entry;
+  }
+  return undefined;
+}
+
+/**
+ * Replace an `si_get_offering` response with a seeded fixture when one
+ * matches the request's `offering_id`. Seeded fixture is authoritative on
+ * the offering body (`available`, `offering_token`, `offering`, ...);
+ * handler's `context` and `ext` round-trip — same envelope-preservation
+ * policy as {@link replaceBrandIdentityIfSeeded}.
+ *
+ * When no fixture matches, returns the handler response unchanged.
+ */
+export function replaceSiOfferingIfSeeded(
+  request: SIGetOfferingRequest | Record<string, unknown>,
+  response: SIGetOfferingResponse,
+  seeded: readonly SeededSiOffering[]
+): SIGetOfferingResponse {
+  const picked = pickSeededSiOfferingForRequest(request, seeded);
+  if (!picked) return response;
+  const handlerContext = (response as { context?: unknown }).context;
+  const handlerExt = (response as { ext?: unknown }).ext;
+  const replaced: SeededSiOffering = { ...picked };
+  if (handlerContext !== undefined) (replaced as { context?: unknown }).context = handlerContext;
+  if (handlerExt !== undefined) (replaced as { ext?: unknown }).ext = handlerExt;
+  return replaced;
+}
+
 /**
  * Bridge the default test-controller store (a `Map<string, unknown>` that
  * holds seeded fixtures by `product_id`, populated by `seed_product` scenarios)
@@ -1799,6 +2131,39 @@ export interface BridgeFromSessionStoreOptions<TSession> {
   selectSeededCreativeFeatures?: (
     session: TSession
   ) => Iterable<SeededCreativeFeature> | Promise<Iterable<SeededCreativeFeature> | null | undefined> | null | undefined;
+
+  /**
+   * Extract seeded brand-identity records from a resolved session. Each entry
+   * MUST carry a non-empty string `brand_id`. Feeds `get_brand_identity` via
+   * singleton replace (pick by `request.brand_id` and replace the response
+   * body, preserving handler `context` / `ext`).
+   */
+  selectSeededBrandIdentity?: (
+    session: TSession
+  ) => Iterable<SeededBrandIdentity> | Promise<Iterable<SeededBrandIdentity> | null | undefined> | null | undefined;
+
+  /**
+   * Extract seeded rights entries from a resolved session. Each entry MUST
+   * carry a non-empty string `rights_id`. Feeds `get_rights` (append-merge
+   * into the `rights` array, seeded wins on `rights_id` collision).
+   */
+  selectSeededRights?: (
+    session: TSession
+  ) => Iterable<SeededRight> | Promise<Iterable<SeededRight> | null | undefined> | null | undefined;
+
+  /**
+   * Extract seeded SI offering records from a resolved session. Each entry
+   * MUST carry a non-empty string at `offering.offering_id`. Feeds
+   * `si_get_offering` via singleton replace (pick by `request.offering_id`
+   * and replace the response body, preserving handler `context` / `ext`).
+   *
+   * Stateless lookup only — the session-keyed SI tools
+   * (`si_initiate_session`, `si_send_message`, `si_terminate_session`) are
+   * intentionally out of scope for the bridge.
+   */
+  selectSeededSiOffering?: (
+    session: TSession
+  ) => Iterable<SeededSiOffering> | Promise<Iterable<SeededSiOffering> | null | undefined> | null | undefined;
 }
 
 /**
@@ -1847,6 +2212,9 @@ export function bridgeFromSessionStore<TSession, TAccount = unknown>(
     selectSeededSignals,
     selectSeededCreativeDelivery,
     selectSeededCreativeFeatures,
+    selectSeededBrandIdentity,
+    selectSeededRights,
+    selectSeededSiOffering,
   } = opts;
 
   // Each per-tool callback resolves the session per-request (no memoisation —
@@ -1953,6 +2321,27 @@ export function bridgeFromSessionStore<TSession, TAccount = unknown>(
     bridge.getSeededCreativeFeatures = async ctx => {
       const session = await loadSession(ctx.input);
       const entries = await selectSeededCreativeFeatures(session);
+      return entries ? Array.from(entries) : [];
+    };
+  }
+  if (selectSeededBrandIdentity) {
+    bridge.getSeededBrandIdentity = async ctx => {
+      const session = await loadSession(ctx.input);
+      const entries = await selectSeededBrandIdentity(session);
+      return entries ? Array.from(entries) : [];
+    };
+  }
+  if (selectSeededRights) {
+    bridge.getSeededRights = async ctx => {
+      const session = await loadSession(ctx.input);
+      const entries = await selectSeededRights(session);
+      return entries ? Array.from(entries) : [];
+    };
+  }
+  if (selectSeededSiOffering) {
+    bridge.getSeededSiOffering = async ctx => {
+      const session = await loadSession(ctx.input);
+      const entries = await selectSeededSiOffering(session);
       return entries ? Array.from(entries) : [];
     };
   }
