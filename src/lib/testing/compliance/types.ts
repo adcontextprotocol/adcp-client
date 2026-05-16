@@ -252,9 +252,20 @@ export type ObservationSeverity = 'info' | 'suggestion' | 'warning' | 'error';
  *   storyboard pipeline (e.g. auth-failure detection on a 401
  *   discovery response). No storyboard coordinates apply.
  *
- * `code` is a stable, kebab-case identifier for the evaluator rule
- * that produced the observation (e.g. `slow-response`, `missing-valid-actions`).
- * It's the load-bearing field for greppable triage and CI gating.
+ * **`storyboard_id` shape note.** This field is sourced from
+ * `TestResult.scenario`, which the storyboard runner constructs as
+ * `${storyboard_id}/${phase_id}` (see `storyboard-tracks.ts`). So
+ * `source.storyboard_id` is a composite "storyboard/phase" identifier,
+ * not the bare storyboard ID. Greppable against the storyboard YAML
+ * either way; the composite form gives extra phase-level specificity
+ * even when `step_id` is also present.
+ *
+ * **`code` casing note.** `code` is intentionally kebab-case
+ * (e.g. `slow-response`, `missing-valid-actions`) to match storyboard
+ * step-id conventions in the compliance YAML cache, even though the
+ * rest of the public SDK surface (`storyboard_id`, `step_id`,
+ * `agent_url`, …) is snake_case. Adopters greppable-searching
+ * compliance reports should expect the kebab form.
  *
  * adcp-client#1746.
  */
