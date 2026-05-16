@@ -141,10 +141,13 @@ import {
   mergeSeededSignalsIntoResponse,
   mergeSeededCreativeDeliveryIntoResponse,
   mergeSeededCreativeFeaturesIntoResponse,
+  mergeSeededRightsIntoResponse,
   replaceAccountFinancialsIfSeeded,
   replacePropertyListIfSeeded,
   replaceCollectionListIfSeeded,
   replaceContentStandardsIfSeeded,
+  replaceBrandIdentityIfSeeded,
+  replaceSiOfferingIfSeeded,
   filterValidSeededProducts,
   filterValidSeededCreatives,
   filterValidSeededMediaBuys,
@@ -158,6 +161,9 @@ import {
   filterValidSeededSignals,
   filterValidSeededCreativeDelivery,
   filterValidSeededCreativeFeatures,
+  filterValidSeededBrandIdentity,
+  filterValidSeededRights,
+  filterValidSeededSiOffering,
   type TestControllerBridge,
   type TestControllerBridgeContext,
 } from './test-controller-bridge';
@@ -4261,6 +4267,92 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
               }
             }
 
+            // get_brand_identity — singleton replace keyed by `brand_id`.
+            // Seeded fixture is authoritative on the GetBrandIdentitySuccess
+            // body; handler's `context` / `ext` round-trip. The response is
+            // a union (success | error) — the dispatcher already gated on
+            // `!isErrorResponse`, so we narrow defensively when reading.
+            else if (toolName === 'get_brand_identity' && testControllerBridge.getSeededBrandIdentity) {
+              try {
+                const rawSeeded = await testControllerBridge.getSeededBrandIdentity(bridgeCtx);
+                const seeded = filterValidSeededBrandIdentity(rawSeeded, logger);
+                if (seeded.length > 0) {
+                  const sc = formatted.structuredContent as
+                    | import('../types/core.generated').GetBrandIdentityResponse
+                    | undefined;
+                  if (sc && typeof sc === 'object') {
+                    const merged = replaceBrandIdentityIfSeeded(
+                      params as import('../types/core.generated').GetBrandIdentityRequest,
+                      sc,
+                      seeded
+                    );
+                    if (merged !== sc) formatted = wrap(merged);
+                  }
+                }
+              } catch (err) {
+                const reason = err instanceof Error ? err.message : String(err);
+                logger.warn('testController.getSeededBrandIdentity failed; returning handler response unchanged', {
+                  tool: toolName,
+                  error: reason,
+                });
+              }
+            }
+
+            // get_rights — append-merge keyed by `rights_id`. Discovery /
+            // search tool (NL `query`); the response carries `rights[]`.
+            // Drops to a no-op on the error arm of the response union.
+            else if (toolName === 'get_rights' && testControllerBridge.getSeededRights) {
+              try {
+                const rawSeeded = await testControllerBridge.getSeededRights(bridgeCtx);
+                const seeded = filterValidSeededRights(rawSeeded, logger);
+                if (seeded.length > 0) {
+                  const sc = formatted.structuredContent as
+                    | import('../types/core.generated').GetRightsResponse
+                    | undefined;
+                  if (sc && typeof sc === 'object') {
+                    const merged = mergeSeededRightsIntoResponse(sc, seeded);
+                    if (merged !== sc) formatted = wrap(merged);
+                  }
+                }
+              } catch (err) {
+                const reason = err instanceof Error ? err.message : String(err);
+                logger.warn('testController.getSeededRights failed; returning handler response unchanged', {
+                  tool: toolName,
+                  error: reason,
+                });
+              }
+            }
+
+            // si_get_offering — singleton replace keyed by `offering_id`.
+            // Stateless catalog lookup; the response's `offering_token` is
+            // produced for a future session but the lookup itself does not
+            // consume one. Handler's `context` / `ext` round-trip.
+            else if (toolName === 'si_get_offering' && testControllerBridge.getSeededSiOffering) {
+              try {
+                const rawSeeded = await testControllerBridge.getSeededSiOffering(bridgeCtx);
+                const seeded = filterValidSeededSiOffering(rawSeeded, logger);
+                if (seeded.length > 0) {
+                  const sc = formatted.structuredContent as
+                    | import('../types/tools.generated').SIGetOfferingResponse
+                    | undefined;
+                  if (sc && typeof sc === 'object') {
+                    const merged = replaceSiOfferingIfSeeded(
+                      params as import('../types/tools.generated').SIGetOfferingRequest,
+                      sc,
+                      seeded
+                    );
+                    if (merged !== sc) formatted = wrap(merged);
+                  }
+                }
+              } catch (err) {
+                const reason = err instanceof Error ? err.message : String(err);
+                logger.warn('testController.getSeededSiOffering failed; returning handler response unchanged', {
+                  tool: toolName,
+                  error: reason,
+                });
+              }
+            }
+
             // list_content_standards / get_content_standards — list returns
             // `{ standards: ContentStandards[] }` (success arm of a union; the
             // error arm is gated out upstream). Get returns `ContentStandards`
@@ -4300,6 +4392,92 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
               } catch (err) {
                 const reason = err instanceof Error ? err.message : String(err);
                 logger.warn('testController.getSeededContentStandards failed; returning handler response unchanged', {
+                  tool: toolName,
+                  error: reason,
+                });
+              }
+            }
+
+            // get_brand_identity — singleton replace keyed by `brand_id`.
+            // Seeded fixture is authoritative on the GetBrandIdentitySuccess
+            // body; handler's `context` / `ext` round-trip. The response is
+            // a union (success | error) — the dispatcher already gated on
+            // `!isErrorResponse`, so we narrow defensively when reading.
+            else if (toolName === 'get_brand_identity' && testControllerBridge.getSeededBrandIdentity) {
+              try {
+                const rawSeeded = await testControllerBridge.getSeededBrandIdentity(bridgeCtx);
+                const seeded = filterValidSeededBrandIdentity(rawSeeded, logger);
+                if (seeded.length > 0) {
+                  const sc = formatted.structuredContent as
+                    | import('../types/core.generated').GetBrandIdentityResponse
+                    | undefined;
+                  if (sc && typeof sc === 'object') {
+                    const merged = replaceBrandIdentityIfSeeded(
+                      params as import('../types/core.generated').GetBrandIdentityRequest,
+                      sc,
+                      seeded
+                    );
+                    if (merged !== sc) formatted = wrap(merged);
+                  }
+                }
+              } catch (err) {
+                const reason = err instanceof Error ? err.message : String(err);
+                logger.warn('testController.getSeededBrandIdentity failed; returning handler response unchanged', {
+                  tool: toolName,
+                  error: reason,
+                });
+              }
+            }
+
+            // get_rights — append-merge keyed by `rights_id`. Discovery /
+            // search tool (NL `query`); the response carries `rights[]`.
+            // Drops to a no-op on the error arm of the response union.
+            else if (toolName === 'get_rights' && testControllerBridge.getSeededRights) {
+              try {
+                const rawSeeded = await testControllerBridge.getSeededRights(bridgeCtx);
+                const seeded = filterValidSeededRights(rawSeeded, logger);
+                if (seeded.length > 0) {
+                  const sc = formatted.structuredContent as
+                    | import('../types/core.generated').GetRightsResponse
+                    | undefined;
+                  if (sc && typeof sc === 'object') {
+                    const merged = mergeSeededRightsIntoResponse(sc, seeded);
+                    if (merged !== sc) formatted = wrap(merged);
+                  }
+                }
+              } catch (err) {
+                const reason = err instanceof Error ? err.message : String(err);
+                logger.warn('testController.getSeededRights failed; returning handler response unchanged', {
+                  tool: toolName,
+                  error: reason,
+                });
+              }
+            }
+
+            // si_get_offering — singleton replace keyed by `offering_id`.
+            // Stateless catalog lookup; the response's `offering_token` is
+            // produced for a future session but the lookup itself does not
+            // consume one. Handler's `context` / `ext` round-trip.
+            else if (toolName === 'si_get_offering' && testControllerBridge.getSeededSiOffering) {
+              try {
+                const rawSeeded = await testControllerBridge.getSeededSiOffering(bridgeCtx);
+                const seeded = filterValidSeededSiOffering(rawSeeded, logger);
+                if (seeded.length > 0) {
+                  const sc = formatted.structuredContent as
+                    | import('../types/tools.generated').SIGetOfferingResponse
+                    | undefined;
+                  if (sc && typeof sc === 'object') {
+                    const merged = replaceSiOfferingIfSeeded(
+                      params as import('../types/tools.generated').SIGetOfferingRequest,
+                      sc,
+                      seeded
+                    );
+                    if (merged !== sc) formatted = wrap(merged);
+                  }
+                }
+              } catch (err) {
+                const reason = err instanceof Error ? err.message : String(err);
+                logger.warn('testController.getSeededSiOffering failed; returning handler response unchanged', {
                   tool: toolName,
                   error: reason,
                 });
