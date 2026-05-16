@@ -2948,12 +2948,21 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
   // runners legitimately have no account scoping and should ignore this
   // warning; production bindings need to wire `resolveAccount` (or
   // `resolveAccountFromAuth` for OAuth-passthrough setups) so the gate's
-  // account-side check has teeth. See `AdcpServerConfig.testController`
+  // account-side check has teeth.
+  //
+  // Dual-emit: `process.emitWarning` writes to stderr by default so the
+  // signal is visible even when `logger` is the default `noopLogger`
+  // (the day-one case where the misconfig is most likely). `logger.warn`
+  // also fires so adopters with configured logging pipelines see it in
+  // their normal channel. The `code` lets adopters silence it via
+  // `--no-warnings=ADCP_BRIDGE_NO_RESOLVER` if they're knowingly running
+  // a storyboard-runner config. See `AdcpServerConfig.testController`
   // JSDoc § "Security — trust boundary" and #1784.
   if (testControllerBridge != null && resolveAccount === undefined && resolveAccountFromAuth === undefined) {
-    logger.warn(
-      'testController is registered but no account resolver is configured. The sandbox gate falls through to the buyer-supplied `account.sandbox` / `context.sandbox` marker — caller-controlled, not a trust boundary. Production bindings should configure `resolveAccount` (or `resolveAccountFromAuth`); storyboard-runner bindings without account scoping can ignore this warning. See `AdcpServerConfig.testController` JSDoc § "Security — trust boundary" for the full model.'
-    );
+    const message =
+      '[adcp/createAdcpServer] testController is wired but no account resolver — configure resolveAccount (or resolveAccountFromAuth) for production. Storyboard runners without account scoping can ignore. Details: https://github.com/adcontextprotocol/adcp-client/blob/main/docs/guides/VALIDATE-YOUR-AGENT.md';
+    process.emitWarning(message, { type: 'AdcpServerConfigWarning', code: 'ADCP_BRIDGE_NO_RESOLVER' });
+    logger.warn(message);
   }
 
   // Pre-resolve credential-policy patterns once. The patterns config is

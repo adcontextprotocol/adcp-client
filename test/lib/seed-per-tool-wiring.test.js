@@ -3523,7 +3523,7 @@ describe('createAdcpServer — trust-boundary warn when testController lacks res
     };
   }
 
-  const MATCH = /testController is registered but no account resolver is configured/;
+  const MATCH = /testController is wired but no account resolver/;
 
   it('warns once at construction when testController is set and neither resolver is configured', () => {
     const { logger, records } = makeRecordingLogger();
@@ -3605,5 +3605,36 @@ describe('createAdcpServer — trust-boundary warn when testController lacks res
     });
     const hits = records.warn.filter(r => MATCH.test(r.msg));
     assert.equal(hits.length, 1, 'warn fires once across construction + N requests');
+  });
+
+  // The default `logger` is `noopLogger`, which swallows `.warn`. The
+  // misconfig is most likely on day one when no logger is wired yet —
+  // so the warn also goes through `process.emitWarning` (stderr by
+  // default, dedupable via `code`). Spy on `process.emitWarning` itself
+  // for synchronous capture — `process.on('warning')` would also work
+  // but adds event-loop-flush timing dependencies.
+  it('also emits via process.emitWarning so the signal is visible without configured logging', () => {
+    const calls = [];
+    const original = process.emitWarning;
+    process.emitWarning = (...args) => {
+      calls.push(args);
+      return original.apply(process, args);
+    };
+    try {
+      _createAdcpServer({
+        name: 'Test',
+        version: '1.0.0',
+        // no `logger` → defaults to noopLogger
+        validation: { requests: 'off', responses: 'off' },
+        mediaBuy: { getProducts: async () => ({ products: [] }) },
+        testController: { getSeededProducts: () => [] },
+      });
+      const ours = calls.filter(args => args[1]?.code === 'ADCP_BRIDGE_NO_RESOLVER');
+      assert.equal(ours.length, 1, 'exactly one process.emitWarning call');
+      assert.match(ours[0][0], MATCH);
+      assert.equal(ours[0][1].type, 'AdcpServerConfigWarning');
+    } finally {
+      process.emitWarning = original;
+    }
   });
 });
