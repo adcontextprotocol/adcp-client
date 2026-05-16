@@ -1896,6 +1896,15 @@ export function pickSeededSiOfferingForRequest(
  * policy as {@link replaceBrandIdentityIfSeeded}.
  *
  * When no fixture matches, returns the handler response unchanged.
+ *
+ * Note: seeded fixture is authoritative on the entire offering body,
+ * including `offering_token`. The token is intentionally NOT preserved
+ * from the handler — storyboards seed `offering_token` to drive
+ * deterministic session continuation in downstream steps. When/if a
+ * stateful SI session bridge ships (phase 5+; see
+ * adcontextprotocol/adcp-client#1755), the storyboard contract becomes
+ * coupled: seeded `offering_token` here must match the seeded session's
+ * `offering_token`, or `si_initiate_session` will reject as stale-token.
  */
 export function replaceSiOfferingIfSeeded(
   request: SIGetOfferingRequest | Record<string, unknown>,
