@@ -1673,6 +1673,35 @@ export interface AdcpServerConfig<TAccount = unknown> {
    * account) bypasses the bridge entirely; omit the field in production
    * configs to be explicit about it.
    *
+   * ## Do you need the bridge? — only upstream-proxy sellers
+   *
+   * The bridge is **test mode's adapter for upstream-proxy sellers** — it
+   * is NOT a generic test pattern that every adopter should wire. Decide
+   * by where your read handlers fetch from:
+   *
+   *   - **State-local sellers** — most SSPs, most creative agents. Your
+   *     read handlers (`getProducts`, `listCreatives`, ...) read from a
+   *     database you control. `comply_test_controller.seed_product` writes
+   *     to your DB; your handler reads from your DB; the seed→read loop
+   *     closes naturally. **Don't wire the bridge.** Test mode alone
+   *     covers you.
+   *   - **Upstream-proxy sellers** — DSPs proxying to Meta/Snap/TikTok,
+   *     retail-media networks reading retailer catalog APIs, signals
+   *     agents brokering third-party data marketplaces, walled-garden
+   *     brokers. Your read handlers fetch from a system you don't control;
+   *     `comply_test_controller.seed_product` is a dead write for you
+   *     because the handler will never see it. **Wire the bridge.** The
+   *     real handler still runs first (so a broken upstream call still
+   *     fails the conformance gate — adapter exercise is preserved), and
+   *     the SDK merges seeded fixtures into the response after.
+   *
+   * The signal class is "read handlers go to a system the seller doesn't
+   * control," not "exposes `list_accounts`" — the latter is the most
+   * common but not the defining feature. See
+   * [`adcp-client#1782`](https://github.com/adcontextprotocol/adcp-client/issues/1782)
+   * and the upstream taxonomy proposal at
+   * [`adcontextprotocol/adcp#4593`](https://github.com/adcontextprotocol/adcp/issues/4593).
+   *
    * ## Security — trust boundary
    *
    * The bridge is gated by `isSandboxRequest(params) && (ctx.account ===
@@ -1693,16 +1722,11 @@ export interface AdcpServerConfig<TAccount = unknown> {
    * sandbox-authority gate (see Phase 2 of #1435 — resolved-account `mode`
    * is the trust boundary, not buyer-supplied `account.sandbox`). The
    * direct `createAdcpServer` flow does not; adopters wiring the bridge
-   * here are responsible for the gate.
+   * here are responsible for the gate. See the top-of-file JSDoc on
+   * `TestControllerBridge` for the full adopter-responsibility note (#1779).
    *
    * See `src/lib/server/test-controller-bridge.ts` for the sandbox-marker
    * predicate and the merge contract.
-   *
-   * **Trust boundary:** production bindings MUST also configure
-   * `resolveAccount`. Without it, the sandbox gate falls through to
-   * the buyer-supplied marker and the bridge can be triggered by any
-   * authenticated buyer. See the top-of-file JSDoc on `TestControllerBridge`
-   * for the full adopter-responsibility note (#1779).
    *
    * @example
    * ```ts
