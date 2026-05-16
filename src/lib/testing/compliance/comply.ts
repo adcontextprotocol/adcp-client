@@ -1131,9 +1131,15 @@ async function complyImpl(agentUrl: string, options: ComplyOptions): Promise<Com
     }
 
     const summary = buildSummary(trackResults, storyboardResults);
-    const testedTracks = trackResults.filter(
-      t => t.status === 'pass' || t.status === 'fail' || t.status === 'partial' || t.status === 'silent'
-    );
+    // Tag `_view` so grep-style triage can distinguish the canonical
+    // `tracks` entry from its appearance under the `tested_tracks` filter
+    // (adcp-client#1674). Shallow-copy on the `tested_tracks` side keeps
+    // the shared nested `scenarios` references intact while preventing
+    // the marker from colliding on the same object.
+    for (const t of trackResults) t._view = 'canonical';
+    const testedTracks: TrackResult[] = trackResults
+      .filter(t => t.status === 'pass' || t.status === 'fail' || t.status === 'partial' || t.status === 'silent')
+      .map(t => ({ ...t, _view: 'reference' as const }));
     const skippedTracks = trackResults
       .filter(t => t.status === 'skip')
       .map(t => ({
@@ -1358,14 +1364,18 @@ async function runWithDegradedProfile(
   const agentRef = options.agent_alias || agentUrl;
   const failures = extractFailures(storyboardResults, storyboards, agentRef);
 
+  // Tag canonical vs reference views to disambiguate the same
+  // TrackResult appearing in both `tracks` and `tested_tracks`
+  // (adcp-client#1674).
+  for (const t of trackResults) t._view = 'canonical';
   return {
     agent_url: agentUrl,
     agent_profile: profile,
     overall_status: overallStatus,
     tracks: trackResults,
-    tested_tracks: trackResults.filter(
-      t => t.status === 'pass' || t.status === 'fail' || t.status === 'partial' || t.status === 'silent'
-    ),
+    tested_tracks: trackResults
+      .filter(t => t.status === 'pass' || t.status === 'fail' || t.status === 'partial' || t.status === 'silent')
+      .map(t => ({ ...t, _view: 'reference' as const })),
     skipped_tracks: [],
     summary,
     observations: allObservations,

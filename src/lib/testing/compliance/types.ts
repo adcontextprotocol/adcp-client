@@ -61,6 +61,28 @@ export interface TrackResult {
   duration_ms: number;
   /** Compliance testing mode: observational (default) or deterministic (test controller available) */
   mode?: 'observational' | 'deterministic';
+  /**
+   * View marker disambiguating the same `TrackResult` appearing in
+   * both `ComplianceResult.tracks` (canonical source of truth) and
+   * `ComplianceResult.tested_tracks` (the filtered subset of passing/
+   * failing/partial/silent tracks). Because `tested_tracks` is built
+   * by filtering `tracks`, every passing track appears in both arrays.
+   * JSON output of a `ComplianceResult` therefore serializes each
+   * scenario twice — triagers grepping the output without this marker
+   * saw spurious "duplicate execution" signals (adcp-client#1674).
+   *
+   * - `'canonical'` — entry appears in `tracks` (the source of truth).
+   * - `'reference'` — entry appears in `tested_tracks` (a filtered view).
+   *
+   * Consumers that want a deduplicated view should iterate `tracks`
+   * and ignore `tested_tracks`, or filter on `_view === 'canonical'`.
+   * CI pipelines that pin on a stable, dedupe-by-design surface should
+   * read `buildComplianceSummary()` / `--summary-output` instead.
+   *
+   * The breaking type-split that fully removes the duplication is
+   * tracked at adcp-client#1791.
+   */
+  _view?: 'canonical' | 'reference';
 }
 
 /**
