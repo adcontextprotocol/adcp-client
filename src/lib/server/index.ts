@@ -40,6 +40,9 @@ export type { OperationalPlatform, OperationalContext } from './operational-plat
 export { pickWireSpecFields, scrubExtensions, WIRE_SPEC_FIELDS } from './wire-safe';
 export type { WireSafe, WireSpecRequestName, ScrubExtensionsOptions } from './wire-safe';
 
+export { assertNoExampleTlds } from './example-tld-guard';
+export type { AssertNoExampleTldsOptions } from './example-tld-guard';
+
 export {
   capabilitiesResponse,
   productsResponse,
@@ -291,20 +294,20 @@ export type {
 export { DEFAULT_REPORTING_CAPABILITIES } from './product-defaults';
 
 export {
-  applySeededBridge,
   isSandboxRequest,
   mergeSeededProductsIntoResponse,
   filterValidSeededProducts,
-  mergeSeededCreativesIntoResponse,
   filterValidSeededCreatives,
-  mergeSeededMediaBuysIntoResponse,
   filterValidSeededMediaBuys,
-  mergeSeededAccountsIntoResponse,
   filterValidSeededAccounts,
-  mergeSeededAccountFinancialsIntoResponse,
   filterValidSeededAccountFinancials,
-  mergeSeededCreativeFormatsIntoResponse,
   filterValidSeededCreativeFormats,
+  mergeSeededCreativesIntoResponse,
+  mergeSeededMediaBuysIntoResponse,
+  mergeSeededAccountsIntoResponse,
+  mergeSeededCreativeFormatsIntoResponse,
+  pickSeededAccountFinancialsForRequest,
+  replaceAccountFinancialsIfSeeded,
   bridgeFromTestControllerStore,
   bridgeFromSessionStore,
 } from './test-controller-bridge';
@@ -314,7 +317,7 @@ export type {
   BridgeFromSessionStoreOptions,
   SeededCreative,
   SeededMediaBuy,
-  SeededAccount,
+  SeededAccountFinancials,
 } from './test-controller-bridge';
 
 export {

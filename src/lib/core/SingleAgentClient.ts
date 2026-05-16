@@ -246,15 +246,22 @@ export interface SingleAgentClientConfig extends ConversationConfig {
    */
   validateFeatures?: boolean;
   /**
-   * Refuse to dispatch mutating tasks unless the seller's capabilities
-   * corroborate AdCP v3. The guard requires all of:
+   * Gate mutating-task dispatch on the seller's declared major version.
+   * When the seller returns an authoritative `get_adcp_capabilities`
+   * response, the guard requires:
    *   1. `major_versions` includes 3
    *   2. `adcp.idempotency.replay_ttl_seconds` is declared (spec-required)
-   *   3. capabilities came from a real `get_adcp_capabilities` response
-   *      (not synthesized from a tool list)
    *
-   * Throws `VersionUnsupportedError` before the request is sent. Bypass
-   * with `allowV2` or — process-wide as a fallback — `ADCP_ALLOW_V2=1`.
+   * Sellers whose capabilities are synthesized from `tools/list` (no
+   * authoritative `get_adcp_capabilities` response) route through the
+   * v2 adapter with a one-time warning — a compliant v3 seller would
+   * declare itself, so absence of a declaration is read as v2. Adopters
+   * who need a hard "definitely-v3" gate should validate
+   * `(await client.getCapabilities())._synthetic === false` directly.
+   *
+   * Throws `VersionUnsupportedError` before the request is sent when
+   * the guard rejects. Bypass with `allowV2` or — process-wide as a
+   * fallback — `ADCP_ALLOW_V2=1`.
    *
    * @default false
    */
@@ -404,6 +411,7 @@ export class SingleAgentClient {
   private cachedToolSchemas?: Map<string, Record<string, unknown>>; // inputSchema.properties per tool name
   private _v2WarningFired = false; // Gate: emit the v2-sunset warning once per client instance
   private _syntheticV3WarningFired = false; // Gate: emit the synthetic-v3 warning once per client instance
+  private _syntheticV2WarningFired = false; // Gate: emit the synthetic-v2 warning once per client instance
   private readonly resolvedAdcpVersion: string;
 
   constructor(
@@ -2999,6 +3007,28 @@ export class SingleAgentClient {
   }
 
   /**
+   * Warn once per client when `requireSupportedMajor` routes a synthetic-v2
+   * seller through the v2 adapter — the agent did not expose
+   * `get_adcp_capabilities`, so the version was inferred from `tools/list`.
+   * A compliant v3 seller would declare itself; absence of a declaration is
+   * read as v2. Idempotency-TTL guarantees are unknown for these sellers,
+   * so BYOK retry callers should treat them as such.
+   *
+   * One-shot via `_syntheticV2WarningFired` (matches `maybeWarnV2Sunset`
+   * cadence).
+   */
+  private maybeWarnSyntheticV2(): void {
+    if (this._syntheticV2WarningFired) return;
+    this._syntheticV2WarningFired = true;
+    console.warn(
+      `[adcp] Warning: agent ${this.agent.agent_uri} does not expose get_adcp_capabilities. ` +
+        `Routing as v2 (synthetic) — idempotency-TTL guarantee is unknown. ` +
+        `Ask the agent operator to declare v3 via get_adcp_capabilities if v3 routing is intended. ` +
+        `Branch on client.isSyntheticV2() to tighten retry policies for these sellers.`
+    );
+  }
+
+  /**
    * Detect server AdCP version
    *
    * @returns 'v2' or 'v3' based on server capabilities
@@ -3006,6 +3036,29 @@ export class SingleAgentClient {
   async detectServerVersion(): Promise<'v2' | 'v3'> {
     const capabilities = await this.getCapabilities();
     return capabilities.version;
+  }
+
+  /**
+   * Whether the seller's capabilities are synthesized from `tools/list`
+   * with no authoritative `get_adcp_capabilities` response — i.e. the
+   * dispatcher routes through the v2 adapter and idempotency-TTL is
+   * unknown. Use this to gate retry behavior for sellers whose retry
+   * safety can't be derived from declared capabilities (lower attempt
+   * caps, longer backoff, or fall back to natural-key recovery).
+   *
+   * Returns `false` for declared v2 sellers, declared v3 sellers, and
+   * synthetic v3 sellers (which advertise the v3 discovery tool even
+   * when the call itself failed).
+   *
+   * Caveat for synthetic v3: the predicate returns `false`, but TTL is
+   * still unknown for those sellers — `getIdempotencyReplayTtlSeconds()`
+   * throws until the agent's capabilities endpoint is fixed (issue
+   * #1217). Retry-policy consumers that need a complete "TTL unknown"
+   * gate should additionally check `getCapabilities()._synthetic`.
+   */
+  async isSyntheticV2(): Promise<boolean> {
+    const capabilities = await this.getCapabilities();
+    return capabilities._synthetic === true && capabilities.version === 'v2';
   }
 
   /**
@@ -3100,19 +3153,24 @@ export class SingleAgentClient {
    * is pinned to (per `getAdcpVersion()`).
    *
    * A self-reported `version: 'v3'` is not enough — a hostile or
-   * misconfigured seller can just string-claim the version. The guard
-   * requires:
+   * misconfigured seller can just string-claim the version. For sellers
+   * that return an authoritative `get_adcp_capabilities` response, the
+   * guard requires:
    *
    *   1. `capabilities.majorVersions.includes(<this client's major>)`
    *   2. `capabilities.idempotency.replayTtlSeconds` present (spec-required
-   *      for real major-3+ sellers; synthetic capabilities don't get this
-   *      free)
-   *   3. capabilities were not synthesized from a tool list
+   *      for real major-3+ sellers)
+   *
+   * Sellers whose capabilities are synthesized from `tools/list` (no
+   * authoritative `get_adcp_capabilities` response) are treated as v2: a
+   * compliant v3 seller would declare itself, so absence of a declaration
+   * is taken as evidence of v2. The dispatcher routes the request through
+   * the v2 wire-shape adapter. A one-time warning surfaces the routing
+   * decision so adopters can audit it; retry-safety (idempotency TTL) is
+   * unknown for these sellers and BYOK callers should treat them as such.
    *
    * Per-client `allowV2: true` or, when that's undefined,
-   * `ADCP_ALLOW_V2=1` in the environment bypasses the check (the v2 escape
-   * hatch is named for the original v2/v3 split; it's the generic
-   * "skip the major-version guard" knob).
+   * `ADCP_ALLOW_V2=1` in the environment bypasses the guard entirely.
    *
    * Throws `VersionUnsupportedError` with the specific reason on failure.
    */
@@ -3120,25 +3178,18 @@ export class SingleAgentClient {
     if (this.isV2Allowed()) return;
     const capabilities = await this.getCapabilities();
 
-    // Synthetic + v2: no `get_adcp_capabilities` tool — we can't confirm the
-    // agent supports our version, throw so the caller fails loud rather than
-    // silently sending v2-adapted requests to an unknown agent.
-    // Synthetic + v3: the tool was present but the call failed — the agent
-    // is verifiably v3 (it advertises the v3-only discovery tool). Skip the
-    // detail-level checks (supportedVersions, majorVersions, idempotency
-    // TTL) since we couldn't read those fields; we know the spec requires
-    // v3 to support idempotency, just can't confirm the TTL until the
-    // capabilities endpoint is fixed (#1217).
-    if (capabilities._synthetic && capabilities.version !== 'v3') {
-      throw new VersionUnsupportedError(taskType, 'synthetic', capabilities.version, this.agent.agent_uri);
-    }
+    // Synthetic capabilities — no authoritative `get_adcp_capabilities`
+    // response, so the version + idempotency-TTL fields couldn't be read.
+    // Route as the synthesized version (v2 when the v3 discovery tool is
+    // absent from tools/list, v3 when the tool is present but the call
+    // failed). Emit a one-time per-client warning so adopters can audit
+    // the routing decision and the skipped TTL guarantee.
     if (capabilities._synthetic) {
-      // Synthetic v3 — silent passage of the version + idempotency-TTL
-      // checks. Adopters who called `requireSupportedMajor` precisely
-      // because they need TTL guarantees deserve to know the check was
-      // skipped. Emit a one-time warning per client (matches the
-      // `maybeWarnV2Sunset` cadence so we don't spam every call).
-      this.maybeWarnSyntheticV3();
+      if (capabilities.version === 'v3') {
+        this.maybeWarnSyntheticV3();
+      } else {
+        this.maybeWarnSyntheticV2();
+      }
       return;
     }
     // Prefer release-precision matching when the seller advertises

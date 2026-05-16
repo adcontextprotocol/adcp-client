@@ -166,12 +166,22 @@ export interface TransportOptions {
    * value set on the client constructor (`SingleAgentClientConfig.transport`).
    *
    * @remarks
-   * **Leave unset for long-lived buyer sessions.** When set, the cap applies
-   * to every fetch in the call's ALS scope — including any side-channel
-   * `GET` the MCP transport opens for server-initiated messages. Long-lived
-   * connections that legitimately stream more cumulative bytes than the cap
-   * will be torn down. The option is intended for one-shot discovery / crawl
-   * paths where the response is bounded by definition.
+   * **Safe to set on all calls.** SSE responses (`text/event-stream`) are
+   * passed through unchanged — a single tool call legitimately emits N status
+   * frames + a final result, bounded by protocol-level framing rather than
+   * cumulative byte counts. The cap applies to one-shot JSON responses
+   * (`get_adcp_capabilities`, agent-card lookup, tool result payloads on
+   * non-streaming transports) where the body is bounded by definition.
+   *
+   * @remarks
+   * **Hostile-peer note:** A peer can opt itself out of this cap by responding
+   * with `Content-Type: text/event-stream`. SSE is bypassed because cumulative
+   * event-frame bytes are unbounded by spec — MCP and A2A both stream tool
+   * responses this way. The MCP/A2A SDKs consume SSE incrementally and frame
+   * termination bounds memory in practice, so this is not a memory-bomb risk
+   * for well-formed transports. Adopters relying on `maxResponseBytes` as a
+   * hostile-server defense should treat it as best-effort for non-SSE
+   * responses only.
    *
    * @remarks
    * Future hardening knobs (DNS-rebind defense, scheme allow-list, request
