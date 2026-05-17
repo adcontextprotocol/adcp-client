@@ -218,9 +218,10 @@ export async function rawMcpProbe(options: {
   allowPrivateIp?: boolean;
 }): Promise<{ httpResult: HttpProbeResult; taskResult?: TaskResult }> {
   const { agentUrl, toolName, args, headers = {}, allowPrivateIp = false } = options;
+  const requestId = ++probeRequestId;
   const body = JSON.stringify({
     jsonrpc: '2.0',
-    id: ++probeRequestId,
+    id: requestId,
     method: 'tools/call',
     params: { name: toolName, arguments: args },
   });
@@ -252,14 +253,34 @@ export async function rawMcpProbe(options: {
       const contentType = httpResult.headers['content-type'] ?? '';
       if (contentType.toLowerCase().includes('text/event-stream')) {
         // Streamable-HTTP MCP: the response is one or more SSE events whose
-        // `data:` payloads are JSON-RPC envelopes. For tools/call the server
-        // sends a single `event: message` with the complete response. Read
-        // the FIRST `data:` line — concatenated multiline `data:` lines on a
-        // single event aren't expected on this wire (the MCP servers we
-        // grade emit one line per envelope).
-        const dataLine = text.split(/\r?\n/).find(l => l.startsWith('data:'));
-        if (!dataLine) throw new Error('SSE response with no data event');
-        parsed = JSON.parse(dataLine.slice('data:'.length).trim());
+        // `data:` payloads are JSON-RPC envelopes. The spec lets a server
+        // emit zero-or-more server-initiated frames (e.g.
+        // `notifications/progress`) before the final tools/call response —
+        // so picking the first `data:` line would parse the wrong envelope.
+        // Walk every `data:` line, JSON-parse each, and pick the envelope
+        // whose `id` matches the request. Fall back to the last parseable
+        // envelope when no id matches (defensive — servers SHOULD include
+        // `id` on the response per JSON-RPC 2.0).
+        const dataLines = text.split(/\r?\n/).filter(l => l.startsWith('data:'));
+        if (dataLines.length === 0) throw new Error('SSE response with no data event');
+        let matched: unknown;
+        let lastParsed: unknown;
+        for (const line of dataLines) {
+          const payload = line.slice('data:'.length).trim();
+          if (!payload) continue;
+          try {
+            const envelope = JSON.parse(payload) as { id?: unknown };
+            lastParsed = envelope;
+            if (envelope?.id === requestId) {
+              matched = envelope;
+              break;
+            }
+          } catch {
+            // Skip non-JSON data lines (heartbeats, etc.); keep walking.
+          }
+        }
+        parsed = matched ?? lastParsed;
+        if (parsed === undefined) throw new Error('SSE response had data events but none were parseable JSON');
       } else {
         parsed = JSON.parse(text);
       }

@@ -514,6 +514,50 @@ describe('rawMcpProbe', () => {
       server.close();
     }
   });
+
+  it('id-matches across multiple SSE data events (progress frame before result)', async () => {
+    // MCP Streamable HTTP allows server-initiated frames (e.g.
+    // `notifications/progress`) before the final tools/call response on the
+    // same SSE stream. The probe must skip non-matching ids and pick the
+    // envelope whose `id` equals the request — otherwise the storyboard
+    // grades against the wrong payload. Convergent expert finding (code +
+    // protocol + security reviewers) on PR #1802.
+    const server = http.createServer(async (req, res) => {
+      const chunks = [];
+      for await (const c of req) chunks.push(c);
+      const seenBody = JSON.parse(Buffer.concat(chunks).toString('utf8'));
+      res.writeHead(200, { 'content-type': 'text/event-stream' });
+      // First frame: a server-initiated progress notification (no `id` field,
+      // so it can never match a request id).
+      const progress = JSON.stringify({
+        jsonrpc: '2.0',
+        method: 'notifications/progress',
+        params: { progressToken: 'tk-1', progress: 0.5 },
+      });
+      // Second frame: the actual tools/call response with matching `id`.
+      const finalEnv = JSON.stringify({
+        jsonrpc: '2.0',
+        id: seenBody.id,
+        result: { structuredContent: { context: { correlation_id: 'final' } } },
+      });
+      res.end(`event: message\ndata: ${progress}\n\nevent: message\ndata: ${finalEnv}\n\n`);
+    });
+    await new Promise(r => server.listen(0, r));
+    try {
+      const { httpResult, taskResult } = await rawMcpProbe({
+        agentUrl: `http://127.0.0.1:${server.address().port}/mcp`,
+        toolName: 'list_creatives',
+        args: {},
+        allowPrivateIp: true,
+      });
+      assert.strictEqual(httpResult.status, 200);
+      // Probe MUST pick the id-matching envelope (the final response), not
+      // the first data line (which would be the progress notification).
+      assert.deepStrictEqual(taskResult.data, { context: { correlation_id: 'final' } });
+    } finally {
+      server.close();
+    }
+  });
 });
 
 // ────────────────────────────────────────────────────────────

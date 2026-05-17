@@ -1579,16 +1579,33 @@ export function createAdcpServerFromPlatform<P extends DecisioningPlatform<any, 
             // refusal so callers can correlate. The comply_controller_mode_gate
             // storyboard (adcp#4028) asserts `context.correlation_id` is
             // returned unchanged on the FORBIDDEN response.
-            const requestContext = (input as { context?: Record<string, unknown> | null }).context;
-            const requestExt = (input as { ext?: Record<string, unknown> | null }).ext;
+            //
+            // `context` and `ext` are open-object on the request schema, so a
+            // hostile caller could stuff arbitrarily large payloads. Self-
+            // reflection only (no cross-tenant amplifier), but we cap at
+            // 8 KiB serialized to bound the response body — anything larger
+            // gets dropped, mirroring a missing field rather than echoing
+            // garbage.
+            const ECHO_BYTE_CAP = 8 * 1024;
+            const safeEcho = (value: unknown): Record<string, unknown> | undefined => {
+              if (value == null || typeof value !== 'object') return undefined;
+              try {
+                if (JSON.stringify(value).length > ECHO_BYTE_CAP) return undefined;
+                return value as Record<string, unknown>;
+              } catch {
+                return undefined;
+              }
+            };
+            const requestContext = safeEcho((input as { context?: unknown }).context);
+            const requestExt = safeEcho((input as { ext?: unknown }).ext);
             return toMcpResponse({
               success: false,
               error: 'FORBIDDEN',
               error_detail:
                 'comply_test_controller requires a sandbox or mock account; ' +
                 'resolved account is in live mode (or no account resolved).',
-              ...(requestContext != null && { context: requestContext }),
-              ...(requestExt != null && { ext: requestExt }),
+              ...(requestContext !== undefined && { context: requestContext }),
+              ...(requestExt !== undefined && { ext: requestExt }),
             });
           }
 

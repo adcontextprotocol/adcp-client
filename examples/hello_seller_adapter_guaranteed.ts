@@ -106,6 +106,13 @@ const ADCP_AUTH_TOKEN = process.env['ADCP_AUTH_TOKEN'] ?? 'sk_harness_do_not_use
 // `createAdcpServerFromPlatform` refuses `comply_test_controller`
 // dispatch with FORBIDDEN. Test-kit value pinned by
 // `compliance/cache/<ver>/test-kits/acme-outdoor-live.yaml`.
+//
+// ⚠️ This bearer is published in the open-source SDK and in the public
+// compliance test-kit. DO NOT copy it into a production seller's keys
+// map — anyone who reads this file would have a known credential against
+// your agent. Production sellers source live-mode test bearers from
+// their own ops onboarding flow (a secret only operators know), not
+// from a worked example.
 const ADCP_LIVE_MODE_AUTH_TOKEN = 'demo-acme-outdoor-live-v1';
 const LIVE_MODE_PROBE_PRINCIPAL = 'compliance-live-mode-probe' as const;
 const PUBLIC_AGENT_URL = process.env['PUBLIC_AGENT_URL'] ?? `http://127.0.0.1:${PORT}`;
