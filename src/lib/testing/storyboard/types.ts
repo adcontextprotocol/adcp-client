@@ -1797,7 +1797,8 @@ export type StoryboardStepHint =
   | ShapeDriftHint
   | MissingRequiredFieldHint
   | FormatMismatchHint
-  | MonotonicViolationHint;
+  | MonotonicViolationHint
+  | ImpairmentCoherenceHint;
 
 /**
  * A seller rejected a request value that the runner traced back to a
@@ -2044,6 +2045,77 @@ export interface MonotonicViolationHint extends StoryboardStepHintBase {
    * @provenance runner
    */
   enum_url: string;
+}
+
+/**
+ * The `impairment.coherence` invariant observed a mismatch between a media
+ * buy's `impairments[]` array and the underlying resource state. Three
+ * violation shapes share this hint:
+ *   - `forward`: an entry in `impairments[]` references a resource whose
+ *     last observed status is NOT an offline value.
+ *   - `inverse`: a resource was observed transitioning to an offline state
+ *     and is referenced by a non-terminal buy, but is missing from that
+ *     buy's `impairments[]`.
+ *   - `health`: the buy's `health` field disagrees with `impairments[]`
+ *     emptiness — `impaired` iff non-empty (and vice versa).
+ *
+ * See adcontextprotocol/adcp#2859 for the originating spec issue.
+ */
+export interface ImpairmentCoherenceHint extends StoryboardStepHintBase {
+  kind: 'impairment_coherence_violation';
+  /**
+   * Discriminator for the violation shape (see the union of `forward`,
+   * `inverse`, `health` documented on the type). Renderers can branch on
+   * `violation` to pick a per-shape template.
+   * @provenance runner
+   */
+  violation: 'forward' | 'inverse' | 'health';
+  /**
+   * Media-buy id whose `impairments[]` snapshot the violation was detected
+   * on. Read from `media_buy_id` on the buy response.
+   * @provenance seller
+   */
+  media_buy_id: string;
+  /**
+   * Step id that returned the offending media-buy snapshot.
+   * @provenance runner
+   */
+  buy_step_id: string;
+  /**
+   * Resource family (`creative`, `audience`, `catalog_item`, `event_source`)
+   * the entry references. Present on `forward` and `inverse`.
+   * @provenance seller (forward) / runner (inverse)
+   */
+  resource_type?: string;
+  /**
+   * Resource id the entry references. Present on `forward` and `inverse`.
+   * @provenance seller (forward) / runner (inverse)
+   */
+  resource_id?: string;
+  /**
+   * Status the runner has on file for the referenced resource. Present on
+   * `forward` and `inverse`. On `forward` it is the non-offline status that
+   * makes the impairment a false positive; on `inverse` it is the offline
+   * status the seller failed to propagate.
+   * @provenance seller
+   */
+  resource_status?: string;
+  /**
+   * Step id that recorded `resource_status`.
+   * @provenance runner
+   */
+  resource_step_id?: string;
+  /**
+   * Health value present on the buy snapshot when the violation is `health`.
+   * The literal seller-returned value, undefined when the field is absent.
+   * @provenance seller
+   */
+  buy_health?: string;
+  /**
+   * `impairments[].length` on the buy snapshot. Present on all three shapes.
+   * @provenance seller
+   */
+  impairments_count: number;
 }
 
 export interface StoryboardPhaseResult {

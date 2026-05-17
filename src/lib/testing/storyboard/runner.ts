@@ -2128,10 +2128,12 @@ async function executeStoryboardPass(
             ...(r.error !== undefined && { error: r.error }),
           });
           // Issue #935: assertions can attach a structured hint that the
-          // runner mirrors into the owning step's `hints[]`. Today only
-          // `status.monotonic` populates `hint`; the merge here keeps the
-          // taxonomy unified so a single CLI/JUnit/Addie renderer can drive
-          // off `step.hints[]` regardless of which subsystem produced it.
+          // runner mirrors into the owning step's `hints[]`. Producers today
+          // include `status.monotonic` (monotonic_violation) and
+          // `impairment.coherence` (impairment_coherence_violation); the
+          // merge here keeps the taxonomy unified so a single CLI/JUnit/Addie
+          // renderer can drive off `step.hints[]` regardless of which
+          // subsystem produced it.
           if (r.hint) {
             const existing = result.hints ?? [];
             result.hints = [...existing, r.hint];

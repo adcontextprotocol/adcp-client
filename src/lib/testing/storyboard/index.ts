@@ -38,6 +38,7 @@ export type {
   MissingRequiredFieldHint,
   FormatMismatchHint,
   MonotonicViolationHint,
+  ImpairmentCoherenceHint,
   StoryboardContext,
   StoryboardRunOptions,
   ValidationResult,
