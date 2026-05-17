@@ -193,4 +193,36 @@ export type ProjectionDiagnostic =
           capability_id?: string;
         };
       };
+    })
+  | (ProjectionDiagnosticBase & {
+      /**
+       * SDK-local code: v2 declaration uses multi-size (`sizes: [...]`)
+       * or responsive (`min_width`/`max_width`/`min_height`/`max_height`)
+       * params, but `v1_format_ref` is a single catalog entry that can
+       * only carry ONE fixed (width, height). The v1 wire emit
+       * represents only the seller-chosen representative size; the
+       * remaining sizes are **silently dropped on the v1 wire**.
+       *
+       * This diagnostic is emitted **alongside** the v1 format_id —
+       * not instead of it — so the v1 buyer still sees the product
+       * but the buyer code is told what coverage was lost. Different
+       * from FORMAT_DECLARATION_V1_AMBIGUOUS (no v1 emit) and
+       * FORMAT_DECLARATION_V1_NOT_APPLICABLE (seller opt-out).
+       *
+       * Surface follow-up: an SDK MAY (non-normative) expand multi-
+       * size to N v1 format_ids by looking up the catalog for each
+       * size. Today's prototype emits only the seller-asserted
+       * representative; multi-emit is a follow-up.
+       */
+      code: 'FORMAT_DECLARATION_V1_LOSSY_MULTI_SIZE';
+      error: {
+        details: {
+          format_kind: CanonicalFormatKind;
+          product_id: string;
+          capability_id?: string;
+          size_mode: 'sizes' | 'responsive_range';
+          declared_sizes_count?: number;
+          v1_emit_represents_size?: { width?: number; height?: number };
+        };
+      };
     });

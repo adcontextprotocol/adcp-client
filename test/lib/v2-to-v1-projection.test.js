@@ -51,13 +51,16 @@ describe('v2 → v1 Product projection — per-fixture structural invariant', { 
     test(name, () => {
       const { v1, diagnostics } = projectV2ProductToV1(product);
       assert.strictEqual(v1.product_id, product.product_id);
-      // Every input declaration produces either a v1 emit or a
-      // diagnostic — never both, never neither.
+      // Every input declaration produces AT LEAST ONE of (v1 emit,
+      // diagnostic). May produce both: a multi-size v2 declaration
+      // emits a single v1 format_id (the representative size) AND a
+      // FORMAT_DECLARATION_V1_LOSSY_MULTI_SIZE advisory so the buyer
+      // knows N-1 sizes were dropped on the v1 wire.
       const declCount = product.format_options.length;
-      assert.strictEqual(
-        v1.format_ids.length + diagnostics.length,
-        declCount,
-        `every format_options[i] must produce either a v1 emit or a diagnostic`
+      assert.ok(
+        v1.format_ids.length + diagnostics.length >= declCount,
+        `every format_options[i] must produce at least one of (v1 emit, diagnostic); ` +
+          `emits=${v1.format_ids.length} diagnostics=${diagnostics.length} declCount=${declCount}`
       );
       // Every diagnostic must carry the spec-mandated source + sdk_id.
       for (const d of diagnostics) {
@@ -70,23 +73,18 @@ describe('v2 → v1 Product projection — per-fixture structural invariant', { 
 });
 
 describe('v2 → v1 projection — seller-asserted v1_format_ref (the only normative path)', { skip: SKIP_REASON }, () => {
-  // After the registry↔catalog reconciliation upstream, 4 IAB-standard
-  // fixtures point at AAO-canonical agent_url + catalog ids; 1 Meta-
-  // specific fixture keeps a publisher-specific agent_url. This is the
-  // explicit pattern the spec now models: converge on AAO ids for
-  // industry-standard formats, keep publisher namespacing for proprietary
-  // platforms.
+  // After the publisher-scoped format catalog landed (adcp commit
+  // e2fae6b086), publisher-specific formats live at the AAO community
+  // mirror under `creative.adcontextprotocol.org/translated/<publisher>`
+  // until the publisher adopts adagents.json#/formats themselves.
+  // Each fixture below is single-size (fixed width+height) so the
+  // projection produces ZERO diagnostics. The multi-size case is
+  // covered by the dedicated nytimes_homepage_flex_display test below.
   const sellerAsserted = [
-    ['nytimes_homepage_mrec', 'https://creative.adcontextprotocol.org/', 'display_300x250_image'],
     ['nytimes_homepage_html5', 'https://creative.adcontextprotocol.org/', 'display_300x250_html'],
     ['gam_3p_display_tag', 'https://creative.adcontextprotocol.org/', 'display_js'],
     ['youtube_vast_preroll', 'https://creative.adcontextprotocol.org/', 'video_vast_30s'],
-    // After the publisher-scoped format catalog landed upstream
-    // (adcp commit e2fae6b086), Meta moved to the AAO community-
-    // mirror tier — `mirror.adcontextprotocol.org/translated/meta`
-    // hosts the catalog until Meta adopts adagents.json#/formats
-    // themselves.
-    ['meta_reels_us', 'https://mirror.adcontextprotocol.org/translated/meta', 'meta_reels'],
+    ['meta_reels_us', 'https://creative.adcontextprotocol.org/translated/meta', 'meta_reels'],
   ];
 
   for (const [fixture, expectedAgentUrl, expectedId] of sellerAsserted) {
@@ -99,6 +97,27 @@ describe('v2 → v1 projection — seller-asserted v1_format_ref (the only norma
       assert.strictEqual(v1.format_ids[0].id, expectedId);
     });
   }
+});
+
+describe('v2 → v1 projection — multi-size lossy advisory', { skip: SKIP_REASON }, () => {
+  // The new flex-display fixture has 3 format_options (image / html5 /
+  // display_tag), each declaring sizes: [3]. Each emits a single
+  // v1_format_ref (the rep size from the AAO catalog) PLUS a
+  // FORMAT_DECLARATION_V1_LOSSY_MULTI_SIZE diagnostic so the buyer
+  // knows the other 2 sizes are dropped on the v1 wire.
+  test('nytimes_homepage_flex_display emits 3 format_ids + 3 lossy advisories', () => {
+    const product = JSON.parse(readFileSync(path.join(FIXTURE_DIR, 'nytimes_homepage_mrec.json'), 'utf-8'));
+    const { v1, diagnostics } = projectV2ProductToV1(product);
+    assert.strictEqual(product.product_id, 'nytimes_homepage_flex_display');
+    assert.strictEqual(product.format_options.length, 3);
+    assert.strictEqual(v1.format_ids.length, 3, 'one v1 format_id per format_option (rep size)');
+    assert.strictEqual(diagnostics.length, 3, 'one lossy advisory per format_option');
+    for (const d of diagnostics) {
+      assert.strictEqual(d.code, 'FORMAT_DECLARATION_V1_LOSSY_MULTI_SIZE');
+      assert.strictEqual(d.error.details.size_mode, 'sizes');
+      assert.strictEqual(d.error.details.declared_sizes_count, 3);
+    }
+  });
 });
 
 describe('v2 → v1 projection — canonical_formats_only opt-out', { skip: SKIP_REASON }, () => {

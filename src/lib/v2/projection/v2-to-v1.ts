@@ -57,6 +57,39 @@ export interface V2ToV1Result {
 }
 
 /**
+ * Inspect a v2 declaration's params for multi-size or responsive-range
+ * shapes that a single v1 `format_id` can't represent. Returns the
+ * detected mode + count so the caller emits the diagnostic with full
+ * context. Returns null when params declare a single fixed (width,
+ * height) — the case that round-trips through v1 cleanly.
+ */
+function detectLossyMultiSize(
+  decl: V2ProductFormatDeclaration
+): { mode: 'sizes' | 'responsive_range'; count?: number } | null {
+  // Only image/html5/display_tag canonicals carry these new size modes
+  // at 3.1 GA. Other canonicals (video_*, audio_*) use their own param
+  // shapes that the v1 format_id can carry inline.
+  if (decl.format_kind !== 'image' && decl.format_kind !== 'html5' && decl.format_kind !== 'display_tag') {
+    return null;
+  }
+  const params = decl.params ?? {};
+  if (Array.isArray(params.sizes) && params.sizes.length > 1) {
+    return { mode: 'sizes', count: params.sizes.length };
+  }
+  // Responsive range mode: any of min_*/max_* present means the v1
+  // format_id (which carries exactly one width+height pair) is lossy.
+  if (
+    typeof params.min_width === 'number' ||
+    typeof params.max_width === 'number' ||
+    typeof params.min_height === 'number' ||
+    typeof params.max_height === 'number'
+  ) {
+    return { mode: 'responsive_range' };
+  }
+  return null;
+}
+
+/**
  * Project a single V2 declaration. Returns either a v1 format_id to
  * emit, or a diagnostic to surface — never both, never neither (the
  * structural invariant the test suite asserts).
@@ -110,8 +143,37 @@ function projectDeclaration(
   }
 
   // Step 3: seller-asserted v1 link — the only normative path to a
-  // specific v1 format_id.
+  // specific v1 format_id. When the v2 params declare a multi-size
+  // (`sizes: [...]`) or responsive range (`min_*`/`max_*`) shape,
+  // the single v1 format_id can't represent the full coverage —
+  // emit both the v1 ref AND a lossy-multi-size diagnostic so the
+  // buyer knows N-1 sizes are missing on the v1 wire.
   if (decl.v1_format_ref) {
+    const lossy = detectLossyMultiSize(decl);
+    if (lossy) {
+      return {
+        v1: decl.v1_format_ref,
+        diagnostic: {
+          source: 'sdk',
+          sdk_id: SDK_ID,
+          field,
+          code: 'FORMAT_DECLARATION_V1_LOSSY_MULTI_SIZE',
+          error: {
+            details: {
+              format_kind: decl.format_kind,
+              product_id: productId,
+              capability_id: decl.capability_id,
+              size_mode: lossy.mode,
+              declared_sizes_count: lossy.count,
+              v1_emit_represents_size: {
+                width: decl.v1_format_ref.width,
+                height: decl.v1_format_ref.height,
+              },
+            },
+          },
+        },
+      };
+    }
     return { v1: decl.v1_format_ref };
   }
 
