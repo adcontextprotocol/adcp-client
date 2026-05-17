@@ -14,12 +14,27 @@
 
 const { test, describe } = require('node:test');
 const assert = require('node:assert');
-const { readFileSync, readdirSync } = require('node:fs');
+const { readFileSync, readdirSync, existsSync } = require('node:fs');
 const path = require('node:path');
 
 const { projectV2ProductToV1 } = require('../../dist/lib/v2/projection/v2-to-v1.js');
 
 const FIXTURE_DIR = path.join(__dirname, 'v2-projection-fixtures');
+
+// The projection layer reads the v1-canonical-mapping registry and the
+// canonical-format schemas (for v1_translatable). Both live under
+// `schemas/cache/3.1.0-beta.0/` which is gitignored and only present
+// locally — CI only syncs the SDK-pinned stable version (3.0.12).
+//
+// Until adcontextprotocol/adcp#3307 merges and publishes a real 3.1.0
+// tarball that `npm run sync-schemas` can pull, these tests skip in
+// CI with a clear reason. Run locally after rebuilding the 3.1-beta
+// cache (see PR #1815 description).
+const SKIP_REASON = existsSync(
+  path.join(__dirname, '..', '..', 'schemas', 'cache', '3.1.0-beta.0', 'registries', 'v1-canonical-mapping.json')
+)
+  ? false
+  : 'requires schemas/cache/3.1.0-beta.0/ — only present in workspaces with a local 3.1-beta sync';
 
 function loadFixtures() {
   return readdirSync(FIXTURE_DIR)
@@ -30,7 +45,7 @@ function loadFixtures() {
     }));
 }
 
-describe('v2 → v1 Product projection — per-fixture structural invariant', () => {
+describe('v2 → v1 Product projection — per-fixture structural invariant', { skip: SKIP_REASON }, () => {
   for (const { name, product } of loadFixtures()) {
     test(name, () => {
       const { v1, diagnostics } = projectV2ProductToV1(product);
@@ -53,7 +68,7 @@ describe('v2 → v1 Product projection — per-fixture structural invariant', ()
   }
 });
 
-describe('v2 → v1 projection — seller-asserted v1_format_ref (the only normative path)', () => {
+describe('v2 → v1 projection — seller-asserted v1_format_ref (the only normative path)', { skip: SKIP_REASON }, () => {
   // After the registry↔catalog reconciliation upstream, 4 IAB-standard
   // fixtures point at AAO-canonical agent_url + catalog ids; 1 Meta-
   // specific fixture keeps a publisher-specific agent_url. This is the
@@ -80,7 +95,7 @@ describe('v2 → v1 projection — seller-asserted v1_format_ref (the only norma
   }
 });
 
-describe('v2 → v1 projection — canonical_formats_only opt-out', () => {
+describe('v2 → v1 projection — canonical_formats_only opt-out', { skip: SKIP_REASON }, () => {
   // Two fixtures use this now: the NYTimes custom takeover (no v1 form
   // possible — multi-placement) and triton_daast (catalog has no DAAST
   // entry yet, so the seller opted out rather than fabricating an id).
@@ -100,7 +115,7 @@ describe('v2 → v1 projection — canonical_formats_only opt-out', () => {
   }
 });
 
-describe('v2 → v1 projection — v1_translatable: false (4 inherently-v2 canonicals)', () => {
+describe('v2 → v1 projection — v1_translatable: false (4 inherently-v2 canonicals)', { skip: SKIP_REASON }, () => {
   const inherentlyV2 = [
     ['amazon_sponsored_products', 'sponsored_placement'],
     ['chatgpt_brand_mention', 'agent_placement'],
@@ -124,7 +139,7 @@ describe('v2 → v1 projection — v1_translatable: false (4 inherently-v2 canon
   }
 });
 
-describe('v2 → v1 projection — coverage report (informational)', () => {
+describe('v2 → v1 projection — coverage report (informational)', { skip: SKIP_REASON }, () => {
   test('emit a bucket-by-bucket coverage report', () => {
     const fixtures = loadFixtures();
     const buckets = {
