@@ -86,29 +86,99 @@ export interface V1Product {
 }
 
 /**
- * Structured channel for projection failures and lossy downgrades, per
- * `v1-canonical-mapping.json`'s resolution-order amendment. **Never
- * logger-only** — emitted on the response envelope's `errors[]` and on
- * the SDK's `TaskResult` so callers can react.
+ * Structured diagnostic shape matching the spec's `errors[]` augmentation
+ * contract (`source: "sdk"`, `sdk_id`, `code`, `field`, `error.details`).
+ * Spec codes — `FORMAT_PROJECTION_FAILED` and `FORMAT_DECLARATION_V1_AMBIGUOUS`
+ * — come straight from `enums/error-code.json`. The two SDK-local codes
+ * (`*_NOT_APPLICABLE`, `CANONICAL_NOT_V1_TRANSLATABLE`) cover cases the
+ * spec leaves to SDK discretion ("surface as a different diagnostic or
+ * skip silently") but where buyer-side transparency is more useful
+ * than silent product drops.
+ *
+ * **Never logger-only**, per the resolution-order amendment — emitted
+ * on the response envelope's `errors[]` array and surfaced on the
+ * SDK's `TaskResult` for caller-side handling without re-walking
+ * `errors[]`.
  */
+export interface ProjectionDiagnosticBase {
+  /** Spec-mandated origin marker for SDK-augmented diagnostics. */
+  source: 'sdk';
+  /** Spec-mandated SDK identity for multi-hop deduplication. */
+  sdk_id: string;
+  /** Field path into the offending declaration. */
+  field: string;
+}
+
 export type ProjectionDiagnostic =
-  | {
-      code: 'FORMAT_DECLARATION_V1_UNREACHABLE';
-      field: string;
-      details: {
-        format_kind: CanonicalFormatKind;
-        capability_id?: string;
-        reason: 'canonical_formats_only' | 'no_v1_format_ref_or_registry_match';
-        hint?: string;
+  | (ProjectionDiagnosticBase & {
+      /**
+       * Spec code (`enums/error-code.json`): registry-coverage gap.
+       * v1_translatable: true canonical that the registry hasn't covered.
+       * Correctable by adding a registry entry (or by the seller authoring
+       * an explicit `canonical` field on the v1 file).
+       */
+      code: 'FORMAT_PROJECTION_FAILED';
+      error: {
+        details: {
+          format_kind: CanonicalFormatKind;
+          product_id: string;
+          capability_id?: string;
+          resolution_failure: 'no_registry_match';
+        };
       };
-    }
-  | {
+    })
+  | (ProjectionDiagnosticBase & {
+      /**
+       * Spec code (`enums/error-code.json`): registry has family-level
+       * structural entries for this canonical (e.g., the VAST entries
+       * for `video_vast`), but none are invertible to a specific v1
+       * named format. Family is known, specific format isn't pickable.
+       * Correctable by the seller adding `v1_format_ref` to the
+       * declaration.
+       */
       code: 'FORMAT_DECLARATION_V1_AMBIGUOUS';
-      field: string;
-      details: {
-        format_kind: CanonicalFormatKind;
-        capability_id?: string;
-        matched_registry_entries: number;
-        hint?: string;
+      error: {
+        details: {
+          format_kind: CanonicalFormatKind;
+          product_id: string;
+          capability_id?: string;
+          registry_matches: number;
+        };
       };
-    };
+    })
+  | (ProjectionDiagnosticBase & {
+      /**
+       * SDK-local code: declaration has `canonical_formats_only: true`.
+       * Seller explicitly opted out of v1 emission. Not a registry-
+       * coverage gap; not ambiguous. Informational so buyers can see
+       * why a product disappeared from a v1-only catalog.
+       */
+      code: 'FORMAT_DECLARATION_V1_NOT_APPLICABLE';
+      error: {
+        details: {
+          format_kind: CanonicalFormatKind;
+          product_id: string;
+          capability_id?: string;
+          reason: 'canonical_formats_only';
+        };
+      };
+    })
+  | (ProjectionDiagnosticBase & {
+      /**
+       * SDK-local code: canonical declares `v1_translatable: false`.
+       * Structural v1-unreachability — no v1 form is possible for this
+       * canonical regardless of registry coverage. The 4 inherently-v2
+       * canonicals at 3.1 GA: `image_carousel`, `sponsored_placement`,
+       * `responsive_creative`, `agent_placement`. Spec is explicit:
+       * **SDKs MUST NOT emit `FORMAT_PROJECTION_FAILED`** for these
+       * (they're not coverage gaps).
+       */
+      code: 'CANONICAL_NOT_V1_TRANSLATABLE';
+      error: {
+        details: {
+          format_kind: CanonicalFormatKind;
+          product_id: string;
+          capability_id?: string;
+        };
+      };
+    });
