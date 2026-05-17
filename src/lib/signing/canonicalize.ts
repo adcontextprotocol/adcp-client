@@ -19,8 +19,8 @@ export interface ResponseLike {
   body?: string;
   /**
    * Originating request context. Required because RFC 9421 §2.2 binds
-   * response signatures to their request context via `@authority` (and
-   * optionally `@target-uri` / `@method` if the caller opts in).
+   * response signatures to their request context via `@authority` and
+   * `@target-uri` (see {@link RESPONSE_MANDATORY_COMPONENTS}).
    *
    * `url` MUST be an absolute URL — `canonicalAuthority` / `canonicalTargetUri`
    * parse it through `new URL(...)` and will throw on a relative path. Express
@@ -33,6 +33,16 @@ export interface ResponseLike {
    *
    * Same shape applies to Lambda (`event.requestContext.domainName` +
    * `event.rawPath`) and Workers (`request.url` is already absolute).
+   *
+   * **Security note for proxied deployments.** `req.protocol` and
+   * `req.get('host')` are attacker-controlled when the server sits behind
+   * a reverse proxy that doesn't strip / validate `Host` and
+   * `X-Forwarded-*` headers. A hostile peer that controls these can rebind
+   * your signature to `attacker.example.com` while the operator believes
+   * they're signing for `seller.example.com`. Set `app.set('trust proxy',
+   * ...)` to your trusted proxy IPs, validate `Host` against an allowlist
+   * before passing in here, and prefer `https://` always (response
+   * signatures bound to `http://` will fail strict-HTTPS verifier profiles).
    */
   request: { method: string; url: string };
 }

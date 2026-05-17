@@ -23,19 +23,34 @@ const signed = signResponse(response, key);
 // signed.headers now carries Signature, Signature-Input, Content-Digest.
 ```
 
-Covered components default to `['@status', '@authority']`, plus `content-type`
-+ `content-digest` automatically when the response carries a body — same
-conditional shape as `signRequest`. Callers that want to bind to a specific
-request URL can opt-in to `@target-uri` via `additionalComponents`.
+Covered components default to `['@status', '@authority', '@target-uri']`,
+plus `content-type` + `content-digest` automatically when the response
+carries a body. `@target-uri` is in the defaults (not opt-in) so a
+multi-tenant seller can't emit signatures interchangeable across endpoints
+sharing the same authority — matches RFC 9421 §B.2.5 examples. Callers
+that need to extend the covered set further (`@method`, custom headers)
+opt in via `additionalComponents`.
+
+**Asymmetry vs `signRequest`.** Response-signing defaults `coverContentDigest`
+to `true` when the response has a body (opt-out); request-signing requires
+an explicit `coverContentDigest: true` (opt-in). The asymmetry is deliberate:
+an unbound response body is the most common cross-purpose footgun for
+response signing (attacker can swap payload but keep headers + signature).
+Webhook signing also forces content-digest unconditionally for the same
+reason.
 
 Async + KMS-shaped path: `signResponseAsync(response, provider)` delegates the
 crypto to the existing `SigningProvider` interface; the prepare/finalize split
 (`prepareResponseSignature` / `finalizeResponseSignature`) is exported for
 callers that need to hand the canonical base to an external signer.
 
-Tag: `adcp/response-signing/v1`. `AdcpUse` extended with `'response-signing'`
-so JWK metadata can declare the binding now — the matching verifier helper
-(`verifyResponseSignature`) is a separate follow-up.
+Tag: `adcp/response-signing/v1`. **Wire-format contract is provisional**
+until `verifyResponseSignature` (follow-up) lands and is exercised against
+external SDK implementations. The `v1` suffix gives a clean break path —
+any breaking change ships as `v2` and verifiers reject `v1`. Adopters
+shipping signed responses today should pin a major SDK version. `AdcpUse`
+extended with `'response-signing'` so JWK metadata can declare the binding
+now.
 
 **Note on `AdcpUse` widening:** the `AdcpUse` union now includes
 `'response-signing'`. Consumers with exhaustive `switch (use)` blocks

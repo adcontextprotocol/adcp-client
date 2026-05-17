@@ -81,13 +81,19 @@ const FIXED_OPTIONS = {
 };
 
 describe('signResponse — default covered components', () => {
-  test('covers @status, @authority, content-type, content-digest when body present', () => {
+  test('covers @status, @authority, @target-uri, content-type, content-digest when body present', () => {
     const kid = 'test-ed25519-2026';
     const key = { keyid: kid, alg: 'ed25519', privateKey: privateJwkFor(kid) };
     const signed = signResponse(SAMPLE_RESPONSE, key, FIXED_OPTIONS);
 
     const parsed = parseSignatureInput(signed.headers['Signature-Input']);
-    assert.deepStrictEqual(parsed.components, ['@status', '@authority', 'content-type', 'content-digest']);
+    assert.deepStrictEqual(parsed.components, [
+      '@status',
+      '@authority',
+      '@target-uri',
+      'content-type',
+      'content-digest',
+    ]);
     assert.strictEqual(parsed.params.tag, RESPONSE_SIGNING_TAG);
     assert.strictEqual(parsed.params.keyid, kid);
     assert.strictEqual(parsed.params.alg, 'ed25519');
@@ -109,15 +115,28 @@ describe('signResponse — default covered components', () => {
     assert.strictEqual(signed.headers['Content-Digest'], computeContentDigest(SAMPLE_RESPONSE.body));
   });
 
-  test('respects additionalComponents to bind @target-uri', () => {
+  test('respects additionalComponents to add @method', () => {
     const kid = 'test-ed25519-2026';
     const key = { keyid: kid, alg: 'ed25519', privateKey: privateJwkFor(kid) };
+    const signed = signResponse(SAMPLE_RESPONSE, key, {
+      ...FIXED_OPTIONS,
+      additionalComponents: ['@method'],
+    });
+    const parsed = parseSignatureInput(signed.headers['Signature-Input']);
+    assert.ok(parsed.components.includes('@method'));
+  });
+
+  test('additionalComponents is idempotent for components already in defaults', () => {
+    const kid = 'test-ed25519-2026';
+    const key = { keyid: kid, alg: 'ed25519', privateKey: privateJwkFor(kid) };
+    // Passing @target-uri (already in defaults) must not duplicate it.
     const signed = signResponse(SAMPLE_RESPONSE, key, {
       ...FIXED_OPTIONS,
       additionalComponents: ['@target-uri'],
     });
     const parsed = parseSignatureInput(signed.headers['Signature-Input']);
-    assert.ok(parsed.components.includes('@target-uri'));
+    const occurrences = parsed.components.filter(c => c === '@target-uri').length;
+    assert.strictEqual(occurrences, 1);
   });
 });
 
@@ -209,6 +228,46 @@ describe('signResponse — round-trip verification', () => {
     const publicKey = jwkToPublicKey(publicJwkFor(kid));
     const ok = verifySignature(parsedInput.params.alg, publicKey, Buffer.from(base, 'utf8'), parsedSig.bytes);
     assert.strictEqual(ok, false);
+  });
+});
+
+describe('signResponse — wire-format fixture (RFC 9421 §2.5)', () => {
+  // Pin the signature base byte-by-byte against an independently constructed
+  // expected value. Without this fixture, all round-trip tests above would
+  // pass even if `buildResponseSignatureBase` silently changed canonicalization
+  // (since they both sign AND verify through the same builder). The fixture
+  // is the only thing protecting wire-format compatibility from refactors.
+  test('Ed25519 signature base matches RFC 9421 §2.5 prose for a known response', () => {
+    const kid = 'test-ed25519-2026';
+    const key = { keyid: kid, alg: 'ed25519', privateKey: privateJwkFor(kid) };
+    const signed = signResponse(SAMPLE_RESPONSE, key, FIXED_OPTIONS);
+
+    const expectedDigest = computeContentDigest(SAMPLE_RESPONSE.body);
+    // RFC 9421 §2.5: signature base is `"<component>": <value>\n` lines
+    // followed by `"@signature-params": <params>`. Components in covered
+    // order; params in the order this SDK canonicalizes (created, expires,
+    // nonce, keyid, alg, tag).
+    const expectedBase = [
+      '"@status": 200',
+      '"@authority": seller.example.com',
+      '"@target-uri": https://seller.example.com/adcp/get_products',
+      '"content-type": application/json',
+      `"content-digest": ${expectedDigest}`,
+      `"@signature-params": ("@status" "@authority" "@target-uri" "content-type" "content-digest");created=${FIXED_OPTIONS.now()};expires=${FIXED_OPTIONS.now() + FIXED_OPTIONS.windowSeconds};nonce="${FIXED_OPTIONS.nonce}";keyid="${kid}";alg="ed25519";tag="${RESPONSE_SIGNING_TAG}"`,
+    ].join('\n');
+
+    assert.strictEqual(signed.signatureBase, expectedBase);
+  });
+
+  test('Signature-Input header is canonical for the same response', () => {
+    const kid = 'test-ed25519-2026';
+    const key = { keyid: kid, alg: 'ed25519', privateKey: privateJwkFor(kid) };
+    const signed = signResponse(SAMPLE_RESPONSE, key, FIXED_OPTIONS);
+    const expected =
+      `sig1=("@status" "@authority" "@target-uri" "content-type" "content-digest");` +
+      `created=${FIXED_OPTIONS.now()};expires=${FIXED_OPTIONS.now() + FIXED_OPTIONS.windowSeconds};` +
+      `nonce="${FIXED_OPTIONS.nonce}";keyid="${kid}";alg="ed25519";tag="${RESPONSE_SIGNING_TAG}"`;
+    assert.strictEqual(signed.headers['Signature-Input'], expected);
   });
 });
 

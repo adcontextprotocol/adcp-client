@@ -65,6 +65,13 @@ function assertKeyPurpose(key: SignerKey, expected: AdcpUse): void {
       throw new WebhookSignatureError('webhook_signature_key_purpose_invalid', 8, message);
     case 'response-signing':
       throw new ResponseSignatureError('response_signature_key_purpose_invalid', 8, message);
+    default: {
+      // Compile-time exhaustiveness: a future `AdcpUse` widening must add
+      // a case arm here. Trips `tsc --noEmit` if the union grows without
+      // an explicit gate decision for the new member.
+      const _exhaustive: never = expected;
+      throw new Error(`unreachable: unhandled AdcpUse '${_exhaustive}'`);
+    }
   }
 }
 
@@ -116,6 +123,15 @@ export interface PreparedRequestSignature {
  * Canonicalize a request for RFC 9421 request-signing. Pure (no I/O); the
  * sync and async paths share this so canonicalization can't drift between
  * them.
+ *
+ * **No purpose-binding gate.** This function takes a `SignatureIdentity`
+ * (just `keyid` + `alg`), not a full `SignerKey`, so it deliberately
+ * cannot enforce `adcp_use`. Callers composing `prepare* + own-signer`
+ * are responsible for purpose binding themselves — the convenience
+ * helper `signRequest` runs `assertKeyPurpose` before calling this and
+ * is what most adopters want. Test-vector authors who need to sign with
+ * wrong-purpose keys (e.g. AdCP negative-vector 009 cross-purpose
+ * rejection) use this prepare/finalize composition deliberately.
  */
 export function prepareRequestSignature(
   request: RequestLike,
@@ -197,6 +213,10 @@ export interface SignWebhookOptions {
  * `signWebhookAsync` paths. Covers the five mandatory components —
  * `@method`, `@target-uri`, `@authority`, `content-type`, `content-digest` —
  * and sets `Content-Digest` on the outgoing headers.
+ *
+ * **No purpose-binding gate** — same caveat as
+ * {@link prepareRequestSignature}. The convenience helper `signWebhook`
+ * runs `assertKeyPurpose` before calling this.
  */
 export function prepareWebhookSignature(
   request: RequestLike,
@@ -244,16 +264,24 @@ export function signWebhook(request: RequestLike, key: SignerKey, options: SignW
 export interface SignResponseOptions {
   /**
    * Cover a `Content-Digest` of the response body. Defaults to `true` when
-   * the response has a body — same shape as request-signing's automatic
-   * `content-digest` inclusion. Pass `false` to omit even when a body is
-   * present (e.g. when the digest is computed by an upstream proxy).
+   * the response has a body.
+   *
+   * **Asymmetric with `signRequest`.** Request signing defaults to opt-in
+   * (`coverContentDigest: true` required to cover); response signing
+   * defaults to opt-out because an unbound body is the most common
+   * cross-purpose footgun for response signing — without a body digest,
+   * an attacker that can swap the payload but preserve headers can pass
+   * the signature check. The asymmetry is deliberate; callers that want
+   * to omit (e.g. when an upstream proxy computes the digest) pass
+   * `false` explicitly.
    */
   coverContentDigest?: boolean;
   /**
    * Additional derived/header components to cover beyond
-   * {@link RESPONSE_MANDATORY_COMPONENTS}. Useful for binding the
-   * signature to a specific request URL (`@target-uri`) or method
-   * (`@method`) rather than just origin.
+   * {@link RESPONSE_MANDATORY_COMPONENTS}. The defaults already include
+   * `@status`, `@authority`, and `@target-uri`. Use this for `@method`
+   * (uncommon for responses — request method is usually implicit) or for
+   * custom headers (`x-content-type-options`, etc.).
    */
   additionalComponents?: ReadonlyArray<string>;
   label?: string;
@@ -298,10 +326,15 @@ export interface PreparedResponseSignature {
 /**
  * Canonicalize a response for RFC 9421 response-signing (§2.2.9). Pure
  * (no I/O); shared between sync `signResponse` and async `signResponseAsync`
- * so canonicalization can't drift between them. Covers `@status` and
- * `@authority` by default; adds `content-type` + `content-digest`
- * automatically when the response carries a body. Callers can extend the
- * covered set via {@link SignResponseOptions.additionalComponents}.
+ * so canonicalization can't drift between them. Covers
+ * {@link RESPONSE_MANDATORY_COMPONENTS} by default; adds `content-type` +
+ * `content-digest` automatically when the response carries a body. Callers
+ * can extend the covered set via
+ * {@link SignResponseOptions.additionalComponents}.
+ *
+ * **No purpose-binding gate** — same caveat as
+ * {@link prepareRequestSignature}. The convenience helper `signResponse`
+ * runs `assertKeyPurpose` before calling this.
  */
 export function prepareResponseSignature(
   response: ResponseLike,
