@@ -11,3 +11,9 @@ docs/
 # would reformat and diverge from the source of truth. Remove once vectors
 # load from compliance/cache/ (already ignored) instead of test/fixtures/.
 test/fixtures/webhook-signing-vectors/
+
+# Vendored v2 canonical-format reference fixtures from adcontextprotocol/adcp#3307
+# (static/examples/products/canonical/). Same byte-fidelity rule as
+# webhook-signing-vectors — these are spec-authored examples and reformatting
+# would diverge from the source of truth.
+test/lib/v2-projection-fixtures/
