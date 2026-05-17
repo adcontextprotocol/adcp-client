@@ -547,6 +547,16 @@ export type {
   CreativeBrief,
 } from './types/core.generated';
 
+// ====== WELL-KNOWN FILE TYPES ======
+// brand.json / adagents.json shapes inferred from the canonical Zod schemas.
+// Re-exported explicitly here (in addition to the transitive `export * from
+// './types'` above) so the top-level public API contract is visible at the
+// main barrel and not dependent on the sub-barrel's wildcard re-export.
+// Source of truth: schemas/cache/{version}/{brand,adagents}.json — regenerate
+// with `npm run generate-wellknown-schemas` when the spec bumps.
+export type { BrandJson, AdagentsJson } from './types/wellknown-schemas.generated';
+export { BrandJsonSchema, AdagentsJsonSchema } from './types/wellknown-schemas.generated';
+
 // ====== ERROR CODES ======
 // Standard error code vocabulary for programmatic error handling
 export type { Error as TaskErrorDetail } from './types/core.generated';
