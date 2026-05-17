@@ -1,8 +1,9 @@
 import { createPrivateKey, randomBytes, randomUUID, sign as nodeSign, type JsonWebKey } from 'crypto';
 import {
   buildSignatureBase,
+  finalizeRequestSignature,
   formatSignatureParams,
-  signRequest,
+  prepareRequestSignature,
   REQUEST_SIGNING_TAG,
   type AdcpJsonWebKey,
   type RequestLike,
@@ -341,12 +342,25 @@ function sign(key: SignerKey, vector: PositiveVector | NegativeVector, args: Sig
     headers: shaped.headers,
     body: shaped.body,
   };
-  const signed = signRequest(request, key, {
-    coverContentDigest: args.coverContentDigest === true,
-    now: args.now !== undefined ? () => args.now! : undefined,
-    nonce: args.nonce,
-    windowSeconds: args.windowSeconds,
-  });
+  // Negative-vector 009 deliberately signs with a wrong-purpose key
+  // (`adcp_use: 'governance-signing'`) to exercise the verifier's step-8
+  // purpose check. The signer-side `signRequest` gate refuses wrong-purpose
+  // keys to prevent the more common operator footgun; bypass it here by
+  // composing `prepareRequestSignature` (which takes `SignatureIdentity`
+  // and runs no gate) with this file's local `produceSignature` helper.
+  // The bypass is intentional and confined to test-vector authoring.
+  const prepared = prepareRequestSignature(
+    request,
+    { keyid: key.keyid, alg: key.alg },
+    {
+      coverContentDigest: args.coverContentDigest === true,
+      now: args.now !== undefined ? () => args.now! : undefined,
+      nonce: args.nonce,
+      windowSeconds: args.windowSeconds,
+    }
+  );
+  const signature = produceSignature(key, Buffer.from(prepared.base, 'utf8'));
+  const signed = finalizeRequestSignature(prepared, signature);
   return {
     method: shaped.method,
     url: shaped.url,

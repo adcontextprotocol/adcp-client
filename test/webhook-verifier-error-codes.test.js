@@ -12,7 +12,8 @@ const { describe, test } = require('node:test');
 const assert = require('node:assert');
 
 const { verifyWebhookSignature } = require('../dist/lib/signing/webhook-verifier.js');
-const { signWebhook } = require('../dist/lib/signing/signer.js');
+const { signWebhook, prepareWebhookSignature, finalizeRequestSignature } = require('../dist/lib/signing/signer.js');
+const nodeCrypto = require('node:crypto');
 const { StaticJwksResolver } = require('../dist/lib/signing/jwks.js');
 const { InMemoryReplayStore } = require('../dist/lib/signing/replay.js');
 const { InMemoryRevocationStore } = require('../dist/lib/signing/revocation.js');
@@ -48,11 +49,31 @@ function signerKeyFor(kid) {
       kty: entry.kty,
       crv: entry.crv,
       alg: entry.alg,
+      adcp_use: entry.adcp_use,
       x: entry.x,
       y: entry.y,
       d: entry._private_d_for_test_only,
     },
   };
+}
+
+/**
+ * Sign a webhook while bypassing the signer-side `adcp_use` purpose gate so
+ * the negative-vector cross-purpose-rejection test can construct a payload
+ * that exercises the *verifier's* step-8 check. The convenience helper
+ * `signWebhook` refuses non-webhook-signing keys (the gate's whole point);
+ * compose `prepareWebhookSignature` + node:crypto + `finalizeRequestSignature`
+ * to author adversarial signatures legitimately. Same pattern the
+ * storyboard request-signing builder uses for AdCP negative vector 009.
+ */
+function signWebhookBypassingPurposeGate(request, signerKey, options) {
+  const prepared = prepareWebhookSignature(request, { keyid: signerKey.keyid, alg: signerKey.alg }, options);
+  const privateKey = nodeCrypto.createPrivateKey({ key: signerKey.privateKey, format: 'jwk' });
+  const sigBytes =
+    signerKey.alg === 'ed25519'
+      ? nodeCrypto.sign(null, Buffer.from(prepared.base, 'utf8'), privateKey)
+      : nodeCrypto.sign('sha256', Buffer.from(prepared.base, 'utf8'), { key: privateKey, dsaEncoding: 'ieee-p1363' });
+  return finalizeRequestSignature(prepared, new Uint8Array(sigBytes));
 }
 
 async function verify(requestLike, jwks, opts = {}) {
@@ -74,7 +95,10 @@ describe('webhook verifier: webhook_mode_mismatch (adcp#2467)', () => {
       headers: { 'Content-Type': 'application/json' },
       body: '{"idempotency_key":"whk_01HW9D3H8FZP2N6R8T0V4X6Z9B","status":"completed"}',
     };
-    const signed = signWebhook(request, signerKey, { now: () => now });
+    // Bypass the signer-side adcp_use gate: this test exists precisely to
+    // exercise the verifier's step-8 cross-purpose rejection, which requires
+    // a wire payload signed with a request-signing key.
+    const signed = signWebhookBypassingPurposeGate(request, signerKey, { now: () => now });
     const jwk = toPublicJwk(keyByKid('test-wrong-purpose-2026')); // adcp_use: "request-signing"
     const jwks = new StaticJwksResolver([jwk]);
 

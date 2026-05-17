@@ -1,10 +1,21 @@
 import { createPrivateKey, randomBytes, sign as nodeSign, type JsonWebKey } from 'crypto';
-import { buildSignatureBase, formatSignatureParams, type RequestLike, type SignatureParams } from './canonicalize';
+import {
+  buildResponseSignatureBase,
+  buildSignatureBase,
+  formatSignatureParams,
+  type RequestLike,
+  type ResponseLike,
+  type SignatureParams,
+} from './canonicalize';
 import { computeContentDigest } from './content-digest';
+import { RequestSignatureError, ResponseSignatureError, WebhookSignatureError } from './errors';
+import type { AdcpUse } from './jwks-helpers';
 import {
   MANDATORY_COMPONENTS,
   MAX_SIGNATURE_WINDOW_SECONDS,
   REQUEST_SIGNING_TAG,
+  RESPONSE_MANDATORY_COMPONENTS,
+  RESPONSE_SIGNING_TAG,
   type AdcpJsonWebKey,
   type AdcpSignAlg,
 } from './types';
@@ -13,7 +24,55 @@ import { WEBHOOK_MANDATORY_COMPONENTS, WEBHOOK_SIGNING_TAG } from './webhook-ver
 export interface SignerKey {
   keyid: string;
   alg: 'ed25519' | 'ecdsa-p256-sha256';
+  /**
+   * Private JWK. MUST carry `adcp_use` matching the helper being called:
+   * - `signRequest` requires `adcp_use: 'request-signing'`
+   * - `signWebhook` requires `adcp_use: 'webhook-signing'`
+   * - `signResponse` requires `adcp_use: 'response-signing'`
+   *
+   * Mismatched or missing `adcp_use` throws at the signer with the same
+   * error code the verifier raises at step 8 — failure surfaces at
+   * configuration time rather than at the receiver, where the message is
+   * far from its cause. Mint keys with `pemToAdcpJwk({ adcp_use: ... })`
+   * to get the binding right by construction.
+   */
   privateKey: AdcpJsonWebKey;
+}
+
+/**
+ * Step-8-equivalent purpose-binding gate on the signer side. The verifier
+ * already enforces `jwk.adcp_use === expected` at step 8 (see verifier.ts
+ * for request signing; webhook-verifier.ts for webhooks). Replicating the
+ * check on the signer side prevents the more common operator footgun:
+ * passing a wrong-purpose key into the helper, producing a wire-conformant
+ * signature that the downstream verifier then rejects, surfacing the
+ * misconfiguration at the wrong end of the connection.
+ *
+ * Errors emit the same code the verifier uses for that direction so log
+ * scrapers across signer / verifier see consistent vocabulary.
+ */
+function assertKeyPurpose(key: SignerKey, expected: AdcpUse): void {
+  const actual = key.privateKey.adcp_use;
+  if (actual === expected) return;
+  const message =
+    `Signing key '${key.keyid}' has adcp_use=${actual === undefined ? '<missing>' : `'${actual}'`} ` +
+    `but the helper requires '${expected}'. Mint a key scoped for '${expected}' via ` +
+    `pemToAdcpJwk({ adcp_use: '${expected}' }) — sharing keys across purposes is intentionally refused.`;
+  switch (expected) {
+    case 'request-signing':
+      throw new RequestSignatureError('request_signature_key_purpose_invalid', 8, message);
+    case 'webhook-signing':
+      throw new WebhookSignatureError('webhook_signature_key_purpose_invalid', 8, message);
+    case 'response-signing':
+      throw new ResponseSignatureError('response_signature_key_purpose_invalid', 8, message);
+    default: {
+      // Compile-time exhaustiveness: a future `AdcpUse` widening must add
+      // a case arm here. Trips `tsc --noEmit` if the union grows without
+      // an explicit gate decision for the new member.
+      const _exhaustive: never = expected;
+      throw new Error(`unreachable: unhandled AdcpUse '${_exhaustive}'`);
+    }
+  }
 }
 
 export interface SignRequestOptions {
@@ -64,6 +123,15 @@ export interface PreparedRequestSignature {
  * Canonicalize a request for RFC 9421 request-signing. Pure (no I/O); the
  * sync and async paths share this so canonicalization can't drift between
  * them.
+ *
+ * **No purpose-binding gate.** This function takes a `SignatureIdentity`
+ * (just `keyid` + `alg`), not a full `SignerKey`, so it deliberately
+ * cannot enforce `adcp_use`. Callers composing `prepare* + own-signer`
+ * are responsible for purpose binding themselves — the convenience
+ * helper `signRequest` runs `assertKeyPurpose` before calling this and
+ * is what most adopters want. Test-vector authors who need to sign with
+ * wrong-purpose keys (e.g. AdCP negative-vector 009 cross-purpose
+ * rejection) use this prepare/finalize composition deliberately.
  */
 export function prepareRequestSignature(
   request: RequestLike,
@@ -120,6 +188,7 @@ export function finalizeRequestSignature(prepared: PreparedRequestSignature, sig
 }
 
 export function signRequest(request: RequestLike, key: SignerKey, options: SignRequestOptions = {}): SignedRequest {
+  assertKeyPurpose(key, 'request-signing');
   const prepared = prepareRequestSignature(request, { keyid: key.keyid, alg: key.alg }, options);
   const signature = produceSignature(key, Buffer.from(prepared.base, 'utf8'));
   return finalizeRequestSignature(prepared, signature);
@@ -144,6 +213,10 @@ export interface SignWebhookOptions {
  * `signWebhookAsync` paths. Covers the five mandatory components —
  * `@method`, `@target-uri`, `@authority`, `content-type`, `content-digest` —
  * and sets `Content-Digest` on the outgoing headers.
+ *
+ * **No purpose-binding gate** — same caveat as
+ * {@link prepareRequestSignature}. The convenience helper `signWebhook`
+ * runs `assertKeyPurpose` before calling this.
  */
 export function prepareWebhookSignature(
   request: RequestLike,
@@ -182,9 +255,176 @@ export function prepareWebhookSignature(
  * conformant webhooks should use this instead of hand-rolling signatures.
  */
 export function signWebhook(request: RequestLike, key: SignerKey, options: SignWebhookOptions = {}): SignedRequest {
+  assertKeyPurpose(key, 'webhook-signing');
   const prepared = prepareWebhookSignature(request, { keyid: key.keyid, alg: key.alg }, options);
   const signature = produceSignature(key, Buffer.from(prepared.base, 'utf8'));
   return finalizeRequestSignature(prepared, signature);
+}
+
+export interface SignResponseOptions {
+  /**
+   * Cover a `Content-Digest` of the response body. Defaults to `true` when
+   * the response has a body.
+   *
+   * **Asymmetric with `signRequest`.** Request signing defaults to opt-in
+   * (`coverContentDigest: true` required to cover); response signing
+   * defaults to opt-out because an unbound body is the most common
+   * cross-purpose footgun for response signing — without a body digest,
+   * an attacker that can swap the payload but preserve headers can pass
+   * the signature check. The asymmetry is deliberate; callers that want
+   * to omit (e.g. when an upstream proxy computes the digest) pass
+   * `false` explicitly.
+   */
+  coverContentDigest?: boolean;
+  /**
+   * Additional derived/header components to cover beyond
+   * {@link RESPONSE_MANDATORY_COMPONENTS}. The defaults already include
+   * `@status`, `@authority`, and `@target-uri`. Use this for `@method`
+   * (uncommon for responses — request method is usually implicit) or for
+   * custom headers (`x-content-type-options`, etc.).
+   */
+  additionalComponents?: ReadonlyArray<string>;
+  label?: string;
+  windowSeconds?: number;
+  now?: () => number;
+  nonce?: string;
+  /**
+   * Override the signature tag. Defaults to `adcp/response-signing/v1`.
+   * Exposed so test suites can pin a wrong tag to exercise receiver
+   * rejection paths without mutating the signed headers post-hoc.
+   */
+  tag?: string;
+}
+
+export interface SignedResponse {
+  status: number;
+  headers: Record<string, string>;
+  signatureBase: string;
+  params: SignatureParams;
+}
+
+/**
+ * Result of canonicalizing a response for signing — everything `signResponse`
+ * and `signResponseAsync` produce up to (but not including) the call into
+ * the signer/provider.
+ */
+export interface PreparedResponseSignature {
+  status: number;
+  components: string[];
+  params: SignatureParams;
+  /**
+   * Outbound response headers including `Content-Digest` when covered, but
+   * not yet including `Signature-Input` / `Signature` — those are appended
+   * by {@link finalizeResponseSignature}.
+   */
+  headers: Record<string, string>;
+  /** Canonical signature base bytes (UTF-8). Pass to the signer/provider. */
+  base: string;
+  label: string;
+}
+
+/**
+ * Canonicalize a response for RFC 9421 response-signing (§2.2.9). Pure
+ * (no I/O); shared between sync `signResponse` and async `signResponseAsync`
+ * so canonicalization can't drift between them. Covers
+ * {@link RESPONSE_MANDATORY_COMPONENTS} by default; adds `content-type` +
+ * `content-digest` automatically when the response carries a body. Callers
+ * can extend the covered set via
+ * {@link SignResponseOptions.additionalComponents}.
+ *
+ * **No purpose-binding gate** — same caveat as
+ * {@link prepareRequestSignature}. The convenience helper `signResponse`
+ * runs `assertKeyPurpose` before calling this.
+ */
+export function prepareResponseSignature(
+  response: ResponseLike,
+  identity: SignatureIdentity,
+  options: SignResponseOptions = {}
+): PreparedResponseSignature {
+  const now = options.now ? options.now() : Math.floor(Date.now() / 1000);
+  const windowSeconds = Math.min(options.windowSeconds ?? 300, MAX_SIGNATURE_WINDOW_SECONDS);
+  const nonce = options.nonce ?? base64UrlRandom(16);
+  const label = options.label ?? 'sig1';
+  const hasBody = (response.body ?? '').length > 0;
+  const coverDigest = (options.coverContentDigest ?? true) && hasBody;
+
+  const headers: Record<string, string> = { ...flattenHeaders(response.headers) };
+  if (coverDigest) {
+    headers['Content-Digest'] = computeContentDigest(response.body ?? '');
+  }
+
+  const components = [...RESPONSE_MANDATORY_COMPONENTS];
+  if (hasBody) components.push('content-type');
+  if (coverDigest) components.push('content-digest');
+  if (options.additionalComponents) {
+    for (const c of options.additionalComponents) {
+      if (!components.includes(c)) components.push(c);
+    }
+  }
+
+  const params: SignatureParams = {
+    created: now,
+    expires: now + windowSeconds,
+    nonce,
+    keyid: identity.keyid,
+    alg: identity.alg,
+    tag: options.tag ?? RESPONSE_SIGNING_TAG,
+  };
+
+  const normalizedResponse: ResponseLike = { ...response, headers };
+  const base = buildResponseSignatureBase(components, normalizedResponse, params);
+
+  return { status: response.status, components, params, headers, base, label };
+}
+
+/**
+ * Attach `Signature` / `Signature-Input` headers given the bytes returned
+ * by the signer/provider. Mirrors {@link finalizeRequestSignature} but
+ * returns a {@link SignedResponse} that carries the response status alongside
+ * the stamped headers so the caller can hand the whole object back to its
+ * HTTP layer.
+ */
+export function finalizeResponseSignature(prepared: PreparedResponseSignature, signature: Uint8Array): SignedResponse {
+  const headers = { ...prepared.headers };
+  const sigB64 = Buffer.from(signature).toString('base64url');
+  headers['Signature-Input'] = `${prepared.label}=${formatSignatureParams(prepared.components, prepared.params)}`;
+  headers['Signature'] = `${prepared.label}=:${sigB64}:`;
+  return { status: prepared.status, headers, signatureBase: prepared.base, params: prepared.params };
+}
+
+/**
+ * Sign an outbound response under the RFC 9421 response-signing profile
+ * (`tag=adcp/response-signing/v1`). Covers `@status` and `@authority` by
+ * default, plus `content-type` + `content-digest` when a body is present.
+ * Servers emitting signed responses (e.g. seller agents whose clients
+ * verify `get_products` payloads before parsing) should use this instead
+ * of hand-rolling signatures.
+ *
+ * Returns headers as a plain `Record<string, string>` for direct use with
+ * Express (`res.set(signed.headers)`). For Fetch / Node `Response` (where
+ * the headers object is immutable on construction), spread into the
+ * `Headers` constructor or `setHeader` loop:
+ *
+ * ```ts
+ * // Express
+ * res.status(signed.status).set(signed.headers).send(body);
+ *
+ * // Fetch / Workers / Node 20+ Response
+ * return new Response(body, { status: signed.status, headers: signed.headers });
+ *
+ * // Node `http.ServerResponse`
+ * res.writeHead(signed.status, signed.headers).end(body);
+ * ```
+ */
+export function signResponse(
+  response: ResponseLike,
+  key: SignerKey,
+  options: SignResponseOptions = {}
+): SignedResponse {
+  assertKeyPurpose(key, 'response-signing');
+  const prepared = prepareResponseSignature(response, { keyid: key.keyid, alg: key.alg }, options);
+  const signature = produceSignature(key, Buffer.from(prepared.base, 'utf8'));
+  return finalizeResponseSignature(prepared, signature);
 }
 
 function produceSignature(key: SignerKey, data: Buffer): Uint8Array {

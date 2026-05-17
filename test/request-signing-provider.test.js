@@ -111,11 +111,16 @@ describe('signRequestAsync produces byte-equivalent output to signRequest (ECDSA
 describe('signWebhookAsync is functionally equivalent to signWebhook', () => {
   test('headers and base match for Ed25519', async () => {
     const kid = 'test-ed25519-2026';
-    const key = { keyid: kid, alg: 'ed25519', privateKey: privateJwkFor(kid) };
+    // The vectors at request-signing/keys.json declare `adcp_use: 'request-signing'`;
+    // the signWebhook purpose-binding gate refuses non-webhook keys, so override
+    // adcp_use for this sync/async equivalence test. The Ed25519 scalar is the
+    // same — only the purpose metadata changes.
+    const webhookJwk = { ...privateJwkFor(kid), adcp_use: 'webhook-signing' };
+    const key = { keyid: kid, alg: 'ed25519', privateKey: webhookJwk };
     const provider = new InMemorySigningProvider({
       keyid: kid,
       algorithm: 'ed25519',
-      privateKey: privateJwkFor(kid),
+      privateKey: webhookJwk,
     });
     const sync = signWebhook(SAMPLE_REQUEST, key, SAMPLE_OPTIONS);
     const async_ = await signWebhookAsync(SAMPLE_REQUEST, provider, SAMPLE_OPTIONS);
