@@ -96,6 +96,7 @@ export {
   summarizeStrictValidation,
   listStrictOnlyFailures,
   resolveCapabilityPath,
+  evaluateCapabilityPredicate,
   buildDiscoveryFailedResult,
 } from './runner';
 

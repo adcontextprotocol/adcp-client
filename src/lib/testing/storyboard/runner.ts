@@ -184,6 +184,64 @@ export function resolveCapabilityPath(raw: unknown, dottedPath: string): unknown
   return current;
 }
 
+/**
+ * Evaluate a `requires_capability` predicate against the value already
+ * resolved from the agent's raw capabilities. Returns `null` when the
+ * predicate is satisfied (or unresolvable, per `equals` absence semantics)
+ * and a human-readable detail string when the storyboard should be skipped.
+ *
+ * Two matcher forms — see `Storyboard.requires_capability` for full semantics:
+ *
+ * - `equals: V` — skip only when `actual` is declared AND disagrees with `V`.
+ *   Absent fields (`undefined`) RUN the storyboard so the failure surfaces
+ *   an under-declared agent.
+ *
+ * - `present: B` — presence is the load-bearing signal. `present: true`
+ *   skips when the field is absent (treats `undefined` and `null` as absent).
+ *   `present: false` skips when the field is present. Empty object `{}`
+ *   counts as present, per the spec's "presence of this object indicates
+ *   support" wording. Note: an explicit `null` on the wire is technically
+ *   non-conformant for object-typed capabilities (`"type": "object"` rejects
+ *   null in JSON Schema), but is coalesced with absent here in the spirit of
+ *   Postel — agents that misdeclare a not-supported capability as `null`
+ *   get the same not_applicable skip as agents that omit the field.
+ *
+ * Exported for direct testing so the predicate semantics are pinned without
+ * needing a full runStoryboard() roundtrip.
+ */
+export function evaluateCapabilityPredicate(
+  predicate: { path: string; equals: boolean | string | number | null } | { path: string; present: boolean },
+  actual: unknown
+): string | null {
+  if ('present' in predicate) {
+    const isPresent = actual !== undefined && actual !== null;
+    if (predicate.present && !isPresent) {
+      return `Capability predicate \`${predicate.path}\` must be present: ` + `agent did not declare it.`;
+    }
+    if (!predicate.present && isPresent) {
+      return (
+        `Capability predicate \`${predicate.path}\` must be absent: ` + `agent declared ${JSON.stringify(actual)}.`
+      );
+    }
+    return null;
+  }
+  // `equals` form — absence semantics are load-bearing. `actual === undefined`
+  // means the agent didn't declare the capability at all (field missing from
+  // `get_adcp_capabilities` response). We deliberately RUN the storyboard in
+  // that case rather than skip it: an agent that pre-dates the capability
+  // field hasn't explicitly opted out, so the storyboard's failures surface
+  // a real spec-coverage gap (under-declared agent) rather than a behavior
+  // the agent affirmatively refused. Skip ONLY when the agent declared a
+  // value AND that value disagrees with the predicate.
+  if (actual !== undefined && actual !== predicate.equals) {
+    return (
+      `Capability predicate \`${predicate.path} === ${JSON.stringify(predicate.equals)}\` not satisfied: ` +
+      `agent declared ${JSON.stringify(actual)}.`
+    );
+  }
+  return null;
+}
+
 function buildSkip(reason: RunnerSkipReason, detail?: string): { reason: RunnerSkipReason; detail: string } {
   return { reason, detail: detail ?? SKIP_DETAILS[reason] };
 }
@@ -1486,23 +1544,15 @@ async function executeStoryboardPass(
   if (storyboard.requires_capability) {
     const rawCaps = profile?.raw_capabilities;
     if (rawCaps !== undefined) {
-      const { path, equals } = storyboard.requires_capability;
-      const actual = resolveCapabilityPath(rawCaps, path);
-      // Absence semantics — load-bearing. `actual === undefined` means
-      // the agent didn't declare the capability at all (field missing
-      // from `get_adcp_capabilities` response). We deliberately RUN the
-      // storyboard in that case rather than skip it: an agent that
-      // pre-dates the capability field hasn't explicitly opted out, so
-      // the storyboard's failures surface a real spec-coverage gap
-      // (under-declared agent) rather than a behavior the agent
-      // affirmatively refused. Skip ONLY when the agent declared a
-      // value AND that value disagrees with the predicate.
-      if (actual !== undefined && actual !== equals) {
-        const detail =
-          `Capability predicate \`${path} === ${JSON.stringify(equals)}\` not satisfied: ` +
-          `agent declared ${JSON.stringify(actual)}.`;
+      const cap = storyboard.requires_capability;
+      const actual = resolveCapabilityPath(rawCaps, cap.path);
+      const unmetDetail = evaluateCapabilityPredicate(cap, actual);
+      if (unmetDetail !== null) {
         if (!options._client) await closeConnections(options.protocol);
-        return { ...buildCapabilityUnsupportedResult(agentUrls, storyboard, detail), notices: preflightNotices };
+        return {
+          ...buildCapabilityUnsupportedResult(agentUrls, storyboard, unmetDetail),
+          notices: preflightNotices,
+        };
       }
     }
   }
