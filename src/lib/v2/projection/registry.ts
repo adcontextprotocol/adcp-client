@@ -110,6 +110,96 @@ export function _resetRegistryCache(): void {
 }
 
 /**
+ * Forward registry lookup (v1 → v2). Given a v1 `format_id.id`, find
+ * the registry entry whose `format_id_glob` matches and return the
+ * canonical + parameters. Used by `projectV1ProductToV2` resolution
+ * step 2.
+ *
+ * Glob `*` matches any non-`/` segment (the same minimal-glob shape
+ * the v2→v1 prototype's matcher used). Returns the first matching
+ * entry — registry order is authoritative per the spec ("Ordered list
+ * of v1 → v2 mappings. SDKs apply mappings in order and use the first
+ * match.").
+ */
+export interface ForwardGlobMatch {
+  canonical: CanonicalFormatKind;
+  parameters: Record<string, unknown>;
+  notes?: string;
+}
+
+export function forwardLookupByGlob(formatIdId: string): ForwardGlobMatch | undefined {
+  const registry = loadRegistry();
+  for (const m of registry.mappings) {
+    if (m.deprecated) continue;
+    const glob = m.v1_pattern.format_id_glob;
+    if (!glob) continue;
+    if (globMatches(glob, formatIdId)) {
+      return {
+        canonical: m.v2.canonical as CanonicalFormatKind,
+        parameters: (m.v2.parameters ?? {}) as Record<string, unknown>,
+        notes: m.notes,
+      };
+    }
+  }
+  return undefined;
+}
+
+function globMatches(glob: string, value: string): boolean {
+  // Anchor both ends; '*' matches one or more non-`/` chars.
+  const re = new RegExp('^' + glob.replace(/[.+^${}()|[\]\\]/g, '\\$&').replace(/\*/g, '[^/]+') + '$');
+  return re.test(value);
+}
+
+/**
+ * Forward structural lookup (v1 → v2). Given a v1 format definition's
+ * declared assets + version constraints, find the first registry
+ * entry whose `structural` pattern matches. Used by
+ * `projectV1ProductToV2` resolution step 3 — the fallback when no
+ * explicit `canonical` annotation and no glob match are available.
+ */
+export interface ForwardStructuralInput {
+  asset_types?: string[];
+  vast_versions?: string[];
+  daast_versions?: string[];
+}
+
+export function forwardLookupByStructural(input: ForwardStructuralInput): ForwardGlobMatch | undefined {
+  const registry = loadRegistry();
+  for (const m of registry.mappings) {
+    if (m.deprecated) continue;
+    const struct = m.v1_pattern.structural;
+    if (!struct) continue;
+    if (struct.asset_types && input.asset_types) {
+      const required = new Set(struct.asset_types);
+      const have = new Set(input.asset_types);
+      let allPresent = true;
+      for (const t of required) {
+        if (!have.has(t)) {
+          allPresent = false;
+          break;
+        }
+      }
+      if (!allPresent) continue;
+    }
+    // Loose-match VAST / DAAST version arrays: any overlap.
+    if (struct.vast_versions && input.vast_versions) {
+      const overlap = input.vast_versions.some(v => struct.vast_versions!.includes(v));
+      if (!overlap) continue;
+    }
+    if (struct.daast_versions && input.daast_versions) {
+      const overlap = input.daast_versions.some(v => struct.daast_versions!.includes(v));
+      if (!overlap) continue;
+    }
+    return {
+      canonical: m.v2.canonical as CanonicalFormatKind,
+      parameters: (m.v2.parameters ?? {}) as Record<string, unknown>,
+      notes: m.notes,
+    };
+  }
+  return undefined;
+}
+
+/**
  * Reverse-lookup outcome. Three buckets the projection algorithm acts on:
  *
  *   - `match`: registry has an invertible entry (literal `format_id_glob`

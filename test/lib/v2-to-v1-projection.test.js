@@ -42,7 +42,8 @@ function loadFixtures() {
     .map(f => ({
       name: f.replace(/\.json$/, ''),
       product: JSON.parse(readFileSync(path.join(FIXTURE_DIR, f), 'utf-8')),
-    }));
+    }))
+    .filter(({ product }) => Array.isArray(product?.format_options));
 }
 
 describe('v2 → v1 Product projection — per-fixture structural invariant', { skip: SKIP_REASON }, () => {

@@ -112,10 +112,22 @@ export interface ProjectionDiagnosticBase {
 export type ProjectionDiagnostic =
   | (ProjectionDiagnosticBase & {
       /**
-       * Spec code (`enums/error-code.json`): registry-coverage gap.
-       * v1_translatable: true canonical that the registry hasn't covered.
-       * Correctable by adding a registry entry (or by the seller authoring
-       * an explicit `canonical` field on the v1 file).
+       * Spec code (`enums/error-code.json`): registry-coverage gap or
+       * v1-catalog-coverage gap depending on `resolution_failure`:
+       *
+       *   - `no_registry_match` — v2→v1 direction. Registry has no
+       *     entries for this canonical (and v1_translatable is true).
+       *   - `catalog_lacks_canonical_annotation` — v1→v2 direction.
+       *     The AAO catalog has this v1 format but hasn't annotated
+       *     it with a `canonical:` field. Native, DOOH, broadcast,
+       *     and card-scaffolding categories sit in this bucket at
+       *     3.1 GA. Distinct from a generic registry gap — the
+       *     catalog DOES know the format, it just hasn't blessed a
+       *     v2 canonical mapping yet. Symmetric counterpart to
+       *     CANONICAL_NOT_V1_TRANSLATABLE: that signals "no v1 form
+       *     possible"; this signals "no v2 form yet."
+       *   - `no_match` — v1→v2 direction, format not in catalog or
+       *     registry, no structural match.
        */
       code: 'FORMAT_PROJECTION_FAILED';
       error: {
@@ -123,7 +135,7 @@ export type ProjectionDiagnostic =
           format_kind: CanonicalFormatKind;
           product_id: string;
           capability_id?: string;
-          resolution_failure: 'no_registry_match';
+          resolution_failure: 'no_registry_match' | 'catalog_lacks_canonical_annotation' | 'no_match';
         };
       };
     })
