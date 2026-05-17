@@ -269,6 +269,8 @@ function runValidation(validation: StoryboardValidation, ctx: ValidationContext)
       return validateCrossResponseFieldEqual(validation, ctx);
     case 'cross_response_count_distinct':
       return validateCrossResponseCountDistinct(validation, ctx);
+    case 'array_length':
+      return validateArrayLength(validation, resolveTarget(ctx));
     default:
       // Forward-compat default per runner-output-contract.yaml v2.0.0:
       // when the runner does not implement an authored check kind (e.g. a
@@ -976,6 +978,200 @@ function validateFieldContains(validation: StoryboardValidation, taskResult: Tas
     json_pointer: pointer,
     expected,
     actual: resolved,
+  };
+}
+
+// ────────────────────────────────────────────────────────────
+// array_length: assert cardinality of the array at `path`
+//
+// Configurations:
+//   - `value: N`       → exact match (array.length === N)
+//   - `min` / `max`    → inclusive bounds (either or both)
+//   - both             → misconfigured, fails the check
+//
+// Cardinality is unsound to express via `field_present arr[N-1]` +
+// `field_value_or_absent arr[N] value: null` because the second clause
+// passes when a seller emits a literal `null` pad at `arr[N]`. This check
+// reads `array.length` directly and rejects non-array resolutions instead.
+// Spec: adcp#4685; SDK adcp-client#1830.
+// ────────────────────────────────────────────────────────────
+
+function validateArrayLength(validation: StoryboardValidation, taskResult: TaskResult): ValidationResult {
+  const checkName = 'array_length' as const;
+  if (!validation.path) {
+    return {
+      check: checkName,
+      passed: false,
+      description: validation.description,
+      path: validation.path,
+      error: 'No path specified for array_length validation',
+      json_pointer: null,
+      expected: 'path must be set in storyboard validation entry',
+      actual: null,
+    };
+  }
+
+  const pointer = toJsonPointer(validation.path);
+
+  const hasExact = typeof validation.value === 'number';
+  const hasMin = typeof validation.min === 'number';
+  const hasMax = typeof validation.max === 'number';
+
+  if (!hasExact && !hasMin && !hasMax) {
+    return {
+      check: checkName,
+      passed: false,
+      description: validation.description,
+      path: validation.path,
+      error: 'array_length requires `value` (exact count) or `min`/`max` (bounds)',
+      json_pointer: pointer,
+      expected: '`value: N` or `min`/`max`',
+      actual: null,
+    };
+  }
+
+  if (hasExact && (hasMin || hasMax)) {
+    return {
+      check: checkName,
+      passed: false,
+      description: validation.description,
+      path: validation.path,
+      error: 'array_length accepts either `value` OR `min`/`max`, not both',
+      json_pointer: pointer,
+      expected: '`value` or `min`/`max`, not both',
+      actual: { value: validation.value, min: validation.min, max: validation.max },
+    };
+  }
+
+  // Reject NaN, fractional, and negative bounds at the config gate. `array.length`
+  // is always a non-negative integer, so any other comparand makes the check
+  // impossible to satisfy — fail loudly at authoring time rather than silently
+  // every run.
+  const isValidCount = (n: unknown): n is number => typeof n === 'number' && Number.isInteger(n) && n >= 0;
+  const badOperand = (label: string, n: number) =>
+    `array_length \`${label}\` must be a non-negative integer; got ${Number.isNaN(n) ? 'NaN' : String(n)}`;
+  if (hasExact && !isValidCount(validation.value)) {
+    return {
+      check: checkName,
+      passed: false,
+      description: validation.description,
+      path: validation.path,
+      error: badOperand('value', validation.value as unknown as number),
+      json_pointer: pointer,
+      expected: 'non-negative integer',
+      actual: (validation.value as unknown) ?? null,
+    };
+  }
+  if (hasMin && !isValidCount(validation.min)) {
+    return {
+      check: checkName,
+      passed: false,
+      description: validation.description,
+      path: validation.path,
+      error: badOperand('min', validation.min as unknown as number),
+      json_pointer: pointer,
+      expected: 'non-negative integer',
+      actual: (validation.min as unknown) ?? null,
+    };
+  }
+  if (hasMax && !isValidCount(validation.max)) {
+    return {
+      check: checkName,
+      passed: false,
+      description: validation.description,
+      path: validation.path,
+      error: badOperand('max', validation.max as unknown as number),
+      json_pointer: pointer,
+      expected: 'non-negative integer',
+      actual: (validation.max as unknown) ?? null,
+    };
+  }
+  if (hasMin && hasMax && (validation.min as number) > (validation.max as number)) {
+    return {
+      check: checkName,
+      passed: false,
+      description: validation.description,
+      path: validation.path,
+      error: `array_length range is impossible: min ${validation.min} > max ${validation.max}`,
+      json_pointer: pointer,
+      expected: '`min <= max`',
+      actual: { min: validation.min, max: validation.max },
+    };
+  }
+
+  const resolved = resolvePath(taskResult.data, validation.path);
+  if (!Array.isArray(resolved)) {
+    return {
+      check: checkName,
+      passed: false,
+      description: validation.description,
+      path: validation.path,
+      error: `array_length requires an array at path; got ${resolved === undefined ? 'undefined' : typeof resolved === 'object' && resolved !== null ? 'object' : typeof resolved}`,
+      json_pointer: pointer,
+      expected: 'array',
+      actual: resolved ?? null,
+    };
+  }
+
+  const length = resolved.length;
+
+  if (hasExact) {
+    const target = validation.value as number;
+    if (length === target) {
+      return {
+        check: checkName,
+        passed: true,
+        description: validation.description,
+        path: validation.path,
+        json_pointer: pointer,
+      };
+    }
+    return {
+      check: checkName,
+      passed: false,
+      description: validation.description,
+      path: validation.path,
+      error: `Expected array length ${target}, got ${length}`,
+      json_pointer: pointer,
+      expected: target,
+      actual: length,
+    };
+  }
+
+  const min = hasMin ? (validation.min as number) : undefined;
+  const max = hasMax ? (validation.max as number) : undefined;
+
+  if (min !== undefined && length < min) {
+    return {
+      check: checkName,
+      passed: false,
+      description: validation.description,
+      path: validation.path,
+      error: `Expected array length >= ${min}, got ${length}`,
+      json_pointer: pointer,
+      expected: { min, max },
+      actual: length,
+    };
+  }
+  if (max !== undefined && length > max) {
+    return {
+      check: checkName,
+      passed: false,
+      description: validation.description,
+      path: validation.path,
+      error: `Expected array length <= ${max}, got ${length}`,
+      json_pointer: pointer,
+      expected: { min, max },
+      actual: length,
+    };
+  }
+
+  return {
+    check: checkName,
+    passed: true,
+    description: validation.description,
+    path: validation.path,
+    json_pointer: pointer,
   };
 }
 
