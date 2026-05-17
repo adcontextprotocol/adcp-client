@@ -1,21 +1,20 @@
 /**
  * Integration check that `SingleAgentClient.fetchA2ACanonicalUrl()` honors
- * `transport.maxResponseBytes` on A2A endpoint discovery — the call site
- * that runs implicitly before every `executeTask` / `listTools` /
- * `getAgentInfo` against an A2A agent whose canonical URL hasn't been
- * resolved yet.
+ * `transport.maxResponseBytes` on A2A canonical-URL discovery — the call
+ * site that runs implicitly via `resolveCanonicalUrl()` before any A2A
+ * request that needs the canonical URL.
  *
  * Closes adcontextprotocol/adcp-client#1804 — companion to #1799
  * (`getAgentInfo`), filed by the security review on PR #1802 because
  * `fetchA2ACanonicalUrl` bypassed the cap even after `getAgentInfo`
  * started honoring it.
  *
- * Test exercises the discovery path via `executeTask`. The first call
- * triggers `ensureEndpointDiscovered` → `fetchA2ACanonicalUrl` → the now-
- * wrapped fetch. An oversized agent-card body must abort with
- * `ResponseTooLargeError` before the JSON parser buffers it.
- *
- * Pattern mirrors `test/unit/get-agent-info-size-limit.test.js`.
+ * NOTE: `getAgentInfo()` does NOT route through `fetchA2ACanonicalUrl` —
+ * it has its own inline A2A discovery branch (wrapped by PR #1802).
+ * To exercise the new wrap, drive through `resolveCanonicalUrl()` which
+ * is the only public method that goes through `ensureCanonicalUrlResolved`
+ * → `fetchA2ACanonicalUrl`. Pattern mirrors
+ * `test/unit/get-agent-info-size-limit.test.js`.
  */
 
 const { describe, it, before, after } = require('node:test');
@@ -65,11 +64,8 @@ describe('SingleAgentClient.fetchA2ACanonicalUrl() — maxResponseBytes (A2A dis
       { transport: { maxResponseBytes: 64 * 1024 } }
     );
 
-    // executeTask routes through ensureEndpointDiscovered → fetchA2ACanonicalUrl.
-    // Use getAgentInfo() too as a belt-and-braces probe — both discovery
-    // call sites must honor the cap.
     await assert.rejects(
-      () => client.getAgentInfo(),
+      () => client.resolveCanonicalUrl(),
       err => {
         assert.ok(
           err instanceof ResponseTooLargeError,
@@ -90,7 +86,8 @@ describe('SingleAgentClient.fetchA2ACanonicalUrl() — maxResponseBytes (A2A dis
 
     // Cap is large enough that the 5 MB padded card fits — discovery
     // resolves without throwing.
-    const info = await client.getAgentInfo();
-    assert.strictEqual(info.protocol, 'a2a');
+    const canonical = await client.resolveCanonicalUrl();
+    assert.strictEqual(typeof canonical, 'string');
+    assert.match(canonical, /^http:\/\/127\.0\.0\.1:\d+/);
   });
 });

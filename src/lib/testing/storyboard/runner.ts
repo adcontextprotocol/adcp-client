@@ -3436,6 +3436,13 @@ async function executeStep(
   // for force_* in step phases rather than seed_* in the fixtures phase.
   // Spec: compliance/cache/<ver>/universal/runner-output-contract.yaml >
   // skip_result.reasons.force_scenario_unsupported.
+  //
+  // Spec gate "comply_test_controller advertised" is enforced upstream by
+  // the phase cascade at the `seedingMissingController` check (~line 1893);
+  // by the time per-step grading reaches this detector, the controller has
+  // already been confirmed present. The `step.task === 'comply_test_controller'`
+  // gate below is the per-step subset — it ensures we don't bleed the skip
+  // into other tools that happen to carry a `scenario` argument.
   {
     const controllerData = taskResult?.data as { success?: unknown; error?: unknown } | undefined;
     const requestScenario = (request as { scenario?: unknown }).scenario;
