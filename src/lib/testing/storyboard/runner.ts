@@ -190,7 +190,7 @@ export function resolveCapabilityPath(raw: unknown, dottedPath: string): unknown
  * predicate is satisfied (or unresolvable, per `equals` absence semantics)
  * and a human-readable detail string when the storyboard should be skipped.
  *
- * Two matcher forms — see `Storyboard.requires_capability` for full semantics:
+ * Three matcher forms — see `Storyboard.requires_capability` for full semantics:
  *
  * - `equals: V` — skip only when `actual` is declared AND disagrees with `V`.
  *   Absent fields (`undefined`) RUN the storyboard so the failure surfaces
@@ -206,11 +206,19 @@ export function resolveCapabilityPath(raw: unknown, dottedPath: string): unknown
  *   Postel — agents that misdeclare a not-supported capability as `null`
  *   get the same not_applicable skip as agents that omit the field.
  *
+ * - `contains: V` — array-membership. `actual` must be an array that
+ *   includes `V` (strict equality, no coercion). Empty arrays, non-arrays,
+ *   and absent fields all skip — absence means the agent hasn't opted into
+ *   the array variant this storyboard tests.
+ *
  * Exported for direct testing so the predicate semantics are pinned without
  * needing a full runStoryboard() roundtrip.
  */
 export function evaluateCapabilityPredicate(
-  predicate: { path: string; equals: boolean | string | number | null } | { path: string; present: boolean },
+  predicate:
+    | { path: string; equals: boolean | string | number | null }
+    | { path: string; present: boolean }
+    | { path: string; contains: boolean | string | number },
   actual: unknown
 ): string | null {
   if ('present' in predicate) {
@@ -221,6 +229,21 @@ export function evaluateCapabilityPredicate(
     if (!predicate.present && isPresent) {
       return (
         `Capability predicate \`${predicate.path}\` must be absent: ` + `agent declared ${JSON.stringify(actual)}.`
+      );
+    }
+    return null;
+  }
+  if ('contains' in predicate) {
+    if (!Array.isArray(actual)) {
+      return (
+        `Capability predicate \`${predicate.path}\` must contain ${JSON.stringify(predicate.contains)}: ` +
+        `agent declared ${actual === undefined ? 'no value' : JSON.stringify(actual)}.`
+      );
+    }
+    if (!actual.includes(predicate.contains)) {
+      return (
+        `Capability predicate \`${predicate.path}\` must contain ${JSON.stringify(predicate.contains)}: ` +
+        `agent declared ${JSON.stringify(actual)}.`
       );
     }
     return null;

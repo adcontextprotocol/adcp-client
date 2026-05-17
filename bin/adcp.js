@@ -2190,7 +2190,9 @@ async function handleStoryboardShow(args) {
               ? sb.requires_capability.present
                 ? ' present'
                 : ' absent'
-              : ' = ' + sb.requires_capability.equals) +
+              : 'contains' in sb.requires_capability
+                ? ' contains ' + JSON.stringify(sb.requires_capability.contains)
+                : ' = ' + sb.requires_capability.equals) +
             ')'
           : ' (always graded)';
         const trackTag = sb.track ? ` [track: ${sb.track}]` : '';
