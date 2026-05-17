@@ -3424,6 +3424,48 @@ async function executeStep(
     ...(runState.agentUrl ? { url: runState.agentUrl } : {}),
   };
 
+  // AdCP 3.0.12 runner-output-contract `force_scenario_unsupported`: when a
+  // comply_test_controller step calls a force_* scenario that the agent
+  // advertises the controller for but does not implement, the agent returns
+  // `{success: false, error: 'UNKNOWN_SCENARIO'}`. Runners MUST grade the
+  // step `not_applicable` with detail `force_scenario_unsupported` BEFORE
+  // applying the step's authored validations — without this, the failing
+  // pass/fail check would mask the coverage gap as a real agent fault.
+  //
+  // Companion to `fixture_seed_unsupported` (seeding.ts) — same shape but
+  // for force_* in step phases rather than seed_* in the fixtures phase.
+  // Spec: compliance/cache/<ver>/universal/runner-output-contract.yaml >
+  // skip_result.reasons.force_scenario_unsupported.
+  {
+    const controllerData = taskResult?.data as { success?: unknown; error?: unknown } | undefined;
+    const requestScenario = (request as { scenario?: unknown }).scenario;
+    if (
+      effectiveStep.task === 'comply_test_controller' &&
+      typeof requestScenario === 'string' &&
+      requestScenario.startsWith('force_') &&
+      controllerData?.success === false &&
+      controllerData.error === 'UNKNOWN_SCENARIO'
+    ) {
+      const next = getNextStepPreview(step.id, allSteps, context, runState.runnerVars);
+      const detail = `force_scenario_unsupported: agent advertised comply_test_controller but does not implement scenario "${requestScenario}"`;
+      return {
+        step_id: step.id,
+        phase_id: phaseId,
+        title: step.title,
+        task: step.task,
+        passed: true,
+        skipped: true,
+        skip_reason: 'force_scenario_unsupported',
+        skip: { reason: 'not_applicable', detail },
+        duration_ms: stepResult.duration_ms,
+        validations: [],
+        context,
+        next,
+        extraction: extractionFromTaskResult(taskResult),
+      };
+    }
+  }
+
   // Feature-unsupported or unknown-tool errors → treat as skip
   const isUnsupported = stepResult.error?.includes('does not support:');
   const isUnknownTool = stepResult.error && /Unknown tool[:\s]/i.test(stepResult.error);

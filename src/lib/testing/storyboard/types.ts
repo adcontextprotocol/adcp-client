@@ -1386,7 +1386,19 @@ export type RunnerDetailedSkipReason =
    * does not satisfy the storyboard's preconditions — consistent with peer
    * skip reasons `rate_abuse_opt_out` and `missing_test_kit_contract`.
    */
-  | 'capability_unsupported';
+  | 'capability_unsupported'
+  /**
+   * A `comply_test_controller` step targeted a `force_*` scenario that the
+   * agent advertised the controller for but did not implement. Detected by
+   * the tuple (step.task === 'comply_test_controller', resolved
+   * `scenario` parameter starts with `force_`, response `success: false,
+   * error: UNKNOWN_SCENARIO`). Runners MUST grade the step `not_applicable`
+   * with detail `force_scenario_unsupported` instead of failing the step's
+   * authored validations. Maps to canonical `not_applicable`. AdCP 3.0.12
+   * runner-output-contract: `universal/runner-output-contract.yaml` >
+   * `skip_result.reasons.force_scenario_unsupported`.
+   */
+  | 'force_scenario_unsupported';
 
 /**
  * Map detailed grader skip reasons onto the six canonical spec values so
@@ -1399,6 +1411,7 @@ export const DETAILED_SKIP_TO_CANONICAL: Record<RunnerDetailedSkipReason, Runner
   grader_skipped: 'not_applicable',
   mcp_mode_flattens_url_edges: 'not_applicable',
   oauth_not_advertised: 'not_applicable',
+  force_scenario_unsupported: 'not_applicable',
   capability_unsupported: 'unsatisfied_contract',
   rate_abuse_opt_out: 'unsatisfied_contract',
   missing_test_kit_contract: 'unsatisfied_contract',
