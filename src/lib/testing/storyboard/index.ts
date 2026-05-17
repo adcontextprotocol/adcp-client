@@ -39,6 +39,7 @@ export type {
   FormatMismatchHint,
   MonotonicViolationHint,
   ImpairmentCoherenceHint,
+  ImpairmentCoherenceNotApplicableHint,
   StoryboardContext,
   StoryboardRunOptions,
   ValidationResult,

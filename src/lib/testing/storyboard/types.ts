@@ -1798,7 +1798,8 @@ export type StoryboardStepHint =
   | MissingRequiredFieldHint
   | FormatMismatchHint
   | MonotonicViolationHint
-  | ImpairmentCoherenceHint;
+  | ImpairmentCoherenceHint
+  | ImpairmentCoherenceNotApplicableHint;
 
 /**
  * A seller rejected a request value that the runner traced back to a
@@ -2118,6 +2119,51 @@ export interface ImpairmentCoherenceHint extends StoryboardStepHintBase {
   impairments_count: number;
 }
 
+/**
+ * The `impairment.coherence` invariant observed an offline-state transition
+ * for a resource family whose buy → resource reverse-traversal isn't yet
+ * implemented (audience / catalog_item / event_source). The forward rule
+ * still grades these families; the inverse rule cannot, so the runner
+ * surfaces the deferred coverage at the transition step instead of skipping
+ * silently. Tracked in adcontextprotocol/adcp#2860.
+ */
+export interface ImpairmentCoherenceNotApplicableHint extends StoryboardStepHintBase {
+  kind: 'impairment_coherence_not_applicable';
+  /**
+   * Always `'inverse'` for this hint — the rule that can't grade.
+   * @provenance runner
+   */
+  violation: 'inverse';
+  /**
+   * Machine-readable reason code. Consumers can filter on this without
+   * matching prose.
+   * @provenance runner
+   */
+  reason: 'resource_traversal_deferred';
+  /**
+   * Resource family the transition was observed on. One of the three
+   * deferred families.
+   * @provenance runner
+   */
+  resource_type: 'audience' | 'catalog_item' | 'event_source';
+  /**
+   * Resource id the transition was observed on.
+   * @provenance seller
+   */
+  resource_id: string;
+  /**
+   * Offline status the resource transitioned to (`suspended` / `withdrawn`
+   * / `insufficient`).
+   * @provenance seller
+   */
+  resource_status: string;
+  /**
+   * Step id that recorded the offline transition.
+   * @provenance runner
+   */
+  resource_step_id: string;
+}
+
 export interface StoryboardPhaseResult {
   phase_id: string;
   phase_title: string;
@@ -2298,9 +2344,17 @@ export interface AssertionResult {
    * `'pass'` when `observation_count > 0` AND `passed === true`,
    * `'fail'` when `passed === false`. Absent on assertions that don't
    * model observation counts (their `passed` flag is sufficient).
-   * Companion to adcontextprotocol/adcp#2834.
+   *
+   * `'not_applicable'` is emitted at step scope by an invariant that
+   * recognises an observation it could grade in principle but whose
+   * grading path isn't yet implemented in the runner (e.g.
+   * `impairment.coherence` inverse rule for audience / catalog_item /
+   * event_source — tracked in adcontextprotocol/adcp#2860). The
+   * accompanying `hint` carries the deferral reason and resource family
+   * so renderers can distinguish a deferred coverage hint from a clean
+   * pass. Companion to adcontextprotocol/adcp#2834.
    */
-  status?: 'pass' | 'silent' | 'fail';
+  status?: 'pass' | 'silent' | 'fail' | 'not_applicable';
 }
 
 /**
