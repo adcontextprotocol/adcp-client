@@ -1,14 +1,23 @@
 # Migrating from `@adcp/sdk` 6.x to 7.0
 
-> **Status: STUB.** JS Phase 2 (mock-mode upstream URL routing) has not
-> landed. This file commits ahead of the SDK code so adopters have
-> something to read before the breaking change ships — and so PRs that
-> introduce the breaking change can't merge without the guide being in
-> place. Sections marked **[planned]** describe the contract Phase 2
-> will ship; sections without that marker describe shipped behavior.
+> ⚠️ **Not yet shipped.** This guide describes contracts that land in
+> 7.0. Adopters on 6.x should NOT restructure adapters yet — `ctx.upstream`
+> does not exist in 6.x. The file exists so PRs introducing the breaking
+> change can't merge without a migration guide in place; sections marked
+> **[planned]** describe the contract Phase 2 will ship.
 >
 > Tracking: [adcp-client#1494](https://github.com/adcontextprotocol/adcp-client/issues/1494)
 > · proposal: [`docs/proposals/lifecycle-state-and-sandbox-authority.md`](./proposals/lifecycle-state-and-sandbox-authority.md)
+
+## tl;dr — the one diff you need to make
+
+| Today (6.x) | 7.0 |
+|---|---|
+| Adapter hardcodes upstream URL (`process.env.GAM_URL`, constructor literal, etc.) | Adapter reads `ctx.upstream` per request |
+| `account.mode` is informational (gates `comply_test_controller`) | `account.mode` drives the URL the framework hands the adapter |
+| Mock-mode requires `complyTest:` plumbing to satisfy storyboards | Mock-mode routes the adapter at `bin/adcp.js mock-server <specialism>`; `complyTest:` stays for adopters who want it |
+
+Restructure with Shape A (per-request client construction), B (per-call `.withBaseUrl()`), or C (URL-keyed cache for vendor SDKs that bake URL into the constructor) — full details below.
 
 ## tl;dr — what's changing
 
@@ -26,16 +35,16 @@ In 6.x, mode is informational — the framework gates `comply_test_controller` o
 
 ## What ships in 7.0 [planned]
 
-1. **`ctx.upstream` on `HandlerContext`** — the framework resolves the per-request upstream URL from the resolved account's mode and threads it through every adapter call.
+1. **`ctx.upstream` on `HandlerContext`** — the framework resolves the per-request upstream URL from the resolved account's mode and threads it through every adapter call. Lives at [`src/lib/server/create-adcp-server.ts`](../src/lib/server/create-adcp-server.ts) — today `HandlerContext` is allocated fresh per tool-handler invocation; Phase 2 stamps `upstream` on the same allocation.
 2. **Adapter contract**: every `SalesPlatform` / `SignalsPlatform` / `CreativePlatform` method receives `ctx.upstream` as the source of truth for the URL its outbound HTTP calls should target. Adapters that ignore it (and hard-code their own URL) work for `'live'` mode but fail conformance in `'mock'` mode.
-3. **`mock-server` URL contract**: `bin/adcp.js mock-server <specialism>` exposes a stable URL that the framework hands to adapters for `mock`-mode requests. The framework boots / supervises the mock-server when configured to.
+3. **`mock-server` URL contract**: [`bin/adcp.js mock-server <specialism>`](../bin/adcp.js) exposes a stable URL that the framework hands to adapters for `mock`-mode requests. The framework boots / supervises the mock-server when configured to.
 4. **`account.mode` persistence across async-task lifecycle** — `tasks/get` polls and webhook emissions read the resolved `mode` from the original request's account, not from the polling caller's auth. A buy created on a `'sandbox'` account stays sandbox-routed for its whole lifecycle.
 
 ## Migration paths
 
 Three shapes for handing the upstream URL into the adapter's HTTP layer. Pick whichever matches how the adapter is structured today; all three pass conformance.
 
-### Shape A: resolver method (Python-friendly, simplest TS)
+### Shape A: per-request client construction (your SDK takes baseUrl in the constructor)
 
 ```ts
 class GamSalesPlatform implements SalesPlatform {
@@ -49,7 +58,7 @@ class GamSalesPlatform implements SalesPlatform {
 
 Best for: adopters whose upstream SDK takes the URL on the constructor. Allocation cost is negligible compared to the upstream HTTP round-trip.
 
-### Shape B: constructor injection per request (TS idiom)
+### Shape B: per-call `.withBaseUrl()` (your SDK exposes a per-call URL hook)
 
 ```ts
 class GamSalesPlatform implements SalesPlatform {
@@ -62,31 +71,30 @@ class GamSalesPlatform implements SalesPlatform {
 
 Best for: adopters whose upstream SDK has a `.withBaseUrl(url)` (or equivalent) that returns a per-call client without re-running the auth handshake.
 
-### Shape C: middleware-rewrite (vendor SDKs that bake URL into the constructor)
+### Shape C: URL-keyed client cache (your SDK bakes URL into the constructor and you want client reuse across requests)
 
-Some vendor SDKs (older GAM bindings, FreeWheel, Kevel, Celtra) read the URL from `process.env` or a constructor-time config that can't change per-request. For those:
+Some vendor SDKs (older GAM bindings, FreeWheel, Kevel, Celtra) read the URL from `process.env` or a constructor-time config that can't change per-request. Shape A handles this fine if you don't mind allocating a fresh client per request. If your vendor SDK has an expensive constructor (auth handshake, connection pool warmup), key the cache off the upstream URL itself so all requests sharing the same `ctx.upstream` reuse the same client:
 
 ```ts
-const clientsByUpstream = new WeakMap<HandlerContext, GamClient>();
-
 class GamSalesPlatform implements SalesPlatform {
-  private clientFor(ctx: HandlerContext): GamClient {
-    let client = clientsByUpstream.get(ctx);
+  private readonly clientsByUpstream = new Map<string, GamClient>();
+  private clientFor(upstream: string): GamClient {
+    let client = this.clientsByUpstream.get(upstream);
     if (!client) {
-      client = new GamClient({ baseUrl: ctx.upstream });
-      clientsByUpstream.set(ctx, client);
+      client = new GamClient({ baseUrl: upstream });
+      this.clientsByUpstream.set(upstream, client);
     }
     return client;
   }
   async getProducts(req, ctx) {
-    return this.clientFor(ctx).products.search(req.brief);
+    return this.clientFor(ctx.upstream).products.search(req.brief);
   }
 }
 ```
 
-The `WeakMap<HandlerContext, …>` keyed off the per-request context object lets the GC reclaim each client when the request completes, without forcing the vendor SDK to expose a per-call URL.
+The cache key is the URL string, not the request context — so client reuse spans every request that resolves to the same upstream (production for all live-mode requests, sandbox for all sandbox-mode requests, mock-server for all mock-mode requests). The cardinality of `ctx.upstream` is bounded by the number of distinct modes × tenants, so the cache stays small.
 
-Best for: vendor SDKs you don't own. The framework's per-request `HandlerContext` is GC-stable and unique per request, so the WeakMap is collision-free.
+Best for: vendor SDKs you don't own AND whose construction is expensive enough to want to amortize across requests. If your vendor SDK is cheap to construct, Shape A is simpler and equivalent.
 
 ## `complyTest:` block stays first-class
 
@@ -103,14 +111,14 @@ This is what makes the three-mode model work end-to-end: a single request's mode
 
 ## Mock-server scenario state [planned]
 
-Tracked at [adcp-client#1495](https://github.com/adcontextprotocol/adcp-client/issues/1495). The `bin/adcp.js mock-server` today serves static request/response shapes; Phase 2 needs scriptable per-specialism state machines so storyboards can drive `'mock'`-mode lifecycle transitions end-to-end without the adopter wiring `complyTest:` themselves. Until that lands, `'mock'` mode is best-effort for adapters that don't pair it with their own controller seeds.
+Tracked at [adcp-client#1495](https://github.com/adcontextprotocol/adcp-client/issues/1495). The `bin/adcp.js mock-server` today serves static request/response shapes; the URL-routing rollout (Phase 2 of the [lifecycle-state-and-sandbox-authority proposal](./proposals/lifecycle-state-and-sandbox-authority.md) — see § Implementation status) needs scriptable per-specialism state machines so storyboards can drive `'mock'`-mode lifecycle transitions end-to-end without the adopter wiring `complyTest:` themselves. Until that lands, `'mock'` mode is best-effort for adapters that don't pair it with their own controller seeds.
 
 ## Self-grade checklist
 
 When 7.0 ships, run through:
 
 - [ ] Adapter receives `ctx.upstream` on every `SalesPlatform` / `SignalsPlatform` / `CreativePlatform` method.
-- [ ] Adapter routes its outbound HTTP to `ctx.upstream`, not a hardcoded value.
+- [ ] Adapter routes its outbound HTTP to `ctx.upstream`, not a hardcoded value. Audit with: `grep -rEn 'baseUrl|BASE_URL|process\.env\.[A-Z_]*_URL' src/adapters/` — every hit needs to be either `ctx.upstream` or a sandbox-bound URL the resolver opted in to.
 - [ ] `accounts.resolve` returns the correct `mode` for every credential the seller honors.
 - [ ] Storyboard run with `--mode mock` (or equivalent CLI flag, name TBD) grades green against your adapter without any `complyTest:` plumbing.
 - [ ] Webhook emissions for sandbox buys stamp `mock`/`sandbox` consistently across the buy's lifetime.

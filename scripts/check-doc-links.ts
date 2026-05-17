@@ -19,21 +19,10 @@ import * as fs from 'node:fs';
 import * as path from 'node:path';
 
 const REPO_ROOT = path.resolve(__dirname, '..');
-const URL_RE = /https:\/\/github\.com\/adcontextprotocol\/adcp-client\/blob\/main\/([^ "'`)\]]+)/g;
-
-// Files to scan. Excludes generated TS (re-emitted on every schema sync;
-// any URLs there land via the upstream spec text, not SDK authoring) and
-// `dist/` (build output mirrors `src/`).
-const SCAN_GLOBS: ReadonlyArray<string> = [
-  'src/**/*.ts',
-  'bin/**/*.js',
-  'docs/**/*.md',
-  'docs/**/*.mdx',
-  'packages/*/src/**/*.ts',
-  'packages/*/README.md',
-  'CLAUDE.md',
-  'README.md',
-];
+// Match both `blob/main/<path>` (file) and `tree/main/<path>` (directory)
+// references. Pinned-commit forms (`blob/<sha>/...`) are intentionally NOT
+// matched — those don't rot because the SHA pins the content.
+const URL_RE = /https:\/\/github\.com\/adcontextprotocol\/adcp-client\/(?:blob|tree)\/main\/([^ "'`)\]]+)/g;
 
 // Paths that may appear in URL form but legitimately don't resolve at the
 // current commit — e.g. a doc that ships only on the published site, or a
@@ -41,9 +30,23 @@ const SCAN_GLOBS: ReadonlyArray<string> = [
 // justification before adding; the goal is zero exemptions over time.
 const EXEMPT_PATHS: ReadonlySet<string> = new Set([]);
 
-function listFiles(globs: ReadonlyArray<string>): string[] {
-  // Minimal glob matcher: walk the repo, match by suffix patterns. Avoids
-  // pulling in a glob dependency for a single CI script.
+// Scanned surface: source we author. Excludes generated TS (re-emitted on
+// every schema sync; any URLs there land via the upstream spec text, not
+// SDK authoring) and `dist/` (build output mirrors `src/`).
+function isScannedFile(rel: string): boolean {
+  if (rel.startsWith('src/') && rel.endsWith('.ts') && !rel.endsWith('.generated.ts')) {
+    return true;
+  }
+  if (rel.startsWith('bin/') && rel.endsWith('.js')) return true;
+  if (rel.startsWith('docs/') && (rel.endsWith('.md') || rel.endsWith('.mdx'))) return true;
+  if (rel.startsWith('packages/') && (rel.endsWith('.ts') || rel.endsWith('.md')) && !rel.endsWith('.generated.ts')) {
+    return true;
+  }
+  return rel === 'CLAUDE.md' || rel === 'README.md';
+}
+
+function listFiles(): string[] {
+  // Minimal walker: avoids pulling in a glob dep for a single CI script.
   const result: string[] = [];
   const walk = (dir: string): void => {
     let entries: fs.Dirent[];
@@ -57,25 +60,12 @@ function listFiles(globs: ReadonlyArray<string>): string[] {
       const full = path.join(dir, entry.name);
       if (entry.isDirectory()) {
         walk(full);
-      } else if (entry.isFile()) {
-        const rel = path.relative(REPO_ROOT, full);
-        if (
-          (rel.startsWith('src/') && rel.endsWith('.ts') && !rel.endsWith('.generated.ts')) ||
-          (rel.startsWith('bin/') && rel.endsWith('.js')) ||
-          (rel.startsWith('docs/') && (rel.endsWith('.md') || rel.endsWith('.mdx'))) ||
-          (rel.startsWith('packages/') &&
-            (rel.endsWith('.ts') || rel.endsWith('.md')) &&
-            !rel.endsWith('.generated.ts')) ||
-          rel === 'CLAUDE.md' ||
-          rel === 'README.md'
-        ) {
-          result.push(full);
-        }
+      } else if (entry.isFile() && isScannedFile(path.relative(REPO_ROOT, full))) {
+        result.push(full);
       }
     }
   };
   walk(REPO_ROOT);
-  void globs;
   return result;
 }
 
@@ -87,7 +77,7 @@ interface BrokenLink {
 
 function checkLinks(): BrokenLink[] {
   const broken: BrokenLink[] = [];
-  for (const file of listFiles(SCAN_GLOBS)) {
+  for (const file of listFiles()) {
     const text = fs.readFileSync(file, 'utf8');
     const lines = text.split('\n');
     for (let lineIdx = 0; lineIdx < lines.length; lineIdx++) {
@@ -123,8 +113,13 @@ if (broken.length > 0) {
     console.error(`  ${b.source}:${b.line} → ${b.pathRef}`);
   }
   console.error(
-    '\nFix: rename the doc back, OR update the reference, OR add the path to EXEMPT_PATHS\n' +
-      'in scripts/check-doc-links.ts with a one-line justification.'
+    '\nFix (preferred): update the reference shown above to point at the new path.\n' +
+      'The reference is a `blob/main/...` or `tree/main/...` URL in source code or docs — fix the URL,\n' +
+      'or rename the file back if the rename was unintended.\n' +
+      '\n' +
+      'Last resort: add the path to EXEMPT_PATHS in scripts/check-doc-links.ts with a one-line\n' +
+      'justification — only if the link legitimately points at content not in this repo\n' +
+      "(published-site-only docs, etc.). Don't use this to silence broken in-repo references."
   );
   process.exit(1);
 }
