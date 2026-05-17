@@ -86,32 +86,52 @@ describe('v1 → v2 projection — every catalog entry projects', { skip: SKIP_R
   });
 });
 
-describe('v1 → v2 projection — registry glob fallback for un-annotated formats', { skip: SKIP_REASON }, () => {
-  test('an id that matches a registry literal projects without a catalog entry', () => {
-    // A v1 product whose format_id matches a registry literal but uses
-    // a non-AAO agent_url (so the catalog lookup misses and the
-    // projection has to fall through to Step 2). The registry's
-    // `display_300x250_image` is a literal glob (no `*`), so it matches
-    // exactly.
-    const v1 = {
-      product_id: 'registry_only_fallback',
-      name: 'test',
-      description: 'test',
-      format_ids: [
-        {
-          agent_url: 'https://some-publisher.example/',
-          id: 'display_300x250_image',
-        },
-      ],
-    };
-    const { v2, diagnostics } = projectV1ProductToV2(v1);
-    assert.strictEqual(diagnostics.length, 0);
-    assert.strictEqual(v2.format_options.length, 1);
-    assert.strictEqual(v2.format_options[0].format_kind, 'image');
-    assert.strictEqual(v2.format_options[0].params.width, 300);
-    assert.strictEqual(v2.format_options[0].params.height, 250);
-  });
-});
+describe(
+  'v1 → v2 projection — structural fallback (registry is structural-only post-3.1-GA)',
+  { skip: SKIP_REASON },
+  () => {
+    // After the publisher-scoped format catalog landed (adcp commit
+    // f88522cfc5), the registry shrank from 17 entries to 7 pure-
+    // structural fallbacks. The literal globs (`iab_mrec_300x250` etc.)
+    // moved into per-publisher catalogs declared via
+    // `adagents.json#/formats` (or the AAO community mirror for
+    // publishers who haven't adopted yet). The SDK's
+    // `forwardLookupByGlob` path stays in place for forward-compat —
+    // the registry MAY grow literal entries again — but at 3.1 GA it
+    // never fires for catalog-known formats.
+
+    test('publisher-bespoke id without catalog entry falls through to structural', () => {
+      // A v1 product whose format_id doesn't match the AAO catalog OR
+      // a registry literal, but DOES have a structural signature the
+      // registry recognizes. The SDK needs to know about the format's
+      // assets — we can't fetch them at projection time (auto-
+      // negotiation surface concern), so we expect fail-closed with
+      // `no_match` here. Structural Step 3 only fires when a catalog
+      // lookup returned an entry without a `canonical:` annotation.
+      const v1 = {
+        product_id: 'bespoke_unknown',
+        name: 'test',
+        description: 'test',
+        format_ids: [
+          {
+            agent_url: 'https://some-publisher.example/',
+            id: 'definitely_not_in_catalog_or_registry',
+          },
+        ],
+      };
+      const { v2, diagnostics } = projectV1ProductToV2(v1);
+      // Either fail-closed (the realistic case — we don't know the
+      // publisher's format definition) or a structural fallback.
+      // The prototype's scope means the publisher-fetch side is
+      // deferred to the auto-negotiation surface, so this is fail-
+      // closed today.
+      assert.strictEqual(v2.format_options.length, 0);
+      assert.strictEqual(diagnostics.length, 1);
+      assert.strictEqual(diagnostics[0].code, 'FORMAT_PROJECTION_FAILED');
+      assert.strictEqual(diagnostics[0].error.details.resolution_failure, 'no_match');
+    });
+  }
+);
 
 describe('v1 → v2 projection — fail-closed for fully-unknown formats', { skip: SKIP_REASON }, () => {
   test('a bespoke format with no catalog/registry/structural match surfaces FORMAT_PROJECTION_FAILED', () => {

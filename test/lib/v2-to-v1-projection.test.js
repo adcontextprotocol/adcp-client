@@ -81,7 +81,12 @@ describe('v2 → v1 projection — seller-asserted v1_format_ref (the only norma
     ['nytimes_homepage_html5', 'https://creative.adcontextprotocol.org/', 'display_300x250_html'],
     ['gam_3p_display_tag', 'https://creative.adcontextprotocol.org/', 'display_js'],
     ['youtube_vast_preroll', 'https://creative.adcontextprotocol.org/', 'video_vast_30s'],
-    ['meta_reels_us', 'https://meta.adcp', 'meta_reels'],
+    // After the publisher-scoped format catalog landed upstream
+    // (adcp commit e2fae6b086), Meta moved to the AAO community-
+    // mirror tier — `mirror.adcontextprotocol.org/translated/meta`
+    // hosts the catalog until Meta adopts adagents.json#/formats
+    // themselves.
+    ['meta_reels_us', 'https://mirror.adcontextprotocol.org/translated/meta', 'meta_reels'],
   ];
 
   for (const [fixture, expectedAgentUrl, expectedId] of sellerAsserted) {
