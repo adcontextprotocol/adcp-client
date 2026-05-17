@@ -82,12 +82,11 @@ export const REQUEST_SIGNING_TAG = 'adcp/request-signing/v1';
 /**
  * Tag value for the AdCP response-signing profile (RFC 9421 §2.2.9).
  *
- * Wire-format contract is provisional until #1826 (`verifyResponseSignature`)
- * lands and exercises this format against external SDK implementations.
- * The `v1` suffix gives a clean break path if interop testing surfaces an
- * incompat — any breaking change ships as `v2` and verifiers reject `v1`.
- * Adopters publishing signed responses today should pin a major SDK version
- * until the verifier ships.
+ * Signer ships in #1823; verifier (`verifyResponseSignature`) ships in
+ * #1826. The wire format is now exercised both directions inside this SDK
+ * via round-trip tests. The `v1` suffix gives a clean break path if cross-
+ * SDK interop testing later surfaces an incompat — any breaking change
+ * ships as `v2` and verifiers reject `v1`.
  */
 export const RESPONSE_SIGNING_TAG = 'adcp/response-signing/v1';
 export const ALLOWED_ALGS = new Set(['ed25519', 'ecdsa-p256-sha256']);
