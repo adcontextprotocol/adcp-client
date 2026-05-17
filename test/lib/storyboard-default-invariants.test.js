@@ -2055,6 +2055,147 @@ describe('default-invariants: impairment.coherence', () => {
     assert.equal(out[0].passed, true);
   });
 
+  // adcp-client#1806 — inverse-rule coverage gap is surfaced at the
+  // transition step itself via a `not_applicable` step-level result, so
+  // reviewers see the gap in run output instead of only in the run-level
+  // onEnd summary.
+  for (const [family, syncStep] of [
+    [
+      'audience',
+      s => ({ task: 'sync_audiences', response: { audiences: [{ audience_id: s.id, status: 'suspended' }] } }),
+    ],
+    [
+      'catalog_item',
+      s => ({
+        task: 'sync_catalogs',
+        response: { catalogs: [{ items: [{ item_id: s.id, status: 'withdrawn' }] }] },
+      }),
+    ],
+    [
+      'event_source',
+      s => ({
+        task: 'sync_event_sources',
+        response: { event_sources: [{ event_source_id: s.id, health: { status: 'insufficient' } }] },
+      }),
+    ],
+  ]) {
+    test(`inverse: offline ${family} transition emits a not_applicable hint at the transition step`, () => {
+      const id = `${family.replace('_', '-')}-1`;
+      const out = run([step({ step_id: 'transition', ...syncStep({ id }) })]);
+      const na = out[0].output.find(o => o.status === 'not_applicable');
+      assert.ok(na, `expected a not_applicable result for ${family}; got ${JSON.stringify(out[0].output)}`);
+      assert.equal(na.passed, true);
+      assert.equal(na.step_id, 'transition');
+      assert.equal(na.hint.kind, 'impairment_coherence_not_applicable');
+      assert.equal(na.hint.violation, 'inverse');
+      assert.equal(na.hint.reason, 'resource_traversal_deferred');
+      assert.equal(na.hint.resource_type, family);
+      assert.equal(na.hint.resource_id, id);
+      assert.equal(na.hint.resource_step_id, 'transition');
+      assert.match(na.hint.message, /adcp#2860/);
+      assert.match(na.description, /resource_traversal_deferred/);
+    });
+  }
+
+  test('inverse: deferred-family hint emits once per resource across re-syncs', () => {
+    // Re-syncs of an already-offline resource don't re-fire the hint —
+    // the trigger is the transition into offline, not subsequent observations.
+    const out = run([
+      step({
+        step_id: 'first',
+        task: 'sync_audiences',
+        response: { audiences: [{ audience_id: 'aud-1', status: 'suspended' }] },
+      }),
+      step({
+        step_id: 'resync',
+        task: 'sync_audiences',
+        response: { audiences: [{ audience_id: 'aud-1', status: 'suspended' }] },
+      }),
+    ]);
+    const firstNa = out[0].output.filter(o => o.status === 'not_applicable');
+    const resyncNa = out[1].output.filter(o => o.status === 'not_applicable');
+    assert.equal(firstNa.length, 1, 'first transition emits one hint');
+    assert.equal(resyncNa.length, 0, 're-sync of already-offline resource does not re-emit');
+  });
+
+  test('inverse: recovery then re-transition emits the hint twice (per transition)', () => {
+    // recover → re-suspend re-enters the offline state, which is a new
+    // transition and re-fires the hint.
+    const out = run([
+      step({
+        step_id: 'suspend1',
+        task: 'sync_audiences',
+        response: { audiences: [{ audience_id: 'aud-1', status: 'suspended' }] },
+      }),
+      step({
+        step_id: 'recover',
+        task: 'sync_audiences',
+        response: { audiences: [{ audience_id: 'aud-1', status: 'ready' }] },
+      }),
+      step({
+        step_id: 'suspend2',
+        task: 'sync_audiences',
+        response: { audiences: [{ audience_id: 'aud-1', status: 'suspended' }] },
+      }),
+    ]);
+    assert.equal(out[0].output.filter(o => o.status === 'not_applicable').length, 1);
+    assert.equal(out[1].output.filter(o => o.status === 'not_applicable').length, 0);
+    assert.equal(out[2].output.filter(o => o.status === 'not_applicable').length, 1);
+  });
+
+  test('inverse: creative offline transition does NOT emit not_applicable (family is graded)', () => {
+    const out = run([
+      step({
+        step_id: 'reject',
+        task: 'sync_creatives',
+        response: { creatives: [{ creative_id: 'cr-1', status: 'rejected' }] },
+      }),
+    ]);
+    assert.equal(
+      out[0].output.filter(o => o.status === 'not_applicable').length,
+      0,
+      'creative inverse rule is graded — no not_applicable hint'
+    );
+  });
+
+  test('inverse: deferred-family hint coexists with a buy snapshot in the same step', () => {
+    // When a sync_* step somehow also returns a media-buy snapshot (rare,
+    // but the runner unions the two paths cleanly), the hint and the
+    // snapshot grading both surface in the same step output.
+    const out = run([
+      step({
+        step_id: 'reject',
+        task: 'sync_creatives',
+        response: { creatives: [{ creative_id: 'cr-1', status: 'rejected' }] },
+      }),
+      step({
+        step_id: 'aud',
+        task: 'sync_audiences',
+        response: { audiences: [{ audience_id: 'aud-1', status: 'suspended' }] },
+      }),
+      // Buy snapshot follows — forward rule should pass, inverse silent.
+      step({
+        step_id: 'buy',
+        task: 'create_media_buy',
+        response: mb('mb-1', {
+          health: 'impaired',
+          impairments: [
+            { resource_type: 'creative', resource_id: 'cr-1' },
+            { resource_type: 'audience', resource_id: 'aud-1' },
+          ],
+          packages: [{ creative_assignments: [{ creative_id: 'cr-1' }] }],
+        }),
+      }),
+    ]);
+    const audNa = out[1].output.find(o => o.status === 'not_applicable');
+    assert.ok(audNa, 'audience transition emits not_applicable');
+    assert.equal(audNa.hint.resource_type, 'audience');
+    assert.ok(
+      out[2].output.every(o => o.passed),
+      'buy snapshot grades pass on the forward leg'
+    );
+  });
+
   test('onEnd: surfaces partial inverse coverage when a deferred-family offline observation lands', () => {
     // adcp#2860: inverse rule only grades creative today; audience /
     // catalog_item / event_source references on a buy are forward-only.

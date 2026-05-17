@@ -1121,6 +1121,16 @@ registerOnce('impairment.coherence', {
 
     const state = getImpairmentState(ctx);
 
+    type CoherenceResult = {
+      passed: boolean;
+      description: string;
+      step_id: string;
+      error?: string;
+      status?: 'not_applicable';
+      hint?: import('./types').ImpairmentCoherenceHint | import('./types').ImpairmentCoherenceNotApplicableHint;
+    };
+    const deferredCoverageResults: CoherenceResult[] = [];
+
     // Direct, dedicated extractor for the four families this invariant cares
     // about. NOT routed through `extractStatusObservations` (which is bound
     // to the `status.monotonic` transition graphs and therefore excludes
@@ -1133,12 +1143,51 @@ registerOnce('impairment.coherence', {
       state.resourceStatus.set(key, { status: ob.status, stepId: stepResult.step_id });
       const offline = IMPAIRMENT_OFFLINE_STATUS.get(ob.resource_type);
       if (offline?.has(ob.status)) {
+        const wasOffline = state.offlineResources.has(key);
         state.offlineResources.set(key, { status: ob.status, stepId: stepResult.step_id });
         state.observedTransition = true;
         state.offlineObservationsByFamily.set(
           ob.resource_type,
           (state.offlineObservationsByFamily.get(ob.resource_type) ?? 0) + 1
         );
+
+        // Issue #1806: surface deferred inverse-rule coverage at the
+        // transition step. When a resource family the runner can't yet
+        // reverse-traverse (`audience` / `catalog_item` / `event_source`)
+        // enters an offline state for the first time in this run, emit a
+        // `not_applicable` step-level result so reviewers see the gap in
+        // run output instead of having to read PR prose. One emission per
+        // (resource_type, resource_id) per run — re-syncs of an already
+        // offline resource don't re-fire.
+        if (
+          !wasOffline &&
+          (ob.resource_type === 'audience' ||
+            ob.resource_type === 'catalog_item' ||
+            ob.resource_type === 'event_source')
+        ) {
+          const message =
+            `inverse-rule coverage for ${ob.resource_type} ${ob.resource_id} ` +
+            `(status="${ob.status}", step "${stepResult.step_id}") is deferred — ` +
+            `buy → resource traversal not yet implemented for this family. ` +
+            `Tracked in adcontextprotocol/adcp#2860.`;
+          deferredCoverageResults.push({
+            passed: true,
+            status: 'not_applicable',
+            description:
+              'inverse-rule coverage deferred for non-creative offline resource (resource_traversal_deferred)',
+            step_id: stepResult.step_id,
+            hint: {
+              kind: 'impairment_coherence_not_applicable',
+              violation: 'inverse',
+              reason: 'resource_traversal_deferred',
+              message,
+              resource_type: ob.resource_type,
+              resource_id: ob.resource_id,
+              resource_status: ob.status,
+              resource_step_id: stepResult.step_id,
+            },
+          });
+        }
       } else {
         // Resource recovered from offline → drop the entry so the inverse
         // rule no longer expects it in impairments[].
@@ -1148,17 +1197,10 @@ registerOnce('impairment.coherence', {
 
     // Extract media-buy snapshots and run the three coherence checks.
     const snapshots = extractBuySnapshots(stepResult.task, body as Record<string, unknown>, stepResult.step_id);
-    if (snapshots.length === 0) return [];
+    if (snapshots.length === 0) return deferredCoverageResults;
     state.observedBuySnapshot = true;
 
     const description = 'media_buy.impairments[] coheres with resource state and buy health';
-    type CoherenceResult = {
-      passed: boolean;
-      description: string;
-      step_id: string;
-      error?: string;
-      hint?: import('./types').ImpairmentCoherenceHint;
-    };
     const results: CoherenceResult[] = [];
 
     for (const snap of snapshots) {
@@ -1280,9 +1322,9 @@ registerOnce('impairment.coherence', {
     }
 
     if (results.length === 0) {
-      return [{ passed: true, description, step_id: stepResult.step_id }];
+      return [...deferredCoverageResults, { passed: true, description, step_id: stepResult.step_id }];
     }
-    return results;
+    return [...deferredCoverageResults, ...results];
   },
   // Emit a run-level summary so the track rollup can distinguish
   // "wired and exercised" from "wired but neither side observed". When
