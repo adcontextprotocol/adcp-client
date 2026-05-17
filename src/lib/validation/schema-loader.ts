@@ -85,6 +85,72 @@ export function resolveBundleKey(version: string): string {
 }
 
 /**
+ * Collapse a bundle key to the release-precision string the AdCP wire schema
+ * accepts for the `adcp_version` envelope field (spec PR
+ * `adcontextprotocol/adcp#3493`). The wire pattern is
+ * `^\d+\.\d+(-[a-zA-Z0-9.-]+)?$` — release-precision (MAJOR.MINOR with
+ * optional prerelease), never full MAJOR.MINOR.PATCH semver.
+ *
+ *   - Stable bundle key `'3.0'` / `'3.1'` → returned verbatim.
+ *   - Prerelease bundle key `'3.1.0-beta.0'` → `'3.1-beta.0'` (PATCH segment
+ *     dropped; the prerelease tag is the wire-meaningful release identifier,
+ *     PATCH is implementation-internal).
+ *   - Full stable semver `'3.0.11'` → `'3.0'` (patches don't change wire
+ *     shape; surface them via `build_version` on capabilities instead).
+ *   - Legacy alias `'v3'` / `'v2.5'` — returned verbatim. The wire spec
+ *     predates the envelope field, so legacy-aliased clients won't emit
+ *     `adcp_version` anyway (gated by `bundleSupportsAdcpVersionField`).
+ *
+ * The normalization rule is declared in `core/version-envelope.json`:
+ *
+ *   > SDKs that read full-semver values from bundle metadata (e.g.
+ *   > ComplianceIndex.published_version = "3.1.0-beta.1") MUST normalize to
+ *   > release-precision ("3.1-beta.1") before emitting on the wire —
+ *   > meta-field values are NOT valid wire values.
+ *
+ * **Idempotent.** Re-applying to an already-wire-shaped value is a no-op:
+ * `toReleasePrecisionWire('3.1-beta.0') === '3.1-beta.0'`. Safe to call
+ * defensively on values a caller read off the wire and is passing back.
+ *
+ * **Prerelease regex is stricter than the wire pattern by design.** The wire
+ * pattern allows `[a-zA-Z0-9.-]+` (any mix of dots and hyphens), but this
+ * function only accepts SemVer §9-shaped prerelease tags
+ * (`[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*`) — disallowing leading dots, double
+ * dots, or trailing dots. Mirrors the path-traversal hardening on
+ * {@link resolveBundleKey} (`'3.0.0-/../etc'`-style strings can't reach the
+ * filesystem there, and shouldn't be silently mirrored to the wire here).
+ * A future reader who wants to "fix" this to match the wire regex
+ * character-for-character should NOT — the strictness is intentional.
+ *
+ * Defense: rejecting unrecognized shapes here surfaces SDK-internal misuse
+ * (someone calling this with raw garbage) loudly instead of silently
+ * emitting a non-spec wire string.
+ */
+export function toReleasePrecisionWire(bundleKeyOrVersion: string): string {
+  // Bare release-precision (MAJOR.MINOR or MAJOR.MINOR-PRE) — already wire-shaped.
+  const releasePrecision = bundleKeyOrVersion.match(/^(\d+)\.(\d+)(-[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?$/);
+  if (releasePrecision) {
+    const [, major, minor, prerelease = ''] = releasePrecision;
+    return `${major}.${minor}${prerelease}`;
+  }
+  // Full semver — collapse PATCH segment. Prerelease (if any) is preserved.
+  const fullSemver = bundleKeyOrVersion.match(/^(\d+)\.(\d+)\.\d+(-[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?$/);
+  if (fullSemver) {
+    const [, major, minor, prerelease = ''] = fullSemver;
+    return `${major}.${minor}${prerelease}`;
+  }
+  // Legacy alias passthrough. Callers that reach here with a legacy alias
+  // shouldn't be emitting `adcp_version` (no version-envelope support), but
+  // returning the input verbatim is least-surprise.
+  if (/^v\d+(\.\d+)?$/.test(bundleKeyOrVersion)) return bundleKeyOrVersion;
+  throw new ConfigurationError(
+    `Cannot normalize ${JSON.stringify(bundleKeyOrVersion)} to release-precision wire format. ` +
+      `Expected a bundle key or AdCP version string.`,
+    'adcpVersion'
+  );
+}
+
+/**
  * Resolve the directory that holds the bundled + core schemas for a given
  * AdCP version. Source layout (dev):
  *   schemas/cache/<exact-version>/{bundled,core}

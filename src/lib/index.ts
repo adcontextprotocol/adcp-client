@@ -897,6 +897,7 @@ export {
   closeMCPConnections,
   bundleSupportsAdcpVersionField,
 } from './protocols';
+export { toReleasePrecisionWire } from './validation/schema-loader';
 export type { CallToolOptions, TransportOptions } from './protocols';
 
 // ====== RESPONSE UTILITIES ======
