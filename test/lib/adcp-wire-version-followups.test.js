@@ -8,7 +8,7 @@
 //   3. `wireVersion` namespace object groups the three helpers
 //      (isSupported, normalize, validate) for stable adopter discovery.
 
-const { test, describe } = require('node:test');
+const { test, describe, before, after } = require('node:test');
 const assert = require('node:assert');
 
 const {
@@ -20,7 +20,32 @@ const {
 
 const { resolveBundleKey, hasSchemaBundle } = require('../../dist/lib/validation/schema-loader.js');
 
+const { mkdirSync, rmSync, existsSync } = require('node:fs');
+const path = require('node:path');
+
+// Hermetic fixture for the fuzzy-resolution test: synthesize a prerelease
+// cache directory under the project's `schemas/cache/`, exercise the
+// fuzzy lookup, then clean up. Uses an unmistakable major-version tag
+// (`98.0.0-test.0`) so a stray leftover wouldn't conflict with any real
+// AdCP cache directory. Created in `before`, removed in `after`.
+const CACHE_ROOT = path.join(__dirname, '..', '..', 'schemas', 'cache');
+const FIXTURE_DIR_NAME = '98.0.0-test.0';
+const FIXTURE_PATH = path.join(CACHE_ROOT, FIXTURE_DIR_NAME);
+
 describe('resolveBundleKey accepts release-precision pins', () => {
+  before(() => {
+    if (!existsSync(CACHE_ROOT)) {
+      mkdirSync(CACHE_ROOT, { recursive: true });
+    }
+    mkdirSync(FIXTURE_PATH, { recursive: true });
+  });
+
+  after(() => {
+    if (existsSync(FIXTURE_PATH)) {
+      rmSync(FIXTURE_PATH, { recursive: true, force: true });
+    }
+  });
+
   test('MAJOR.MINOR-PRE returns verbatim', () => {
     assert.strictEqual(resolveBundleKey('3.1-beta'), '3.1-beta');
     assert.strictEqual(resolveBundleKey('3.1-beta.0'), '3.1-beta.0');
@@ -39,19 +64,20 @@ describe('resolveBundleKey accepts release-precision pins', () => {
     assert.throws(() => resolveBundleKey('3.1-beta/0'));
   });
 
-  test('release-precision-pinned bundle resolves to a cached prerelease dir', () => {
-    // hasSchemaBundle returns true when resolveSchemaRoot finds a directory.
-    // The fuzzy lookup matches 3.1-beta against any cached 3.1.0-beta.* dir;
-    // the cache in this workspace contains 3.1.0-beta.0.
-    assert.strictEqual(hasSchemaBundle('3.1-beta'), true);
-    assert.strictEqual(hasSchemaBundle('3.1-beta.0'), true);
+  test('release-precision pin resolves via fuzzy lookup', () => {
+    // Fixture: `schemas/cache/98.0.0-test.0/` exists (created in `before`).
+    // Its release-precision form is `'98.0-test.0'`. A pin of `'98.0-test'`
+    // should match it via the fuzzy lookup (release-precision starts with
+    // `'98.0-test.'`); `'98.0-test.0'` should match exactly.
+    assert.strictEqual(hasSchemaBundle('98.0-test'), true);
+    assert.strictEqual(hasSchemaBundle('98.0-test.0'), true);
     // Exact prerelease still works.
-    assert.strictEqual(hasSchemaBundle('3.1.0-beta.0'), true);
+    assert.strictEqual(hasSchemaBundle('98.0.0-test.0'), true);
   });
 
   test('non-matching release-precision pin returns false', () => {
-    // No cached directory has prerelease tag starting with `gamma`.
-    assert.strictEqual(hasSchemaBundle('3.1-gamma'), false);
+    // No cached directory has prerelease tag starting with `nomatch`.
+    assert.strictEqual(hasSchemaBundle('98.0-nomatch'), false);
     // No 4.x prerelease cached.
     assert.strictEqual(hasSchemaBundle('4.0-beta'), false);
   });
