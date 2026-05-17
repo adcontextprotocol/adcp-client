@@ -66,8 +66,12 @@ function projectDeclaration(
   productId: string,
   field: string
 ): { v1?: V1FormatId; diagnostic?: ProjectionDiagnostic } {
-  // Step 1: seller-asserted product-level opt-out.
-  if (decl.format_kind === 'custom' && decl.canonical_formats_only === true) {
+  // Step 1: seller-asserted product-level opt-out. canonical_formats_only
+  // is REQUIRED on `custom` declarations without v1_format_ref, but it's
+  // ALSO valid on any non-custom canonical when the seller wants to opt
+  // out of v1 emission for this product (e.g. the catalog has no v1 entry
+  // for the format yet — `audio_daast` is the 3.1 example).
+  if (decl.canonical_formats_only === true) {
     return {
       diagnostic: {
         source: 'sdk',

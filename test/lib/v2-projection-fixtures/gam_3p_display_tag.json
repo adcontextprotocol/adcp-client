@@ -40,6 +40,10 @@
   "format_options": [
     {
       "format_kind": "display_tag",
+      "v1_format_ref": {
+        "agent_url": "https://creative.adcontextprotocol.org/",
+        "id": "display_js"
+      },
       "params": {
         "width": 300,
         "height": 250,

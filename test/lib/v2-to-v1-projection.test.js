@@ -54,36 +54,50 @@ describe('v2 → v1 Product projection — per-fixture structural invariant', ()
 });
 
 describe('v2 → v1 projection — seller-asserted v1_format_ref (the only normative path)', () => {
-  test('nytimes_homepage_mrec projects via v1_format_ref', () => {
-    const fixture = JSON.parse(readFileSync(path.join(FIXTURE_DIR, 'nytimes_homepage_mrec.json'), 'utf-8'));
-    const { v1, diagnostics } = projectV2ProductToV1(fixture);
-    assert.strictEqual(diagnostics.length, 0);
-    assert.strictEqual(v1.format_ids.length, 1);
-    // Comes from the declaration's v1_format_ref, not from registry
-    // synthesis — the registry path is non-normative.
-    assert.strictEqual(v1.format_ids[0].agent_url, 'https://nytimes.adcp');
-    assert.strictEqual(v1.format_ids[0].id, 'iab_mrec_300x250');
-  });
+  // After the registry↔catalog reconciliation upstream, 4 IAB-standard
+  // fixtures point at AAO-canonical agent_url + catalog ids; 1 Meta-
+  // specific fixture keeps a publisher-specific agent_url. This is the
+  // explicit pattern the spec now models: converge on AAO ids for
+  // industry-standard formats, keep publisher namespacing for proprietary
+  // platforms.
+  const sellerAsserted = [
+    ['nytimes_homepage_mrec', 'https://creative.adcontextprotocol.org/', 'display_300x250_image'],
+    ['nytimes_homepage_html5', 'https://creative.adcontextprotocol.org/', 'display_300x250_html'],
+    ['gam_3p_display_tag', 'https://creative.adcontextprotocol.org/', 'display_js'],
+    ['youtube_vast_preroll', 'https://creative.adcontextprotocol.org/', 'video_vast_30s'],
+    ['meta_reels_us', 'https://meta.adcp', 'meta_reels'],
+  ];
 
-  test('triton_daast_audio_30s projects via v1_format_ref', () => {
-    const fixture = JSON.parse(readFileSync(path.join(FIXTURE_DIR, 'triton_daast_audio_30s.json'), 'utf-8'));
-    const { v1, diagnostics } = projectV2ProductToV1(fixture);
-    assert.strictEqual(diagnostics.length, 0);
-    assert.strictEqual(v1.format_ids.length, 1);
-    assert.strictEqual(v1.format_ids[0].agent_url, 'https://triton.adcp');
-    assert.strictEqual(v1.format_ids[0].id, 'daast_audio_30s_v1_1');
-  });
+  for (const [fixture, expectedAgentUrl, expectedId] of sellerAsserted) {
+    test(`${fixture} projects via v1_format_ref → ${expectedId}`, () => {
+      const product = JSON.parse(readFileSync(path.join(FIXTURE_DIR, `${fixture}.json`), 'utf-8'));
+      const { v1, diagnostics } = projectV2ProductToV1(product);
+      assert.strictEqual(diagnostics.length, 0, `expected zero diagnostics; got ${JSON.stringify(diagnostics)}`);
+      assert.strictEqual(v1.format_ids.length, 1);
+      assert.strictEqual(v1.format_ids[0].agent_url, expectedAgentUrl);
+      assert.strictEqual(v1.format_ids[0].id, expectedId);
+    });
+  }
 });
 
 describe('v2 → v1 projection — canonical_formats_only opt-out', () => {
-  test('nytimes_homepage_takeover_custom emits FORMAT_DECLARATION_V1_NOT_APPLICABLE', () => {
-    const fixture = JSON.parse(readFileSync(path.join(FIXTURE_DIR, 'nytimes_homepage_takeover_custom.json'), 'utf-8'));
-    const { v1, diagnostics } = projectV2ProductToV1(fixture);
-    assert.strictEqual(v1.format_ids.length, 0);
-    assert.strictEqual(diagnostics.length, 1);
-    assert.strictEqual(diagnostics[0].code, 'FORMAT_DECLARATION_V1_NOT_APPLICABLE');
-    assert.strictEqual(diagnostics[0].error.details.reason, 'canonical_formats_only');
-  });
+  // Two fixtures use this now: the NYTimes custom takeover (no v1 form
+  // possible — multi-placement) and triton_daast (catalog has no DAAST
+  // entry yet, so the seller opted out rather than fabricating an id).
+  const optOuts = [
+    ['nytimes_homepage_takeover_custom', 'custom'],
+    ['triton_daast_audio_30s', 'audio_daast'],
+  ];
+  for (const [fixture, kind] of optOuts) {
+    test(`${fixture} (${kind}) emits FORMAT_DECLARATION_V1_NOT_APPLICABLE`, () => {
+      const product = JSON.parse(readFileSync(path.join(FIXTURE_DIR, `${fixture}.json`), 'utf-8'));
+      const { v1, diagnostics } = projectV2ProductToV1(product);
+      assert.strictEqual(v1.format_ids.length, 0);
+      assert.strictEqual(diagnostics.length, 1);
+      assert.strictEqual(diagnostics[0].code, 'FORMAT_DECLARATION_V1_NOT_APPLICABLE');
+      assert.strictEqual(diagnostics[0].error.details.reason, 'canonical_formats_only');
+    });
+  }
 });
 
 describe('v2 → v1 projection — v1_translatable: false (4 inherently-v2 canonicals)', () => {
