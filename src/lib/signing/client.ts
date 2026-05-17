@@ -44,7 +44,16 @@ export { WEBHOOK_MANDATORY_COMPONENTS, WEBHOOK_SIGNING_TAG } from './webhook-ver
 export { createSigningFetch, type CoverContentDigestPredicate, type SigningFetchOptions } from './fetch';
 export { createSigningFetchAsync } from './fetch-async';
 export type { SigningProvider } from './provider';
-export { SigningProviderAlgorithmMismatchError, type SigningProviderErrorCode } from './errors';
+export {
+  RequestSignatureError,
+  type RequestSignatureErrorCode,
+  ResponseSignatureError,
+  type ResponseSignatureErrorCode,
+  SigningProviderAlgorithmMismatchError,
+  type SigningProviderErrorCode,
+  WebhookSignatureError,
+  type WebhookSignatureErrorCode,
+} from './errors';
 export {
   ALLOWED_ALGS,
   CLOCK_SKEW_TOLERANCE_SECONDS,

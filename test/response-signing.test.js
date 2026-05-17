@@ -6,6 +6,8 @@ const path = require('node:path');
 const {
   signResponse,
   signResponseAsync,
+  signRequest,
+  signWebhook,
   prepareResponseSignature,
   finalizeResponseSignature,
   buildResponseSignatureBase,
@@ -15,6 +17,9 @@ const {
   verifySignature,
   RESPONSE_SIGNING_TAG,
   RESPONSE_MANDATORY_COMPONENTS,
+  ResponseSignatureError,
+  RequestSignatureError,
+  WebhookSignatureError,
   computeContentDigest,
 } = require('../dist/lib/signing/index.js');
 
@@ -39,10 +44,22 @@ function publicJwkFor(kid) {
   return publicPart;
 }
 
-function privateJwkFor(kid) {
+// Use a sentinel for "strip adcp_use entirely" so JS default-param semantics
+// don't quietly substitute 'response-signing' when callers pass undefined.
+const STRIP_ADCP_USE = Symbol('strip-adcp-use');
+
+function privateJwkFor(kid, adcpUse = 'response-signing') {
   const k = keysByKid.get(kid);
   const { _private_d_for_test_only, ...rest } = k;
-  return { ...rest, d: _private_d_for_test_only };
+  // Vectors carry adcp_use='request-signing'; override so the response-signing
+  // purpose-binding gate in signResponse accepts the same key material.
+  const out = { ...rest, d: _private_d_for_test_only };
+  if (adcpUse === STRIP_ADCP_USE) {
+    delete out.adcp_use;
+  } else {
+    out.adcp_use = adcpUse;
+  }
+  return out;
 }
 
 const ORIGINATING_REQUEST = {
@@ -210,6 +227,74 @@ describe('signResponseAsync', () => {
     assert.strictEqual(asyncSig.headers['Signature-Input'], sync.headers['Signature-Input']);
     assert.strictEqual(asyncSig.signatureBase, sync.signatureBase);
     assert.strictEqual(asyncSig.status, sync.status);
+  });
+});
+
+describe('signResponse — adcp_use purpose binding', () => {
+  test('rejects a webhook-signing key with response_signature_key_purpose_invalid', () => {
+    const kid = 'test-ed25519-2026';
+    const wrongPurpose = { keyid: kid, alg: 'ed25519', privateKey: privateJwkFor(kid, 'webhook-signing') };
+    assert.throws(
+      () => signResponse(SAMPLE_RESPONSE, wrongPurpose, FIXED_OPTIONS),
+      err =>
+        err instanceof ResponseSignatureError &&
+        err.code === 'response_signature_key_purpose_invalid' &&
+        err.failedStep === 8 &&
+        /webhook-signing/.test(err.message) &&
+        /response-signing/.test(err.message)
+    );
+  });
+
+  test('rejects a key with missing adcp_use', () => {
+    const kid = 'test-ed25519-2026';
+    const missingPurpose = { keyid: kid, alg: 'ed25519', privateKey: privateJwkFor(kid, STRIP_ADCP_USE) };
+    assert.throws(
+      () => signResponse(SAMPLE_RESPONSE, missingPurpose, FIXED_OPTIONS),
+      err =>
+        err instanceof ResponseSignatureError &&
+        err.code === 'response_signature_key_purpose_invalid' &&
+        /<missing>/.test(err.message)
+    );
+  });
+});
+
+describe('signRequest / signWebhook — adcp_use purpose binding (regression)', () => {
+  test('signRequest rejects a response-signing key', () => {
+    const kid = 'test-ed25519-2026';
+    const wrongPurpose = { keyid: kid, alg: 'ed25519', privateKey: privateJwkFor(kid, 'response-signing') };
+    assert.throws(
+      () =>
+        signRequest(
+          {
+            method: 'POST',
+            url: 'https://seller.example.com/adcp/get_products',
+            headers: { 'Content-Type': 'application/json' },
+            body: '{}',
+          },
+          wrongPurpose,
+          FIXED_OPTIONS
+        ),
+      err => err instanceof RequestSignatureError && err.code === 'request_signature_key_purpose_invalid'
+    );
+  });
+
+  test('signWebhook rejects a request-signing key', () => {
+    const kid = 'test-ed25519-2026';
+    const wrongPurpose = { keyid: kid, alg: 'ed25519', privateKey: privateJwkFor(kid, 'request-signing') };
+    assert.throws(
+      () =>
+        signWebhook(
+          {
+            method: 'POST',
+            url: 'https://buyer.example.com/webhook',
+            headers: { 'Content-Type': 'application/json' },
+            body: '{}',
+          },
+          wrongPurpose,
+          FIXED_OPTIONS
+        ),
+      err => err instanceof WebhookSignatureError && err.code === 'webhook_signature_key_purpose_invalid'
+    );
   });
 });
 

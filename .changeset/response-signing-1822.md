@@ -43,3 +43,28 @@ backed by `never` checks will need to add a `case 'response-signing':`
 arm. Pragmatically a minor bump — the runtime surface is purely additive
 and no existing call site changes — but exhaustive narrowers must opt-in
 to handle the new member.
+
+**Signer-side `adcp_use` purpose binding (closes #1825).** All three sync
+signer entry points now refuse keys whose `adcp_use` doesn't match the
+helper:
+
+- `signRequest` requires `adcp_use: 'request-signing'`
+- `signWebhook` requires `adcp_use: 'webhook-signing'`
+- `signResponse` requires `adcp_use: 'response-signing'`
+
+Mismatch (including a missing `adcp_use`) throws at the signer with the
+same error code the verifier raises at step 8 (`*_signature_key_purpose_invalid`),
+so misconfiguration surfaces at configuration time rather than at the
+receiver. Production callers using `pemToAdcpJwk({ adcp_use: ... })` to
+mint keys are already correct by construction; anyone reusing a key
+across purposes will get a clear remediation message.
+
+Test-vector authors that need to *deliberately* sign with a wrong-purpose
+key (e.g. AdCP negative-vector 009 cross-purpose rejection) can compose
+the lower-level `prepareRequestSignature` + `finalizeRequestSignature`
+helpers directly — those take a `SignatureIdentity` and skip the gate
+because they're designed for KMS-shaped async paths where purpose
+binding happens via the `SigningProvider`. The internal storyboard
+builder uses this composition pattern; see
+`src/lib/testing/storyboard/request-signing/builder.ts` for the
+canonical shape.

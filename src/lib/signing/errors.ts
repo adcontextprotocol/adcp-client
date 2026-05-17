@@ -82,6 +82,27 @@ export class WebhookSignatureError extends ADCPError {
 }
 
 /**
+ * Error codes for the RFC 9421 response-signing surface. Parallel to the
+ * request- and webhook-signing taxonomies; the verifier side ships in a
+ * follow-up (#1826) and will extend this union with `response_signature_*`
+ * codes for window, replay, digest mismatch, etc. The signer-side gate at
+ * `request_signature_key_purpose_invalid` semantics is established here so
+ * adopters get consistent error vocabulary across both sides.
+ */
+export type ResponseSignatureErrorCode = 'response_signature_key_purpose_invalid';
+
+export class ResponseSignatureError extends ADCPError {
+  readonly code: ResponseSignatureErrorCode;
+  readonly failedStep: number;
+
+  constructor(code: ResponseSignatureErrorCode, failedStep: number, message: string, details?: unknown) {
+    super(message, details);
+    this.code = code;
+    this.failedStep = failedStep;
+  }
+}
+
+/**
  * SDK-side error codes for the `SigningProvider` integration path. Distinct
  * namespace from `RequestSignatureErrorCode` / `WebhookSignatureErrorCode`
  * because these surface during adapter setup, not during wire-level

@@ -25,6 +25,8 @@ export { jwkToPublicKey, verifySignature } from './crypto';
 export {
   RequestSignatureError,
   type RequestSignatureErrorCode,
+  ResponseSignatureError,
+  type ResponseSignatureErrorCode,
   WebhookSignatureError,
   type WebhookSignatureErrorCode,
 } from './errors';

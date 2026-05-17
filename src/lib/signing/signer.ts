@@ -8,6 +8,8 @@ import {
   type SignatureParams,
 } from './canonicalize';
 import { computeContentDigest } from './content-digest';
+import { RequestSignatureError, ResponseSignatureError, WebhookSignatureError } from './errors';
+import type { AdcpUse } from './jwks-helpers';
 import {
   MANDATORY_COMPONENTS,
   MAX_SIGNATURE_WINDOW_SECONDS,
@@ -22,7 +24,48 @@ import { WEBHOOK_MANDATORY_COMPONENTS, WEBHOOK_SIGNING_TAG } from './webhook-ver
 export interface SignerKey {
   keyid: string;
   alg: 'ed25519' | 'ecdsa-p256-sha256';
+  /**
+   * Private JWK. MUST carry `adcp_use` matching the helper being called:
+   * - `signRequest` requires `adcp_use: 'request-signing'`
+   * - `signWebhook` requires `adcp_use: 'webhook-signing'`
+   * - `signResponse` requires `adcp_use: 'response-signing'`
+   *
+   * Mismatched or missing `adcp_use` throws at the signer with the same
+   * error code the verifier raises at step 8 — failure surfaces at
+   * configuration time rather than at the receiver, where the message is
+   * far from its cause. Mint keys with `pemToAdcpJwk({ adcp_use: ... })`
+   * to get the binding right by construction.
+   */
   privateKey: AdcpJsonWebKey;
+}
+
+/**
+ * Step-8-equivalent purpose-binding gate on the signer side. The verifier
+ * already enforces `jwk.adcp_use === expected` at step 8 (see verifier.ts
+ * for request signing; webhook-verifier.ts for webhooks). Replicating the
+ * check on the signer side prevents the more common operator footgun:
+ * passing a wrong-purpose key into the helper, producing a wire-conformant
+ * signature that the downstream verifier then rejects, surfacing the
+ * misconfiguration at the wrong end of the connection.
+ *
+ * Errors emit the same code the verifier uses for that direction so log
+ * scrapers across signer / verifier see consistent vocabulary.
+ */
+function assertKeyPurpose(key: SignerKey, expected: AdcpUse): void {
+  const actual = key.privateKey.adcp_use;
+  if (actual === expected) return;
+  const message =
+    `Signing key '${key.keyid}' has adcp_use=${actual === undefined ? '<missing>' : `'${actual}'`} ` +
+    `but the helper requires '${expected}'. Mint a key scoped for '${expected}' via ` +
+    `pemToAdcpJwk({ adcp_use: '${expected}' }) — sharing keys across purposes is intentionally refused.`;
+  switch (expected) {
+    case 'request-signing':
+      throw new RequestSignatureError('request_signature_key_purpose_invalid', 8, message);
+    case 'webhook-signing':
+      throw new WebhookSignatureError('webhook_signature_key_purpose_invalid', 8, message);
+    case 'response-signing':
+      throw new ResponseSignatureError('response_signature_key_purpose_invalid', 8, message);
+  }
 }
 
 export interface SignRequestOptions {
@@ -129,6 +172,7 @@ export function finalizeRequestSignature(prepared: PreparedRequestSignature, sig
 }
 
 export function signRequest(request: RequestLike, key: SignerKey, options: SignRequestOptions = {}): SignedRequest {
+  assertKeyPurpose(key, 'request-signing');
   const prepared = prepareRequestSignature(request, { keyid: key.keyid, alg: key.alg }, options);
   const signature = produceSignature(key, Buffer.from(prepared.base, 'utf8'));
   return finalizeRequestSignature(prepared, signature);
@@ -191,6 +235,7 @@ export function prepareWebhookSignature(
  * conformant webhooks should use this instead of hand-rolling signatures.
  */
 export function signWebhook(request: RequestLike, key: SignerKey, options: SignWebhookOptions = {}): SignedRequest {
+  assertKeyPurpose(key, 'webhook-signing');
   const prepared = prepareWebhookSignature(request, { keyid: key.keyid, alg: key.alg }, options);
   const signature = produceSignature(key, Buffer.from(prepared.base, 'utf8'));
   return finalizeRequestSignature(prepared, signature);
@@ -343,6 +388,7 @@ export function signResponse(
   key: SignerKey,
   options: SignResponseOptions = {}
 ): SignedResponse {
+  assertKeyPurpose(key, 'response-signing');
   const prepared = prepareResponseSignature(response, { keyid: key.keyid, alg: key.alg }, options);
   const signature = produceSignature(key, Buffer.from(prepared.base, 'utf8'));
   return finalizeResponseSignature(prepared, signature);
