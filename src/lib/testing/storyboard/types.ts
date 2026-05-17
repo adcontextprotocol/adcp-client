@@ -117,10 +117,23 @@ export interface Storyboard {
    *   (not_applicable) rather than run, because the seller's silence is the
    *   spec-defined opt-out.
    *
+   * - `contains: V` — array-membership matcher for capabilities whose
+   *   declaration shape is an array of allowed values (e.g.
+   *   `media_buy.conversion_tracking.supported_targets: ["cost_per",
+   *   "per_ad_spend"]`). The value at `path` MUST be an array and MUST include
+   *   `V` (strict equality, no coercion). Empty arrays fail; paths resolving
+   *   to undefined or non-array values fail (treated as "capability not
+   *   declared", skip the storyboard as not_applicable). Like `present:`,
+   *   absence is the load-bearing signal — a seller that doesn't advertise
+   *   the array hasn't opted into the variant this storyboard tests.
+   *
    * When `raw_capabilities` is not available (e.g. the agent doesn't expose
    * `get_adcp_capabilities`), the gate is a no-op and the storyboard runs.
    */
-  requires_capability?: { path: string; equals: boolean | string | number | null } | { path: string; present: boolean };
+  requires_capability?:
+    | { path: string; equals: boolean | string | number | null }
+    | { path: string; present: boolean }
+    | { path: string; contains: boolean | string | number };
   /** Scenario IDs that must pass alongside this storyboard (loaded from storyboards/scenarios/) */
   requires_scenarios?: string[];
   agent: {
