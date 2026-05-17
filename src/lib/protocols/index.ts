@@ -46,7 +46,7 @@ import { validateAgentUrl } from '../validation';
 import { withSpan } from '../observability/tracing';
 import { ADCP_MAJOR_VERSION, ADCP_VERSION, parseAdcpMajorVersion } from '../version';
 import { ConfigurationError } from '../errors';
-import { resolveBundleKey, toReleasePrecisionWire } from '../validation/schema-loader';
+import { resolveBundleKey, toReleasePrecisionWire, validateAdcpVersionWire } from '../validation/schema-loader';
 import { buildAgentSigningContext, CAPABILITY_OP, ensureCapabilityLoaded } from '../signing/client';
 import { withResponseSizeLimit } from './responseSizeLimit';
 
@@ -121,7 +121,13 @@ function buildVersionEnvelope(
   if (!bundleSupportsAdcpVersionField(bundleKey)) {
     return { adcp_major_version: wireMajor };
   }
-  return { adcp_major_version: wireMajor, adcp_version: toReleasePrecisionWire(bundleKey) };
+  const wireValue = toReleasePrecisionWire(bundleKey);
+  // Defensive postcondition — should never throw in well-formed code, but
+  // if a future refactor breaks the normalization the error message tells
+  // the developer to call `toReleasePrecisionWire` instead of silently
+  // emitting a non-spec wire string.
+  validateAdcpVersionWire(wireValue);
+  return { adcp_major_version: wireMajor, adcp_version: wireValue };
 }
 
 /**

@@ -41,7 +41,15 @@ const SCHEMA_FILENAME_SUFFIX: Record<Direction, string> = {
  *
  *   - Stable semver `'3.0.0'` / `'3.0.1'` → `'3.0'` (latest patch in minor)
  *   - Bare minor `'3.0'` → `'3.0'` (already the bundle key)
- *   - Prerelease `'3.1.0-beta.1'` → `'3.1.0-beta.1'` (exact-version, intentional pin)
+ *   - Release-precision prerelease `'3.1-beta'` / `'3.1-beta.0'` →
+ *     returned verbatim. {@link resolveSchemaRoot} fuzzy-resolves to the
+ *     highest cached prerelease directory whose own release-precision form
+ *     matches (e.g. `'3.1-beta'` matches `schemas/cache/3.1.0-beta.0/`).
+ *     Accepted because sellers advertise `supported_versions` in this
+ *     shape (`["3.1-beta"]`), and a buyer reading that off the wire must
+ *     be able to pin to it.
+ *   - Full prerelease semver `'3.1.0-beta.1'` → `'3.1.0-beta.1'`
+ *     (exact-version, intentional pin)
  *   - Legacy alias `'v3'` / `'v2.5'` / `'v2.6'` → returned verbatim (cache
  *     historically keyed these directories by the alias name)
  *
@@ -61,6 +69,12 @@ export function resolveBundleKey(version: string): string {
   // Bare 'MAJOR.MINOR' (no patch).
   const minorOnly = version.match(/^(\d+)\.(\d+)$/);
   if (minorOnly) return `${minorOnly[1]}.${minorOnly[2]}`;
+  // Release-precision prerelease 'MAJOR.MINOR-PRE' (no patch). Same SemVer §9
+  // prerelease constraint as the full-semver branch — `'3.1-/../etc'`-style
+  // strings can't slip through. Returns verbatim; resolveSchemaRoot does the
+  // fuzzy directory match.
+  const releasePrecisionPre = version.match(/^(\d+)\.(\d+)-[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*$/);
+  if (releasePrecisionPre) return version;
   // Full 'MAJOR.MINOR.PATCH' with optional prerelease. Prerelease group
   // restricted to SemVer §9 identifiers (alphanumerics + hyphen,
   // dot-separated) so `'3.0.0-/../etc'`-style strings can't slip through
@@ -79,7 +93,8 @@ export function resolveBundleKey(version: string): string {
   if (legacyAlias) return version;
   throw new ConfigurationError(
     `AdCP version ${JSON.stringify(version)} is not a recognized version format. ` +
-      `Expected semver (e.g. '3.0.1', '3.1.0-beta.1'), bare minor ('3.0'), or legacy alias ('v3', 'v2.5').`,
+      `Expected semver (e.g. '3.0.1', '3.1.0-beta.1'), bare minor ('3.0'), ` +
+      `release-precision ('3.1-beta'), or legacy alias ('v3', 'v2.5').`,
     'adcpVersion'
   );
 }
@@ -126,6 +141,51 @@ export function resolveBundleKey(version: string): string {
  * (someone calling this with raw garbage) loudly instead of silently
  * emitting a non-spec wire string.
  */
+/**
+ * The exact pattern `core/version-envelope.json` applies to `adcp_version`
+ * on the wire. Kept verbatim so {@link validateAdcpVersionWire} doesn't
+ * drift from the spec — bump only when the spec itself bumps.
+ */
+const ADCP_VERSION_WIRE_PATTERN = /^\d+\.\d+(-[a-zA-Z0-9.-]+)?$/;
+
+/**
+ * Validate a string against the AdCP 3.1 `adcp_version` wire pattern.
+ * Throws `ConfigurationError` with a hint that points at
+ * {@link toReleasePrecisionWire} when the value would be sent on the wire
+ * but doesn't satisfy `core/version-envelope.json`'s pattern.
+ *
+ * Use this when you're constructing a request envelope by hand (storyboard
+ * fixtures, conformance harnesses, custom transports) and want a clear
+ * error rather than a downstream AJV pattern-mismatch from the seller —
+ * by the time the seller rejects the request, the buyer's stack frame is
+ * long gone and `core/version-envelope.json/properties/adcp_version/pattern`
+ * is the only clue.
+ *
+ * The SDK's own `buildVersionEnvelope` calls this as a postcondition after
+ * normalizing the bundle key — should never throw in well-formed SDK code,
+ * but if a future refactor breaks the normalization the assertion fires
+ * with a message that names the helper to call.
+ *
+ * Returns the value with the type narrowed to `string` via assertion.
+ */
+export function validateAdcpVersionWire(value: unknown): asserts value is string {
+  if (typeof value !== 'string') {
+    throw new ConfigurationError(
+      `adcp_version must be a string. Got ${typeof value}. ` +
+        `Use toReleasePrecisionWire() to convert a bundle key or full-semver pin to a wire-shaped string.`,
+      'adcp_version'
+    );
+  }
+  if (!ADCP_VERSION_WIRE_PATTERN.test(value)) {
+    throw new ConfigurationError(
+      `adcp_version ${JSON.stringify(value)} doesn't match the AdCP 3.1 wire pattern ${ADCP_VERSION_WIRE_PATTERN}. ` +
+        `Full-semver bundle keys (e.g. "3.1.0-beta.0") are NOT valid wire values — ` +
+        `call toReleasePrecisionWire() to normalize (e.g. "3.1.0-beta.0" → "3.1-beta.0").`,
+      'adcp_version'
+    );
+  }
+}
+
 export function toReleasePrecisionWire(bundleKeyOrVersion: string): string {
   // Bare release-precision (MAJOR.MINOR or MAJOR.MINOR-PRE) — already wire-shaped.
   const releasePrecision = bundleKeyOrVersion.match(/^(\d+)\.(\d+)(-[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?$/);
@@ -205,6 +265,31 @@ function resolveSchemaRoot(version: string): string {
       }))
       .filter(c => Number.isFinite(c.patch))
       .sort((a, b) => b.patch - a.patch);
+    if (cached.length > 0) return path.join(cacheRoot, cached[0]!.name);
+  }
+
+  // For release-precision prerelease pins (`'3.1-beta'`, `'3.1-beta.0'`),
+  // find the highest cached prerelease directory whose own release-precision
+  // form starts with the requested key. A pin of `'3.1-beta'` matches any
+  // directory whose `toReleasePrecisionWire` form is `'3.1-beta'` or
+  // `'3.1-beta.*'`. A pin of `'3.1-beta.0'` matches `'3.1-beta.0'` or
+  // `'3.1-beta.0.*'`. Sort newest-first by directory name (lexicographic
+  // is a good-enough proxy; proper SemVer §11 prerelease ordering can come
+  // later if it bites in practice).
+  const releasePrecisionMatch = /^\d+\.\d+-/.test(key);
+  if (releasePrecisionMatch && existsSync(cacheRoot)) {
+    const cached = readdirSync(cacheRoot, { withFileTypes: true })
+      .filter(e => e.isDirectory() && !e.name.endsWith('.previous'))
+      .map(e => {
+        try {
+          return { name: e.name, rp: toReleasePrecisionWire(e.name) };
+        } catch {
+          return null;
+        }
+      })
+      .filter((c): c is { name: string; rp: string } => c !== null)
+      .filter(c => c.rp === key || c.rp.startsWith(`${key}.`))
+      .sort((a, b) => b.name.localeCompare(a.name));
     if (cached.length > 0) return path.join(cacheRoot, cached[0]!.name);
   }
 

@@ -897,8 +897,22 @@ export {
   closeMCPConnections,
   bundleSupportsAdcpVersionField,
 } from './protocols';
-export { toReleasePrecisionWire } from './validation/schema-loader';
+export { toReleasePrecisionWire, validateAdcpVersionWire } from './validation/schema-loader';
 export type { CallToolOptions, TransportOptions } from './protocols';
+
+// ====== WIRE VERSION HELPERS (NAMESPACE) ======
+// Grouped re-exports of the three AdCP `adcp_version` envelope helpers
+// (spec PR adcontextprotocol/adcp#3493). Prefer this surface over the
+// individual top-level exports — the namespace stays stable as helpers
+// are added (a fourth helper drops in here without churning the barrel).
+// The top-level exports are kept for back-compat and aren't deprecated.
+import { bundleSupportsAdcpVersionField as _isSupported } from './protocols';
+import { toReleasePrecisionWire as _normalize, validateAdcpVersionWire as _validate } from './validation/schema-loader';
+export const wireVersion = {
+  isSupported: _isSupported,
+  normalize: _normalize,
+  validate: _validate,
+} as const;
 
 // ====== RESPONSE UTILITIES ======
 // Public utilities for working with AdCP responses
