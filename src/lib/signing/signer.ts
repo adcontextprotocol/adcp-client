@@ -321,6 +321,22 @@ export function finalizeResponseSignature(prepared: PreparedResponseSignature, s
  * Servers emitting signed responses (e.g. seller agents whose clients
  * verify `get_products` payloads before parsing) should use this instead
  * of hand-rolling signatures.
+ *
+ * Returns headers as a plain `Record<string, string>` for direct use with
+ * Express (`res.set(signed.headers)`). For Fetch / Node `Response` (where
+ * the headers object is immutable on construction), spread into the
+ * `Headers` constructor or `setHeader` loop:
+ *
+ * ```ts
+ * // Express
+ * res.status(signed.status).set(signed.headers).send(body);
+ *
+ * // Fetch / Workers / Node 20+ Response
+ * return new Response(body, { status: signed.status, headers: signed.headers });
+ *
+ * // Node `http.ServerResponse`
+ * res.writeHead(signed.status, signed.headers).end(body);
+ * ```
  */
 export function signResponse(
   response: ResponseLike,

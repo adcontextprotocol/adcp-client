@@ -21,6 +21,18 @@ export interface ResponseLike {
    * Originating request context. Required because RFC 9421 §2.2 binds
    * response signatures to their request context via `@authority` (and
    * optionally `@target-uri` / `@method` if the caller opts in).
+   *
+   * `url` MUST be an absolute URL — `canonicalAuthority` / `canonicalTargetUri`
+   * parse it through `new URL(...)` and will throw on a relative path. Express
+   * handlers ship `req.url` / `req.originalUrl` as path-only; reconstruct in
+   * the handler before passing in:
+   *
+   * ```ts
+   * const url = `${req.protocol}://${req.get('host')}${req.originalUrl}`;
+   * ```
+   *
+   * Same shape applies to Lambda (`event.requestContext.domainName` +
+   * `event.rawPath`) and Workers (`request.url` is already absolute).
    */
   request: { method: string; url: string };
 }

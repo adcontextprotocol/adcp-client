@@ -36,3 +36,10 @@ callers that need to hand the canonical base to an external signer.
 Tag: `adcp/response-signing/v1`. `AdcpUse` extended with `'response-signing'`
 so JWK metadata can declare the binding now — the matching verifier helper
 (`verifyResponseSignature`) is a separate follow-up.
+
+**Note on `AdcpUse` widening:** the `AdcpUse` union now includes
+`'response-signing'`. Consumers with exhaustive `switch (use)` blocks
+backed by `never` checks will need to add a `case 'response-signing':`
+arm. Pragmatically a minor bump — the runtime surface is purely additive
+and no existing call site changes — but exhaustive narrowers must opt-in
+to handle the new member.
