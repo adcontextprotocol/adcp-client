@@ -1466,6 +1466,12 @@ NOTES:
   skill-matrix run: hand Claude the OpenAPI spec + the AdCP SKILL.md +
   a target storyboard, let Claude generate the wrapper, then grade.
 
+  The spec pins the triage order spec → mock → SDK. When a storyboard
+  failure disagrees between the spec, the mock, and your code, the mock
+  is the authoritative reference (within the bounds the spec defines).
+  See:
+    https://adcontextprotocol.org/docs/building/verification/conformance#mock-server-authority-and-failure-triage
+
   See: src/lib/mock-server/<specialism>/openapi.yaml
 `);
     process.exit(args.length === 0 ? 2 : 0);
