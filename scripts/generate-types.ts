@@ -431,6 +431,24 @@ export function enforceStrictSchema(schema: any): any {
         if (keys.length > 0 && keys.every(k => k === 'if' || k === 'then' || k === 'else')) {
           return false;
         }
+        // XOR-via-anyOf pattern: a member that is purely `{ anyOf: [...] }`
+        // where every branch is a `required`-only object. This is the
+        // canonical JSON Schema idiom for "at least one of these fields is
+        // present" — combined with a sibling `not` member (already stripped
+        // above), it expresses XOR. jsts has no way to model "exactly one of
+        // these properties must be set"; keeping the member produces
+        // intersections that double the property surface and confuse
+        // downstream ts-to-zod. Ajv enforces the constraint at runtime
+        // against the unstripped schema. Used by `publisher-property-selector.json`
+        // for the `publisher_domain` / `publisher_domains` XOR (adcp#4504).
+        if (keys.length === 1 && keys[0] === 'anyOf' && Array.isArray(member.anyOf)) {
+          const onlyRequiredBranches = member.anyOf.every((b: any) => {
+            if (!b || typeof b !== 'object') return false;
+            const bKeys = Object.keys(b);
+            return bKeys.length === 1 && bKeys[0] === 'required' && Array.isArray(b.required);
+          });
+          if (onlyRequiredBranches) return false;
+        }
         return true;
       })
       .map(enforceStrictSchema);

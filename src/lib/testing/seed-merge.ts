@@ -211,7 +211,10 @@ export function overlayById<T>(
  *     base entry; other base pricing options stay put.
  *   - `publisher_properties[]` — keyed by `publisher_domain` + `selection_type`
  *     composite (PublisherPropertySelector is a discriminated union, no
- *     single id field).
+ *     single id field). Compact-form entries that carry `publisher_domains[]`
+ *     instead are keyed by the sorted, lowercased domain list joined with
+ *     `,` + `selection_type` so a re-seeded compact selector overlays its
+ *     counterpart instead of duplicating.
  *
  * Other arrays (`channels`, `format_ids`, `placements`, ...) still replace
  * wholesale per the {@link mergeSeed} default.
@@ -241,8 +244,17 @@ export function mergeSeedProduct<TBase extends Partial<Product> = Partial<Produc
       seedObj.publisher_properties,
       item => {
         const domain = (item as { publisher_domain?: unknown }).publisher_domain;
+        const domains = (item as { publisher_domains?: unknown }).publisher_domains;
         const sel = (item as { selection_type?: unknown }).selection_type;
-        if (typeof domain === 'string' && typeof sel === 'string') return `${domain}::${sel}`;
+        if (typeof sel !== 'string') return undefined;
+        if (typeof domain === 'string') return `${domain.toLowerCase()}::${sel}`;
+        if (Array.isArray(domains) && domains.length > 0 && domains.every(d => typeof d === 'string')) {
+          // JSON.stringify the sorted-lowercased list — guarantees `['a,b']`
+          // and `['a','b']` produce distinct keys (`["a,b"]` vs `["a","b"]`)
+          // rather than colliding under a naive comma-join.
+          const sorted = [...(domains as string[])].map(d => d.toLowerCase()).sort();
+          return `${JSON.stringify(sorted)}::${sel}`;
+        }
         return undefined;
       }
     );

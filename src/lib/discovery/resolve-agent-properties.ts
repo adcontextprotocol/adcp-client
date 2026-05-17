@@ -22,7 +22,15 @@
  * schema's strict-conformance position. The pre-fix TS behavior of
  * attributing every property to every listed agent is gone.
  */
-import type { AdAgentsJson, AuthorizedAgent, AuthorizationType, Property, PublisherPropertySelector } from './types';
+import type {
+  AdAgentsJson,
+  AuthorizedAgent,
+  AuthorizationType,
+  Property,
+  PublisherPropertySelector,
+  SinglePublisherPropertySelector,
+} from './types';
+import { expandPublisherPropertySelectors } from './publisher-property-selector';
 
 /**
  * Result of resolving a single agent's authorization scope against an
@@ -35,8 +43,22 @@ import type { AdAgentsJson, AuthorizedAgent, AuthorizationType, Property, Publis
 export interface ResolvedAgentScope {
   /** Locally-resolved properties (subset of top-level `properties[]`, or inline). */
   properties: Property[];
-  /** Cross-publisher selectors the caller must resolve against other files. */
+  /**
+   * Cross-publisher selectors the caller must resolve against other files.
+   * Preserved verbatim from the source file — compact `publisher_domains[]`
+   * entries are NOT expanded here. Use {@link ResolvedAgentScope.cross_publisher_expanded}
+   * when iterating by publisher domain.
+   */
   cross_publisher: PublisherPropertySelector[];
+  /**
+   * Same selectors as {@link ResolvedAgentScope.cross_publisher} with every
+   * compact-form entry fanned out to its singular equivalents. A selector
+   * with `publisher_domains: [a,b,c]` contributes three entries here, one
+   * per domain, each carrying the same predicate (`'all'` or `'by_tag'` +
+   * `property_tags`). Callers that index by `publisher_domain` should
+   * iterate this array, not `cross_publisher` — see adcp#4504.
+   */
+  cross_publisher_expanded: SinglePublisherPropertySelector[];
   /** The matched agent entry, or `undefined` if no entry matched the agent URL. */
   matched_entry?: AuthorizedAgent;
   /** Why the resolution returned an empty result, when it did. */
@@ -99,14 +121,14 @@ export function canonicalizeAgentUrl(raw: string): string | null {
  * differing only in case, default port, percent-encoding of unreserved
  * chars, or fragment are the same agent.
  *
- * Returns `{ properties: [], cross_publisher: [], unresolvable: '...' }`
+ * Returns `{ properties: [], cross_publisher: [], cross_publisher_expanded: [], unresolvable: '...' }`
  * (never throws) when the agent isn't listed, when its entry is
  * malformed, or when the agent uses a signals authorization type.
  */
 export function resolveAgentProperties(adAgents: AdAgentsJson, agentUrl: string): ResolvedAgentScope {
   const wanted = canonicalizeAgentUrl(agentUrl);
   if (!wanted) {
-    return { properties: [], cross_publisher: [], unresolvable: 'agent_not_listed' };
+    return { properties: [], cross_publisher: [], cross_publisher_expanded: [], unresolvable: 'agent_not_listed' };
   }
 
   const entries = Array.isArray(adAgents.authorized_agents) ? adAgents.authorized_agents : [];
@@ -117,12 +139,18 @@ export function resolveAgentProperties(adAgents: AdAgentsJson, agentUrl: string)
   });
 
   if (!entry) {
-    return { properties: [], cross_publisher: [], unresolvable: 'agent_not_listed' };
+    return { properties: [], cross_publisher: [], cross_publisher_expanded: [], unresolvable: 'agent_not_listed' };
   }
 
   const authType = entry.authorization_type as AuthorizationType | undefined;
   if (!authType) {
-    return { properties: [], cross_publisher: [], matched_entry: entry, unresolvable: 'missing_authorization_type' };
+    return {
+      properties: [],
+      cross_publisher: [],
+      cross_publisher_expanded: [],
+      matched_entry: entry,
+      unresolvable: 'missing_authorization_type',
+    };
   }
 
   const allProperties = Array.isArray(adAgents.properties) ? adAgents.properties : [];
@@ -131,13 +159,20 @@ export function resolveAgentProperties(adAgents: AdAgentsJson, agentUrl: string)
     case 'property_ids': {
       const ids = entry.property_ids;
       if (!Array.isArray(ids) || ids.length === 0) {
-        return { properties: [], cross_publisher: [], matched_entry: entry, unresolvable: 'missing_selector' };
+        return {
+          properties: [],
+          cross_publisher: [],
+          cross_publisher_expanded: [],
+          matched_entry: entry,
+          unresolvable: 'missing_selector',
+        };
       }
       const idSet = new Set(ids);
       const matched = allProperties.filter(p => p.property_id !== undefined && idSet.has(p.property_id));
       return {
         properties: matched,
         cross_publisher: [],
+        cross_publisher_expanded: [],
         matched_entry: entry,
         ...(matched.length === 0 ? { unresolvable: 'no_match' as const } : {}),
       };
@@ -146,13 +181,20 @@ export function resolveAgentProperties(adAgents: AdAgentsJson, agentUrl: string)
     case 'property_tags': {
       const tags = entry.property_tags;
       if (!Array.isArray(tags) || tags.length === 0) {
-        return { properties: [], cross_publisher: [], matched_entry: entry, unresolvable: 'missing_selector' };
+        return {
+          properties: [],
+          cross_publisher: [],
+          cross_publisher_expanded: [],
+          matched_entry: entry,
+          unresolvable: 'missing_selector',
+        };
       }
       const tagSet = new Set(tags);
       const matched = allProperties.filter(p => Array.isArray(p.tags) && p.tags.some(t => tagSet.has(t)));
       return {
         properties: matched,
         cross_publisher: [],
+        cross_publisher_expanded: [],
         matched_entry: entry,
         ...(matched.length === 0 ? { unresolvable: 'no_match' as const } : {}),
       };
@@ -161,29 +203,58 @@ export function resolveAgentProperties(adAgents: AdAgentsJson, agentUrl: string)
     case 'inline_properties': {
       const inline = entry.properties;
       if (!Array.isArray(inline) || inline.length === 0) {
-        return { properties: [], cross_publisher: [], matched_entry: entry, unresolvable: 'missing_selector' };
+        return {
+          properties: [],
+          cross_publisher: [],
+          cross_publisher_expanded: [],
+          matched_entry: entry,
+          unresolvable: 'missing_selector',
+        };
       }
-      return { properties: inline, cross_publisher: [], matched_entry: entry };
+      return { properties: inline, cross_publisher: [], cross_publisher_expanded: [], matched_entry: entry };
     }
 
     case 'publisher_properties': {
       const selectors = entry.publisher_properties;
       if (!Array.isArray(selectors) || selectors.length === 0) {
-        return { properties: [], cross_publisher: [], matched_entry: entry, unresolvable: 'missing_selector' };
+        return {
+          properties: [],
+          cross_publisher: [],
+          cross_publisher_expanded: [],
+          matched_entry: entry,
+          unresolvable: 'missing_selector',
+        };
       }
-      return { properties: [], cross_publisher: selectors, matched_entry: entry };
+      return {
+        properties: [],
+        cross_publisher: selectors,
+        cross_publisher_expanded: expandPublisherPropertySelectors(selectors),
+        matched_entry: entry,
+      };
     }
 
     case 'signal_ids':
     case 'signal_tags':
-      return { properties: [], cross_publisher: [], matched_entry: entry, unresolvable: 'signals_only' };
+      return {
+        properties: [],
+        cross_publisher: [],
+        cross_publisher_expanded: [],
+        matched_entry: entry,
+        unresolvable: 'signals_only',
+      };
 
     default:
       // Exhaustiveness guard — if a new authorization_type lands on
       // `AuthorizationType` without a branch here, TS won't compile.
       // For runtime files carrying a string we don't recognize, return
       // `unknown_authorization_type`.
-      return { properties: [], cross_publisher: [], matched_entry: entry, unresolvable: 'unknown_authorization_type' };
+      return {
+        properties: [],
+        cross_publisher: [],
+        cross_publisher_expanded: [],
+        matched_entry: entry,
+        unresolvable: 'unknown_authorization_type',
+      };
   }
 }
 
@@ -198,11 +269,25 @@ export function resolveAgentProperties(adAgents: AdAgentsJson, agentUrl: string)
 export function listAgentPropertyMap(adAgents: AdAgentsJson): {
   byAgent: Map<string, Property[]>;
   unresolved: Array<{ agent_url: string; reason: ResolveUnresolvableReason }>;
-  cross_publisher: Array<{ agent_url: string; selectors: PublisherPropertySelector[] }>;
+  /**
+   * Cross-publisher selectors per agent. `selectors` preserves the wire
+   * shape (compact `publisher_domains[]` entries kept as-is); `expanded`
+   * fans every compact entry out to singular form for callers that index
+   * by `publisher_domain`. See adcp#4504.
+   */
+  cross_publisher: Array<{
+    agent_url: string;
+    selectors: PublisherPropertySelector[];
+    expanded: SinglePublisherPropertySelector[];
+  }>;
 } {
   const byAgent = new Map<string, Property[]>();
   const unresolved: Array<{ agent_url: string; reason: ResolveUnresolvableReason }> = [];
-  const cross_publisher: Array<{ agent_url: string; selectors: PublisherPropertySelector[] }> = [];
+  const cross_publisher: Array<{
+    agent_url: string;
+    selectors: PublisherPropertySelector[];
+    expanded: SinglePublisherPropertySelector[];
+  }> = [];
 
   const entries = Array.isArray(adAgents.authorized_agents) ? adAgents.authorized_agents : [];
   for (const entry of entries) {
@@ -214,7 +299,11 @@ export function listAgentPropertyMap(adAgents: AdAgentsJson): {
       byAgent.set(key, scope.properties);
     }
     if (scope.cross_publisher.length > 0) {
-      cross_publisher.push({ agent_url: key, selectors: scope.cross_publisher });
+      cross_publisher.push({
+        agent_url: key,
+        selectors: scope.cross_publisher,
+        expanded: scope.cross_publisher_expanded,
+      });
     }
     if (scope.unresolvable && scope.properties.length === 0 && scope.cross_publisher.length === 0) {
       unresolved.push({ agent_url: key, reason: scope.unresolvable });

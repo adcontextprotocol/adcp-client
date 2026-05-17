@@ -62,13 +62,39 @@ export type AuthorizationType =
  * Each entry references properties from a different publisher's adagents.json
  * (resolving the actual `Property` objects requires fetching that publisher's
  * file separately).
+ *
+ * Two shapes per the spec:
+ *
+ *  - **Singular** — `publisher_domain: string`. One selector targets one
+ *    publisher. Available for all `selection_type` variants.
+ *  - **Compact / fan-out** — `publisher_domains: string[]`. One selector
+ *    targets every listed publisher with the same predicate. The compact
+ *    form is **only** available for `selection_type: 'all' | 'by_tag'`.
+ *    `'by_id'` is single-publisher only — property IDs are scoped to one
+ *    publisher's adagents.json, so the fan-out semantics don't make sense.
+ *    See adcontextprotocol/adcp#4504.
+ *
+ * The two shapes are XOR — both-present or neither-present fails validation.
+ * Callers that iterate by `publisher_domain` MUST first fan compact-form
+ * selectors out to singular via {@link expandPublisherPropertySelectors}
+ * (`src/lib/discovery/publisher-property-selector.ts`), otherwise they will
+ * silently miss the publishers carried in `publisher_domains[]`.
  */
-export interface PublisherPropertySelector {
-  publisher_domain: string;
-  selection_type: 'all' | 'by_id' | 'by_tag';
-  property_ids?: string[];
-  property_tags?: string[];
-}
+export type PublisherPropertySelector = SinglePublisherPropertySelector | CompactPublisherPropertySelector;
+
+/** Singular form — one selector, one publisher. Post-fanout shape. */
+export type SinglePublisherPropertySelector =
+  | { selection_type: 'all'; publisher_domain: string }
+  | { selection_type: 'by_id'; publisher_domain: string; property_ids: string[] }
+  | { selection_type: 'by_tag'; publisher_domain: string; property_tags: string[] };
+
+/**
+ * Compact form — one selector, N publishers, same predicate.
+ * `by_id` is intentionally excluded (property IDs are publisher-scoped).
+ */
+export type CompactPublisherPropertySelector =
+  | { selection_type: 'all'; publisher_domains: string[] }
+  | { selection_type: 'by_tag'; publisher_domains: string[]; property_tags: string[] };
 
 /**
  * Entry in `adagents.json` `authorized_agents[]`. The schema requires
