@@ -1,7 +1,7 @@
 # Ad Context Protocol (AdCP)
 
-> Generated at: 2026-05-12
-> Library: @adcp/sdk v7.1.0
+> Generated at: 2026-05-17
+> Library: @adcp/sdk v7.5.0
 > AdCP major version: 3
 > Canonical URL: https://adcontextprotocol.github.io/adcp-client/llms.txt
 > Note: the `Library` stamp reflects the package.json version at doc-generation time. The narrative below describes the surface that lands on the next-published minor — including any 6.7 helpers documented here ahead of the release tag.
@@ -895,7 +895,7 @@ These are the standard tool call sequences from the AdCP storyboards. Each flow 
 **Brand baseline** — Baseline protocol storyboard — every brand agent must declare the brand protocol in capabilities and return a schema-valid brand identity.
 Flow: `get_adcp_capabilities → get_brand_identity`
 
-**Brand agent rejects rights acquisition when governance denies** — Verifies that a brand agent propagates GOVERNANCE_DENIED when the buyer's governance plan denies a rights license.
+**Brand agent rejects rights acquisition when governance denies** — Verifies that a brand agent returns AcquireRightsRejected when the buyer's governance plan denies a rights license.
 Flow: `sync_plans → sync_accounts → sync_governance → get_rights → acquire_rights`
 
 ### Creative
@@ -1091,14 +1091,17 @@ Flow: `get_adcp_capabilities → list_creative_formats → build_creative → sy
 
 **Runner output contract** — Required failure-detail shape that AdCP storyboard runners MUST emit so implementors can self-diagnose validation failures.
 
+### Security
+
+**Comply test controller — live-account denial gate** — Verifies that a seller exposing comply_test_controller refuses calls from live-mode (non-sandbox) accounts with FORBIDDEN.
+Flow: `comply_test_controller`
+
+**Authentication baseline** — Every AdCP agent MUST require authentication on protected operations. At least one of API key or OAuth MUST be implemented and correctly advertised.
+
 ### Error Handling
 
 **Error handling and compliance** — Validates that agents return properly structured AdCP errors with correct codes, recovery hints, and transport bindings.
 Flow: `get_adcp_capabilities → create_media_buy → get_products → create_media_buy → get_products → create_media_buy`
-
-### Security
-
-**Authentication baseline** — Every AdCP agent MUST require authentication on protected operations. At least one of API key or OAuth MUST be implemented and correctly advertised.
 
 ### Security transport
 

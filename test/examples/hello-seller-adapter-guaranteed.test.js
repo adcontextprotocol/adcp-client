@@ -64,6 +64,19 @@ runHelloAdapterGates({
     'GET /v1/orders/{id}',
     'POST /v1/orders/{id}/lineitems',
   ],
+  // adcp#4028 denial gate — verify the framework refuses comply_test_controller
+  // dispatch when the resolver stamps mode: 'live'. The storyboard uses
+  // `auth.from_test_kit: true` so the grader resolves the bearer from the
+  // test-kit (acme-outdoor-live → demo-acme-outdoor-live-v1); the adapter's
+  // resolver recognises that principal and stamps mode: 'live', triggering the
+  // framework's FORBIDDEN refusal in createAdcpServerFromPlatform.
+  extraStoryboards: [
+    {
+      id: 'comply_controller_mode_gate',
+      label: 'denies live-mode comply_test_controller calls with FORBIDDEN (adcp#4028)',
+      testKitPath: path.join(REPO_ROOT, 'compliance', 'cache', 'latest', 'test-kits', 'acme-outdoor-live.yaml'),
+    },
+  ],
   filterFailures: grader => {
     const failures = grader.failures || [];
     // Defensive: every entry in EXPECTED_FAILURES must appear in the

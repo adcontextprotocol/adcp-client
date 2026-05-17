@@ -1,5 +1,5 @@
 // Generated Zod v4 schemas from TypeScript types
-// Generated at: 2026-05-16T11:37:37.881Z
+// Generated at: 2026-05-17T09:46:26.782Z
 // Sources:
 //   - core.generated.ts (core types)
 //   - tools.generated.ts (tool types)
@@ -5526,7 +5526,7 @@ export const GetAdCPCapabilitiesResponseSchema = z.object({
     account: z.object({
         require_operator_auth: z.boolean().optional(),
         authorization_endpoint: z.string().optional(),
-        supported_billing: z.array(BillingPartySchema),
+        supported_billing: z.array(BillingPartySchema).optional(),
         required_for_products: z.boolean().optional(),
         account_financials: z.boolean().optional(),
         sandbox: z.boolean().optional()

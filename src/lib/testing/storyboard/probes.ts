@@ -218,24 +218,27 @@ export async function rawMcpProbe(options: {
   allowPrivateIp?: boolean;
 }): Promise<{ httpResult: HttpProbeResult; taskResult?: TaskResult }> {
   const { agentUrl, toolName, args, headers = {}, allowPrivateIp = false } = options;
+  const requestId = ++probeRequestId;
   const body = JSON.stringify({
     jsonrpc: '2.0',
-    id: ++probeRequestId,
+    id: requestId,
     method: 'tools/call',
     params: { name: toolName, arguments: args },
   });
 
   const httpResult: HttpProbeResult = { url: agentUrl, status: 0, headers: {}, body: null };
   try {
-    // Accept only JSON. Streamable-HTTP MCP servers that prefer SSE framing
-    // will 406 or downgrade to JSON; we can't robustly parse event-stream
-    // wire format in a probe without reimplementing the transport, and silently
-    // misreading an SSE body would make expect_error steps falsely pass.
+    // Advertise both JSON and SSE so Streamable-HTTP MCP servers don't 406.
+    // Strict MCP servers (e.g. those built on the official SDK) require the
+    // client to accept both — they return SSE-framed responses for tools/call
+    // even though the payload is a single JSON-RPC envelope. The probe parses
+    // the SSE wire form below; the existing JSON branch is preserved for
+    // servers that downgrade to plain JSON when offered both.
     const res = await ssrfSafeFetch(agentUrl, {
       method: 'POST',
       headers: {
         'content-type': 'application/json',
-        accept: 'application/json',
+        accept: 'application/json, text/event-stream',
         ...headers,
       },
       body,
@@ -247,13 +250,42 @@ export async function rawMcpProbe(options: {
     const text = Buffer.from(res.body.buffer, res.body.byteOffset, res.body.byteLength).toString('utf8');
     let parsed: unknown;
     try {
-      parsed = JSON.parse(text);
+      const contentType = httpResult.headers['content-type'] ?? '';
+      if (contentType.toLowerCase().includes('text/event-stream')) {
+        // Streamable-HTTP MCP: the response is one or more SSE events whose
+        // `data:` payloads are JSON-RPC envelopes. The spec lets a server
+        // emit zero-or-more server-initiated frames (e.g.
+        // `notifications/progress`) before the final tools/call response —
+        // so picking the first `data:` line would parse the wrong envelope.
+        // Walk every `data:` line, JSON-parse each, and pick the envelope
+        // whose `id` matches the request. Fall back to the last parseable
+        // envelope when no id matches (defensive — servers SHOULD include
+        // `id` on the response per JSON-RPC 2.0).
+        const dataLines = text.split(/\r?\n/).filter(l => l.startsWith('data:'));
+        if (dataLines.length === 0) throw new Error('SSE response with no data event');
+        let matched: unknown;
+        let lastParsed: unknown;
+        for (const line of dataLines) {
+          const payload = line.slice('data:'.length).trim();
+          if (!payload) continue;
+          try {
+            const envelope = JSON.parse(payload) as { id?: unknown };
+            lastParsed = envelope;
+            if (envelope?.id === requestId) {
+              matched = envelope;
+              break;
+            }
+          } catch {
+            // Skip non-JSON data lines (heartbeats, etc.); keep walking.
+          }
+        }
+        parsed = matched ?? lastParsed;
+        if (parsed === undefined) throw new Error('SSE response had data events but none were parseable JSON');
+      } else {
+        parsed = JSON.parse(text);
+      }
     } catch {
       httpResult.body = text;
-      // Body didn't parse — almost certainly SSE framing or HTML from an edge
-      // proxy. We deliberately don't attempt SSE parsing (see the advertised
-      // Accept gate above). Surface a distinct error so callers don't mistake
-      // a non-JSON response for a silent success.
       return {
         httpResult,
         taskResult: {

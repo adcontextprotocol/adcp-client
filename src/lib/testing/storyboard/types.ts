@@ -2285,6 +2285,22 @@ export interface AssertionResult {
    * to adcontextprotocol/adcp#2834.
    */
   observation_count?: number;
+  /**
+   * Distinguishes `'silent'` (wired but no observations) from `'pass'`
+   * (wired and exercised). Per-assertion analog of the track-level
+   * `TrackStatus: 'silent'` rollup — consumers (graders, dashboards) that
+   * render per-assertion results need a direct enum here so the
+   * "wired-but-not-observed" outcome doesn't render identically to a real
+   * pass.
+   *
+   * Set by observation-based invariants on their `onEnd` summary record:
+   * `'silent'` when `observation_count === 0` AND `passed === true`,
+   * `'pass'` when `observation_count > 0` AND `passed === true`,
+   * `'fail'` when `passed === false`. Absent on assertions that don't
+   * model observation counts (their `passed` flag is sufficient).
+   * Companion to adcontextprotocol/adcp#2834.
+   */
+  status?: 'pass' | 'silent' | 'fail';
 }
 
 /**

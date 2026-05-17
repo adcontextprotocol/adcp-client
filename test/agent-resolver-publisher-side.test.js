@@ -26,6 +26,13 @@ const { validateResponse } = require('../dist/lib/validation/schema-validator');
 const minBase = () => ({
   adcp: { major_versions: [3], idempotency: { supported: true, replay_ttl_seconds: 86400 } },
   supported_protocols: ['media_buy'],
+  // AdCP 3.0.12 made `account` required when `media_buy` is declared in
+  // `supported_protocols` (`allOf/0/then/required: ['account']`), and
+  // `account.supported_billing` required within that. The suite under
+  // test is `identity.brand_json_url` forward-compat, not account shape;
+  // the minimal `account` block satisfies the schema gate without
+  // contributing semantic noise.
+  account: { supported_billing: ['operator'] },
 });
 
 describe('publisher-side: identity.brand_json_url on 3.0.5', () => {

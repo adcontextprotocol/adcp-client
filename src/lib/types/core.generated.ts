@@ -1,5 +1,5 @@
-// Generated AdCP core types from official schemas v3.0.11
-// Generated at: 2026-05-16T11:37:34.319Z
+// Generated AdCP core types from official schemas v3.0.12
+// Generated at: 2026-05-17T09:46:22.944Z
 
 // MEDIA-BUY SCHEMA
 /**
@@ -13487,7 +13487,7 @@ export interface GetAdCPCapabilitiesResponse {
    */
   supported_protocols: ('media_buy' | 'signals' | 'governance' | 'sponsored_intelligence' | 'creative' | 'brand')[];
   /**
-   * Account management capabilities. Describes how accounts are established, what billing models are supported, and whether an account is required before browsing products.
+   * Account management capabilities. Required when media_buy is in supported_protocols; optional otherwise. Describes how accounts are established, what billing models are supported, and whether an account is required before browsing products.
    */
   account?: {
     /**
@@ -13501,7 +13501,7 @@ export interface GetAdCPCapabilitiesResponse {
     /**
      * Billing models this seller supports. operator: seller invoices the operator (agency or brand buying direct). agent: agent consolidates billing. advertiser: seller invoices the advertiser directly, even when a different operator places orders on their behalf. The buyer must pass one of these values in sync_accounts.
      */
-    supported_billing: BillingParty[];
+    supported_billing?: BillingParty[];
     /**
      * Whether an account reference is required for get_products. When true, the buyer must establish an account before browsing products. When false (default), the buyer can browse products without an account — useful for price comparison and discovery before committing to a seller.
      */
@@ -13516,7 +13516,7 @@ export interface GetAdCPCapabilitiesResponse {
     sandbox?: boolean;
   };
   /**
-   * Media-buy protocol capabilities. Expected when media_buy is in supported_protocols. Sellers declaring media_buy should also include account with supported_billing.
+   * Media-buy protocol capabilities. Expected when media_buy is in supported_protocols. Sellers declaring media_buy MUST include account with supported_billing.
    */
   media_buy?: {
     /**
