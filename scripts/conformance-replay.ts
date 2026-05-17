@@ -224,6 +224,8 @@ const IMPLEMENTED_CHECKS = new Set([
   // `replayed`, etc.); the distinction is for static drift detection.
   'envelope_field_present',
   'envelope_field_value',
+  // Cardinality assertions (adcp#4685 / adcp-client#1830).
+  'array_length',
 ]);
 
 // Check types that fundamentally need transport-layer state (HTTP status,
@@ -328,6 +330,34 @@ async function runStep(
       if (actual !== v.value) {
         allPassed = false;
         result.failures.push(`${check} ${v.path}: got ${JSON.stringify(actual)}, want ${JSON.stringify(v.value)}`);
+      }
+    } else if (check === 'array_length') {
+      const actual = getByPath(structured, v.path as string);
+      if (!Array.isArray(actual)) {
+        allPassed = false;
+        result.failures.push(
+          `array_length ${v.path}: not an array (got ${actual === undefined ? 'undefined' : typeof actual})`
+        );
+      } else {
+        const len = actual.length;
+        const hasExact = typeof v.value === 'number';
+        const hasMin = typeof (v as { min?: unknown }).min === 'number';
+        const hasMax = typeof (v as { max?: unknown }).max === 'number';
+        const min = hasMin ? (v as { min: number }).min : undefined;
+        const max = hasMax ? (v as { max: number }).max : undefined;
+        if (hasExact && len !== v.value) {
+          allPassed = false;
+          result.failures.push(`array_length ${v.path}: got ${len}, want ${v.value}`);
+        } else if (!hasExact && min !== undefined && len < min) {
+          allPassed = false;
+          result.failures.push(`array_length ${v.path}: got ${len}, want >= ${min}`);
+        } else if (!hasExact && max !== undefined && len > max) {
+          allPassed = false;
+          result.failures.push(`array_length ${v.path}: got ${len}, want <= ${max}`);
+        } else if (!hasExact && !hasMin && !hasMax) {
+          allPassed = false;
+          result.failures.push(`array_length ${v.path}: misconfigured (need value or min/max)`);
+        }
       }
     } else if (TRANSPORT_ONLY_CHECKS.has(check)) {
       // Transport-only checks require an HTTP-mode harness; permanently

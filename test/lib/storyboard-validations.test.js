@@ -455,3 +455,189 @@ describe('field_contains (adcp#3803 item 2)', () => {
     assert.strictEqual(result.json_pointer, '/creatives/0/errors/*/code');
   });
 });
+
+describe('array_length (adcp#4685 / adcp-client#1830)', () => {
+  // Cardinality assertion that reads `array.length` directly. Necessary
+  // because `field_present arr[N-1]` + `field_value_or_absent arr[N]
+  // value: null` is unsound: it passes when the seller emits a literal
+  // null pad at arr[N]. This check rejects non-array resolutions instead.
+  it('passes with exact value match', () => {
+    const taskResult = {
+      success: true,
+      data: { media_buys: [{ impairments: [{ id: 'a' }, { id: 'b' }] }] },
+    };
+    const [result] = runOne(
+      [
+        {
+          check: 'array_length',
+          path: 'media_buys[0].impairments',
+          value: 2,
+          description: 'exactly two impairments',
+        },
+      ],
+      'create_media_buy',
+      taskResult
+    );
+    assert.strictEqual(result.passed, true, result.error);
+    assert.strictEqual(result.check, 'array_length');
+    assert.strictEqual(result.json_pointer, '/media_buys/0/impairments');
+  });
+
+  it('fails when exact value does not match', () => {
+    const taskResult = {
+      success: true,
+      data: { media_buys: [{ impairments: [{ id: 'a' }, { id: 'b' }, { id: 'c' }] }] },
+    };
+    const [result] = runOne(
+      [
+        {
+          check: 'array_length',
+          path: 'media_buys[0].impairments',
+          value: 2,
+          description: 'exactly two impairments',
+        },
+      ],
+      'create_media_buy',
+      taskResult
+    );
+    assert.strictEqual(result.passed, false);
+    assert.match(result.error, /Expected array length 2, got 3/);
+    assert.strictEqual(result.expected, 2);
+    assert.strictEqual(result.actual, 3);
+  });
+
+  it('refuses to false-pass on a literal null pad (the unsound workaround case)', () => {
+    // Seller emits `[ {…}, null ]` — under the old workaround
+    // (field_value_or_absent arr[1] value: null) this passes silently.
+    // array_length value: 1 must fail because length is 2.
+    const taskResult = {
+      success: true,
+      data: { media_buys: [{ impairments: [{ id: 'a' }, null] }] },
+    };
+    const [result] = runOne(
+      [
+        {
+          check: 'array_length',
+          path: 'media_buys[0].impairments',
+          value: 1,
+          description: 'exactly one impairment (null pad should be caught)',
+        },
+      ],
+      'create_media_buy',
+      taskResult
+    );
+    assert.strictEqual(result.passed, false);
+    assert.strictEqual(result.actual, 2);
+  });
+
+  it('passes within inclusive min/max bounds', () => {
+    const taskResult = { success: true, data: { items: [1, 2, 3] } };
+    const [result] = runOne(
+      [{ check: 'array_length', path: 'items', min: 1, max: 5, description: 'bounded' }],
+      'sync_creatives',
+      taskResult
+    );
+    assert.strictEqual(result.passed, true, result.error);
+  });
+
+  it('passes with only `min` set when length meets the lower bound', () => {
+    const taskResult = { success: true, data: { items: [1, 2, 3] } };
+    const [result] = runOne(
+      [{ check: 'array_length', path: 'items', min: 3, description: 'at least three' }],
+      'sync_creatives',
+      taskResult
+    );
+    assert.strictEqual(result.passed, true, result.error);
+  });
+
+  it('passes with only `max` set when length meets the upper bound', () => {
+    const taskResult = { success: true, data: { items: [] } };
+    const [result] = runOne(
+      [{ check: 'array_length', path: 'items', max: 0, description: 'at most zero' }],
+      'sync_creatives',
+      taskResult
+    );
+    assert.strictEqual(result.passed, true, result.error);
+  });
+
+  it('fails when length is below `min`', () => {
+    const taskResult = { success: true, data: { items: [1] } };
+    const [result] = runOne(
+      [{ check: 'array_length', path: 'items', min: 2, max: 5, description: 'bounded' }],
+      'sync_creatives',
+      taskResult
+    );
+    assert.strictEqual(result.passed, false);
+    assert.match(result.error, />= 2, got 1/);
+  });
+
+  it('fails when length is above `max`', () => {
+    const taskResult = { success: true, data: { items: [1, 2, 3, 4, 5, 6] } };
+    const [result] = runOne(
+      [{ check: 'array_length', path: 'items', min: 0, max: 5, description: 'bounded' }],
+      'sync_creatives',
+      taskResult
+    );
+    assert.strictEqual(result.passed, false);
+    assert.match(result.error, /<= 5, got 6/);
+  });
+
+  it('fails when the resolved path is not an array', () => {
+    const taskResult = { success: true, data: { items: 'not-an-array' } };
+    const [result] = runOne(
+      [{ check: 'array_length', path: 'items', value: 0, description: 'wrong type' }],
+      'sync_creatives',
+      taskResult
+    );
+    assert.strictEqual(result.passed, false);
+    assert.match(result.error, /requires an array at path/);
+  });
+
+  it('fails when the resolved path is absent', () => {
+    const taskResult = { success: true, data: {} };
+    const [result] = runOne(
+      [{ check: 'array_length', path: 'items', value: 0, description: 'absent' }],
+      'sync_creatives',
+      taskResult
+    );
+    assert.strictEqual(result.passed, false);
+    assert.match(result.error, /got undefined/);
+  });
+
+  it('fails when path is missing', () => {
+    const [result] = runOne([{ check: 'array_length', value: 1, description: 'no path' }], 'sync_creatives', {
+      success: true,
+      data: { items: [1] },
+    });
+    assert.strictEqual(result.passed, false);
+    assert.match(result.error, /No path specified for array_length/);
+  });
+
+  it('rejects misconfigured check with no value/min/max', () => {
+    const [result] = runOne(
+      [{ check: 'array_length', path: 'items', description: 'no expectation' }],
+      'sync_creatives',
+      { success: true, data: { items: [1] } }
+    );
+    assert.strictEqual(result.passed, false);
+    assert.match(result.error, /requires `value`.*or `min`\/`max`/);
+  });
+
+  it('rejects misconfigured check when both `value` and bounds are set', () => {
+    const [result] = runOne(
+      [
+        {
+          check: 'array_length',
+          path: 'items',
+          value: 2,
+          min: 1,
+          description: 'mutually exclusive',
+        },
+      ],
+      'sync_creatives',
+      { success: true, data: { items: [1, 2] } }
+    );
+    assert.strictEqual(result.passed, false);
+    assert.match(result.error, /either `value` OR `min`\/`max`, not both/);
+  });
+});

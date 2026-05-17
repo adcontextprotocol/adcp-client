@@ -711,7 +711,19 @@ export type StoryboardValidationCheck =
    * dispatch resolved successfully. Spec:
    * test-kits/parallel-dispatch-runner.yaml.
    */
-  | 'cross_response_count_distinct';
+  | 'cross_response_count_distinct'
+  /**
+   * Assert the cardinality of the array at `path`. Two configurations are
+   * supported: exact-count via `value: N` (passes only when the resolved
+   * array has exactly N entries) and range via `min` / `max` (either bound
+   * is optional; both inclusive). Specifying both `value` and `min`/`max` is
+   * rejected as a misconfigured check. Fails with a type error when the
+   * resolved path is absent or not an array — `field_present` paired with
+   * `field_value_or_absent value: null` is unsound for cardinality because
+   * it passes when a seller emits a literal-null pad at `arr[N]`.
+   * Spec: adcp#4685 (cardinality assertions); SDK adcp-client#1830.
+   */
+  | 'array_length';
 
 /**
  * Configuration for a step that fans out to N concurrent dispatches against
@@ -921,6 +933,17 @@ export interface StoryboardValidation {
    * for cumulative-effect assertions.
    */
   since?: string;
+  // ─── array_length fields ──────────────────────────────────
+  /**
+   * Inclusive lower bound for `array_length`. Mutually exclusive with
+   * `value`. Pass with `max` omitted to assert "at least N entries."
+   */
+  min?: number;
+  /**
+   * Inclusive upper bound for `array_length`. Mutually exclusive with
+   * `value`. Pass with `min` omitted to assert "at most N entries."
+   */
+  max?: number;
 }
 
 // ────────────────────────────────────────────────────────────
