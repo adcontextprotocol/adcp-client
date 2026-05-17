@@ -184,6 +184,73 @@ describe('createComplyController — dispatch', () => {
     assert.strictEqual(result.success, false);
     assert.strictEqual(result.error, 'UNKNOWN_SCENARIO');
   });
+
+  // ── force.audience_status + force.catalog_item_status (issue #1819) ──
+
+  it('routes force.audience_status to the adapter with typed params', async () => {
+    let captured;
+    const controller = createComplyController({
+      force: {
+        audience_status: params => {
+          captured = params;
+          return { success: true, previous_state: 'processing', current_state: params.status };
+        },
+      },
+    });
+    const result = await controller.handleRaw({
+      scenario: 'force_audience_status',
+      params: { audience_id: 'aud-1', status: 'ready', reason: 'matching complete' },
+    });
+    assert.strictEqual(result.success, true);
+    assert.strictEqual(result.current_state, 'ready');
+    assert.deepStrictEqual(captured, { audience_id: 'aud-1', status: 'ready', reason: 'matching complete' });
+  });
+
+  it('advertises force_audience_status via list_scenarios when registered', async () => {
+    const controller = createComplyController({
+      force: { audience_status: () => ({ success: true, previous_state: 'processing', current_state: 'ready' }) },
+    });
+    const result = await controller.handleRaw({ scenario: 'list_scenarios' });
+    assert.ok(result.scenarios.includes('force_audience_status'));
+  });
+
+  it('returns UNKNOWN_SCENARIO for force_audience_status when adapter not registered', async () => {
+    const controller = createComplyController({});
+    const result = await controller.handleRaw({
+      scenario: 'force_audience_status',
+      params: { audience_id: 'aud-1', status: 'ready' },
+    });
+    assert.strictEqual(result.error, 'UNKNOWN_SCENARIO');
+  });
+
+  it('routes force.catalog_item_status to the adapter with typed params', async () => {
+    let captured;
+    const controller = createComplyController({
+      force: {
+        catalog_item_status: params => {
+          captured = params;
+          return { success: true, previous_state: 'pending', current_state: params.status };
+        },
+      },
+    });
+    const result = await controller.handleRaw({
+      scenario: 'force_catalog_item_status',
+      params: { catalog_item_id: 'sku-42', status: 'rejected', reason: 'policy violation' },
+    });
+    assert.strictEqual(result.success, true);
+    assert.strictEqual(result.current_state, 'rejected');
+    assert.deepStrictEqual(captured, { catalog_item_id: 'sku-42', status: 'rejected', reason: 'policy violation' });
+  });
+
+  it('advertises force_catalog_item_status via list_scenarios when registered', async () => {
+    const controller = createComplyController({
+      force: {
+        catalog_item_status: () => ({ success: true, previous_state: 'pending', current_state: 'approved' }),
+      },
+    });
+    const result = await controller.handleRaw({ scenario: 'list_scenarios' });
+    assert.ok(result.scenarios.includes('force_catalog_item_status'));
+  });
 });
 
 describe('createComplyController — seed idempotency', () => {

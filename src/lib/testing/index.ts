@@ -133,6 +133,8 @@ export type {
   DirectiveAdapter,
   ForceAccountStatusParams,
   ForceAdapter,
+  ForceAudienceStatusParams,
+  ForceCatalogItemStatusParams,
   ForceCreateMediaBuyArmParams,
   ForceCreativeStatusParams,
   ForceMediaBuyStatusParams,

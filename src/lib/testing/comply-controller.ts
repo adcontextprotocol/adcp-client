@@ -64,7 +64,13 @@ import type {
   SimulationSuccess,
   StateTransitionSuccess,
 } from '../types/tools.generated';
-import type { AccountStatus, CreativeStatus, MediaBuyStatus } from '../types/core.generated';
+import type {
+  AccountStatus,
+  AudienceStatus,
+  CatalogItemStatus,
+  CreativeStatus,
+  MediaBuyStatus,
+} from '../types/core.generated';
 import type { McpToolResponse } from '../server/responses';
 
 // ────────────────────────────────────────────────────────────
@@ -144,6 +150,25 @@ export interface ForceCreateMediaBuyArmParams {
 export interface ForceTaskCompletionParams {
   task_id: string;
   result: Record<string, unknown>;
+}
+
+/**
+ * Params for `force_audience_status` (extension scenario; issue #1819).
+ * `status` is typed against the spec-shipped `AudienceStatus`; offline
+ * values (e.g. `suspended` for adcp#2860's impairment storyboard) flow
+ * through automatically once the spec ships them and codegen reruns.
+ */
+export interface ForceAudienceStatusParams {
+  audience_id: string;
+  status: AudienceStatus;
+  reason?: string;
+}
+
+/** Params for `force_catalog_item_status` (extension scenario; issue #1819). */
+export interface ForceCatalogItemStatusParams {
+  catalog_item_id: string;
+  status: CatalogItemStatus;
+  reason?: string;
 }
 
 export interface SimulateDeliveryParams {
@@ -280,6 +305,14 @@ export interface ComplyControllerConfig {
      * payload. The seller delivers `result` to the buyer's push-notification
      * URL per the AdCP 3.0 async completion path. */
     task_completion?: ForceAdapter<ForceTaskCompletionParams>;
+    /** Transition a synced audience to a matching status. Backs the
+     * `impairment.coherence` audience inverse-rule traversal (issue #1819).
+     * Advertised as `force_audience_status`. */
+    audience_status?: ForceAdapter<ForceAudienceStatusParams>;
+    /** Transition a single catalog item to a review status. Backs the
+     * catalog-side `impairment.coherence` traversal (issue #1819).
+     * Advertised as `force_catalog_item_status`. */
+    catalog_item_status?: ForceAdapter<ForceCatalogItemStatusParams>;
   };
 
   /** Simulation adapters (synthetic delivery/budget data). */
@@ -444,6 +477,14 @@ function buildStore(config: ComplyControllerConfig, ctx: ComplyControllerContext
     store.forceTaskCompletion = (taskId, result) =>
       Promise.resolve(force.task_completion!({ task_id: taskId, result }, ctx));
   }
+  if (force?.audience_status) {
+    store.forceAudienceStatus = (audienceId, status, reason) =>
+      Promise.resolve(force.audience_status!({ audience_id: audienceId, status, reason }, ctx));
+  }
+  if (force?.catalog_item_status) {
+    store.forceCatalogItemStatus = (itemId, status, reason) =>
+      Promise.resolve(force.catalog_item_status!({ catalog_item_id: itemId, status, reason }, ctx));
+  }
 
   if (simulate?.delivery) {
     store.simulateDelivery = (mediaBuyId, params) =>
@@ -472,13 +513,15 @@ function advertisedScenarios(config: ComplyControllerConfig): ControllerScenario
   if (config.force?.task_completion) out.push(CONTROLLER_SCENARIOS.FORCE_TASK_COMPLETION);
   if (config.simulate?.delivery) out.push(CONTROLLER_SCENARIOS.SIMULATE_DELIVERY);
   if (config.simulate?.budget_spend) out.push(CONTROLLER_SCENARIOS.SIMULATE_BUDGET_SPEND);
-  // `query_upstream_traffic` is an extension scenario (spec PR
-  // adcontextprotocol/adcp#3816) — not yet in the schema cache's
-  // `ControllerScenario` enum, but the dispatcher accepts it under
-  // `TOOL_INPUT_SHAPE.scenario: z.string()`'s open-extension pattern.
-  // Cast through unknown until the schema lands, then this becomes a
-  // `CONTROLLER_SCENARIOS.QUERY_UPSTREAM_TRAFFIC` reference like the
-  // others above.
+  // Extension scenarios (not yet in the schema cache's `ControllerScenario`
+  // enum — dispatcher accepts them under `TOOL_INPUT_SHAPE.scenario:
+  // z.string()`'s open-extension pattern). Cast through unknown until the
+  // schemas land, then these become `CONTROLLER_SCENARIOS.*` references.
+  // Bundle the cleanup when codegen catches up:
+  //   - audience_status / catalog_item_status: issue #1819 + spec adcp#2860
+  //   - query_upstream_traffic: spec adcp#3816
+  if (config.force?.audience_status) out.push('force_audience_status' as unknown as ControllerScenario);
+  if (config.force?.catalog_item_status) out.push('force_catalog_item_status' as unknown as ControllerScenario);
   if (config.queryUpstreamTraffic) out.push('query_upstream_traffic' as unknown as ControllerScenario);
   return out;
 }

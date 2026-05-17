@@ -106,8 +106,20 @@ import type {
   ControllerError,
   ComplyTestControllerResponse,
 } from '../types/tools.generated';
-import type { AccountStatus, MediaBuyStatus, CreativeStatus } from '../types/core.generated';
-import { AccountStatusSchema, MediaBuyStatusSchema, CreativeStatusSchema } from '../types/schemas.generated';
+import type {
+  AccountStatus,
+  AudienceStatus,
+  CatalogItemStatus,
+  MediaBuyStatus,
+  CreativeStatus,
+} from '../types/core.generated';
+import {
+  AccountStatusSchema,
+  AudienceStatusSchema,
+  CatalogItemStatusSchema,
+  MediaBuyStatusSchema,
+  CreativeStatusSchema,
+} from '../types/schemas.generated';
 import type { McpToolResponse } from './responses';
 import { toStructuredContent } from './responses';
 
@@ -252,6 +264,53 @@ export interface TestControllerStore {
    * buyer's `push_notification_config.url` per the AdCP 3.0 completion path.
    */
   forceTaskCompletion?(taskId: string, result: Record<string, unknown>): Promise<StateTransitionSuccess>;
+
+  /**
+   * Transition a synced audience to the specified matching status. Backs
+   * the `impairment.coherence` audience inverse-rule traversal — storyboards
+   * flip an audience offline to verify that downstream segments / activations
+   * reflect the upstream state change. Advertised as `force_audience_status`
+   * via `list_scenarios`.
+   *
+   * Extension scenario: not yet a member of `CONTROLLER_SCENARIOS` because
+   * the schema cache's `ListScenariosSuccess['scenarios']` union doesn't
+   * include `force_audience_status` (open-for-extension per spec). The
+   * dispatcher accepts the literal string under `TOOL_INPUT_SHAPE.scenario:
+   * z.string()`. Status values are validated against the spec-shipped
+   * `AudienceStatusSchema` — when the spec adds offline values
+   * (e.g. `suspended` for adcp#2860), codegen widens the schema and this
+   * adapter automatically accepts them.
+   *
+   * Wire param convention: the dispatcher accepts `reason` (this issue's
+   * proposed name, neutral across non-rejection transitions like
+   * `processing → ready`) OR `rejection_reason` (the field name used by
+   * `force_creative_status` / `force_media_buy_status`). Adapters receive
+   * whichever was supplied as the single `reason` argument.
+   *
+   * TODO(adcp#2860): when the spec PR lands populated effects
+   * (`matched_count`, `effective_match_rate`) on the `ready` transition,
+   * the return shape may widen from plain `StateTransitionSuccess` to a
+   * variant carrying `effects?`. Track the spec PR and update once the
+   * schema cache picks it up.
+   */
+  forceAudienceStatus?(audienceId: string, status: AudienceStatus, reason?: string): Promise<StateTransitionSuccess>;
+
+  /**
+   * Transition a single catalog item to the specified review status. Backs
+   * the catalog-side `impairment.coherence` traversal (item-level approval
+   * flipping). Advertised as `force_catalog_item_status` via
+   * `list_scenarios`.
+   *
+   * Extension scenario; see {@link forceAudienceStatus} for the rationale.
+   * Status validated against `CatalogItemStatusSchema`. Same dual
+   * `reason` / `rejection_reason` acceptance as `forceAudienceStatus`.
+   *
+   * Param name note: `catalog_item_id` (not `item_id`). Storyboard runner
+   * bindings in `sales-catalog-driven` reference catalog items by this
+   * name; the wire entity field is `item_id`, but the controller layer is
+   * driven by storyboards, so we follow the binding convention.
+   */
+  forceCatalogItemStatus?(itemId: string, status: CatalogItemStatus, reason?: string): Promise<StateTransitionSuccess>;
 
   /** Inject synthetic delivery data for a media buy. */
   simulateDelivery?(
@@ -480,6 +539,17 @@ export function enforceMapCap<V>(
  */
 const QUERY_UPSTREAM_TRAFFIC_SCENARIO = 'query_upstream_traffic';
 
+/**
+ * Force-transition extension scenarios for resource families whose status
+ * enum exists in the spec but isn't yet a member of
+ * `ListScenariosSuccess['scenarios']`. Issue #1819 — unblocks the
+ * dependency-impairment storyboard cluster (adcp#2860) by giving adopters
+ * a registration slot today; the value list expands automatically when the
+ * spec adds offline values and codegen reruns.
+ */
+const FORCE_AUDIENCE_STATUS_SCENARIO = 'force_audience_status';
+const FORCE_CATALOG_ITEM_STATUS_SCENARIO = 'force_catalog_item_status';
+
 /** Map store method presence to scenario names. */
 const SCENARIO_MAP: Array<[keyof TestControllerStore, ControllerScenario]> = [
   ['forceCreativeStatus', CONTROLLER_SCENARIOS.FORCE_CREATIVE_STATUS],
@@ -512,6 +582,8 @@ function scenariosFromStore(store: TestControllerStore): ControllerScenario[] {
  */
 function allScenariosFromStore(store: TestControllerStore): string[] {
   const out: string[] = scenariosFromStore(store);
+  if (typeof store.forceAudienceStatus === 'function') out.push(FORCE_AUDIENCE_STATUS_SCENARIO);
+  if (typeof store.forceCatalogItemStatus === 'function') out.push(FORCE_CATALOG_ITEM_STATUS_SCENARIO);
   if (typeof store.queryUpstreamTraffic === 'function') out.push(QUERY_UPSTREAM_TRAFFIC_SCENARIO);
   return out;
 }
@@ -991,8 +1063,57 @@ async function handleTestControllerRequestImpl(
 
       // Extension scenarios — accepted by the dispatcher but not yet
       // members of CONTROLLER_SCENARIOS. Promoted to first-class constants
-      // once a release ships the schema. Today: just `query_upstream_traffic`
-      // (spec PR adcp#3816).
+      // once a release ships the schema. Today: `query_upstream_traffic`
+      // (spec PR adcp#3816), `force_audience_status` /
+      // `force_catalog_item_status` (issue #1819 / spec adcp#2860).
+      case FORCE_AUDIENCE_STATUS_SCENARIO: {
+        if (!store.forceAudienceStatus) {
+          return controllerError('UNKNOWN_SCENARIO', `Scenario not supported: ${scenario}`);
+        }
+        if (!params?.audience_id || !params?.status) {
+          return controllerError(
+            'INVALID_PARAMS',
+            'force_audience_status requires params.audience_id and params.status'
+          );
+        }
+        const audienceStatus = AudienceStatusSchema.safeParse(params.status);
+        if (!audienceStatus.success) {
+          return controllerError('INVALID_PARAMS', `Invalid audience status: ${params.status}`);
+        }
+        // Accept either `reason` (this issue's proposed shape, neutral across
+        // transitions like processing→ready) or `rejection_reason` (the field
+        // name used by force_creative_status / force_media_buy_status). The
+        // adapter receives whichever was supplied — de-risks the eventual spec
+        // PR (adcp#2860) picking either name.
+        return await store.forceAudienceStatus(
+          params.audience_id as string,
+          audienceStatus.data,
+          (params.reason ?? params.rejection_reason) as string | undefined
+        );
+      }
+
+      case FORCE_CATALOG_ITEM_STATUS_SCENARIO: {
+        if (!store.forceCatalogItemStatus) {
+          return controllerError('UNKNOWN_SCENARIO', `Scenario not supported: ${scenario}`);
+        }
+        if (!params?.catalog_item_id || !params?.status) {
+          return controllerError(
+            'INVALID_PARAMS',
+            'force_catalog_item_status requires params.catalog_item_id and params.status'
+          );
+        }
+        const itemStatus = CatalogItemStatusSchema.safeParse(params.status);
+        if (!itemStatus.success) {
+          return controllerError('INVALID_PARAMS', `Invalid catalog item status: ${params.status}`);
+        }
+        // See force_audience_status above — same dual-name acceptance.
+        return await store.forceCatalogItemStatus(
+          params.catalog_item_id as string,
+          itemStatus.data,
+          (params.reason ?? params.rejection_reason) as string | undefined
+        );
+      }
+
       case QUERY_UPSTREAM_TRAFFIC_SCENARIO: {
         if (!store.queryUpstreamTraffic) {
           return controllerError('UNKNOWN_SCENARIO', `Scenario not supported: ${scenario}`);
