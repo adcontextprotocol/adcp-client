@@ -168,6 +168,169 @@ describe('handleTestControllerRequest', () => {
     });
   });
 
+  // ── force_audience_status (extension; issue #1819) ──────
+
+  describe('force_audience_status', () => {
+    it('calls store and returns transition result', async () => {
+      const store = {
+        async forceAudienceStatus(id, status, reason) {
+          return { success: true, previous_state: 'processing', current_state: status };
+        },
+      };
+      const result = await handleTestControllerRequest(store, {
+        scenario: 'force_audience_status',
+        params: { audience_id: 'aud-1', status: 'ready' },
+      });
+      assert.strictEqual(result.success, true);
+      assert.strictEqual(result.current_state, 'ready');
+    });
+
+    it('passes reason to store', async () => {
+      let capturedReason;
+      const store = {
+        async forceAudienceStatus(id, status, reason) {
+          capturedReason = reason;
+          return { success: true, previous_state: 'ready', current_state: 'too_small' };
+        },
+      };
+      await handleTestControllerRequest(store, {
+        scenario: 'force_audience_status',
+        params: { audience_id: 'aud-1', status: 'too_small', reason: 'Member churn' },
+      });
+      assert.strictEqual(capturedReason, 'Member churn');
+    });
+
+    it('returns UNKNOWN_SCENARIO when store lacks method', async () => {
+      const result = await handleTestControllerRequest(
+        {},
+        {
+          scenario: 'force_audience_status',
+          params: { audience_id: 'aud-1', status: 'ready' },
+        }
+      );
+      assert.strictEqual(result.error, 'UNKNOWN_SCENARIO');
+    });
+
+    it('returns INVALID_PARAMS when audience_id is missing', async () => {
+      const store = { async forceAudienceStatus() {} };
+      const result = await handleTestControllerRequest(store, {
+        scenario: 'force_audience_status',
+        params: { status: 'ready' },
+      });
+      assert.strictEqual(result.error, 'INVALID_PARAMS');
+    });
+
+    it('returns INVALID_PARAMS when status is missing', async () => {
+      const store = { async forceAudienceStatus() {} };
+      const result = await handleTestControllerRequest(store, {
+        scenario: 'force_audience_status',
+        params: { audience_id: 'aud-1' },
+      });
+      assert.strictEqual(result.error, 'INVALID_PARAMS');
+    });
+
+    it('accepts rejection_reason as an alias for reason', async () => {
+      // Dual-name acceptance — the spec PR adcp#2860 may pick either field
+      // name; the dispatcher forwards whichever was supplied. Guards against
+      // a future-breaking rename.
+      let captured;
+      const store = {
+        async forceAudienceStatus(id, status, reason) {
+          captured = reason;
+          return { success: true, previous_state: 'ready', current_state: 'too_small' };
+        },
+      };
+      await handleTestControllerRequest(store, {
+        scenario: 'force_audience_status',
+        params: { audience_id: 'aud-1', status: 'too_small', rejection_reason: 'Audit failed' },
+      });
+      assert.strictEqual(captured, 'Audit failed');
+    });
+
+    it('rejects invalid audience status', async () => {
+      const store = { async forceAudienceStatus() {} };
+      const result = await handleTestControllerRequest(store, {
+        scenario: 'force_audience_status',
+        params: { audience_id: 'aud-1', status: 'banana' },
+      });
+      assert.strictEqual(result.error, 'INVALID_PARAMS');
+      assert.match(result.error_detail, /Invalid audience status/);
+    });
+
+    it('is advertised via list_scenarios when store implements it', async () => {
+      const store = { async forceAudienceStatus() {} };
+      const result = await handleTestControllerRequest(store, { scenario: 'list_scenarios' });
+      assert.ok(result.scenarios.includes('force_audience_status'));
+    });
+  });
+
+  // ── force_catalog_item_status (extension; issue #1819) ──
+
+  describe('force_catalog_item_status', () => {
+    it('calls store and returns transition result', async () => {
+      const store = {
+        async forceCatalogItemStatus(id, status) {
+          return { success: true, previous_state: 'pending', current_state: status };
+        },
+      };
+      const result = await handleTestControllerRequest(store, {
+        scenario: 'force_catalog_item_status',
+        params: { catalog_item_id: 'sku-42', status: 'approved' },
+      });
+      assert.strictEqual(result.success, true);
+      assert.strictEqual(result.current_state, 'approved');
+    });
+
+    it('returns INVALID_PARAMS when catalog_item_id is missing', async () => {
+      const store = { async forceCatalogItemStatus() {} };
+      const result = await handleTestControllerRequest(store, {
+        scenario: 'force_catalog_item_status',
+        params: { status: 'approved' },
+      });
+      assert.strictEqual(result.error, 'INVALID_PARAMS');
+    });
+
+    it('returns INVALID_PARAMS when status is missing', async () => {
+      const store = { async forceCatalogItemStatus() {} };
+      const result = await handleTestControllerRequest(store, {
+        scenario: 'force_catalog_item_status',
+        params: { catalog_item_id: 'sku-42' },
+      });
+      assert.strictEqual(result.error, 'INVALID_PARAMS');
+    });
+
+    it('accepts rejection_reason as an alias for reason', async () => {
+      let captured;
+      const store = {
+        async forceCatalogItemStatus(id, status, reason) {
+          captured = reason;
+          return { success: true, previous_state: 'pending', current_state: 'rejected' };
+        },
+      };
+      await handleTestControllerRequest(store, {
+        scenario: 'force_catalog_item_status',
+        params: { catalog_item_id: 'sku-42', status: 'rejected', rejection_reason: 'Missing image' },
+      });
+      assert.strictEqual(captured, 'Missing image');
+    });
+
+    it('rejects invalid catalog item status', async () => {
+      const store = { async forceCatalogItemStatus() {} };
+      const result = await handleTestControllerRequest(store, {
+        scenario: 'force_catalog_item_status',
+        params: { catalog_item_id: 'sku-42', status: 'banana' },
+      });
+      assert.strictEqual(result.error, 'INVALID_PARAMS');
+      assert.match(result.error_detail, /Invalid catalog item status/);
+    });
+
+    it('is advertised via list_scenarios when store implements it', async () => {
+      const store = { async forceCatalogItemStatus() {} };
+      const result = await handleTestControllerRequest(store, { scenario: 'list_scenarios' });
+      assert.ok(result.scenarios.includes('force_catalog_item_status'));
+    });
+  });
+
   // ── simulate_delivery ───────────────────────────────────
 
   describe('simulate_delivery', () => {
