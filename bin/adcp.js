@@ -2184,7 +2184,14 @@ async function handleStoryboardShow(args) {
       console.log(`Resolves to ${resolved.storyboards.length} storyboard(s):`);
       for (const sb of resolved.storyboards) {
         const gating = sb.requires_capability
-          ? ` (gated on ${sb.requires_capability.path} = ${sb.requires_capability.equals})`
+          ? ' (gated on ' +
+            sb.requires_capability.path +
+            ('present' in sb.requires_capability
+              ? sb.requires_capability.present
+                ? ' present'
+                : ' absent'
+              : ' = ' + sb.requires_capability.equals) +
+            ')'
           : ' (always graded)';
         const trackTag = sb.track ? ` [track: ${sb.track}]` : '';
         console.log(`  - ${sb.id}${trackTag}${gating}`);
