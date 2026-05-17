@@ -97,7 +97,18 @@ export type {
   // expose it under a distinct name to avoid clobbering the registry
   // type that's been part of the public API longer.
   PublisherPropertySelector as AdAgentsPublisherPropertySelector,
+  SinglePublisherPropertySelector,
+  CompactPublisherPropertySelector,
 } from './discovery/types';
+export {
+  parsePublisherPropertySelector,
+  expandPublisherPropertySelector,
+  expandPublisherPropertySelectors,
+  isCompactPublisherPropertySelector,
+  publisherDomainsCoveredBySelectors,
+  PublisherPropertySelectorParseError,
+  type PublisherPropertySelectorError,
+} from './discovery/publisher-property-selector';
 export {
   resolveAgentProperties,
   listAgentPropertyMap,

@@ -179,6 +179,138 @@ describe('resolveAgentProperties — authorization_type: publisher_properties', 
     assert.strictEqual(scope.properties.length, 0);
     assert.strictEqual(scope.cross_publisher.length, 2);
     assert.strictEqual(scope.cross_publisher[0].publisher_domain, 'other.example');
+    // Singular entries pass through to `_expanded` unchanged.
+    assert.strictEqual(scope.cross_publisher_expanded.length, 2);
+    assert.deepStrictEqual(
+      scope.cross_publisher_expanded.map(s => s.publisher_domain),
+      ['other.example', 'third.example']
+    );
+  });
+
+  test('compact publisher_domains[] entries fan out in cross_publisher_expanded (adcp#4504)', () => {
+    const file = {
+      properties: [],
+      authorized_agents: [
+        {
+          url: 'https://network.example/mcp',
+          authorized_for: 'managed network',
+          authorization_type: 'publisher_properties',
+          publisher_properties: [
+            {
+              publisher_domains: ['site1.example', 'site2.example', 'site3.example'],
+              selection_type: 'by_tag',
+              property_tags: ['managed_network'],
+            },
+          ],
+        },
+      ],
+    };
+    const scope = resolveAgentProperties(file, 'https://network.example/mcp');
+    // Wire form preserved as authored.
+    assert.strictEqual(scope.cross_publisher.length, 1);
+    assert.deepStrictEqual(scope.cross_publisher[0].publisher_domains, [
+      'site1.example',
+      'site2.example',
+      'site3.example',
+    ]);
+    // Expanded form fans out per publisher, carrying the by_tag predicate.
+    assert.strictEqual(scope.cross_publisher_expanded.length, 3);
+    for (const entry of scope.cross_publisher_expanded) {
+      assert.strictEqual(entry.selection_type, 'by_tag');
+      assert.deepStrictEqual(entry.property_tags, ['managed_network']);
+    }
+    assert.deepStrictEqual(
+      scope.cross_publisher_expanded.map(s => s.publisher_domain),
+      ['site1.example', 'site2.example', 'site3.example']
+    );
+  });
+
+  test('mixed singular + compact selectors expand in order', () => {
+    const file = {
+      properties: [],
+      authorized_agents: [
+        {
+          url: 'https://mixed.example/mcp',
+          authorized_for: 'mixed',
+          authorization_type: 'publisher_properties',
+          publisher_properties: [
+            { publisher_domain: 'first.example', selection_type: 'all' },
+            { publisher_domains: ['second.example', 'third.example'], selection_type: 'all' },
+            { publisher_domain: 'fourth.example', selection_type: 'by_id', property_ids: ['x'] },
+          ],
+        },
+      ],
+    };
+    const scope = resolveAgentProperties(file, 'https://mixed.example/mcp');
+    assert.deepStrictEqual(
+      scope.cross_publisher_expanded.map(s => s.publisher_domain),
+      ['first.example', 'second.example', 'third.example', 'fourth.example']
+    );
+  });
+});
+
+describe('resolveAgentProperties — managed network scale (Raptive/Cafe Media shape)', () => {
+  test('handles 6,800-domain compact selector without performance cliff', () => {
+    // Real-world shape from Raptive/Cafe Media's production adagents.json
+    // (https://cafemedia.com/.well-known/adagents.json as of 2026-05).
+    // One authorized agent, one publisher_properties[] entry with a single
+    // by_tag selector carrying 6,800 publisher domains. Validates that the
+    // fanout is O(n) and doesn't choke at production scale.
+    const domains = Array.from({ length: 6800 }, (_, i) => `site${i}.example`);
+    const file = {
+      authorized_agents: [
+        {
+          url: 'https://interchange.io',
+          authorized_for: 'managed network',
+          authorization_type: 'publisher_properties',
+          publisher_properties: [
+            {
+              publisher_domains: domains,
+              selection_type: 'by_tag',
+              property_tags: ['raptive_managed'],
+            },
+          ],
+        },
+      ],
+    };
+    const scope = resolveAgentProperties(file, 'https://interchange.io');
+    assert.strictEqual(scope.cross_publisher.length, 1);
+    assert.strictEqual(scope.cross_publisher_expanded.length, 6800);
+    // Spot-check first and last to confirm order preservation + predicate propagation.
+    assert.strictEqual(scope.cross_publisher_expanded[0].publisher_domain, 'site0.example');
+    assert.strictEqual(scope.cross_publisher_expanded[6799].publisher_domain, 'site6799.example');
+    assert.deepStrictEqual(scope.cross_publisher_expanded[0].property_tags, ['raptive_managed']);
+  });
+});
+
+describe('listAgentPropertyMap — compact publisher_properties (adcp#4504)', () => {
+  test('exposes both wire-shape selectors and expanded singular form per agent', () => {
+    const file = {
+      authorized_agents: [
+        {
+          url: 'https://network.example/mcp',
+          authorized_for: 'managed network',
+          authorization_type: 'publisher_properties',
+          publisher_properties: [
+            {
+              publisher_domains: ['a.example', 'b.example'],
+              selection_type: 'by_tag',
+              property_tags: ['ctv'],
+            },
+          ],
+        },
+      ],
+    };
+    const result = listAgentPropertyMap(file);
+    assert.strictEqual(result.cross_publisher.length, 1);
+    const entry = result.cross_publisher[0];
+    // Wire shape preserved.
+    assert.deepStrictEqual(entry.selectors[0].publisher_domains, ['a.example', 'b.example']);
+    // Expanded shape ready for indexing.
+    assert.deepStrictEqual(
+      entry.expanded.map(s => s.publisher_domain),
+      ['a.example', 'b.example']
+    );
   });
 });
 
