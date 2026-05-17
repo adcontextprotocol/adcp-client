@@ -1461,6 +1461,29 @@ describe('default-invariants: status.monotonic', () => {
     ]);
     assert.ok(out[1].output.every(o => o.passed));
   });
+
+  // adcp-client#1797 — onEnd carries `status: 'silent'` when nothing was
+  // observed, `status: 'pass'` once any lifecycle resource is seen.
+  // Downstream renderers (adcp#2834) read this per-assertion rather than
+  // having to infer from `observation_count === 0`.
+  test("onEnd: status: 'silent' when observation_count is 0", () => {
+    const ctx = makeCtx();
+    spec.onStart(ctx);
+    const out = spec.onEnd(ctx);
+    assert.equal(out[0].observation_count, 0);
+    assert.equal(out[0].status, 'silent');
+    assert.equal(out[0].passed, true);
+  });
+
+  test("onEnd: status: 'pass' when at least one lifecycle resource observed", () => {
+    const ctx = makeCtx();
+    spec.onStart(ctx);
+    spec.onStep(ctx, step({ step_id: 'create', task: 'create_media_buy', response: mb('mb-1', 'pending_creatives') }));
+    const out = spec.onEnd(ctx);
+    assert.ok(out[0].observation_count >= 1);
+    assert.equal(out[0].status, 'pass');
+    assert.equal(out[0].passed, true);
+  });
 });
 
 // ────────────────────────────────────────────────────────────
@@ -2001,6 +2024,35 @@ describe('default-invariants: impairment.coherence', () => {
     );
     spec.onStep(ctx, step({ step_id: 'buy', task: 'create_media_buy', response: mb('mb-1') }));
     assert.equal(spec.onEnd(ctx)[0].observation_count, 1);
+  });
+
+  // adcp-client#1797 — onEnd carries `status: 'silent'` for the unexercised
+  // case, `status: 'pass'` once both sides have been observed.
+  test("onEnd: status: 'silent' when nothing observed", () => {
+    const ctx = makeCtx();
+    spec.onStart(ctx);
+    const out = spec.onEnd(ctx);
+    assert.equal(out[0].observation_count, 0);
+    assert.equal(out[0].status, 'silent');
+    assert.equal(out[0].passed, true);
+  });
+
+  test("onEnd: status: 'pass' when both transition + buy snapshot observed", () => {
+    const ctx = makeCtx();
+    spec.onStart(ctx);
+    spec.onStep(
+      ctx,
+      step({
+        step_id: 'reject',
+        task: 'sync_creatives',
+        response: { creatives: [{ creative_id: 'cr-1', status: 'rejected' }] },
+      })
+    );
+    spec.onStep(ctx, step({ step_id: 'buy', task: 'create_media_buy', response: mb('mb-1') }));
+    const out = spec.onEnd(ctx);
+    assert.equal(out[0].observation_count, 1);
+    assert.equal(out[0].status, 'pass');
+    assert.equal(out[0].passed, true);
   });
 
   test('onEnd: surfaces partial inverse coverage when a deferred-family offline observation lands', () => {

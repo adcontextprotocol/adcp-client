@@ -971,6 +971,7 @@ registerOnce('status.monotonic', {
         passed: true,
         description: 'Resource statuses transition only along spec lifecycle edges',
         observation_count,
+        status: observation_count === 0 ? ('silent' as const) : ('pass' as const),
       },
     ];
   },
@@ -1296,6 +1297,7 @@ registerOnce('impairment.coherence', {
         passed: true,
         description: 'media_buy.impairments[] coheres with resource state and buy health',
         observation_count: exercised ? 1 : 0,
+        status: exercised ? ('pass' as const) : ('silent' as const),
       },
     ];
 
