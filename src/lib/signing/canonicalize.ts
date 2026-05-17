@@ -7,6 +7,24 @@ export interface RequestLike {
   body?: string;
 }
 
+/**
+ * RFC 9421 §2.2.9 response-signing context. Carries the response status and
+ * its headers/body, plus the originating request's method + URL so derived
+ * components that bind back to the request context (`@method`, `@target-uri`,
+ * `@authority`) resolve correctly.
+ */
+export interface ResponseLike {
+  status: number;
+  headers: Record<string, string | string[] | undefined>;
+  body?: string;
+  /**
+   * Originating request context. Required because RFC 9421 §2.2 binds
+   * response signatures to their request context via `@authority` (and
+   * optionally `@target-uri` / `@method` if the caller opts in).
+   */
+  request: { method: string; url: string };
+}
+
 export interface SignatureParams {
   created: number;
   expires: number;
@@ -27,7 +45,7 @@ const DEFAULT_PARAM_ORDER: ReadonlyArray<keyof SignatureParams> = [
 
 const STRING_PARAMS = new Set<keyof SignatureParams>(['nonce', 'keyid', 'alg', 'tag']);
 
-const SUPPORTED_DERIVED = new Set(['@method', '@target-uri', '@authority']);
+const SUPPORTED_DERIVED = new Set(['@method', '@target-uri', '@authority', '@status']);
 
 export function canonicalTargetUri(rawUrl: string): string {
   rejectNonAsciiHost(rawUrl);
@@ -109,6 +127,45 @@ export function buildSignatureBase(
   return lines.join('\n');
 }
 
+/**
+ * Build the RFC 9421 §2.5 signature base for a response.
+ *
+ * Resolves `@status` from `response.status` and binds the remaining derived
+ * components (`@method`, `@target-uri`, `@authority`) to the originating
+ * request carried on `response.request`. Header components resolve against
+ * `response.headers`. `signatureParamsValue` works the same as for
+ * {@link buildSignatureBase} — pass it on the verifier path to keep byte
+ * identity with whatever `Signature-Input` the peer sent.
+ */
+export function buildResponseSignatureBase(
+  components: ReadonlyArray<string>,
+  response: ResponseLike,
+  params: SignatureParams,
+  signatureParamsValue?: string
+): string {
+  const requestView: RequestLike = {
+    method: response.request.method,
+    url: response.request.url,
+    headers: response.headers,
+    body: response.body,
+  };
+  const lines: string[] = [];
+  for (const component of components) {
+    const value = component === '@status' ? String(response.status) : resolveComponentValue(component, requestView);
+    if (value === undefined) {
+      throw new RequestSignatureError(
+        'request_signature_components_incomplete',
+        6,
+        `Covered component "${component}" not present in response`
+      );
+    }
+    lines.push(`"${component}": ${value}`);
+  }
+  const paramsString = signatureParamsValue ?? formatSignatureParams(components, params);
+  lines.push(`"@signature-params": ${paramsString}`);
+  return lines.join('\n');
+}
+
 export function formatSignatureParams(components: ReadonlyArray<string>, params: SignatureParams): string {
   const componentList = components.map(c => `"${c}"`).join(' ');
   const paramPairs: string[] = [];
@@ -136,6 +193,12 @@ function resolveComponentValue(component: string, request: RequestLike): string 
         return canonicalTargetUri(request.url);
       case '@authority':
         return canonicalAuthority(request.url);
+      case '@status':
+        throw new RequestSignatureError(
+          'request_signature_components_unexpected',
+          6,
+          '"@status" is only valid in response-signing context; use buildResponseSignatureBase'
+        );
     }
   }
   return getHeaderValue(request.headers, component);

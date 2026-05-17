@@ -1,7 +1,19 @@
-import type { RequestLike } from './canonicalize';
+import type { RequestLike, ResponseLike } from './canonicalize';
 import type { SigningProvider } from './provider';
-import type { SignedRequest, SignRequestOptions, SignWebhookOptions } from './signer';
-import { finalizeRequestSignature, prepareRequestSignature, prepareWebhookSignature } from './signer';
+import type {
+  SignedRequest,
+  SignedResponse,
+  SignRequestOptions,
+  SignResponseOptions,
+  SignWebhookOptions,
+} from './signer';
+import {
+  finalizeRequestSignature,
+  finalizeResponseSignature,
+  prepareRequestSignature,
+  prepareResponseSignature,
+  prepareWebhookSignature,
+} from './signer';
 
 /**
  * Async variant of `signRequest` that delegates the actual signature
@@ -39,4 +51,19 @@ export async function signWebhookAsync(
   const prepared = prepareWebhookSignature(request, { keyid: provider.keyid, alg: provider.algorithm }, options);
   const signature = await provider.sign(Buffer.from(prepared.base, 'utf8'));
   return finalizeRequestSignature(prepared, signature);
+}
+
+/**
+ * Async variant of `signResponse`. Reuses {@link prepareResponseSignature}
+ * and {@link finalizeResponseSignature} from the sync path so canonicalization
+ * stays identical — `provider.sign(payload)` is the only difference.
+ */
+export async function signResponseAsync(
+  response: ResponseLike,
+  provider: SigningProvider,
+  options: SignResponseOptions = {}
+): Promise<SignedResponse> {
+  const prepared = prepareResponseSignature(response, { keyid: provider.keyid, alg: provider.algorithm }, options);
+  const signature = await provider.sign(Buffer.from(prepared.base, 'utf8'));
+  return finalizeResponseSignature(prepared, signature);
 }

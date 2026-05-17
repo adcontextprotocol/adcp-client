@@ -79,6 +79,7 @@ export interface VerifiedSigner {
 export type VerifyResult = ({ status: 'verified' } & VerifiedSigner) | { status: 'unsigned'; verified_at: number };
 
 export const REQUEST_SIGNING_TAG = 'adcp/request-signing/v1';
+export const RESPONSE_SIGNING_TAG = 'adcp/response-signing/v1';
 export const ALLOWED_ALGS = new Set(['ed25519', 'ecdsa-p256-sha256']);
 /**
  * Wire-format algorithm identifier — the string that appears in
@@ -88,3 +89,14 @@ export type AdcpSignAlg = 'ed25519' | 'ecdsa-p256-sha256';
 export const MAX_SIGNATURE_WINDOW_SECONDS = 300;
 export const CLOCK_SKEW_TOLERANCE_SECONDS = 60;
 export const MANDATORY_COMPONENTS: ReadonlyArray<string> = ['@method', '@target-uri', '@authority'];
+/**
+ * Minimum derived components covered by a response signature under the AdCP
+ * response-signing profile (RFC 9421 §2.2.9). `@status` binds the signature
+ * to the response status code; `@authority` binds it to the request origin
+ * the response was emitted for. `content-digest` is added at signing time
+ * when the response carries a body — same conditional shape as
+ * {@link MANDATORY_COMPONENTS} for request signing. Callers that want to
+ * bind the signature to a specific request URL can opt-in to `@target-uri`
+ * and `@method` via `componentIds`.
+ */
+export const RESPONSE_MANDATORY_COMPONENTS: ReadonlyArray<string> = ['@status', '@authority'];

@@ -17,7 +17,7 @@ const WIRE_ALG_TO_JOSE: Record<AdcpSignAlg, string> = {
   'ecdsa-p256-sha256': 'ES256',
 };
 
-export type AdcpUse = 'request-signing' | 'webhook-signing';
+export type AdcpUse = 'request-signing' | 'webhook-signing' | 'response-signing';
 
 export interface PemToAdcpJwkOptions {
   /** `kid` to embed in the JWK — must match the value published in `Signature-Input`. */
@@ -28,6 +28,9 @@ export interface PemToAdcpJwkOptions {
    * Purpose binding, enforced by AdCP verifiers at step 8.
    * - `'request-signing'` — for JWKs published at the buyer's `jwks_uri`.
    * - `'webhook-signing'` — for JWKs used to sign outbound webhook callbacks.
+   * - `'response-signing'` — for JWKs used to sign outbound responses
+   *   (RFC 9421 §2.2.9 response signing). Verifier surface is a follow-up;
+   *   the value is reserved here so signer-side JWKs can declare it now.
    */
   adcp_use: AdcpUse;
 }
