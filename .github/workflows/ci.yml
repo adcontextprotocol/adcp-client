@@ -67,6 +67,9 @@ jobs:
       - name: Validate agent docs are in sync
         run: npm run ci:docs-check
 
+      - name: Check SDK→docs URLs resolve (URL-rot guard)
+        run: npm run ci:doc-links
+
       - name: Run TypeScript type checking
         run: npm run typecheck
 
