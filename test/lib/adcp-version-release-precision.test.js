@@ -87,5 +87,19 @@ describe('toReleasePrecisionWire — release-precision normalization', () => {
     assert.throws(() => toReleasePrecisionWire('3'));
     assert.throws(() => toReleasePrecisionWire('3.x'));
     assert.throws(() => toReleasePrecisionWire('3.0.0.0'));
+    // Trailing dot on prerelease — wire regex would accept (`.` is in the
+    // wire char class) but SemVer §9 says prerelease IDs can't be empty,
+    // so this is rejected. Confirms the "stricter than wire pattern" note
+    // in the JSDoc is enforced by code, not just doc.
+    assert.throws(() => toReleasePrecisionWire('3.1.0-beta.'));
+    assert.throws(() => toReleasePrecisionWire('3.0.'));
+  });
+
+  test('leading-zero inputs round-trip (wire-valid by spec pattern)', () => {
+    // The spec wire pattern is `\d+\.\d+` — `'03.01'` matches. The
+    // normalizer follows suit rather than imposing extra structure no
+    // upstream caller is asking for. Documents the precedence story:
+    // we don't normalize numeric components, only the patch-collapse.
+    assert.strictEqual(toReleasePrecisionWire('03.01'), '03.01');
   });
 });

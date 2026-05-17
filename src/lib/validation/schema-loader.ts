@@ -108,6 +108,20 @@ export function resolveBundleKey(version: string): string {
  *   > release-precision ("3.1-beta.1") before emitting on the wire —
  *   > meta-field values are NOT valid wire values.
  *
+ * **Idempotent.** Re-applying to an already-wire-shaped value is a no-op:
+ * `toReleasePrecisionWire('3.1-beta.0') === '3.1-beta.0'`. Safe to call
+ * defensively on values a caller read off the wire and is passing back.
+ *
+ * **Prerelease regex is stricter than the wire pattern by design.** The wire
+ * pattern allows `[a-zA-Z0-9.-]+` (any mix of dots and hyphens), but this
+ * function only accepts SemVer §9-shaped prerelease tags
+ * (`[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*`) — disallowing leading dots, double
+ * dots, or trailing dots. Mirrors the path-traversal hardening on
+ * {@link resolveBundleKey} (`'3.0.0-/../etc'`-style strings can't reach the
+ * filesystem there, and shouldn't be silently mirrored to the wire here).
+ * A future reader who wants to "fix" this to match the wire regex
+ * character-for-character should NOT — the strictness is intentional.
+ *
  * Defense: rejecting unrecognized shapes here surfaces SDK-internal misuse
  * (someone calling this with raw garbage) loudly instead of silently
  * emitting a non-spec wire string.
