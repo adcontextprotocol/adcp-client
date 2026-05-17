@@ -332,31 +332,48 @@ async function runStep(
         result.failures.push(`${check} ${v.path}: got ${JSON.stringify(actual)}, want ${JSON.stringify(v.value)}`);
       }
     } else if (check === 'array_length') {
-      const actual = getByPath(structured, v.path as string);
-      if (!Array.isArray(actual)) {
+      const hasExact = typeof v.value === 'number';
+      const hasMin = typeof (v as { min?: unknown }).min === 'number';
+      const hasMax = typeof (v as { max?: unknown }).max === 'number';
+      const min = hasMin ? (v as { min: number }).min : undefined;
+      const max = hasMax ? (v as { max: number }).max : undefined;
+      const isValidCount = (n: unknown): n is number => typeof n === 'number' && Number.isInteger(n) && n >= 0;
+      if (!hasExact && !hasMin && !hasMax) {
         allPassed = false;
-        result.failures.push(
-          `array_length ${v.path}: not an array (got ${actual === undefined ? 'undefined' : typeof actual})`
-        );
+        result.failures.push(`array_length ${v.path}: misconfigured (need value or min/max)`);
+      } else if (hasExact && (hasMin || hasMax)) {
+        allPassed = false;
+        result.failures.push(`array_length ${v.path}: misconfigured (value and min/max are mutually exclusive)`);
+      } else if (hasExact && !isValidCount(v.value)) {
+        allPassed = false;
+        result.failures.push(`array_length ${v.path}: misconfigured (value must be a non-negative integer)`);
+      } else if (hasMin && !isValidCount(min)) {
+        allPassed = false;
+        result.failures.push(`array_length ${v.path}: misconfigured (min must be a non-negative integer)`);
+      } else if (hasMax && !isValidCount(max)) {
+        allPassed = false;
+        result.failures.push(`array_length ${v.path}: misconfigured (max must be a non-negative integer)`);
+      } else if (hasMin && hasMax && (min as number) > (max as number)) {
+        allPassed = false;
+        result.failures.push(`array_length ${v.path}: impossible range (min ${min} > max ${max})`);
       } else {
-        const len = actual.length;
-        const hasExact = typeof v.value === 'number';
-        const hasMin = typeof (v as { min?: unknown }).min === 'number';
-        const hasMax = typeof (v as { max?: unknown }).max === 'number';
-        const min = hasMin ? (v as { min: number }).min : undefined;
-        const max = hasMax ? (v as { max: number }).max : undefined;
-        if (hasExact && len !== v.value) {
+        const actual = getByPath(structured, v.path as string);
+        if (!Array.isArray(actual)) {
           allPassed = false;
-          result.failures.push(`array_length ${v.path}: got ${len}, want ${v.value}`);
-        } else if (!hasExact && min !== undefined && len < min) {
-          allPassed = false;
-          result.failures.push(`array_length ${v.path}: got ${len}, want >= ${min}`);
-        } else if (!hasExact && max !== undefined && len > max) {
-          allPassed = false;
-          result.failures.push(`array_length ${v.path}: got ${len}, want <= ${max}`);
-        } else if (!hasExact && !hasMin && !hasMax) {
-          allPassed = false;
-          result.failures.push(`array_length ${v.path}: misconfigured (need value or min/max)`);
+          const ty = actual === undefined ? 'undefined' : actual === null ? 'null' : typeof actual;
+          result.failures.push(`array_length ${v.path}: not an array (got ${ty})`);
+        } else {
+          const len = actual.length;
+          if (hasExact && len !== v.value) {
+            allPassed = false;
+            result.failures.push(`array_length ${v.path}: got ${len}, want ${v.value}`);
+          } else if (!hasExact && min !== undefined && len < min) {
+            allPassed = false;
+            result.failures.push(`array_length ${v.path}: got ${len}, want >= ${min}`);
+          } else if (!hasExact && max !== undefined && len > max) {
+            allPassed = false;
+            result.failures.push(`array_length ${v.path}: got ${len}, want <= ${max}`);
+          }
         }
       }
     } else if (TRANSPORT_ONLY_CHECKS.has(check)) {

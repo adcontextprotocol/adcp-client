@@ -1043,6 +1043,62 @@ function validateArrayLength(validation: StoryboardValidation, taskResult: TaskR
     };
   }
 
+  // Reject NaN, fractional, and negative bounds at the config gate. `array.length`
+  // is always a non-negative integer, so any other comparand makes the check
+  // impossible to satisfy — fail loudly at authoring time rather than silently
+  // every run.
+  const isValidCount = (n: unknown): n is number => typeof n === 'number' && Number.isInteger(n) && n >= 0;
+  const badOperand = (label: string, n: number) =>
+    `array_length \`${label}\` must be a non-negative integer; got ${Number.isNaN(n) ? 'NaN' : String(n)}`;
+  if (hasExact && !isValidCount(validation.value)) {
+    return {
+      check: checkName,
+      passed: false,
+      description: validation.description,
+      path: validation.path,
+      error: badOperand('value', validation.value as unknown as number),
+      json_pointer: pointer,
+      expected: 'non-negative integer',
+      actual: (validation.value as unknown) ?? null,
+    };
+  }
+  if (hasMin && !isValidCount(validation.min)) {
+    return {
+      check: checkName,
+      passed: false,
+      description: validation.description,
+      path: validation.path,
+      error: badOperand('min', validation.min as unknown as number),
+      json_pointer: pointer,
+      expected: 'non-negative integer',
+      actual: (validation.min as unknown) ?? null,
+    };
+  }
+  if (hasMax && !isValidCount(validation.max)) {
+    return {
+      check: checkName,
+      passed: false,
+      description: validation.description,
+      path: validation.path,
+      error: badOperand('max', validation.max as unknown as number),
+      json_pointer: pointer,
+      expected: 'non-negative integer',
+      actual: (validation.max as unknown) ?? null,
+    };
+  }
+  if (hasMin && hasMax && (validation.min as number) > (validation.max as number)) {
+    return {
+      check: checkName,
+      passed: false,
+      description: validation.description,
+      path: validation.path,
+      error: `array_length range is impossible: min ${validation.min} > max ${validation.max}`,
+      json_pointer: pointer,
+      expected: '`min <= max`',
+      actual: { min: validation.min, max: validation.max },
+    };
+  }
+
   const resolved = resolvePath(taskResult.data, validation.path);
   if (!Array.isArray(resolved)) {
     return {

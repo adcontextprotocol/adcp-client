@@ -640,4 +640,45 @@ describe('array_length (adcp#4685 / adcp-client#1830)', () => {
     assert.strictEqual(result.passed, false);
     assert.match(result.error, /either `value` OR `min`\/`max`, not both/);
   });
+
+  it('rejects NaN operand at the config gate', () => {
+    const [result] = runOne(
+      [{ check: 'array_length', path: 'items', value: NaN, description: 'NaN value' }],
+      'sync_creatives',
+      { success: true, data: { items: [1] } }
+    );
+    assert.strictEqual(result.passed, false);
+    assert.match(result.error, /must be a non-negative integer/);
+    assert.match(result.error, /NaN/);
+  });
+
+  it('rejects fractional `value` at the config gate', () => {
+    const [result] = runOne(
+      [{ check: 'array_length', path: 'items', value: 2.5, description: 'fractional value' }],
+      'sync_creatives',
+      { success: true, data: { items: [1, 2] } }
+    );
+    assert.strictEqual(result.passed, false);
+    assert.match(result.error, /must be a non-negative integer/);
+  });
+
+  it('rejects negative `min` at the config gate', () => {
+    const [result] = runOne(
+      [{ check: 'array_length', path: 'items', min: -1, description: 'negative min' }],
+      'sync_creatives',
+      { success: true, data: { items: [1] } }
+    );
+    assert.strictEqual(result.passed, false);
+    assert.match(result.error, /`min` must be a non-negative integer/);
+  });
+
+  it('rejects impossible range when `min > max`', () => {
+    const [result] = runOne(
+      [{ check: 'array_length', path: 'items', min: 5, max: 1, description: 'impossible' }],
+      'sync_creatives',
+      { success: true, data: { items: [1, 2, 3] } }
+    );
+    assert.strictEqual(result.passed, false);
+    assert.match(result.error, /impossible: min 5 > max 1/);
+  });
 });
