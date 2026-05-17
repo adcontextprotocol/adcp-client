@@ -227,15 +227,17 @@ export async function rawMcpProbe(options: {
 
   const httpResult: HttpProbeResult = { url: agentUrl, status: 0, headers: {}, body: null };
   try {
-    // Accept only JSON. Streamable-HTTP MCP servers that prefer SSE framing
-    // will 406 or downgrade to JSON; we can't robustly parse event-stream
-    // wire format in a probe without reimplementing the transport, and silently
-    // misreading an SSE body would make expect_error steps falsely pass.
+    // Advertise both JSON and SSE so Streamable-HTTP MCP servers don't 406.
+    // Strict MCP servers (e.g. those built on the official SDK) require the
+    // client to accept both — they return SSE-framed responses for tools/call
+    // even though the payload is a single JSON-RPC envelope. The probe parses
+    // the SSE wire form below; the existing JSON branch is preserved for
+    // servers that downgrade to plain JSON when offered both.
     const res = await ssrfSafeFetch(agentUrl, {
       method: 'POST',
       headers: {
         'content-type': 'application/json',
-        accept: 'application/json',
+        accept: 'application/json, text/event-stream',
         ...headers,
       },
       body,
@@ -247,13 +249,22 @@ export async function rawMcpProbe(options: {
     const text = Buffer.from(res.body.buffer, res.body.byteOffset, res.body.byteLength).toString('utf8');
     let parsed: unknown;
     try {
-      parsed = JSON.parse(text);
+      const contentType = httpResult.headers['content-type'] ?? '';
+      if (contentType.toLowerCase().includes('text/event-stream')) {
+        // Streamable-HTTP MCP: the response is one or more SSE events whose
+        // `data:` payloads are JSON-RPC envelopes. For tools/call the server
+        // sends a single `event: message` with the complete response. Read
+        // the FIRST `data:` line — concatenated multiline `data:` lines on a
+        // single event aren't expected on this wire (the MCP servers we
+        // grade emit one line per envelope).
+        const dataLine = text.split(/\r?\n/).find(l => l.startsWith('data:'));
+        if (!dataLine) throw new Error('SSE response with no data event');
+        parsed = JSON.parse(dataLine.slice('data:'.length).trim());
+      } else {
+        parsed = JSON.parse(text);
+      }
     } catch {
       httpResult.body = text;
-      // Body didn't parse — almost certainly SSE framing or HTML from an edge
-      // proxy. We deliberately don't attempt SSE parsing (see the advertised
-      // Accept gate above). Surface a distinct error so callers don't mistake
-      // a non-JSON response for a silent success.
       return {
         httpResult,
         taskResult: {

@@ -474,6 +474,46 @@ describe('rawMcpProbe', () => {
     assert.strictEqual(httpResult.status, 0);
     assert.match(httpResult.error ?? '', /non-HTTPS/);
   });
+
+  it('parses Streamable-HTTP MCP SSE response framing (single data event)', async () => {
+    // Strict MCP servers (the official SDK) require the client to accept both
+    // `application/json` and `text/event-stream`, and respond to tools/call
+    // with a single SSE event whose `data:` line is the JSON-RPC envelope.
+    // rawMcpProbe must parse this without falling back to the "Non-JSON
+    // response body" error path. Closes adcp-client#1522 (comply_controller_mode_gate
+    // storyboard couldn't grade because the probe 406'd against the framework's
+    // MCP server).
+    let seenAccept;
+    const server = http.createServer(async (req, res) => {
+      seenAccept = req.headers.accept ?? '';
+      const chunks = [];
+      for await (const c of req) chunks.push(c);
+      const seenBody = JSON.parse(Buffer.concat(chunks).toString('utf8'));
+      res.writeHead(200, { 'content-type': 'text/event-stream' });
+      res.end(
+        `event: message\ndata: ${JSON.stringify({
+          jsonrpc: '2.0',
+          id: seenBody.id,
+          result: { structuredContent: { context: { correlation_id: 'sse-ok' } } },
+        })}\n\n`
+      );
+    });
+    await new Promise(r => server.listen(0, r));
+    try {
+      const { httpResult, taskResult } = await rawMcpProbe({
+        agentUrl: `http://127.0.0.1:${server.address().port}/mcp`,
+        toolName: 'list_creatives',
+        args: { page: 1 },
+        allowPrivateIp: true,
+      });
+      assert.match(seenAccept, /application\/json/);
+      assert.match(seenAccept, /text\/event-stream/);
+      assert.strictEqual(httpResult.status, 200);
+      assert.deepStrictEqual(taskResult.data, { context: { correlation_id: 'sse-ok' } });
+    } finally {
+      server.close();
+    }
+  });
 });
 
 // ────────────────────────────────────────────────────────────

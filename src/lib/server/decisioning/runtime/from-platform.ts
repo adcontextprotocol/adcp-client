@@ -1575,12 +1575,20 @@ export function createAdcpServerFromPlatform<P extends DecisioningPlatform<any, 
           const allowed = accountIsSandbox || (resolvedAccount == null && refSandbox) || envSandbox;
 
           if (!allowed) {
+            // Echo the request's context (and ext, if present) onto the
+            // refusal so callers can correlate. The comply_controller_mode_gate
+            // storyboard (adcp#4028) asserts `context.correlation_id` is
+            // returned unchanged on the FORBIDDEN response.
+            const requestContext = (input as { context?: Record<string, unknown> | null }).context;
+            const requestExt = (input as { ext?: Record<string, unknown> | null }).ext;
             return toMcpResponse({
               success: false,
               error: 'FORBIDDEN',
               error_detail:
                 'comply_test_controller requires a sandbox or mock account; ' +
                 'resolved account is in live mode (or no account resolved).',
+              ...(requestContext != null && { context: requestContext }),
+              ...(requestExt != null && { ext: requestExt }),
             });
           }
 

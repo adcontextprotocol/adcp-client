@@ -99,6 +99,15 @@ const UPSTREAM_URL = process.env['UPSTREAM_URL'] ?? 'http://127.0.0.1:4450';
 const UPSTREAM_API_KEY = process.env['UPSTREAM_API_KEY'] ?? 'mock_sales_guaranteed_key_do_not_use_in_prod';
 const PORT = Number(process.env['PORT'] ?? 3004);
 const ADCP_AUTH_TOKEN = process.env['ADCP_AUTH_TOKEN'] ?? 'sk_harness_do_not_use_in_prod';
+// Test-kit principal for the `comply_controller_mode_gate` storyboard
+// (adcp#4028). The runner authenticates with this bearer to probe the
+// seller's live-mode denial path. The resolver below stamps
+// `mode: 'live'` on the matching principal so the framework gate inside
+// `createAdcpServerFromPlatform` refuses `comply_test_controller`
+// dispatch with FORBIDDEN. Test-kit value pinned by
+// `compliance/cache/<ver>/test-kits/acme-outdoor-live.yaml`.
+const ADCP_LIVE_MODE_AUTH_TOKEN = 'demo-acme-outdoor-live-v1';
+const LIVE_MODE_PROBE_PRINCIPAL = 'compliance-live-mode-probe' as const;
 const PUBLIC_AGENT_URL = process.env['PUBLIC_AGENT_URL'] ?? `http://127.0.0.1:${PORT}`;
 
 const KNOWN_PUBLISHERS = ['acmeoutdoor.example', 'pinnacle-agency.example', 'premium-sports.example'];
@@ -553,11 +562,27 @@ class SalesGuaranteedAdapter implements DecisioningPlatform<Record<string, never
         const publisherDomain = 'acmeoutdoor.example';
         const network = await upstream.lookupNetwork(publisherDomain);
         if (!network) return null;
+        // Live-mode probe principal (comply_controller_mode_gate
+        // storyboard) — stamp `mode: 'live'` so the framework gate inside
+        // `createAdcpServerFromPlatform` refuses `comply_test_controller`
+        // dispatch with FORBIDDEN. The probe never reaches a mutating
+        // dispatch path; the live-mode caller is denied before scenario
+        // execution. Production sellers source `mode` from their tenant
+        // store, not from the principal name.
+        //
+        // Detection: ResolvedAuthInfo doesn't surface the principal name
+        // directly (the framework propagates AuthPrincipal.principal as
+        // `clientId` for MCP, then exposes the legacy `token` field on
+        // ResolvedAuthInfo). For a worked example, checking the bearer
+        // token is the simplest signal; production sellers use
+        // `credential.key_id` (api_key) or a tenant-store lookup.
+        const isLiveModeProbe = ctx.authInfo.token === ADCP_LIVE_MODE_AUTH_TOKEN;
         return {
           id: network.network_code,
           name: network.display_name,
           status: 'active',
           brand: { domain: network.adcp_publisher },
+          ...(isLiveModeProbe ? { mode: 'live' as const } : {}),
           ctx_metadata: {
             network_code: network.network_code,
             publisher_domain: network.adcp_publisher,
@@ -1237,7 +1262,14 @@ serve(
   {
     port: PORT,
     authenticate: verifyApiKey({
-      keys: { [ADCP_AUTH_TOKEN]: { principal: 'compliance-runner' } },
+      keys: {
+        [ADCP_AUTH_TOKEN]: { principal: 'compliance-runner' },
+        // Live-mode probe principal — see comply_controller_mode_gate
+        // storyboard. The resolver below stamps `mode: 'live'` when this
+        // bearer is presented; the framework gate then refuses
+        // comply_test_controller dispatch with FORBIDDEN.
+        [ADCP_LIVE_MODE_AUTH_TOKEN]: { principal: LIVE_MODE_PROBE_PRINCIPAL },
+      },
     }),
   }
 );
