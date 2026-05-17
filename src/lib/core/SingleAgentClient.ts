@@ -551,6 +551,15 @@ export class SingleAgentClient {
     const clientModule = require('@a2a-js/sdk/client');
     const A2AClient = clientModule.A2AClient;
 
+    // adcp-client#1804 — wrap A2A card discovery in withResponseSizeLimit so
+    // `transport.maxResponseBytes` applies to every agent-card fetch. The
+    // auth-stamping fetchImpl composes through wrapFetchWithSizeLimit so the
+    // active ALS slot enforces the cap on the wire call. Matches the same
+    // pattern in `getAgentInfo` (closed #1799 via PR #1802).
+    const { withResponseSizeLimit, wrapFetchWithSizeLimit } = await import('../protocols/responseSizeLimit');
+    const maxResponseBytes = this.config.transport?.maxResponseBytes;
+    const sizeLimitedFetch = wrapFetchWithSizeLimit((input, init) => fetch(input as RequestInfo | URL, init));
+
     const authToken = this.normalizedAgent.auth_token;
     let got401 = false;
 
@@ -564,7 +573,7 @@ export class SingleAgentClient {
         }),
       };
 
-      const response = await fetch(url, { ...options, headers });
+      const response = await sizeLimitedFetch(url as RequestInfo | URL, { ...options, headers });
 
       // Track 401 errors for later handling
       if (response.status === 401) {
@@ -581,7 +590,7 @@ export class SingleAgentClient {
       let lastError: Error = new Error(`A2A agent card not found at ${cardUrls.join(', ')}`);
       for (const cardUrl of cardUrls) {
         try {
-          client = await A2AClient.fromCardUrl(cardUrl, { fetchImpl });
+          client = await withResponseSizeLimit(maxResponseBytes, () => A2AClient.fromCardUrl(cardUrl, { fetchImpl }));
           break;
         } catch (err: unknown) {
           lastError = err as Error;
@@ -591,7 +600,9 @@ export class SingleAgentClient {
       if (!client) {
         throw lastError;
       }
-      const agentCard = client.agentCardPromise ? await client.agentCardPromise : client.agentCard;
+      const agentCard = await withResponseSizeLimit(maxResponseBytes, async () =>
+        client.agentCardPromise ? client.agentCardPromise : client.agentCard
+      );
 
       // Use the canonical URL from the agent card, falling back to computed base URL
       if (agentCard?.url) {
