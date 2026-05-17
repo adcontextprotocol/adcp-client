@@ -47,6 +47,7 @@
 import type { V2Product, V2ProductFormatDeclaration, V1Product, V1FormatId, ProjectionDiagnostic } from './types';
 import { reverseLookup } from './registry';
 import { isCanonicalV1Translatable } from './canonical-properties';
+import { findCatalogEntryByCanonicalAndSize, parseSizedIdTemplate } from './catalog';
 import { LIBRARY_VERSION } from '../../version';
 
 const SDK_ID = `@adcp/sdk@${LIBRARY_VERSION}`;
@@ -90,15 +91,69 @@ function detectLossyMultiSize(
 }
 
 /**
- * Project a single V2 declaration. Returns either a v1 format_id to
- * emit, or a diagnostic to surface — never both, never neither (the
- * structural invariant the test suite asserts).
+ * Try to fan out a multi-size v2 declaration to N v1 format_ids by
+ * looking up each declared size in the AAO catalog. When successful,
+ * v1 buyers see ALL the sizes the v2 declaration covers — not just
+ * the seller-asserted rep. The spec doesn't require this (the rep +
+ * lossy advisory is the minimum-bar projection) but the catalog
+ * already publishes the per-size entries, so the SDK can use them
+ * without inter-SDK divergence.
+ *
+ * Returns the fanned-out v1 ids when at least 2 sizes resolved
+ * (otherwise the rep alone is fine; no value in fan-out). The lossy
+ * advisory is still emitted — its details now reflect how many
+ * sizes were actually covered vs declared.
+ */
+function tryFanOutMultiSize(decl: V2ProductFormatDeclaration, v1Ref: V1FormatId): V1FormatId[] | null {
+  const sizes = decl.params?.sizes;
+  if (!Array.isArray(sizes) || sizes.length <= 1) return null;
+  // Parse the seller's chosen v1_format_ref id to extract its
+  // `<prefix>_<W>x<H>_<suffix>` template, then constrain the fan-out
+  // to siblings sharing the same prefix + suffix. Otherwise multiple
+  // entries with the same `canonical:` annotation but different
+  // families (e.g., image's `display_*_image` and `display_*_generative`
+  // both annotated `canonical: image`) would collide and the SDK could
+  // emit ids from the wrong family.
+  const template = parseSizedIdTemplate(v1Ref.id);
+  const lookupOpts = template ? { prefix: template.prefix, suffix: template.suffix } : undefined;
+
+  const found: V1FormatId[] = [];
+  for (const size of sizes) {
+    if (!size || typeof size !== 'object') continue;
+    const sz = size as { width?: unknown; height?: unknown };
+    if (typeof sz.width !== 'number' || typeof sz.height !== 'number') continue;
+    const entry = findCatalogEntryByCanonicalAndSize(
+      decl.format_kind,
+      sz.width,
+      sz.height,
+      v1Ref.agent_url,
+      lookupOpts
+    );
+    if (entry) {
+      found.push({
+        agent_url: entry.format_id.agent_url,
+        id: entry.format_id.id,
+        width: sz.width,
+        height: sz.height,
+      });
+    }
+  }
+  return found.length >= 2 ? found : null;
+}
+
+/**
+ * Project a single V2 declaration. Returns one v1 format_id (the
+ * common case) OR a fanned-out list of v1 format_ids (multi-size
+ * fan-out) OR a diagnostic, plus an optional advisory diagnostic
+ * (multi-size loses some sizes). The structural invariant: every
+ * declaration produces AT LEAST ONE of (v1 emit, diagnostic) — may
+ * produce both.
  */
 function projectDeclaration(
   decl: V2ProductFormatDeclaration,
   productId: string,
   field: string
-): { v1?: V1FormatId; diagnostic?: ProjectionDiagnostic } {
+): { v1?: V1FormatId | V1FormatId[]; diagnostic?: ProjectionDiagnostic } {
   // Step 1: seller-asserted product-level opt-out. canonical_formats_only
   // is REQUIRED on `custom` declarations without v1_format_ref, but it's
   // ALSO valid on any non-custom canonical when the seller wants to opt
@@ -151,8 +206,16 @@ function projectDeclaration(
   if (decl.v1_format_ref) {
     const lossy = detectLossyMultiSize(decl);
     if (lossy) {
+      // Try to fan out via catalog lookup. When successful, the v1
+      // emit covers every size the catalog has an entry for. When
+      // only the rep is available, fall back to single-emit. Either
+      // way, surface the advisory so the buyer knows the v2
+      // declaration was multi-size.
+      const fanned = lossy.mode === 'sizes' ? tryFanOutMultiSize(decl, decl.v1_format_ref) : null;
+      const emit = fanned ?? decl.v1_format_ref;
+      const emittedCount = Array.isArray(emit) ? emit.length : 1;
       return {
-        v1: decl.v1_format_ref,
+        v1: emit,
         diagnostic: {
           source: 'sdk',
           sdk_id: SDK_ID,
@@ -165,6 +228,7 @@ function projectDeclaration(
               capability_id: decl.capability_id,
               size_mode: lossy.mode,
               declared_sizes_count: lossy.count,
+              emitted_sizes_count: emittedCount,
               v1_emit_represents_size: {
                 width: decl.v1_format_ref.width,
                 height: decl.v1_format_ref.height,
@@ -241,7 +305,13 @@ export function projectV2ProductToV1(v2: V2Product): V2ToV1Result {
     const decl = v2.format_options[i]!;
     const field = `products[${v2.product_id}].format_options[${i}]`;
     const { v1, diagnostic } = projectDeclaration(decl, v2.product_id, field);
-    if (v1) format_ids.push(v1);
+    if (v1) {
+      if (Array.isArray(v1)) {
+        for (const id of v1) format_ids.push(id);
+      } else {
+        format_ids.push(v1);
+      }
+    }
     if (diagnostic) diagnostics.push(diagnostic);
   }
 

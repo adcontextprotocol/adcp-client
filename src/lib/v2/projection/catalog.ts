@@ -150,3 +150,64 @@ export function lookupV1Format(formatId: V1FormatId, explicitPath?: string): V1F
 export function _resetCatalogCache(): void {
   cached = null;
 }
+
+/**
+ * Find a catalog entry matching `(canonical, width, height)` at the same
+ * publisher domain as `agentUrl`. Used by the v2 → v1 multi-size fan-out:
+ * when a v2 declaration says `sizes: [W1×H1, W2×H2, ...]` and the
+ * seller-asserted `v1_format_ref` points at the catalog entry for one of
+ * those sizes, the SDK can look up the entries for the OTHER sizes and
+ * emit additional v1 format_ids — giving v1 buyers full size coverage
+ * instead of just the rep.
+ *
+ * The catalog uses a stable id-pattern convention
+ * (`<prefix>_<W>x<H>_<suffix>`) for per-size entries — image, html5, and
+ * generative all follow it. This function parses ids matching that
+ * pattern and matches on extracted dimensions, so the lookup is
+ * dimensionally honest without requiring the spec to add explicit
+ * width/height fields to catalog entries.
+ *
+ * Returns undefined when no matching entry exists at this publisher.
+ * Caller falls back to the seller-asserted rep + lossy advisory.
+ */
+const SIZED_ID_RE = /^([a-z]+)_(\d+)x(\d+)_([a-z]+)$/;
+
+/**
+ * Extract the `<prefix>_<W>x<H>_<suffix>` template from a sized catalog
+ * id. Used by `findCatalogEntryByCanonicalAndSize` to filter fan-out
+ * candidates to siblings of the seller-asserted ref. Multiple catalog
+ * entries can share the same `canonical:` annotation but represent
+ * different families (e.g., `image` is both `display_*_image` and
+ * `display_*_generative`); without a suffix filter, fan-out would
+ * collide families.
+ */
+export function parseSizedIdTemplate(id: string): { prefix: string; suffix: string } | undefined {
+  const m = id.match(SIZED_ID_RE);
+  if (!m) return undefined;
+  return { prefix: m[1]!, suffix: m[4]! };
+}
+
+export function findCatalogEntryByCanonicalAndSize(
+  canonical: CanonicalFormatKind,
+  width: number,
+  height: number,
+  agentUrl: string,
+  options?: { prefix?: string; suffix?: string; explicitPath?: string }
+): V1FormatDefinition | undefined {
+  const catalog = loadCatalog(options?.explicitPath);
+  const normalizedAgentUrl = normalizeAgentUrl(agentUrl);
+  for (const entry of catalog.entries) {
+    if (entry.canonical !== canonical) continue;
+    if (!entry.format_id?.id || !entry.format_id?.agent_url) continue;
+    if (normalizeAgentUrl(entry.format_id.agent_url) !== normalizedAgentUrl) continue;
+    const m = entry.format_id.id.match(SIZED_ID_RE);
+    if (!m) continue;
+    const [, prefix, wStr, hStr, suffix] = m;
+    if (options?.prefix && prefix !== options.prefix) continue;
+    if (options?.suffix && suffix !== options.suffix) continue;
+    if (parseInt(wStr!, 10) === width && parseInt(hStr!, 10) === height) {
+      return entry;
+    }
+  }
+  return undefined;
+}

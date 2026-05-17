@@ -105,18 +105,42 @@ describe('v2 → v1 projection — multi-size lossy advisory', { skip: SKIP_REAS
   // v1_format_ref (the rep size from the AAO catalog) PLUS a
   // FORMAT_DECLARATION_V1_LOSSY_MULTI_SIZE diagnostic so the buyer
   // knows the other 2 sizes are dropped on the v1 wire.
-  test('nytimes_homepage_flex_display emits 3 format_ids + 3 lossy advisories', () => {
+  test('nytimes_homepage_flex_display fans out via catalog lookup', () => {
     const product = JSON.parse(readFileSync(path.join(FIXTURE_DIR, 'nytimes_homepage_mrec.json'), 'utf-8'));
     const { v1, diagnostics } = projectV2ProductToV1(product);
     assert.strictEqual(product.product_id, 'nytimes_homepage_flex_display');
     assert.strictEqual(product.format_options.length, 3);
-    assert.strictEqual(v1.format_ids.length, 3, 'one v1 format_id per format_option (rep size)');
-    assert.strictEqual(diagnostics.length, 3, 'one lossy advisory per format_option');
+
+    // The SDK fans out multi-size declarations by looking each declared
+    // size up in the AAO catalog. image + html5 each have 3 sized
+    // catalog entries → 6 emits total. display_tag has only the
+    // parameterized `display_js` entry → falls back to rep (1 emit).
+    // Total v1 emits: 3 + 3 + 1 = 7. One lossy advisory per format_option.
+    const imageEmits = v1.format_ids.filter(f => f.id.includes('image'));
+    const htmlEmits = v1.format_ids.filter(f => f.id.includes('html'));
+    const tagEmits = v1.format_ids.filter(f => f.id === 'display_js');
+    assert.strictEqual(imageEmits.length, 3, 'image canonical fans to 3 sized catalog entries');
+    assert.strictEqual(htmlEmits.length, 3, 'html5 canonical fans to 3 sized catalog entries');
+    assert.strictEqual(tagEmits.length, 1, 'display_tag has only display_js (parameterized); falls back to rep');
+    assert.strictEqual(v1.format_ids.length, 7, 'total v1 emits across all 3 format_options');
+
+    assert.strictEqual(diagnostics.length, 3, 'one lossy advisory per format_option (sizes was declared multi)');
     for (const d of diagnostics) {
       assert.strictEqual(d.code, 'FORMAT_DECLARATION_V1_LOSSY_MULTI_SIZE');
       assert.strictEqual(d.error.details.size_mode, 'sizes');
       assert.strictEqual(d.error.details.declared_sizes_count, 3);
     }
+    // image + html5 advisories report full coverage (3/3); display_tag reports 1/3.
+    const imageAdvisory = diagnostics.find(d => d.error.details.format_kind === 'image');
+    const htmlAdvisory = diagnostics.find(d => d.error.details.format_kind === 'html5');
+    const tagAdvisory = diagnostics.find(d => d.error.details.format_kind === 'display_tag');
+    assert.strictEqual(imageAdvisory.error.details.emitted_sizes_count, 3);
+    assert.strictEqual(htmlAdvisory.error.details.emitted_sizes_count, 3);
+    assert.strictEqual(
+      tagAdvisory.error.details.emitted_sizes_count,
+      1,
+      'display_tag has only display_js; fan-out finds 0 sized variants and falls back to rep'
+    );
   });
 });
 

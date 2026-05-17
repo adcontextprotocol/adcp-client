@@ -222,6 +222,14 @@ export type ProjectionDiagnostic =
           capability_id?: string;
           size_mode: 'sizes' | 'responsive_range';
           declared_sizes_count?: number;
+          /**
+           * How many v1 format_ids the SDK actually emitted. <
+           * `declared_sizes_count` when the catalog doesn't cover every
+           * declared size; equal when the catalog has full coverage.
+           * The fan-out is non-normative — when this equals 1, only the
+           * seller-asserted rep was emitted; v1 buyers lose the rest.
+           */
+          emitted_sizes_count?: number;
           v1_emit_represents_size?: { width?: number; height?: number };
         };
       };
