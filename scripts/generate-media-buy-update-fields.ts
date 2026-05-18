@@ -33,12 +33,7 @@ const REPO_ROOT = path.join(__dirname, '..');
 function resolveSchemaPath(): string {
   if (process.env.SCHEMA_PATH) return process.env.SCHEMA_PATH;
   const adcpVersion = readFileSync(path.join(REPO_ROOT, 'ADCP_VERSION'), 'utf8').trim();
-  const cached = path.join(
-    REPO_ROOT,
-    'schemas/cache',
-    adcpVersion,
-    'enums/media-buy-valid-action.json'
-  );
+  const cached = path.join(REPO_ROOT, 'schemas/cache', adcpVersion, 'enums/media-buy-valid-action.json');
   if (!existsSync(cached)) {
     throw new Error(`Schema not found at ${cached}. Run \`npm run sync-schemas\` or set SCHEMA_PATH.`);
   }
@@ -88,9 +83,7 @@ function main(): void {
   const tableLines = rows
     .map(row => {
       const fields = row.update_fields.map(f => JSON.stringify(f)).join(', ');
-      const rollup = row.rollup === null
-        ? 'null'
-        : `[${row.rollup.map(r => JSON.stringify(r)).join(', ')}] as const`;
+      const rollup = row.rollup === null ? 'null' : `[${row.rollup.map(r => JSON.stringify(r)).join(', ')}] as const`;
       return (
         `  ${JSON.stringify(row.action)}: {\n` +
         `    update_fields: [${fields}] as const,\n` +
@@ -121,10 +114,7 @@ function main(): void {
   const inverseLines = Object.entries(inverse)
     .sort(([a], [b]) => a.localeCompare(b))
     .map(
-      ([field, actions]) =>
-        `  ${JSON.stringify(field)}: [${actions
-          .map(a => JSON.stringify(a))
-          .join(', ')}] as const,`
+      ([field, actions]) => `  ${JSON.stringify(field)}: [${actions.map(a => JSON.stringify(a)).join(', ')}] as const,`
     )
     .join('\n');
 
@@ -136,8 +126,7 @@ function main(): void {
     '\n} as const;\n\n';
 
   const legacyExport =
-    "export { LEGACY_COARSE_ACTIONS } from './types';\n" +
-    "export type { LegacyCoarseAction } from './types';\n";
+    "export { LEGACY_COARSE_ACTIONS } from './types';\n" + "export type { LegacyCoarseAction } from './types';\n";
 
   const output = banner + tsImports + tsEntry + tableConst + inverseConst + legacyExport;
   const outPath = path.join(REPO_ROOT, 'src/lib/media-buy/update-fields.generated.ts');

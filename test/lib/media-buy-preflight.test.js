@@ -314,17 +314,13 @@ describe('preflightUpdateMediaBuy', () => {
 
 describe('recoveryForModeMismatch', () => {
   test('requires_proposal returns createProposal hint', () => {
-    const r = recoveryForModeMismatch('extend_flight', [
-      { action: 'extend_flight', mode: 'requires_proposal' },
-    ]);
+    const r = recoveryForModeMismatch('extend_flight', [{ action: 'extend_flight', mode: 'requires_proposal' }]);
     assert.strictEqual(r.kind, 'createProposal');
     assert.match(r.message, /create_proposal/);
   });
 
   test('requires_approval returns waitForApproval hint', () => {
-    const r = recoveryForModeMismatch('cancel', [
-      { action: 'cancel', mode: 'requires_approval' },
-    ]);
+    const r = recoveryForModeMismatch('cancel', [{ action: 'cancel', mode: 'requires_approval' }]);
     assert.strictEqual(r.kind, 'waitForApproval');
   });
 
@@ -336,9 +332,7 @@ describe('recoveryForModeMismatch', () => {
   });
 
   test('returns undefined when attempted action not in available list', () => {
-    const r = recoveryForModeMismatch('pause', [
-      { action: 'cancel', mode: 'requires_approval' },
-    ]);
+    const r = recoveryForModeMismatch('pause', [{ action: 'cancel', mode: 'requires_approval' }]);
     assert.strictEqual(r, undefined);
   });
 });

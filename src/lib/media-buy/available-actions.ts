@@ -6,11 +6,7 @@
 // authoritative source and surfaces a deprecation hint when only the
 // legacy field is populated.
 
-import type {
-  MediaBuyActionContext,
-  MediaBuyAvailableAction,
-  MediaBuyValidAction,
-} from './types';
+import type { MediaBuyActionContext, MediaBuyAvailableAction, MediaBuyValidAction } from './types';
 
 /**
  * Source the normalized `available_actions[]` came from. Callers branch on

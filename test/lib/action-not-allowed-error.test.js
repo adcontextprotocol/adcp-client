@@ -3,12 +3,7 @@
 const { test, describe } = require('node:test');
 const assert = require('node:assert');
 
-const {
-  ActionNotAllowedError,
-  adcpErrorToTypedError,
-  isADCPError,
-  isErrorOfType,
-} = require('../../dist/lib/errors');
+const { ActionNotAllowedError, adcpErrorToTypedError, isADCPError, isErrorOfType } = require('../../dist/lib/errors');
 
 describe('ActionNotAllowedError', () => {
   test('parses typed details and exposes structured fields', () => {
@@ -30,9 +25,7 @@ describe('ActionNotAllowedError', () => {
     const err = new ActionNotAllowedError({
       attempted_action: 'increase_budget',
       reason: 'mode_mismatch',
-      currently_available_actions: [
-        { action: 'increase_budget', mode: 'requires_proposal' },
-      ],
+      currently_available_actions: [{ action: 'increase_budget', mode: 'requires_proposal' }],
     });
     assert.ok(err.recovery);
     assert.strictEqual(err.recovery.kind, 'createProposal');
@@ -91,9 +84,7 @@ describe('adcpErrorToTypedError dispatch', () => {
       details: {
         attempted_action: 'increase_budget',
         reason: 'mode_mismatch',
-        currently_available_actions: [
-          { action: 'increase_budget', mode: 'requires_proposal' },
-        ],
+        currently_available_actions: [{ action: 'increase_budget', mode: 'requires_proposal' }],
       },
     });
     assert.ok(typed instanceof ActionNotAllowedError);

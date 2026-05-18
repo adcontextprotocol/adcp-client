@@ -484,10 +484,7 @@ export class ActionNotAllowedError extends ADCPError {
     this.attemptedAction = detailsPayload.attempted_action;
     this.reason = detailsPayload.reason;
     this.currentlyAvailableActions = detailsPayload.currently_available_actions ?? [];
-    this.recovery =
-      detailsPayload.reason === 'mode_mismatch'
-        ? buildModeMismatchRecovery(detailsPayload)
-        : undefined;
+    this.recovery = detailsPayload.reason === 'mode_mismatch' ? buildModeMismatchRecovery(detailsPayload) : undefined;
     this.details = detailsPayload;
   }
 }
@@ -538,12 +535,8 @@ function buildActionNotAllowedMessage(details: ActionNotAllowedErrorDetails): st
   }
 }
 
-function buildModeMismatchRecovery(
-  details: ActionNotAllowedErrorDetails
-): ActionNotAllowedRecovery | undefined {
-  const match = details.currently_available_actions?.find(
-    a => a.action === details.attempted_action
-  );
+function buildModeMismatchRecovery(details: ActionNotAllowedErrorDetails): ActionNotAllowedRecovery | undefined {
+  const match = details.currently_available_actions?.find(a => a.action === details.attempted_action);
   if (!match) return undefined;
   switch (match.mode) {
     case 'requires_proposal':

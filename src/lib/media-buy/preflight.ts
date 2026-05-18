@@ -8,11 +8,7 @@
 //   3. Preflight: `preflightUpdateMediaBuy(buy, request)` - composes
 //      resolver + gate checks into a single ok/not-ok decision.
 
-import {
-  findAvailableAction,
-  getAvailableActions,
-  type AvailableActionsResult,
-} from './available-actions';
+import { findAvailableAction, getAvailableActions, type AvailableActionsResult } from './available-actions';
 import { ACTIONS_BY_FIELD } from './update-fields.generated';
 import type {
   ActionNotAllowedReason,
@@ -34,32 +30,21 @@ function isAvailable(buy: MediaBuyActionContext, action: MediaBuyValidAction): b
 export const canPause = (buy: MediaBuyActionContext): boolean => isAvailable(buy, 'pause');
 export const canResume = (buy: MediaBuyActionContext): boolean => isAvailable(buy, 'resume');
 export const canCancel = (buy: MediaBuyActionContext): boolean => isAvailable(buy, 'cancel');
-export const canExtendFlight = (buy: MediaBuyActionContext): boolean =>
-  isAvailable(buy, 'extend_flight');
-export const canShortenFlight = (buy: MediaBuyActionContext): boolean =>
-  isAvailable(buy, 'shorten_flight');
-export const canUpdateFlightDates = (buy: MediaBuyActionContext): boolean =>
-  isAvailable(buy, 'update_flight_dates');
-export const canIncreaseBudget = (buy: MediaBuyActionContext): boolean =>
-  isAvailable(buy, 'increase_budget');
-export const canDecreaseBudget = (buy: MediaBuyActionContext): boolean =>
-  isAvailable(buy, 'decrease_budget');
-export const canReallocateBudget = (buy: MediaBuyActionContext): boolean =>
-  isAvailable(buy, 'reallocate_budget');
-export const canUpdateTargeting = (buy: MediaBuyActionContext): boolean =>
-  isAvailable(buy, 'update_targeting');
-export const canUpdatePacing = (buy: MediaBuyActionContext): boolean =>
-  isAvailable(buy, 'update_pacing');
+export const canExtendFlight = (buy: MediaBuyActionContext): boolean => isAvailable(buy, 'extend_flight');
+export const canShortenFlight = (buy: MediaBuyActionContext): boolean => isAvailable(buy, 'shorten_flight');
+export const canUpdateFlightDates = (buy: MediaBuyActionContext): boolean => isAvailable(buy, 'update_flight_dates');
+export const canIncreaseBudget = (buy: MediaBuyActionContext): boolean => isAvailable(buy, 'increase_budget');
+export const canDecreaseBudget = (buy: MediaBuyActionContext): boolean => isAvailable(buy, 'decrease_budget');
+export const canReallocateBudget = (buy: MediaBuyActionContext): boolean => isAvailable(buy, 'reallocate_budget');
+export const canUpdateTargeting = (buy: MediaBuyActionContext): boolean => isAvailable(buy, 'update_targeting');
+export const canUpdatePacing = (buy: MediaBuyActionContext): boolean => isAvailable(buy, 'update_pacing');
 export const canUpdateFrequencyCaps = (buy: MediaBuyActionContext): boolean =>
   isAvailable(buy, 'update_frequency_caps');
-export const canReplaceCreative = (buy: MediaBuyActionContext): boolean =>
-  isAvailable(buy, 'replace_creative');
+export const canReplaceCreative = (buy: MediaBuyActionContext): boolean => isAvailable(buy, 'replace_creative');
 export const canUpdateCreativeAssignments = (buy: MediaBuyActionContext): boolean =>
   isAvailable(buy, 'update_creative_assignments');
-export const canAddPackages = (buy: MediaBuyActionContext): boolean =>
-  isAvailable(buy, 'add_packages');
-export const canRemovePackages = (buy: MediaBuyActionContext): boolean =>
-  isAvailable(buy, 'remove_packages');
+export const canAddPackages = (buy: MediaBuyActionContext): boolean => isAvailable(buy, 'add_packages');
+export const canRemovePackages = (buy: MediaBuyActionContext): boolean => isAvailable(buy, 'remove_packages');
 
 /**
  * Whether a creative can be removed from the buy. The current spec keys
@@ -67,10 +52,8 @@ export const canRemovePackages = (buy: MediaBuyActionContext): boolean =>
  * is reserved so future spec revisions that distinguish per-creative
  * removability don't require a signature change.
  */
-export const canRemoveCreative = (
-  buy: MediaBuyActionContext,
-  _creativeId?: string
-): boolean => isAvailable(buy, 'remove_creative');
+export const canRemoveCreative = (buy: MediaBuyActionContext, _creativeId?: string): boolean =>
+  isAvailable(buy, 'remove_creative');
 
 // ---------------------------------------------------------------------------
 // Resolver
@@ -350,9 +333,7 @@ export function preflightUpdateMediaBuy(
   const resolved = getActionForMutation(currentBuy, request);
   const result = getAvailableActions(currentBuy, { silent: true });
   const compat =
-    result.source === 'valid_actions'
-      ? { source: result.source, message: result.deprecationHint ?? '' }
-      : undefined;
+    result.source === 'valid_actions' ? { source: result.source, message: result.deprecationHint ?? '' } : undefined;
 
   if (resolved.length === 0) {
     // Request didn't touch any recognized field. Treat as a no-op the

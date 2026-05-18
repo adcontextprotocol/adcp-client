@@ -55,11 +55,7 @@ export type LegacyCoarseAction = (typeof LEGACY_COARSE_ACTIONS)[number];
  * How a seller honors a given action on a media buy. Buyers branch on this to
  * pick a synchronous, conditional, proposal, or async-approval flow.
  */
-export type MediaBuyActionMode =
-  | 'self_serve'
-  | 'conditional_self_serve'
-  | 'requires_proposal'
-  | 'requires_approval';
+export type MediaBuyActionMode = 'self_serve' | 'conditional_self_serve' | 'requires_proposal' | 'requires_approval';
 
 /**
  * SLA window expressed as a structured duration. Mirrors `sla-window.json`
