@@ -1723,6 +1723,187 @@ describe('default-invariants: impairment.coherence', () => {
     assert.equal(inverse.hint.media_buy_id, 'mb-1');
   });
 
+  // adcp#2860 — audience inverse traversal. Audience refs live at
+  // packages[*].targeting_overlay.audience_include[]; audience_exclude is
+  // NOT a dependency. Mirror the creative inverse coverage.
+
+  test('inverse: suspended audience referenced via audience_include without impairment fails', () => {
+    const out = run([
+      step({
+        step_id: 'suspend',
+        task: 'sync_audiences',
+        response: { audiences: [{ audience_id: 'aud-1', status: 'suspended' }] },
+      }),
+      step({
+        step_id: 'buy',
+        task: 'get_media_buys',
+        response: {
+          media_buys: [
+            mb('mb-1', {
+              status: 'active',
+              health: 'ok',
+              impairments: [],
+              packages: [{ targeting_overlay: { audience_include: ['aud-1'] } }],
+            }),
+          ],
+        },
+      }),
+    ]);
+    const inverse = out[1].output.find(o => o.hint && o.hint.violation === 'inverse');
+    assert.ok(inverse, 'audience inverse violation must produce a failing result');
+    assert.equal(inverse.passed, false);
+    assert.equal(inverse.hint.resource_type, 'audience');
+    assert.equal(inverse.hint.resource_id, 'aud-1');
+    assert.equal(inverse.hint.resource_status, 'suspended');
+    assert.equal(inverse.hint.resource_step_id, 'suspend');
+    assert.equal(inverse.hint.media_buy_id, 'mb-1');
+  });
+
+  test('inverse: suspended audience referenced via audience_include WITH impairment passes', () => {
+    const out = run([
+      step({
+        step_id: 'suspend',
+        task: 'sync_audiences',
+        response: { audiences: [{ audience_id: 'aud-1', status: 'suspended' }] },
+      }),
+      step({
+        step_id: 'buy',
+        task: 'get_media_buys',
+        response: {
+          media_buys: [
+            mb('mb-1', {
+              status: 'active',
+              health: 'impaired',
+              impairments: [{ resource_type: 'audience', resource_id: 'aud-1', package_ids: ['pkg-1'] }],
+              packages: [
+                {
+                  package_id: 'pkg-1',
+                  targeting_overlay: { audience_include: ['aud-1'] },
+                },
+              ],
+            }),
+          ],
+        },
+      }),
+    ]);
+    assert.ok(
+      out[1].output.every(o => o.passed),
+      `propagated impairment should pass; got ${JSON.stringify(out[1].output)}`
+    );
+  });
+
+  test('inverse: suspended audience listed under audience_exclude is NOT a dependency (no failure)', () => {
+    // audience_exclude doesn't require the audience to be serviceable —
+    // the buy still serves; users in the exclude list just aren't reached.
+    const out = run([
+      step({
+        step_id: 'suspend',
+        task: 'sync_audiences',
+        response: { audiences: [{ audience_id: 'aud-x', status: 'suspended' }] },
+      }),
+      step({
+        step_id: 'buy',
+        task: 'get_media_buys',
+        response: {
+          media_buys: [
+            mb('mb-1', {
+              status: 'active',
+              impairments: [],
+              packages: [{ targeting_overlay: { audience_exclude: ['aud-x'] } }],
+            }),
+          ],
+        },
+      }),
+    ]);
+    assert.ok(!out[1].output.some(o => o.hint && o.hint.violation === 'inverse'));
+  });
+
+  test('inverse: suspended audience on a terminal (completed) buy is silent', () => {
+    const out = run([
+      step({
+        step_id: 'suspend',
+        task: 'sync_audiences',
+        response: { audiences: [{ audience_id: 'aud-1', status: 'suspended' }] },
+      }),
+      step({
+        step_id: 'buy',
+        task: 'get_media_buys',
+        response: {
+          media_buys: [
+            mb('mb-1', {
+              status: 'completed',
+              impairments: [],
+              packages: [{ targeting_overlay: { audience_include: ['aud-1'] } }],
+            }),
+          ],
+        },
+      }),
+    ]);
+    assert.ok(!out[1].output.some(o => o.hint && o.hint.violation === 'inverse'));
+  });
+
+  test('inverse: audience recovered to ready clears the failing condition', () => {
+    const out = run([
+      step({
+        step_id: 'suspend',
+        task: 'sync_audiences',
+        response: { audiences: [{ audience_id: 'aud-1', status: 'suspended' }] },
+      }),
+      step({
+        step_id: 'recover',
+        task: 'sync_audiences',
+        response: { audiences: [{ audience_id: 'aud-1', status: 'ready' }] },
+      }),
+      step({
+        step_id: 'buy',
+        task: 'get_media_buys',
+        response: {
+          media_buys: [
+            mb('mb-1', {
+              status: 'active',
+              health: 'ok',
+              impairments: [],
+              packages: [{ targeting_overlay: { audience_include: ['aud-1'] } }],
+            }),
+          ],
+        },
+      }),
+    ]);
+    // After recovery, audience is no longer offline — inverse rule has
+    // nothing to require. Buy with no impairments and health 'ok' passes.
+    assert.ok(out[2].output.every(o => o.passed));
+  });
+
+  test('inverse: extractor reads creative refs from creative_approvals[] on get_media_buys (spec response shape)', () => {
+    // The get_media_buys-response.json package shape uses creative_approvals
+    // (not creative_assignments — that's the request-side shape from
+    // core/package.json). Without this, sellers conformant to the response
+    // schema would have the inverse rule grade silent.
+    const out = run([
+      step({
+        step_id: 'reject',
+        task: 'sync_creatives',
+        response: { creatives: [{ creative_id: 'cr-1', status: 'rejected' }] },
+      }),
+      step({
+        step_id: 'snapshot',
+        task: 'get_media_buys',
+        response: {
+          media_buys: [
+            mb('mb-1', {
+              status: 'active',
+              impairments: [],
+              packages: [{ creative_approvals: [{ creative_id: 'cr-1', approval_status: 'rejected' }] }],
+            }),
+          ],
+        },
+      }),
+    ]);
+    const inverse = out[1].output.find(o => o.hint && o.hint.violation === 'inverse');
+    assert.ok(inverse, 'inverse violation must fire when creative refs are exposed via creative_approvals');
+    assert.equal(inverse.hint.resource_id, 'cr-1');
+  });
+
   test('inverse: rejected creative on a terminal (completed) buy is silent', () => {
     const out = run([
       step({
@@ -2061,10 +2242,6 @@ describe('default-invariants: impairment.coherence', () => {
   // onEnd summary.
   for (const [family, syncStep] of [
     [
-      'audience',
-      s => ({ task: 'sync_audiences', response: { audiences: [{ audience_id: s.id, status: 'suspended' }] } }),
-    ],
-    [
       'catalog_item',
       s => ({
         task: 'sync_catalogs',
@@ -2092,7 +2269,6 @@ describe('default-invariants: impairment.coherence', () => {
       assert.equal(na.hint.resource_type, family);
       assert.equal(na.hint.resource_id, id);
       assert.equal(na.hint.resource_step_id, 'transition');
-      assert.match(na.hint.message, /adcp#2860/);
       assert.match(na.description, /resource_traversal_deferred/);
     });
   }
@@ -2103,13 +2279,13 @@ describe('default-invariants: impairment.coherence', () => {
     const out = run([
       step({
         step_id: 'first',
-        task: 'sync_audiences',
-        response: { audiences: [{ audience_id: 'aud-1', status: 'suspended' }] },
+        task: 'sync_catalogs',
+        response: { catalogs: [{ items: [{ item_id: 'item-1', status: 'withdrawn' }] }] },
       }),
       step({
         step_id: 'resync',
-        task: 'sync_audiences',
-        response: { audiences: [{ audience_id: 'aud-1', status: 'suspended' }] },
+        task: 'sync_catalogs',
+        response: { catalogs: [{ items: [{ item_id: 'item-1', status: 'withdrawn' }] }] },
       }),
     ]);
     const firstNa = out[0].output.filter(o => o.status === 'not_applicable');
@@ -2119,23 +2295,23 @@ describe('default-invariants: impairment.coherence', () => {
   });
 
   test('inverse: recovery then re-transition emits the hint twice (per transition)', () => {
-    // recover → re-suspend re-enters the offline state, which is a new
+    // recover → re-withdraw re-enters the offline state, which is a new
     // transition and re-fires the hint.
     const out = run([
       step({
-        step_id: 'suspend1',
-        task: 'sync_audiences',
-        response: { audiences: [{ audience_id: 'aud-1', status: 'suspended' }] },
+        step_id: 'withdraw1',
+        task: 'sync_catalogs',
+        response: { catalogs: [{ items: [{ item_id: 'item-1', status: 'withdrawn' }] }] },
       }),
       step({
         step_id: 'recover',
-        task: 'sync_audiences',
-        response: { audiences: [{ audience_id: 'aud-1', status: 'ready' }] },
+        task: 'sync_catalogs',
+        response: { catalogs: [{ items: [{ item_id: 'item-1', status: 'active' }] }] },
       }),
       step({
-        step_id: 'suspend2',
-        task: 'sync_audiences',
-        response: { audiences: [{ audience_id: 'aud-1', status: 'suspended' }] },
+        step_id: 'withdraw2',
+        task: 'sync_catalogs',
+        response: { catalogs: [{ items: [{ item_id: 'item-1', status: 'withdrawn' }] }] },
       }),
     ]);
     assert.equal(out[0].output.filter(o => o.status === 'not_applicable').length, 1);
@@ -2158,6 +2334,21 @@ describe('default-invariants: impairment.coherence', () => {
     );
   });
 
+  test('inverse: audience offline transition does NOT emit not_applicable (family is now graded, adcp#2860)', () => {
+    const out = run([
+      step({
+        step_id: 'suspend',
+        task: 'sync_audiences',
+        response: { audiences: [{ audience_id: 'aud-1', status: 'suspended' }] },
+      }),
+    ]);
+    assert.equal(
+      out[0].output.filter(o => o.status === 'not_applicable').length,
+      0,
+      'audience inverse rule is graded post-#2860 — no not_applicable hint'
+    );
+  });
+
   test('inverse: deferred-family hint coexists with a buy snapshot in the same step', () => {
     // When a sync_* step somehow also returns a media-buy snapshot (rare,
     // but the runner unions the two paths cleanly), the hint and the
@@ -2169,9 +2360,9 @@ describe('default-invariants: impairment.coherence', () => {
         response: { creatives: [{ creative_id: 'cr-1', status: 'rejected' }] },
       }),
       step({
-        step_id: 'aud',
-        task: 'sync_audiences',
-        response: { audiences: [{ audience_id: 'aud-1', status: 'suspended' }] },
+        step_id: 'cat',
+        task: 'sync_catalogs',
+        response: { catalogs: [{ items: [{ item_id: 'cat-1', status: 'withdrawn' }] }] },
       }),
       // Buy snapshot follows — forward rule should pass, inverse silent.
       step({
@@ -2181,15 +2372,15 @@ describe('default-invariants: impairment.coherence', () => {
           health: 'impaired',
           impairments: [
             { resource_type: 'creative', resource_id: 'cr-1' },
-            { resource_type: 'audience', resource_id: 'aud-1' },
+            { resource_type: 'catalog_item', resource_id: 'cat-1' },
           ],
           packages: [{ creative_assignments: [{ creative_id: 'cr-1' }] }],
         }),
       }),
     ]);
-    const audNa = out[1].output.find(o => o.status === 'not_applicable');
-    assert.ok(audNa, 'audience transition emits not_applicable');
-    assert.equal(audNa.hint.resource_type, 'audience');
+    const catNa = out[1].output.find(o => o.status === 'not_applicable');
+    assert.ok(catNa, 'catalog_item transition emits not_applicable');
+    assert.equal(catNa.hint.resource_type, 'catalog_item');
     assert.ok(
       out[2].output.every(o => o.passed),
       'buy snapshot grades pass on the forward leg'
@@ -2197,9 +2388,9 @@ describe('default-invariants: impairment.coherence', () => {
   });
 
   test('onEnd: surfaces partial inverse coverage when a deferred-family offline observation lands', () => {
-    // adcp#2860: inverse rule only grades creative today; audience /
-    // catalog_item / event_source references on a buy are forward-only.
-    // When the run actually observes an offline resource in one of those
+    // Inverse rule grades creative and audience; catalog_item /
+    // event_source references on a buy are forward-only. When the run
+    // actually observes an offline resource in one of those deferred
     // families, the deferral is materially relevant — onEnd emits a
     // second result naming the gap so storyboard authors see it at run
     // time instead of having to read the PR description.
@@ -2208,17 +2399,17 @@ describe('default-invariants: impairment.coherence', () => {
     spec.onStep(
       ctx,
       step({
-        step_id: 'aud',
-        task: 'sync_audiences',
-        response: { audiences: [{ audience_id: 'aud-1', status: 'suspended' }] },
+        step_id: 'cat',
+        task: 'sync_catalogs',
+        response: { catalogs: [{ items: [{ item_id: 'cat-1', status: 'withdrawn' }] }] },
       })
     );
     spec.onStep(
       ctx,
       step({
-        step_id: 'cat',
-        task: 'sync_catalogs',
-        response: { catalogs: [{ items: [{ item_id: 'cat-1', status: 'withdrawn' }] }] },
+        step_id: 'es',
+        task: 'sync_event_sources',
+        response: { event_sources: [{ event_source_id: 'es-1', health: { status: 'insufficient' } }] },
       })
     );
     spec.onStep(ctx, step({ step_id: 'buy', task: 'create_media_buy', response: mb('mb-1') }));
@@ -2227,9 +2418,26 @@ describe('default-invariants: impairment.coherence', () => {
     const notice = out[1];
     assert.equal(notice.passed, true);
     assert.match(notice.description, /inverse coverage gap/);
-    assert.match(notice.description, /audience \(1\)/);
     assert.match(notice.description, /catalog_item \(1\)/);
-    assert.match(notice.description, /adcp#2860/);
+    assert.match(notice.description, /event_source \(1\)/);
+  });
+
+  test('onEnd: no deferred-coverage notice when only audience offline observations land (now graded)', () => {
+    // Post-#2860 audience is graded on the inverse rule — an audience-only
+    // run does NOT trigger the deferred-coverage notice.
+    const ctx = makeCtx();
+    spec.onStart(ctx);
+    spec.onStep(
+      ctx,
+      step({
+        step_id: 'suspend',
+        task: 'sync_audiences',
+        response: { audiences: [{ audience_id: 'aud-1', status: 'suspended' }] },
+      })
+    );
+    spec.onStep(ctx, step({ step_id: 'buy', task: 'create_media_buy', response: mb('mb-1') }));
+    const out = spec.onEnd(ctx);
+    assert.equal(out.length, 1, 'no deferred-coverage notice expected');
   });
 
   test('onEnd: no deferred-coverage notice when only creative offline observations land', () => {
