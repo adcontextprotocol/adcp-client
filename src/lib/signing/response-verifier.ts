@@ -139,6 +139,12 @@ export async function verifyResponseSignature(
   // verifier — flag dangerous URI shapes (non-https, userinfo, fragment)
   // before cryptographic work. Distinct from `header_malformed`, which
   // flags the Signature / Signature-Input headers.
+  //
+  // Note: response-side `@target-uri` comes from `response.request.url`,
+  // which is the *client's* reconstruction of what they sent. This check
+  // most often fires on caller-side bugs (Express `req.protocol` lying
+  // behind a non-trust-proxy reverse proxy → http://...) rather than on
+  // wire-level attacker payloads. See ResponseLike.request JSDoc.
   validateTargetUri(response.request.url);
 
   // Step 7: resolve keyid.

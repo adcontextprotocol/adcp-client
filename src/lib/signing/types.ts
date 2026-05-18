@@ -118,8 +118,9 @@ export const MANDATORY_COMPONENTS: ReadonlyArray<string> = ['@method', '@target-
  * covered set further via `SignResponseOptions.additionalComponents`
  * (e.g. `@method`, custom headers).
  *
- * Wire-format contract is provisional until #1826 (`verifyResponseSignature`)
- * lands and is exercised against external implementations. Adopters
- * shipping signed responses today should pin a major version.
+ * Signer ships in #1823; verifier (`verifyResponseSignature`) ships in
+ * #1826. The wire format is now exercised both directions inside this SDK
+ * via round-trip tests. The `v1` tag suffix gives a clean break path if
+ * cross-SDK interop testing later surfaces an incompat.
  */
 export const RESPONSE_MANDATORY_COMPONENTS: ReadonlyArray<string> = ['@status', '@authority', '@target-uri'];
