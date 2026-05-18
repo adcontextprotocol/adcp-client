@@ -628,12 +628,13 @@ describe('end-to-end: provider-signed request verifies under the SDK verifier', 
     const webhookKey = keysData.keys.find(k => k.adcp_use === 'webhook-signing');
     if (!webhookKey) {
       // Conformance vectors don't include a separate webhook-signing key; reuse
-      // the request-signing key with a synthetic adcp_use override for the
-      // verifier's purpose check.
+      // the request-signing key but explicitly override `adcpUse` on the
+      // provider so signWebhookAsync's purpose gate accepts it.
       const provider = new InMemorySigningProvider({
         keyid: kid,
         algorithm: 'ed25519',
         privateKey: privateJwkFor(kid),
+        adcpUse: 'webhook-signing',
       });
       const signed = await signWebhookAsync(SAMPLE_REQUEST, provider, SAMPLE_OPTIONS);
       // Just assert headers shape — full verifier round-trip needs a webhook-purpose key.
