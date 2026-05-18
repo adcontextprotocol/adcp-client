@@ -263,10 +263,16 @@ describe('request-signing grader — end-to-end vs. reference verifier', () => {
       // Positives whose Signature-Input omits "content-digest" must be skipped
       // structurally — the strict-required verifier would reject them with
       // request_signature_components_incomplete before any acceptance check.
+      // Every positive vector in cache 3.0.12 except 002 signs without
+      // content-digest, so all eleven enumerate here.
       const uncoveredPositiveIds = [
         '001-basic-post',
         '003-es256-post',
         '004-multiple-signature-labels',
+        '005-default-port-stripped',
+        '006-dot-segment-path',
+        '007-query-byte-preserved',
+        '008-percent-encoded-path',
         '009-percent-encoded-unreserved-decoded',
         '010-percent-encoded-slash-preserved',
         '011-ipv6-authority',
@@ -334,12 +340,16 @@ describe('request-signing grader — end-to-end vs. reference verifier', () => {
       assert.strictEqual(v002.skipped, true, 'positive/002 should skip under forbidden policy');
       assert.strictEqual(v002.skip_reason, 'capability_profile_mismatch', 'positive/002 skip_reason');
 
-      // Negative-010 (content-digest-mismatch) signs WITH content-digest — same
-      // fate. Likewise negative-018 (digest-covered-when-forbidden) is already
-      // declared 'forbidden' and matches the agent — runs and passes.
-      const v010 = report.negative.find(n => n.vector_id === '010-content-digest-mismatch');
-      assert.ok(v010, '010 in report');
-      assert.strictEqual(v010.skipped, true, 'negative/010 should skip under forbidden policy');
+      // Negatives 010 (content-digest-mismatch) and 023 (multi-valued-content-digest)
+      // sign WITH content-digest — same structural skip. Negative-018
+      // (digest-covered-when-forbidden) is declared 'forbidden' and matches the
+      // agent — runs and passes.
+      for (const id of ['010-content-digest-mismatch', '023-multi-valued-content-digest']) {
+        const v = report.negative.find(n => n.vector_id === id);
+        assert.ok(v, `${id} in report`);
+        assert.strictEqual(v.skipped, true, `negative/${id} should skip under forbidden policy`);
+        assert.strictEqual(v.skip_reason, 'capability_profile_mismatch', `negative/${id} skip_reason`);
+      }
 
       const failures = [...report.positive, ...report.negative].filter(v => !v.passed && !v.skipped);
       assert.deepStrictEqual(

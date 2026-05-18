@@ -694,43 +694,15 @@ function negativeAcceptedErrorCode(vector: NegativeVector, probe: ProbeResult): 
 }
 
 /**
- * Compare a vector's `verifier_capability` fixture against the agent's
- * declared capability profile. Returns a human-readable diagnostic when
- * the two can't coexist — the vector asserts a policy the agent didn't
- * advertise — or `undefined` when the vector is gradable under the
- * agent's profile.
- *
- * Rules (all four must hold for a graded run):
- *   - `covers_content_digest`: asymmetric. Vector-side `'either'` is
- *     permissive only at the declaration level — the structural shape
- *     check below still applies. Agent-side `'either'` is NOT permissive
- *     against a strict vector — an agent that declares `'either'`
- *     accepts covered AND uncovered requests, so it can't pass vectors
- *     007 (`'required'`) or 018 (`'forbidden'`). Those auto-skip with
- *     `capability_profile_mismatch`.
- *   - structural shape: the vector's actual `Signature-Input` must be
- *     compatible with the agent's policy regardless of what
- *     `verifier_capability.covers_content_digest` declares. A vector
- *     signing without `content-digest` can't grade a `'required'`
- *     verifier; a vector signing with `content-digest` can't grade a
- *     `'forbidden'` verifier. Either short-circuits with a
- *     `request_signature_components_*` error before the vector's
- *     intended assertion fires.
- *   - `required_for`: if the vector asserts a required_for operation,
- *     the agent's `required_for` must include it. The reverse is fine
- *     — an agent that requires MORE operations is still conformant
- *     against a vector that asserts fewer.
- *   - `supported`: must match. A vector with `supported: true` doesn't
- *     grade against an agent that declares `supported: false` (the
- *     conformance storyboard already skips such agents outright, but
- *     defense-in-depth).
- */
-/**
  * Inspect the vector's `Signature-Input` header to determine whether the
  * signed components cover `content-digest`. Returns `undefined` when the
  * header is absent or unparseable — the vector exercises a no-signature or
  * malformed-header failure path, so the digest shape check doesn't apply
  * (the verifier short-circuits before the components check).
+ *
+ * Header lookup is canonical-PascalCase + lowercase only. Test fixtures
+ * use canonical PascalCase headers; this isn't a general-purpose
+ * header-name normalizer.
  */
 function vectorSignsContentDigest(vector: PositiveVector | NegativeVector): boolean | undefined {
   const headers = vector.request.headers;
@@ -810,6 +782,38 @@ function contentDigestPolicyMismatch(
   return contentDigestStructuralMismatch(vector, agentPolicy);
 }
 
+/**
+ * Compare a vector's `verifier_capability` fixture and actual signed shape
+ * against the agent's declared capability profile. Returns a
+ * human-readable diagnostic when the vector can't grade against this
+ * profile — or `undefined` when the vector is gradable.
+ *
+ * Rules (all four must hold for a graded run):
+ *   - `supported`: must match. A vector with `supported: true` doesn't
+ *     grade against an agent that declares `supported: false` (the
+ *     conformance storyboard already skips such agents outright, but
+ *     defense-in-depth).
+ *   - `covers_content_digest`: asymmetric. Vector-side `'either'` is
+ *     permissive only at the declaration level — the structural shape
+ *     check below still applies. Agent-side `'either'` is NOT permissive
+ *     against a strict vector — an agent that declares `'either'`
+ *     accepts covered AND uncovered requests, so it can't pass vectors
+ *     007 (`'required'`) or 018 (`'forbidden'`). Those auto-skip with
+ *     `capability_profile_mismatch`.
+ *   - structural shape: the vector's actual `Signature-Input` must
+ *     coexist with the agent's policy regardless of what
+ *     `verifier_capability.covers_content_digest` declares. A vector
+ *     signing without `content-digest` can't grade a `'required'`
+ *     verifier; a vector signing with `content-digest` can't grade a
+ *     `'forbidden'` verifier. Either short-circuits with a
+ *     `request_signature_components_*` error before the vector's
+ *     intended assertion fires.
+ *   - `required_for` / `protocol_methods_required_for`: if the vector
+ *     asserts a required_for operation or method, the agent's
+ *     `required_for` / `protocol_methods_required_for` must include it.
+ *     The reverse is fine — an agent that requires MORE operations is
+ *     still conformant against a vector that asserts fewer.
+ */
 function capabilityMismatch(
   vector: PositiveVector | NegativeVector,
   agentCap: VerifierCapabilityFixture
