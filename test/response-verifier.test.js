@@ -401,3 +401,130 @@ describe('verifyResponseSignature — cross-purpose signing from outside-SDK sou
     );
   });
 });
+
+describe('verifyResponseSignature — step 2 params_incomplete', () => {
+  // Mutate the parsed Signature-Input by dropping one required param. Step 2
+  // fires before crypto, so we don't need the resulting bytes to verify.
+  function dropParam(response, paramName) {
+    const sigInput = response.headers['Signature-Input'];
+    // Match `;<name>=...` whether the value is quoted (string) or bare (int).
+    const stripped = sigInput.replace(new RegExp(`;${paramName}=(?:"[^"]*"|[0-9]+)`), '');
+    return { ...response, headers: { ...response.headers, 'Signature-Input': stripped } };
+  }
+
+  for (const param of ['created', 'expires', 'nonce', 'keyid', 'alg', 'tag']) {
+    test(`rejects when ${param} is missing`, async () => {
+      const response = dropParam(signedResponse(), param);
+      await assert.rejects(
+        () => verifyResponseSignature(response, verifyOptions()),
+        err => err.code === 'response_signature_params_incomplete' && err.failedStep === 2
+      );
+    });
+  }
+});
+
+describe('verifyResponseSignature — step 4 alg_not_allowed', () => {
+  test('rejects when alg is not in the AdCP allowlist (e.g. hs256)', async () => {
+    const response = signedResponse();
+    response.headers['Signature-Input'] = response.headers['Signature-Input'].replace(/alg="[^"]+"/, 'alg="hs256"');
+    await assert.rejects(
+      () => verifyResponseSignature(response, verifyOptions()),
+      err => err.code === 'response_signature_alg_not_allowed' && err.failedStep === 4
+    );
+  });
+});
+
+describe('verifyResponseSignature — step 7 kid mismatch', () => {
+  test('rejects when JWKS resolver returns a JWK whose kid disagrees with the requested keyid', async () => {
+    const response = signedResponse();
+    const mismatchedJwk = publicJwk(KID, { kid: 'some-other-kid' });
+    // StaticJwksResolver indexes by kid; bypass via a custom resolver.
+    const liarJwks = { resolve: async () => mismatchedJwk };
+    await assert.rejects(
+      () => verifyResponseSignature(response, verifyOptions({ jwks: liarJwks })),
+      err => err.code === 'response_signature_key_unknown' && err.failedStep === 7
+    );
+  });
+});
+
+describe('verifyResponseSignature — step 9 revocation_stale', () => {
+  test('re-maps request_signature_revocation_stale → response_signature_revocation_stale', async () => {
+    const response = signedResponse();
+    const { RequestSignatureError: RequestSignatureErrorClass } = require('../dist/lib/signing/index.js');
+    const staleStore = {
+      isRevoked: async () => {
+        throw new RequestSignatureErrorClass(
+          'request_signature_revocation_stale',
+          9,
+          'revocation snapshot is past grace'
+        );
+      },
+    };
+    await assert.rejects(
+      () => verifyResponseSignature(response, verifyOptions({ revocationStore: staleStore })),
+      err => err.code === 'response_signature_revocation_stale' && err.failedStep === 9
+    );
+  });
+});
+
+describe('verifyResponseSignature — step 9a / 13 rate_abuse', () => {
+  test('isCapHit at pre-check phase trips rate_abuse', async () => {
+    const response = signedResponse();
+    const capStore = {
+      has: async () => false,
+      isCapHit: async () => true,
+      insert: async () => 'ok',
+    };
+    await assert.rejects(
+      () => verifyResponseSignature(response, verifyOptions({ replayStore: capStore })),
+      err => err.code === 'response_signature_rate_abuse' && err.failedStep === 9
+    );
+  });
+
+  test('insert returns rate_abuse at commit phase', async () => {
+    const response = signedResponse();
+    const commitStore = {
+      has: async () => false,
+      isCapHit: async () => false,
+      insert: async () => 'rate_abuse',
+    };
+    await assert.rejects(
+      () => verifyResponseSignature(response, verifyOptions({ replayStore: commitStore })),
+      err => err.code === 'response_signature_rate_abuse' && err.failedStep === 13
+    );
+  });
+
+  test('insert returns replayed at commit phase', async () => {
+    // Path 13 vs path 12: cover both phases. Pre-check (12) hit by repeating a
+    // call; this test hits the commit-side replay arm.
+    const response = signedResponse();
+    const racyStore = {
+      has: async () => false,
+      isCapHit: async () => false,
+      insert: async () => 'replayed',
+    };
+    await assert.rejects(
+      () => verifyResponseSignature(response, verifyOptions({ replayStore: racyStore })),
+      err => err.code === 'response_signature_replayed' && err.failedStep === 13
+    );
+  });
+});
+
+describe('verifyResponseSignature — agentUrlForKeyid is invoked with the resolved kid', () => {
+  test('agentUrlForKeyid receives the JWK kid, not the requested keyid', async () => {
+    const response = signedResponse();
+    const seen = [];
+    const result = await verifyResponseSignature(
+      response,
+      verifyOptions({
+        agentUrlForKeyid: kid => {
+          seen.push(kid);
+          return 'https://seller.example.com';
+        },
+      })
+    );
+    assert.strictEqual(seen.length, 1);
+    assert.strictEqual(seen[0], KID);
+    assert.strictEqual(result.agent_url, 'https://seller.example.com');
+  });
+});
