@@ -12,7 +12,7 @@ Three layers, each usable on its own:
 
 - **Resolver**: `getActionForMutation(currentBuy, request)` walks the request body and returns the fine-grained actions it covers as a `ResolvedAction[]`. Direction inference picks `increase_budget` vs `decrease_budget` vs `reallocate_budget` from the per-package budget diff, and `extend_flight` vs `shorten_flight` vs `update_flight_dates` from the start/end-time diff. The action-to-field mapping is read from `enumMetadata.update_fields` in the schema rather than hand-copied; regenerate via `scripts/generate-media-buy-update-fields.ts` on a schema bump.
 
-- **Preflight**: `preflightUpdateMediaBuy(currentBuy, request)` composes the resolver and the gates into a discriminated union: `{ ok: true, actions[], modes[], matched[], requiresAsyncFlow, compat? }` or `{ ok: false, action, reason, currently_available_actions, recovery?, compat? }`. Callers decide whether to fire the network request, or branch on the mode (`self_serve` vs `requires_proposal` vs `requires_approval`) to pick the right flow.
+- **Preflight**: `preflightUpdateMediaBuy(currentBuy, request)` composes the resolver and the gates into a discriminated union: `{ ok: true, actions[], modes[], matched[], requiresAsyncFlow, compat? }` or `{ ok: false, denials: PreflightDenial[], currently_available_actions, compat? }`. Multi-action requests accumulate every blocker in `denials[]` so callers can render every reason in a single pass. Callers decide whether to fire the network request, or branch on the mode (`self_serve` vs `requires_proposal` vs `requires_approval`) to pick the right flow.
 
 Typed error surface:
 

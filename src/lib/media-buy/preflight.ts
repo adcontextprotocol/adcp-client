@@ -46,14 +46,14 @@ export const canUpdateCreativeAssignments = (buy: MediaBuyActionContext): boolea
 export const canAddPackages = (buy: MediaBuyActionContext): boolean => isAvailable(buy, 'add_packages');
 export const canRemovePackages = (buy: MediaBuyActionContext): boolean => isAvailable(buy, 'remove_packages');
 
-/**
- * Whether a creative can be removed from the buy. The current spec keys
- * removability at the buy level, not the creative - the `creativeId` arg
- * is reserved so future spec revisions that distinguish per-creative
- * removability don't require a signature change.
- */
-export const canRemoveCreative = (buy: MediaBuyActionContext, _creativeId?: string): boolean =>
-  isAvailable(buy, 'remove_creative');
+export const canRemoveCreative = (buy: MediaBuyActionContext): boolean => isAvailable(buy, 'remove_creative');
+
+// Float tolerance for comparing summed budgets across packages. Below this
+// difference, two totals are treated as equal (absorbs cent-rounding from
+// per-package decimal math). Currency-agnostic - the spec doesn't pin a
+// minor unit, so half a cent is the smallest representable difference any
+// AdCP currency cares about.
+const BUDGET_EQUAL_TOLERANCE = 0.005;
 
 // ---------------------------------------------------------------------------
 // Resolver
@@ -211,7 +211,7 @@ function resolveBudgetDirection(
 
   // Reallocate: per-package movement in both directions but total
   // unchanged (within float tolerance to absorb cent rounding).
-  if (sawIncrease && sawDecrease && Math.abs(proposedTotal - currentTotal) < 0.005) {
+  if (sawIncrease && sawDecrease && Math.abs(proposedTotal - currentTotal) < BUDGET_EQUAL_TOLERANCE) {
     return { action: 'reallocate_budget', direction: 'reallocate' };
   }
   if (proposedTotal > currentTotal) return { action: 'increase_budget', direction: 'increase' };
@@ -297,15 +297,24 @@ export interface PreflightAllowed {
   compat?: { source: AvailableActionsResult['source']; message: string };
 }
 
-export interface PreflightDenied {
-  ok: false;
-  /** The action the request mapped to that the buy doesn't currently allow. */
+/**
+ * One blocked action in a denied preflight. Multi-action requests can
+ * accumulate several denials in a single result so callers can render
+ * every blocker in one pass.
+ */
+export interface PreflightDenial {
   action: MediaBuyValidAction;
   reason: ActionNotAllowedReason;
-  /** Snapshot of the buy's available_actions[] for caller-side recovery UI. */
-  currently_available_actions: MediaBuyAvailableAction[];
   /** Structured recovery hint when `reason: 'mode_mismatch'`. */
   recovery?: ModeMismatchRecovery;
+}
+
+export interface PreflightDenied {
+  ok: false;
+  /** Every action the request mapped to that the buy doesn't currently allow. */
+  denials: PreflightDenial[];
+  /** Snapshot of the buy's available_actions[] for caller-side recovery UI. */
+  currently_available_actions: MediaBuyAvailableAction[];
   compat?: { source: AvailableActionsResult['source']; message: string };
 }
 
@@ -324,7 +333,8 @@ export type ModeMismatchRecovery =
  * but flagged as a compat fallback.
  *
  * Multi-action requests: every resolved action must be present in
- * `available_actions[]`. First missing action wins the denial.
+ * `available_actions[]`. All missing actions are reported in `denials[]`
+ * so callers can render every blocker in a single pass.
  */
 export function preflightUpdateMediaBuy(
   currentBuy: MediaBuyActionContext,
@@ -340,35 +350,38 @@ export function preflightUpdateMediaBuy(
     // SDK shouldn't dispatch; the caller probably forgot to set something.
     return {
       ok: false,
-      action: 'pause',
-      reason: 'not_supported_on_buy',
+      denials: [{ action: 'pause', reason: 'not_supported_on_buy' }],
       currently_available_actions: result.actions,
-      recovery: undefined,
       compat,
     };
   }
 
   const matched: MediaBuyAvailableAction[] = [];
   const modes: MediaBuyActionMode[] = [];
+  const denials: PreflightDenial[] = [];
 
   for (const resolvedAction of resolved) {
     const lookup = findAvailableAction(currentBuy, resolvedAction.action, { silent: true });
     if (!lookup) {
-      return {
-        ok: false,
-        action: resolvedAction.action,
-        // Without product allowed_actions on the buy we can't distinguish
-        // not_supported_on_product vs not_supported_on_buy. wrong_status
-        // is server-side. Default to not_supported_on_buy - the most
-        // common preflight failure when a seller doesn't advertise the
-        // action on this specific buy.
-        reason: 'not_supported_on_buy',
-        currently_available_actions: result.actions,
-        compat,
-      };
+      // Without product allowed_actions on the buy we can't distinguish
+      // not_supported_on_product vs not_supported_on_buy. wrong_status
+      // is server-side. Default to not_supported_on_buy: the most common
+      // preflight failure when a seller doesn't advertise the action on
+      // this specific buy.
+      denials.push({ action: resolvedAction.action, reason: 'not_supported_on_buy' });
+      continue;
     }
     matched.push(lookup.entry);
     modes.push(lookup.entry.mode);
+  }
+
+  if (denials.length > 0) {
+    return {
+      ok: false,
+      denials,
+      currently_available_actions: result.actions,
+      compat,
+    };
   }
 
   return {

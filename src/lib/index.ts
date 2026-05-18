@@ -282,6 +282,10 @@ export type {
 } from './errors';
 
 // ====== MEDIA BUY ACTIONS (AdCP 3.1 / RFC #4480) ======
+// Note: the 3.1-extended `MediaBuyValidAction` lives in `./media-buy` and is
+// not re-exported here. The top-level `MediaBuyValidAction` continues to
+// reflect whatever the schema-cache codegen produces; import the extended
+// vocabulary from `@adcp/sdk/media-buy` directly to avoid shadowing.
 export type {
   ActionNotAllowedDetails,
   ActionNotAllowedReason,
@@ -291,9 +295,9 @@ export type {
   MediaBuyActionContext,
   MediaBuyActionMode,
   MediaBuyAvailableAction,
-  MediaBuyValidAction as MediaBuyValidActionV31,
   ModeMismatchRecovery,
   PreflightAllowed,
+  PreflightDenial,
   PreflightDenied,
   PreflightResult,
   ResolvedAction,

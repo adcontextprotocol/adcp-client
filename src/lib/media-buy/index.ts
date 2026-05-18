@@ -24,6 +24,7 @@ export {
 export type {
   ModeMismatchRecovery,
   PreflightAllowed,
+  PreflightDenial,
   PreflightDenied,
   PreflightResult,
   ResolvedAction,

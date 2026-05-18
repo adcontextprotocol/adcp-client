@@ -66,10 +66,9 @@ describe('boolean gates', () => {
     assert.strictEqual(canReallocateBudget(buy), true);
   });
 
-  test('canRemoveCreative signature accepts optional creativeId', () => {
+  test('canRemoveCreative reflects remove_creative availability', () => {
     const buy = buyWith([{ action: 'remove_creative', mode: 'self_serve' }]);
     assert.strictEqual(canRemoveCreative(buy), true);
-    assert.strictEqual(canRemoveCreative(buy, 'cr_123'), true);
   });
 
   test('canAddPackages false when not advertised', () => {
@@ -266,19 +265,25 @@ describe('preflightUpdateMediaBuy', () => {
     const buy = buyWith([{ action: 'pause', mode: 'self_serve' }]);
     const result = preflightUpdateMediaBuy(buy, { end_time: '2026-07-01T00:00:00Z' });
     assert.strictEqual(result.ok, false);
-    assert.strictEqual(result.action, 'extend_flight');
-    assert.strictEqual(result.reason, 'not_supported_on_buy');
+    assert.strictEqual(result.denials.length, 1);
+    assert.strictEqual(result.denials[0].action, 'extend_flight');
+    assert.strictEqual(result.denials[0].reason, 'not_supported_on_buy');
     assert.ok(Array.isArray(result.currently_available_actions));
   });
 
-  test('multi-action request fails on first missing action', () => {
+  test('multi-action request reports every blocked action', () => {
+    // Buy advertises only `increase_budget`. Request touches end_time
+    // (extend_flight) AND a second packages[].budget bump that maps to
+    // `increase_budget`, AND a frequency cap change. Two of three should
+    // be denied; the budget bump is allowed.
     const buy = buyWith([{ action: 'increase_budget', mode: 'self_serve' }]);
     const result = preflightUpdateMediaBuy(buy, {
       end_time: '2026-07-01T00:00:00Z',
-      packages: [{ package_id: 'pkg_1', budget: 1500 }],
+      packages: [{ package_id: 'pkg_1', budget: 1500, targeting_overlay: { frequency_cap: { count: 3 } } }],
     });
     assert.strictEqual(result.ok, false);
-    assert.strictEqual(result.action, 'extend_flight');
+    const denied = result.denials.map(d => d.action).sort();
+    assert.deepStrictEqual(denied, ['extend_flight', 'update_frequency_caps']);
   });
 
   test('compat shim populates compat field on valid_actions[] only buy', () => {
