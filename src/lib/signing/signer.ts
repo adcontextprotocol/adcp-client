@@ -52,10 +52,32 @@ export interface SignerKey {
  * scrapers across signer / verifier see consistent vocabulary.
  */
 function assertKeyPurpose(key: SignerKey, expected: AdcpUse): void {
-  const actual = key.privateKey.adcp_use;
+  throwIfPurposeMismatch(key.keyid, key.privateKey.adcp_use, expected);
+}
+
+/**
+ * Async-path equivalent. Mirrors {@link assertKeyPurpose} but reads
+ * `adcpUse` from a {@link SigningProvider} rather than a `SignerKey`.
+ *
+ * **Optional binding.** When `provider.adcpUse` is `undefined`, the gate
+ * is skipped — preserves backward compat with adapters that pre-date the
+ * `SigningProvider.adcpUse` field. Adapter authors who want signer-side
+ * defense-in-depth set `adcpUse` on their provider; the async helpers
+ * (`signRequestAsync` / `signWebhookAsync` / `signResponseAsync`) then
+ * enforce the binding parallel to the sync path.
+ */
+function assertProviderPurpose(
+  provider: { readonly keyid: string; readonly adcpUse?: AdcpUse },
+  expected: AdcpUse
+): void {
+  if (provider.adcpUse === undefined) return;
+  throwIfPurposeMismatch(provider.keyid, provider.adcpUse, expected);
+}
+
+function throwIfPurposeMismatch(keyid: string, actual: string | undefined, expected: AdcpUse): void {
   if (actual === expected) return;
   const message =
-    `Signing key '${key.keyid}' has adcp_use=${actual === undefined ? '<missing>' : `'${actual}'`} ` +
+    `Signing key '${keyid}' has adcp_use=${actual === undefined ? '<missing>' : `'${actual}'`} ` +
     `but the helper requires '${expected}'. Mint a key scoped for '${expected}' via ` +
     `pemToAdcpJwk({ adcp_use: '${expected}' }) — sharing keys across purposes is intentionally refused.`;
   switch (expected) {
@@ -74,6 +96,8 @@ function assertKeyPurpose(key: SignerKey, expected: AdcpUse): void {
     }
   }
 }
+
+export { assertProviderPurpose };
 
 export interface SignRequestOptions {
   coverContentDigest?: boolean;

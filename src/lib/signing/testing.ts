@@ -12,6 +12,11 @@ import type { AdcpJsonWebKey, AdcpSignAlg } from './types';
  */
 export const ALLOW_IN_MEMORY_SIGNER_ENV = 'ADCP_ALLOW_IN_MEMORY_SIGNER';
 
+const ADCP_USE_VALUES = new Set<AdcpUse>(['request-signing', 'webhook-signing', 'response-signing']);
+function isAdcpUse(value: unknown): value is AdcpUse {
+  return typeof value === 'string' && ADCP_USE_VALUES.has(value as AdcpUse);
+}
+
 export interface InMemorySigningProviderOptions {
   /** `kid` published in `Signature-Input`. */
   keyid: string;
@@ -19,6 +24,15 @@ export interface InMemorySigningProviderOptions {
   algorithm: AdcpSignAlg;
   /** Private JWK including the `d` scalar. */
   privateKey: AdcpJsonWebKey;
+  /**
+   * Optional purpose binding. When supplied, the async signing helpers
+   * (`signRequestAsync` / `signWebhookAsync` / `signResponseAsync`) refuse
+   * to sign with a mismatched purpose — same defense-in-depth gate the
+   * sync path's `SignerKey.privateKey.adcp_use` provides. Defaults to the
+   * value carried on `privateKey.adcp_use` when present, so adapters
+   * minted via `pemToAdcpJwk({ adcp_use: ... })` get the binding for free.
+   */
+  adcpUse?: AdcpUse;
 }
 
 /**
@@ -36,6 +50,7 @@ export class InMemorySigningProvider implements SigningProvider {
   readonly keyid: string;
   readonly algorithm: AdcpSignAlg;
   readonly fingerprint: string;
+  readonly adcpUse?: AdcpUse;
   private readonly privateKey: AdcpJsonWebKey;
 
   constructor(options: InMemorySigningProviderOptions) {
@@ -58,6 +73,10 @@ export class InMemorySigningProvider implements SigningProvider {
     this.keyid = options.keyid;
     this.algorithm = options.algorithm;
     this.privateKey = options.privateKey;
+    // Prefer explicit `adcpUse` option; fall back to the JWK's `adcp_use`
+    // metadata so keys minted via `pemToAdcpJwk` get the binding for free.
+    const jwkUse = options.privateKey.adcp_use;
+    this.adcpUse = options.adcpUse ?? (isAdcpUse(jwkUse) ? jwkUse : undefined);
     // Mirrors the historical `privateKeyFingerprint` derivation — same input,
     // same 64-bit cache disambiguator, so behavior carries over for callers
     // who switch from the inline `request_signing` shape to a provider while

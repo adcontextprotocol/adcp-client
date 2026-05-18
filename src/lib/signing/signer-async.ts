@@ -8,6 +8,7 @@ import type {
   SignWebhookOptions,
 } from './signer';
 import {
+  assertProviderPurpose,
   finalizeRequestSignature,
   finalizeResponseSignature,
   prepareRequestSignature,
@@ -32,6 +33,7 @@ export async function signRequestAsync(
   provider: SigningProvider,
   options: SignRequestOptions = {}
 ): Promise<SignedRequest> {
+  assertProviderPurpose(provider, 'request-signing');
   const prepared = prepareRequestSignature(request, { keyid: provider.keyid, alg: provider.algorithm }, options);
   const signature = await provider.sign(Buffer.from(prepared.base, 'utf8'));
   return finalizeRequestSignature(prepared, signature);
@@ -48,6 +50,7 @@ export async function signWebhookAsync(
   provider: SigningProvider,
   options: SignWebhookOptions = {}
 ): Promise<SignedRequest> {
+  assertProviderPurpose(provider, 'webhook-signing');
   const prepared = prepareWebhookSignature(request, { keyid: provider.keyid, alg: provider.algorithm }, options);
   const signature = await provider.sign(Buffer.from(prepared.base, 'utf8'));
   return finalizeRequestSignature(prepared, signature);
@@ -63,6 +66,7 @@ export async function signResponseAsync(
   provider: SigningProvider,
   options: SignResponseOptions = {}
 ): Promise<SignedResponse> {
+  assertProviderPurpose(provider, 'response-signing');
   const prepared = prepareResponseSignature(response, { keyid: provider.keyid, alg: provider.algorithm }, options);
   const signature = await provider.sign(Buffer.from(prepared.base, 'utf8'));
   return finalizeResponseSignature(prepared, signature);
