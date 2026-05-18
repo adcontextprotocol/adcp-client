@@ -73,6 +73,13 @@ export {
 } from './types';
 export { verifyRequestSignature, type VerifyRequestOptions } from './verifier';
 export {
+  createResponseVerifier,
+  verifyResponseSignature,
+  type CreateResponseVerifierOptions,
+  type VerifyResponseOptions,
+  type VerifyResponseResult,
+} from './response-verifier';
+export {
   createWebhookVerifier,
   verifyWebhookSignature,
   WEBHOOK_MANDATORY_COMPONENTS,
