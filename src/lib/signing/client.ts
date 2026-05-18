@@ -20,6 +20,16 @@ export {
 } from './canonicalize';
 export { computeContentDigest, contentDigestMatches, parseContentDigest } from './content-digest';
 export {
+  requestContextFromExpress,
+  requestContextFromFetch,
+  requestContextFromLambda,
+  type ExpressRequestLike,
+  type FetchRequestLike,
+  type LambdaRequestEvent,
+  type RequestContextFromExpressOptions,
+  type RequestContextFromLambdaOptions,
+} from './request-context';
+export {
   finalizeRequestSignature,
   finalizeResponseSignature,
   prepareRequestSignature,
