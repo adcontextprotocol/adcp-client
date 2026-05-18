@@ -251,6 +251,117 @@ describe('request-signing grader — end-to-end vs. reference verifier', () => {
     }
   });
 
+  test('agentContentDigestPolicy "required" skips uncovered vectors structurally (issue #1840)', async () => {
+    const fresh = await startGraderServer({ replayCap: 1000, coversContentDigest: 'required' });
+    try {
+      const report = await gradeRequestSigning(fresh.url, {
+        allowPrivateIp: true,
+        skipRateAbuse: true,
+        agentContentDigestPolicy: 'required',
+      });
+
+      // Positives whose Signature-Input omits "content-digest" must be skipped
+      // structurally — the strict-required verifier would reject them with
+      // request_signature_components_incomplete before any acceptance check.
+      // Every positive vector in cache 3.0.12 except 002 signs without
+      // content-digest, so all eleven enumerate here.
+      const uncoveredPositiveIds = [
+        '001-basic-post',
+        '003-es256-post',
+        '004-multiple-signature-labels',
+        '005-default-port-stripped',
+        '006-dot-segment-path',
+        '007-query-byte-preserved',
+        '008-percent-encoded-path',
+        '009-percent-encoded-unreserved-decoded',
+        '010-percent-encoded-slash-preserved',
+        '011-ipv6-authority',
+        '012-ipv6-authority-default-port-stripped',
+      ];
+      for (const id of uncoveredPositiveIds) {
+        const v = report.positive.find(p => p.vector_id === id);
+        assert.ok(v, `${id} in report`);
+        assert.strictEqual(v.skipped, true, `positive/${id} should skip under required policy`);
+        assert.strictEqual(v.skip_reason, 'capability_profile_mismatch', `positive/${id} skip_reason`);
+      }
+
+      // Vector 002 signs WITH content-digest and declares 'required' — it must
+      // run and pass against a required verifier.
+      const v002 = report.positive.find(p => p.vector_id === '002-post-with-content-digest');
+      assert.ok(v002, '002 in report');
+      assert.strictEqual(v002.skipped, undefined, '002 should not skip under required policy');
+      assert.ok(
+        v002.passed && v002.http_status >= 200 && v002.http_status < 300,
+        `002 should pass: ${v002.diagnostic}`
+      );
+
+      // Negatives whose Signature-Input omits content-digest hit the digest
+      // gate before their intended error path — must be skipped, not failed.
+      const uncoveredNegativeIds = [
+        '008-unknown-keyid',
+        '009-key-ops-missing-verify',
+        '015-signature-invalid',
+        '016-replayed-nonce',
+        '017-key-revoked',
+      ];
+      for (const id of uncoveredNegativeIds) {
+        const v = report.negative.find(n => n.vector_id === id);
+        assert.ok(v, `${id} in report`);
+        assert.strictEqual(v.skipped, true, `negative/${id} should skip under required policy`);
+        assert.strictEqual(v.skip_reason, 'capability_profile_mismatch', `negative/${id} skip_reason`);
+      }
+
+      // No un-skipped failures: every vector that ran must either pass or be
+      // skipped — that's the whole point of the fix.
+      const failures = [...report.positive, ...report.negative].filter(v => !v.passed && !v.skipped);
+      assert.deepStrictEqual(
+        failures.map(v => v.vector_id),
+        [],
+        'no un-skipped failures when grading against a strict-required verifier'
+      );
+    } finally {
+      fresh.server.close();
+    }
+  });
+
+  test('agentContentDigestPolicy "forbidden" skips covered vectors structurally (issue #1840)', async () => {
+    const fresh = await startGraderServer({ replayCap: 1000, coversContentDigest: 'forbidden' });
+    try {
+      const report = await gradeRequestSigning(fresh.url, {
+        allowPrivateIp: true,
+        skipRateAbuse: true,
+        agentContentDigestPolicy: 'forbidden',
+      });
+
+      // Vector 002 signs WITH content-digest — strict-forbidden verifier rejects
+      // it with request_signature_components_unexpected before any other path.
+      const v002 = report.positive.find(p => p.vector_id === '002-post-with-content-digest');
+      assert.ok(v002, '002 in report');
+      assert.strictEqual(v002.skipped, true, 'positive/002 should skip under forbidden policy');
+      assert.strictEqual(v002.skip_reason, 'capability_profile_mismatch', 'positive/002 skip_reason');
+
+      // Negatives 010 (content-digest-mismatch) and 023 (multi-valued-content-digest)
+      // sign WITH content-digest — same structural skip. Negative-018
+      // (digest-covered-when-forbidden) is declared 'forbidden' and matches the
+      // agent — runs and passes.
+      for (const id of ['010-content-digest-mismatch', '023-multi-valued-content-digest']) {
+        const v = report.negative.find(n => n.vector_id === id);
+        assert.ok(v, `${id} in report`);
+        assert.strictEqual(v.skipped, true, `negative/${id} should skip under forbidden policy`);
+        assert.strictEqual(v.skip_reason, 'capability_profile_mismatch', `negative/${id} skip_reason`);
+      }
+
+      const failures = [...report.positive, ...report.negative].filter(v => !v.passed && !v.skipped);
+      assert.deepStrictEqual(
+        failures.map(v => v.vector_id),
+        [],
+        'no un-skipped failures when grading against a strict-forbidden verifier'
+      );
+    } finally {
+      fresh.server.close();
+    }
+  });
+
   test('agentContentDigestPolicy "either" auto-skips vectors 007 and 018 with capability_profile_mismatch', async () => {
     const report = await gradeRequestSigning(instance.url, {
       allowPrivateIp: true,
