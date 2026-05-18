@@ -265,13 +265,70 @@ export {
   IdempotencyConflictError,
   IdempotencyExpiredError,
   ResponseTooLargeError,
+  ActionNotAllowedError,
   adcpErrorToTypedError,
   isADCPError,
   isErrorOfType,
   extractErrorInfo,
   is401Error,
 } from './errors';
-export type { OAuthMetadataInfo } from './errors';
+export type {
+  OAuthMetadataInfo,
+  ActionNotAllowedErrorDetails,
+  ActionNotAllowedReasonValue,
+  ActionNotAllowedAttemptedAction,
+  ActionNotAllowedAvailableAction,
+  ActionNotAllowedRecovery,
+} from './errors';
+
+// ====== MEDIA BUY ACTIONS (AdCP 3.1 / RFC #4480) ======
+export type {
+  ActionNotAllowedDetails,
+  ActionNotAllowedReason,
+  AvailableActionsResult,
+  AvailableActionsSource,
+  LegacyCoarseAction,
+  MediaBuyActionContext,
+  MediaBuyActionMode,
+  MediaBuyAvailableAction,
+  MediaBuyValidAction as MediaBuyValidActionV31,
+  ModeMismatchRecovery,
+  PreflightAllowed,
+  PreflightDenied,
+  PreflightResult,
+  ResolvedAction,
+  SlaWindow,
+  UpdateFieldEntry,
+  UpdateMediaBuyRequestLike,
+} from './media-buy';
+export {
+  ACTIONS_BY_FIELD,
+  LEGACY_COARSE_ACTIONS,
+  UPDATE_FIELDS_BY_ACTION,
+  canAddPackages,
+  canCancel,
+  canDecreaseBudget,
+  canExtendFlight,
+  canIncreaseBudget,
+  canPause,
+  canReallocateBudget,
+  canRemoveCreative,
+  canRemovePackages,
+  canReplaceCreative,
+  canResume,
+  canShortenFlight,
+  canUpdateCreativeAssignments,
+  canUpdateFlightDates,
+  canUpdateFrequencyCaps,
+  canUpdatePacing,
+  canUpdateTargeting,
+  findAvailableAction,
+  getActionForMutation,
+  getAvailableActions,
+  getRollupParent,
+  preflightUpdateMediaBuy,
+  recoveryForModeMismatch,
+} from './media-buy';
 export { InputRequiredError } from './core/TaskExecutor';
 
 // ====== IDEMPOTENCY ======
