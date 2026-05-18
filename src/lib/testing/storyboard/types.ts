@@ -667,6 +667,26 @@ export type StoryboardValidationCheck =
    */
   | 'field_less_than'
   /**
+   * Assert a numeric field in the current step's response is at most (≤) a
+   * comparand. Semantically symmetric with `field_less_than` but with
+   * non-strict comparison — pairs cleanly with cap-style assertions like
+   * "observed frequency stays at or below the requested cap of 3".
+   * The comparand is either a context-captured runtime value (`context_key`)
+   * or a literal number (`value`). Fails with a type error when either
+   * operand is non-numeric or absent. When `context_key` is specified but
+   * absent from `storyboardContext`, passes with a `context_key_absent`
+   * observation. Added for adcp-client#1839.
+   */
+  | 'field_at_most'
+  /**
+   * Assert a numeric field in the current step's response is at least (≥) a
+   * comparand. Mirror of `field_at_most` — pairs with floor-style assertions
+   * like "delivered reach ≥ promised reach". Same operand and
+   * context_key_absent semantics as `field_at_most`. Added for
+   * adcp-client#1839.
+   */
+  | 'field_at_least'
+  /**
    * Assert a field in the current step's response deep-equals a value captured
    * from an earlier step via `context_key`. Unlike `field_value` + `$context.key`
    * substitution (which resolves the comparand at YAML authoring time), this
@@ -895,8 +915,9 @@ export interface StoryboardValidation {
   // ─── field_less_than / field_equals_context fields ────────
   /**
    * Key to look up in the accumulated `storyboardContext` for cross-step
-   * comparison checks (`field_less_than`, `field_equals_context`).
-   * Only consumed by those two check types — ignored on all others.
+   * comparison checks (`field_less_than`, `field_at_most`, `field_at_least`,
+   * `field_equals_context`).
+   * Only consumed by those check types — ignored on all others.
    * When set and the key is absent from context, the check passes with a
    * `context_key_absent` observation rather than failing — the prior step
    * that was supposed to populate the key may have been legitimately skipped.
