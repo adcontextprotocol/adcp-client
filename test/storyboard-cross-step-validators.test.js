@@ -139,6 +139,175 @@ describe('field_less_than', () => {
 });
 
 // ────────────────────────────────────────────────────────────
+// field_greater_than
+// ────────────────────────────────────────────────────────────
+
+describe('field_greater_than', () => {
+  it('passes when field is strictly greater than the literal value', () => {
+    const [result] = runValidations(
+      [{ check: 'field_greater_than', path: 'reach', value: 100, description: 'reach above floor' }],
+      makeCtx({ data: { reach: 150 } })
+    );
+    assert.strictEqual(result.passed, true);
+  });
+
+  it('fails when field equals the literal value (strict greater-than)', () => {
+    // Mirror of the equality-boundary case for field_less_than — strict > must reject equality.
+    const [result] = runValidations(
+      [{ check: 'field_greater_than', path: 'reach', value: 100, description: 'reach above floor' }],
+      makeCtx({ data: { reach: 100 } })
+    );
+    assert.strictEqual(result.passed, false);
+    assert.match(result.error, /100.*>.*100/);
+  });
+
+  it('fails when field is below the literal value', () => {
+    const [result] = runValidations(
+      [{ check: 'field_greater_than', path: 'reach', value: 100, description: 'test' }],
+      makeCtx({ data: { reach: 50 } })
+    );
+    assert.strictEqual(result.passed, false);
+  });
+
+  it('passes using context_key comparand', () => {
+    const [result] = runValidations(
+      [{ check: 'field_greater_than', path: 'spend', context_key: 'min_spend', description: 'test' }],
+      makeCtx({ data: { spend: 200 }, storyboardContext: { min_spend: 100 } })
+    );
+    assert.strictEqual(result.passed, true);
+  });
+});
+
+// ────────────────────────────────────────────────────────────
+// field_at_most
+// ────────────────────────────────────────────────────────────
+
+describe('field_at_most', () => {
+  it('passes when field is strictly less than the literal value', () => {
+    const [result] = runValidations(
+      [{ check: 'field_at_most', path: 'frequency', value: 3, description: 'observed frequency ≤ cap' }],
+      makeCtx({ data: { frequency: 2.5 } })
+    );
+    assert.strictEqual(result.passed, true);
+  });
+
+  it('passes when field equals the literal value (non-strict ≤)', () => {
+    // The whole point of field_at_most vs field_less_than — exact-equality at cap must pass.
+    const [result] = runValidations(
+      [{ check: 'field_at_most', path: 'frequency', value: 3, description: 'observed frequency ≤ cap' }],
+      makeCtx({ data: { frequency: 3 } })
+    );
+    assert.strictEqual(result.passed, true);
+  });
+
+  it('fails when field exceeds the literal value', () => {
+    const [result] = runValidations(
+      [{ check: 'field_at_most', path: 'frequency', value: 3, description: 'observed frequency ≤ cap' }],
+      makeCtx({ data: { frequency: 3.5 } })
+    );
+    assert.strictEqual(result.passed, false);
+    assert.ok(result.error.includes('<='));
+  });
+
+  it('passes using context_key comparand', () => {
+    const [result] = runValidations(
+      [{ check: 'field_at_most', path: 'spend', context_key: 'budget', description: 'spend ≤ budget' }],
+      makeCtx({ data: { spend: 100 }, storyboardContext: { budget: 100 } })
+    );
+    assert.strictEqual(result.passed, true);
+  });
+
+  it('passes with observation when context_key is absent', () => {
+    const [result] = runValidations(
+      [{ check: 'field_at_most', path: 'spend', context_key: 'missing_key', description: 'test' }],
+      makeCtx({ data: { spend: 100 }, storyboardContext: {} })
+    );
+    assert.strictEqual(result.passed, true);
+    assert.ok(result.observations[0].includes('context_key_absent'));
+  });
+
+  it('fails when field is absent', () => {
+    const [result] = runValidations(
+      [{ check: 'field_at_most', path: 'missing', value: 3, description: 'test' }],
+      makeCtx({ data: { frequency: 2 } })
+    );
+    assert.strictEqual(result.passed, false);
+    assert.ok(result.error.includes('not found'));
+  });
+
+  it('fails when field is non-numeric', () => {
+    const [result] = runValidations(
+      [{ check: 'field_at_most', path: 'frequency', value: 3, description: 'test' }],
+      makeCtx({ data: { frequency: 'high' } })
+    );
+    assert.strictEqual(result.passed, false);
+    assert.ok(result.error.includes('finite number'));
+  });
+
+  it('fails when no path is specified', () => {
+    const [result] = runValidations([{ check: 'field_at_most', value: 3, description: 'test' }], makeCtx({ data: {} }));
+    assert.strictEqual(result.passed, false);
+    assert.ok(result.error.includes('path'));
+  });
+});
+
+// ────────────────────────────────────────────────────────────
+// field_at_least
+// ────────────────────────────────────────────────────────────
+
+describe('field_at_least', () => {
+  it('passes when field is strictly greater than the literal value', () => {
+    const [result] = runValidations(
+      [{ check: 'field_at_least', path: 'reach', value: 100, description: 'delivered ≥ promised' }],
+      makeCtx({ data: { reach: 150 } })
+    );
+    assert.strictEqual(result.passed, true);
+  });
+
+  it('passes when field equals the literal value (non-strict ≥)', () => {
+    const [result] = runValidations(
+      [{ check: 'field_at_least', path: 'reach', value: 100, description: 'delivered ≥ promised' }],
+      makeCtx({ data: { reach: 100 } })
+    );
+    assert.strictEqual(result.passed, true);
+  });
+
+  it('fails when field is below the literal value', () => {
+    const [result] = runValidations(
+      [{ check: 'field_at_least', path: 'reach', value: 100, description: 'delivered ≥ promised' }],
+      makeCtx({ data: { reach: 99 } })
+    );
+    assert.strictEqual(result.passed, false);
+    assert.ok(result.error.includes('>='));
+  });
+
+  it('passes using context_key comparand', () => {
+    const [result] = runValidations(
+      [{ check: 'field_at_least', path: 'delivered_reach', context_key: 'promised_reach', description: 'test' }],
+      makeCtx({ data: { delivered_reach: 10000 }, storyboardContext: { promised_reach: 10000 } })
+    );
+    assert.strictEqual(result.passed, true);
+  });
+
+  it('fails when field is non-numeric', () => {
+    const [result] = runValidations(
+      [{ check: 'field_at_least', path: 'reach', value: 100, description: 'test' }],
+      makeCtx({ data: { reach: null } })
+    );
+    assert.strictEqual(result.passed, false);
+  });
+
+  it('fails when comparand is non-numeric', () => {
+    const [result] = runValidations(
+      [{ check: 'field_at_least', path: 'reach', value: 'a lot', description: 'test' }],
+      makeCtx({ data: { reach: 100 } })
+    );
+    assert.strictEqual(result.passed, false);
+    assert.ok(result.error.includes('comparand'));
+  });
+});
+
+// ────────────────────────────────────────────────────────────
 // field_equals_context
 // ────────────────────────────────────────────────────────────
 

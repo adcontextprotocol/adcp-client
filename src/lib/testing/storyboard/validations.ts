@@ -260,7 +260,13 @@ function runValidation(validation: StoryboardValidation, ctx: ValidationContext)
     case 'refs_resolve':
       return validateRefsResolve(validation, ctx);
     case 'field_less_than':
-      return validateFieldLessThan(validation, ctx);
+      return validateNumericComparison(validation, ctx, NUMERIC_OPS.less_than);
+    case 'field_greater_than':
+      return validateNumericComparison(validation, ctx, NUMERIC_OPS.greater_than);
+    case 'field_at_most':
+      return validateNumericComparison(validation, ctx, NUMERIC_OPS.at_most);
+    case 'field_at_least':
+      return validateNumericComparison(validation, ctx, NUMERIC_OPS.at_least);
     case 'field_equals_context':
       return validateFieldEqualsContext(validation, ctx);
     case 'upstream_traffic':
@@ -2316,12 +2322,19 @@ function dedupRefs(refs: Array<Record<string, unknown>>, keys: string[]): Array<
 }
 
 // ────────────────────────────────────────────────────────────
-// field_less_than / field_equals_context (cross-step comparison)
+// Numeric comparison + cross-step value checks
 //
-// Both checks read from ctx.storyboardContext — the accumulator
-// populated by context_outputs rules across step boundaries.
-// The precedent is refs_resolve's `resolveRefsRoot('context', ctx)`
-// path. Added for adcp#2642 cross-step comparison primitives.
+// field_less_than (strict <), field_at_most (≤), field_at_least (≥),
+// and field_equals_context (deep-equals) all read their comparand
+// from `ctx.storyboardContext` — the accumulator populated by
+// `context_outputs` rules across step boundaries — and fall back
+// to the literal `value` field when no `context_key` is set. The
+// precedent for context resolution is refs_resolve's
+// `resolveRefsRoot('context', ctx)` path. The three numeric checks
+// share `validateNumericComparison`; field_equals_context has its
+// own path because its operands aren't required to be numeric.
+// Added for adcp#2642 (less_than, equals_context) and
+// adcp-client#1839 (at_most, at_least).
 // ────────────────────────────────────────────────────────────
 
 /**
@@ -2356,13 +2369,33 @@ function resolveContextComparand(
   return { found: true, value: ctxValue };
 }
 
-function validateFieldLessThan(validation: StoryboardValidation, ctx: ValidationContext): ValidationResult {
+interface NumericOp {
+  /** Check name surfaced in result.check and error prose. */
+  check: 'field_less_than' | 'field_greater_than' | 'field_at_most' | 'field_at_least';
+  /** Human-readable operator (`<`, `>`, `<=`, `>=`) used in error messages. */
+  symbol: string;
+  /** Comparator returning true when `actual` satisfies the assertion vs `comparand`. */
+  compare: (actual: number, comparand: number) => boolean;
+}
+
+const NUMERIC_OPS = {
+  less_than: { check: 'field_less_than', symbol: '<', compare: (a, c) => a < c },
+  greater_than: { check: 'field_greater_than', symbol: '>', compare: (a, c) => a > c },
+  at_most: { check: 'field_at_most', symbol: '<=', compare: (a, c) => a <= c },
+  at_least: { check: 'field_at_least', symbol: '>=', compare: (a, c) => a >= c },
+} as const satisfies Record<string, NumericOp>;
+
+function validateNumericComparison(
+  validation: StoryboardValidation,
+  ctx: ValidationContext,
+  op: NumericOp
+): ValidationResult {
   if (!validation.path) {
     return {
-      check: 'field_less_than',
+      check: op.check,
       passed: false,
       description: validation.description,
-      error: 'No path specified for field_less_than validation',
+      error: `No path specified for ${op.check} validation`,
       json_pointer: null,
       expected: 'path must be set in storyboard validation entry',
       actual: null,
@@ -2372,7 +2405,7 @@ function validateFieldLessThan(validation: StoryboardValidation, ctx: Validation
   const comparandResult = resolveContextComparand(validation, ctx);
   if (!comparandResult.found) {
     return {
-      check: 'field_less_than',
+      check: op.check,
       passed: true,
       description: validation.description,
       observations: [comparandResult.observation],
@@ -2385,44 +2418,44 @@ function validateFieldLessThan(validation: StoryboardValidation, ctx: Validation
 
   if (actual === undefined || actual === null) {
     return {
-      check: 'field_less_than',
+      check: op.check,
       passed: false,
       description: validation.description,
       path: validation.path,
       error: `Field not found at path: ${validation.path}`,
       json_pointer: pointer,
-      expected: `numeric value < ${JSON.stringify(comparand)}`,
+      expected: `numeric value ${op.symbol} ${JSON.stringify(comparand)}`,
       actual: null,
     };
   }
   if (typeof actual !== 'number' || !Number.isFinite(actual)) {
     return {
-      check: 'field_less_than',
+      check: op.check,
       passed: false,
       description: validation.description,
       path: validation.path,
-      error: `field_less_than requires a finite number at path "${validation.path}"; got ${typeof actual} ${JSON.stringify(actual)}`,
+      error: `${op.check} requires a finite number at path "${validation.path}"; got ${typeof actual} ${JSON.stringify(actual)}`,
       json_pointer: pointer,
-      expected: `finite number < ${JSON.stringify(comparand)}`,
+      expected: `finite number ${op.symbol} ${JSON.stringify(comparand)}`,
       actual: actual ?? null,
     };
   }
   if (typeof comparand !== 'number' || !Number.isFinite(comparand)) {
     return {
-      check: 'field_less_than',
+      check: op.check,
       passed: false,
       description: validation.description,
       path: validation.path,
-      error: `field_less_than comparand must be a finite number; got ${typeof comparand} ${JSON.stringify(comparand)}`,
+      error: `${op.check} comparand must be a finite number; got ${typeof comparand} ${JSON.stringify(comparand)}`,
       json_pointer: pointer,
       expected: `finite number (comparand)`,
       actual: actual,
     };
   }
 
-  if (actual < comparand) {
+  if (op.compare(actual, comparand)) {
     return {
-      check: 'field_less_than',
+      check: op.check,
       passed: true,
       description: validation.description,
       path: validation.path,
@@ -2430,13 +2463,13 @@ function validateFieldLessThan(validation: StoryboardValidation, ctx: Validation
     };
   }
   return {
-    check: 'field_less_than',
+    check: op.check,
     passed: false,
     description: validation.description,
     path: validation.path,
-    error: `Expected ${JSON.stringify(actual)} < ${JSON.stringify(comparand)}`,
+    error: `Expected ${JSON.stringify(actual)} ${op.symbol} ${JSON.stringify(comparand)}`,
     json_pointer: pointer,
-    expected: `< ${JSON.stringify(comparand)}`,
+    expected: `${op.symbol} ${JSON.stringify(comparand)}`,
     actual,
   };
 }
