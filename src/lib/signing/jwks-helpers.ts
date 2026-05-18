@@ -35,7 +35,9 @@ export interface PemToAdcpJwkOptions {
    *   (JWS-signed, not RFC 9421). Declared on JWKs published in a tenant's
    *   aggregated JWKS so JSON-typed consumers (e.g., third-party verifiers
    *   filtering by `adcp_use`) can identify governance-signing material;
-   *   this SDK does not yet ship a `signGovernanceContext` helper.
+   *   this SDK does not yet ship a `signGovernanceContext` helper — the
+   *   verifier surface for governance JWS is deferred work tracked under
+   *   adcp-client#1844.
    */
   adcp_use: AdcpUse;
 }
