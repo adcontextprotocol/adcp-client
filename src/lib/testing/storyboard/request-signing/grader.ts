@@ -11,6 +11,7 @@ import {
   verifyRequestSignature,
   type AdcpJsonWebKey,
 } from '../../../signing';
+import { parseSignatureInput } from '../../../signing/parser';
 import type { NegativeVector, PositiveVector, VerifierCapabilityFixture } from './types';
 
 export interface GradeOptions extends LoadVectorsOptions {
@@ -39,7 +40,11 @@ export interface GradeOptions extends LoadVectorsOptions {
    * profile and auto-skips any vector that asserts a policy the agent
    * didn't advertise (e.g., vector 007 requires `covers_content_digest:
    * 'required'`; agent declares `'either'` — auto-skipped with
-   * `skip_reason: 'capability_profile_mismatch'`).
+   * `skip_reason: 'capability_profile_mismatch'`). The grader also parses
+   * each vector's `Signature-Input` and auto-skips vectors whose actual
+   * signed components are structurally incompatible with the agent's
+   * policy (uncovered `content-digest` against a `'required'` verifier,
+   * or covered `content-digest` against a `'forbidden'` verifier).
    *
    * Without this option, every vector runs and cap-profile mismatches
    * produce failed vectors that the operator has to manually translate
@@ -68,18 +73,28 @@ export interface GradeOptions extends LoadVectorsOptions {
   /**
    * Agent's declared `covers_content_digest` policy from
    * `get_adcp_capabilities.request_signing.covers_content_digest`. When set
-   * without `agentCapability`, the grader auto-skips **negative** vectors whose
-   * `verifier_capability.covers_content_digest` asserts a policy the agent
-   * didn't advertise (positive vectors are always gradable regardless of policy):
-   *   - `'either'` → skips neg/007 (`'required'`) and neg/018 (`'forbidden'`)
-   *   - `'required'` → skips neg/018; neg/007 still runs
-   *   - `'forbidden'` → skips neg/007; neg/018 still runs
+   * without `agentCapability`, the grader auto-skips both positive and
+   * negative vectors whose signature shape is structurally incompatible
+   * with the agent's policy:
+   *
+   *   - Vectors whose `verifier_capability.covers_content_digest` asserts
+   *     a strict policy the agent didn't advertise (e.g. `'either'` →
+   *     skips neg/007 (`'required'`) and neg/018 (`'forbidden'`)).
+   *   - Vectors whose actual `Signature-Input` covers `content-digest`
+   *     against a `'forbidden'` agent (rejected with
+   *     `request_signature_components_unexpected` before the intended
+   *     error path).
+   *   - Vectors whose actual `Signature-Input` does not cover
+   *     `content-digest` against a `'required'` agent (rejected with
+   *     `request_signature_components_incomplete` before the intended
+   *     error path).
    *
    * Skipped vectors use `skip_reason: 'capability_profile_mismatch'`.
    *
-   * Has no effect when `agentCapability` is provided — the full capability
-   * fixture's `covers_content_digest` field governs via `capabilityMismatch()`.
-   * Use `agentCapability` when you also need `required_for` skip behavior.
+   * Has no effect when `agentCapability` is provided — the full
+   * capability fixture's `covers_content_digest` field governs via
+   * `capabilityMismatch()`, which performs the same shape check. Use
+   * `agentCapability` when you also need `required_for` skip behavior.
    */
   agentContentDigestPolicy?: 'required' | 'forbidden' | 'either';
   /**
@@ -283,7 +298,7 @@ function preflightSkip(
     return { ...base, skipped: true, skip_reason: 'operator_skip' };
   }
   if (options.agentCapability) {
-    const mismatch = capabilityMismatch(vector.verifier_capability, options.agentCapability);
+    const mismatch = capabilityMismatch(vector, options.agentCapability);
     if (mismatch) {
       // Surface the mismatch in the diagnostic so operators can audit
       // which vectors were dodged. An agent that under-declares its
@@ -300,16 +315,14 @@ function preflightSkip(
       };
     }
   }
-  if (kind === 'negative' && !options.agentCapability && options.agentContentDigestPolicy) {
-    const vectorCd = vector.verifier_capability.covers_content_digest;
-    if (vectorCd !== 'either' && vectorCd !== options.agentContentDigestPolicy) {
+  if (!options.agentCapability && options.agentContentDigestPolicy) {
+    const policyMismatch = contentDigestPolicyMismatch(vector, kind, options.agentContentDigestPolicy);
+    if (policyMismatch) {
       return {
         ...base,
         skipped: true,
         skip_reason: 'capability_profile_mismatch',
-        diagnostic:
-          `Vector asserts covers_content_digest='${vectorCd}' but agent declares '${options.agentContentDigestPolicy}'. ` +
-          `The agent's policy is incompatible with the vector's expected verifier behavior.`,
+        diagnostic: policyMismatch,
       };
     }
   }
@@ -687,13 +700,22 @@ function negativeAcceptedErrorCode(vector: NegativeVector, probe: ProbeResult): 
  * advertise — or `undefined` when the vector is gradable under the
  * agent's profile.
  *
- * Rules (all three must hold for a graded run):
+ * Rules (all four must hold for a graded run):
  *   - `covers_content_digest`: asymmetric. Vector-side `'either'` is
- *     permissive (any agent policy can grade the vector). Agent-side
- *     `'either'` is NOT permissive against a strict vector — an agent
- *     that declares `'either'` accepts covered AND uncovered requests,
- *     so it can't pass vectors 007 (`'required'`) or 018
- *     (`'forbidden'`). Those auto-skip with `capability_profile_mismatch`.
+ *     permissive only at the declaration level — the structural shape
+ *     check below still applies. Agent-side `'either'` is NOT permissive
+ *     against a strict vector — an agent that declares `'either'`
+ *     accepts covered AND uncovered requests, so it can't pass vectors
+ *     007 (`'required'`) or 018 (`'forbidden'`). Those auto-skip with
+ *     `capability_profile_mismatch`.
+ *   - structural shape: the vector's actual `Signature-Input` must be
+ *     compatible with the agent's policy regardless of what
+ *     `verifier_capability.covers_content_digest` declares. A vector
+ *     signing without `content-digest` can't grade a `'required'`
+ *     verifier; a vector signing with `content-digest` can't grade a
+ *     `'forbidden'` verifier. Either short-circuits with a
+ *     `request_signature_components_*` error before the vector's
+ *     intended assertion fires.
  *   - `required_for`: if the vector asserts a required_for operation,
  *     the agent's `required_for` must include it. The reverse is fine
  *     — an agent that requires MORE operations is still conformant
@@ -703,10 +725,96 @@ function negativeAcceptedErrorCode(vector: NegativeVector, probe: ProbeResult): 
  *     conformance storyboard already skips such agents outright, but
  *     defense-in-depth).
  */
+/**
+ * Inspect the vector's `Signature-Input` header to determine whether the
+ * signed components cover `content-digest`. Returns `undefined` when the
+ * header is absent or unparseable — the vector exercises a no-signature or
+ * malformed-header failure path, so the digest shape check doesn't apply
+ * (the verifier short-circuits before the components check).
+ */
+function vectorSignsContentDigest(vector: PositiveVector | NegativeVector): boolean | undefined {
+  const headers = vector.request.headers;
+  const sigInput = headers['Signature-Input'] ?? headers['signature-input'];
+  if (!sigInput) return undefined;
+  try {
+    const parsed = parseSignatureInput(sigInput);
+    return parsed.components.includes('content-digest');
+  } catch {
+    return undefined;
+  }
+}
+
+/**
+ * Return a diagnostic when the vector's actual signed shape is
+ * structurally incompatible with `agentCoversContentDigest` — i.e. the
+ * verifier rejects the request shape before the vector's intended error
+ * path can fire. Returns `undefined` when the shapes can coexist (or the
+ * vector exercises a header-absent/malformed path where this check
+ * doesn't apply).
+ */
+function contentDigestStructuralMismatch(
+  vector: PositiveVector | NegativeVector,
+  agentCoversContentDigest: 'required' | 'forbidden' | 'either'
+): string | undefined {
+  const signsCd = vectorSignsContentDigest(vector);
+  if (signsCd === undefined) return undefined;
+  if (signsCd && agentCoversContentDigest === 'forbidden') {
+    return (
+      `Vector's Signature-Input covers content-digest but agent declares ` +
+      `covers_content_digest='forbidden'. The verifier rejects with ` +
+      `request_signature_components_unexpected before the vector's intended ` +
+      `error path can fire.`
+    );
+  }
+  if (!signsCd && agentCoversContentDigest === 'required') {
+    return (
+      `Vector's Signature-Input does not cover content-digest but agent declares ` +
+      `covers_content_digest='required'. The verifier rejects with ` +
+      `request_signature_components_incomplete before the vector's intended ` +
+      `error path can fire.`
+    );
+  }
+  return undefined;
+}
+
+/**
+ * Capability-profile mismatch resolver used when the operator passes
+ * `agentContentDigestPolicy` without a full `agentCapability` fixture.
+ * Combines two checks:
+ *   - Declared-policy check (negatives only): a negative vector that
+ *     asserts a strict policy the agent didn't advertise can't surface
+ *     its intended error path — the agent never rejects the shape the
+ *     vector is exercising. Positives are unaffected because acceptance
+ *     under a permissive agent still demonstrates the verifier's
+ *     acceptance contract.
+ *   - Structural shape check (positives and negatives): the vector's
+ *     actual `Signature-Input` shape must coexist with the agent's
+ *     policy — otherwise the verifier short-circuits with a
+ *     `request_signature_components_*` error before any other path can
+ *     fire.
+ */
+function contentDigestPolicyMismatch(
+  vector: PositiveVector | NegativeVector,
+  kind: 'positive' | 'negative',
+  agentPolicy: 'required' | 'forbidden' | 'either'
+): string | undefined {
+  if (kind === 'negative') {
+    const vectorCd = vector.verifier_capability.covers_content_digest;
+    if (vectorCd !== 'either' && vectorCd !== agentPolicy) {
+      return (
+        `Vector asserts covers_content_digest='${vectorCd}' but agent declares '${agentPolicy}'. ` +
+        `The agent's policy is incompatible with the vector's expected verifier behavior.`
+      );
+    }
+  }
+  return contentDigestStructuralMismatch(vector, agentPolicy);
+}
+
 function capabilityMismatch(
-  vectorCap: VerifierCapabilityFixture,
+  vector: PositiveVector | NegativeVector,
   agentCap: VerifierCapabilityFixture
 ): string | undefined {
+  const vectorCap = vector.verifier_capability;
   if (vectorCap.supported !== agentCap.supported) {
     return (
       `Vector asserts supported=${vectorCap.supported} but agent declares supported=${agentCap.supported}. ` +
@@ -714,14 +822,13 @@ function capabilityMismatch(
     );
   }
   // `covers_content_digest` asymmetry: vector-side `'either'` is
-  // permissive (any agent policy can grade the vector), but agent-side
-  // `'either'` is NOT permissive against a strict vector — an agent
-  // that declares `'either'` accepts requests with OR without
+  // permissive only if the vector's actual signed shape is compatible
+  // with the agent's policy (handled by the structural check below).
+  // Agent-side `'either'` is NOT permissive against a strict vector —
+  // an agent that declares `'either'` accepts requests with OR without
   // Content-Digest, so vector 007's "MUST reject uncovered request"
   // and vector 018's "MUST reject covered-when-forbidden" are
-  // structurally incompatible with the agent's stance. The check
-  // fires whenever the VECTOR is strict and the agent's declaration
-  // can't pass the vector's assertion.
+  // structurally incompatible with the agent's stance.
   if (
     vectorCap.covers_content_digest !== 'either' &&
     vectorCap.covers_content_digest !== agentCap.covers_content_digest
@@ -731,6 +838,14 @@ function capabilityMismatch(
       `The vector can't grade against this profile — its expected verifier behavior doesn't match what the agent implements.`
     );
   }
+  // Structural shape check: even when vectorCap is permissive (`'either'`),
+  // the vector's actual `Signature-Input` either covers `content-digest` or
+  // not. A `'required'` verifier rejects every uncovered request with
+  // `request_signature_components_incomplete`; a `'forbidden'` verifier
+  // rejects every covered request with `request_signature_components_unexpected`.
+  // Both fire before the vector's intended error path, masking the result.
+  const structural = contentDigestStructuralMismatch(vector, agentCap.covers_content_digest);
+  if (structural) return structural;
   // `required_for` on the vector: every op the vector expects to be
   // required must also be required by the agent. Otherwise a negative
   // vector (e.g., missing signature on `create_media_buy`) would test a
