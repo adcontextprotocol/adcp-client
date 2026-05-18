@@ -23,3 +23,5 @@ Compat shim:
 - `getAvailableActions(buy)` reads `available_actions[]` when present, falls back to synthesizing from `valid_actions[]` with `mode: 'self_serve'`. Returns `{ source: 'available_actions' | 'valid_actions' | 'absent' }` and a `deprecationHint` when only the legacy field was populated. One-shot `console.warn` per process, suppressible via `{ silent: true }`. `findAvailableAction(buy, action)` honors `enumMetadata.rollup` so a fine-grained gate matches a seller's legacy coarse emission (e.g. `canIncreaseBudget` returns true when the seller advertises `update_budget`).
 
 Types are hand-written in `src/lib/media-buy/types.ts` until the next schema-cache bump pulls the AdCP 3.1 sources into `*.generated.ts`; the module index re-exports them from a single import path.
+
+**Schema-bump follow-up.** When `npm run sync-schemas` lands a cache with `enumMetadata` on `media-buy-valid-action.json` (3.1+), re-run `npx tsx scripts/generate-media-buy-update-fields.ts` and commit the regenerated `src/lib/media-buy/update-fields.generated.ts`. The script throws against any cache that lacks the metadata block, so it'll self-flag if you forget.

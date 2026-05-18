@@ -43,8 +43,10 @@ function emitDeprecationWarning(): void {
 }
 
 /**
- * Hook for tests to reset the one-shot warning gate. Not exported from the
- * public barrel.
+ * Hook for tests (this repo's and downstream adopters') to reset the
+ * one-shot warning gate. Underscore-prefixed name signals it's not part
+ * of the buyer-facing API surface; it's exported so test files can call
+ * it through the built `dist/`.
  */
 export function __resetValidActionsWarningForTests(): void {
   warnedOnce = false;

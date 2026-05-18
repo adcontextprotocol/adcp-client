@@ -26,6 +26,7 @@ const {
   recoveryForModeMismatch,
   __resetValidActionsWarningForTests,
 } = require('../../dist/lib/media-buy');
+const { ValidationError } = require('../../dist/lib/errors');
 
 function buyWith(availableActions, overrides = {}) {
   return {
@@ -184,6 +185,25 @@ describe('getActionForMutation resolver', () => {
     assert.strictEqual(result[0].direction, 'shorten');
   });
 
+  test('end_time without baseline falls through to update_flight_dates', () => {
+    // Buy carries no end_time, so direction is indeterminate. Generic
+    // vocabulary is safer than guessing extend.
+    const noBaseline = { available_actions: buy.available_actions, packages: [] };
+    const result = getActionForMutation(noBaseline, { end_time: '2026-07-01T00:00:00Z' });
+    assert.strictEqual(result[0].action, 'update_flight_dates');
+    assert.strictEqual(result[0].direction, 'shift');
+  });
+
+  test('budget unchanged on a single package resolves to reallocate_budget', () => {
+    // Equal totals with no per-package movement still attaches an action
+    // so the preflight gate runs against a real entry.
+    const result = getActionForMutation(buy, {
+      packages: [{ package_id: 'pkg_1', budget: 1000 }],
+    });
+    assert.strictEqual(result[0].action, 'reallocate_budget');
+    assert.strictEqual(result[0].direction, 'reallocate');
+  });
+
   test('end + start touched together resolves to update_flight_dates', () => {
     const result = getActionForMutation(buy, {
       start_time: '2026-04-01T00:00:00Z',
@@ -303,10 +323,20 @@ describe('preflightUpdateMediaBuy', () => {
     assert.strictEqual(result.modes[0], 'self_serve');
   });
 
-  test('empty request body is denied (no-op preflight)', () => {
+  test('empty request body throws ValidationError (buyer-side no-op)', () => {
     const buy = buyWith([{ action: 'pause', mode: 'self_serve' }]);
-    const result = preflightUpdateMediaBuy(buy, {});
-    assert.strictEqual(result.ok, false);
+    assert.throws(() => preflightUpdateMediaBuy(buy, {}), ValidationError);
+  });
+
+  test('request touching only pkg.paused throws (not a real action)', () => {
+    // pkg.paused has no entry in the action mapping - the spec keys pause
+    // at the buy level only. Resolver should ignore it; preflight should
+    // refuse to dispatch a no-op rather than misclassify it as `pause`.
+    const buy = buyWith([{ action: 'pause', mode: 'self_serve' }]);
+    assert.throws(
+      () => preflightUpdateMediaBuy(buy, { packages: [{ package_id: 'pkg_1', paused: false }] }),
+      ValidationError
+    );
   });
 
   test('requiresAsyncFlow false when every mode is self_serve', () => {

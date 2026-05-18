@@ -8,6 +8,7 @@
 //   3. Preflight: `preflightUpdateMediaBuy(buy, request)` - composes
 //      resolver + gate checks into a single ok/not-ok decision.
 
+import { ValidationError } from '../errors';
 import { findAvailableAction, getAvailableActions, type AvailableActionsResult } from './available-actions';
 import { ACTIONS_BY_FIELD } from './update-fields.generated';
 import type {
@@ -50,9 +51,11 @@ export const canRemoveCreative = (buy: MediaBuyActionContext): boolean => isAvai
 
 // Float tolerance for comparing summed budgets across packages. Below this
 // difference, two totals are treated as equal (absorbs cent-rounding from
-// per-package decimal math). Currency-agnostic - the spec doesn't pin a
-// minor unit, so half a cent is the smallest representable difference any
-// AdCP currency cares about.
+// per-package decimal math). Half a cent is the smallest representable
+// difference any current AdCP currency cares about. If a future spec
+// extension allows sub-cent / micro-amount pricing (e.g. programmatic
+// auction-side bidding) this tolerance would mask real reallocations and
+// should be tightened or made currency-aware.
 const BUDGET_EQUAL_TOLERANCE = 0.005;
 
 // ---------------------------------------------------------------------------
@@ -144,7 +147,9 @@ function collectTouchedFields(request: UpdateMediaBuyRequestLike): Set<string> {
   if (request.packages) {
     for (const pkg of request.packages) {
       if (pkg.canceled !== undefined) touched.add('packages[].canceled');
-      if (pkg.paused !== undefined) touched.add('paused');
+      // `pkg.paused` has no entry in the generated action mapping - the
+      // spec keys pause/resume at the buy level only. Drop silently so the
+      // resolver doesn't conflate it with the top-level `paused` action.
       if (pkg.budget !== undefined) touched.add('packages[].budget');
       if (pkg.pacing !== undefined) touched.add('packages[].pacing');
       if (pkg.start_time !== undefined) touched.add('packages[].start_time');
@@ -249,8 +254,10 @@ function resolveFlightEndDirection(
         if (next < cur) return { action: 'shorten_flight', direction: 'shorten' };
       }
     }
-    // Can't tell - default to extend (most common request).
-    return { action: 'extend_flight', direction: 'extend' };
+    // Indeterminate (missing baseline or unparseable dates). Fall through
+    // to the generic vocabulary; sellers that advertise either of the
+    // direction-specific actions usually also advertise update_flight_dates.
+    return { action: 'update_flight_dates', direction: 'shift' };
   }
 
   // packages[].end_time
@@ -335,26 +342,28 @@ export type ModeMismatchRecovery =
  * Multi-action requests: every resolved action must be present in
  * `available_actions[]`. All missing actions are reported in `denials[]`
  * so callers can render every blocker in a single pass.
+ *
+ * Throws `ValidationError` when the request touches no recognized
+ * `update_media_buy` field. This is a buyer-side bug (the SDK was asked to
+ * dispatch a no-op), not a seller-side denial.
  */
 export function preflightUpdateMediaBuy(
   currentBuy: MediaBuyActionContext,
   request: UpdateMediaBuyRequestLike
 ): PreflightResult {
   const resolved = getActionForMutation(currentBuy, request);
+
+  if (resolved.length === 0) {
+    throw new ValidationError(
+      'request',
+      request,
+      'update_media_buy request must touch at least one mutating field (paused, canceled, start_time, end_time, packages[*], or new_packages)'
+    );
+  }
+
   const result = getAvailableActions(currentBuy, { silent: true });
   const compat =
     result.source === 'valid_actions' ? { source: result.source, message: result.deprecationHint ?? '' } : undefined;
-
-  if (resolved.length === 0) {
-    // Request didn't touch any recognized field. Treat as a no-op the
-    // SDK shouldn't dispatch; the caller probably forgot to set something.
-    return {
-      ok: false,
-      denials: [{ action: 'pause', reason: 'not_supported_on_buy' }],
-      currently_available_actions: result.actions,
-      compat,
-    };
-  }
 
   const matched: MediaBuyAvailableAction[] = [];
   const modes: MediaBuyActionMode[] = [];
