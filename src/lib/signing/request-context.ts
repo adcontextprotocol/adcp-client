@@ -76,14 +76,14 @@ export function requestContextFromExpress(
   req: ExpressRequestLike,
   options: RequestContextFromExpressOptions = {}
 ): { method: string; url: string } {
-  const host = req.get('host')?.trim().toLowerCase();
+  const host = normalizeHost(req.get('host'));
   if (!host) {
     throw new TypeError(
       'requestContextFromExpress: Host header is missing. ' +
         'Express returned no `host` — either the inbound request omitted it, or your reverse proxy stripped it.'
     );
   }
-  if (options.hostAllowlist && !options.hostAllowlist.some(h => h.trim().toLowerCase() === host)) {
+  if (options.hostAllowlist && !hostMatchesAllowlist(host, options.hostAllowlist)) {
     throw new TypeError(
       `requestContextFromExpress: Host "${host}" is not in hostAllowlist. ` +
         `A hostile peer may be trying to rebind your signature origin via Host-header injection. ` +
@@ -98,6 +98,13 @@ export function requestContextFromExpress(
         `Set app.set('trust proxy', ...) so Express sees the X-Forwarded-Proto header, ` +
         `or pass forceHttps: false for local dev (loopback / mock-server testing).`
     );
+  }
+  // Defense-in-depth: reject userinfo in originalUrl. A malicious middleware
+  // could mutate req.originalUrl to inject `user@` between host and path —
+  // canonicalAuthority would then sign the userinfo-bearing variant. Express
+  // doesn't normally carry userinfo here but we check rather than trust.
+  if (/[@]/.test(req.originalUrl.split('?')[0] ?? '')) {
+    throw new TypeError('requestContextFromExpress: originalUrl path must not embed userinfo (@).');
   }
   return { method: req.method, url: `${protocol}://${host}${req.originalUrl}` };
 }
@@ -120,6 +127,24 @@ export interface FetchRequestLike {
  * terminate TLS at the edge so `https` is honest.
  */
 export function requestContextFromFetch(request: FetchRequestLike): { method: string; url: string } {
+  // WHATWG accepts `https://user:pw@host/path` as a valid Request URL and
+  // echoes it back verbatim. `canonicalAuthority` would then sign the
+  // userinfo-bearing form, splitting the signature namespace between
+  // userinfo and userinfo-stripped variants of the same logical origin.
+  // Reject at construction time — userinfo never belongs in a signed
+  // `@authority` / `@target-uri`.
+  let parsed: URL;
+  try {
+    parsed = new URL(request.url);
+  } catch {
+    throw new TypeError(`requestContextFromFetch: request.url "${request.url}" is not a parseable URL.`);
+  }
+  if (parsed.username || parsed.password) {
+    throw new TypeError(
+      'requestContextFromFetch: request.url must not embed userinfo. ' +
+        'A signed @authority component with userinfo creates a verifier-splitting confusion vector.'
+    );
+  }
   return { method: request.method, url: request.url };
 }
 
@@ -174,8 +199,11 @@ export function requestContextFromLambda(
         'is this event shaped like something else?'
     );
   }
-  const host = domainName.trim().toLowerCase();
-  if (options.hostAllowlist && !options.hostAllowlist.some(h => h.trim().toLowerCase() === host)) {
+  const host = normalizeHost(domainName);
+  if (!host) {
+    throw new TypeError('requestContextFromLambda: domainName is empty after normalization.');
+  }
+  if (options.hostAllowlist && !hostMatchesAllowlist(host, options.hostAllowlist)) {
     throw new TypeError(
       `requestContextFromLambda: domainName "${host}" is not in hostAllowlist. ` +
         `Multi-tenant API Gateway misroute? Add the legitimate value, or fix the API mapping.`
@@ -186,6 +214,8 @@ export function requestContextFromLambda(
     throw new TypeError('requestContextFromLambda: HTTP method is missing from the event.');
   }
   const path = event.rawPath ?? event.path ?? '/';
+  // Lambda's domainName won't carry a trailing dot in supported configs but
+  // we normalize here so a future shape change can't bypass the allowlist.
   let url = `https://${host}${path}`;
   if (event.rawQueryString) {
     url += `?${event.rawQueryString}`;
@@ -196,4 +226,24 @@ export function requestContextFromLambda(
     if (params.length) url += `?${params.join('&')}`;
   }
   return { method, url };
+}
+
+/**
+ * Normalize a Host / domainName value for allowlist comparison. Lowercase
+ * + trim handle the obvious cases; trailing-dot stripping closes a
+ * documented Host-header bypass where `example.com.` is a distinct string
+ * from `example.com` on some stacks. IPv6 brackets are preserved so the
+ * allowlist entry and the inbound value agree on bracket presence.
+ */
+function normalizeHost(raw: string | undefined): string {
+  if (!raw) return '';
+  let h = raw.trim().toLowerCase();
+  // Strip trailing dot from FQDN. Bracketed IPv6 cannot legitimately
+  // carry a trailing dot, so this only fires on hostnames.
+  if (h.endsWith('.') && !h.endsWith(']')) h = h.slice(0, -1);
+  return h;
+}
+
+function hostMatchesAllowlist(host: string, allowlist: ReadonlyArray<string>): boolean {
+  return allowlist.some(entry => normalizeHost(entry) === host);
 }
