@@ -235,3 +235,207 @@ describe('webhook verifier: webhook_target_uri_malformed (adcp#2467)', () => {
     assert.match(thrown.message, /fragment/);
   });
 });
+
+describe('webhook verifier: step 2 params_incomplete', () => {
+  function signedRequest() {
+    const now = Math.floor(Date.now() / 1000);
+    const signerKey = signerKeyFor('test-ed25519-webhook-2026');
+    const original = {
+      method: 'POST',
+      url: 'https://buyer.example.com/adcp/webhook/foo/agent_123/op_abc',
+      headers: { 'Content-Type': 'application/json' },
+      body: '{"idempotency_key":"whk_step2"}',
+    };
+    const signed = signWebhook(original, signerKey, { now: () => now });
+    return { now, request: { ...original, headers: { ...original.headers, ...signed.headers } } };
+  }
+  const jwks = () => new StaticJwksResolver([toPublicJwk(keyByKid('test-ed25519-webhook-2026'))]);
+
+  for (const param of ['created', 'expires', 'nonce', 'keyid', 'alg', 'tag']) {
+    test(`rejects when ${param} is missing`, async () => {
+      const { now, request } = signedRequest();
+      request.headers['Signature-Input'] = request.headers['Signature-Input'].replace(
+        new RegExp(`;${param}=(?:"[^"]*"|[0-9]+)`),
+        ''
+      );
+      let thrown;
+      try {
+        await verify(request, jwks(), { now });
+      } catch (err) {
+        thrown = err;
+      }
+      assert.ok(thrown instanceof WebhookSignatureError);
+      assert.strictEqual(thrown.code, 'webhook_signature_params_incomplete');
+      assert.strictEqual(thrown.failedStep, 2);
+    });
+  }
+});
+
+describe('webhook verifier: step 4 alg_not_allowed', () => {
+  test('rejects when alg is not in the AdCP allowlist (e.g. hs256)', async () => {
+    const now = Math.floor(Date.now() / 1000);
+    const signerKey = signerKeyFor('test-ed25519-webhook-2026');
+    const original = {
+      method: 'POST',
+      url: 'https://buyer.example.com/adcp/webhook/foo/agent_123/op_abc',
+      headers: { 'Content-Type': 'application/json' },
+      body: '{"idempotency_key":"whk_step4"}',
+    };
+    const signed = signWebhook(original, signerKey, { now: () => now });
+    const tampered = signed.headers['Signature-Input'].replace(/alg="[^"]+"/, 'alg="hs256"');
+    const request = { ...original, headers: { ...original.headers, ...signed.headers, 'Signature-Input': tampered } };
+    const jwks = new StaticJwksResolver([toPublicJwk(keyByKid('test-ed25519-webhook-2026'))]);
+    let thrown;
+    try {
+      await verify(request, jwks, { now });
+    } catch (err) {
+      thrown = err;
+    }
+    assert.ok(thrown instanceof WebhookSignatureError);
+    assert.strictEqual(thrown.code, 'webhook_signature_alg_not_allowed');
+    assert.strictEqual(thrown.failedStep, 4);
+  });
+});
+
+describe('webhook verifier: step 7 kid mismatch', () => {
+  test('rejects when JWKS resolver returns a JWK whose kid disagrees with the requested keyid', async () => {
+    const now = Math.floor(Date.now() / 1000);
+    const signerKey = signerKeyFor('test-ed25519-webhook-2026');
+    const original = {
+      method: 'POST',
+      url: 'https://buyer.example.com/adcp/webhook/foo/agent_123/op_abc',
+      headers: { 'Content-Type': 'application/json' },
+      body: '{"idempotency_key":"whk_step7"}',
+    };
+    const signed = signWebhook(original, signerKey, { now: () => now });
+    const request = { ...original, headers: { ...original.headers, ...signed.headers } };
+    const mismatched = { ...toPublicJwk(keyByKid('test-ed25519-webhook-2026')), kid: 'some-other-kid' };
+    const liarJwks = { resolve: async () => mismatched };
+    let thrown;
+    try {
+      await verify(request, liarJwks, { now });
+    } catch (err) {
+      thrown = err;
+    }
+    assert.ok(thrown instanceof WebhookSignatureError);
+    assert.strictEqual(thrown.code, 'webhook_signature_key_unknown');
+    assert.strictEqual(thrown.failedStep, 7);
+  });
+});
+
+describe('webhook verifier: step 9 revocation_stale', () => {
+  test('re-maps request_signature_revocation_stale → webhook_signature_revocation_stale', async () => {
+    const { RequestSignatureError: RequestSignatureErrorClass } = require('../dist/lib/signing/index.js');
+    const now = Math.floor(Date.now() / 1000);
+    const signerKey = signerKeyFor('test-ed25519-webhook-2026');
+    const original = {
+      method: 'POST',
+      url: 'https://buyer.example.com/adcp/webhook/foo/agent_123/op_abc',
+      headers: { 'Content-Type': 'application/json' },
+      body: '{"idempotency_key":"whk_stale"}',
+    };
+    const signed = signWebhook(original, signerKey, { now: () => now });
+    const request = { ...original, headers: { ...original.headers, ...signed.headers } };
+    const jwks = new StaticJwksResolver([toPublicJwk(keyByKid('test-ed25519-webhook-2026'))]);
+    const staleStore = {
+      isRevoked: async () => {
+        throw new RequestSignatureErrorClass(
+          'request_signature_revocation_stale',
+          9,
+          'revocation snapshot is past grace'
+        );
+      },
+    };
+    let thrown;
+    try {
+      await verifyWebhookSignature(request, {
+        jwks,
+        replayStore: new InMemoryReplayStore(),
+        revocationStore: staleStore,
+        now: () => now,
+      });
+    } catch (err) {
+      thrown = err;
+    }
+    assert.ok(thrown instanceof WebhookSignatureError);
+    assert.strictEqual(thrown.code, 'webhook_signature_revocation_stale');
+    assert.strictEqual(thrown.failedStep, 9);
+  });
+});
+
+describe('webhook verifier: step 9a / 13 rate_abuse', () => {
+  function signedRequest() {
+    const now = Math.floor(Date.now() / 1000);
+    const signerKey = signerKeyFor('test-ed25519-webhook-2026');
+    const original = {
+      method: 'POST',
+      url: 'https://buyer.example.com/adcp/webhook/foo/agent_123/op_abc',
+      headers: { 'Content-Type': 'application/json' },
+      body: '{"idempotency_key":"whk_rate"}',
+    };
+    const signed = signWebhook(original, signerKey, { now: () => now });
+    return { now, request: { ...original, headers: { ...original.headers, ...signed.headers } } };
+  }
+  const jwks = () => new StaticJwksResolver([toPublicJwk(keyByKid('test-ed25519-webhook-2026'))]);
+
+  async function runWithStore(replayStore) {
+    const { now, request } = signedRequest();
+    return verifyWebhookSignature(request, {
+      jwks: jwks(),
+      replayStore,
+      revocationStore: new InMemoryRevocationStore(),
+      now: () => now,
+    });
+  }
+
+  test('isCapHit pre-check trips rate_abuse', async () => {
+    const capStore = {
+      has: async () => false,
+      isCapHit: async () => true,
+      insert: async () => 'ok',
+    };
+    let thrown;
+    try {
+      await runWithStore(capStore);
+    } catch (err) {
+      thrown = err;
+    }
+    assert.ok(thrown instanceof WebhookSignatureError);
+    assert.strictEqual(thrown.code, 'webhook_signature_rate_abuse');
+    assert.strictEqual(thrown.failedStep, 9);
+  });
+
+  test('insert returns rate_abuse at commit phase', async () => {
+    const commitStore = {
+      has: async () => false,
+      isCapHit: async () => false,
+      insert: async () => 'rate_abuse',
+    };
+    let thrown;
+    try {
+      await runWithStore(commitStore);
+    } catch (err) {
+      thrown = err;
+    }
+    assert.ok(thrown instanceof WebhookSignatureError);
+    assert.strictEqual(thrown.code, 'webhook_signature_rate_abuse');
+    assert.strictEqual(thrown.failedStep, 13);
+  });
+
+  test('insert returns replayed at commit phase', async () => {
+    const racyStore = {
+      has: async () => false,
+      isCapHit: async () => false,
+      insert: async () => 'replayed',
+    };
+    let thrown;
+    try {
+      await runWithStore(racyStore);
+    } catch (err) {
+      thrown = err;
+    }
+    assert.ok(thrown instanceof WebhookSignatureError);
+    assert.strictEqual(thrown.code, 'webhook_signature_replayed');
+    assert.strictEqual(thrown.failedStep, 13);
+  });
+});
