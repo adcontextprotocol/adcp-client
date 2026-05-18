@@ -51,7 +51,17 @@ export interface SignerKey {
  * Errors emit the same code the verifier uses for that direction so log
  * scrapers across signer / verifier see consistent vocabulary.
  */
-function assertKeyPurpose(key: SignerKey, expected: AdcpUse): void {
+/**
+ * Subset of {@link AdcpUse} that the RFC 9421 helpers in this module emit
+ * as `expected`. Governance signing is JWS-based and lives on a different
+ * code path; narrowing the parameter here lets the exhaustiveness branch
+ * stay tight without a `case 'governance-signing':` arm that throws an
+ * untyped error. A future JWS helper would mint its own typed error class
+ * rather than route through `throwIfPurposeMismatch`.
+ */
+type Rfc9421AdcpUse = Exclude<AdcpUse, 'governance-signing'>;
+
+function assertKeyPurpose(key: SignerKey, expected: Rfc9421AdcpUse): void {
   throwIfPurposeMismatch(key.keyid, key.privateKey.adcp_use, expected);
 }
 
@@ -68,13 +78,13 @@ function assertKeyPurpose(key: SignerKey, expected: AdcpUse): void {
  */
 function assertProviderPurpose(
   provider: { readonly keyid: string; readonly adcpUse?: AdcpUse },
-  expected: AdcpUse
+  expected: Rfc9421AdcpUse
 ): void {
   if (provider.adcpUse === undefined) return;
   throwIfPurposeMismatch(provider.keyid, provider.adcpUse, expected);
 }
 
-function throwIfPurposeMismatch(keyid: string, actual: string | undefined, expected: AdcpUse): void {
+function throwIfPurposeMismatch(keyid: string, actual: string | undefined, expected: Rfc9421AdcpUse): void {
   if (actual === expected) return;
   const message =
     `Signing key '${keyid}' has adcp_use=${actual === undefined ? '<missing>' : `'${actual}'`} ` +
@@ -88,11 +98,12 @@ function throwIfPurposeMismatch(keyid: string, actual: string | undefined, expec
     case 'response-signing':
       throw new ResponseSignatureError('response_signature_key_purpose_invalid', 8, message);
     default: {
-      // Compile-time exhaustiveness: a future `AdcpUse` widening must add
-      // a case arm here. Trips `tsc --noEmit` if the union grows without
-      // an explicit gate decision for the new member.
+      // Compile-time exhaustiveness: a future widening of `Rfc9421AdcpUse`
+      // (typically because `AdcpUse` grew an RFC-9421 member) must add a
+      // case arm here. Trips `tsc --noEmit` if the union grows without an
+      // explicit gate decision for the new member.
       const _exhaustive: never = expected;
-      throw new Error(`unreachable: unhandled AdcpUse '${_exhaustive}'`);
+      throw new Error(`unreachable: unhandled Rfc9421AdcpUse '${_exhaustive}'`);
     }
   }
 }

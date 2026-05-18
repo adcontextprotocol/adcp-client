@@ -12,7 +12,12 @@ import type { AdcpJsonWebKey, AdcpSignAlg } from './types';
  */
 export const ALLOW_IN_MEMORY_SIGNER_ENV = 'ADCP_ALLOW_IN_MEMORY_SIGNER';
 
-const ADCP_USE_VALUES = new Set<AdcpUse>(['request-signing', 'webhook-signing', 'response-signing']);
+const ADCP_USE_VALUES = new Set<AdcpUse>([
+  'request-signing',
+  'webhook-signing',
+  'response-signing',
+  'governance-signing',
+]);
 function isAdcpUse(value: unknown): value is AdcpUse {
   return typeof value === 'string' && ADCP_USE_VALUES.has(value as AdcpUse);
 }
@@ -141,9 +146,10 @@ export interface MintEphemeralEd25519KeyOptions {
    */
   kid?: string;
   /**
-   * AdCP purpose binding tagged on both JWKs.
-   * - `'webhook-signing'` (default) — outbound webhook callbacks.
-   * - `'request-signing'` — buyer-to-seller signed requests (AdCP step 8).
+   * AdCP purpose binding tagged on both JWKs. Accepts every member of
+   * {@link AdcpUse} — see that type for the canonical list (currently
+   * `'webhook-signing'`, `'request-signing'`, `'response-signing'`,
+   * `'governance-signing'`). Defaults to `'webhook-signing'`.
    *
    * For production request-signing keys use `pemToAdcpJwk()` or a KMS-backed
    * `SigningProvider` instead.
