@@ -11,8 +11,6 @@ const {
   InMemoryReplayStore,
   InMemoryRevocationStore,
   ResponseSignatureError,
-  RESPONSE_SIGNING_TAG,
-  computeContentDigest,
 } = require('../dist/lib/signing/index.js');
 
 const KEYS_PATH = path.join(
