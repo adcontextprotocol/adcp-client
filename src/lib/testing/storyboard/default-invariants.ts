@@ -1043,6 +1043,7 @@ interface BuySnapshot {
   health: string | undefined;
   impairments: ImpairmentEntry[];
   referencedCreativeIds: Set<string>;
+  referencedAudienceIds: Set<string>;
   stepId: string;
 }
 
@@ -1055,13 +1056,19 @@ interface ResourceObservation {
  * Resource families the inverse rule does NOT yet grade — the buy-side
  * reference shape for these in `media_buy.packages` isn't stable in the
  * cached schema, so we can't reliably tell which buys reference which
- * resources. Tracked in adcontextprotocol/adcp#2860. Listed here so the
- * onEnd summary can emit a runtime "partial inverse coverage" signal when
- * the run actually observed offline resources in one of these families —
- * making the deferral visible to storyboard authors and reviewers rather
- * than burying it in PR prose and JSDoc.
+ * resources. Listed here so the onEnd summary can emit a runtime
+ * "partial inverse coverage" signal when the run actually observed
+ * offline resources in one of these families — making the deferral
+ * visible to storyboard authors and reviewers rather than burying it in
+ * PR prose and JSDoc.
+ *
+ * `audience` was deferred prior to adcp#2860 — the buy-side reference
+ * lives at `packages[*].targeting_overlay.audience_include[]` and is now
+ * extracted in `readBuySnapshot`. `catalog_item` and `event_source` stay
+ * deferred: a buy doesn't reference catalog_items or event_sources by
+ * stable id in the cached schema.
  */
-const INVERSE_DEFERRED_FAMILIES: ReadonlySet<string> = new Set(['audience', 'catalog_item', 'event_source']);
+const INVERSE_DEFERRED_FAMILIES: ReadonlySet<string> = new Set(['catalog_item', 'event_source']);
 
 /**
  * Private per-run scratch state. Namespaced under
@@ -1153,23 +1160,20 @@ registerOnce('impairment.coherence', {
 
         // Issue #1806: surface deferred inverse-rule coverage at the
         // transition step. When a resource family the runner can't yet
-        // reverse-traverse (`audience` / `catalog_item` / `event_source`)
-        // enters an offline state for the first time in this run, emit a
+        // reverse-traverse (`catalog_item` / `event_source`) enters an
+        // offline state for the first time in this run, emit a
         // `not_applicable` step-level result so reviewers see the gap in
         // run output instead of having to read PR prose. One emission per
         // (resource_type, resource_id) per run — re-syncs of an already
-        // offline resource don't re-fire.
-        if (
-          !wasOffline &&
-          (ob.resource_type === 'audience' ||
-            ob.resource_type === 'catalog_item' ||
-            ob.resource_type === 'event_source')
-        ) {
+        // offline resource don't re-fire. `audience` is no longer in this
+        // set: post-adcp#2860 the runner extracts audience refs from
+        // packages[*].targeting_overlay.audience_include[] and grades the
+        // inverse rule for audience the same way it grades creative.
+        if (!wasOffline && (ob.resource_type === 'catalog_item' || ob.resource_type === 'event_source')) {
           const message =
             `inverse-rule coverage for ${ob.resource_type} ${ob.resource_id} ` +
             `(status="${ob.status}", step "${stepResult.step_id}") is deferred — ` +
-            `buy → resource traversal not yet implemented for this family. ` +
-            `Tracked in adcontextprotocol/adcp#2860.`;
+            `buy → resource traversal not yet implemented for this family.`;
           deferredCoverageResults.push({
             passed: true,
             status: 'not_applicable',
@@ -1277,47 +1281,53 @@ registerOnce('impairment.coherence', {
         });
       }
 
-      // Inverse check (creative only). For each creative_id the buy
-      // references via packages[].creative_assignments[].creative_id, if
-      // the runner has it in the offline set AND the buy is non-terminal
-      // AND the impairments[] list doesn't mention it, the seller failed
-      // to propagate the resource state into the buy. Audience / catalog /
-      // event-source inverse coverage is intentionally deferred: their
-      // buy-side reference shape isn't yet stable enough in the cached
-      // schema to extract without ambiguity. Tracked in adcp#2860.
+      // Inverse check. For each resource the buy references — creatives
+      // via `packages[].creative_assignments[].creative_id`, audiences via
+      // `packages[].targeting_overlay.audience_include[]` — if the runner
+      // has it in the offline set AND the buy is non-terminal AND the
+      // impairments[] list doesn't mention it, the seller failed to
+      // propagate the resource state into the buy. `catalog_item` and
+      // `event_source` inverse coverage is still deferred: their buy-side
+      // reference shape isn't yet stable enough in the cached schema to
+      // extract without ambiguity.
       if (isTerminal) continue;
 
-      const impairedCreativeIds = new Set(
-        snap.impairments.filter(e => e.resource_type === 'creative').map(e => e.resource_id)
-      );
-      for (const creativeId of snap.referencedCreativeIds) {
-        const key = `creative:${creativeId}`;
-        const offline = state.offlineResources.get(key);
-        if (!offline) continue;
-        if (impairedCreativeIds.has(creativeId)) continue;
-        const message =
-          `media_buy ${snap.media_buy_id} (status="${snap.status ?? 'unknown'}") references creative ` +
-          `${creativeId} which is offline (status="${offline.status}", step "${offline.stepId}"), ` +
-          `but impairments[] does not list it. Spec: any offline resource referenced by a ` +
-          `non-terminal buy MUST appear in impairments[] (adcp#2859).`;
-        results.push({
-          passed: false,
-          description,
-          step_id: stepResult.step_id,
-          error: message,
-          hint: {
-            kind: 'impairment_coherence_violation',
-            violation: 'inverse',
-            message,
-            media_buy_id: snap.media_buy_id,
-            buy_step_id: snap.stepId,
-            resource_type: 'creative',
-            resource_id: creativeId,
-            resource_status: offline.status,
-            resource_step_id: offline.stepId,
-            impairments_count: snap.impairments.length,
-          },
-        });
+      for (const [resourceType, referencedIds] of [
+        ['creative', snap.referencedCreativeIds] as const,
+        ['audience', snap.referencedAudienceIds] as const,
+      ]) {
+        const impairedIds = new Set(
+          snap.impairments.filter(e => e.resource_type === resourceType).map(e => e.resource_id)
+        );
+        for (const resourceId of referencedIds) {
+          const key = `${resourceType}:${resourceId}`;
+          const offline = state.offlineResources.get(key);
+          if (!offline) continue;
+          if (impairedIds.has(resourceId)) continue;
+          const message =
+            `media_buy ${snap.media_buy_id} (status="${snap.status ?? 'unknown'}") references ${resourceType} ` +
+            `${resourceId} which is offline (status="${offline.status}", step "${offline.stepId}"), ` +
+            `but impairments[] does not list it. Spec: any offline resource referenced by a ` +
+            `non-terminal buy MUST appear in impairments[] (adcp#2859).`;
+          results.push({
+            passed: false,
+            description,
+            step_id: stepResult.step_id,
+            error: message,
+            hint: {
+              kind: 'impairment_coherence_violation',
+              violation: 'inverse',
+              message,
+              media_buy_id: snap.media_buy_id,
+              buy_step_id: snap.stepId,
+              resource_type: resourceType,
+              resource_id: resourceId,
+              resource_status: offline.status,
+              resource_step_id: offline.stepId,
+              impairments_count: snap.impairments.length,
+            },
+          });
+        }
       }
     }
 
@@ -1360,8 +1370,8 @@ registerOnce('impairment.coherence', {
           passed: true,
           description:
             'inverse coverage gap: offline resources observed for families the runner does not yet grade ' +
-            'on the inverse rule (creative is graded; audience/catalog_item/event_source are forward-only). ' +
-            `Observed: ${summary}. Tracked in adcontextprotocol/adcp#2860.`,
+            'on the inverse rule (creative and audience are graded; catalog_item and event_source are forward-only). ' +
+            `Observed: ${summary}.`,
           observation_count: 0,
         });
       }
@@ -1432,9 +1442,11 @@ function extractImpairmentObservations(
  * Extract every media-buy snapshot present on a step response. Walks
  * `create_media_buy` / `update_media_buy` (top-level buy object) and
  * `get_media_buys` (`media_buys[]` array). Returns each snapshot's
- * impairments[], health, status, and the set of `creative_id`s the buy
- * references through `packages[].creative_assignments[]` — used by the
- * inverse rule.
+ * impairments[], health, status, the set of `creative_id`s the buy
+ * references through `packages[].creative_assignments[]`, and the set of
+ * `audience_id`s referenced through `packages[].targeting_overlay.audience_include[]`.
+ * Both reference sets feed the inverse rule. `audience_exclude` is not
+ * collected — excluding an audience does not require it to be serviceable.
  */
 function extractBuySnapshots(task: string, body: Record<string, unknown>, stepId: string): BuySnapshot[] {
   const out: BuySnapshot[] = [];
@@ -1465,13 +1477,46 @@ function readBuySnapshot(record: Record<string, unknown>, stepId: string): BuySn
     impairments.push({ resource_type, resource_id });
   }
   const referencedCreativeIds = new Set<string>();
+  const referencedAudienceIds = new Set<string>();
   for (const pkg of asArray(record.packages)) {
     if (!isObject(pkg)) continue;
+    // Creative refs appear in two shapes on the wire:
+    //   - `core/package.json` → `creative_assignments[].creative_id` (used on
+    //     create_media_buy request/response, update_media_buy)
+    //   - `get-media-buys-response.json` → `creative_approvals[].creative_id`
+    //     (the snapshot shape — `creative_approvals` carries per-assignment
+    //     approval_status alongside the id)
+    // Walk both — sellers conformant to either schema surface the references
+    // we need for the inverse rule. (The SDK previously only walked the
+    // request shape, which made the inverse rule silent on conformant
+    // get_media_buys snapshots; tracked in adcp#2860.)
     for (const ca of asArray(pkg.creative_assignments)) {
       if (!isObject(ca)) continue;
       const cid = asString(ca.creative_id);
       if (cid) referencedCreativeIds.add(cid);
     }
+    for (const ca of asArray(pkg.creative_approvals)) {
+      if (!isObject(ca)) continue;
+      const cid = asString(ca.creative_id);
+      if (cid) referencedCreativeIds.add(cid);
+    }
+    // Audience refs: only `audience_include` counts as a hard dependency.
+    // `audience_exclude` doesn't — a suspended exclude-audience does not
+    // prevent the buy from serving.
+    const overlay = isObject(pkg.targeting_overlay) ? pkg.targeting_overlay : undefined;
+    if (overlay) {
+      for (const aid of asArray(overlay.audience_include)) {
+        if (typeof aid === 'string' && aid.length > 0) referencedAudienceIds.add(aid);
+      }
+    }
   }
-  return { media_buy_id, status, health, impairments, referencedCreativeIds, stepId };
+  return {
+    media_buy_id,
+    status,
+    health,
+    impairments,
+    referencedCreativeIds,
+    referencedAudienceIds,
+    stepId,
+  };
 }
