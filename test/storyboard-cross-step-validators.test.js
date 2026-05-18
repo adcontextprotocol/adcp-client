@@ -139,6 +139,46 @@ describe('field_less_than', () => {
 });
 
 // ────────────────────────────────────────────────────────────
+// field_greater_than
+// ────────────────────────────────────────────────────────────
+
+describe('field_greater_than', () => {
+  it('passes when field is strictly greater than the literal value', () => {
+    const [result] = runValidations(
+      [{ check: 'field_greater_than', path: 'reach', value: 100, description: 'reach above floor' }],
+      makeCtx({ data: { reach: 150 } })
+    );
+    assert.strictEqual(result.passed, true);
+  });
+
+  it('fails when field equals the literal value (strict greater-than)', () => {
+    // Mirror of the equality-boundary case for field_less_than — strict > must reject equality.
+    const [result] = runValidations(
+      [{ check: 'field_greater_than', path: 'reach', value: 100, description: 'reach above floor' }],
+      makeCtx({ data: { reach: 100 } })
+    );
+    assert.strictEqual(result.passed, false);
+    assert.match(result.error, /100.*>.*100/);
+  });
+
+  it('fails when field is below the literal value', () => {
+    const [result] = runValidations(
+      [{ check: 'field_greater_than', path: 'reach', value: 100, description: 'test' }],
+      makeCtx({ data: { reach: 50 } })
+    );
+    assert.strictEqual(result.passed, false);
+  });
+
+  it('passes using context_key comparand', () => {
+    const [result] = runValidations(
+      [{ check: 'field_greater_than', path: 'spend', context_key: 'min_spend', description: 'test' }],
+      makeCtx({ data: { spend: 200 }, storyboardContext: { min_spend: 100 } })
+    );
+    assert.strictEqual(result.passed, true);
+  });
+});
+
+// ────────────────────────────────────────────────────────────
 // field_at_most
 // ────────────────────────────────────────────────────────────
 

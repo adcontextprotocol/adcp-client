@@ -667,6 +667,14 @@ export type StoryboardValidationCheck =
    */
   | 'field_less_than'
   /**
+   * Assert a numeric field in the current step's response is strictly greater
+   * than a comparand. Mirror of `field_less_than` — completes the four-quadrant
+   * numeric comparison vocabulary (`<`, `<=`, `>=`, `>`). Same operand and
+   * `context_key_absent` semantics as `field_less_than`. Added for
+   * adcp-client#1839 four-quadrant symmetry.
+   */
+  | 'field_greater_than'
+  /**
    * Assert a numeric field in the current step's response is at most (≤) a
    * comparand. Semantically symmetric with `field_less_than` but with
    * non-strict comparison — pairs cleanly with cap-style assertions like
@@ -915,8 +923,8 @@ export interface StoryboardValidation {
   // ─── field_less_than / field_equals_context fields ────────
   /**
    * Key to look up in the accumulated `storyboardContext` for cross-step
-   * comparison checks (`field_less_than`, `field_at_most`, `field_at_least`,
-   * `field_equals_context`).
+   * comparison checks (`field_less_than`, `field_greater_than`,
+   * `field_at_most`, `field_at_least`, `field_equals_context`).
    * Only consumed by those check types — ignored on all others.
    * When set and the key is absent from context, the check passes with a
    * `context_key_absent` observation rather than failing — the prior step

@@ -261,6 +261,8 @@ function runValidation(validation: StoryboardValidation, ctx: ValidationContext)
       return validateRefsResolve(validation, ctx);
     case 'field_less_than':
       return validateNumericComparison(validation, ctx, NUMERIC_OPS.less_than);
+    case 'field_greater_than':
+      return validateNumericComparison(validation, ctx, NUMERIC_OPS.greater_than);
     case 'field_at_most':
       return validateNumericComparison(validation, ctx, NUMERIC_OPS.at_most);
     case 'field_at_least':
@@ -2369,8 +2371,8 @@ function resolveContextComparand(
 
 interface NumericOp {
   /** Check name surfaced in result.check and error prose. */
-  check: 'field_less_than' | 'field_at_most' | 'field_at_least';
-  /** Human-readable operator (`<`, `<=`, `>=`) used in error messages. */
+  check: 'field_less_than' | 'field_greater_than' | 'field_at_most' | 'field_at_least';
+  /** Human-readable operator (`<`, `>`, `<=`, `>=`) used in error messages. */
   symbol: string;
   /** Comparator returning true when `actual` satisfies the assertion vs `comparand`. */
   compare: (actual: number, comparand: number) => boolean;
@@ -2378,6 +2380,7 @@ interface NumericOp {
 
 const NUMERIC_OPS = {
   less_than: { check: 'field_less_than', symbol: '<', compare: (a, c) => a < c },
+  greater_than: { check: 'field_greater_than', symbol: '>', compare: (a, c) => a > c },
   at_most: { check: 'field_at_most', symbol: '<=', compare: (a, c) => a <= c },
   at_least: { check: 'field_at_least', symbol: '>=', compare: (a, c) => a >= c },
 } as const satisfies Record<string, NumericOp>;
