@@ -12,7 +12,12 @@ import type { AdcpJsonWebKey, AdcpSignAlg } from './types';
  */
 export const ALLOW_IN_MEMORY_SIGNER_ENV = 'ADCP_ALLOW_IN_MEMORY_SIGNER';
 
-const ADCP_USE_VALUES = new Set<AdcpUse>(['request-signing', 'webhook-signing', 'response-signing']);
+const ADCP_USE_VALUES = new Set<AdcpUse>([
+  'request-signing',
+  'webhook-signing',
+  'response-signing',
+  'governance-signing',
+]);
 function isAdcpUse(value: unknown): value is AdcpUse {
   return typeof value === 'string' && ADCP_USE_VALUES.has(value as AdcpUse);
 }

@@ -87,6 +87,17 @@ function throwIfPurposeMismatch(keyid: string, actual: string | undefined, expec
       throw new WebhookSignatureError('webhook_signature_key_purpose_invalid', 8, message);
     case 'response-signing':
       throw new ResponseSignatureError('response_signature_key_purpose_invalid', 8, message);
+    case 'governance-signing':
+      // RFC 9421 helpers (`signRequest` / `signWebhook` / `signResponse`)
+      // never pass `'governance-signing'` as `expected` — governance signing
+      // is JWS-based and lives on a different code path. Reaching this arm
+      // means an SDK caller passed governance-signing into an RFC 9421
+      // helper, which is a programmer error rather than a verifier-visible
+      // signature failure.
+      throw new Error(
+        `Governance-signing keys are signed via JWS, not RFC 9421. ` +
+          `Key '${keyid}' should not be used with signRequest / signWebhook / signResponse.`
+      );
     default: {
       // Compile-time exhaustiveness: a future `AdcpUse` widening must add
       // a case arm here. Trips `tsc --noEmit` if the union grows without

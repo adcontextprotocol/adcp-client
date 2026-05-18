@@ -17,7 +17,7 @@ const WIRE_ALG_TO_JOSE: Record<AdcpSignAlg, string> = {
   'ecdsa-p256-sha256': 'ES256',
 };
 
-export type AdcpUse = 'request-signing' | 'webhook-signing' | 'response-signing';
+export type AdcpUse = 'request-signing' | 'webhook-signing' | 'response-signing' | 'governance-signing';
 
 export interface PemToAdcpJwkOptions {
   /** `kid` to embed in the JWK — must match the value published in `Signature-Input`. */
@@ -31,6 +31,11 @@ export interface PemToAdcpJwkOptions {
    * - `'response-signing'` — for JWKs used to sign outbound responses
    *   (RFC 9421 §2.2.9 response signing). Verifier surface is a follow-up;
    *   the value is reserved here so signer-side JWKs can declare it now.
+   * - `'governance-signing'` — for JWKs used to sign governance context
+   *   (JWS-signed, not RFC 9421). Declared on JWKs published in a tenant's
+   *   aggregated JWKS so JSON-typed consumers (e.g., third-party verifiers
+   *   filtering by `adcp_use`) can identify governance-signing material;
+   *   this SDK does not yet ship a `signGovernanceContext` helper.
    */
   adcp_use: AdcpUse;
 }
