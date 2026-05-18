@@ -456,6 +456,119 @@ export class ResponseTooLargeError extends ADCPError {
 }
 
 /**
+ * Error thrown when an `update_media_buy` request is rejected because the
+ * action it maps to isn't currently allowed on the buy (AdCP 3.1, RFC #4480).
+ *
+ * Typed `details` payload follows `error-details/action-not-allowed.json`:
+ * `attempted_action`, `reason`, optional `currently_available_actions[]`.
+ *
+ * Recovery branches on `reason`:
+ *  - `wrong_status`: transition the buy (or wait) to an allowed status.
+ *  - `not_supported_on_product`: terminal for this buy; pick a different
+ *    product for future buys that need the action.
+ *  - `not_supported_on_buy`: terminal; renegotiate buy terms.
+ *  - `mode_mismatch`: `recovery` is set to a typed hint indicating the
+ *    required flow (`createProposal`, `waitForApproval`, `reissueAsDirect`)
+ *    instead of a plain retry.
+ */
+export class ActionNotAllowedError extends ADCPError {
+  readonly code = 'ACTION_NOT_ALLOWED';
+
+  readonly attemptedAction: ActionNotAllowedErrorDetails['attempted_action'];
+  readonly reason: ActionNotAllowedErrorDetails['reason'];
+  readonly currentlyAvailableActions: ReadonlyArray<ActionNotAllowedAvailableAction>;
+  readonly recovery?: ActionNotAllowedRecovery;
+
+  constructor(detailsPayload: ActionNotAllowedErrorDetails, message?: string) {
+    super(message ?? buildActionNotAllowedMessage(detailsPayload));
+    this.attemptedAction = detailsPayload.attempted_action;
+    this.reason = detailsPayload.reason;
+    this.currentlyAvailableActions = detailsPayload.currently_available_actions ?? [];
+    this.recovery = detailsPayload.reason === 'mode_mismatch' ? buildModeMismatchRecovery(detailsPayload) : undefined;
+    this.details = detailsPayload;
+  }
+}
+
+/**
+ * Inline copy of the structured payload - duplicated here rather than
+ * imported from `media-buy/types` to keep the errors module free of
+ * cross-module imports (matches the convention used for the other typed
+ * errors in this file).
+ */
+export interface ActionNotAllowedErrorDetails {
+  attempted_action: ActionNotAllowedAttemptedAction;
+  reason: ActionNotAllowedReasonValue;
+  currently_available_actions?: ActionNotAllowedAvailableAction[];
+}
+
+export type ActionNotAllowedReasonValue =
+  | 'wrong_status'
+  | 'not_supported_on_product'
+  | 'not_supported_on_buy'
+  | 'mode_mismatch';
+
+export type ActionNotAllowedAttemptedAction = string;
+
+export interface ActionNotAllowedAvailableAction {
+  action: ActionNotAllowedAttemptedAction;
+  mode: 'self_serve' | 'conditional_self_serve' | 'requires_proposal' | 'requires_approval';
+  sla?: unknown;
+  terms_ref?: string;
+}
+
+export type ActionNotAllowedRecovery =
+  | { kind: 'createProposal'; message: string }
+  | { kind: 'waitForApproval'; message: string }
+  | { kind: 'reissueAsDirect'; message: string };
+
+function buildActionNotAllowedMessage(details: ActionNotAllowedErrorDetails): string {
+  const prefix = `update_media_buy rejected: \`${details.attempted_action}\` not allowed (${details.reason}).`;
+  switch (details.reason) {
+    case 'wrong_status':
+      return `${prefix} transition the buy to an allowed status before retrying.`;
+    case 'not_supported_on_product':
+      return `${prefix} product does not declare this action; pick a different product for future buys needing it.`;
+    case 'not_supported_on_buy':
+      return `${prefix} buy was negotiated without this capability; renegotiate buy terms.`;
+    case 'mode_mismatch':
+      return `${prefix} mode shifted between preflight and dispatch; re-issue through the appropriate flow indicated by available_actions.`;
+  }
+}
+
+function buildModeMismatchRecovery(details: ActionNotAllowedErrorDetails): ActionNotAllowedRecovery | undefined {
+  const match = details.currently_available_actions?.find(a => a.action === details.attempted_action);
+  if (!match) return undefined;
+  switch (match.mode) {
+    case 'requires_proposal':
+      return {
+        kind: 'createProposal',
+        message:
+          `seller now resolves \`${details.attempted_action}\` as requires_proposal. ` +
+          'reissue via the proposal lifecycle (`create_proposal` / `finalize_proposal`).',
+      };
+    case 'requires_approval':
+      return {
+        kind: 'waitForApproval',
+        message:
+          `seller now resolves \`${details.attempted_action}\` as requires_approval. ` +
+          'expect an async approval callback rather than a direct response.',
+      };
+    case 'conditional_self_serve':
+      return {
+        kind: 'reissueAsDirect',
+        message:
+          `seller resolves \`${details.attempted_action}\` as conditional_self_serve: ` +
+          'small mutations clear automatically, larger ones queue. retry; expect a possible async escalation.',
+      };
+    case 'self_serve':
+      return {
+        kind: 'reissueAsDirect',
+        message: `seller resolves \`${details.attempted_action}\` as self_serve. retry the same request.`,
+      };
+  }
+}
+
+/**
  * Reason the v3 guard refused a mutating dispatch.
  * - `version`: seller's `major_versions` does not include 3
  * - `idempotency`: seller reports v3 but omits the required
@@ -561,7 +674,7 @@ export function is401Error(error: unknown, got401Flag = false): boolean {
  * the authoritative source.
  */
 export function adcpErrorToTypedError(
-  adcpError: { code: string; message?: string },
+  adcpError: { code: string; message?: string; details?: unknown },
   idempotencyKey?: string
 ): ADCPError | undefined {
   switch (adcpError.code) {
@@ -569,9 +682,65 @@ export function adcpErrorToTypedError(
       return new IdempotencyConflictError(idempotencyKey, adcpError.message);
     case 'IDEMPOTENCY_EXPIRED':
       return new IdempotencyExpiredError(idempotencyKey, adcpError.message);
+    case 'ACTION_NOT_ALLOWED': {
+      const parsed = parseActionNotAllowedDetails(adcpError.details);
+      if (!parsed) return undefined;
+      return new ActionNotAllowedError(parsed, adcpError.message);
+    }
     default:
       return undefined;
   }
+}
+
+function parseActionNotAllowedDetails(raw: unknown): ActionNotAllowedErrorDetails | undefined {
+  if (!raw || typeof raw !== 'object') return undefined;
+  const obj = raw as Record<string, unknown>;
+  const attempted = obj['attempted_action'];
+  const reason = obj['reason'];
+  if (typeof attempted !== 'string' || typeof reason !== 'string') return undefined;
+  if (!isActionNotAllowedReason(reason)) return undefined;
+
+  const rawList = obj['currently_available_actions'];
+  let currently: ActionNotAllowedAvailableAction[] | undefined;
+  if (Array.isArray(rawList)) {
+    currently = [];
+    for (const entry of rawList) {
+      if (!entry || typeof entry !== 'object') continue;
+      const e = entry as Record<string, unknown>;
+      const action = e['action'];
+      const mode = e['mode'];
+      if (typeof action !== 'string' || typeof mode !== 'string') continue;
+      if (!isActionMode(mode)) continue;
+      const parsedEntry: ActionNotAllowedAvailableAction = { action, mode };
+      if (typeof e['terms_ref'] === 'string') parsedEntry.terms_ref = e['terms_ref'];
+      if (e['sla'] !== undefined) parsedEntry.sla = e['sla'];
+      currently.push(parsedEntry);
+    }
+  }
+
+  return {
+    attempted_action: attempted,
+    reason,
+    currently_available_actions: currently,
+  };
+}
+
+function isActionNotAllowedReason(value: string): value is ActionNotAllowedReasonValue {
+  return (
+    value === 'wrong_status' ||
+    value === 'not_supported_on_product' ||
+    value === 'not_supported_on_buy' ||
+    value === 'mode_mismatch'
+  );
+}
+
+function isActionMode(value: string): value is ActionNotAllowedAvailableAction['mode'] {
+  return (
+    value === 'self_serve' ||
+    value === 'conditional_self_serve' ||
+    value === 'requires_proposal' ||
+    value === 'requires_approval'
+  );
 }
 
 /**

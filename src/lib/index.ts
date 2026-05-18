@@ -276,13 +276,74 @@ export {
   IdempotencyConflictError,
   IdempotencyExpiredError,
   ResponseTooLargeError,
+  ActionNotAllowedError,
   adcpErrorToTypedError,
   isADCPError,
   isErrorOfType,
   extractErrorInfo,
   is401Error,
 } from './errors';
-export type { OAuthMetadataInfo } from './errors';
+export type {
+  OAuthMetadataInfo,
+  ActionNotAllowedErrorDetails,
+  ActionNotAllowedReasonValue,
+  ActionNotAllowedAttemptedAction,
+  ActionNotAllowedAvailableAction,
+  ActionNotAllowedRecovery,
+} from './errors';
+
+// ====== MEDIA BUY ACTIONS (AdCP 3.1 / RFC #4480) ======
+// Note: the 3.1-extended `MediaBuyValidAction` lives in `./media-buy` and is
+// not re-exported here. The top-level `MediaBuyValidAction` continues to
+// reflect whatever the schema-cache codegen produces; import the extended
+// vocabulary from `@adcp/sdk/media-buy` directly to avoid shadowing.
+export type {
+  ActionNotAllowedDetails,
+  ActionNotAllowedReason,
+  AvailableActionsResult,
+  AvailableActionsSource,
+  LegacyCoarseAction,
+  MediaBuyActionContext,
+  MediaBuyActionMode,
+  MediaBuyAvailableAction,
+  ModeMismatchRecovery,
+  PreflightAllowed,
+  PreflightDenial,
+  PreflightDenied,
+  PreflightResult,
+  ResolvedAction,
+  SlaWindow,
+  UpdateFieldEntry,
+  UpdateMediaBuyRequestLike,
+} from './media-buy';
+export {
+  ACTIONS_BY_FIELD,
+  LEGACY_COARSE_ACTIONS,
+  UPDATE_FIELDS_BY_ACTION,
+  canAddPackages,
+  canCancel,
+  canDecreaseBudget,
+  canExtendFlight,
+  canIncreaseBudget,
+  canPause,
+  canReallocateBudget,
+  canRemoveCreative,
+  canRemovePackages,
+  canReplaceCreative,
+  canResume,
+  canShortenFlight,
+  canUpdateCreativeAssignments,
+  canUpdateFlightDates,
+  canUpdateFrequencyCaps,
+  canUpdatePacing,
+  canUpdateTargeting,
+  findAvailableAction,
+  getActionForMutation,
+  getAvailableActions,
+  getRollupParent,
+  preflightUpdateMediaBuy,
+  recoveryForModeMismatch,
+} from './media-buy';
 export { InputRequiredError } from './core/TaskExecutor';
 
 // ====== IDEMPOTENCY ======
