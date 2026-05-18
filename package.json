@@ -1,6 +1,6 @@
 {
   "name": "@adcp/sdk",
-  "version": "7.3.0",
+  "version": "7.7.0",
   "description": "AdCP SDK — client, server, and compliance harnesses for the AdContext Protocol (MCP + A2A)",
   "workspaces": [
     ".",
@@ -260,6 +260,7 @@
     "ci:schema-check": "npm run sync-schemas && npm run generate-types && npm run generate-registry-types && git diff --exit-code -I '// Generated at:' src/lib/types/ src/lib/agents/ src/lib/registry/types.generated.ts schemas/registry/registry.yaml || (echo '⚠️  Generated files are out of sync. Run: npm run sync-schemas && npm run generate-types && npm run generate-registry-types' && exit 1)",
     "ci:codegen-strict": "tsx scripts/check-no-loose-oneof.ts",
     "ci:docs-check": "npm run generate-agent-docs && git diff --exit-code -I '> Generated at:' -I '> (Library: )?@adcp/sdk v' docs/llms.txt docs/TYPE-SUMMARY.md || (echo '⚠️  Agent docs are out of sync. Run: npm run generate-agent-docs' && exit 1)",
+    "ci:doc-links": "tsx scripts/check-doc-links.ts",
     "ci:pre-push": "npm run ci:schema-check && npm run ci:codegen-strict && npm run ci:quick",
     "hooks:install": "node scripts/install-hooks.js",
     "hooks:uninstall": "rm -f .git/hooks/pre-push",
@@ -362,5 +363,5 @@
     },
     "minimatch": "^10.2.1"
   },
-  "adcp_version": "3.0.11"
+  "adcp_version": "3.0.12"
 }

@@ -97,7 +97,18 @@ export type {
   // expose it under a distinct name to avoid clobbering the registry
   // type that's been part of the public API longer.
   PublisherPropertySelector as AdAgentsPublisherPropertySelector,
+  SinglePublisherPropertySelector,
+  CompactPublisherPropertySelector,
 } from './discovery/types';
+export {
+  parsePublisherPropertySelector,
+  expandPublisherPropertySelector,
+  expandPublisherPropertySelectors,
+  isCompactPublisherPropertySelector,
+  publisherDomainsCoveredBySelectors,
+  PublisherPropertySelectorParseError,
+  type PublisherPropertySelectorError,
+} from './discovery/publisher-property-selector';
 export {
   resolveAgentProperties,
   listAgentPropertyMap,
@@ -538,7 +549,6 @@ export type {
   // Format Assets
   Overlay,
   // Creative Agent Domain
-  CreativeBrief,
   CreativeManifest,
   CreativeVariable,
   BuildCreativeRequest,
@@ -603,7 +613,21 @@ export type {
   CatalogAction,
   CatalogItemStatus,
   MediaBuyStatus,
+  // CreativeBrief is its own top-level schema (creative-brief.json) — emitted
+  // in core.generated, no longer transitively pulled into tools.generated now
+  // that BriefAsset merges its allOf[$ref] base inline.
+  CreativeBrief,
 } from './types/core.generated';
+
+// ====== WELL-KNOWN FILE TYPES ======
+// brand.json / adagents.json shapes inferred from the canonical Zod schemas.
+// Re-exported explicitly here (in addition to the transitive `export * from
+// './types'` above) so the top-level public API contract is visible at the
+// main barrel and not dependent on the sub-barrel's wildcard re-export.
+// Source of truth: schemas/cache/{version}/{brand,adagents}.json — regenerate
+// with `npm run generate-wellknown-schemas` when the spec bumps.
+export type { BrandJson, AdagentsJson } from './types/wellknown-schemas.generated';
+export { BrandJsonSchema, AdagentsJsonSchema } from './types/wellknown-schemas.generated';
 
 // ====== ERROR CODES ======
 // Standard error code vocabulary for programmatic error handling
@@ -934,7 +958,22 @@ export {
   closeMCPConnections,
   bundleSupportsAdcpVersionField,
 } from './protocols';
+export { toReleasePrecisionWire, validateAdcpVersionWire } from './validation/schema-loader';
 export type { CallToolOptions, TransportOptions } from './protocols';
+
+// ====== WIRE VERSION HELPERS (NAMESPACE) ======
+// Grouped re-exports of the three AdCP `adcp_version` envelope helpers
+// (spec PR adcontextprotocol/adcp#3493). Prefer this surface over the
+// individual top-level exports — the namespace stays stable as helpers
+// are added (a fourth helper drops in here without churning the barrel).
+// The top-level exports are kept for back-compat and aren't deprecated.
+import { bundleSupportsAdcpVersionField as _isSupported } from './protocols';
+import { toReleasePrecisionWire as _normalize, validateAdcpVersionWire as _validate } from './validation/schema-loader';
+export const wireVersion = {
+  isSupported: _isSupported,
+  normalize: _normalize,
+  validate: _validate,
+} as const;
 
 // ====== RESPONSE UTILITIES ======
 // Public utilities for working with AdCP responses

@@ -38,6 +38,8 @@ export type {
   MissingRequiredFieldHint,
   FormatMismatchHint,
   MonotonicViolationHint,
+  ImpairmentCoherenceHint,
+  ImpairmentCoherenceNotApplicableHint,
   StoryboardContext,
   StoryboardRunOptions,
   ValidationResult,
@@ -94,6 +96,7 @@ export {
   summarizeStrictValidation,
   listStrictOnlyFailures,
   resolveCapabilityPath,
+  evaluateCapabilityPredicate,
   buildDiscoveryFailedResult,
 } from './runner';
 

@@ -3,7 +3,7 @@
 import { writeFileSync, mkdirSync, readFileSync, existsSync, readdirSync, statSync } from 'fs';
 import { compile } from 'json-schema-to-typescript';
 import path from 'path';
-import { removeArrayLengthConstraints } from './schema-utils';
+import { injectJsdocConstraints, removeArrayLengthConstraints } from './schema-utils';
 
 // Write file only if content differs (excluding timestamp)
 function writeFileIfChanged(filePath: string, newContent: string): boolean {
@@ -192,6 +192,47 @@ function tightenMutualExclusionOneOf(schema: any): any {
 }
 
 /**
+ * Resolve an external `$ref` for the purpose of pre-merging an
+ * `allOf: [{ $ref }]` member into its parent. Returns `null` for
+ * unresolvable refs (including local `#/$defs/...` refs, which require
+ * document context this helper doesn't have). Suppresses the warning that
+ * `loadCachedSchema` would emit for unresolvable paths — a miss here just
+ * means we leave the `allOf` member in place for jsts to handle.
+ */
+function resolveAllOfRefForMerge(ref: string): any | null {
+  if (!ref || typeof ref !== 'string') return null;
+  // Only external schema refs are resolvable through the cache. Local
+  // `#/$defs/...` and other fragment-only refs are left to jsts.
+  if (!ref.startsWith('/schemas/')) return null;
+  // Suppress the warn from loadCachedSchema for legitimate misses (e.g. a
+  // schema path we don't have cached yet). The original `allOf` member stays
+  // in place if resolution fails.
+  const originalWarn = console.warn;
+  console.warn = () => {};
+  let raw: any;
+  try {
+    raw = loadCachedSchema(ref);
+  } finally {
+    console.warn = originalWarn;
+  }
+  if (!raw) return null;
+  // Apply the same preprocessing the ref resolver uses for normal $ref reads —
+  // otherwise minItems/maxItems constraints from the base schema would leak
+  // through the merge and resurrect as `@minItems`/tuple types in jsts output.
+  const preprocessed = removeArrayLengthConstraints(raw);
+  // Normalize the resolved base through the same strict-schema pipeline the
+  // parent went through. Without this, a base schema's top-level
+  // `additionalProperties: true` (e.g. creative-brief.json, catalog.json)
+  // would propagate into the merged shape and emit a
+  // `[k: string]: unknown | undefined` index signature on the resulting flat
+  // interface — wider than the pre-merge intersection form. Recursion is
+  // safe: `loadCachedSchema` reads a fresh JSON document per call (no shared
+  // mutable cache), and AdCP schemas aren't cyclic at the `allOf:[{ $ref }]`
+  // sibling level, so transitive base resolution terminates.
+  return enforceStrictSchema(preprocessed);
+}
+
+/**
  * Recursively remove additionalProperties: true from schema to enforce strict typing
  * This prevents [k: string]: unknown in generated TypeScript types
  *
@@ -301,6 +342,69 @@ export function enforceStrictSchema(schema: any): any {
     }
   }
 
+  // Pre-merge `allOf: [{ $ref }, ...]` members when the parent has its own
+  // `properties` or `required` at the same level. json-schema-to-typescript
+  // mishandles this pattern (especially inside `oneOf` variants) and emits a
+  // broken union `( BaseFields | { variant-specific + duplicated base fields } )`
+  // where the intent is an intersection `BaseFields & { variant-specific }`.
+  //
+  // Resolving the `$ref` at the JSON Schema level lets jsts see a single flat
+  // shape and emit a clean discriminated-union variant. We only resolve refs
+  // we can load (external `/schemas/...` paths via the cache). Local
+  // `#/$defs/...` refs are left in place — without the parent document we
+  // can't resolve them here, and the existing post-processors handle the
+  // common Individual*Asset alias case.
+  //
+  // The merged shape loses the named base type alias in the emitted TS
+  // (option 2 in the adcp#4510 acceptance criteria: "flattens the allOf into
+  // a single merged shape — less ideal but acceptable"). Recovering the
+  // intersection form would be a follow-up polish pass.
+  //
+  // We only apply this merge when the parent already declares its own
+  // `properties` or `required` siblings — the `vendor-pricing-option` style
+  // (allOf-only at root, no sibling properties) compiles correctly today and
+  // is left untouched.
+  if (
+    Array.isArray(strictSchema.allOf) &&
+    (strictSchema.properties || strictSchema.required) &&
+    !mustPreserveProperties
+  ) {
+    const remaining: any[] = [];
+    for (const member of strictSchema.allOf) {
+      if (member && typeof member === 'object' && typeof member.$ref === 'string' && Object.keys(member).length === 1) {
+        const resolved = resolveAllOfRefForMerge(member.$ref);
+        if (resolved) {
+          // Variant-level fields win on collision — `properties`, `required`,
+          // and `additionalProperties` are merged with variant precedence.
+          strictSchema.properties = {
+            ...(resolved.properties ?? {}),
+            ...(strictSchema.properties ?? {}),
+          };
+          const mergedRequired = [...(resolved.required ?? []), ...(strictSchema.required ?? [])];
+          if (mergedRequired.length > 0) {
+            strictSchema.required = [...new Set(mergedRequired)];
+          }
+          if (strictSchema.additionalProperties === undefined && resolved.additionalProperties !== undefined) {
+            strictSchema.additionalProperties = resolved.additionalProperties;
+          }
+          continue;
+        }
+      }
+      remaining.push(member);
+    }
+    strictSchema.allOf = remaining;
+    if (strictSchema.allOf.length === 0) {
+      delete strictSchema.allOf;
+    }
+    // Re-run property recursion now that we've merged in base properties —
+    // they may themselves carry allOf/$ref patterns that need normalizing.
+    if (strictSchema.properties) {
+      strictSchema.properties = Object.fromEntries(
+        Object.entries(strictSchema.properties).map(([key, value]) => [key, enforceStrictSchema(value)])
+      );
+    }
+  }
+
   if (strictSchema.allOf) {
     // Strip allOf members that contain only validation logic TypeScript can't
     // represent. Two cases:
@@ -326,6 +430,24 @@ export function enforceStrictSchema(schema: any): any {
         // Drop members composed only of those keys.
         if (keys.length > 0 && keys.every(k => k === 'if' || k === 'then' || k === 'else')) {
           return false;
+        }
+        // XOR-via-anyOf pattern: a member that is purely `{ anyOf: [...] }`
+        // where every branch is a `required`-only object. This is the
+        // canonical JSON Schema idiom for "at least one of these fields is
+        // present" — combined with a sibling `not` member (already stripped
+        // above), it expresses XOR. jsts has no way to model "exactly one of
+        // these properties must be set"; keeping the member produces
+        // intersections that double the property surface and confuse
+        // downstream ts-to-zod. Ajv enforces the constraint at runtime
+        // against the unstripped schema. Used by `publisher-property-selector.json`
+        // for the `publisher_domain` / `publisher_domains` XOR (adcp#4504).
+        if (keys.length === 1 && keys[0] === 'anyOf' && Array.isArray(member.anyOf)) {
+          const onlyRequiredBranches = member.anyOf.every((b: any) => {
+            if (!b || typeof b !== 'object') return false;
+            const bKeys = Object.keys(b);
+            return bKeys.length === 1 && bKeys[0] === 'required' && Array.isArray(b.required);
+          });
+          if (onlyRequiredBranches) return false;
         }
         return true;
       })
@@ -913,7 +1035,7 @@ async function generateToolTypes(tools: ToolDefinition[]) {
       if (url.startsWith('/schemas/')) {
         const schema = loadCachedSchema(url);
         if (schema) {
-          return Promise.resolve(enforceStrictSchema(removeArrayLengthConstraints(schema)));
+          return Promise.resolve(enforceStrictSchema(removeArrayLengthConstraints(injectJsdocConstraints(schema))));
         }
       }
       return Promise.reject(new Error(`Cannot resolve $ref: ${url}`));
@@ -930,7 +1052,9 @@ async function generateToolTypes(tools: ToolDefinition[]) {
       if (tool.paramsSchema) {
         const paramTypeName = `${tool.methodName.charAt(0).toUpperCase() + tool.methodName.slice(1)}Request`;
         // Process schema: remove additionalProperties and minItems constraints
-        const strictParamsSchema = enforceStrictSchema(removeArrayLengthConstraints(tool.paramsSchema));
+        const strictParamsSchema = enforceStrictSchema(
+          removeArrayLengthConstraints(injectJsdocConstraints(tool.paramsSchema))
+        );
         const paramTypes = await compile(strictParamsSchema, paramTypeName, {
           bannerComment: '',
           style: { semi: true, singleQuote: true },
@@ -953,7 +1077,9 @@ async function generateToolTypes(tools: ToolDefinition[]) {
       if (tool.responseSchema) {
         const responseTypeName = `${tool.methodName.charAt(0).toUpperCase() + tool.methodName.slice(1)}Response`;
         // Process schema: remove additionalProperties and minItems constraints
-        const strictResponseSchema = enforceStrictSchema(removeArrayLengthConstraints(tool.responseSchema));
+        const strictResponseSchema = enforceStrictSchema(
+          removeArrayLengthConstraints(injectJsdocConstraints(tool.responseSchema))
+        );
         const responseTypes = await compile(strictResponseSchema, responseTypeName, {
           bannerComment: '',
           style: { semi: true, singleQuote: true },
@@ -1934,7 +2060,7 @@ async function compileGapSchemas(generatedTypes: Set<string>, refResolver: any):
         schema = makeFieldsOptional(schema, BACKWARD_COMPAT_OPTIONAL_FIELDS[pascalName]);
       }
 
-      const strictSchema = enforceStrictSchema(removeArrayLengthConstraints(schema));
+      const strictSchema = enforceStrictSchema(removeArrayLengthConstraints(injectJsdocConstraints(schema)));
       const types = await compile(strictSchema, typeName, {
         bannerComment: '',
         style: { semi: true, singleQuote: true },
@@ -1990,7 +2116,7 @@ async function generateTypes() {
       if (url.startsWith('/schemas/')) {
         const schema = loadCachedSchema(url);
         if (schema) {
-          return Promise.resolve(enforceStrictSchema(removeArrayLengthConstraints(schema)));
+          return Promise.resolve(enforceStrictSchema(removeArrayLengthConstraints(injectJsdocConstraints(schema))));
         }
       }
       return Promise.reject(new Error(`Cannot resolve $ref: ${url}`));
@@ -2008,7 +2134,7 @@ async function generateTypes() {
       if (schema) {
         console.log(`🔧 Generating TypeScript types for ${schemaName}...`);
         // Process schema: remove additionalProperties and minItems constraints
-        const strictSchema = enforceStrictSchema(removeArrayLengthConstraints(schema));
+        const strictSchema = enforceStrictSchema(removeArrayLengthConstraints(injectJsdocConstraints(schema)));
         const types = await compile(strictSchema, schemaName, {
           bannerComment: '',
           style: {
@@ -2060,7 +2186,7 @@ async function generateTypes() {
       if (schema) {
         console.log(`🔧 Generating TypeScript types for ${schemaName}...`);
         // Process schema: remove additionalProperties and minItems constraints
-        const strictSchema = enforceStrictSchema(removeArrayLengthConstraints(schema));
+        const strictSchema = enforceStrictSchema(removeArrayLengthConstraints(injectJsdocConstraints(schema)));
         const types = await compile(strictSchema, schemaName, {
           bannerComment: '',
           style: {

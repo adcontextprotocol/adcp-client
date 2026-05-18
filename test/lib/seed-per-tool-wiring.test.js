@@ -2200,3 +2200,1441 @@ describe('bridgeFromSessionStore — governance selectors', () => {
     assert.equal(bridge.getSeededContentStandards, undefined);
   });
 });
+
+// ---------------------------------------------------------------------------
+// getSeededSignals — get_signals (append-merge by signal_id)
+// ---------------------------------------------------------------------------
+
+describe('createAdcpServer — getSeededSignals wiring (get_signals)', () => {
+  // SignalID is a discriminated union; build a canonical fixture matcher.
+  function catalogSignal(id, dataProvider = 'polk.com', overrides = {}) {
+    return {
+      signal_id: { source: 'catalog', data_provider_domain: dataProvider, id },
+      signal_agent_segment_id: `seg-${id}`,
+      name: `Signal ${id}`,
+      description: `Description ${id}`,
+      signal_type: 'marketplace',
+      data_provider: 'Polk',
+      coverage_percentage: 50,
+      deployments: [],
+      pricing_options: [
+        {
+          pricing_option_id: 'p1',
+          currency: 'USD',
+          cpm: 1,
+        },
+      ],
+      ...overrides,
+    };
+  }
+
+  function agentSignal(id, agentUrl = 'https://signals.example/.well-known/adcp/signals', overrides = {}) {
+    return {
+      signal_id: { source: 'agent', agent_url: agentUrl, id },
+      signal_agent_segment_id: `seg-${id}`,
+      name: `Signal ${id}`,
+      description: `Description ${id}`,
+      signal_type: 'owned',
+      data_provider: 'Agent',
+      coverage_percentage: 30,
+      deployments: [],
+      pricing_options: [
+        {
+          pricing_option_id: 'p1',
+          currency: 'USD',
+          cpm: 1,
+        },
+      ],
+      ...overrides,
+    };
+  }
+
+  function handlerWith(signals) {
+    return async () => ({ signals });
+  }
+
+  it('appends seeded signals to handler output on sandbox requests', async () => {
+    const server = createAdcpServer({
+      name: 'Test',
+      version: '1.0.0',
+      signals: {
+        getSignals: handlerWith([catalogSignal('h-1')]),
+      },
+      testController: {
+        getSeededSignals: () => [catalogSignal('s-1'), catalogSignal('s-2')],
+      },
+    });
+    const res = await dispatch(server, 'get_signals', {
+      signal_spec: 'auto buyers',
+      deliver_to: { platforms: 'all', countries: ['US'] },
+      account: SANDBOX_ACCOUNT,
+    });
+    const ids = res.structuredContent.signals.map(s => s.signal_id.id);
+    assert.deepEqual(ids, ['h-1', 's-1', 's-2']);
+    assert.equal(res.structuredContent.sandbox, true);
+  });
+
+  it('returns handler-only entries when getSeededSignals is omitted', async () => {
+    const server = createAdcpServer({
+      name: 'Test',
+      version: '1.0.0',
+      signals: { getSignals: handlerWith([catalogSignal('h-1'), catalogSignal('h-2')]) },
+      testController: {},
+    });
+    const res = await dispatch(server, 'get_signals', {
+      signal_spec: 'x',
+      deliver_to: { platforms: 'all', countries: ['US'] },
+      account: SANDBOX_ACCOUNT,
+    });
+    assert.deepEqual(
+      res.structuredContent.signals.map(s => s.signal_id.id),
+      ['h-1', 'h-2']
+    );
+  });
+
+  it('seeded wins on canonical (source,origin,id) collision', async () => {
+    const server = createAdcpServer({
+      name: 'Test',
+      version: '1.0.0',
+      signals: {
+        getSignals: handlerWith([
+          catalogSignal('shared', 'polk.com', { name: 'Handler' }),
+          catalogSignal('h-only', 'polk.com'),
+        ]),
+      },
+      testController: {
+        getSeededSignals: () => [catalogSignal('shared', 'polk.com', { name: 'Seeded' })],
+      },
+    });
+    const res = await dispatch(server, 'get_signals', {
+      signal_spec: 'x',
+      deliver_to: { platforms: 'all', countries: ['US'] },
+      account: SANDBOX_ACCOUNT,
+    });
+    const byId = Object.fromEntries(res.structuredContent.signals.map(s => [s.signal_id.id, s.name]));
+    assert.equal(byId.shared, 'Seeded');
+    assert.equal(byId['h-only'], 'Signal h-only');
+  });
+
+  it('mixed collision: handler [A,B] + bridge [B,C] → merged [A,B-seeded,C]', async () => {
+    const server = createAdcpServer({
+      name: 'Test',
+      version: '1.0.0',
+      signals: {
+        getSignals: handlerWith([
+          catalogSignal('A', 'polk.com', { coverage_percentage: 10 }),
+          catalogSignal('B', 'polk.com', { coverage_percentage: 20 }),
+        ]),
+      },
+      testController: {
+        getSeededSignals: () => [
+          catalogSignal('B', 'polk.com', { coverage_percentage: 99 }), // collides → seeded wins
+          catalogSignal('C', 'polk.com', { coverage_percentage: 30 }), // new → appended
+        ],
+      },
+    });
+    const res = await dispatch(server, 'get_signals', {
+      signal_spec: 'x',
+      deliver_to: { platforms: 'all', countries: ['US'] },
+      account: SANDBOX_ACCOUNT,
+    });
+    assert.deepEqual(
+      res.structuredContent.signals.map(s => s.signal_id.id),
+      ['A', 'B', 'C']
+    );
+    const byId = Object.fromEntries(res.structuredContent.signals.map(s => [s.signal_id.id, s.coverage_percentage]));
+    assert.equal(byId.A, 10);
+    assert.equal(byId.B, 99, 'B replaced by seeded value');
+    assert.equal(byId.C, 30);
+  });
+
+  it('catalog and agent signals with the same id are distinct (different sources)', async () => {
+    // signal_id discriminator: {source:'catalog'} vs {source:'agent'} make
+    // these two different signals even though both have id='shared'.
+    const server = createAdcpServer({
+      name: 'Test',
+      version: '1.0.0',
+      signals: {
+        getSignals: handlerWith([catalogSignal('shared', 'polk.com', { name: 'Catalog one' })]),
+      },
+      testController: {
+        getSeededSignals: () => [
+          agentSignal('shared', 'https://signals.example/.well-known/adcp/signals', { name: 'Agent one' }),
+        ],
+      },
+    });
+    const res = await dispatch(server, 'get_signals', {
+      signal_spec: 'x',
+      deliver_to: { platforms: 'all', countries: ['US'] },
+      account: SANDBOX_ACCOUNT,
+    });
+    // Both entries survive — different source discriminator.
+    assert.equal(res.structuredContent.signals.length, 2);
+    const sources = res.structuredContent.signals.map(s => s.signal_id.source).sort();
+    assert.deepEqual(sources, ['agent', 'catalog']);
+  });
+
+  it('skipped on non-sandbox requests', async () => {
+    let called = false;
+    const server = createAdcpServer({
+      name: 'Test',
+      version: '1.0.0',
+      signals: { getSignals: handlerWith([catalogSignal('h-1')]) },
+      testController: {
+        getSeededSignals: () => {
+          called = true;
+          return [catalogSignal('s-1')];
+        },
+      },
+    });
+    const res = await dispatch(server, 'get_signals', {
+      signal_spec: 'x',
+      deliver_to: { platforms: 'all', countries: ['US'] },
+      account: { brand: { domain: 'example.com' }, operator: 'example.com' /* no sandbox */ },
+    });
+    assert.equal(called, false);
+    assert.deepEqual(
+      res.structuredContent.signals.map(s => s.signal_id.id),
+      ['h-1']
+    );
+  });
+
+  it('drops seeded entries with invalid signal_id', async () => {
+    const server = createAdcpServer({
+      name: 'Test',
+      version: '1.0.0',
+      signals: { getSignals: handlerWith([]) },
+      testController: {
+        getSeededSignals: () => [
+          catalogSignal('ok-1'),
+          { /* no signal_id at all */ name: 'no id' },
+          { signal_id: { source: 'catalog' /* missing id and origin */ }, name: 'bad' },
+          { signal_id: { source: 'agent', agent_url: '', id: 'empty-url' }, name: 'bad' },
+          { signal_id: 'not-an-object', name: 'bad' },
+          catalogSignal('ok-2'),
+        ],
+      },
+    });
+    const res = await dispatch(server, 'get_signals', {
+      signal_spec: 'x',
+      deliver_to: { platforms: 'all', countries: ['US'] },
+      account: SANDBOX_ACCOUNT,
+    });
+    assert.deepEqual(
+      res.structuredContent.signals.map(s => s.signal_id.id),
+      ['ok-1', 'ok-2']
+    );
+  });
+});
+
+// ---------------------------------------------------------------------------
+// getSeededCreativeDelivery — get_creative_delivery (append-merge by creative_id)
+// ---------------------------------------------------------------------------
+
+describe('createAdcpServer — getSeededCreativeDelivery wiring (get_creative_delivery)', () => {
+  const REPORTING_PERIOD = { start: '2025-01-01T00:00:00Z', end: '2025-01-31T23:59:59Z' };
+
+  function makeDelivery(creative_id, overrides = {}) {
+    return {
+      creative_id,
+      variants: [],
+      ...overrides,
+    };
+  }
+
+  function handlerWith(creatives, pagination = undefined) {
+    return async () => {
+      const out = {
+        reporting_period: REPORTING_PERIOD,
+        currency: 'USD',
+        creatives,
+      };
+      if (pagination) out.pagination = pagination;
+      return out;
+    };
+  }
+
+  it('seeded-only: empty handler, two seeded entries append', async () => {
+    const server = createAdcpServer({
+      name: 'Test',
+      version: '1.0.0',
+      creative: {
+        getCreativeDelivery: handlerWith([]),
+      },
+      testController: {
+        getSeededCreativeDelivery: () => [makeDelivery('s-1'), makeDelivery('s-2')],
+      },
+    });
+    const res = await dispatch(server, 'get_creative_delivery', { account: SANDBOX_ACCOUNT });
+    assert.deepEqual(
+      res.structuredContent.creatives.map(c => c.creative_id),
+      ['s-1', 's-2']
+    );
+  });
+
+  it('handler-only: bridge omitted, response passes through verbatim', async () => {
+    const server = createAdcpServer({
+      name: 'Test',
+      version: '1.0.0',
+      creative: {
+        getCreativeDelivery: handlerWith([makeDelivery('h-1')]),
+      },
+      testController: {},
+    });
+    const res = await dispatch(server, 'get_creative_delivery', { account: SANDBOX_ACCOUNT });
+    assert.deepEqual(
+      res.structuredContent.creatives.map(c => c.creative_id),
+      ['h-1']
+    );
+  });
+
+  it('append-merge: handler [h-1] + bridge [s-1, s-2] → [h-1, s-1, s-2]', async () => {
+    const server = createAdcpServer({
+      name: 'Test',
+      version: '1.0.0',
+      creative: {
+        getCreativeDelivery: handlerWith([makeDelivery('h-1')]),
+      },
+      testController: {
+        getSeededCreativeDelivery: () => [makeDelivery('s-1'), makeDelivery('s-2')],
+      },
+    });
+    const res = await dispatch(server, 'get_creative_delivery', { account: SANDBOX_ACCOUNT });
+    assert.deepEqual(
+      res.structuredContent.creatives.map(c => c.creative_id),
+      ['h-1', 's-1', 's-2']
+    );
+  });
+
+  it('seeded wins on creative_id collision', async () => {
+    const server = createAdcpServer({
+      name: 'Test',
+      version: '1.0.0',
+      creative: {
+        getCreativeDelivery: handlerWith([
+          makeDelivery('shared', { totals: { impressions: 1 } }),
+          makeDelivery('h-only'),
+        ]),
+      },
+      testController: {
+        getSeededCreativeDelivery: () => [makeDelivery('shared', { totals: { impressions: 999 } })],
+      },
+    });
+    const res = await dispatch(server, 'get_creative_delivery', { account: SANDBOX_ACCOUNT });
+    assert.equal(res.structuredContent.creatives.length, 2);
+    const byId = Object.fromEntries(res.structuredContent.creatives.map(c => [c.creative_id, c]));
+    assert.equal(byId.shared.totals.impressions, 999, 'seeded wins on collision');
+  });
+
+  it('mixed collision: handler [A,B] + bridge [B,C] → merged [A, B-seeded, C]', async () => {
+    const server = createAdcpServer({
+      name: 'Test',
+      version: '1.0.0',
+      creative: {
+        getCreativeDelivery: handlerWith([
+          makeDelivery('A', { variant_count: 1 }),
+          makeDelivery('B', { variant_count: 2 }),
+        ]),
+      },
+      testController: {
+        getSeededCreativeDelivery: () => [
+          makeDelivery('B', { variant_count: 99 }), // collides → seeded wins
+          makeDelivery('C', { variant_count: 3 }), // new → appended
+        ],
+      },
+    });
+    const res = await dispatch(server, 'get_creative_delivery', { account: SANDBOX_ACCOUNT });
+    assert.deepEqual(
+      res.structuredContent.creatives.map(c => c.creative_id),
+      ['A', 'B', 'C']
+    );
+    const byId = Object.fromEntries(res.structuredContent.creatives.map(c => [c.creative_id, c.variant_count]));
+    assert.equal(byId.A, 1);
+    assert.equal(byId.B, 99);
+    assert.equal(byId.C, 3);
+  });
+
+  it('pagination.total updates by newCount on append-merge', async () => {
+    const server = createAdcpServer({
+      name: 'Test',
+      version: '1.0.0',
+      creative: {
+        getCreativeDelivery: handlerWith([makeDelivery('h-1'), makeDelivery('h-2')], {
+          limit: 50,
+          offset: 0,
+          has_more: true,
+          total: 50,
+        }),
+      },
+      testController: {
+        getSeededCreativeDelivery: () => [makeDelivery('s-1'), makeDelivery('s-2'), makeDelivery('s-3')],
+      },
+    });
+    const res = await dispatch(server, 'get_creative_delivery', { account: SANDBOX_ACCOUNT });
+    assert.equal(res.structuredContent.creatives.length, 5);
+    assert.equal(res.structuredContent.pagination.total, 53);
+  });
+
+  it('pagination.total: no drift on full collision', async () => {
+    const server = createAdcpServer({
+      name: 'Test',
+      version: '1.0.0',
+      creative: {
+        getCreativeDelivery: handlerWith([makeDelivery('shared-1'), makeDelivery('shared-2')], {
+          limit: 50,
+          offset: 0,
+          has_more: false,
+          total: 10,
+        }),
+      },
+      testController: {
+        getSeededCreativeDelivery: () => [
+          makeDelivery('shared-1', { variant_count: 1 }),
+          makeDelivery('shared-2', { variant_count: 1 }),
+        ],
+      },
+    });
+    const res = await dispatch(server, 'get_creative_delivery', { account: SANDBOX_ACCOUNT });
+    assert.equal(res.structuredContent.creatives.length, 2);
+    assert.equal(res.structuredContent.pagination.total, 10, 'no drift on full collision');
+  });
+
+  it('skipped on non-sandbox requests', async () => {
+    let called = false;
+    const server = createAdcpServer({
+      name: 'Test',
+      version: '1.0.0',
+      creative: { getCreativeDelivery: handlerWith([makeDelivery('h-1')]) },
+      testController: {
+        getSeededCreativeDelivery: () => {
+          called = true;
+          return [makeDelivery('s-1')];
+        },
+      },
+    });
+    const res = await dispatch(server, 'get_creative_delivery', {
+      account: { brand: { domain: 'example.com' }, operator: 'example.com' /* no sandbox */ },
+    });
+    assert.equal(called, false);
+    assert.deepEqual(
+      res.structuredContent.creatives.map(c => c.creative_id),
+      ['h-1']
+    );
+  });
+
+  it('drops seeded entries missing creative_id', async () => {
+    const server = createAdcpServer({
+      name: 'Test',
+      version: '1.0.0',
+      creative: { getCreativeDelivery: handlerWith([]) },
+      testController: {
+        getSeededCreativeDelivery: () => [
+          makeDelivery('ok-1'),
+          { variants: [] /* no id */ },
+          { creative_id: '', variants: [] },
+          makeDelivery('ok-2'),
+        ],
+      },
+    });
+    const res = await dispatch(server, 'get_creative_delivery', { account: SANDBOX_ACCOUNT });
+    assert.deepEqual(
+      res.structuredContent.creatives.map(c => c.creative_id),
+      ['ok-1', 'ok-2']
+    );
+  });
+});
+
+// ---------------------------------------------------------------------------
+// getSeededCreativeFeatures — get_creative_features (merge into results[] by feature_id)
+//
+// `get_creative_features` is a `oneOf` envelope. Success arm carries
+// `results: CreativeFeatureResult[]`; error arm carries `errors: Error[]`.
+// The bridge seeds at the per-feature granularity — adopters override
+// specific feature scores without rewriting the whole evaluation handler.
+// ---------------------------------------------------------------------------
+
+describe('createAdcpServer — getSeededCreativeFeatures wiring (get_creative_features)', () => {
+  function feature(id, value, overrides = {}) {
+    return { feature_id: id, value, ...overrides };
+  }
+
+  function manifest() {
+    return {
+      format_id: { agent_url: 'https://x.example', id: 'fmt-1' },
+      assets: {},
+    };
+  }
+
+  it('merges seeded results into handler success-arm results array', async () => {
+    const server = createAdcpServer({
+      name: 'Test',
+      version: '1.0.0',
+      governance: {
+        getCreativeFeatures: async () => ({
+          results: [feature('quality', 0.5)],
+        }),
+      },
+      testController: {
+        getSeededCreativeFeatures: () => [feature('brand_safety', true), feature('toxicity', 0.1)],
+      },
+    });
+    const res = await dispatch(server, 'get_creative_features', {
+      creative_manifest: manifest(),
+      account: SANDBOX_ACCOUNT,
+    });
+    const ids = res.structuredContent.results.map(r => r.feature_id);
+    assert.deepEqual(ids, ['quality', 'brand_safety', 'toxicity']);
+  });
+
+  it('handler-only: bridge omitted, response passes through', async () => {
+    const server = createAdcpServer({
+      name: 'Test',
+      version: '1.0.0',
+      governance: {
+        getCreativeFeatures: async () => ({ results: [feature('q', 1)] }),
+      },
+      testController: {},
+    });
+    const res = await dispatch(server, 'get_creative_features', {
+      creative_manifest: manifest(),
+      account: SANDBOX_ACCOUNT,
+    });
+    assert.deepEqual(
+      res.structuredContent.results.map(r => r.feature_id),
+      ['q']
+    );
+  });
+
+  it('seeded wins on feature_id collision; handler value replaced', async () => {
+    const server = createAdcpServer({
+      name: 'Test',
+      version: '1.0.0',
+      governance: {
+        getCreativeFeatures: async () => ({
+          results: [feature('brand_safety', false), feature('quality', 0.7)],
+        }),
+      },
+      testController: {
+        getSeededCreativeFeatures: () => [feature('brand_safety', true, { confidence: 0.95 })],
+      },
+    });
+    const res = await dispatch(server, 'get_creative_features', {
+      creative_manifest: manifest(),
+      account: SANDBOX_ACCOUNT,
+    });
+    const byId = Object.fromEntries(res.structuredContent.results.map(r => [r.feature_id, r]));
+    assert.equal(byId.brand_safety.value, true);
+    assert.equal(byId.brand_safety.confidence, 0.95);
+    assert.equal(byId.quality.value, 0.7);
+  });
+
+  it('mixed collision: handler [A,B] + bridge [B,C] → merged [A, B-seeded, C]', async () => {
+    const server = createAdcpServer({
+      name: 'Test',
+      version: '1.0.0',
+      governance: {
+        getCreativeFeatures: async () => ({
+          results: [feature('A', 0.1), feature('B', 0.2)],
+        }),
+      },
+      testController: {
+        getSeededCreativeFeatures: () => [feature('B', 0.99), feature('C', 0.3)],
+      },
+    });
+    const res = await dispatch(server, 'get_creative_features', {
+      creative_manifest: manifest(),
+      account: SANDBOX_ACCOUNT,
+    });
+    assert.deepEqual(
+      res.structuredContent.results.map(r => r.feature_id),
+      ['A', 'B', 'C']
+    );
+    const byId = Object.fromEntries(res.structuredContent.results.map(r => [r.feature_id, r.value]));
+    assert.equal(byId.A, 0.1);
+    assert.equal(byId.B, 0.99);
+    assert.equal(byId.C, 0.3);
+  });
+
+  it('error arm passes through unchanged (no-op)', async () => {
+    // When the handler returned the error arm of the oneOf envelope, the
+    // bridge MUST be a no-op — the seeded results array can't be grafted
+    // onto an error envelope without producing a wire-incorrect mixed shape.
+    const server = createAdcpServer({
+      name: 'Test',
+      version: '1.0.0',
+      governance: {
+        getCreativeFeatures: async () => ({
+          errors: [{ code: 'EVAL_FAILED', message: 'cannot evaluate' }],
+        }),
+      },
+      testController: {
+        getSeededCreativeFeatures: () => [feature('brand_safety', true)],
+      },
+    });
+    const res = await dispatch(server, 'get_creative_features', {
+      creative_manifest: manifest(),
+      account: SANDBOX_ACCOUNT,
+    });
+    assert.equal(res.structuredContent.results, undefined, 'no results grafted onto error arm');
+    assert.equal(res.structuredContent.errors[0].code, 'EVAL_FAILED');
+  });
+
+  it('preserves handler context, ext, and other success-arm envelope fields', async () => {
+    // The framework-managed envelope fields (`context`, `ext`,
+    // `detail_url`, `pricing_option_id`, `vendor_cost`, `currency`,
+    // `consumption`) must round-trip from the handler verbatim.
+    const server = createAdcpServer({
+      name: 'Test',
+      version: '1.0.0',
+      governance: {
+        getCreativeFeatures: async () => ({
+          results: [feature('q', 0.5)],
+          context: { adcp_version: '3.0.11', request_id: 'req-feat-1' },
+          ext: { audit: { trace_id: 't-feat' } },
+          detail_url: 'https://vendor.example/report/123',
+          vendor_cost: 0.05,
+          currency: 'USD',
+        }),
+      },
+      testController: {
+        getSeededCreativeFeatures: () => [feature('brand_safety', true)],
+      },
+    });
+    const res = await dispatch(server, 'get_creative_features', {
+      creative_manifest: manifest(),
+      account: SANDBOX_ACCOUNT,
+    });
+    assert.deepEqual(
+      res.structuredContent.context,
+      { adcp_version: '3.0.11', request_id: 'req-feat-1' },
+      'handler context preserved'
+    );
+    assert.deepEqual(res.structuredContent.ext, { audit: { trace_id: 't-feat' } }, 'handler ext preserved');
+    assert.equal(res.structuredContent.detail_url, 'https://vendor.example/report/123');
+    assert.equal(res.structuredContent.vendor_cost, 0.05);
+    assert.equal(res.structuredContent.currency, 'USD');
+    assert.equal(res.structuredContent.results.length, 2);
+  });
+
+  it('skipped on non-sandbox requests', async () => {
+    let called = false;
+    const server = createAdcpServer({
+      name: 'Test',
+      version: '1.0.0',
+      governance: {
+        getCreativeFeatures: async () => ({ results: [feature('q', 0.5)] }),
+      },
+      testController: {
+        getSeededCreativeFeatures: () => {
+          called = true;
+          return [feature('brand_safety', true)];
+        },
+      },
+    });
+    const res = await dispatch(server, 'get_creative_features', {
+      creative_manifest: manifest(),
+      account: { brand: { domain: 'example.com' }, operator: 'example.com' /* no sandbox */ },
+    });
+    assert.equal(called, false);
+    assert.deepEqual(
+      res.structuredContent.results.map(r => r.feature_id),
+      ['q']
+    );
+  });
+
+  it('drops seeded entries missing feature_id', async () => {
+    const server = createAdcpServer({
+      name: 'Test',
+      version: '1.0.0',
+      governance: {
+        getCreativeFeatures: async () => ({ results: [] }),
+      },
+      testController: {
+        getSeededCreativeFeatures: () => [
+          feature('ok-1', 1),
+          { value: 'no id' },
+          { feature_id: '', value: 'empty id' },
+          feature('ok-2', 2),
+        ],
+      },
+    });
+    const res = await dispatch(server, 'get_creative_features', {
+      creative_manifest: manifest(),
+      account: SANDBOX_ACCOUNT,
+    });
+    assert.deepEqual(
+      res.structuredContent.results.map(r => r.feature_id),
+      ['ok-1', 'ok-2']
+    );
+  });
+});
+
+// ---------------------------------------------------------------------------
+// bridgeFromSessionStore — signals / creative-delivery / creative-features selectors
+// ---------------------------------------------------------------------------
+
+describe('bridgeFromSessionStore — signals / creative selectors', () => {
+  it('wires getSeededSignals from selectSeededSignals', async () => {
+    const bridge = bridgeFromSessionStore({
+      loadSession: () => ({
+        sigs: [
+          {
+            signal_id: { source: 'catalog', data_provider_domain: 'polk.com', id: 's-1' },
+            signal_agent_segment_id: 'seg-1',
+            name: 'A',
+            description: 'A',
+            signal_type: 'marketplace',
+            data_provider: 'Polk',
+            coverage_percentage: 50,
+            deployments: [],
+            pricing_options: [{ pricing_option_id: 'p1', currency: 'USD', cpm: 1 }],
+          },
+        ],
+      }),
+      selectSeededProducts: () => undefined,
+      selectSeededSignals: session => session.sigs,
+    });
+    const out = await bridge.getSeededSignals({ input: {} });
+    assert.equal(out.length, 1);
+    assert.equal(out[0].signal_id.id, 's-1');
+  });
+
+  it('wires getSeededCreativeDelivery from selectSeededCreativeDelivery', async () => {
+    const bridge = bridgeFromSessionStore({
+      loadSession: () => ({
+        deliveries: [{ creative_id: 'c-1', variants: [] }],
+      }),
+      selectSeededProducts: () => undefined,
+      selectSeededCreativeDelivery: session => session.deliveries,
+    });
+    const out = await bridge.getSeededCreativeDelivery({ input: {} });
+    assert.deepEqual(
+      out.map(d => d.creative_id),
+      ['c-1']
+    );
+  });
+
+  it('wires getSeededCreativeFeatures from selectSeededCreativeFeatures', async () => {
+    const bridge = bridgeFromSessionStore({
+      loadSession: () => ({
+        feats: [{ feature_id: 'brand_safety', value: true }],
+      }),
+      selectSeededProducts: () => undefined,
+      selectSeededCreativeFeatures: session => session.feats,
+    });
+    const out = await bridge.getSeededCreativeFeatures({ input: {} });
+    assert.deepEqual(
+      out.map(f => f.feature_id),
+      ['brand_safety']
+    );
+  });
+
+  it('omits signals / creative-delivery / features callbacks when no selectors provided', async () => {
+    const bridge = bridgeFromSessionStore({
+      loadSession: () => ({}),
+      selectSeededProducts: () => undefined,
+    });
+    assert.equal(bridge.getSeededSignals, undefined);
+    assert.equal(bridge.getSeededCreativeDelivery, undefined);
+    assert.equal(bridge.getSeededCreativeFeatures, undefined);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// getSeededBrandIdentity — get_brand_identity (singleton replace, brand_id key)
+// ---------------------------------------------------------------------------
+
+describe('createAdcpServer — getSeededBrandIdentity wiring (get_brand_identity)', () => {
+  function bi(brandId, overrides = {}) {
+    return {
+      brand_id: brandId,
+      house: { domain: 'example.com', name: 'Example' },
+      names: [{ en_US: `Brand ${brandId}` }],
+      ...overrides,
+    };
+  }
+
+  it('replaces the response with seeded fixture when brand_id matches', async () => {
+    const server = createAdcpServer({
+      name: 'Test',
+      version: '1.0.0',
+      brandRights: {
+        getBrandIdentity: async () => bi('b-1', { description: 'Handler' }),
+      },
+      testController: {
+        getSeededBrandIdentity: () => [bi('b-1', { description: 'Seeded' })],
+      },
+    });
+    const res = await dispatch(server, 'get_brand_identity', {
+      brand_id: 'b-1',
+      account: SANDBOX_ACCOUNT,
+    });
+    assert.equal(res.structuredContent.brand_id, 'b-1');
+    assert.equal(res.structuredContent.description, 'Seeded');
+  });
+
+  it('passes handler response through when no fixture matches request.brand_id', async () => {
+    const server = createAdcpServer({
+      name: 'Test',
+      version: '1.0.0',
+      brandRights: {
+        getBrandIdentity: async () => bi('b-1', { description: 'Handler' }),
+      },
+      testController: {
+        getSeededBrandIdentity: () => [bi('other', { description: 'Other' })],
+      },
+    });
+    const res = await dispatch(server, 'get_brand_identity', {
+      brand_id: 'b-1',
+      account: SANDBOX_ACCOUNT,
+    });
+    assert.equal(res.structuredContent.description, 'Handler');
+  });
+
+  it('preserves handler context and ext on replace; seeded context/ext lose', async () => {
+    const server = createAdcpServer({
+      name: 'Test',
+      version: '1.0.0',
+      brandRights: {
+        getBrandIdentity: async () => ({
+          ...bi('b-1', { description: 'Handler' }),
+          context: { adcp_version: '3.0.11', request_id: 'req-bi' },
+          ext: { audit: { trace_id: 't-bi' } },
+        }),
+      },
+      testController: {
+        getSeededBrandIdentity: () => [
+          {
+            ...bi('b-1', { description: 'Seeded' }),
+            context: { adcp_version: 'WRONG', request_id: 'WRONG' },
+            ext: { audit: { trace_id: 'WRONG' } },
+          },
+        ],
+      },
+    });
+    const res = await dispatch(server, 'get_brand_identity', {
+      brand_id: 'b-1',
+      account: SANDBOX_ACCOUNT,
+    });
+    assert.equal(res.structuredContent.description, 'Seeded', 'body replaced');
+    assert.deepEqual(
+      res.structuredContent.context,
+      { adcp_version: '3.0.11', request_id: 'req-bi' },
+      'handler context preserved'
+    );
+    assert.deepEqual(res.structuredContent.ext, { audit: { trace_id: 't-bi' } }, 'handler ext preserved');
+  });
+
+  it('skipped on non-sandbox requests', async () => {
+    let called = false;
+    const server = createAdcpServer({
+      name: 'Test',
+      version: '1.0.0',
+      brandRights: {
+        getBrandIdentity: async () => bi('b-1', { description: 'Handler' }),
+      },
+      testController: {
+        getSeededBrandIdentity: () => {
+          called = true;
+          return [bi('b-1', { description: 'Seeded' })];
+        },
+      },
+    });
+    const res = await dispatch(server, 'get_brand_identity', {
+      brand_id: 'b-1',
+      account: { brand: { domain: 'example.com' }, operator: 'example.com' /* no sandbox */ },
+    });
+    assert.equal(called, false);
+    assert.equal(res.structuredContent.description, 'Handler');
+  });
+
+  it('drops seeded entries missing brand_id and duplicates (first wins)', async () => {
+    const server = createAdcpServer({
+      name: 'Test',
+      version: '1.0.0',
+      brandRights: {
+        getBrandIdentity: async () => bi('b-2', { description: 'Handler' }),
+      },
+      testController: {
+        getSeededBrandIdentity: () => [
+          { house: { domain: 'x', name: 'x' }, names: [] }, // missing brand_id
+          { brand_id: '', house: { domain: 'x', name: 'x' }, names: [] }, // empty
+          bi('b-2', { description: 'First B-2' }),
+          bi('b-2', { description: 'Duplicate B-2 — dropped' }),
+        ],
+      },
+    });
+    const res = await dispatch(server, 'get_brand_identity', {
+      brand_id: 'b-2',
+      account: SANDBOX_ACCOUNT,
+    });
+    assert.equal(res.structuredContent.description, 'First B-2');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// getSeededRights — get_rights (append-merge, rights_id key)
+// ---------------------------------------------------------------------------
+
+describe('createAdcpServer — getSeededRights wiring (get_rights)', () => {
+  function rt(rightsId, overrides = {}) {
+    return {
+      rights_id: rightsId,
+      brand_id: 'brand-a',
+      name: `Right ${rightsId}`,
+      available_uses: ['likeness'],
+      pricing_options: [],
+      ...overrides,
+    };
+  }
+  function handlerWith(rights) {
+    return async () => ({ rights });
+  }
+
+  it('appends seeded rights to handler output on sandbox requests', async () => {
+    const server = createAdcpServer({
+      name: 'Test',
+      version: '1.0.0',
+      brandRights: { getRights: handlerWith([rt('h-1')]) },
+      testController: {
+        getSeededRights: () => [rt('s-1'), rt('s-2')],
+      },
+    });
+    const res = await dispatch(server, 'get_rights', {
+      query: 'anything',
+      account: SANDBOX_ACCOUNT,
+    });
+    assert.deepEqual(
+      res.structuredContent.rights.map(r => r.rights_id),
+      ['h-1', 's-1', 's-2']
+    );
+  });
+
+  it('returns seeded-only entries when handler returned empty', async () => {
+    const server = createAdcpServer({
+      name: 'Test',
+      version: '1.0.0',
+      brandRights: { getRights: handlerWith([]) },
+      testController: { getSeededRights: () => [rt('s-1')] },
+    });
+    const res = await dispatch(server, 'get_rights', { query: 'q', account: SANDBOX_ACCOUNT });
+    assert.deepEqual(
+      res.structuredContent.rights.map(r => r.rights_id),
+      ['s-1']
+    );
+  });
+
+  it('returns handler-only entries when bridge is omitted', async () => {
+    const server = createAdcpServer({
+      name: 'Test',
+      version: '1.0.0',
+      brandRights: { getRights: handlerWith([rt('h-1'), rt('h-2')]) },
+      testController: {},
+    });
+    const res = await dispatch(server, 'get_rights', { query: 'q', account: SANDBOX_ACCOUNT });
+    assert.deepEqual(
+      res.structuredContent.rights.map(r => r.rights_id),
+      ['h-1', 'h-2']
+    );
+  });
+
+  it('seeded wins on rights_id collision; mixed [A, B] handler + [B, C] bridge → [A, B-seeded, C]', async () => {
+    const server = createAdcpServer({
+      name: 'Test',
+      version: '1.0.0',
+      brandRights: {
+        getRights: handlerWith([rt('A', { name: 'Handler A' }), rt('B', { name: 'Handler B' })]),
+      },
+      testController: {
+        getSeededRights: () => [rt('B', { name: 'Seeded B' }), rt('C', { name: 'Seeded C' })],
+      },
+    });
+    const res = await dispatch(server, 'get_rights', { query: 'q', account: SANDBOX_ACCOUNT });
+    const byId = Object.fromEntries(res.structuredContent.rights.map(r => [r.rights_id, r.name]));
+    assert.deepEqual(Object.keys(byId).sort(), ['A', 'B', 'C']);
+    assert.equal(byId.A, 'Handler A');
+    assert.equal(byId.B, 'Seeded B', 'seeded wins on collision');
+    assert.equal(byId.C, 'Seeded C');
+  });
+
+  it('does not call the bridge on non-sandbox requests', async () => {
+    let called = false;
+    const server = createAdcpServer({
+      name: 'Test',
+      version: '1.0.0',
+      brandRights: { getRights: handlerWith([rt('h-1')]) },
+      testController: {
+        getSeededRights: () => {
+          called = true;
+          return [rt('s-1')];
+        },
+      },
+    });
+    const res = await dispatch(server, 'get_rights', {
+      query: 'q',
+      account: { brand: { domain: 'example.com' }, operator: 'example.com' },
+    });
+    assert.equal(called, false);
+    assert.deepEqual(
+      res.structuredContent.rights.map(r => r.rights_id),
+      ['h-1']
+    );
+  });
+
+  it('drops seeded entries missing rights_id', async () => {
+    const server = createAdcpServer({
+      name: 'Test',
+      version: '1.0.0',
+      brandRights: { getRights: handlerWith([]) },
+      testController: {
+        getSeededRights: () => [rt('ok-1'), { name: 'no id' }, { rights_id: '', name: 'empty' }, rt('ok-2')],
+      },
+    });
+    const res = await dispatch(server, 'get_rights', { query: 'q', account: SANDBOX_ACCOUNT });
+    assert.deepEqual(
+      res.structuredContent.rights.map(r => r.rights_id),
+      ['ok-1', 'ok-2']
+    );
+  });
+});
+
+// ---------------------------------------------------------------------------
+// getSeededSiOffering — si_get_offering (singleton replace, offering_id key)
+// ---------------------------------------------------------------------------
+
+describe('createAdcpServer — getSeededSiOffering wiring (si_get_offering)', () => {
+  function off(offeringId, overrides = {}) {
+    return {
+      available: true,
+      offering: { offering_id: offeringId, title: `Offering ${offeringId}`, ...(overrides.offering ?? {}) },
+      ...(overrides.top ?? {}),
+    };
+  }
+
+  it('replaces the response with seeded fixture when offering.offering_id matches request.offering_id', async () => {
+    const server = createAdcpServer({
+      name: 'Test',
+      version: '1.0.0',
+      sponsoredIntelligence: {
+        getOffering: async () => off('o-1', { offering: { title: 'Handler' } }),
+      },
+      testController: {
+        getSeededSiOffering: () => [off('o-1', { offering: { title: 'Seeded' } })],
+      },
+    });
+    const res = await dispatch(server, 'si_get_offering', {
+      offering_id: 'o-1',
+      account: SANDBOX_ACCOUNT,
+    });
+    assert.equal(res.structuredContent.offering.title, 'Seeded');
+    assert.equal(res.structuredContent.offering.offering_id, 'o-1');
+  });
+
+  it('passes handler response through when no fixture matches request.offering_id', async () => {
+    const server = createAdcpServer({
+      name: 'Test',
+      version: '1.0.0',
+      sponsoredIntelligence: {
+        getOffering: async () => off('o-1', { offering: { title: 'Handler' } }),
+      },
+      testController: {
+        getSeededSiOffering: () => [off('other', { offering: { title: 'Other' } })],
+      },
+    });
+    const res = await dispatch(server, 'si_get_offering', {
+      offering_id: 'o-1',
+      account: SANDBOX_ACCOUNT,
+    });
+    assert.equal(res.structuredContent.offering.title, 'Handler');
+  });
+
+  it('preserves handler context and ext on replace; seeded context/ext lose', async () => {
+    const server = createAdcpServer({
+      name: 'Test',
+      version: '1.0.0',
+      sponsoredIntelligence: {
+        getOffering: async () => ({
+          ...off('o-1', { offering: { title: 'Handler' } }),
+          context: { adcp_version: '3.0.11', request_id: 'req-si' },
+          ext: { audit: { trace_id: 't-si' } },
+        }),
+      },
+      testController: {
+        getSeededSiOffering: () => [
+          {
+            ...off('o-1', { offering: { title: 'Seeded' } }),
+            context: { adcp_version: 'WRONG', request_id: 'WRONG' },
+            ext: { audit: { trace_id: 'WRONG' } },
+          },
+        ],
+      },
+    });
+    const res = await dispatch(server, 'si_get_offering', {
+      offering_id: 'o-1',
+      account: SANDBOX_ACCOUNT,
+    });
+    assert.equal(res.structuredContent.offering.title, 'Seeded', 'body replaced');
+    assert.deepEqual(
+      res.structuredContent.context,
+      { adcp_version: '3.0.11', request_id: 'req-si' },
+      'handler context preserved'
+    );
+    assert.deepEqual(res.structuredContent.ext, { audit: { trace_id: 't-si' } }, 'handler ext preserved');
+  });
+
+  it('skipped on non-sandbox requests', async () => {
+    let called = false;
+    const server = createAdcpServer({
+      name: 'Test',
+      version: '1.0.0',
+      sponsoredIntelligence: {
+        getOffering: async () => off('o-1', { offering: { title: 'Handler' } }),
+      },
+      testController: {
+        getSeededSiOffering: () => {
+          called = true;
+          return [off('o-1', { offering: { title: 'Seeded' } })];
+        },
+      },
+    });
+    const res = await dispatch(server, 'si_get_offering', {
+      offering_id: 'o-1',
+      account: { brand: { domain: 'example.com' }, operator: 'example.com' },
+    });
+    assert.equal(called, false);
+    assert.equal(res.structuredContent.offering.title, 'Handler');
+  });
+
+  it('drops seeded entries missing offering.offering_id and warn-drops duplicates (first wins)', async () => {
+    const server = createAdcpServer({
+      name: 'Test',
+      version: '1.0.0',
+      sponsoredIntelligence: {
+        getOffering: async () => off('o-2', { offering: { title: 'Handler' } }),
+      },
+      testController: {
+        getSeededSiOffering: () => [
+          { available: true }, // no offering at all
+          { available: true, offering: {} }, // no offering_id
+          { available: true, offering: { offering_id: '' } }, // empty
+          off('o-2', { offering: { title: 'First O-2' } }),
+          off('o-2', { offering: { title: 'Duplicate O-2 — dropped' } }),
+        ],
+      },
+    });
+    const res = await dispatch(server, 'si_get_offering', {
+      offering_id: 'o-2',
+      account: SANDBOX_ACCOUNT,
+    });
+    assert.equal(res.structuredContent.offering.title, 'First O-2');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// bridgeFromSessionStore — brand-rights + SI selectors
+// ---------------------------------------------------------------------------
+
+describe('bridgeFromSessionStore — brand-rights + SI selectors', () => {
+  it('wires getSeededBrandIdentity from selectSeededBrandIdentity', async () => {
+    const bridge = bridgeFromSessionStore({
+      loadSession: () => ({
+        bi: [{ brand_id: 'b-a', house: { domain: 'x.com', name: 'X' }, names: [] }],
+      }),
+      selectSeededProducts: () => undefined,
+      selectSeededBrandIdentity: session => session.bi,
+    });
+    const out = await bridge.getSeededBrandIdentity({ input: {} });
+    assert.deepEqual(
+      out.map(e => e.brand_id),
+      ['b-a']
+    );
+  });
+
+  it('wires getSeededRights from selectSeededRights', async () => {
+    const bridge = bridgeFromSessionStore({
+      loadSession: () => ({
+        rights: [{ rights_id: 'r-a', brand_id: 'b', name: 'R', available_uses: [], pricing_options: [] }],
+      }),
+      selectSeededProducts: () => undefined,
+      selectSeededRights: session => session.rights,
+    });
+    const out = await bridge.getSeededRights({ input: {} });
+    assert.deepEqual(
+      out.map(r => r.rights_id),
+      ['r-a']
+    );
+  });
+
+  it('wires getSeededSiOffering from selectSeededSiOffering', async () => {
+    const bridge = bridgeFromSessionStore({
+      loadSession: () => ({ off: [{ available: true, offering: { offering_id: 'o-a', title: 'A' } }] }),
+      selectSeededProducts: () => undefined,
+      selectSeededSiOffering: session => session.off,
+    });
+    const out = await bridge.getSeededSiOffering({ input: {} });
+    assert.deepEqual(
+      out.map(o => o.offering.offering_id),
+      ['o-a']
+    );
+  });
+
+  it('omits brand-rights + SI per-tool callbacks when no selectors are provided', async () => {
+    const bridge = bridgeFromSessionStore({
+      loadSession: () => ({}),
+      selectSeededProducts: () => undefined,
+    });
+    assert.equal(bridge.getSeededBrandIdentity, undefined);
+    assert.equal(bridge.getSeededRights, undefined);
+    assert.equal(bridge.getSeededSiOffering, undefined);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Sandbox-gate diagnostic
+//
+// When the request carries a sandbox marker (`account.sandbox === true` or
+// `context.sandbox === true`) but the resolved `ctx.account` is explicitly
+// non-sandbox, the dispatcher rejects the merge silently. Emit a `debug`
+// line so dev logs surface the rejection without adding production-traffic
+// noise (the first gate, `isSandboxRequest`, fails first there and never
+// reaches this branch).
+// ---------------------------------------------------------------------------
+
+describe('createAdcpServer — sandbox-gate debug log on resolved-account mismatch', () => {
+  function makeRecordingLogger() {
+    const records = { debug: [], info: [], warn: [], error: [] };
+    return {
+      logger: {
+        debug: (msg, data) => records.debug.push({ msg, data }),
+        info: (msg, data) => records.info.push({ msg, data }),
+        warn: (msg, data) => records.warn.push({ msg, data }),
+        error: (msg, data) => records.error.push({ msg, data }),
+      },
+      records,
+    };
+  }
+
+  function handlerListCreatives() {
+    return async () => ({
+      query_summary: { total_matching: 0, returned: 0 },
+      pagination: { limit: 50, offset: 0, has_more: false },
+      creatives: [],
+    });
+  }
+
+  it('emits debug when request is sandbox-flagged but resolved account is sandbox:false', async () => {
+    const { logger, records } = makeRecordingLogger();
+    let bridgeCalled = false;
+    const server = createAdcpServer({
+      name: 'Test',
+      version: '1.0.0',
+      logger,
+      resolveAccount: () => ({ account_id: 'prod-acct', sandbox: false }),
+      creative: { listCreatives: handlerListCreatives() },
+      testController: {
+        getSeededCreatives: () => {
+          bridgeCalled = true;
+          return [{ creative_id: 'leaked-fixture', name: 'should not appear' }];
+        },
+      },
+    });
+
+    await dispatch(server, 'list_creatives', { account: SANDBOX_ACCOUNT });
+
+    assert.equal(bridgeCalled, false);
+    const hit = records.debug.find(r =>
+      r.msg.includes('request is sandbox-flagged but resolved account is not sandbox')
+    );
+    assert.ok(hit, 'expected sandbox-gate debug log');
+    assert.equal(hit.data.tool, 'list_creatives');
+    assert.equal(hit.data.resolved_account_id, 'prod-acct', 'log should include resolved account_id for diagnostics');
+  });
+
+  it('does not emit debug when request lacks sandbox marker (gate fails first)', async () => {
+    const { logger, records } = makeRecordingLogger();
+    const server = createAdcpServer({
+      name: 'Test',
+      version: '1.0.0',
+      logger,
+      resolveAccount: () => ({ account_id: 'prod-acct', sandbox: false }),
+      creative: { listCreatives: handlerListCreatives() },
+      testController: {
+        getSeededCreatives: () => [{ creative_id: 's-1', name: 'X' }],
+      },
+    });
+
+    await dispatch(server, 'list_creatives', {
+      account: { brand: { domain: 'example.com' }, operator: 'example.com' /* no sandbox */ },
+    });
+
+    const hit = records.debug.find(r =>
+      r.msg.includes('request is sandbox-flagged but resolved account is not sandbox')
+    );
+    assert.equal(hit, undefined, 'should not log gate-mismatch when production traffic');
+  });
+
+  it('does not emit debug when resolved account is sandbox (gate passes)', async () => {
+    const { logger, records } = makeRecordingLogger();
+    const server = createAdcpServer({
+      name: 'Test',
+      version: '1.0.0',
+      logger,
+      resolveAccount: () => ({ account_id: 'sandbox-acct', sandbox: true }),
+      creative: { listCreatives: handlerListCreatives() },
+      testController: {
+        getSeededCreatives: () => [{ creative_id: 's-1', name: 'X' }],
+      },
+    });
+
+    const res = await dispatch(server, 'list_creatives', { account: SANDBOX_ACCOUNT });
+    const hit = records.debug.find(r =>
+      r.msg.includes('request is sandbox-flagged but resolved account is not sandbox')
+    );
+    assert.equal(hit, undefined, 'should not log when the gate passes');
+    assert.deepEqual(
+      res.structuredContent.creatives.map(c => c.creative_id),
+      ['s-1']
+    );
+  });
+});
+
+// ---------------------------------------------------------------------------
+// #1784 — construction-time warn when `testController` is registered without
+// any account resolver. The dispatch-time sandbox gate admits requests where
+// `ctx.account === undefined`, so without `resolveAccount` (or
+// `resolveAccountFromAuth`) the only remaining check is the buyer-supplied
+// `account.sandbox` / `context.sandbox` marker — caller-controlled, not a
+// trust boundary. The warn makes that silent failure mode loud once, without
+// breaking the legitimate storyboard-runner case (runner-without-resolver
+// configs simply ignore the warning).
+// ---------------------------------------------------------------------------
+
+describe('createAdcpServer — trust-boundary warn when testController lacks resolveAccount (#1784)', () => {
+  function makeRecordingLogger() {
+    const records = { debug: [], info: [], warn: [], error: [] };
+    return {
+      logger: {
+        debug: (msg, data) => records.debug.push({ msg, data }),
+        info: (msg, data) => records.info.push({ msg, data }),
+        warn: (msg, data) => records.warn.push({ msg, data }),
+        error: (msg, data) => records.error.push({ msg, data }),
+      },
+      records,
+    };
+  }
+
+  const MATCH = /testController is wired but no account resolver/;
+
+  it('warns once at construction when testController is set and neither resolver is configured', () => {
+    const { logger, records } = makeRecordingLogger();
+    _createAdcpServer({
+      name: 'Test',
+      version: '1.0.0',
+      logger,
+      validation: { requests: 'off', responses: 'off' },
+      mediaBuy: { getProducts: async () => ({ products: [] }) },
+      testController: { getSeededProducts: () => [] },
+    });
+    const hits = records.warn.filter(r => MATCH.test(r.msg));
+    assert.equal(hits.length, 1, 'warn fires exactly once');
+  });
+
+  it('does not warn when testController is omitted (state-local seller)', () => {
+    const { logger, records } = makeRecordingLogger();
+    _createAdcpServer({
+      name: 'Test',
+      version: '1.0.0',
+      logger,
+      validation: { requests: 'off', responses: 'off' },
+      mediaBuy: { getProducts: async () => ({ products: [] }) },
+      // no testController, no resolver — state-local seller path
+    });
+    const hits = records.warn.filter(r => MATCH.test(r.msg));
+    assert.equal(hits.length, 0);
+  });
+
+  it('does not warn when resolveAccount is configured', () => {
+    const { logger, records } = makeRecordingLogger();
+    _createAdcpServer({
+      name: 'Test',
+      version: '1.0.0',
+      logger,
+      validation: { requests: 'off', responses: 'off' },
+      resolveAccount: () => ({ account_id: 'a', sandbox: true }),
+      mediaBuy: { getProducts: async () => ({ products: [] }) },
+      testController: { getSeededProducts: () => [] },
+    });
+    const hits = records.warn.filter(r => MATCH.test(r.msg));
+    assert.equal(hits.length, 0);
+  });
+
+  it('does not warn when resolveAccountFromAuth is configured (OAuth-passthrough setups)', () => {
+    const { logger, records } = makeRecordingLogger();
+    _createAdcpServer({
+      name: 'Test',
+      version: '1.0.0',
+      logger,
+      validation: { requests: 'off', responses: 'off' },
+      resolveAccountFromAuth: () => ({ account_id: 'a', sandbox: true }),
+      mediaBuy: { getProducts: async () => ({ products: [] }) },
+      testController: { getSeededProducts: () => [] },
+    });
+    const hits = records.warn.filter(r => MATCH.test(r.msg));
+    assert.equal(hits.length, 0);
+  });
+
+  it('does not re-warn on subsequent dispatches', async () => {
+    const { logger, records } = makeRecordingLogger();
+    const server = _createAdcpServer({
+      name: 'Test',
+      version: '1.0.0',
+      logger,
+      validation: { requests: 'off', responses: 'off' },
+      mediaBuy: { getProducts: async () => ({ products: [] }) },
+      testController: { getSeededProducts: () => [] },
+    });
+    await dispatch(server, 'get_products', {
+      brief: 'x',
+      buying_mode: 'brief',
+      account: SANDBOX_ACCOUNT,
+    });
+    await dispatch(server, 'get_products', {
+      brief: 'x',
+      buying_mode: 'brief',
+      account: SANDBOX_ACCOUNT,
+    });
+    const hits = records.warn.filter(r => MATCH.test(r.msg));
+    assert.equal(hits.length, 1, 'warn fires once across construction + N requests');
+  });
+
+  // The default `logger` is `noopLogger`, which swallows `.warn`. The
+  // misconfig is most likely on day one when no logger is wired yet —
+  // so the warn also goes through `process.emitWarning` (stderr by
+  // default, dedupable via `code`). Spy on `process.emitWarning` itself
+  // for synchronous capture — `process.on('warning')` would also work
+  // but adds event-loop-flush timing dependencies.
+  it('also emits via process.emitWarning so the signal is visible without configured logging', () => {
+    const calls = [];
+    const original = process.emitWarning;
+    process.emitWarning = (...args) => {
+      calls.push(args);
+      return original.apply(process, args);
+    };
+    try {
+      _createAdcpServer({
+        name: 'Test',
+        version: '1.0.0',
+        // no `logger` → defaults to noopLogger
+        validation: { requests: 'off', responses: 'off' },
+        mediaBuy: { getProducts: async () => ({ products: [] }) },
+        testController: { getSeededProducts: () => [] },
+      });
+      const ours = calls.filter(args => args[1]?.code === 'ADCP_BRIDGE_NO_RESOLVER');
+      assert.equal(ours.length, 1, 'exactly one process.emitWarning call');
+      assert.match(ours[0][0], MATCH);
+      assert.equal(ours[0][1].type, 'AdcpServerConfigWarning');
+    } finally {
+      process.emitWarning = original;
+    }
+  });
+});

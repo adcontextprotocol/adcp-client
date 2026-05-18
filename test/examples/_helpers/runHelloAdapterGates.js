@@ -34,6 +34,13 @@ const CLI = path.join(REPO_ROOT, 'bin', 'adcp.js');
  * @property {Parameters<typeof bootMockServer>[0]} [mockOptions] — extra mock-server boot opts
  * @property {(grader: any) => any[]} [filterFailures] — narrow the failures list (default: all)
  * @property {string} [storyboardSummary]     — optional storyboard description for the test name
+ * @property {Array<{id: string, label?: string, auth?: string, testKitPath?: string}>} [extraStoryboards]
+ *           — additional storyboards run against the same agent process after the
+ *             primary storyboard. Each entry runs as its own `it()` gate with
+ *             default-strict failure assertion. `auth` overrides the bearer
+ *             passed to the grader; `testKitPath` is forwarded to the grader as
+ *             `--test-kit PATH` so storyboard steps with `auth.from_test_kit: true`
+ *             or `$test_kit.<path>` references resolve.
  *
  * Ports are picked dynamically per test run (kernel-assigned via `pickFreePort()`)
  * so concurrent test-file workers never race on the same hardcoded number. See
@@ -57,6 +64,7 @@ function runHelloAdapterGates(config) {
     mockOptions = {},
     filterFailures,
     storyboardSummary,
+    extraStoryboards = [],
   } = config;
 
   describe(suiteName, () => {
@@ -147,6 +155,27 @@ function runHelloAdapterGates(config) {
       assert.notEqual(grader.overall_status, 'failing');
     });
 
+    for (const extra of extraStoryboards) {
+      const label = extra.label
+        ? `${extra.label} (${extra.id})`
+        : `additional storyboard ${extra.id} passes with zero failed steps`;
+      it(label, async () => {
+        const grader = await runGrader(
+          `http://127.0.0.1:${agentPort}/mcp`,
+          extra.id,
+          extra.auth ?? adcpAuthToken,
+          extra.testKitPath ? { testKitPath: extra.testKitPath } : {}
+        );
+        const failures = (grader.failures || []).filter(f => !f.skipped);
+        assert.equal(
+          failures.length,
+          0,
+          `storyboard ${extra.id} reported ${failures.length} failed step(s):\n` + formatFailures(failures)
+        );
+        assert.notEqual(grader.overall_status, 'failing');
+      });
+    }
+
     it('hits every expected upstream route at least once (façade gate)', async () => {
       const res = await fetch(`${mockHandle.url}/_debug/traffic`);
       const body = await res.json();
@@ -200,7 +229,7 @@ function pickFreePort() {
   });
 }
 
-function runGrader(agentUrl, storyboardId, adcpAuthToken) {
+function runGrader(agentUrl, storyboardId, adcpAuthToken, { testKitPath } = {}) {
   return new Promise((resolveFn, reject) => {
     const child = spawn(
       'node',
@@ -215,6 +244,7 @@ function runGrader(agentUrl, storyboardId, adcpAuthToken) {
         '--auth',
         adcpAuthToken,
         '--webhook-receiver',
+        ...(testKitPath ? ['--test-kit', testKitPath] : []),
       ],
       { cwd: REPO_ROOT, stdio: ['ignore', 'pipe', 'pipe'] }
     );

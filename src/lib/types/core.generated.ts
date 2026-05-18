@@ -1,5 +1,5 @@
-// Generated AdCP core types from official schemas v3.0.11
-// Generated at: 2026-05-11T09:20:21.634Z
+// Generated AdCP core types from official schemas v3.0.12
+// Generated at: 2026-05-17T09:46:22.944Z
 
 // MEDIA-BUY SCHEMA
 /**
@@ -153,10 +153,12 @@ export type FrequencyCap = {
   suppress?: Duration;
   /**
    * Deprecated — use suppress instead. Cooldown period in minutes between consecutive exposures to the same entity (e.g. 60 for a 1-hour cooldown).
+   * @minimum 0
    */
   suppress_minutes?: number;
   /**
    * Maximum number of impressions per entity per window. For duration windows, implementations typically use a rolling window; 'campaign' applies a fixed cap across the full flight.
+   * @minimum 1
    */
   max_impressions?: number;
   /**
@@ -267,6 +269,7 @@ export type OptimizationGoal =
           };
       /**
        * Relative priority among all optimization goals on this package. 1 = highest priority (primary goal); higher numbers are lower priority (secondary signals). When omitted, sellers may use array position as priority.
+       * @minimum 1
        */
       priority?: number;
     }
@@ -278,6 +281,7 @@ export type OptimizationGoal =
       event_sources: {
         /**
          * Event source to include (must be configured on this account via sync_event_sources)
+         * @minLength 1
          */
         event_source_id: string;
         event_type: EventType;
@@ -330,6 +334,7 @@ export type OptimizationGoal =
       };
       /**
        * Relative priority among all optimization goals on this package. 1 = highest priority (primary goal); higher numbers are lower priority (secondary signals). When omitted, sellers may use array position as priority.
+       * @minimum 1
        */
       priority?: number;
     };
@@ -349,6 +354,7 @@ export interface MediaBuy {
   rejection_reason?: string;
   /**
    * ISO 8601 timestamp when the seller confirmed this media buy. A successful create_media_buy response constitutes order confirmation.
+   * @format date-time
    */
   confirmed_at?: string;
   /**
@@ -357,16 +363,19 @@ export interface MediaBuy {
   cancellation?: {
     /**
      * ISO 8601 timestamp when this media buy was canceled.
+     * @format date-time
      */
     canceled_at: string;
     canceled_by: CanceledBy;
     /**
      * Reason provided when the media buy was canceled.
+     * @maxLength 500
      */
     reason?: string;
   };
   /**
    * Total budget amount
+   * @minimum 0
    */
   total_budget: number;
   /**
@@ -376,18 +385,22 @@ export interface MediaBuy {
   invoice_recipient?: BusinessEntity;
   /**
    * ISO 8601 timestamp for creative upload deadline
+   * @format date-time
    */
   creative_deadline?: string;
   /**
    * Monotonically increasing revision number. Incremented on every state change or update. Callers MAY include this in update_media_buy requests for optimistic concurrency — sellers MUST reject with CONFLICT if the provided revision does not match the current value.
+   * @minimum 1
    */
   revision?: number;
   /**
    * Creation timestamp
+   * @format date-time
    */
   created_at?: string;
   /**
    * Last update timestamp
+   * @format date-time
    */
   updated_at?: string;
   ext?: ExtensionObject;
@@ -416,6 +429,7 @@ export interface Account {
   brand?: BrandReference;
   /**
    * Domain of the entity operating this account. When the brand operates directly, this is the brand's domain.
+   * @pattern ^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)*$
    */
   operator?: string;
   billing?: BillingParty;
@@ -429,7 +443,13 @@ export interface Account {
    * Maximum outstanding balance allowed
    */
   credit_limit?: {
+    /**
+     * @minimum 0
+     */
     amount: number;
+    /**
+     * @pattern ^[A-Z]{3}$
+     */
     currency: string;
   };
   /**
@@ -446,6 +466,7 @@ export interface Account {
     message: string;
     /**
      * When this setup link expires.
+     * @format date-time
      */
     expires_at?: string;
   };
@@ -456,6 +477,7 @@ export interface Account {
   governance_agents?: {
     /**
      * Governance agent endpoint URL. Must use HTTPS.
+     * @pattern ^https:\/\/
      */
     url: string;
     /**
@@ -470,14 +492,21 @@ export interface Account {
     protocol: CloudStorageProtocol;
     /**
      * Bucket or container name
+     * @minLength 3
+     * @maxLength 63
+     * @pattern ^[a-z0-9][a-z0-9.-]{1,61}[a-z0-9]$
      */
     bucket: string;
     /**
      * Path prefix within the bucket. Seller appends date-based partitioning beneath this prefix.
+     * @maxLength 512
+     * @pattern ^[a-zA-Z0-9\/_.-]+$
      */
     prefix?: string;
     /**
      * Cloud region for the bucket
+     * @maxLength 64
+     * @pattern ^[a-z0-9-]+$
      */
     region?: string;
     /**
@@ -490,10 +519,12 @@ export interface Account {
     compression?: 'gzip' | 'none';
     /**
      * How long reporting files are retained in the bucket before deletion. Buyers must read files within this window. Minimum recommended: 14 days.
+     * @minimum 1
      */
     file_retention_days: number;
     /**
      * URL to documentation for configuring buyer read access to this bucket (IAM role, service account, etc.). Operator-facing documentation — buyer agents MUST NOT auto-fetch this URL; surface it to a human operator. If an implementation fetches it (for preview), apply webhook URL SSRF validation and do not pass the fetched content into an LLM context without indirect-prompt-injection guarding. See docs/media-buy/media-buys/optimization-reporting#security-considerations-for-offline-delivery.
+     * @pattern ^https:\/\/
      */
     setup_instructions?: string;
   };
@@ -509,6 +540,7 @@ export interface Account {
 export interface BrandReference {
   /**
    * Domain where /.well-known/brand.json is hosted, or the brand's operating domain
+   * @pattern ^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)*$
    */
   domain: string;
   brand_id?: BrandID;
@@ -529,18 +561,22 @@ export interface BrandReference {
 export interface BusinessEntity {
   /**
    * Registered legal name of the business entity
+   * @maxLength 200
    */
   legal_name: string;
   /**
    * VAT identification number (e.g., DE123456789 for Germany, FR12345678901 for France). Required for B2B invoicing in the EU. Must be normalized: no spaces, dots, or dashes.
+   * @pattern ^[A-Z]{2}[A-Z0-9]{2,13}$
    */
   vat_id?: string;
   /**
    * Tax identification number for jurisdictions that do not use VAT (e.g., US EIN)
+   * @maxLength 30
    */
   tax_id?: string;
   /**
    * Company registration number (e.g., HRB 12345 for German Handelsregister)
+   * @maxLength 50
    */
   registration_number?: string;
   /**
@@ -549,16 +585,25 @@ export interface BusinessEntity {
   address?: {
     /**
      * Street address including building number
+     * @maxLength 200
      */
     street: string;
+    /**
+     * @maxLength 100
+     */
     city: string;
+    /**
+     * @maxLength 20
+     */
     postal_code: string;
     /**
      * State, province, or region
+     * @maxLength 100
      */
     region?: string;
     /**
      * ISO 3166-1 alpha-2 country code
+     * @pattern ^[A-Z]{2}$
      */
     country: string;
   };
@@ -572,9 +617,17 @@ export interface BusinessEntity {
     role: 'billing' | 'legal' | 'creative' | 'general';
     /**
      * Full name of the contact
+     * @maxLength 200
      */
     name?: string;
+    /**
+     * @maxLength 254
+     * @format email
+     */
     email?: string;
+    /**
+     * @maxLength 30
+     */
     phone?: string;
   }[];
   /**
@@ -583,22 +636,27 @@ export interface BusinessEntity {
   bank?: {
     /**
      * Name on the bank account
+     * @maxLength 200
      */
     account_holder: string;
     /**
      * International Bank Account Number (SEPA markets)
+     * @pattern ^[A-Z]{2}[0-9]{2}[A-Z0-9]{4,30}$
      */
     iban?: string;
     /**
      * Bank Identifier Code / SWIFT code (SEPA markets)
+     * @pattern ^[A-Z]{4}[A-Z]{2}[A-Z0-9]{2}([A-Z0-9]{3})?$
      */
     bic?: string;
     /**
      * Bank routing number for non-SEPA markets (e.g., US ABA routing number, Canadian transit/institution number)
+     * @maxLength 30
      */
     routing_number?: string;
     /**
      * Bank account number for non-SEPA markets
+     * @maxLength 30
      */
     account_number?: string;
   };
@@ -622,6 +680,7 @@ export interface Package {
   product_id?: string;
   /**
    * Budget allocation for this package in the currency specified by the pricing option
+   * @minimum 0
    */
   budget?: number;
   pacing?: Pacing;
@@ -631,11 +690,13 @@ export interface Package {
   pricing_option_id?: string;
   /**
    * Bid price for auction-based pricing. This is the exact bid/price to honor unless the selected pricing option has max_bid=true, in which case bid_price is the buyer's maximum willingness to pay (ceiling).
+   * @minimum 0
    */
   bid_price?: number;
   price_breakdown?: PriceBreakdown;
   /**
    * Impression goal for this package
+   * @minimum 0
    */
   impressions?: number;
   /**
@@ -666,10 +727,12 @@ export interface Package {
   optimization_goals?: OptimizationGoal[];
   /**
    * Flight start date/time for this package in ISO 8601 format. When omitted, the package inherits the media buy's start_time. Sellers SHOULD always include the resolved value in responses, even when inherited.
+   * @format date-time
    */
   start_time?: string;
   /**
    * Flight end date/time for this package in ISO 8601 format. When omitted, the package inherits the media buy's end_time. Sellers SHOULD always include the resolved value in responses, even when inherited.
+   * @format date-time
    */
   end_time?: string;
   /**
@@ -686,24 +749,29 @@ export interface Package {
   cancellation?: {
     /**
      * ISO 8601 timestamp when this package was canceled.
+     * @format date-time
      */
     canceled_at: string;
     canceled_by: CanceledBy;
     /**
      * Reason the package was canceled.
+     * @maxLength 500
      */
     reason?: string;
     /**
      * ISO 8601 timestamp when the seller acknowledged the cancellation. Confirms inventory has been released and billing stopped. Absent until the seller processes the cancellation.
+     * @format date-time
      */
     acknowledged_at?: string;
   };
   /**
    * Agency estimate or authorization number for this package. Echoed from the buyer's request. When present on the package, takes precedence over the media buy-level estimate number.
+   * @maxLength 100
    */
   agency_estimate_number?: string;
   /**
    * ISO 8601 timestamp for creative upload or change deadline for this package. After this deadline, creative changes are rejected. When absent, the media buy's creative_deadline applies.
+   * @format date-time
    */
   creative_deadline?: string;
   context?: ContextObject;
@@ -833,18 +901,22 @@ export interface FormatReferenceStructuredObject {
   agent_url: string;
   /**
    * Format identifier within the agent's namespace (e.g., 'display_static', 'video_hosted', 'audio_standard'). When used alone, references a template format. When combined with dimension/duration fields, creates a parameterized format ID for a specific variant.
+   * @pattern ^[a-zA-Z0-9_-]+$
    */
   id: string;
   /**
    * Width in pixels for visual formats. When specified, height must also be specified. Both fields together create a parameterized format ID for dimension-specific variants.
+   * @minimum 1
    */
   width?: number;
   /**
    * Height in pixels for visual formats. When specified, width must also be specified. Both fields together create a parameterized format ID for dimension-specific variants.
+   * @minimum 1
    */
   height?: number;
   /**
    * Duration in milliseconds for time-based formats (video, audio). When specified, creates a parameterized format ID. Omit to reference a template format without parameters.
+   * @minimum 1
    */
   duration_ms?: number;
 }
@@ -940,6 +1012,8 @@ export interface TargetingOverlay {
   age_restriction?: {
     /**
      * Minimum age required
+     * @minimum 13
+     * @maximum 99
      */
     min: number;
     /**
@@ -996,11 +1070,13 @@ export interface TargetingOverlay {
   keyword_targets?: {
     /**
      * The keyword to target
+     * @minLength 1
      */
     keyword: string;
     match_type: MatchType;
     /**
      * Per-keyword bid price, denominated in the same currency as the package's pricing option. Overrides the package-level bid_price for this keyword. Inherits the max_bid interpretation from the pricing option: when max_bid is true, this is the keyword's bid ceiling; when false, this is the exact bid. If omitted, the package bid_price applies.
+     * @minimum 0
      */
     bid_price?: number;
   }[];
@@ -1010,6 +1086,7 @@ export interface TargetingOverlay {
   negative_keywords?: {
     /**
      * The keyword to exclude
+     * @minLength 1
      */
     keyword: string;
     match_type: MatchType;
@@ -1025,10 +1102,14 @@ export interface DaypartTarget {
   days: DayOfWeek[];
   /**
    * Start hour (inclusive), 0-23 in 24-hour format. 0 = midnight, 6 = 6:00am, 18 = 6:00pm.
+   * @minimum 0
+   * @maximum 23
    */
   start_hour: number;
   /**
    * End hour (exclusive), 1-24 in 24-hour format. 10 = 10:00am, 24 = midnight. Must be greater than start_hour.
+   * @minimum 1
+   * @maximum 24
    */
   end_hour: number;
   /**
@@ -1042,6 +1123,7 @@ export interface DaypartTarget {
 export interface Duration {
   /**
    * Number of time units. Must be 1 when unit is 'campaign'.
+   * @minimum 1
    */
   interval: number;
   /**
@@ -1059,6 +1141,7 @@ export interface PropertyListReference {
   agent_url: string;
   /**
    * Identifier for the property list within the agent
+   * @minLength 1
    */
   list_id: string;
   /**
@@ -1076,6 +1159,7 @@ export interface CollectionListReference {
   agent_url: string;
   /**
    * Identifier for the collection list within the agent
+   * @minLength 1
    */
   list_id: string;
   /**
@@ -1094,6 +1178,7 @@ export interface MeasurementTerms {
     vendor: BrandReference;
     /**
      * Maximum acceptable variance between the billing vendor's count and the other party's count before resolution is triggered (e.g., 10 means a 10% divergence triggers review).
+     * @minimum 0
      */
     max_variance_percent?: number;
     /**
@@ -1118,6 +1203,8 @@ export interface PerformanceStandard {
   metric: PerformanceStandardMetric;
   /**
    * Rate threshold as a decimal (e.g., 0.70 for 70%). Whether this is a floor or ceiling depends on the metric: for viewability, completion_rate, brand_safety, attention_score the actual rate must be >= threshold; for ivt the actual rate must be <= threshold.
+   * @minimum 0
+   * @maximum 1
    */
   threshold: number;
   standard?: ViewabilityStandard;
@@ -1133,6 +1220,8 @@ export interface CreativeAssignment {
   creative_id: string;
   /**
    * Relative delivery weight for this creative (0–100). When multiple creatives are assigned to the same package, weights determine impression distribution proportionally — a creative with weight 2 gets twice the delivery of weight 1. When omitted, the creative receives equal rotation with other unweighted creatives. A weight of 0 means the creative is assigned but paused (receives no delivery).
+   * @minimum 0
+   * @maximum 100
    */
   weight?: number;
   /**
@@ -1229,6 +1318,7 @@ export type VASTAsset = {
   vpaid_enabled?: boolean;
   /**
    * Expected video duration in milliseconds (if known)
+   * @minimum 0
    */
   duration_ms?: number;
   /**
@@ -1410,6 +1500,7 @@ export type DAASTAsset = {
   daast_version?: DAASTVersion;
   /**
    * Expected audio duration in milliseconds (if known)
+   * @minimum 0
    */
   duration_ms?: number;
   /**
@@ -1483,24 +1574,6 @@ export type DAASTTrackingEvent =
  */
 export type MarkdownFlavor = 'commonmark' | 'gfm';
 /**
- * Campaign-level creative context as an asset. Carries the creative brief through the manifest so it travels with the creative through regeneration, resizing, and auditing.
- */
-export type BriefAsset = CreativeBrief & {
-  /**
-   * Discriminator identifying this as a brief asset. See /schemas/creative/asset-types for the registry.
-   */
-  asset_type: 'brief';
-};
-/**
- * A typed data feed as a creative asset. Carries catalog context (products, stores, jobs, etc.) within the manifest's assets map.
- */
-export type CatalogAsset = Catalog & {
-  /**
-   * Discriminator identifying this as a catalog asset. See /schemas/creative/asset-types for the registry.
-   */
-  asset_type: 'catalog';
-};
-/**
  * For generative creatives: set to 'approved' to finalize, 'rejected' to request regeneration with updated assets/message. Omit for non-generative creatives (system will set based on processing state).
  */
 export type CreativeStatus = 'processing' | 'pending_review' | 'approved' | 'rejected' | 'archived';
@@ -1554,6 +1627,8 @@ export interface CreativeAsset {
   status?: CreativeStatus;
   /**
    * Optional delivery weight for creative rotation when uploading via create_media_buy or update_media_buy (0-100). If omitted, platform determines rotation. Only used during upload to media buy - not stored in creative library.
+   * @minimum 0
+   * @maximum 100
    */
   weight?: number;
   /**
@@ -1580,10 +1655,12 @@ export interface ImageAsset {
   url: string;
   /**
    * Width in pixels
+   * @minimum 1
    */
   width: number;
   /**
    * Height in pixels
+   * @minimum 1
    */
   height: number;
   /**
@@ -1637,10 +1714,12 @@ export interface Provenance {
   };
   /**
    * When this provenance claim was made (ISO 8601). Distinct from created_time, which records when the content itself was produced. A provenance claim may be attached well after content creation, for example when retroactively declaring AI involvement for regulatory compliance.
+   * @format date-time
    */
   declared_at?: string;
   /**
    * When this content was created or generated (ISO 8601)
+   * @format date-time
    */
   created_time?: string;
   /**
@@ -1687,6 +1766,7 @@ export interface Provenance {
         persistence?: DisclosurePersistence;
         /**
          * Minimum display duration in milliseconds for initial persistence. Recommended when persistence is initial — without it, the duration is at the publisher's discretion. At serve time the publisher reads this from provenance since the brief is not available.
+         * @minimum 1
          */
         min_duration_ms?: number;
         /**
@@ -1707,6 +1787,7 @@ export interface Provenance {
     verified_by: string;
     /**
      * When the verification was performed (ISO 8601)
+     * @format date-time
      */
     verified_time?: string;
     /**
@@ -1715,6 +1796,8 @@ export interface Provenance {
     result: 'authentic' | 'ai_generated' | 'ai_modified' | 'inconclusive';
     /**
      * Confidence score of the verification result (0.0 to 1.0)
+     * @minimum 0
+     * @maximum 1
      */
     confidence?: number;
     /**
@@ -1738,18 +1821,22 @@ export interface VideoAsset {
   url: string;
   /**
    * Width in pixels
+   * @minimum 1
    */
   width: number;
   /**
    * Height in pixels
+   * @minimum 1
    */
   height: number;
   /**
    * Video duration in milliseconds
+   * @minimum 1
    */
   duration_ms?: number;
   /**
    * File size in bytes
+   * @minimum 1
    */
   file_size_bytes?: number;
   /**
@@ -1762,6 +1849,7 @@ export interface VideoAsset {
   video_codec?: string;
   /**
    * Video stream bitrate in kilobits per second
+   * @minimum 1
    */
   video_bitrate_kbps?: number;
   /**
@@ -1811,6 +1899,7 @@ export interface VideoAsset {
   audio_bit_depth?: 16 | 24 | 32;
   /**
    * Audio bitrate in kilobits per second
+   * @minimum 1
    */
   audio_bitrate_kbps?: number;
   /**
@@ -1849,10 +1938,12 @@ export interface AudioAsset {
   url: string;
   /**
    * Audio duration in milliseconds
+   * @minimum 0
    */
   duration_ms?: number;
   /**
    * File size in bytes
+   * @minimum 1
    */
   file_size_bytes?: number;
   /**
@@ -1874,6 +1965,7 @@ export interface AudioAsset {
   bit_depth?: 16 | 24 | 32;
   /**
    * Bitrate in kilobits per second
+   * @minimum 1
    */
   bitrate_kbps?: number;
   /**
@@ -2017,6 +2109,8 @@ export interface WebhookAsset {
   method?: HTTPMethod;
   /**
    * Maximum time to wait for response in milliseconds
+   * @minimum 10
+   * @maximum 5000
    */
   timeout_ms?: number;
   /**
@@ -2085,9 +2179,9 @@ export interface MarkdownAsset {
   allow_raw_html?: boolean;
 }
 /**
- * Campaign-level creative context for AI-powered creative generation. Provides the layer between brand identity (stable across campaigns) and individual creative execution (per-request). A brand has one identity (defined in brand.json) but different creative briefs for each campaign or flight.
+ * Campaign-level creative context as an asset. Carries the creative brief through the manifest so it travels with the creative through regeneration, resizing, and auditing.
  */
-export interface CreativeBrief {
+export interface BriefAsset {
   /**
    * Campaign or flight name for identification
    */
@@ -2169,6 +2263,10 @@ export interface CreativeBrief {
      */
     prohibited_claims?: string[];
   };
+  /**
+   * Discriminator identifying this as a brief asset. See /schemas/creative/asset-types for the registry.
+   */
+  asset_type: 'brief';
 }
 /**
  * A reference asset that provides creative context. Carries visual materials (mood boards, product shots, example creatives) with semantic roles that tell creative agents how to use them.
@@ -2188,12 +2286,70 @@ export interface ReferenceAsset {
   description?: string;
 }
 /**
+ * A typed data feed as a creative asset. Carries catalog context (products, stores, jobs, etc.) within the manifest's assets map.
+ */
+export interface CatalogAsset {
+  /**
+   * Buyer's identifier for this catalog. Required when syncing via sync_catalogs. When used in creatives, references a previously synced catalog on the account.
+   */
+  catalog_id?: string;
+  /**
+   * Human-readable name for this catalog (e.g., 'Summer Products 2025', 'Amsterdam Store Locations').
+   */
+  name?: string;
+  type: CatalogType;
+  /**
+   * URL to an external catalog feed. The platform fetches and resolves items from this URL. For offering-type catalogs, the feed contains an array of Offering objects. For other types, the feed format is determined by feed_format. When omitted with type 'product', the platform uses its synced copy of the brand's product catalog.
+   */
+  url?: string;
+  feed_format?: FeedFormat;
+  update_frequency?: UpdateFrequency;
+  /**
+   * Inline catalog data. The item schema depends on the catalog type: Offering objects for 'offering', StoreItem for 'store', HotelItem for 'hotel', FlightItem for 'flight', JobItem for 'job', VehicleItem for 'vehicle', RealEstateItem for 'real_estate', EducationItem for 'education', DestinationItem for 'destination', AppItem for 'app', or freeform objects for 'product', 'inventory', and 'promotion'. Mutually exclusive with url — provide one or the other, not both. Implementations should validate items against the type-specific schema.
+   */
+  items?: {}[];
+  /**
+   * Filter catalog to specific item IDs. For offering-type catalogs, these are offering_id values. For product-type catalogs, these are SKU identifiers.
+   */
+  ids?: string[];
+  /**
+   * Filter product-type catalogs by GTIN identifiers for cross-retailer catalog matching. Accepts standard GTIN formats (GTIN-8, UPC-A/GTIN-12, EAN-13/GTIN-13, GTIN-14). Only applicable when type is 'product'.
+   */
+  gtins?: string[];
+  /**
+   * Filter catalog to items with these tags. Tags are matched using OR logic — items matching any tag are included.
+   */
+  tags?: string[];
+  /**
+   * Filter catalog to items in this category (e.g., 'beverages/soft-drinks', 'chef-positions').
+   */
+  category?: string;
+  /**
+   * Natural language filter for catalog items (e.g., 'all pasta sauces under $5', 'amsterdam vacancies').
+   */
+  query?: string;
+  /**
+   * Event types that represent conversions for items in this catalog. Declares what events the platform should attribute to catalog items — e.g., a job catalog converts via submit_application, a product catalog via purchase. The event's content_ids field carries the item IDs that connect back to catalog items. Use content_id_type to declare what identifier type content_ids values represent.
+   */
+  conversion_events?: EventType[];
+  content_id_type?: ContentIDType;
+  /**
+   * Declarative normalization rules for external feeds. Maps non-standard feed field names, date formats, price encodings, and image URLs to the AdCP catalog item schema. Applied during sync_catalogs ingestion. Supports field renames, named transforms (date, divide, boolean, split), static literal injection, and assignment of image URLs to typed asset pools.
+   */
+  feed_field_mappings?: CatalogFieldMapping[];
+  /**
+   * Discriminator identifying this as a catalog asset. See /schemas/creative/asset-types for the registry.
+   */
+  asset_type: 'catalog';
+}
+/**
  * An industry-standard identifier for an advertising creative (e.g., Ad-ID, ISCI, Clearcast clock number). These identifiers are managed by external registries and used across the supply chain to track and reference specific creative assets.
  */
 export interface IndustryIdentifier {
   type: CreativeIdentifierType;
   /**
    * The identifier value (e.g., 'ABCD1234000H' for Ad-ID)
+   * @maxLength 64
    */
   value: string;
 }
@@ -2204,6 +2360,7 @@ export type PublisherPropertySelector =
   | {
       /**
        * Domain where publisher's adagents.json is hosted (e.g., 'cnn.com')
+       * @pattern ^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)*$
        */
       publisher_domain: string;
       /**
@@ -2214,6 +2371,7 @@ export type PublisherPropertySelector =
   | {
       /**
        * Domain where publisher's adagents.json is hosted (e.g., 'cnn.com')
+       * @pattern ^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)*$
        */
       publisher_domain: string;
       /**
@@ -2228,6 +2386,7 @@ export type PublisherPropertySelector =
   | {
       /**
        * Domain where publisher's adagents.json is hosted (e.g., 'cnn.com')
+       * @pattern ^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)*$
        */
       publisher_domain: string;
       /**
@@ -2241,10 +2400,12 @@ export type PublisherPropertySelector =
     };
 /**
  * Identifier for a publisher property. Must be lowercase alphanumeric with underscores only.
+ * @pattern ^[a-z0-9_]+$
  */
 export type PropertyID = string;
 /**
  * Tag for categorizing publisher properties. Must be lowercase alphanumeric with underscores only.
+ * @pattern ^[a-z0-9_]+$
  */
 export type PropertyTag = string;
 /**
@@ -2308,14 +2469,17 @@ export type ForecastRange = {
 } & {
   /**
    * Conservative (low-end) forecast value
+   * @minimum 0
    */
   low?: number;
   /**
    * Expected (most likely) forecast value
+   * @minimum 0
    */
   mid?: number;
   /**
    * Optimistic (high-end) forecast value
+   * @minimum 0
    */
   high?: number;
 };
@@ -2380,6 +2544,7 @@ export type DataProviderSignalSelector =
   | {
       /**
        * Domain where data provider's adagents.json is hosted (e.g., 'polk.com')
+       * @pattern ^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)*$
        */
       data_provider_domain: string;
       /**
@@ -2390,6 +2555,7 @@ export type DataProviderSignalSelector =
   | {
       /**
        * Domain where data provider's adagents.json is hosted (e.g., 'polk.com')
+       * @pattern ^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)*$
        */
       data_provider_domain: string;
       /**
@@ -2404,6 +2570,7 @@ export type DataProviderSignalSelector =
   | {
       /**
        * Domain where data provider's adagents.json is hosted (e.g., 'polk.com')
+       * @pattern ^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)*$
        */
       data_provider_domain: string;
       /**
@@ -2619,6 +2786,7 @@ export interface Product {
   };
   /**
    * Maximum number of optimization_goals this product accepts on a package. When absent, no limit is declared. Most social platforms accept only 1 goal — buyers sending arrays longer than this value should expect the seller to use only the highest-priority (lowest priority number) goal.
+   * @minimum 1
    */
   max_optimization_goals?: number;
   measurement_readiness?: MeasurementReadiness;
@@ -2653,10 +2821,12 @@ export interface Product {
     matched_ids?: string[];
     /**
      * Number of catalog items that matched this product's inventory.
+     * @minimum 0
      */
     matched_count?: number;
     /**
      * Total catalog items evaluated from the buyer's catalog.
+     * @minimum 0
      */
     submitted_count: number;
   };
@@ -2666,6 +2836,7 @@ export interface Product {
   brief_relevance?: string;
   /**
    * Expiration timestamp. After this time, the product may no longer be available for purchase and create_media_buy may reject packages referencing it.
+   * @format date-time
    */
   expires_at?: string;
   /**
@@ -2756,14 +2927,17 @@ export interface Product {
   material_submission?: {
     /**
      * HTTPS URL for uploading or submitting physical creative materials
+     * @pattern ^https:\/\/
      */
     url?: string;
     /**
      * Email address for creative material submission
+     * @format email
      */
     email?: string;
     /**
      * Human-readable instructions for material submission (file naming conventions, shipping address, etc.)
+     * @maxLength 2000
      */
     instructions?: string;
     ext?: ExtensionObject;
@@ -2809,14 +2983,17 @@ export interface CPMPricingOption {
   pricing_model: 'cpm';
   /**
    * ISO 4217 currency code
+   * @pattern ^[A-Z]{3}$
    */
   currency: string;
   /**
    * Fixed price per unit. If present, this is fixed pricing. If absent, auction-based.
+   * @minimum 0
    */
   fixed_price?: number;
   /**
    * Minimum acceptable bid for auction pricing (mutually exclusive with fixed_price). Bids below this value will be rejected.
+   * @minimum 0
    */
   floor_price?: number;
   /**
@@ -2826,6 +3003,7 @@ export interface CPMPricingOption {
   price_guidance?: PriceGuidance;
   /**
    * Minimum spend requirement per package using this pricing option, in the specified currency
+   * @minimum 0
    */
   min_spend_per_package?: number;
   price_breakdown?: PriceBreakdown;
@@ -2840,18 +3018,22 @@ export interface CPMPricingOption {
 export interface PriceGuidance {
   /**
    * 25th percentile of recent winning bids
+   * @minimum 0
    */
   p25?: number;
   /**
    * Median of recent winning bids
+   * @minimum 0
    */
   p50?: number;
   /**
    * 75th percentile of recent winning bids
+   * @minimum 0
    */
   p75?: number;
   /**
    * 90th percentile of recent winning bids
+   * @minimum 0
    */
   p90?: number;
 }
@@ -2869,14 +3051,17 @@ export interface VCPMPricingOption {
   pricing_model: 'vcpm';
   /**
    * ISO 4217 currency code
+   * @pattern ^[A-Z]{3}$
    */
   currency: string;
   /**
    * Fixed price per unit. If present, this is fixed pricing. If absent, auction-based.
+   * @minimum 0
    */
   fixed_price?: number;
   /**
    * Minimum acceptable bid for auction pricing (mutually exclusive with fixed_price). Bids below this value will be rejected.
+   * @minimum 0
    */
   floor_price?: number;
   /**
@@ -2886,6 +3071,7 @@ export interface VCPMPricingOption {
   price_guidance?: PriceGuidance;
   /**
    * Minimum spend requirement per package using this pricing option, in the specified currency
+   * @minimum 0
    */
   min_spend_per_package?: number;
   price_breakdown?: PriceBreakdown;
@@ -2908,14 +3094,17 @@ export interface CPCPricingOption {
   pricing_model: 'cpc';
   /**
    * ISO 4217 currency code
+   * @pattern ^[A-Z]{3}$
    */
   currency: string;
   /**
    * Fixed price per click. If present, this is fixed pricing. If absent, auction-based.
+   * @minimum 0
    */
   fixed_price?: number;
   /**
    * Minimum acceptable bid for auction pricing (mutually exclusive with fixed_price). Bids below this value will be rejected.
+   * @minimum 0
    */
   floor_price?: number;
   /**
@@ -2925,6 +3114,7 @@ export interface CPCPricingOption {
   price_guidance?: PriceGuidance;
   /**
    * Minimum spend requirement per package using this pricing option, in the specified currency
+   * @minimum 0
    */
   min_spend_per_package?: number;
   price_breakdown?: PriceBreakdown;
@@ -2947,14 +3137,17 @@ export interface CPCVPricingOption {
   pricing_model: 'cpcv';
   /**
    * ISO 4217 currency code
+   * @pattern ^[A-Z]{3}$
    */
   currency: string;
   /**
    * Fixed price per completed view. If present, this is fixed pricing. If absent, auction-based.
+   * @minimum 0
    */
   fixed_price?: number;
   /**
    * Minimum acceptable bid for auction pricing (mutually exclusive with fixed_price). Bids below this value will be rejected.
+   * @minimum 0
    */
   floor_price?: number;
   /**
@@ -2964,6 +3157,7 @@ export interface CPCVPricingOption {
   price_guidance?: PriceGuidance;
   /**
    * Minimum spend requirement per package using this pricing option, in the specified currency
+   * @minimum 0
    */
   min_spend_per_package?: number;
   price_breakdown?: PriceBreakdown;
@@ -2986,14 +3180,17 @@ export interface CPVPricingOption {
   pricing_model: 'cpv';
   /**
    * ISO 4217 currency code
+   * @pattern ^[A-Z]{3}$
    */
   currency: string;
   /**
    * Fixed price per view. If present, this is fixed pricing. If absent, auction-based.
+   * @minimum 0
    */
   fixed_price?: number;
   /**
    * Minimum acceptable bid for auction pricing (mutually exclusive with fixed_price). Bids below this value will be rejected.
+   * @minimum 0
    */
   floor_price?: number;
   /**
@@ -3010,12 +3207,14 @@ export interface CPVPricingOption {
       | {
           /**
            * Seconds of viewing required
+           * @minimum 1
            */
           duration_seconds: number;
         };
   };
   /**
    * Minimum spend requirement per package using this pricing option, in the specified currency
+   * @minimum 0
    */
   min_spend_per_package?: number;
   price_breakdown?: PriceBreakdown;
@@ -3038,14 +3237,17 @@ export interface CPPPricingOption {
   pricing_model: 'cpp';
   /**
    * ISO 4217 currency code
+   * @pattern ^[A-Z]{3}$
    */
   currency: string;
   /**
    * Fixed price per rating point. If present, this is fixed pricing. If absent, auction-based.
+   * @minimum 0
    */
   fixed_price?: number;
   /**
    * Minimum acceptable bid for auction pricing (mutually exclusive with fixed_price). Bids below this value will be rejected.
+   * @minimum 0
    */
   floor_price?: number;
   price_guidance?: PriceGuidance;
@@ -3060,11 +3262,13 @@ export interface CPPPricingOption {
     demographic: string;
     /**
      * Minimum GRPs/TRPs required
+     * @minimum 0
      */
     min_points?: number;
   };
   /**
    * Minimum spend requirement per package using this pricing option, in the specified currency
+   * @minimum 0
    */
   min_spend_per_package?: number;
   price_breakdown?: PriceBreakdown;
@@ -3099,6 +3303,7 @@ export interface CPAPricingOption {
   event_source_id?: string;
   /**
    * ISO 4217 currency code
+   * @pattern ^[A-Z]{3}$
    */
   currency: string;
   /**
@@ -3107,6 +3312,7 @@ export interface CPAPricingOption {
   fixed_price: number;
   /**
    * Minimum spend requirement per package using this pricing option, in the specified currency
+   * @minimum 0
    */
   min_spend_per_package?: number;
   price_breakdown?: PriceBreakdown;
@@ -3129,20 +3335,24 @@ export interface FlatRatePricingOption {
   pricing_model: 'flat_rate';
   /**
    * ISO 4217 currency code
+   * @pattern ^[A-Z]{3}$
    */
   currency: string;
   /**
    * Flat rate cost. If present, this is fixed pricing. If absent, auction-based.
+   * @minimum 0
    */
   fixed_price?: number;
   /**
    * Minimum acceptable bid for auction pricing (mutually exclusive with fixed_price). Bids below this value will be rejected.
+   * @minimum 0
    */
   floor_price?: number;
   price_guidance?: PriceGuidance;
   parameters?: DoohParameters;
   /**
    * Minimum spend requirement per package using this pricing option, in the specified currency
+   * @minimum 0
    */
   min_spend_per_package?: number;
   price_breakdown?: PriceBreakdown;
@@ -3161,14 +3371,18 @@ export interface DoohParameters {
   type: 'dooh';
   /**
    * Guaranteed share of voice as a percentage (0-100)
+   * @minimum 0
+   * @maximum 100
    */
   sov_percentage?: number;
   /**
    * Duration of the ad loop rotation in seconds
+   * @minimum 1
    */
   loop_duration_seconds?: number;
   /**
    * Minimum number of plays per hour guaranteed
+   * @minimum 1
    */
   min_plays_per_hour?: number;
   /**
@@ -3177,6 +3391,7 @@ export interface DoohParameters {
   venue_package?: string;
   /**
    * Duration of the DOOH slot in hours (e.g., 24 for a full-day takeover)
+   * @minimum 0
    */
   duration_hours?: number;
   /**
@@ -3185,6 +3400,7 @@ export interface DoohParameters {
   daypart?: string;
   /**
    * Estimated audience impressions for this slot (informational, not a delivery guarantee)
+   * @minimum 0
    */
   estimated_impressions?: number;
 }
@@ -3202,14 +3418,17 @@ export interface TimeBasedPricingOption {
   pricing_model: 'time';
   /**
    * ISO 4217 currency code
+   * @pattern ^[A-Z]{3}$
    */
   currency: string;
   /**
    * Cost per time unit. If present, this is fixed pricing. If absent, auction-based.
+   * @minimum 0
    */
   fixed_price?: number;
   /**
    * Minimum acceptable bid per time unit for auction pricing (mutually exclusive with fixed_price). Bids below this value will be rejected.
+   * @minimum 0
    */
   floor_price?: number;
   price_guidance?: PriceGuidance;
@@ -3223,15 +3442,18 @@ export interface TimeBasedPricingOption {
     time_unit: 'hour' | 'day' | 'week' | 'month';
     /**
      * Minimum booking duration in time_units
+     * @minimum 1
      */
     min_duration?: number;
     /**
      * Maximum booking duration in time_units. Must be >= min_duration when both are present.
+     * @minimum 1
      */
     max_duration?: number;
   };
   /**
    * Minimum spend requirement per package using this pricing option, in the specified currency
+   * @minimum 0
    */
   min_spend_per_package?: number;
   price_breakdown?: PriceBreakdown;
@@ -3261,15 +3483,19 @@ export interface DeliveryForecast {
   demographic?: string;
   /**
    * Third-party measurement provider whose data was used to produce this forecast. Distinct from demographic_system, which specifies demographic notation — measurement_source identifies whose data produced the forecast numbers. Should be present when measured_impressions is used. Lowercase slug format.
+   * @maxLength 64
+   * @pattern ^[a-z0-9_]+$
    */
   measurement_source?: string;
   reach_unit?: ReachUnit;
   /**
    * When this forecast was computed
+   * @format date-time
    */
   generated_at?: string;
   /**
    * When this forecast expires. After this time, the forecast should be refreshed. Forecast expiry does not affect proposal executability.
+   * @format date-time
    */
   valid_until?: string;
   ext?: ExtensionObject;
@@ -3280,10 +3506,12 @@ export interface DeliveryForecast {
 export interface ForecastPoint {
   /**
    * Human-readable name for this forecast point. Required when forecast_range_unit is 'package' so buyer agents can identify and reference individual packages. Optional for other forecast types.
+   * @maxLength 128
    */
   label?: string;
   /**
    * Budget amount for this forecast point. Required for spend curves; omit for availability forecasts where the metrics represent total available inventory. For allocation-level forecasts, this is the absolute budget for that allocation (not the percentage). For proposal-level forecasts, this is the total proposal budget. When omitted, use metrics.spend to express the estimated cost of the available inventory.
+   * @minimum 0
    */
   budget?: number;
   /**
@@ -3345,10 +3573,13 @@ export interface CancellationPolicy {
     type: 'percent_remaining' | 'full_commitment' | 'fixed_fee' | 'none';
     /**
      * Fee rate as a decimal proportion of remaining committed spend. Required when type is 'percent_remaining' (e.g., 0.5 means 50% of remaining spend).
+     * @minimum 0
+     * @maximum 1
      */
     rate?: number;
     /**
      * Fixed fee amount in the buy's currency. Required when type is 'fixed_fee'.
+     * @minimum 0
      */
     amount?: number;
   };
@@ -3363,6 +3594,7 @@ export interface ReportingCapabilities {
   available_reporting_frequencies: ReportingFrequency[];
   /**
    * Expected delay in minutes before reporting data becomes available (e.g., 240 for 4-hour delay)
+   * @minimum 0
    */
   expected_delay_minutes: number;
   /**
@@ -3442,18 +3674,22 @@ export interface GeographicBreakdownSupport {
 export interface MeasurementWindow {
   /**
    * Identifier for this maturation stage. Standard broadcast values: 'live' (real-time viewers only), 'c3' (live + 3 days time-shifted), 'c7' (live + 7 days time-shifted). Standard values for other channels include 'tentative' (provisional data available quickly), 'final' (post-processing certified data), 'post_ivt' (digital after invalid-traffic filtering), 'post_sivt' (digital after sophisticated-IVT filtering), 'downloads_7d' / 'downloads_30d' (podcast download maturation). Sellers may define custom IDs.
+   * @maxLength 50
    */
   window_id: string;
   /**
    * Human-readable description of what this window measures
+   * @maxLength 500
    */
   description?: string;
   /**
    * Number of days of accumulation included in this window before processing begins. For broadcast, this is DVR accumulation (0 = live only, 3 = live + 3 days DVR, 7 = live + 7 days DVR). For channels without an accumulation period (DOOH tentative→final, digital IVT filtering), this is 0 — maturation is entirely vendor processing time captured in expected_availability_days.
+   * @minimum 0
    */
   duration_days: number;
   /**
    * Expected number of days after delivery before this window's data is available from the measurement vendor. Captures accumulation time plus vendor processing time. Examples: broadcast C7 from VideoAmp ~22 days (7-day accumulation + ~15-day processing); DOOH tentative plays same-day; DOOH final (post-IVT/fraud-check) ~1 day; digital post-SIVT ~2–3 days.
+   * @minimum 0
    */
   expected_availability_days?: number;
   /**
@@ -3517,6 +3753,7 @@ export interface DiagnosticIssue {
 export interface CollectionSelector {
   /**
    * Domain where the adagents.json declaring these collections is hosted (e.g., 'mrbeast.com'). The collections array in that file contains the authoritative collection definitions.
+   * @pattern ^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)*$
    */
   publisher_domain: string;
   /**
@@ -3550,11 +3787,13 @@ export interface Installment {
   installment_number?: string;
   /**
    * When the installment airs or publishes (ISO 8601)
+   * @format date-time
    */
   scheduled_at?: string;
   status?: InstallmentStatus;
   /**
    * Expected duration of the installment in seconds
+   * @minimum 0
    */
   duration_seconds?: number;
   /**
@@ -3563,6 +3802,7 @@ export interface Installment {
   flexible_end?: boolean;
   /**
    * When this installment data expires and should be re-queried. Agents should re-query before committing budget to products with tentative installments.
+   * @format date-time
    */
   valid_until?: string;
   content_rating?: ContentRating;
@@ -3610,10 +3850,12 @@ export interface Special {
   category?: SpecialCategory;
   /**
    * When the event starts (ISO 8601)
+   * @format date-time
    */
   starts?: string;
   /**
    * When the event ends (ISO 8601). Omit for single-day events.
+   * @format date-time
    */
   ends?: string;
 }
@@ -3637,14 +3879,17 @@ export interface Talent {
 export interface AdInventoryConfiguration {
   /**
    * Number of planned ad breaks in the installment
+   * @minimum 0
    */
   expected_breaks: number;
   /**
    * Total seconds of ad time across all breaks
+   * @minimum 0
    */
   total_ad_seconds?: number;
   /**
    * Maximum duration in seconds for a single ad within a break. Buyers need this to know whether their creative fits.
+   * @minimum 1
    */
   max_ad_duration_seconds?: number;
   /**
@@ -3662,10 +3907,12 @@ export interface AdInventoryConfiguration {
 export interface InstallmentDeadlines {
   /**
    * Last date/time to book a placement in this installment (ISO 8601). After this point, the seller will not accept new bookings.
+   * @format date-time
    */
   booking_deadline?: string;
   /**
    * Last date/time to cancel without penalty (ISO 8601). Cancellations after this point may incur fees per the seller's terms.
+   * @format date-time
    */
   cancellation_deadline?: string;
   /**
@@ -3683,6 +3930,7 @@ export interface MaterialDeadline {
   stage: string;
   /**
    * When materials for this stage are due (ISO 8601)
+   * @format date-time
    */
   due_at: string;
   /**
@@ -3917,6 +4165,8 @@ export type AudienceSelector =
       type: 'description';
       /**
        * Natural language description of the audience (e.g., 'likely EV buyers', 'high net worth individuals', 'vulnerable communities')
+       * @minLength 1
+       * @maxLength 2000
        */
       description: string;
       /**
@@ -3935,10 +4185,12 @@ export type SignalID =
       source: 'catalog';
       /**
        * Domain of the data provider that owns this signal (e.g., 'polk.com', 'experian.com'). The signal definition is published at this domain's /.well-known/adagents.json
+       * @pattern ^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)*$
        */
       data_provider_domain: string;
       /**
        * Signal identifier within the data provider's catalog (e.g., 'likely_tesla_buyers', 'income_100k_plus')
+       * @pattern ^[a-zA-Z0-9_-]+$
        */
       id: string;
     }
@@ -3953,6 +4205,7 @@ export type SignalID =
       agent_url: string;
       /**
        * Signal identifier within the agent's signal set (e.g., 'custom_auto_intenders')
+       * @pattern ^[a-zA-Z0-9_-]+$
        */
       id: string;
     };
@@ -4009,7 +4262,13 @@ export type PreviewRender =
        * Dimensions for this rendered piece
        */
       dimensions?: {
+        /**
+         * @minimum 0
+         */
         width: number;
+        /**
+         * @minimum 0
+         */
         height: number;
       };
       /**
@@ -4055,7 +4314,13 @@ export type PreviewRender =
        * Dimensions for this rendered piece
        */
       dimensions?: {
+        /**
+         * @minimum 0
+         */
         width: number;
+        /**
+         * @minimum 0
+         */
         height: number;
       };
       /**
@@ -4105,7 +4370,13 @@ export type PreviewRender =
        * Dimensions for this rendered piece
        */
       dimensions?: {
+        /**
+         * @minimum 0
+         */
         width: number;
+        /**
+         * @minimum 0
+         */
         height: number;
       };
       /**
@@ -4157,6 +4428,9 @@ export type CatalogItemStatus = 'approved' | 'pending' | 'rejected' | 'warning';
 export interface MCPWebhookPayload {
   /**
    * Sender-generated key stable across retries of the same webhook event. Publishers MUST generate a cryptographically random value (UUID v4 recommended) per distinct event and reuse the same key on every retry of that event. Receivers MUST dedupe by this key, scoped to the authenticated sender identity (HMAC secret or Bearer credential) — keys from different publishers are independent. This is the canonical dedup field — the (task_id, status, timestamp) tuple is insufficient when a single transition is retried with unchanged timestamp or when two transitions share a timestamp.
+   * @minLength 16
+   * @maxLength 255
+   * @pattern ^[A-Za-z0-9_.:-]{16,255}$
    */
   idempotency_key: string;
   /**
@@ -4172,6 +4446,7 @@ export interface MCPWebhookPayload {
   status: TaskStatus;
   /**
    * ISO 8601 timestamp when this webhook was generated.
+   * @format date-time
    */
   timestamp: string;
   /**
@@ -4294,14 +4569,17 @@ export interface GetProductsResponse {
 export interface Proposal {
   /**
    * Unique identifier for this proposal. Used to execute it via create_media_buy.
+   * @maxLength 255
    */
   proposal_id: string;
   /**
    * Human-readable name for this media plan proposal
+   * @maxLength 500
    */
   name: string;
   /**
    * Explanation of the proposal strategy and what it achieves
+   * @maxLength 2000
    */
   description?: string;
   /**
@@ -4311,6 +4589,7 @@ export interface Proposal {
   proposal_status?: ProposalStatus;
   /**
    * When this proposal expires and can no longer be executed. For draft proposals, indicates when indicative pricing becomes stale. For committed proposals, indicates when the inventory hold lapses — the buyer must call create_media_buy before this time.
+   * @format date-time
    */
   expires_at?: string;
   insertion_order?: InsertionOrder;
@@ -4320,14 +4599,17 @@ export interface Proposal {
   total_budget_guidance?: {
     /**
      * Minimum recommended budget
+     * @minimum 0
      */
     min?: number;
     /**
      * Recommended budget for optimal performance
+     * @minimum 0
      */
     recommended?: number;
     /**
      * Maximum budget before diminishing returns
+     * @minimum 0
      */
     max?: number;
     /**
@@ -4337,6 +4619,7 @@ export interface Proposal {
   };
   /**
    * Explanation of how this proposal aligns with the campaign brief
+   * @maxLength 2000
    */
   brief_alignment?: string;
   forecast?: DeliveryForecast;
@@ -4352,6 +4635,8 @@ export interface ProductAllocation {
   product_id: string;
   /**
    * Percentage of total budget allocated to this product (0-100)
+   * @minimum 0
+   * @maximum 100
    */
   allocation_percentage: number;
   /**
@@ -4364,6 +4649,7 @@ export interface ProductAllocation {
   rationale?: string;
   /**
    * Optional ordering hint for multi-line-item plans (1-based)
+   * @minimum 1
    */
   sequence?: number;
   /**
@@ -4372,10 +4658,12 @@ export interface ProductAllocation {
   tags?: string[];
   /**
    * Recommended flight start date/time for this allocation in ISO 8601 format. Allows publishers to propose per-flight scheduling within a proposal. When omitted, the allocation applies to the full campaign date range.
+   * @format date-time
    */
   start_time?: string;
   /**
    * Recommended flight end date/time for this allocation in ISO 8601 format. Allows publishers to propose per-flight scheduling within a proposal. When omitted, the allocation applies to the full campaign date range.
+   * @format date-time
    */
   end_time?: string;
   /**
@@ -4391,6 +4679,7 @@ export interface ProductAllocation {
 export interface InsertionOrder {
   /**
    * Unique identifier for this insertion order. Referenced by io_acceptance on create_media_buy.
+   * @maxLength 255
    */
   io_id: string;
   /**
@@ -4399,28 +4688,37 @@ export interface InsertionOrder {
   terms?: {
     /**
      * Advertiser name or identifier
+     * @maxLength 500
      */
     advertiser?: string;
     /**
      * Publisher name or identifier
+     * @maxLength 500
      */
     publisher?: string;
     /**
      * Total committed budget
      */
     total_budget?: {
+      /**
+       * @minimum 0
+       */
       amount: number;
       /**
        * ISO 4217 currency code
+       * @minLength 3
+       * @maxLength 3
        */
       currency: string;
     };
     /**
      * Campaign start date
+     * @format date-time
      */
     flight_start?: string;
     /**
      * Campaign end date
+     * @format date-time
      */
     flight_end?: string;
     /**
@@ -4447,6 +4745,8 @@ export interface InsertionOrder {
 export interface Error {
   /**
    * Error code for programmatic handling. Standard codes are defined in error-code.json and enable autonomous agent recovery. Sellers MAY use codes not in the standard vocabulary for platform-specific errors; agents MUST handle unknown codes gracefully by falling back to the recovery classification.
+   * @minLength 1
+   * @maxLength 64
    */
   code: string;
   /**
@@ -4463,6 +4763,8 @@ export interface Error {
   suggestion?: string;
   /**
    * Seconds to wait before retrying the operation. Sellers MUST return values between 1 and 3600. Clients MUST clamp values outside this range.
+   * @minimum 1
+   * @maximum 3600
    */
   retry_after?: number;
   /**
@@ -4509,6 +4811,7 @@ export interface PaginationResponse {
   cursor?: string;
   /**
    * Total number of items matching the query across all pages. Optional because not all backends can efficiently compute this.
+   * @minimum 0
    */
   total_count?: number;
 }
@@ -4518,6 +4821,8 @@ export interface PaginationResponse {
 export interface GetProductsAsyncWorking {
   /**
    * Progress percentage of the search operation
+   * @minimum 0
+   * @maximum 100
    */
   percentage?: number;
   /**
@@ -4560,6 +4865,7 @@ export interface GetProductsAsyncInputRequired {
 export interface GetProductsAsyncSubmitted {
   /**
    * Estimated completion time for the search
+   * @format date-time
    */
   estimated_completion?: string;
   context?: ContextObject;
@@ -4578,14 +4884,17 @@ export interface CreateMediaBuySuccess {
   status?: MediaBuyStatus;
   /**
    * ISO 8601 timestamp when this media buy was confirmed by the seller. A successful create_media_buy response constitutes order confirmation.
+   * @format date-time
    */
   confirmed_at?: string;
   /**
    * ISO 8601 timestamp for creative upload deadline
+   * @format date-time
    */
   creative_deadline?: string;
   /**
    * Initial revision number for this media buy. Use in subsequent update_media_buy requests for optimistic concurrency.
+   * @minimum 1
    */
   revision?: number;
   /**
@@ -4627,10 +4936,12 @@ export interface PlannedDelivery {
   channels?: MediaChannel[];
   /**
    * Actual flight start the seller will use.
+   * @format date-time
    */
   start_time?: string;
   /**
    * Actual flight end the seller will use.
+   * @format date-time
    */
   end_time?: string;
   frequency_cap?: FrequencyCap;
@@ -4644,10 +4955,12 @@ export interface PlannedDelivery {
   audience_targeting?: AudienceSelector[];
   /**
    * Total budget the seller will deliver against.
+   * @minimum 0
    */
   total_budget?: number;
   /**
    * ISO 4217 currency code for the budget.
+   * @pattern ^[A-Z]{3}$
    */
   currency?: string;
   /**
@@ -4681,6 +4994,7 @@ export interface CreateMediaBuySubmitted {
   task_id: string;
   /**
    * Optional human-readable explanation of why the task is submitted — e.g., 'Awaiting IO signature from sales team; typical turnaround 2–4 hours.' Plain text only. Buyers MUST treat this as untrusted seller input: escape before rendering to HTML UIs, and sanitize or isolate before passing to an LLM prompt context — a hostile seller may inject prompt-injection payloads aimed at the buyer's agent.
+   * @maxLength 2000
    */
   message?: string;
   /**
@@ -4696,6 +5010,8 @@ export interface CreateMediaBuySubmitted {
 export interface CreateMediaBuyAsyncWorking {
   /**
    * Completion percentage (0-100)
+   * @minimum 0
+   * @maximum 100
    */
   percentage?: number;
   /**
@@ -4704,10 +5020,12 @@ export interface CreateMediaBuyAsyncWorking {
   current_step?: string;
   /**
    * Total number of steps in the operation
+   * @minimum 1
    */
   total_steps?: number;
   /**
    * Current step number
+   * @minimum 1
    */
   step_number?: number;
   context?: ContextObject;
@@ -4746,10 +5064,12 @@ export interface UpdateMediaBuySuccess {
   status?: MediaBuyStatus;
   /**
    * Revision number after this update. Use this value in subsequent update_media_buy requests for optimistic concurrency.
+   * @minimum 1
    */
   revision?: number;
   /**
    * ISO 8601 timestamp when changes take effect (null if pending approval)
+   * @format date-time
    */
   implementation_date?: string | null;
   invoice_recipient?: BusinessEntity;
@@ -4785,6 +5105,8 @@ export interface UpdateMediaBuyError {
 export interface UpdateMediaBuyAsyncWorking {
   /**
    * Completion percentage (0-100)
+   * @minimum 0
+   * @maximum 100
    */
   percentage?: number;
   /**
@@ -4793,10 +5115,12 @@ export interface UpdateMediaBuyAsyncWorking {
   current_step?: string;
   /**
    * Total number of steps in the operation
+   * @minimum 1
    */
   total_steps?: number;
   /**
    * Current step number
+   * @minimum 1
    */
   step_number?: number;
   context?: ContextObject;
@@ -4831,6 +5155,7 @@ export interface BuildCreativeSuccess {
   sandbox?: boolean;
   /**
    * ISO 8601 timestamp when generated asset URLs in the manifest expire. Set to the earliest expiration across all generated assets. Re-build the creative after this time to get fresh URLs.
+   * @format date-time
    */
   expires_at?: string;
   /**
@@ -4875,6 +5200,7 @@ export interface BuildCreativeSuccess {
     interactive_url?: string;
     /**
      * ISO 8601 timestamp when preview URLs expire. May differ from the manifest's expires_at.
+     * @format date-time
      */
     expires_at: string;
   };
@@ -4885,10 +5211,12 @@ export interface BuildCreativeSuccess {
   pricing_option_id?: string;
   /**
    * Cost incurred for this build, denominated in currency. May be 0 for CPM-priced creatives where cost accrues at serve time rather than build time.
+   * @minimum 0
    */
   vendor_cost?: number;
   /**
    * ISO 4217 currency code for vendor_cost.
+   * @pattern ^[A-Z]{3}$
    */
   currency?: string;
   consumption?: CreativeConsumption;
@@ -4942,10 +5270,12 @@ export interface RightsConstraint {
   };
   /**
    * Start of the rights validity period
+   * @format date-time
    */
   valid_from?: string;
   /**
    * End of the rights validity period. Creative should not be served after this time.
+   * @format date-time
    */
   valid_until?: string;
   /**
@@ -4962,6 +5292,7 @@ export interface RightsConstraint {
   excluded_countries?: string[];
   /**
    * Maximum total impressions allowed for the full validity period (valid_from to valid_until). This is the absolute cap across all creatives using this rights grant, not a per-creative or per-period limit.
+   * @minimum 1
    */
   impression_cap?: number;
   right_type?: RightType;
@@ -4981,18 +5312,22 @@ export interface RightsConstraint {
 export interface CreativeConsumption {
   /**
    * LLM or generation tokens consumed during creative generation.
+   * @minimum 0
    */
   tokens?: number;
   /**
    * Number of images produced during generation.
+   * @minimum 0
    */
   images_generated?: number;
   /**
    * Number of render passes performed (video, animation).
+   * @minimum 0
    */
   renders?: number;
   /**
    * Processing time billed, in seconds. For compute-time pricing models.
+   * @minimum 0
    */
   duration_seconds?: number;
 }
@@ -5010,6 +5345,7 @@ export interface BuildCreativeMultiSuccess {
   sandbox?: boolean;
   /**
    * ISO 8601 timestamp when the earliest generated asset URL expires across all manifests. Re-build after this time to get fresh URLs.
+   * @format date-time
    */
   expires_at?: string;
   /**
@@ -5055,6 +5391,7 @@ export interface BuildCreativeMultiSuccess {
     interactive_url?: string;
     /**
      * ISO 8601 timestamp when preview URLs expire. May differ from the manifest's expires_at.
+     * @format date-time
      */
     expires_at: string;
   };
@@ -5065,10 +5402,12 @@ export interface BuildCreativeMultiSuccess {
   pricing_option_id?: string;
   /**
    * Total cost incurred for this multi-format build, denominated in currency. May be 0 for CPM-priced creatives where cost accrues at serve time.
+   * @minimum 0
    */
   vendor_cost?: number;
   /**
    * ISO 4217 currency code for vendor_cost.
+   * @pattern ^[A-Z]{3}$
    */
   currency?: string;
   consumption?: CreativeConsumption;
@@ -5092,6 +5431,8 @@ export interface BuildCreativeError {
 export interface BuildCreativeAsyncWorking {
   /**
    * Completion percentage (0-100)
+   * @minimum 0
+   * @maximum 100
    */
   percentage?: number;
   /**
@@ -5100,10 +5441,12 @@ export interface BuildCreativeAsyncWorking {
   current_step?: string;
   /**
    * Total number of steps in the operation
+   * @minimum 1
    */
   total_steps?: number;
   /**
    * Current step number
+   * @minimum 1
    */
   step_number?: number;
   context?: ContextObject;
@@ -5172,6 +5515,7 @@ export interface SyncCreativesSuccess {
     preview_url?: string;
     /**
      * ISO 8601 timestamp when preview link expires (only present when preview_url exists)
+     * @format date-time
      */
     expires_at?: string;
     /**
@@ -5223,6 +5567,7 @@ export interface SyncCreativesSubmitted {
   task_id: string;
   /**
    * Optional human-readable explanation of why the task is submitted — e.g., 'Batch ingestion queued; typical turnaround 15-30 minutes.' Plain text only. Buyers MUST treat this as untrusted seller input: escape before rendering to HTML UIs, and sanitize or isolate before passing to an LLM prompt context — a hostile seller may inject prompt-injection payloads aimed at the buyer's agent.
+   * @maxLength 2000
    */
   message?: string;
   /**
@@ -5238,6 +5583,8 @@ export interface SyncCreativesSubmitted {
 export interface SyncCreativesAsyncWorking {
   /**
    * Completion percentage (0-100)
+   * @minimum 0
+   * @maximum 100
    */
   percentage?: number;
   /**
@@ -5246,18 +5593,22 @@ export interface SyncCreativesAsyncWorking {
   current_step?: string;
   /**
    * Total number of steps in the operation
+   * @minimum 1
    */
   total_steps?: number;
   /**
    * Current step number
+   * @minimum 1
    */
   step_number?: number;
   /**
    * Number of creatives processed so far
+   * @minimum 0
    */
   creatives_processed?: number;
   /**
    * Total number of creatives to process
+   * @minimum 0
    */
   creatives_total?: number;
   context?: ContextObject;
@@ -5304,18 +5655,22 @@ export interface SyncCatalogsSuccess {
     platform_id?: string;
     /**
      * Total number of items in the catalog after sync. Required when action is 'created', 'updated', or 'unchanged'. Omitted on 'failed' and 'deleted'.
+     * @minimum 0
      */
     item_count?: number;
     /**
      * Number of items approved by the platform. Populated when the platform performs item-level review.
+     * @minimum 0
      */
     items_approved?: number;
     /**
      * Number of items pending platform review. Common for product catalogs where items must pass content policy checks.
+     * @minimum 0
      */
     items_pending?: number;
     /**
      * Number of items rejected by the platform. Check item_issues for rejection reasons.
+     * @minimum 0
      */
     items_rejected?: number;
     /**
@@ -5334,10 +5689,12 @@ export interface SyncCatalogsSuccess {
     }[];
     /**
      * ISO 8601 timestamp of when the most recent sync was accepted by the platform
+     * @format date-time
      */
     last_synced_at?: string;
     /**
      * ISO 8601 timestamp of when the platform will next fetch the feed URL. Only present for URL-based catalogs with update_frequency.
+     * @format date-time
      */
     next_fetch_at?: string;
     /**
@@ -5377,6 +5734,8 @@ export interface SyncCatalogsError {
 export interface SyncCatalogsAsyncWorking {
   /**
    * Completion percentage (0-100)
+   * @minimum 0
+   * @maximum 100
    */
   percentage?: number;
   /**
@@ -5385,26 +5744,32 @@ export interface SyncCatalogsAsyncWorking {
   current_step?: string;
   /**
    * Total number of steps in the operation
+   * @minimum 1
    */
   total_steps?: number;
   /**
    * Current step number
+   * @minimum 1
    */
   step_number?: number;
   /**
    * Number of catalogs processed so far
+   * @minimum 0
    */
   catalogs_processed?: number;
   /**
    * Total number of catalogs to process
+   * @minimum 0
    */
   catalogs_total?: number;
   /**
    * Total number of catalog items processed across all catalogs
+   * @minimum 0
    */
   items_processed?: number;
   /**
    * Total number of catalog items to process across all catalogs
+   * @minimum 0
    */
   items_total?: number;
   context?: ContextObject;
@@ -5574,6 +5939,7 @@ export interface A2UIUserAction {
   };
   /**
    * When the action occurred
+   * @format date-time
    */
   timestamp?: string;
 }
@@ -5591,6 +5957,8 @@ export type AuthenticationScheme = 'Bearer' | 'HMAC-SHA256';
 export interface AcquireRightsRequest {
   /**
    * The AdCP major version the buyer's payloads conform to. Sellers validate against their supported major_versions and return VERSION_UNSUPPORTED if unsupported. When omitted, the seller assumes its highest supported version.
+   * @minimum 1
+   * @maximum 99
    */
   adcp_major_version?: number;
   /**
@@ -5624,14 +5992,17 @@ export interface AcquireRightsRequest {
     format_ids?: FormatReferenceStructuredObject[];
     /**
      * Estimated total impressions for the campaign. Required when the request carries an intent-phase governance_context token AND the selected pricing_option has model: 'cpm' — the brand agent projects commitment as (pricing_option.price / 1000) × estimated_impressions evaluated in pricing_option.currency. Brand agents MUST reject with INVALID_REQUEST (field: campaign.estimated_impressions) when CPM-priced rights are requested under a governance_context and this field is omitted or zero; implementer-chosen defaults are non-conformant. See the acquire_rights task reference for the full validation contract including currency-mismatch handling.
+     * @minimum 0
      */
     estimated_impressions?: number;
     /**
      * Campaign start date (ISO 8601)
+     * @format date
      */
     start_date?: string;
     /**
      * Campaign end date (ISO 8601). Brand agents MUST reject with INVALID_REQUEST (field: campaign.end_date) when end_date is in the past at the time of the request — acquiring rights for an elapsed window produces a zero-duration grant and is almost always a buyer-side bug.
+     * @format date
      */
     end_date?: string;
   };
@@ -5639,6 +6010,9 @@ export interface AcquireRightsRequest {
   push_notification_config?: PushNotificationConfig;
   /**
    * Client-generated key for safe retries. Resubmitting with the same key returns the original response rather than creating a duplicate acquisition. MUST be unique per (seller, request) pair to prevent cross-seller correlation. Use a fresh UUID v4 for each request.
+   * @minLength 16
+   * @maxLength 255
+   * @pattern ^[A-Za-z0-9_.:-]{16,255}$
    */
   idempotency_key: string;
   context?: ContextObject;
@@ -5654,6 +6028,7 @@ export interface PushNotificationConfig {
   url: string;
   /**
    * Optional client-provided token for webhook validation. Echoed back in webhook payload to validate request authenticity.
+   * @minLength 16
    */
   token?: string;
   /**
@@ -5666,6 +6041,7 @@ export interface PushNotificationConfig {
     schemes: AuthenticationScheme[];
     /**
      * Credentials for the legacy scheme. For Bearer: token sent in Authorization header. For HMAC-SHA256: shared secret used to generate signature. Minimum 32 characters. Exchanged out-of-band during onboarding.
+     * @minLength 32
      */
     credentials: string;
   };
@@ -5731,13 +6107,31 @@ export interface AcquireRightsAcquired {
  */
 export interface RightsTerms {
   pricing_option_id: string;
+  /**
+   * @minimum 0
+   */
   amount: number;
+  /**
+   * @pattern ^[A-Z]{3}$
+   */
   currency: string;
   period?: RightsBillingPeriod;
   uses: RightUse[];
+  /**
+   * @minimum 1
+   */
   impression_cap?: number;
+  /**
+   * @minimum 0
+   */
   overage_cpm?: number;
+  /**
+   * @format date
+   */
   start_date?: string;
+  /**
+   * @format date
+   */
   end_date?: string;
   /**
    * Exclusivity terms if applicable
@@ -5765,6 +6159,7 @@ export interface GenerationCredential {
   uses: RightUse[];
   /**
    * When this credential expires. Key lifetime is determined by the provider.
+   * @format date-time
    */
   expires_at?: string;
   /**
@@ -5822,6 +6217,8 @@ export interface AcquireRightsError {
 export interface CreativeApprovalRequest {
   /**
    * The AdCP major version the buyer's payloads conform to. Sellers validate against their supported major_versions and return VERSION_UNSUPPORTED if unsupported. When omitted, the seller assumes its highest supported version.
+   * @minimum 1
+   * @maximum 99
    */
   adcp_major_version?: number;
   /**
@@ -5847,6 +6244,9 @@ export interface CreativeApprovalRequest {
   metadata?: {};
   /**
    * Client-generated key for safe retries. Resubmitting with the same key returns the original response. MUST be unique per (seller, request) pair to prevent cross-seller correlation. Use a fresh UUID v4 for each request.
+   * @minLength 16
+   * @maxLength 255
+   * @pattern ^[A-Za-z0-9_.:-]{16,255}$
    */
   idempotency_key: string;
   context?: ContextObject;
@@ -5874,6 +6274,9 @@ export interface CreativeApproved {
    */
   creative_id?: string;
   creative_url?: string;
+  /**
+   * @format date-time
+   */
   approved_at?: string;
   /**
    * Conditions on the approval (e.g., 'approved for NL market only')
@@ -5939,6 +6342,8 @@ export interface CreativeApprovalError {
 export interface GetBrandIdentityRequest {
   /**
    * The AdCP major version the buyer's payloads conform to. Sellers validate against their supported major_versions and return VERSION_UNSUPPORTED if unsupported. When omitted, the seller assumes its highest supported version.
+   * @minimum 1
+   * @maximum 99
    */
   adcp_major_version?: number;
   /**
@@ -6093,10 +6498,13 @@ export interface GetBrandIdentitySuccess {
           files?: {
             /**
              * HTTPS URL to the font file
+             * @pattern ^https:\/\/
              */
             url: string;
             /**
              * CSS numeric font-weight
+             * @minimum 100
+             * @maximum 900
              */
             weight?: number;
             /**
@@ -6130,10 +6538,13 @@ export interface GetBrandIdentitySuccess {
           files?: {
             /**
              * HTTPS URL to the font file
+             * @pattern ^https:\/\/
              */
             url: string;
             /**
              * CSS numeric font-weight
+             * @minimum 100
+             * @maximum 900
              */
             weight?: number;
             /**
@@ -6165,10 +6576,13 @@ export interface GetBrandIdentitySuccess {
               files?: {
                 /**
                  * HTTPS URL to the font file
+                 * @pattern ^https:\/\/
                  */
                 url: string;
                 /**
                  * CSS numeric font-weight
+                 * @minimum 100
+                 * @maximum 900
                  */
                 weight?: number;
                 /**
@@ -6223,6 +6637,9 @@ export interface GetBrandIdentitySuccess {
   tagline?:
     | string
     | {
+        /**
+         * @minLength 1
+         */
         [k: string]: string | undefined;
       }[];
   /**
@@ -6328,10 +6745,13 @@ export interface GetBrandIdentityError {
 export interface GetRightsRequest {
   /**
    * The AdCP major version the buyer's payloads conform to. Sellers validate against their supported major_versions and return VERSION_UNSUPPORTED if unsupported. When omitted, the seller assumes its highest supported version.
+   * @minimum 1
+   * @maximum 99
    */
   adcp_major_version?: number;
   /**
    * Natural language description of desired rights. The agent interprets intent, budget signals, and compatibility from this text.
+   * @maxLength 2000
    */
   query: string;
   /**
@@ -6362,6 +6782,8 @@ export interface GetRightsRequest {
 export interface PaginationRequest {
   /**
    * Maximum number of items to return per page
+   * @minimum 1
+   * @maximum 100
    */
   max_results?: number;
   /**
@@ -6403,6 +6825,8 @@ export interface GetRightsSuccess {
     right_type?: RightType;
     /**
      * Relevance score from 0 to 1
+     * @minimum 0
+     * @maximum 1
      */
     match_score?: number;
     /**
@@ -6479,10 +6903,12 @@ export interface RightsPricingOption {
   model: PricingModel;
   /**
    * Price amount. Interpretation depends on model: CPM = cost per 1,000 impressions, flat_rate = fixed cost per period.
+   * @minimum 0
    */
   price: number;
   /**
    * ISO 4217 currency code
+   * @pattern ^[A-Z]{3}$
    */
   currency: string;
   /**
@@ -6492,10 +6918,12 @@ export interface RightsPricingOption {
   period?: RightsBillingPeriod;
   /**
    * Maximum impressions included in this pricing option per period
+   * @minimum 1
    */
   impression_cap?: number;
   /**
    * CPM rate applied to impressions exceeding the impression_cap
+   * @minimum 0
    */
   overage_cpm?: number;
   /**
@@ -6517,6 +6945,9 @@ export interface GetRightsError {
 export interface RevocationNotification {
   /**
    * Sender-generated key stable across retries of the same revocation notification. Rights holders MUST generate a cryptographically random value (UUID v4 recommended) per distinct revocation event and reuse the same key when retrying delivery. Buyers MUST dedupe by this key, scoped to the authenticated sender identity (HMAC secret or Bearer credential); keys from different senders are independent.
+   * @minLength 16
+   * @maxLength 255
+   * @pattern ^[A-Za-z0-9_.:-]{16,255}$
    */
   idempotency_key: string;
   /**
@@ -6533,6 +6964,7 @@ export interface RevocationNotification {
   reason: string;
   /**
    * When the revocation takes effect. Immediate revocations use current time. Grace periods use a future time. The buyer must stop serving creative using these rights by this time.
+   * @format date-time
    */
   effective_at: string;
   /**
@@ -6550,6 +6982,8 @@ export interface RevocationNotification {
 export interface UpdateRightsRequest {
   /**
    * The AdCP major version the buyer's payloads conform to. Sellers validate against their supported major_versions and return VERSION_UNSUPPORTED if unsupported. When omitted, the seller assumes its highest supported version.
+   * @minimum 1
+   * @maximum 99
    */
   adcp_major_version?: number;
   /**
@@ -6558,10 +6992,12 @@ export interface UpdateRightsRequest {
   rights_id: string;
   /**
    * New end date for the rights grant (must be >= current end_date). Extending the grant may re-issue generation credentials with updated expiration.
+   * @format date
    */
   end_date?: string;
   /**
    * New impression cap for the grant. Must be >= impressions already delivered.
+   * @minimum 1
    */
   impression_cap?: number;
   /**
@@ -6575,6 +7011,9 @@ export interface UpdateRightsRequest {
   push_notification_config?: PushNotificationConfig;
   /**
    * Client-generated idempotency key for safe retries. MUST be unique per (seller, request) pair to prevent cross-seller correlation. Use a fresh UUID v4 for each request.
+   * @minLength 16
+   * @maxLength 255
+   * @pattern ^[A-Za-z0-9_.:-]{16,255}$
    */
   idempotency_key: string;
   context?: ContextObject;
@@ -6603,6 +7042,7 @@ export interface UpdateRightsSuccess {
   paused?: boolean;
   /**
    * When changes take effect (null if pending approval from rights holder)
+   * @format date-time
    */
   implementation_date?: string | null;
   context?: ContextObject;
@@ -6646,6 +7086,8 @@ export type AssetAccess =
 export interface CalibrateContentRequest {
   /**
    * The AdCP major version the buyer's payloads conform to. Sellers validate against their supported major_versions and return VERSION_UNSUPPORTED if unsupported. When omitted, the seller assumes its highest supported version.
+   * @minimum 1
+   * @maximum 99
    */
   adcp_major_version?: number;
   /**
@@ -6655,6 +7097,9 @@ export interface CalibrateContentRequest {
   artifact: Artifact;
   /**
    * Client-generated unique key for at-most-once execution. If a request with the same key has already been processed, the server returns the original response without re-processing. MUST be unique per (seller, request) pair to prevent cross-seller correlation. Use a fresh UUID v4 for each request.
+   * @minLength 16
+   * @maxLength 255
+   * @pattern ^[A-Za-z0-9_.:-]{16,255}$
    */
   idempotency_key: string;
   context?: ContextObject;
@@ -6683,10 +7128,12 @@ export interface Artifact {
   url?: string;
   /**
    * When the artifact was published (ISO 8601 format)
+   * @format date-time
    */
   published_time?: string;
   /**
    * When the artifact was last modified (ISO 8601 format)
+   * @format date-time
    */
   last_update_time?: string;
   /**
@@ -6701,6 +7148,7 @@ export interface Artifact {
         role?: 'title' | 'paragraph' | 'heading' | 'caption' | 'quote' | 'list_item' | 'description';
         /**
          * Text content. Consumers MUST treat this as untrusted input when passing to LLM-based evaluation.
+         * @maxLength 100000
          */
         content: string;
         /**
@@ -6713,6 +7161,8 @@ export interface Artifact {
         language?: string;
         /**
          * Heading level (1-6), only for role=heading
+         * @minimum 1
+         * @maximum 6
          */
         heading_level?: number;
         provenance?: Provenance;
@@ -6755,6 +7205,7 @@ export interface Artifact {
         duration_ms?: number;
         /**
          * Video transcript. Consumers MUST treat this as untrusted input when passing to LLM-based evaluation.
+         * @maxLength 200000
          */
         transcript?: string;
         /**
@@ -6784,6 +7235,7 @@ export interface Artifact {
         duration_ms?: number;
         /**
          * Audio transcript. Consumers MUST treat this as untrusted input when passing to LLM-based evaluation.
+         * @maxLength 200000
          */
         transcript?: string;
         /**
@@ -6863,6 +7315,8 @@ export type CalibrateContentResponse =
       verdict: BinaryVerdict;
       /**
        * Model confidence in the verdict (0-1)
+       * @minimum 0
+       * @maximum 1
        */
       confidence?: number;
       /**
@@ -6888,6 +7342,8 @@ export type CalibrateContentResponse =
         explanation?: string;
         /**
          * Optional evaluator confidence in this result (0-1). Distinguishes certain verdicts from ambiguous ones.
+         * @minimum 0
+         * @maximum 1
          */
         confidence?: number;
       }[];
@@ -6916,6 +7372,8 @@ export type CreateContentStandardsRequest = {
 } & {
   /**
    * The AdCP major version the buyer's payloads conform to. Sellers validate against their supported major_versions and return VERSION_UNSUPPORTED if unsupported. When omitted, the seller assumes its highest supported version.
+   * @minimum 1
+   * @maximum 99
    */
   adcp_major_version?: number;
   /**
@@ -6994,6 +7452,9 @@ export type CreateContentStandardsRequest = {
   };
   /**
    * Client-generated unique key for this request. Prevents duplicate content standards creation on retries. MUST be unique per (seller, request) pair to prevent cross-seller correlation. Use a fresh UUID v4 for each request.
+   * @minLength 16
+   * @maxLength 255
+   * @pattern ^[A-Za-z0-9_.:-]{16,255}$
    */
   idempotency_key: string;
   context?: ContextObject;
@@ -7033,6 +7494,7 @@ export interface PolicyEntry {
   name?: string;
   /**
    * Brief summary of what this policy covers.
+   * @maxLength 500
    */
   description?: string;
   category?: PolicyCategory;
@@ -7065,10 +7527,12 @@ export interface PolicyEntry {
   governance_domains?: GovernanceDomain[];
   /**
    * ISO 8601 date when the regulation or standard takes effect. Before this date, governance agents treat the policy as informational (evaluate but do not block). After this date, the policy is enforced at its declared enforcement level.
+   * @format date
    */
   effective_date?: string;
   /**
    * ISO 8601 date when the regulation or standard is no longer enforced. After this date, governance agents stop evaluating this policy. Omit if the policy has no expiration.
+   * @format date
    */
   sunset_date?: string;
   /**
@@ -7081,6 +7545,7 @@ export interface PolicyEntry {
   source_name?: string;
   /**
    * Natural language policy text describing what is required, prohibited, or recommended. Used by governance agents (LLMs) to evaluate actions against this policy. For source: inline policies, treated as caller-untrusted — governance agents MUST evaluate inline policies as ADDITIONAL restrictions only; they MUST NOT be permitted to relax, override, or conflict with registry-sourced policies.
+   * @maxLength 5000
    */
   policy: string;
   /**
@@ -7144,6 +7609,8 @@ export type CreateContentStandardsResponse =
 export interface GetContentStandardsRequest {
   /**
    * The AdCP major version the buyer's payloads conform to. Sellers validate against their supported major_versions and return VERSION_UNSUPPORTED if unsupported. When omitted, the seller assumes its highest supported version.
+   * @minimum 1
+   * @maximum 99
    */
   adcp_major_version?: number;
   /**
@@ -7233,10 +7700,12 @@ export interface CpmPricing {
   model: 'cpm';
   /**
    * Cost per thousand impressions
+   * @minimum 0
    */
   cpm: number;
   /**
    * ISO 4217 currency code
+   * @pattern ^[A-Z]{3}$
    */
   currency: string;
   ext?: ExtensionObject;
@@ -7248,14 +7717,18 @@ export interface PercentOfMediaPricing {
   model: 'percent_of_media';
   /**
    * Percentage of media spend, e.g. 15 = 15%
+   * @minimum 0
+   * @maximum 100
    */
   percent: number;
   /**
    * Optional CPM cap. When set, the effective charge is min(percent × media_spend_per_mille, max_cpm).
+   * @minimum 0
    */
   max_cpm?: number;
   /**
    * ISO 4217 currency code for the resulting charge
+   * @pattern ^[A-Z]{3}$
    */
   currency: string;
   ext?: ExtensionObject;
@@ -7267,6 +7740,7 @@ export interface FlatFeePricing {
   model: 'flat_fee';
   /**
    * Fixed charge for the billing period
+   * @minimum 0
    */
   amount: number;
   /**
@@ -7275,6 +7749,7 @@ export interface FlatFeePricing {
   period: 'monthly' | 'quarterly' | 'annual' | 'campaign';
   /**
    * ISO 4217 currency code
+   * @pattern ^[A-Z]{3}$
    */
   currency: string;
   ext?: ExtensionObject;
@@ -7290,10 +7765,12 @@ export interface PerUnitPricing {
   unit: string;
   /**
    * Cost per one unit
+   * @minimum 0
    */
   unit_price: number;
   /**
    * ISO 4217 currency code
+   * @pattern ^[A-Z]{3}$
    */
   currency: string;
   ext?: ExtensionObject;
@@ -7305,6 +7782,7 @@ export interface CustomPricing {
   model: 'custom';
   /**
    * Human-readable description of the custom pricing model. Buyers display this to the operator when requesting approval.
+   * @minLength 1
    */
   description: string;
   /**
@@ -7313,11 +7791,13 @@ export interface CustomPricing {
   metadata: {
     /**
      * One or two sentences describing the pricing construct in plain language, displayed to the buyer's operator when requesting approval. Should not repeat the top-level `description` verbatim — summarize the charge mechanic instead (e.g., 'Base $12 CPM plus $0.50 per qualifying post-view conversion, capped at $45 CPM').
+     * @minLength 1
      */
     summary_for_operator?: string;
   };
   /**
    * ISO 4217 currency code. Present when the pricing resolves to a monetary charge in a specific currency.
+   * @pattern ^[A-Z]{3}$
    */
   currency?: string;
   ext?: ExtensionObject;
@@ -7338,6 +7818,7 @@ export type AccountReference =
       brand: BrandReference;
       /**
        * Domain of the entity operating on the brand's behalf. When the brand operates directly, this is the brand's domain.
+       * @pattern ^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)*$
        */
       operator: string;
       /**
@@ -7351,6 +7832,8 @@ export type AccountReference =
 export interface GetMediaBuyArtifactsRequest {
   /**
    * The AdCP major version the buyer's payloads conform to. Sellers validate against their supported major_versions and return VERSION_UNSUPPORTED if unsupported. When omitted, the seller assumes its highest supported version.
+   * @minimum 1
+   * @maximum 99
    */
   adcp_major_version?: number;
   account?: AccountReference;
@@ -7372,10 +7855,12 @@ export interface GetMediaBuyArtifactsRequest {
   time_range?: {
     /**
      * Start of time range (inclusive)
+     * @format date-time
      */
     start?: string;
     /**
      * End of time range (exclusive)
+     * @format date-time
      */
     end?: string;
   };
@@ -7385,6 +7870,8 @@ export interface GetMediaBuyArtifactsRequest {
   pagination?: {
     /**
      * Maximum number of artifacts to return per page
+     * @minimum 1
+     * @maximum 10000
      */
     max_results?: number;
     /**
@@ -7416,6 +7903,7 @@ export type GetMediaBuyArtifactsResponse =
         record_id: string;
         /**
          * When the delivery occurred
+         * @format date-time
          */
         timestamp?: string;
         /**
@@ -7487,6 +7975,8 @@ export type GetMediaBuyArtifactsResponse =
 export interface ListContentStandardsRequest {
   /**
    * The AdCP major version the buyer's payloads conform to. Sellers validate against their supported major_versions and return VERSION_UNSUPPORTED if unsupported. When omitted, the seller assumes its highest supported version.
+   * @minimum 1
+   * @maximum 99
    */
   adcp_major_version?: number;
   /**
@@ -7533,6 +8023,8 @@ export type ListContentStandardsResponse =
 export interface UpdateContentStandardsRequest {
   /**
    * The AdCP major version the buyer's payloads conform to. Sellers validate against their supported major_versions and return VERSION_UNSUPPORTED if unsupported. When omitted, the seller assumes its highest supported version.
+   * @minimum 1
+   * @maximum 99
    */
   adcp_major_version?: number;
   /**
@@ -7617,6 +8109,9 @@ export interface UpdateContentStandardsRequest {
   ext?: ExtensionObject;
   /**
    * Client-generated unique key for at-most-once execution. If a request with the same key has already been processed, the server returns the original response without re-processing. MUST be unique per (seller, request) pair to prevent cross-seller correlation. Use a fresh UUID v4 for each request.
+   * @minLength 16
+   * @maxLength 255
+   * @pattern ^[A-Za-z0-9_.:-]{16,255}$
    */
   idempotency_key: string;
 }
@@ -7663,6 +8158,8 @@ export interface UpdateContentStandardsError {
 export interface ValidateContentDeliveryRequest {
   /**
    * The AdCP major version the buyer's payloads conform to. Sellers validate against their supported major_versions and return VERSION_UNSUPPORTED if unsupported. When omitted, the seller assumes its highest supported version.
+   * @minimum 1
+   * @maximum 99
    */
   adcp_major_version?: number;
   /**
@@ -7683,6 +8180,7 @@ export interface ValidateContentDeliveryRequest {
     media_buy_id?: string;
     /**
      * When the delivery occurred
+     * @format date-time
      */
     timestamp?: string;
     artifact: Artifact;
@@ -7762,6 +8260,8 @@ export type ValidateContentDeliveryResponse =
           explanation?: string;
           /**
            * Optional evaluator confidence in this result (0-1). Distinguishes certain verdicts from ambiguous ones.
+           * @minimum 0
+           * @maximum 1
            */
           confidence?: number;
         }[];
@@ -7782,6 +8282,8 @@ export type ValidateContentDeliveryResponse =
 export interface TasksGetRequest {
   /**
    * The AdCP major version the buyer's payloads conform to. Sellers validate against their supported major_versions and return VERSION_UNSUPPORTED if unsupported. When omitted, the seller assumes its highest supported version.
+   * @minimum 1
+   * @maximum 99
    */
   adcp_major_version?: number;
   /**
@@ -7810,14 +8312,17 @@ export interface TasksGetResponse {
   status: TaskStatus;
   /**
    * When the task was initially created (ISO 8601)
+   * @format date-time
    */
   created_at: string;
   /**
    * When the task was last updated (ISO 8601)
+   * @format date-time
    */
   updated_at: string;
   /**
    * When the task completed (ISO 8601, only for completed/failed/canceled tasks)
+   * @format date-time
    */
   completed_at?: string;
   /**
@@ -7830,6 +8335,8 @@ export interface TasksGetResponse {
   progress?: {
     /**
      * Completion percentage (0-100)
+     * @minimum 0
+     * @maximum 100
      */
     percentage?: number;
     /**
@@ -7838,10 +8345,12 @@ export interface TasksGetResponse {
     current_step?: string;
     /**
      * Total number of steps in the operation
+     * @minimum 1
      */
     total_steps?: number;
     /**
      * Current step number
+     * @minimum 1
      */
     step_number?: number;
   };
@@ -7878,6 +8387,7 @@ export interface TasksGetResponse {
   history?: {
     /**
      * When this exchange occurred (ISO 8601)
+     * @format date-time
      */
     timestamp: string;
     /**
@@ -7905,6 +8415,8 @@ export type SortDirection = 'asc' | 'desc';
 export interface TasksListRequest {
   /**
    * The AdCP major version the buyer's payloads conform to. Sellers validate against their supported major_versions and return VERSION_UNSUPPORTED if unsupported. When omitted, the seller assumes its highest supported version.
+   * @minimum 1
+   * @maximum 99
    */
   adcp_major_version?: number;
   /**
@@ -7928,18 +8440,22 @@ export interface TasksListRequest {
     task_types?: TaskType[];
     /**
      * Filter tasks created after this date (ISO 8601)
+     * @format date-time
      */
     created_after?: string;
     /**
      * Filter tasks created before this date (ISO 8601)
+     * @format date-time
      */
     created_before?: string;
     /**
      * Filter tasks last updated after this date (ISO 8601)
+     * @format date-time
      */
     updated_after?: string;
     /**
      * Filter tasks last updated before this date (ISO 8601)
+     * @format date-time
      */
     updated_before?: string;
     /**
@@ -7985,10 +8501,12 @@ export interface TasksListResponse {
   query_summary: {
     /**
      * Total number of tasks matching filters (across all pages)
+     * @minimum 0
      */
     total_matching?: number;
     /**
      * Number of tasks returned in this response
+     * @minimum 0
      */
     returned?: number;
     /**
@@ -7997,10 +8515,12 @@ export interface TasksListResponse {
     domain_breakdown?: {
       /**
        * Number of media-buy tasks in results
+       * @minimum 0
        */
       'media-buy'?: number;
       /**
        * Number of signals tasks in results
+       * @minimum 0
        */
       signals?: number;
     };
@@ -8008,6 +8528,9 @@ export interface TasksListResponse {
      * Count of tasks by status
      */
     status_breakdown?: {
+      /**
+       * @minimum 0
+       */
       [k: string]: number | undefined;
     };
     /**
@@ -8038,14 +8561,17 @@ export interface TasksListResponse {
     status: TaskStatus;
     /**
      * When the task was initially created (ISO 8601)
+     * @format date-time
      */
     created_at: string;
     /**
      * When the task was last updated (ISO 8601)
+     * @format date-time
      */
     updated_at: string;
     /**
      * When the task completed (ISO 8601, only for completed/failed/canceled tasks)
+     * @format date-time
      */
     completed_at?: string;
     /**
@@ -8067,6 +8593,8 @@ export type GetCreativeDeliveryRequest = {
 } & {
   /**
    * The AdCP major version the buyer's payloads conform to. Sellers validate against their supported major_versions and return VERSION_UNSUPPORTED if unsupported. When omitted, the seller assumes its highest supported version.
+   * @minimum 1
+   * @maximum 99
    */
   adcp_major_version?: number;
   account?: AccountReference;
@@ -8080,14 +8608,17 @@ export type GetCreativeDeliveryRequest = {
   creative_ids?: string[];
   /**
    * Start date for delivery period (YYYY-MM-DD). Interpreted in the platform's reporting timezone.
+   * @pattern ^\d{4}-\d{2}-\d{2}$
    */
   start_date?: string;
   /**
    * End date for delivery period (YYYY-MM-DD). Interpreted in the platform's reporting timezone.
+   * @pattern ^\d{4}-\d{2}-\d{2}$
    */
   end_date?: string;
   /**
    * Maximum number of variants to return per creative. When omitted, the agent returns all variants. Use this to limit response size for generative creatives that may produce large numbers of variants.
+   * @minimum 1
    */
   max_variants?: number;
   pagination?: PaginationRequest;
@@ -8140,6 +8671,7 @@ export interface GetCreativeDeliveryResponse {
   media_buy_id?: string;
   /**
    * ISO 4217 currency code for monetary values in this response (e.g., 'USD', 'EUR')
+   * @pattern ^[A-Z]{3}$
    */
   currency: string;
   /**
@@ -8148,10 +8680,12 @@ export interface GetCreativeDeliveryResponse {
   reporting_period: {
     /**
      * ISO 8601 start timestamp
+     * @format date-time
      */
     start: string;
     /**
      * ISO 8601 end timestamp
+     * @format date-time
      */
     end: string;
     /**
@@ -8175,6 +8709,7 @@ export interface GetCreativeDeliveryResponse {
     totals?: DeliveryMetrics;
     /**
      * Total number of variants for this creative. When max_variants was specified in the request, this may exceed the number of items in the variants array.
+     * @minimum 0
      */
     variant_count?: number;
     /**
@@ -8188,10 +8723,12 @@ export interface GetCreativeDeliveryResponse {
   pagination?: {
     /**
      * Maximum number of creatives requested
+     * @minimum 1
      */
     limit: number;
     /**
      * Number of creatives skipped
+     * @minimum 0
      */
     offset: number;
     /**
@@ -8200,6 +8737,7 @@ export interface GetCreativeDeliveryResponse {
     has_more: boolean;
     /**
      * Total number of creatives matching the request filters
+     * @minimum 0
      */
     total?: number;
   };
@@ -8216,54 +8754,70 @@ export interface GetCreativeDeliveryResponse {
 export interface DeliveryMetrics {
   /**
    * Impressions delivered
+   * @minimum 0
    */
   impressions?: number;
   /**
    * Amount spent
+   * @minimum 0
    */
   spend?: number;
   /**
    * Total clicks
+   * @minimum 0
    */
   clicks?: number;
   /**
    * Click-through rate (clicks/impressions)
+   * @minimum 0
+   * @maximum 1
    */
   ctr?: number;
   /**
    * Content engagements counted toward the billable view threshold. For video this is a platform-defined view event (e.g., 30 seconds or video midpoint); for audio/podcast it is a stream start; for other formats it follows the pricing model's view definition. When the package uses CPV pricing, spend = views × rate.
+   * @minimum 0
    */
   views?: number;
   /**
    * Video/audio completions. When the package has a completed_views optimization goal with view_duration_seconds, completions are counted at that threshold rather than 100% completion.
+   * @minimum 0
    */
   completed_views?: number;
   /**
    * Completion rate (completed_views/impressions)
+   * @minimum 0
+   * @maximum 1
    */
   completion_rate?: number;
   /**
    * Total conversions attributed to this delivery. When by_event_type is present, this equals the sum of all by_event_type[].count entries.
+   * @minimum 0
    */
   conversions?: number;
   /**
    * Total monetary value of attributed conversions (in the reporting currency)
+   * @minimum 0
    */
   conversion_value?: number;
   /**
    * Return on ad spend (conversion_value / spend)
+   * @minimum 0
    */
   roas?: number;
   /**
    * Cost per conversion (spend / conversions)
+   * @minimum 0
    */
   cost_per_acquisition?: number;
   /**
    * Fraction of conversions from first-time brand buyers (0 = none, 1 = all)
+   * @minimum 0
+   * @maximum 1
    */
   new_to_brand_rate?: number;
   /**
    * Leads generated (convenience alias for by_event_type where event_type='lead')
+   * @minimum 0
    */
   leads?: number;
   /**
@@ -8277,19 +8831,23 @@ export interface DeliveryMetrics {
     event_source_id?: string;
     /**
      * Number of events of this type
+     * @minimum 0
      */
     count: number;
     /**
      * Total monetary value of events of this type
+     * @minimum 0
      */
     value?: number;
   }[];
   /**
    * Gross Rating Points delivered (for CPP)
+   * @minimum 0
    */
   grps?: number;
   /**
    * Unique reach in the units specified by reach_unit. When reach_unit is omitted, units are unspecified — do not compare reach values across packages or media buys without a common reach_unit.
+   * @minimum 0
    */
   reach?: number;
   /**
@@ -8298,6 +8856,7 @@ export interface DeliveryMetrics {
   reach_unit?: ReachUnit;
   /**
    * Average frequency per reach unit (typically measured over campaign duration, but can vary by measurement provider). When reach_unit is 'households', this is average exposures per household; when 'accounts', per logged-in account; etc.
+   * @minimum 0
    */
   frequency?: number;
   /**
@@ -8306,18 +8865,22 @@ export interface DeliveryMetrics {
   quartile_data?: {
     /**
      * 25% completion views
+     * @minimum 0
      */
     q1_views?: number;
     /**
      * 50% completion views
+     * @minimum 0
      */
     q2_views?: number;
     /**
      * 75% completion views
+     * @minimum 0
      */
     q3_views?: number;
     /**
      * 100% completion views
+     * @minimum 0
      */
     q4_views?: number;
   };
@@ -8327,18 +8890,23 @@ export interface DeliveryMetrics {
   dooh_metrics?: {
     /**
      * Number of times ad played in rotation
+     * @minimum 0
      */
     loop_plays?: number;
     /**
      * Number of unique screens displaying the ad
+     * @minimum 0
      */
     screens_used?: number;
     /**
      * Total display time in seconds
+     * @minimum 0
      */
     screen_time_seconds?: number;
     /**
      * Actual share of voice delivered (0.0 to 1.0)
+     * @minimum 0
+     * @maximum 1
      */
     sov_achieved?: number;
     /**
@@ -8363,14 +8931,17 @@ export interface DeliveryMetrics {
       venue_type?: string;
       /**
        * Impressions delivered at this venue
+       * @minimum 0
        */
       impressions: number;
       /**
        * Loop plays at this venue
+       * @minimum 0
        */
       loop_plays?: number;
       /**
        * Number of screens used at this venue
+       * @minimum 0
        */
       screens_used?: number;
     }[];
@@ -8381,40 +8952,51 @@ export interface DeliveryMetrics {
   viewability?: {
     /**
      * Impressions where viewability could be measured. Excludes environments without measurement capability (e.g., non-Intersection Observer browsers, certain app environments).
+     * @minimum 0
      */
     measurable_impressions?: number;
     /**
      * Impressions that met the viewability threshold defined by the measurement standard.
+     * @minimum 0
      */
     viewable_impressions?: number;
     /**
      * Viewable impression rate (viewable_impressions / measurable_impressions). Range 0.0 to 1.0.
+     * @minimum 0
+     * @maximum 1
      */
     viewable_rate?: number;
     standard?: ViewabilityStandard;
   };
   /**
    * Total engagements — direct interactions with the ad beyond viewing. Includes social reactions/comments/shares, story/unit opens, interactive overlay taps on CTV, companion banner interactions on audio. Platform-specific; corresponds to the 'engagements' optimization metric.
+   * @minimum 0
    */
   engagements?: number;
   /**
    * New followers, page likes, artist/podcast/channel subscribes attributed to this delivery.
+   * @minimum 0
    */
   follows?: number;
   /**
    * Saves, bookmarks, playlist adds, pins attributed to this delivery.
+   * @minimum 0
    */
   saves?: number;
   /**
    * Visits to the brand's in-platform page (profile, artist page, channel, or storefront) attributed to this delivery. Does not include external website clicks.
+   * @minimum 0
    */
   profile_visits?: number;
   /**
    * Platform-specific engagement rate (0.0 to 1.0). Typically engagements/impressions, but definition varies by platform.
+   * @minimum 0
+   * @maximum 1
    */
   engagement_rate?: number;
   /**
    * Cost per click (spend / clicks)
+   * @minimum 0
    */
   cost_per_click?: number;
   /**
@@ -8428,13 +9010,102 @@ export interface DeliveryMetrics {
     event_source_id?: string;
     /**
      * Number of conversions from this action source
+     * @minimum 0
      */
     count: number;
     /**
      * Total monetary value of conversions from this action source
+     * @minimum 0
      */
     value?: number;
   }[];
+}
+/**
+ * Campaign-level creative context for AI-powered creative generation. Provides the layer between brand identity (stable across campaigns) and individual creative execution (per-request). A brand has one identity (defined in brand.json) but different creative briefs for each campaign or flight.
+ */
+export interface CreativeBrief {
+  /**
+   * Campaign or flight name for identification
+   */
+  name: string;
+  /**
+   * Campaign objective that guides creative tone and call-to-action strategy
+   */
+  objective?: 'awareness' | 'consideration' | 'conversion' | 'retention' | 'engagement';
+  /**
+   * Desired tone for this campaign, modulating the brand's base tone (e.g., 'playful and festive', 'premium and aspirational')
+   */
+  tone?: string;
+  /**
+   * Target audience description for this campaign
+   */
+  audience?: string;
+  /**
+   * Creative territory or positioning the campaign should occupy
+   */
+  territory?: string;
+  /**
+   * Messaging framework for the campaign
+   */
+  messaging?: {
+    /**
+     * Primary headline
+     */
+    headline?: string;
+    /**
+     * Supporting tagline or sub-headline
+     */
+    tagline?: string;
+    /**
+     * Call-to-action text
+     */
+    cta?: string;
+    /**
+     * Key messages to communicate in priority order
+     */
+    key_messages?: string[];
+  };
+  /**
+   * Visual and strategic reference materials such as mood boards, product shots, example creatives, and strategy documents
+   */
+  reference_assets?: ReferenceAsset[];
+  /**
+   * Regulatory and legal compliance requirements for this campaign. Campaign-specific, regional, and product-based — distinct from brand-level disclaimers in brand.json.
+   */
+  compliance?: {
+    /**
+     * Disclosures that must appear in creatives for this campaign. Each disclosure specifies the text, where it should appear, and which jurisdictions require it.
+     */
+    required_disclosures?: {
+      /**
+       * The disclosure text that must appear in the creative
+       */
+      text: string;
+      position?: DisclosurePosition;
+      /**
+       * Jurisdictions where this disclosure is required. ISO 3166-1 alpha-2 country codes or ISO 3166-2 subdivision codes (e.g., 'US', 'GB', 'US-NJ', 'CA-QC'). If omitted, the disclosure applies to all jurisdictions in the campaign.
+       */
+      jurisdictions?: string[];
+      /**
+       * The regulation or legal authority requiring this disclosure (e.g., 'SEC Rule 156', 'FCA COBS 4.5', 'FDA 21 CFR 202')
+       */
+      regulation?: string;
+      /**
+       * Minimum display duration in milliseconds. For video/audio disclosures, how long the disclosure must be visible or audible. For static formats, how long the disclosure must remain on screen before any auto-advance.
+       * @minimum 1
+       */
+      min_duration_ms?: number;
+      /**
+       * Language of the disclosure text as a BCP 47 language tag (e.g., 'en', 'fr-CA', 'es'). When omitted, the disclosure is assumed to match the creative's language.
+       */
+      language?: string;
+      persistence?: DisclosurePersistence;
+    }[];
+    /**
+     * Claims that must not appear in creatives for this campaign. Creative agents should ensure generated content avoids these claims.
+     */
+    prohibited_claims?: string[];
+  };
 }
 /**
  * Property where the artifact appears
@@ -8454,6 +9125,8 @@ export interface Identifier {
 export interface GetCreativeFeaturesRequest {
   /**
    * The AdCP major version the buyer's payloads conform to. Sellers validate against their supported major_versions and return VERSION_UNSUPPORTED if unsupported. When omitted, the seller assumes its highest supported version.
+   * @minimum 1
+   * @maximum 99
    */
   adcp_major_version?: number;
   creative_manifest: CreativeManifest;
@@ -8486,10 +9159,12 @@ export type GetCreativeFeaturesResponse =
       pricing_option_id?: string;
       /**
        * Cost incurred for this evaluation, denominated in currency.
+       * @minimum 0
        */
       vendor_cost?: number;
       /**
        * ISO 4217 currency code for vendor_cost.
+       * @pattern ^[A-Z]{3}$
        */
       currency?: string;
       consumption?: CreativeConsumption;
@@ -8520,14 +9195,18 @@ export interface CreativeFeatureResult {
   unit?: string;
   /**
    * Confidence score for this value (0-1)
+   * @minimum 0
+   * @maximum 1
    */
   confidence?: number;
   /**
    * When this feature was evaluated
+   * @format date-time
    */
   measured_at?: string;
   /**
    * When this evaluation expires and should be refreshed
+   * @format date-time
    */
   expires_at?: string;
   /**
@@ -8556,6 +9235,8 @@ export type WCAGLevel = 'A' | 'AA' | 'AAA';
 export interface ListCreativeFormatsRequestCreativeAgent {
   /**
    * The AdCP major version the buyer's payloads conform to. Sellers validate against their supported major_versions and return VERSION_UNSUPPORTED if unsupported. When omitted, the seller assumes its highest supported version.
+   * @minimum 1
+   * @maximum 99
    */
   adcp_major_version?: number;
   /**
@@ -8632,6 +9313,8 @@ export type CreativeSortField = 'created_date' | 'updated_date' | 'name' | 'stat
 export interface ListCreativesRequest {
   /**
    * The AdCP major version the buyer's payloads conform to. Sellers validate against their supported major_versions and return VERSION_UNSUPPORTED if unsupported. When omitted, the seller assumes its highest supported version.
+   * @minimum 1
+   * @maximum 99
    */
   adcp_major_version?: number;
   filters?: CreativeFilters;
@@ -8715,18 +9398,22 @@ export interface CreativeFilters {
   creative_ids?: string[];
   /**
    * Filter creatives created after this date (ISO 8601)
+   * @format date-time
    */
   created_after?: string;
   /**
    * Filter creatives created before this date (ISO 8601)
+   * @format date-time
    */
   created_before?: string;
   /**
    * Filter creatives last updated after this date (ISO 8601)
+   * @format date-time
    */
   updated_after?: string;
   /**
    * Filter creatives last updated before this date (ISO 8601)
+   * @format date-time
    */
   updated_before?: string;
   /**
@@ -8817,10 +9504,12 @@ export interface ListCreativesResponse {
   query_summary: {
     /**
      * Total number of creatives matching filters (across all pages)
+     * @minimum 0
      */
     total_matching: number;
     /**
      * Number of creatives returned in this response
+     * @minimum 0
      */
     returned: number;
     /**
@@ -8853,10 +9542,12 @@ export interface ListCreativesResponse {
     status: CreativeStatus;
     /**
      * When the creative was created
+     * @format date-time
      */
     created_date: string;
     /**
      * When the creative was last modified
+     * @format date-time
      */
     updated_date: string;
     /**
@@ -8887,6 +9578,7 @@ export interface ListCreativesResponse {
     assignments?: {
       /**
        * Total number of active package assignments
+       * @minimum 0
        */
       assignment_count: number;
       /**
@@ -8899,6 +9591,7 @@ export interface ListCreativesResponse {
         package_id: string;
         /**
          * When this assignment was created
+         * @format date-time
          */
         assigned_date: string;
       }[];
@@ -8909,18 +9602,22 @@ export interface ListCreativesResponse {
     snapshot?: {
       /**
        * When this snapshot was captured by the platform
+       * @format date-time
        */
       as_of: string;
       /**
        * Maximum age of this data in seconds. For example, 3600 means the data may be up to 1 hour old.
+       * @minimum 0
        */
       staleness_seconds: number;
       /**
        * Lifetime impressions across all assignments. Not scoped to any date range.
+       * @minimum 0
        */
       impressions: number;
       /**
        * Last time this creative served an impression. Absent when the creative has never served.
+       * @format date-time
        */
       last_served?: string;
     };
@@ -8940,6 +9637,7 @@ export interface ListCreativesResponse {
   format_summary?: {
     /**
      * Number of creatives with this format
+     * @minimum 0
      *
      * This interface was referenced by `undefined`'s JSON-Schema definition
      * via the `patternProperty` "^[a-zA-Z0-9_-]+$".
@@ -8952,22 +9650,27 @@ export interface ListCreativesResponse {
   status_summary?: {
     /**
      * Number of creatives being processed
+     * @minimum 0
      */
     processing?: number;
     /**
      * Number of approved creatives
+     * @minimum 0
      */
     approved?: number;
     /**
      * Number of creatives pending review
+     * @minimum 0
      */
     pending_review?: number;
     /**
      * Number of rejected creatives
+     * @minimum 0
      */
     rejected?: number;
     /**
      * Number of archived creatives
+     * @minimum 0
      */
     archived?: number;
   };
@@ -9084,6 +9787,8 @@ export type CatalogAsset1 = CatalogAsset;
 export interface PreviewCreativeRequest {
   /**
    * The AdCP major version the buyer's payloads conform to. Sellers validate against their supported major_versions and return VERSION_UNSUPPORTED if unsupported. When omitted, the seller assumes its highest supported version.
+   * @minimum 1
+   * @maximum 99
    */
   adcp_major_version?: number;
   /**
@@ -9119,6 +9824,7 @@ export interface PreviewCreativeRequest {
   output_format?: PreviewOutputFormat;
   /**
    * Maximum number of catalog items to render per preview variant. Used in single mode. Creative agents SHOULD default to a reasonable sample when omitted and the catalog is large.
+   * @minimum 1
    */
   item_limit?: number;
   /**
@@ -9154,6 +9860,7 @@ export interface PreviewCreativeRequest {
     output_format?: PreviewOutputFormat;
     /**
      * Maximum number of catalog items to render in this preview.
+     * @minimum 1
      */
     item_limit?: number;
   }[];
@@ -9223,6 +9930,7 @@ export interface PreviewCreativeSingleResponse {
   interactive_url?: string;
   /**
    * ISO 8601 timestamp when preview links expire
+   * @format date-time
    */
   expires_at: string;
   context?: ContextObject;
@@ -9287,6 +9995,7 @@ export interface PreviewCreativeVariantResponse {
   manifest?: CreativeManifest;
   /**
    * ISO 8601 timestamp when preview links expire
+   * @format date-time
    */
   expires_at?: string;
   context?: ContextObject;
@@ -9302,6 +10011,8 @@ export type ValidationMode = 'strict' | 'lenient';
 export interface SyncCreativesRequest {
   /**
    * The AdCP major version the buyer's payloads conform to. Sellers validate against their supported major_versions and return VERSION_UNSUPPORTED if unsupported. When omitted, the seller assumes its highest supported version.
+   * @minimum 1
+   * @maximum 99
    */
   adcp_major_version?: number;
   account: AccountReference;
@@ -9327,6 +10038,8 @@ export interface SyncCreativesRequest {
     package_id: string;
     /**
      * Relative delivery weight (0-100). When multiple creatives are assigned to the same package, weights determine impression distribution proportionally. When omitted, the creative receives equal rotation with other unweighted creatives. A weight of 0 means the creative is assigned but paused (receives no delivery).
+     * @minimum 0
+     * @maximum 100
      */
     weight?: number;
     /**
@@ -9336,6 +10049,9 @@ export interface SyncCreativesRequest {
   }[];
   /**
    * Client-generated idempotency key for safe retries. If a sync fails without a response, resending with the same idempotency_key guarantees at-most-once execution. MUST be unique per (seller, request) pair to prevent cross-seller correlation. Use a fresh UUID v4 for each request.
+   * @minLength 16
+   * @maxLength 255
+   * @pattern ^[A-Za-z0-9_.:-]{16,255}$
    */
   idempotency_key: string;
   /**
@@ -9359,6 +10075,8 @@ export interface SyncCreativesRequest {
 export interface BuildCreativeRequest {
   /**
    * The AdCP major version the buyer's payloads conform to. Sellers validate against their supported major_versions and return VERSION_UNSUPPORTED if unsupported. When omitted, the seller assumes its highest supported version.
+   * @minimum 1
+   * @maximum 99
    */
   adcp_major_version?: number;
   /**
@@ -9392,6 +10110,7 @@ export interface BuildCreativeRequest {
   quality?: CreativeQuality;
   /**
    * Maximum number of catalog items to use when generating. When a catalog asset contains more items than this limit, the creative agent selects the top items based on relevance or catalog ordering. When item_limit exceeds the format's max_items, the creative agent SHOULD use the lesser of the two. Ignored when the manifest contains no catalog assets.
+   * @minimum 1
    */
   item_limit?: number;
   /**
@@ -9427,6 +10146,9 @@ export interface BuildCreativeRequest {
   };
   /**
    * Client-generated unique key for this request. Prevents duplicate creative generation on retries. MUST be unique per (seller, request) pair to prevent cross-seller correlation. Use a fresh UUID v4 for each request.
+   * @minLength 16
+   * @maxLength 255
+   * @pattern ^[A-Za-z0-9_.:-]{16,255}$
    */
   idempotency_key: string;
   context?: ContextObject;
@@ -9529,10 +10251,15 @@ export type StartTiming = 'asap' | string;
 export interface CreateMediaBuyRequest {
   /**
    * The AdCP major version the buyer's payloads conform to. Sellers validate against their supported major_versions and return VERSION_UNSUPPORTED if unsupported. When omitted, the seller assumes its highest supported version.
+   * @minimum 1
+   * @maximum 99
    */
   adcp_major_version?: number;
   /**
    * Client-generated unique key for this request. If a request with the same idempotency_key and account has already been processed, the seller returns the existing media buy rather than creating a duplicate. MUST be unique per (seller, request) pair to prevent cross-seller correlation. Use a fresh UUID v4 for each request.
+   * @minLength 16
+   * @maxLength 255
+   * @pattern ^[A-Za-z0-9_.:-]{16,255}$
    */
   idempotency_key: string;
   /**
@@ -9550,6 +10277,7 @@ export interface CreateMediaBuyRequest {
   total_budget?: {
     /**
      * Total budget amount
+     * @minimum 0
      */
     amount: number;
     /**
@@ -9574,10 +10302,13 @@ export interface CreateMediaBuyRequest {
     io_id: string;
     /**
      * ISO 8601 timestamp when the IO was accepted
+     * @format date-time
      */
     accepted_at: string;
     /**
      * Who accepted the IO — agent identifier or human name
+     * @minLength 1
+     * @maxLength 250
      */
     signatory: string;
     /**
@@ -9591,11 +10322,13 @@ export interface CreateMediaBuyRequest {
   po_number?: string;
   /**
    * Agency estimate or authorization number. Primary financial reference for broadcast buys — links the order to the agency's media plan and billing system. Travels with the order and Ad-IDs through the transaction lifecycle.
+   * @maxLength 100
    */
   agency_estimate_number?: string;
   start_time: StartTiming;
   /**
    * Campaign end date/time in ISO 8601 format
+   * @format date-time
    */
   end_time: string;
   push_notification_config?: PushNotificationConfig;
@@ -9610,6 +10343,7 @@ export interface CreateMediaBuyRequest {
     url: string;
     /**
      * Optional client-provided token for webhook validation. Echoed back in webhook payload to validate request authenticity.
+     * @minLength 16
      */
     token?: string;
     /**
@@ -9622,6 +10356,7 @@ export interface CreateMediaBuyRequest {
       schemes: AuthenticationScheme[];
       /**
        * Credentials for the legacy scheme. For Bearer: token sent in Authorization header. For HMAC-SHA256: shared secret used to generate signature. Minimum 32 characters. Exchanged out-of-band during onboarding.
+       * @minLength 32
        */
       credentials: string;
     };
@@ -9635,6 +10370,8 @@ export interface CreateMediaBuyRequest {
     batch_frequency?: 'hourly' | 'daily';
     /**
      * Fraction of impressions to include (0-1). 1.0 = all impressions, 0.1 = 10% sample. Default: 1.0
+     * @minimum 0
+     * @maximum 1
      */
     sampling_rate?: number;
   };
@@ -9647,6 +10384,8 @@ export interface CreateMediaBuyRequest {
 export interface PackageRequest {
   /**
    * The AdCP major version the buyer's payloads conform to. Sellers validate against their supported major_versions and return VERSION_UNSUPPORTED if unsupported. When omitted, the seller assumes its highest supported version.
+   * @minimum 1
+   * @maximum 99
    */
   adcp_major_version?: number;
   /**
@@ -9659,6 +10398,7 @@ export interface PackageRequest {
   format_ids?: FormatReferenceStructuredObject[];
   /**
    * Budget allocation for this package in the media buy's currency
+   * @minimum 0
    */
   budget: number;
   pacing?: Pacing;
@@ -9668,18 +10408,22 @@ export interface PackageRequest {
   pricing_option_id: string;
   /**
    * Bid price for auction-based pricing options. This is the exact bid/price to honor unless selected pricing_option has max_bid=true, in which case bid_price is the buyer's maximum willingness to pay (ceiling).
+   * @minimum 0
    */
   bid_price?: number;
   /**
    * Impression goal for this package
+   * @minimum 0
    */
   impressions?: number;
   /**
    * Flight start date/time for this package in ISO 8601 format. When omitted, the package inherits the media buy's start_time. Must fall within the media buy's date range.
+   * @format date-time
    */
   start_time?: string;
   /**
    * Flight end date/time for this package in ISO 8601 format. When omitted, the package inherits the media buy's end_time. Must fall within the media buy's date range.
+   * @format date-time
    */
   end_time?: string;
   /**
@@ -9710,6 +10454,7 @@ export interface PackageRequest {
   creatives?: CreativeAsset[];
   /**
    * Agency estimate or authorization number for this package. Overrides the media buy-level estimate number when different packages correspond to different agency estimates (e.g., different stations or flights within the same buy).
+   * @maxLength 100
    */
   agency_estimate_number?: string;
   context?: ContextObject;
@@ -9725,6 +10470,7 @@ export interface ReportingWebhook {
   url: string;
   /**
    * Optional client-provided token for webhook validation. Echoed back in webhook payload to validate request authenticity.
+   * @minLength 16
    */
   token?: string;
   /**
@@ -9737,6 +10483,7 @@ export interface ReportingWebhook {
     schemes: AuthenticationScheme[];
     /**
      * Credentials for the legacy scheme. For Bearer: token sent in Authorization header. For HMAC-SHA256: shared secret used to generate signature. Minimum 32 characters. Exchanged out-of-band during onboarding.
+     * @minLength 32
      */
     credentials: string;
   };
@@ -9792,6 +10539,8 @@ export type SortMetric =
 export interface GetMediaBuyDeliveryRequest {
   /**
    * The AdCP major version the buyer's payloads conform to. Sellers validate against their supported major_versions and return VERSION_UNSUPPORTED if unsupported. When omitted, the seller assumes its highest supported version.
+   * @minimum 1
+   * @maximum 99
    */
   adcp_major_version?: number;
   account?: AccountReference;
@@ -9805,10 +10554,12 @@ export interface GetMediaBuyDeliveryRequest {
   status_filter?: MediaBuyStatus | MediaBuyStatus[];
   /**
    * Start date for reporting period (YYYY-MM-DD). When omitted along with end_date, returns campaign lifetime data. Only accepted when the product's reporting_capabilities.date_range_support is 'date_range'.
+   * @pattern ^\d{4}-\d{2}-\d{2}$
    */
   start_date?: string;
   /**
    * End date for reporting period (YYYY-MM-DD). When omitted along with start_date, returns campaign lifetime data. Only accepted when the product's reporting_capabilities.date_range_support is 'date_range'.
+   * @pattern ^\d{4}-\d{2}-\d{2}$
    */
   end_date?: string;
   /**
@@ -9844,6 +10595,7 @@ export interface GetMediaBuyDeliveryRequest {
       system?: MetroAreaSystem | PostalCodeSystem;
       /**
        * Maximum number of geo entries to return. Defaults to 25. When truncated, by_geo_truncated is true in the response.
+       * @minimum 1
        */
       limit?: number;
       sort_by?: SortMetric;
@@ -9854,6 +10606,7 @@ export interface GetMediaBuyDeliveryRequest {
     device_type?: {
       /**
        * Maximum number of entries to return. When omitted, all entries are returned (the enum is small and bounded).
+       * @minimum 1
        */
       limit?: number;
       sort_by?: SortMetric;
@@ -9864,6 +10617,7 @@ export interface GetMediaBuyDeliveryRequest {
     device_platform?: {
       /**
        * Maximum number of entries to return. When omitted, all entries are returned (the enum is small and bounded).
+       * @minimum 1
        */
       limit?: number;
       sort_by?: SortMetric;
@@ -9874,6 +10628,7 @@ export interface GetMediaBuyDeliveryRequest {
     audience?: {
       /**
        * Maximum number of entries to return. Defaults to 25.
+       * @minimum 1
        */
       limit?: number;
       sort_by?: SortMetric;
@@ -9884,6 +10639,7 @@ export interface GetMediaBuyDeliveryRequest {
     placement?: {
       /**
        * Maximum number of entries to return. Defaults to 25.
+       * @minimum 1
        */
       limit?: number;
       sort_by?: SortMetric;
@@ -9913,14 +10669,17 @@ export interface GetMediaBuyDeliveryResponse {
   partial_data?: boolean;
   /**
    * Number of media buys with reporting_delayed or failed status (only present in webhook deliveries when partial_data is true)
+   * @minimum 0
    */
   unavailable_count?: number;
   /**
    * Sequential notification number (only present in webhook deliveries, starts at 1)
+   * @minimum 1
    */
   sequence_number?: number;
   /**
    * ISO 8601 timestamp for next expected notification (only present in webhook deliveries when notification_type is not 'final')
+   * @format date-time
    */
   next_expected_at?: string;
   /**
@@ -9929,15 +10688,18 @@ export interface GetMediaBuyDeliveryResponse {
   reporting_period: {
     /**
      * ISO 8601 start timestamp in UTC (e.g., 2024-02-05T00:00:00Z)
+     * @format date-time
      */
     start: string;
     /**
      * ISO 8601 end timestamp in UTC (e.g., 2024-02-05T23:59:59Z)
+     * @format date-time
      */
     end: string;
   };
   /**
    * ISO 4217 currency code
+   * @pattern ^[A-Z]{3}$
    */
   currency?: string;
   attribution_window?: AttributionWindow;
@@ -9947,50 +10709,64 @@ export interface GetMediaBuyDeliveryResponse {
   aggregated_totals?: {
     /**
      * Total impressions delivered across all media buys
+     * @minimum 0
      */
     impressions: number;
     /**
      * Total amount spent across all media buys
+     * @minimum 0
      */
     spend: number;
     /**
      * Total clicks across all media buys (if applicable)
+     * @minimum 0
      */
     clicks?: number;
     /**
      * Total audio/video completions across all media buys (if applicable)
+     * @minimum 0
      */
     completed_views?: number;
     /**
      * Total views across all media buys (if applicable)
+     * @minimum 0
      */
     views?: number;
     /**
      * Total conversions across all media buys (if applicable)
+     * @minimum 0
      */
     conversions?: number;
     /**
      * Total conversion value across all media buys (if applicable)
+     * @minimum 0
      */
     conversion_value?: number;
     /**
      * Aggregate return on ad spend across all media buys (total conversion_value / total spend)
+     * @minimum 0
      */
     roas?: number;
     /**
      * Fraction of total conversions across all media buys from first-time brand buyers (weighted by conversion volume, not a simple average of per-buy rates)
+     * @minimum 0
+     * @maximum 1
      */
     new_to_brand_rate?: number;
     /**
      * Aggregate cost per conversion across all media buys (total spend / total conversions)
+     * @minimum 0
      */
     cost_per_acquisition?: number;
     /**
      * Aggregate completion rate across all media buys (weighted by impressions, not a simple average of per-buy rates)
+     * @minimum 0
+     * @maximum 1
      */
     completion_rate?: number;
     /**
      * Deduplicated reach across all media buys (if the seller can deduplicate across buys; otherwise sum of per-buy reach). Only present when all media buys share the same reach_unit. Omitted when reach units are heterogeneous — use per-buy reach values instead.
+     * @minimum 0
      */
     reach?: number;
     /**
@@ -9999,10 +10775,12 @@ export interface GetMediaBuyDeliveryResponse {
     reach_unit?: ReachUnit;
     /**
      * Average frequency per reach unit across all media buys (impressions / reach when cross-buy deduplication is available). Only present when reach is present.
+     * @minimum 0
      */
     frequency?: number;
     /**
      * Number of media buys included in the response
+     * @minimum 0
      */
     media_buy_count: number;
   };
@@ -10030,6 +10808,7 @@ export interface GetMediaBuyDeliveryResponse {
       | 'reporting_delayed';
     /**
      * When delayed data is expected to be available (only present when status is reporting_delayed)
+     * @format date-time
      */
     expected_availability?: string;
     /**
@@ -10040,6 +10819,7 @@ export interface GetMediaBuyDeliveryResponse {
     totals: DeliveryMetrics & {
       /**
        * Effective rate paid per unit based on pricing_model (e.g., actual CPM for 'cpm', actual cost per completed view for 'cpcv', actual cost per point for 'cpp')
+       * @minimum 0
        */
       effective_rate?: number;
     };
@@ -10053,15 +10833,18 @@ export interface GetMediaBuyDeliveryResponse {
       package_id: string;
       /**
        * Delivery pace (1.0 = on track, <1.0 = behind, >1.0 = ahead)
+       * @minimum 0
        */
       pacing_index?: number;
       pricing_model?: PricingModel;
       /**
        * The pricing rate for this package in the specified currency. For fixed-rate pricing, this is the agreed rate (e.g., CPM rate of 12.50 means $12.50 per 1,000 impressions). For auction-based pricing, this represents the effective rate based on actual delivery.
+       * @minimum 0
        */
       rate?: number;
       /**
        * ISO 4217 currency code (e.g., USD, EUR, GBP) for this package's pricing. Indicates the currency in which the rate and spend values are denominated. Different packages can use different currencies when supported by the publisher.
+       * @pattern ^[A-Z]{3}$
        */
       currency?: string;
       /**
@@ -10078,10 +10861,12 @@ export interface GetMediaBuyDeliveryResponse {
       is_final?: boolean;
       /**
        * Which measurement window this data represents, referencing a window_id from the product's reporting_capabilities.measurement_windows. For broadcast: 'live', 'c3', 'c7'. When absent, the data is not windowed (standard digital reporting). When present with is_final: false, a later report for the same period will provide a wider window or more complete data.
+       * @maxLength 50
        */
       measurement_window?: string;
       /**
        * Which measurement window this data replaces. Present on window_update notifications to indicate progression (e.g., 'live' when reporting C3 data that supersedes live-only numbers). Absent on the first report for a period. Buyers should replace stored data for the superseded window with this report's data.
+       * @maxLength 50
        */
       supersedes_window?: string;
       /**
@@ -10104,6 +10889,8 @@ export interface GetMediaBuyDeliveryResponse {
         creative_id: string;
         /**
          * Observed delivery share for this creative within the package during the reporting period, expressed as a percentage (0-100). Reflects actual delivery distribution, not a configured setting.
+         * @minimum 0
+         * @maximum 100
          */
         weight?: number;
       })[];
@@ -10200,30 +10987,38 @@ export interface GetMediaBuyDeliveryResponse {
       daily_breakdown?: {
         /**
          * Date (YYYY-MM-DD)
+         * @pattern ^\d{4}-\d{2}-\d{2}$
          */
         date: string;
         /**
          * Daily impressions for this package
+         * @minimum 0
          */
         impressions: number;
         /**
          * Daily spend for this package
+         * @minimum 0
          */
         spend: number;
         /**
          * Daily conversions for this package
+         * @minimum 0
          */
         conversions?: number;
         /**
          * Daily conversion value for this package
+         * @minimum 0
          */
         conversion_value?: number;
         /**
          * Daily return on ad spend (conversion_value / spend)
+         * @minimum 0
          */
         roas?: number;
         /**
          * Daily fraction of conversions from first-time brand buyers (0 = none, 1 = all)
+         * @minimum 0
+         * @maximum 1
          */
         new_to_brand_rate?: number;
       }[];
@@ -10234,30 +11029,38 @@ export interface GetMediaBuyDeliveryResponse {
     daily_breakdown?: {
       /**
        * Date (YYYY-MM-DD)
+       * @pattern ^\d{4}-\d{2}-\d{2}$
        */
       date: string;
       /**
        * Daily impressions
+       * @minimum 0
        */
       impressions: number;
       /**
        * Daily spend
+       * @minimum 0
        */
       spend: number;
       /**
        * Daily conversions
+       * @minimum 0
        */
       conversions?: number;
       /**
        * Daily conversion value
+       * @minimum 0
        */
       conversion_value?: number;
       /**
        * Daily return on ad spend (conversion_value / spend)
+       * @minimum 0
        */
       roas?: number;
       /**
        * Daily fraction of conversions from first-time brand buyers (0 = none, 1 = all)
+       * @minimum 0
+       * @maximum 1
        */
       new_to_brand_rate?: number;
     }[];
@@ -10293,6 +11096,8 @@ export interface AttributionWindow {
 export interface GetMediaBuysRequest {
   /**
    * The AdCP major version the buyer's payloads conform to. Sellers validate against their supported major_versions and return VERSION_UNSUPPORTED if unsupported. When omitted, the seller assumes its highest supported version.
+   * @minimum 1
+   * @maximum 99
    */
   adcp_major_version?: number;
   account?: AccountReference;
@@ -10310,6 +11115,8 @@ export interface GetMediaBuysRequest {
   include_snapshot?: boolean;
   /**
    * When present, include the last N revision history entries for each media buy (returns min(N, available entries)). Each entry contains revision number, timestamp, actor, and a summary of what changed. Omit or set to 0 to exclude history (default). Recommended: 5-10 for monitoring, 50+ for audit.
+   * @minimum 0
+   * @maximum 1000
    */
   include_history?: number;
   pagination?: PaginationRequest;
@@ -10339,26 +11146,32 @@ export interface GetMediaBuysResponse {
     status: MediaBuyStatus;
     /**
      * ISO 4217 currency code (e.g., USD, EUR, GBP) for monetary values at this media buy level. total_budget is always denominated in this currency. Package-level fields may override with package.currency.
+     * @pattern ^[A-Z]{3}$
      */
     currency: string;
     /**
      * Total budget amount across all packages, denominated in media_buy.currency
+     * @minimum 0
      */
     total_budget?: number;
     /**
      * ISO 8601 flight start time for this media buy (earliest package start_time). Avoids requiring buyers to compute min(packages[].start_time).
+     * @format date-time
      */
     start_time?: string;
     /**
      * ISO 8601 flight end time for this media buy (latest package end_time). Avoids requiring buyers to compute max(packages[].end_time).
+     * @format date-time
      */
     end_time?: string;
     /**
      * ISO 8601 timestamp for creative upload deadline
+     * @format date-time
      */
     creative_deadline?: string;
     /**
      * ISO 8601 timestamp when the seller confirmed this media buy. A successful create_media_buy response constitutes order confirmation.
+     * @format date-time
      */
     confirmed_at?: string;
     /**
@@ -10367,24 +11180,29 @@ export interface GetMediaBuysResponse {
     cancellation?: {
       /**
        * ISO 8601 timestamp when this media buy was canceled.
+       * @format date-time
        */
       canceled_at: string;
       canceled_by: CanceledBy;
       /**
        * Reason the media buy was canceled.
+       * @maxLength 500
        */
       reason?: string;
     };
     /**
      * Current revision number. Pass this in update_media_buy for optimistic concurrency.
+     * @minimum 1
      */
     revision?: number;
     /**
      * Creation timestamp
+     * @format date-time
      */
     created_at?: string;
     /**
      * Last update timestamp
+     * @format date-time
      */
     updated_at?: string;
     /**
@@ -10397,10 +11215,12 @@ export interface GetMediaBuysResponse {
     history?: {
       /**
        * Revision number after this change was applied.
+       * @minimum 1
        */
       revision: number;
       /**
        * When this change occurred.
+       * @format date-time
        */
       timestamp: string;
       /**
@@ -10413,6 +11233,7 @@ export interface GetMediaBuysResponse {
       action: string;
       /**
        * Human-readable summary of the change (e.g., 'Budget increased from $5,000 to $7,500 on pkg_abc').
+       * @maxLength 500
        */
       summary?: string;
       /**
@@ -10453,27 +11274,33 @@ export interface PackageStatus {
   product_id?: string;
   /**
    * Package budget amount, denominated in package.currency when present, otherwise media_buy.currency
+   * @minimum 0
    */
   budget?: number;
   /**
    * ISO 4217 currency code for monetary values at this package level (budget, bid_price, snapshot.spend). When absent, inherit media_buy.currency.
+   * @pattern ^[A-Z]{3}$
    */
   currency?: string;
   /**
    * Current bid price for auction-based packages. Denominated in package.currency when present, otherwise media_buy.currency. Relevant for automated price optimization loops.
+   * @minimum 0
    */
   bid_price?: number;
   /**
    * Goal impression count for impression-based packages
+   * @minimum 0
    */
   impressions?: number;
   targeting_overlay?: TargetingOverlay;
   /**
    * ISO 8601 flight start time for this package. Use to determine whether the package is within its scheduled flight before interpreting delivery status.
+   * @format date-time
    */
   start_time?: string;
   /**
    * ISO 8601 flight end time for this package
+   * @format date-time
    */
   end_time?: string;
   /**
@@ -10490,16 +11317,19 @@ export interface PackageStatus {
   cancellation?: {
     /**
      * ISO 8601 timestamp when this package was canceled.
+     * @format date-time
      */
     canceled_at: string;
     canceled_by: CanceledBy;
     /**
      * Reason the package was canceled.
+     * @maxLength 500
      */
     reason?: string;
   };
   /**
    * ISO 8601 timestamp for creative upload or change deadline for this package. After this deadline, creative changes are rejected. When absent, the media buy's creative_deadline applies.
+   * @format date-time
    */
   creative_deadline?: string;
   /**
@@ -10527,30 +11357,37 @@ export interface PackageStatus {
   snapshot?: {
     /**
      * ISO 8601 timestamp when this snapshot was captured by the platform
+     * @format date-time
      */
     as_of: string;
     /**
      * Maximum age of this data in seconds. For example, 900 means the data may be up to 15 minutes old. Use this to interpret zero delivery: a value of 900 means zero impressions is likely real; a value of 14400 means reporting may still be catching up.
+     * @minimum 0
      */
     staleness_seconds: number;
     /**
      * Total impressions delivered since package start
+     * @minimum 0
      */
     impressions: number;
     /**
      * Total spend since package start, denominated in snapshot.currency when present, otherwise package.currency or media_buy.currency
+     * @minimum 0
      */
     spend: number;
     /**
      * ISO 4217 currency code for spend in this snapshot. Optional when unchanged from package.currency or media_buy.currency.
+     * @pattern ^[A-Z]{3}$
      */
     currency?: string;
     /**
      * Total clicks since package start (when available)
+     * @minimum 0
      */
     clicks?: number;
     /**
      * Current delivery pace relative to expected (1.0 = on track, <1.0 = behind, >1.0 = ahead). Absent when pacing cannot be determined.
+     * @minimum 0
      */
     pacing_index?: number;
     /**
@@ -10610,6 +11447,8 @@ export type SignalTargeting =
 export interface GetProductsRequest {
   /**
    * The AdCP major version the buyer's payloads conform to. Sellers validate against their supported major_versions and return VERSION_UNSUPPORTED if unsupported. When omitted, the seller assumes its highest supported version.
+   * @minimum 1
+   * @maximum 99
    */
   adcp_major_version?: number;
   /**
@@ -10631,6 +11470,7 @@ export interface GetProductsRequest {
         scope: 'request';
         /**
          * What the buyer is asking for at the request level (e.g., 'more video options and less display', 'suggest how to combine these products').
+         * @minLength 1
          */
         ask: string;
       }
@@ -10641,6 +11481,7 @@ export interface GetProductsRequest {
         scope: 'product';
         /**
          * Product ID from a previous get_products response.
+         * @minLength 1
          */
         product_id: string;
         /**
@@ -10649,6 +11490,7 @@ export interface GetProductsRequest {
         action?: 'include' | 'omit' | 'more_like_this';
         /**
          * What the buyer is asking for on this product. For 'include': specific changes to request (e.g., 'add 16:9 format'). For 'more_like_this': what 'similar' means (e.g., 'same audience but video format'). Ignored when action is 'omit'.
+         * @minLength 1
          */
         ask?: string;
       }
@@ -10659,6 +11501,7 @@ export interface GetProductsRequest {
         scope: 'proposal';
         /**
          * Proposal ID from a previous get_products response.
+         * @minLength 1
          */
         proposal_id: string;
         /**
@@ -10667,6 +11510,7 @@ export interface GetProductsRequest {
         action?: 'include' | 'omit' | 'finalize';
         /**
          * What the buyer is asking for on this proposal (e.g., 'shift more budget toward video', 'reduce total by 10%'). Ignored when action is 'omit'.
+         * @minLength 1
          */
         ask?: string;
       }
@@ -10747,14 +11591,17 @@ export interface ProductFilters {
   standard_formats_only?: boolean;
   /**
    * Minimum exposures/impressions needed for measurement validity
+   * @minimum 1
    */
   min_exposures?: number;
   /**
    * Campaign start date (ISO 8601 date format: YYYY-MM-DD) for availability checks
+   * @format date
    */
   start_date?: string;
   /**
    * Campaign end date (ISO 8601 date format: YYYY-MM-DD) for availability checks
+   * @format date
    */
   end_date?: string;
   /**
@@ -10857,6 +11704,7 @@ export interface ProductFilters {
   keywords?: {
     /**
      * The keyword to target
+     * @minLength 1
      */
     keyword: string;
     match_type?: MatchType;
@@ -10888,6 +11736,8 @@ export interface MediaBuyFeatures {
 export interface ListCreativeFormatsRequest {
   /**
    * The AdCP major version the buyer's payloads conform to. Sellers validate against their supported major_versions and return VERSION_UNSUPPORTED if unsupported. When omitted, the seller assumes its highest supported version.
+   * @minimum 1
+   * @maximum 99
    */
   adcp_major_version?: number;
   /**
@@ -10957,6 +11807,8 @@ export type UserMatch = {
 export interface LogEventRequest {
   /**
    * The AdCP major version the buyer's payloads conform to. Sellers validate against their supported major_versions and return VERSION_UNSUPPORTED if unsupported. When omitted, the seller assumes its highest supported version.
+   * @minimum 1
+   * @maximum 99
    */
   adcp_major_version?: number;
   /**
@@ -10973,6 +11825,9 @@ export interface LogEventRequest {
   events: Event[];
   /**
    * Client-generated unique key for this request. Prevents duplicate event logging on retries. MUST be unique per (seller, request) pair to prevent cross-seller correlation. Use a fresh UUID v4 for each request.
+   * @minLength 16
+   * @maxLength 255
+   * @pattern ^[A-Za-z0-9_.:-]{16,255}$
    */
   idempotency_key: string;
   context?: ContextObject;
@@ -10984,11 +11839,14 @@ export interface LogEventRequest {
 export interface Event {
   /**
    * Unique identifier for deduplication (scoped to event_type + event_source_id)
+   * @minLength 1
+   * @maxLength 256
    */
   event_id: string;
   event_type: EventType;
   /**
    * ISO 8601 timestamp when the event occurred
+   * @format date-time
    */
   event_time: string;
   user_match?: UserMatch;
@@ -11010,10 +11868,12 @@ export interface Event {
 export interface EventCustomData {
   /**
    * Monetary value of the event (should be accompanied by currency)
+   * @minimum 0
    */
   value?: number;
   /**
    * ISO 4217 currency code
+   * @pattern ^[A-Z]{3}$
    */
   currency?: string;
   /**
@@ -11038,6 +11898,7 @@ export interface EventCustomData {
   content_category?: string;
   /**
    * Number of items in the event
+   * @minimum 0
    */
   num_items?: number;
   /**
@@ -11054,10 +11915,12 @@ export interface EventCustomData {
     id: string;
     /**
      * Quantity of this item
+     * @minimum 1
      */
     quantity?: number;
     /**
      * Price per unit of this item
+     * @minimum 0
      */
     price?: number;
     /**
@@ -11080,10 +11943,12 @@ export type LogEventResponse = LogEventSuccess | LogEventError;
 export interface LogEventSuccess {
   /**
    * Number of events received
+   * @minimum 0
    */
   events_received: number;
   /**
    * Number of events successfully queued for processing
+   * @minimum 0
    */
   events_processed: number;
   /**
@@ -11109,6 +11974,8 @@ export interface LogEventSuccess {
   warnings?: string[];
   /**
    * Overall match quality score for the batch (0.0 = no matches, 1.0 = all matched)
+   * @minimum 0
+   * @maximum 1
    */
   match_quality?: number;
   /**
@@ -11158,27 +12025,36 @@ export type FeedbackSource =
 export interface ProvidePerformanceFeedbackRequest {
   /**
    * The AdCP major version the buyer's payloads conform to. Sellers validate against their supported major_versions and return VERSION_UNSUPPORTED if unsupported. When omitted, the seller assumes its highest supported version.
+   * @minimum 1
+   * @maximum 99
    */
   adcp_major_version?: number;
   /**
    * Seller's media buy identifier
+   * @minLength 1
    */
   media_buy_id: string;
   /**
    * Client-generated unique key for this request. Prevents duplicate feedback submissions on retries. MUST be unique per (seller, request) pair to prevent cross-seller correlation. Use a fresh UUID v4 for each request.
+   * @minLength 16
+   * @maxLength 255
+   * @pattern ^[A-Za-z0-9_.:-]{16,255}$
    */
   idempotency_key: string;
   measurement_period: DatetimeRange;
   /**
    * Normalized performance score (0.0 = no value, 1.0 = expected, >1.0 = above expected)
+   * @minimum 0
    */
   performance_index: number;
   /**
    * Specific package within the media buy (if feedback is package-specific)
+   * @minLength 1
    */
   package_id?: string;
   /**
    * Specific creative asset (if feedback is creative-specific)
+   * @minLength 1
    */
   creative_id?: string;
   metric_type?: MetricType;
@@ -11192,10 +12068,12 @@ export interface ProvidePerformanceFeedbackRequest {
 export interface DatetimeRange {
   /**
    * Start timestamp (inclusive), ISO 8601
+   * @format date-time
    */
   start: string;
   /**
    * End timestamp (inclusive), ISO 8601
+   * @format date-time
    */
   end: string;
 }
@@ -11251,10 +12129,15 @@ export type ConsentBasis = 'consent' | 'legitimate_interest' | 'contract' | 'leg
 export interface SyncAudiencesRequest {
   /**
    * The AdCP major version the buyer's payloads conform to. Sellers validate against their supported major_versions and return VERSION_UNSUPPORTED if unsupported. When omitted, the seller assumes its highest supported version.
+   * @minimum 1
+   * @maximum 99
    */
   adcp_major_version?: number;
   /**
    * Client-generated unique key for at-most-once execution. `audience_id` gives resource-level dedup per audience, but the sync envelope emits audit events and may trigger downstream refreshes — this key prevents those side effects from firing twice on retry. Also serves as a request ID on discovery-only calls (when `audiences` is omitted). MUST be unique per (seller, request) pair. Use a fresh UUID v4 for each request.
+   * @minLength 16
+   * @maxLength 255
+   * @pattern ^[A-Za-z0-9_.:-]{16,255}$
    */
   idempotency_key: string;
   account: AccountReference;
@@ -11354,18 +12237,23 @@ export interface SyncAudiencesSuccess {
     status?: AudienceStatus;
     /**
      * Number of members submitted in this sync operation (delta, not cumulative). In discovery-only calls (no audiences array), this is 0.
+     * @minimum 0
      */
     uploaded_count?: number;
     /**
      * Cumulative number of members uploaded across all syncs for this audience. Compare with matched_count to calculate match rate (matched_count / total_uploaded_count). Populated when the seller tracks cumulative upload counts.
+     * @minimum 0
      */
     total_uploaded_count?: number;
     /**
      * Total members matched to platform users across all syncs (cumulative, not just this call). Populated when status is 'ready'.
+     * @minimum 0
      */
     matched_count?: number;
     /**
      * Deduplicated match rate across all identifier types (matched_count / total_uploaded_count after deduplication). A single number for reach estimation. Populated when status is 'ready'.
+     * @minimum 0
+     * @maximum 1
      */
     effective_match_rate?: number;
     /**
@@ -11375,23 +12263,29 @@ export interface SyncAudiencesSuccess {
       id_type: MatchIDType;
       /**
        * Cumulative number of members submitted with this identifier type across all syncs (matches total_uploaded_count semantics, not uploaded_count). Compare with matched to calculate per-type match rate.
+       * @minimum 0
        */
       submitted: number;
       /**
        * Cumulative number of members matched via this identifier type across all syncs.
+       * @minimum 0
        */
       matched: number;
       /**
        * Match rate for this identifier type (matched / submitted). Server-authoritative — consumers should prefer this value over computing their own.
+       * @minimum 0
+       * @maximum 1
        */
       match_rate: number;
     }[];
     /**
      * ISO 8601 timestamp of when the most recent sync operation was accepted by the platform. Useful for agents reasoning about audience freshness. Omitted if the seller does not track this.
+     * @format date-time
      */
     last_synced_at?: string;
     /**
      * Minimum matched audience size required for targeting on this platform. Populated when status is 'too_small'. Helps agents know how many more members are needed.
+     * @minimum 1
      */
     minimum_size?: number;
     /**
@@ -11425,10 +12319,15 @@ export interface SyncAudiencesError {
 export interface SyncCatalogsRequest {
   /**
    * The AdCP major version the buyer's payloads conform to. Sellers validate against their supported major_versions and return VERSION_UNSUPPORTED if unsupported. When omitted, the seller assumes its highest supported version.
+   * @minimum 1
+   * @maximum 99
    */
   adcp_major_version?: number;
   /**
    * Client-generated unique key for at-most-once execution. `catalog_id` gives resource-level dedup per catalog, but the sync envelope emits audit events and triggers platform review for large feeds — this key prevents those side effects from firing twice on retry. Also serves as a request ID on discovery-only calls (when `catalogs` is omitted). MUST be unique per (seller, request) pair. Use a fresh UUID v4 for each request.
+   * @minLength 16
+   * @maxLength 255
+   * @pattern ^[A-Za-z0-9_.:-]{16,255}$
    */
   idempotency_key: string;
   account: AccountReference;
@@ -11461,10 +12360,15 @@ export interface SyncCatalogsRequest {
 export interface SyncEventSourcesRequest {
   /**
    * The AdCP major version the buyer's payloads conform to. Sellers validate against their supported major_versions and return VERSION_UNSUPPORTED if unsupported. When omitted, the seller assumes its highest supported version.
+   * @minimum 1
+   * @maximum 99
    */
   adcp_major_version?: number;
   /**
    * Client-generated unique key for at-most-once execution. `event_source_id` gives resource-level dedup per source, but the sync envelope emits audit events and can trigger downstream pixel provisioning — this key prevents those side effects from firing twice on retry. Also serves as a request ID on discovery-only calls (when `event_sources` is omitted). MUST be unique per (seller, request) pair. Use a fresh UUID v4 for each request.
+   * @minLength 16
+   * @maxLength 255
+   * @pattern ^[A-Za-z0-9_.:-]{16,255}$
    */
   idempotency_key: string;
   account: AccountReference;
@@ -11576,10 +12480,12 @@ export interface EventSourceHealth {
   detail?: {
     /**
      * Seller-defined quality score. Scale varies by seller — only compare within the same seller.
+     * @minimum 0
      */
     score: number;
     /**
      * Maximum possible score on this seller's scale.
+     * @minimum 1
      */
     max_score: number;
     /**
@@ -11589,18 +12495,23 @@ export interface EventSourceHealth {
   };
   /**
    * Fraction of events from this source that the seller successfully matched to ad interactions (0.0-1.0). Low match rates indicate weak user_match identifiers. Absent when the seller does not compute match rates.
+   * @minimum 0
+   * @maximum 1
    */
   match_rate?: number;
   /**
    * ISO 8601 timestamp of the most recent event received from this source. Absent when no events have been received.
+   * @format date-time
    */
   last_event_at?: string;
   /**
    * ISO 8601 timestamp of when this health assessment was computed. When health is derived from reporting data, this may lag real-time. Buyer agents can use this to decide whether to trust stale assessments or re-request.
+   * @format date-time
    */
   evaluated_at?: string;
   /**
    * Number of events received from this source in the last 24 hours. Zero indicates the source is configured but not firing.
+   * @minimum 0
    */
   events_received_24h?: number;
   /**
@@ -11627,6 +12538,8 @@ export interface SyncEventSourcesError {
 export interface UpdateMediaBuyRequest {
   /**
    * The AdCP major version the buyer's payloads conform to. Sellers validate against their supported major_versions and return VERSION_UNSUPPORTED if unsupported. When omitted, the seller assumes its highest supported version.
+   * @minimum 1
+   * @maximum 99
    */
   adcp_major_version?: number;
   account: AccountReference;
@@ -11636,6 +12549,7 @@ export interface UpdateMediaBuyRequest {
   media_buy_id: string;
   /**
    * Expected current revision for optimistic concurrency. When provided, sellers MUST reject the update with CONFLICT if the media buy's current revision does not match. Obtain from get_media_buys or the most recent update response.
+   * @minimum 1
    */
   revision?: number;
   /**
@@ -11648,11 +12562,13 @@ export interface UpdateMediaBuyRequest {
   canceled?: true;
   /**
    * Reason for cancellation. Sellers SHOULD store this and return it in subsequent get_media_buys responses.
+   * @maxLength 500
    */
   cancellation_reason?: string;
   start_time?: StartTiming;
   /**
    * New end date/time in ISO 8601 format
+   * @format date-time
    */
   end_time?: string;
   /**
@@ -11668,6 +12584,9 @@ export interface UpdateMediaBuyRequest {
   push_notification_config?: PushNotificationConfig;
   /**
    * Client-generated idempotency key for safe retries. If an update fails without a response, resending with the same idempotency_key guarantees the update is applied at most once. MUST be unique per (seller, request) pair to prevent cross-seller correlation. Use a fresh UUID v4 for each request.
+   * @minLength 16
+   * @maxLength 255
+   * @pattern ^[A-Za-z0-9_.:-]{16,255}$
    */
   idempotency_key: string;
   context?: ContextObject;
@@ -11683,23 +12602,28 @@ export interface PackageUpdate {
   package_id: string;
   /**
    * Updated budget allocation for this package in the currency specified by the pricing option
+   * @minimum 0
    */
   budget?: number;
   pacing?: Pacing;
   /**
    * Updated bid price for auction-based pricing options. This is the exact bid/price to honor unless selected pricing_option has max_bid=true, in which case bid_price is the buyer's maximum willingness to pay (ceiling).
+   * @minimum 0
    */
   bid_price?: number;
   /**
    * Updated impression goal for this package
+   * @minimum 0
    */
   impressions?: number;
   /**
    * Updated flight start date/time for this package in ISO 8601 format. Must fall within the media buy's date range.
+   * @format date-time
    */
   start_time?: string;
   /**
    * Updated flight end date/time for this package in ISO 8601 format. Must fall within the media buy's date range.
+   * @format date-time
    */
   end_time?: string;
   /**
@@ -11712,6 +12636,7 @@ export interface PackageUpdate {
   canceled?: true;
   /**
    * Reason for canceling this package.
+   * @maxLength 500
    */
   cancellation_reason?: string;
   /**
@@ -11729,11 +12654,13 @@ export interface PackageUpdate {
   keyword_targets_add?: {
     /**
      * The keyword to target
+     * @minLength 1
      */
     keyword: string;
     match_type: MatchType;
     /**
      * Per-keyword bid price. Inherits currency and max_bid interpretation from the package's pricing option.
+     * @minimum 0
      */
     bid_price?: number;
   }[];
@@ -11743,6 +12670,7 @@ export interface PackageUpdate {
   keyword_targets_remove?: {
     /**
      * The keyword to stop targeting
+     * @minLength 1
      */
     keyword: string;
     match_type: MatchType;
@@ -11753,6 +12681,7 @@ export interface PackageUpdate {
   negative_keywords_add?: {
     /**
      * The keyword to exclude
+     * @minLength 1
      */
     keyword: string;
     match_type: MatchType;
@@ -11763,6 +12692,7 @@ export interface PackageUpdate {
   negative_keywords_remove?: {
     /**
      * The keyword to stop excluding
+     * @minLength 1
      */
     keyword: string;
     match_type: MatchType;
@@ -11802,6 +12732,8 @@ export type BasePropertySource = PublisherTagsSource | PublisherPropertyIDsSourc
 export interface CreatePropertyListRequest {
   /**
    * The AdCP major version the buyer's payloads conform to. Sellers validate against their supported major_versions and return VERSION_UNSUPPORTED if unsupported. When omitted, the seller assumes its highest supported version.
+   * @minimum 1
+   * @maximum 99
    */
   adcp_major_version?: number;
   account?: AccountReference;
@@ -11821,6 +12753,9 @@ export interface CreatePropertyListRequest {
   brand?: BrandReference;
   /**
    * Client-generated unique key for this request. Prevents duplicate property list creation on retries. MUST be unique per (seller, request) pair to prevent cross-seller correlation. Use a fresh UUID v4 for each request.
+   * @minLength 16
+   * @maxLength 255
+   * @pattern ^[A-Za-z0-9_.:-]{16,255}$
    */
   idempotency_key: string;
   context?: ContextObject;
@@ -11836,6 +12771,7 @@ export interface PublisherTagsSource {
   selection_type: 'publisher_tags';
   /**
    * Domain where publisher's adagents.json is hosted (e.g., 'raptive.com')
+   * @pattern ^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)*$
    */
   publisher_domain: string;
   /**
@@ -11853,6 +12789,7 @@ export interface PublisherPropertyIDsSource {
   selection_type: 'publisher_ids';
   /**
    * Domain where publisher's adagents.json is hosted (e.g., 'raptive.com')
+   * @pattern ^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)*$
    */
   publisher_domain: string;
   /**
@@ -11972,14 +12909,17 @@ export interface PropertyList {
   webhook_url?: string;
   /**
    * Recommended cache duration for resolved list. Consumers should re-fetch after this period.
+   * @minimum 1
    */
   cache_duration_hours?: number;
   /**
    * When the list was created
+   * @format date-time
    */
   created_at?: string;
   /**
    * When the list was last modified
+   * @format date-time
    */
   updated_at?: string;
   /**
@@ -11999,6 +12939,8 @@ export interface PropertyList {
 export interface DeletePropertyListRequest {
   /**
    * The AdCP major version the buyer's payloads conform to. Sellers validate against their supported major_versions and return VERSION_UNSUPPORTED if unsupported. When omitted, the seller assumes its highest supported version.
+   * @minimum 1
+   * @maximum 99
    */
   adcp_major_version?: number;
   /**
@@ -12010,6 +12952,9 @@ export interface DeletePropertyListRequest {
   ext?: ExtensionObject;
   /**
    * Client-generated unique key for at-most-once execution. If a request with the same key has already been processed, the server returns the original response without re-processing. MUST be unique per (seller, request) pair to prevent cross-seller correlation. Use a fresh UUID v4 for each request.
+   * @minLength 16
+   * @maxLength 255
+   * @pattern ^[A-Za-z0-9_.:-]{16,255}$
    */
   idempotency_key: string;
 }
@@ -12042,6 +12987,8 @@ export interface DeletePropertyListResponse {
 export interface GetPropertyListRequest {
   /**
    * The AdCP major version the buyer's payloads conform to. Sellers validate against their supported major_versions and return VERSION_UNSUPPORTED if unsupported. When omitted, the seller assumes its highest supported version.
+   * @minimum 1
+   * @maximum 99
    */
   adcp_major_version?: number;
   /**
@@ -12059,6 +13006,8 @@ export interface GetPropertyListRequest {
   pagination?: {
     /**
      * Maximum number of identifiers to return per page
+     * @minimum 1
+     * @maximum 10000
      */
     max_results?: number;
     /**
@@ -12083,10 +13032,12 @@ export interface GetPropertyListResponse {
   pagination?: PaginationResponse;
   /**
    * When the list was resolved
+   * @format date-time
    */
   resolved_at?: string;
   /**
    * Cache expiration timestamp. Re-fetch the list after this time to get updated identifiers.
+   * @format date-time
    */
   cache_valid_until?: string;
   /**
@@ -12104,6 +13055,8 @@ export interface GetPropertyListResponse {
 export interface ListPropertyListsRequest {
   /**
    * The AdCP major version the buyer's payloads conform to. Sellers validate against their supported major_versions and return VERSION_UNSUPPORTED if unsupported. When omitted, the seller assumes its highest supported version.
+   * @minimum 1
+   * @maximum 99
    */
   adcp_major_version?: number;
   account?: AccountReference;
@@ -12137,6 +13090,8 @@ export interface ListPropertyListsResponse {
 export interface UpdatePropertyListRequest {
   /**
    * The AdCP major version the buyer's payloads conform to. Sellers validate against their supported major_versions and return VERSION_UNSUPPORTED if unsupported. When omitted, the seller assumes its highest supported version.
+   * @minimum 1
+   * @maximum 99
    */
   adcp_major_version?: number;
   /**
@@ -12166,6 +13121,9 @@ export interface UpdatePropertyListRequest {
   ext?: ExtensionObject;
   /**
    * Client-generated unique key for at-most-once execution. If a request with the same key has already been processed, the server returns the original response without re-processing. MUST be unique per (seller, request) pair to prevent cross-seller correlation. Use a fresh UUID v4 for each request.
+   * @minLength 16
+   * @maxLength 255
+   * @pattern ^[A-Za-z0-9_.:-]{16,255}$
    */
   idempotency_key: string;
 }
@@ -12191,6 +13149,8 @@ export interface UpdatePropertyListResponse {
 export interface ValidatePropertyDeliveryRequest {
   /**
    * The AdCP major version the buyer's payloads conform to. Sellers validate against their supported major_versions and return VERSION_UNSUPPORTED if unsupported. When omitted, the seller assumes its highest supported version.
+   * @minimum 1
+   * @maximum 99
    */
   adcp_major_version?: number;
   /**
@@ -12216,6 +13176,7 @@ export interface DeliveryRecord {
   identifier: Identifier;
   /**
    * Number of impressions delivered to this identifier
+   * @minimum 0
    */
   impressions: number;
   /**
@@ -12351,10 +13312,12 @@ export interface ValidatePropertyDeliveryResponse {
   results: ValidationResult[];
   /**
    * Timestamp when validation was performed
+   * @format date-time
    */
   validated_at: string;
   /**
    * Timestamp of the property list resolution used for validation
+   * @format date-time
    */
   list_resolved_at?: string;
   context?: ContextObject;
@@ -12375,6 +13338,7 @@ export interface ValidationResult {
   status: 'compliant' | 'non_compliant' | 'not_covered' | 'unidentified';
   /**
    * Number of impressions from this record
+   * @minimum 0
    */
   impressions: number;
   /**
@@ -12413,6 +13377,8 @@ export interface ValidationResult {
     };
     /**
      * Optional evaluator confidence in this result (0-1). Distinguishes certain verdicts from ambiguous ones.
+     * @minimum 0
+     * @maximum 1
      */
     confidence?: number;
   }[];
@@ -12457,6 +13423,8 @@ export interface AuthorizationResult {
 export interface GetAdCPCapabilitiesRequest {
   /**
    * The AdCP major version the buyer's payloads conform to. When provided, the seller validates this against its supported major_versions and returns VERSION_UNSUPPORTED if the version is not in range. When omitted, the seller assumes the highest major version it supports.
+   * @minimum 1
+   * @maximum 99
    */
   adcp_major_version?: number;
   /**
@@ -12519,7 +13487,7 @@ export interface GetAdCPCapabilitiesResponse {
    */
   supported_protocols: ('media_buy' | 'signals' | 'governance' | 'sponsored_intelligence' | 'creative' | 'brand')[];
   /**
-   * Account management capabilities. Describes how accounts are established, what billing models are supported, and whether an account is required before browsing products.
+   * Account management capabilities. Required when media_buy is in supported_protocols; optional otherwise. Describes how accounts are established, what billing models are supported, and whether an account is required before browsing products.
    */
   account?: {
     /**
@@ -12533,7 +13501,7 @@ export interface GetAdCPCapabilitiesResponse {
     /**
      * Billing models this seller supports. operator: seller invoices the operator (agency or brand buying direct). agent: agent consolidates billing. advertiser: seller invoices the advertiser directly, even when a different operator places orders on their behalf. The buyer must pass one of these values in sync_accounts.
      */
-    supported_billing: BillingParty[];
+    supported_billing?: BillingParty[];
     /**
      * Whether an account reference is required for get_products. When true, the buyer must establish an account before browsing products. When false (default), the buyer can browse products without an account — useful for price comparison and discovery before committing to a seller.
      */
@@ -12548,7 +13516,7 @@ export interface GetAdCPCapabilitiesResponse {
     sandbox?: boolean;
   };
   /**
-   * Media-buy protocol capabilities. Expected when media_buy is in supported_protocols. Sellers declaring media_buy should also include account with supported_billing.
+   * Media-buy protocol capabilities. Expected when media_buy is in supported_protocols. Sellers declaring media_buy MUST include account with supported_billing.
    */
   media_buy?: {
     /**
@@ -12725,13 +13693,20 @@ export interface GetAdCPCapabilitiesResponse {
       supported_uid_types?: UIDType[];
       /**
        * Minimum matched audience size required for targeting. Audiences below this threshold will have status: too_small. Varies by platform (100–1000 is typical).
+       * @minimum 1
        */
       minimum_audience_size: number;
       /**
        * Expected matching latency range in hours after upload. Use to calibrate polling cadence and set appropriate expectations before configuring push_notification_config.
        */
       matching_latency_hours?: {
+        /**
+         * @minimum 0
+         */
         min?: number;
+        /**
+         * @minimum 0
+         */
         max?: number;
       };
     };
@@ -12809,10 +13784,12 @@ export interface GetAdCPCapabilitiesResponse {
       primary_countries?: string[];
       /**
        * Markdown-formatted description of the inventory portfolio
+       * @maxLength 5000
        */
       description?: string;
       /**
        * Advertising content policies, restrictions, and guidelines
+       * @maxLength 10000
        */
       advertising_policies?: string;
     };
@@ -12842,6 +13819,8 @@ export interface GetAdCPCapabilitiesResponse {
   governance?: {
     /**
      * Trailing window (in days) over which this governance agent aggregates committed spend when evaluating dollar-valued thresholds (reallocation_threshold, human_review triggers, registry-policy floors). Required for fragmentation defense: without aggregation, a buyer can split a single large spend into many sub-threshold commits across plans / task surfaces / time and bypass every dollar-gated escalation. Aggregation is keyed on (buyer_agent, seller_agent, account_id) and spans all spend-commit task types. Upper bound 365 represents a one-year trailing window (fiscal-year alignment with grace); governance agents needing longer scopes negotiate via operator sign-off, not this capability. No schema default: absence of this field indicates the governance agent has not committed to any aggregation window and buyers MUST assume per-commit evaluation only (the fragmentation attack surface is open). A declared value of 30 is a common starting point but is not implied by omission. Buyers depending on a specific window for compliance MUST check this capability before relying on aggregation semantics — an agent declaring 7 days does not defend against fragmentation spread across a 30-day quarter-end push.
+     * @minimum 1
+     * @maximum 365
      */
     aggregation_window_days?: number;
     /**
@@ -12975,6 +13954,7 @@ export interface GetAdCPCapabilitiesResponse {
     generation_providers?: string[];
     /**
      * Description of the agent's brand protocol capabilities
+     * @maxLength 5000
      */
     description?: string;
   };
@@ -13118,6 +14098,7 @@ export interface GetAdCPCapabilitiesResponse {
   experimental_features?: string[];
   /**
    * ISO 8601 timestamp of when capabilities were last updated. Buyers can use this for cache invalidation.
+   * @format date-time
    */
   last_updated?: string;
   /**
@@ -13137,6 +14118,8 @@ export interface IdempotencySupported {
   supported: true;
   /**
    * How long the seller retains a canonical response for an idempotency_key. Within this window, a replay with the same key + equivalent canonical payload returns the cached response; a replay with a different canonical payload returns IDEMPOTENCY_CONFLICT; a replay past the window returns IDEMPOTENCY_EXPIRED when the seller can still distinguish 'seen and evicted' from 'never seen'. Minimum 3600 (1h); recommended 86400 (24h). Maximum 604800 (7 days) — longer windows force buyers to retain secret keys at rest for extended periods and grow the seller's cache table without bounded benefit.
+   * @minimum 3600
+   * @maximum 604800
    */
   replay_ttl_seconds: number;
   /**
@@ -13291,6 +14274,8 @@ export type Destination =
 export interface ActivateSignalRequest {
   /**
    * The AdCP major version the buyer's payloads conform to. Sellers validate against their supported major_versions and return VERSION_UNSUPPORTED if unsupported. When omitted, the seller assumes its highest supported version.
+   * @minimum 1
+   * @maximum 99
    */
   adcp_major_version?: number;
   /**
@@ -13312,6 +14297,9 @@ export interface ActivateSignalRequest {
   account?: AccountReference;
   /**
    * Client-generated unique key for this request. Prevents duplicate activations on retries. MUST be unique per (seller, request) pair to prevent cross-seller correlation. Use a fresh UUID v4 for each request.
+   * @minLength 16
+   * @maxLength 255
+   * @pattern ^[A-Za-z0-9_.:-]{16,255}$
    */
   idempotency_key: string;
   context?: ContextObject;
@@ -13347,10 +14335,12 @@ export type Deployment =
       activation_key?: ActivationKey;
       /**
        * Estimated time to activate if not live, or to complete activation if in progress
+       * @minimum 0
        */
       estimated_activation_duration_minutes?: number;
       /**
        * Timestamp when activation completed (if is_live=true)
+       * @format date-time
        */
       deployed_at?: string;
     }
@@ -13374,10 +14364,12 @@ export type Deployment =
       activation_key?: ActivationKey;
       /**
        * Estimated time to activate if not live, or to complete activation if in progress
+       * @minimum 0
        */
       estimated_activation_duration_minutes?: number;
       /**
        * Timestamp when activation completed (if is_live=true)
+       * @format date-time
        */
       deployed_at?: string;
     };
@@ -13445,6 +14437,8 @@ export type GetSignalsRequest = {
 } & {
   /**
    * The AdCP major version the buyer's payloads conform to. Sellers validate against their supported major_versions and return VERSION_UNSUPPORTED if unsupported. When omitted, the seller assumes its highest supported version.
+   * @minimum 1
+   * @maximum 99
    */
   adcp_major_version?: number;
   account?: AccountReference;
@@ -13468,6 +14462,7 @@ export type GetSignalsRequest = {
   /**
    * @deprecated
    * DEPRECATED: Use pagination.max_results instead. When both fields are present, agents MUST honor pagination.max_results. When only this field is present without a pagination envelope, agents SHOULD treat it as the page size subject to a maximum of 100 results. This field will be removed in AdCP 4.0.
+   * @minimum 1
    */
   max_results?: number;
   pagination?: PaginationRequest;
@@ -13493,14 +14488,19 @@ export interface SignalFilters {
   data_providers?: string[];
   /**
    * Maximum CPM filter. Applies only to signals with model='cpm'.
+   * @minimum 0
    */
   max_cpm?: number;
   /**
    * Maximum percent-of-media rate filter. Signals where all percent_of_media pricing options exceed this value are excluded. Does not account for max_cpm caps.
+   * @minimum 0
+   * @maximum 100
    */
   max_percent?: number;
   /**
    * Minimum coverage requirement
+   * @minimum 0
+   * @maximum 100
    */
   min_coverage_percentage?: number;
 }
@@ -13556,6 +14556,8 @@ export interface GetSignalsResponse {
     data_provider: string;
     /**
      * Percentage of audience coverage
+     * @minimum 0
+     * @maximum 100
      */
     coverage_percentage: number;
     /**
@@ -13587,6 +14589,8 @@ export interface GetSignalsResponse {
 export interface SIGetOfferingRequest {
   /**
    * The AdCP major version the buyer's payloads conform to. Sellers validate against their supported major_versions and return VERSION_UNSUPPORTED if unsupported. When omitted, the seller assumes its highest supported version.
+   * @minimum 1
+   * @maximum 99
    */
   adcp_major_version?: number;
   /**
@@ -13604,6 +14608,8 @@ export interface SIGetOfferingRequest {
   include_products?: boolean;
   /**
    * Maximum number of matching products to return
+   * @minimum 1
+   * @maximum 50
    */
   product_limit?: number;
   ext?: ExtensionObject;
@@ -13624,10 +14630,12 @@ export interface SIGetOfferingResponse {
   offering_token?: string;
   /**
    * How long this offering information is valid (seconds). Host should re-fetch after TTL expires.
+   * @minimum 0
    */
   ttl_seconds?: number;
   /**
    * When this offering information was retrieved
+   * @format date-time
    */
   checked_at?: string;
   /**
@@ -13652,6 +14660,7 @@ export interface SIGetOfferingResponse {
     tagline?: string;
     /**
      * When this offering expires
+     * @format date-time
      */
     expires_at?: string;
     /**
@@ -13702,6 +14711,7 @@ export interface SIGetOfferingResponse {
   }[];
   /**
    * Total number of products matching the context (may be more than returned in matching_products)
+   * @minimum 0
    */
   total_matching?: number;
   /**
@@ -13727,6 +14737,8 @@ export interface SIGetOfferingResponse {
 export interface SIInitiateSessionRequest {
   /**
    * The AdCP major version the buyer's payloads conform to. Sellers validate against their supported major_versions and return VERSION_UNSUPPORTED if unsupported. When omitted, the seller assumes its highest supported version.
+   * @minimum 1
+   * @maximum 99
    */
   adcp_major_version?: number;
   /**
@@ -13754,6 +14766,9 @@ export interface SIInitiateSessionRequest {
   offering_token?: string;
   /**
    * Client-generated unique key for this request. Prevents duplicate session creation on retries. MUST be unique per (seller, request) pair to prevent cross-seller correlation. Use a fresh UUID v4 for each request.
+   * @minLength 16
+   * @maxLength 255
+   * @pattern ^[A-Za-z0-9_.:-]{16,255}$
    */
   idempotency_key: string;
   ext?: ExtensionObject;
@@ -13768,6 +14783,7 @@ export interface SIIdentity {
   consent_granted: boolean;
   /**
    * When consent was granted (ISO 8601)
+   * @format date-time
    */
   consent_timestamp?: string;
   /**
@@ -13793,6 +14809,7 @@ export interface SIIdentity {
   user?: {
     /**
      * User's email address
+     * @format email
      */
     email?: string;
     /**
@@ -13855,6 +14872,7 @@ export interface SIInitiateSessionResponse {
   session_status: SISessionStatus;
   /**
    * Session inactivity timeout in seconds. After this duration without a message, the brand agent may terminate the session. Hosts SHOULD warn users before timeout when possible.
+   * @minimum 1
    */
   session_ttl_seconds?: number;
   /**
@@ -13895,10 +14913,15 @@ export type SISendMessageRequest = {
 } & {
   /**
    * The AdCP major version the buyer's payloads conform to. Sellers validate against their supported major_versions and return VERSION_UNSUPPORTED if unsupported. When omitted, the seller assumes its highest supported version.
+   * @minimum 1
+   * @maximum 99
    */
   adcp_major_version?: number;
   /**
    * Client-generated unique key for at-most-once execution. Each conversational turn is a distinct mutation of session transcript — without this key, a timeout-and-retry produces a duplicate turn and a duplicate model response. MUST be unique per (seller, request) pair. Use a fresh UUID v4 for each user turn.
+   * @minLength 16
+   * @maxLength 255
+   * @pattern ^[A-Za-z0-9_.:-]{16,255}$
    */
   idempotency_key: string;
   /**
@@ -14010,6 +15033,8 @@ export interface SISendMessageResponse {
 export interface SITerminateSessionRequest {
   /**
    * The AdCP major version the buyer's payloads conform to. Sellers validate against their supported major_versions and return VERSION_UNSUPPORTED if unsupported. When omitted, the seller assumes its highest supported version.
+   * @minimum 1
+   * @maximum 99
    */
   adcp_major_version?: number;
   /**
@@ -14079,6 +15104,7 @@ export interface SITerminateSessionResponse {
     payload?: {};
     /**
      * When this handoff data expires. Hosts should initiate checkout before this time.
+     * @format date-time
      */
     expires_at?: string;
   };
@@ -14170,6 +15196,7 @@ export interface PublisherCollectionsSource {
   selection_type: 'publisher_collections';
   /**
    * Domain where publisher's adagents.json is hosted
+   * @pattern ^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)*$
    */
   publisher_domain: string;
   /**
@@ -14187,6 +15214,7 @@ export interface PublisherGenresSource {
   selection_type: 'publisher_genres';
   /**
    * Domain where publisher's adagents.json is hosted
+   * @pattern ^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)*$
    */
   publisher_domain: string;
   /**
@@ -14204,6 +15232,9 @@ export interface PublisherGenresSource {
 export interface CollectionListChangedWebhook {
   /**
    * Sender-generated key stable across retries of the same webhook event. Governance agents MUST generate a cryptographically random value (UUID v4 recommended) per distinct list-change event and reuse the same key on every retry. Recipients MUST dedupe by this key, scoped to the authenticated sender identity (HMAC secret or Bearer credential) — keys from different governance agents are independent.
+   * @minLength 16
+   * @maxLength 255
+   * @pattern ^[A-Za-z0-9_.:-]{16,255}$
    */
   idempotency_key: string;
   /**
@@ -14237,10 +15268,12 @@ export interface CollectionListChangedWebhook {
   };
   /**
    * When the list was re-resolved
+   * @format date-time
    */
   resolved_at: string;
   /**
    * When the consumer should refresh from the governance agent
+   * @format date-time
    */
   cache_valid_until?: string;
   /**
@@ -14331,14 +15364,17 @@ export interface CollectionList {
   webhook_url?: string;
   /**
    * Recommended cache duration for resolved list. Consumers should re-fetch after this period. Defaults to 168 (one week) because collection metadata changes less frequently than property metadata.
+   * @minimum 1
    */
   cache_duration_hours?: number;
   /**
    * When the list was created
+   * @format date-time
    */
   created_at?: string;
   /**
    * When the list was last modified
+   * @format date-time
    */
   updated_at?: string;
   /**
@@ -14354,6 +15390,9 @@ export interface CollectionList {
 export interface ArtifactWebhookPayload {
   /**
    * Sender-generated key stable across retries of the same webhook event. Sales agents MUST generate a cryptographically random value (UUID v4 recommended) per distinct emission of a batch and reuse the same key on every retry. Recipients MUST dedupe by this key, scoped to the authenticated sender identity (HMAC secret or Bearer credential) — keys from different sales agents are independent. Distinct from `batch_id`, which identifies the logical batch: `idempotency_key` identifies this specific emission event, so a re-emission of the same `batch_id` (e.g., after a correction) is a different event and MUST carry a fresh `idempotency_key`.
+   * @minLength 16
+   * @maxLength 255
+   * @pattern ^[A-Za-z0-9_.:-]{16,255}$
    */
   idempotency_key: string;
   /**
@@ -14366,6 +15405,7 @@ export interface ArtifactWebhookPayload {
   batch_id: string;
   /**
    * When this batch was generated (ISO 8601)
+   * @format date-time
    */
   timestamp: string;
   /**
@@ -14375,6 +15415,7 @@ export interface ArtifactWebhookPayload {
     artifact: Artifact;
     /**
      * When the impression was delivered (ISO 8601)
+     * @format date-time
      */
     delivered_at: string;
     /**
@@ -14413,6 +15454,7 @@ export interface ArtifactWebhookPayload {
 export interface AgentEncryptionKey {
   /**
    * Key identifier. Opaque — MUST NOT encode geographic or deployment information.
+   * @maxLength 8
    */
   kid: string;
   /**
@@ -14477,6 +15519,7 @@ export interface AgentSigningKey {
   e?: string;
   /**
    * Optional revocation timestamp. When present, verifiers MUST reject any signature produced with this key whose signing epoch (or equivalent time reference) is at or after this timestamp. The key may continue to appear in the trust anchor during a grace period so caches that have not yet refreshed still find the key and can evaluate the revocation marker. Keys past their revocation can be removed once the cache TTL (recommended: 5 minutes) has elapsed across all verifiers.
+   * @format date-time
    */
   revoked_at?: string;
 }
@@ -14505,6 +15548,7 @@ export interface AppItem {
   bundle_id?: string;
   /**
    * Numeric Apple App Store ID (e.g., '389801252'). Required for Apple Search Ads and iOS platforms that use the numeric ID rather than bundle_id.
+   * @pattern ^[0-9]+$
    */
   apple_id?: string;
   /**
@@ -14542,10 +15586,13 @@ export interface AppItem {
   price?: Price;
   /**
    * Average store rating (0–5). Use 0 to indicate no ratings yet.
+   * @minimum 0
+   * @maximum 5
    */
   rating?: number;
   /**
    * Total number of store ratings.
+   * @minimum 0
    */
   rating_count?: number;
   /**
@@ -14568,10 +15615,12 @@ export interface AppItem {
 export interface Price {
   /**
    * Monetary amount in the specified currency.
+   * @minimum 0
    */
   amount: number;
   /**
    * ISO 4217 currency code (e.g., 'USD', 'EUR', 'GBP').
+   * @pattern ^[A-Z]{3}$
    */
   currency: string;
   /**
@@ -14627,6 +15676,7 @@ export type Catchment = {
   travel_time?: {
     /**
      * Travel time limit.
+     * @minimum 1
      */
     value: number;
     unit: TravelTimeUnit;
@@ -14771,14 +15821,17 @@ export interface Collection {
 export interface LimitedSeries {
   /**
    * Planned number of installments in the series
+   * @minimum 1
    */
   total_installments: number;
   /**
    * When the series begins (ISO 8601)
+   * @format date-time
    */
   starts?: string;
   /**
    * When the series ends (ISO 8601)
+   * @format date-time
    */
   ends?: string;
 }
@@ -14788,10 +15841,12 @@ export interface LimitedSeries {
 export interface DeadlinePolicy {
   /**
    * Days before scheduled_at by which the placement must be booked
+   * @minimum 0
    */
   booking_lead_days?: number;
   /**
    * Days before scheduled_at by which cancellation is penalty-free
+   * @minimum 0
    */
   cancellation_lead_days?: number;
   /**
@@ -14804,6 +15859,7 @@ export interface DeadlinePolicy {
     stage: string;
     /**
      * Days before scheduled_at this stage is due
+     * @minimum 0
      */
     lead_days: number;
     /**
@@ -14824,10 +15880,12 @@ export interface DeadlinePolicy {
 export interface DateRange {
   /**
    * Start date (inclusive), ISO 8601
+   * @format date
    */
   start: string;
   /**
    * End date (inclusive), ISO 8601
+   * @format date
    */
   end: string;
 }
@@ -14860,6 +15918,7 @@ export interface DestinationItem {
   region?: string;
   /**
    * ISO 3166-1 alpha-2 country code.
+   * @pattern ^[A-Z]{2}$
    */
   country?: string;
   /**
@@ -14868,10 +15927,14 @@ export interface DestinationItem {
   location?: {
     /**
      * Latitude in decimal degrees (WGS 84).
+     * @minimum -90
+     * @maximum 90
      */
     lat: number;
     /**
      * Longitude in decimal degrees (WGS 84).
+     * @minimum -180
+     * @maximum 180
      */
     lng: number;
   };
@@ -14890,6 +15953,8 @@ export interface DestinationItem {
   url?: string;
   /**
    * Destination rating (1–5).
+   * @minimum 1
+   * @maximum 5
    */
   rating?: number;
   /**
@@ -14943,6 +16008,7 @@ export interface EducationItem {
   duration?: string;
   /**
    * Next available start date (ISO 8601 date).
+   * @format date
    */
   start_date?: string;
   /**
@@ -14991,6 +16057,7 @@ export interface FlightItem {
   origin: {
     /**
      * IATA airport code (e.g., 'AMS', 'JFK', 'LHR').
+     * @pattern ^[A-Z]{3}$
      */
     airport_code: string;
     /**
@@ -15004,6 +16071,7 @@ export interface FlightItem {
   destination: {
     /**
      * IATA airport code.
+     * @pattern ^[A-Z]{3}$
      */
     airport_code: string;
     /**
@@ -15022,10 +16090,12 @@ export interface FlightItem {
   description?: string;
   /**
    * Departure date and time (ISO 8601).
+   * @format date-time
    */
   departure_time?: string;
   /**
    * Arrival date and time (ISO 8601).
+   * @format date-time
    */
   arrival_time?: string;
   /**
@@ -15304,6 +16374,7 @@ export interface Format {
           };
           /**
            * Fixed aspect ratio constraint (e.g., '16:9', '4:3', '1:1', '1.91:1')
+           * @pattern ^\d+(\.\d+)?:\d+(\.\d+)?$
            */
           aspect_ratio?: string;
         };
@@ -15454,10 +16525,12 @@ export interface Overlay {
     y: number;
     /**
      * Width of the overlay
+     * @minimum 0
      */
     width: number;
     /**
      * Height of the overlay
+     * @minimum 0
      */
     height: number;
     /**
@@ -15484,10 +16557,12 @@ export interface RepeatableGroupAsset {
   required: boolean;
   /**
    * Minimum number of repetitions required (if group is required) or allowed (if optional)
+   * @minimum 0
    */
   min_count: number;
   /**
    * Maximum number of repetitions allowed
+   * @minimum 1
    */
   max_count: number;
   /**
@@ -15541,10 +16616,14 @@ export interface HotelItem {
   location: {
     /**
      * Latitude in decimal degrees (WGS 84).
+     * @minimum -90
+     * @maximum 90
      */
     lat: number;
     /**
      * Longitude in decimal degrees (WGS 84).
+     * @minimum -180
+     * @maximum 180
      */
     lng: number;
   };
@@ -15570,11 +16649,14 @@ export interface HotelItem {
     postal_code?: string;
     /**
      * ISO 3166-1 alpha-2 country code.
+     * @pattern ^[A-Z]{2}$
      */
     country?: string;
   };
   /**
    * Official star rating (1–5).
+   * @minimum 1
+   * @maximum 5
    */
   star_rating?: number;
   price?: Price;
@@ -15596,10 +16678,12 @@ export interface HotelItem {
   amenities?: string[];
   /**
    * Standard check-in time in HH:MM format (e.g., '15:00').
+   * @pattern ^[0-2][0-9]:[0-5][0-9]$
    */
   check_in_time?: string;
   /**
    * Standard check-out time in HH:MM format (e.g., '11:00').
+   * @pattern ^[0-2][0-9]:[0-5][0-9]$
    */
   check_out_time?: string;
   /**
@@ -15608,10 +16692,12 @@ export interface HotelItem {
   tags?: string[];
   /**
    * Date from which this item is available or this rate applies (ISO 8601, e.g., '2025-03-01'). Used for seasonal availability windows in feed imports.
+   * @format date
    */
   valid_from?: string;
   /**
    * Date until which this item is available or this rate applies (ISO 8601, e.g., '2025-09-30'). Used for seasonal availability windows in feed imports.
+   * @format date
    */
   valid_to?: string;
   /**
@@ -15660,14 +16746,17 @@ export interface JobItem {
   salary?: {
     /**
      * Minimum salary.
+     * @minimum 0
      */
     min?: number;
     /**
      * Maximum salary.
+     * @minimum 0
      */
     max?: number;
     /**
      * ISO 4217 currency code.
+     * @pattern ^[A-Z]{3}$
      */
     currency: string;
     /**
@@ -15677,10 +16766,12 @@ export interface JobItem {
   };
   /**
    * Date the job was posted (ISO 8601 date).
+   * @format date
    */
   date_posted?: string;
   /**
    * Application deadline (ISO 8601 date).
+   * @format date
    */
   valid_through?: string;
   /**
@@ -15729,10 +16820,12 @@ export interface Offering {
   tagline?: string;
   /**
    * When the offering becomes available. If not specified, offering is immediately available.
+   * @format date-time
    */
   valid_from?: string;
   /**
    * When the offering expires. If not specified, offering has no expiration.
+   * @format date-time
    */
   valid_to?: string;
   /**
@@ -15818,15 +16911,18 @@ export interface PerformanceFeedback {
   measurement_period: {
     /**
      * ISO 8601 start timestamp for measurement period
+     * @format date-time
      */
     start: string;
     /**
      * ISO 8601 end timestamp for measurement period
+     * @format date-time
      */
     end: string;
   };
   /**
    * Normalized performance score (0.0 = no value, 1.0 = expected, >1.0 = above expected)
+   * @minimum 0
    */
   performance_index: number;
   metric_type: MetricType;
@@ -15837,10 +16933,12 @@ export interface PerformanceFeedback {
   status: 'accepted' | 'queued' | 'applied' | 'rejected';
   /**
    * ISO 8601 timestamp when feedback was submitted
+   * @format date-time
    */
   submitted_at: string;
   /**
    * ISO 8601 timestamp when feedback was applied to optimization algorithms
+   * @format date-time
    */
   applied_at?: string;
 }
@@ -15908,6 +17006,7 @@ export interface ProtocolEnvelope {
   message?: string;
   /**
    * ISO 8601 timestamp when the response was generated. Useful for debugging, logging, cache validation, and tracking async operation progress.
+   * @format date-time
    */
   timestamp?: string;
   /**
@@ -15921,6 +17020,9 @@ export interface ProtocolEnvelope {
    * Value format: in 3.0 governance agents MUST emit a compact JWS per the AdCP JWS profile (see Security — Signed Governance Context). Sellers MAY verify; sellers that do not verify MUST persist and forward the token unchanged. In 3.1 all sellers MUST verify. Non-JWS values from pre-3.0 governance agents are deprecated.
    *
    * This is the primary correlation key for audit and reporting across the governance lifecycle.
+   * @minLength 1
+   * @maxLength 4096
+   * @pattern ^[\x20-\x7E]+$
    */
   governance_context?: string;
   /**
@@ -15964,6 +17066,7 @@ export interface RealEstateItem {
     postal_code?: string;
     /**
      * ISO 3166-1 alpha-2 country code.
+     * @pattern ^[A-Z]{2}$
      */
     country?: string;
   };
@@ -15978,10 +17081,12 @@ export interface RealEstateItem {
   listing_type?: 'for_sale' | 'for_rent';
   /**
    * Number of bedrooms.
+   * @minimum 0
    */
   bedrooms?: number;
   /**
    * Number of bathrooms (e.g., 2.5 for two full and one half bath).
+   * @minimum 0
    */
   bathrooms?: number;
   /**
@@ -15990,6 +17095,7 @@ export interface RealEstateItem {
   area?: {
     /**
      * Area value.
+     * @minimum 0
      */
     value: number;
     /**
@@ -16007,10 +17113,14 @@ export interface RealEstateItem {
   location?: {
     /**
      * Latitude in decimal degrees (WGS 84).
+     * @minimum -90
+     * @maximum 90
      */
     lat: number;
     /**
      * Longitude in decimal degrees (WGS 84).
+     * @minimum -180
+     * @maximum 180
      */
     lng: number;
   };
@@ -16081,6 +17191,7 @@ export interface ImageAssetRequirements {
   unit?: DimensionUnit;
   /**
    * Required aspect ratio (e.g., '16:9', '1:1', '1.91:1')
+   * @pattern ^\d+(\.\d+)?:\d+(\.\d+)?$
    */
   aspect_ratio?: string;
   /**
@@ -16089,6 +17200,7 @@ export interface ImageAssetRequirements {
   formats?: ('jpg' | 'jpeg' | 'png' | 'gif' | 'webp' | 'svg' | 'avif' | 'tiff' | 'pdf' | 'eps')[];
   /**
    * Minimum resolution in dots per inch. Always in DPI regardless of the dimension unit. Standard print requires 300 DPI, newspaper 150 DPI.
+   * @minimum 1
    */
   min_dpi?: number;
   /**
@@ -16098,13 +17210,26 @@ export interface ImageAssetRequirements {
     | {
         /**
          * Same bleed on all four sides
+         * @minimum 0
          */
         uniform: number;
       }
     | {
+        /**
+         * @minimum 0
+         */
         top: number;
+        /**
+         * @minimum 0
+         */
         right: number;
+        /**
+         * @minimum 0
+         */
         bottom: number;
+        /**
+         * @minimum 0
+         */
         left: number;
       };
   /**
@@ -16113,6 +17238,7 @@ export interface ImageAssetRequirements {
   color_space?: 'rgb' | 'cmyk' | 'grayscale';
   /**
    * Maximum file size in kilobytes
+   * @minimum 1
    */
   max_file_size_kb?: number;
   /**
@@ -16125,6 +17251,7 @@ export interface ImageAssetRequirements {
   animation_allowed?: boolean;
   /**
    * Maximum animation duration in milliseconds (if animation_allowed is true)
+   * @minimum 0
    */
   max_animation_duration_ms?: number;
   /**
@@ -16138,30 +17265,37 @@ export interface ImageAssetRequirements {
 export interface VideoAssetRequirements {
   /**
    * Minimum width in pixels
+   * @minimum 1
    */
   min_width?: number;
   /**
    * Maximum width in pixels
+   * @minimum 1
    */
   max_width?: number;
   /**
    * Minimum height in pixels
+   * @minimum 1
    */
   min_height?: number;
   /**
    * Maximum height in pixels
+   * @minimum 1
    */
   max_height?: number;
   /**
    * Required aspect ratio (e.g., '16:9', '9:16')
+   * @pattern ^\d+:\d+$
    */
   aspect_ratio?: string;
   /**
    * Minimum duration in milliseconds
+   * @minimum 1
    */
   min_duration_ms?: number;
   /**
    * Maximum duration in milliseconds
+   * @minimum 1
    */
   max_duration_ms?: number;
   /**
@@ -16174,14 +17308,17 @@ export interface VideoAssetRequirements {
   codecs?: ('h264' | 'h265' | 'vp8' | 'vp9' | 'av1' | 'prores')[];
   /**
    * Maximum file size in kilobytes
+   * @minimum 1
    */
   max_file_size_kb?: number;
   /**
    * Minimum video bitrate in kilobits per second
+   * @minimum 1
    */
   min_bitrate_kbps?: number;
   /**
    * Maximum video bitrate in kilobits per second
+   * @minimum 1
    */
   max_bitrate_kbps?: number;
   /**
@@ -16197,10 +17334,12 @@ export interface VideoAssetRequirements {
   gop_type?: GOPType;
   /**
    * Minimum keyframe interval in seconds
+   * @minimum 0
    */
   min_gop_interval_seconds?: number;
   /**
    * Maximum keyframe interval in seconds. SSAI typically requires 1-2 second intervals.
+   * @minimum 0
    */
   max_gop_interval_seconds?: number;
   moov_atom_position?: MoovAtomPosition;
@@ -16222,6 +17361,7 @@ export interface VideoAssetRequirements {
   loudness_lufs?: number;
   /**
    * Acceptable deviation from loudness_lufs target in dB (e.g., 2 means -22 to -26 LUFS for a -24 target)
+   * @minimum 0
    */
   loudness_tolerance_db?: number;
   /**
@@ -16235,10 +17375,12 @@ export interface VideoAssetRequirements {
 export interface AudioAssetRequirements {
   /**
    * Minimum duration in milliseconds
+   * @minimum 1
    */
   min_duration_ms?: number;
   /**
    * Maximum duration in milliseconds
+   * @minimum 1
    */
   max_duration_ms?: number;
   /**
@@ -16247,6 +17389,7 @@ export interface AudioAssetRequirements {
   formats?: ('mp3' | 'aac' | 'wav' | 'ogg' | 'flac')[];
   /**
    * Maximum file size in kilobytes
+   * @minimum 1
    */
   max_file_size_kb?: number;
   /**
@@ -16259,10 +17402,12 @@ export interface AudioAssetRequirements {
   channels?: ('mono' | 'stereo')[];
   /**
    * Minimum audio bitrate in kilobits per second
+   * @minimum 1
    */
   min_bitrate_kbps?: number;
   /**
    * Maximum audio bitrate in kilobits per second
+   * @minimum 1
    */
   max_bitrate_kbps?: number;
 }
@@ -16272,18 +17417,22 @@ export interface AudioAssetRequirements {
 export interface TextAssetRequirements {
   /**
    * Minimum character length
+   * @minimum 0
    */
   min_length?: number;
   /**
    * Maximum character length
+   * @minimum 1
    */
   max_length?: number;
   /**
    * Minimum number of lines
+   * @minimum 1
    */
   min_lines?: number;
   /**
    * Maximum number of lines
+   * @minimum 1
    */
   max_lines?: number;
   /**
@@ -16301,6 +17450,7 @@ export interface TextAssetRequirements {
 export interface MarkdownAssetRequirements {
   /**
    * Maximum character length
+   * @minimum 1
    */
   max_length?: number;
 }
@@ -16310,6 +17460,7 @@ export interface MarkdownAssetRequirements {
 export interface HTMLAssetRequirements {
   /**
    * Maximum file size in kilobytes for the HTML asset
+   * @minimum 1
    */
   max_file_size_kb?: number;
   /**
@@ -16331,6 +17482,7 @@ export interface HTMLAssetRequirements {
 export interface CSSAssetRequirements {
   /**
    * Maximum file size in kilobytes
+   * @minimum 1
    */
   max_file_size_kb?: number;
 }
@@ -16340,6 +17492,7 @@ export interface CSSAssetRequirements {
 export interface JavaScriptAssetRequirements {
   /**
    * Maximum file size in kilobytes for the JavaScript asset
+   * @minimum 1
    */
   max_file_size_kb?: number;
   /**
@@ -16401,6 +17554,7 @@ export interface URLAssetRequirements {
   allowed_domains?: string[];
   /**
    * Maximum URL length in characters
+   * @minimum 1
    */
   max_length?: number;
   /**
@@ -16487,10 +17641,12 @@ export interface CatalogRequirements {
   required?: boolean;
   /**
    * Minimum number of items the catalog must contain for this format to render properly (e.g., a carousel might require at least 3 products)
+   * @minimum 1
    */
   min_items?: number;
   /**
    * Maximum number of items the format can render. Items beyond this limit are ignored. Useful for fixed-slot layouts (e.g., a 3-product card) or feed-size constraints.
+   * @minimum 1
    */
   max_items?: number;
   /**
@@ -16525,10 +17681,12 @@ export interface OfferingAssetConstraint {
   required?: boolean;
   /**
    * Minimum number of items required in this group.
+   * @minimum 1
    */
   min_count?: number;
   /**
    * Maximum number of items allowed in this group.
+   * @minimum 1
    */
   max_count?: number;
   asset_requirements?: AssetRequirements;
@@ -16566,6 +17724,8 @@ export interface SellerAgentReference {
   agent_url: string;
   /**
    * Reserved for a future registry-assigned stable seller identifier. Not used today — senders MUST NOT populate this field until a registry is defined. When a future release populates both `agent_url` and `id`, `agent_url` remains authoritative and `id` is advisory.
+   * @minLength 1
+   * @pattern ^[a-zA-Z0-9_-]+$
    */
   id?: string;
 }
@@ -16593,14 +17753,18 @@ export type RestrictedAttribute =
 export interface SignalDefinition {
   /**
    * Signal identifier within this data provider's catalog
+   * @pattern ^[a-zA-Z0-9_-]+$
    */
   id: string;
   /**
    * Human-readable signal name
+   * @minLength 1
+   * @maxLength 255
    */
   name: string;
   /**
    * Detailed description of what this signal represents and how it's derived
+   * @maxLength 2000
    */
   description?: string;
   value_type: SignalValueType;
@@ -16670,10 +17834,14 @@ export interface StoreItem {
   location: {
     /**
      * Latitude in decimal degrees (WGS 84).
+     * @minimum -90
+     * @maximum 90
      */
     lat: number;
     /**
      * Longitude in decimal degrees (WGS 84).
+     * @minimum -180
+     * @maximum 180
      */
     lng: number;
   };
@@ -16699,6 +17867,7 @@ export interface StoreItem {
     postal_code?: string;
     /**
      * ISO 3166-1 alpha-2 country code.
+     * @pattern ^[A-Z]{2}$
      */
     country?: string;
   };
@@ -16753,6 +17922,7 @@ export interface VehicleItem {
   model: string;
   /**
    * Model year.
+   * @minimum 1900
    */
   year: number;
   price?: Price;
@@ -16774,6 +17944,7 @@ export interface VehicleItem {
   mileage?: {
     /**
      * Mileage value.
+     * @minimum 0
      */
     value: number;
     /**
@@ -16807,10 +17978,14 @@ export interface VehicleItem {
   location?: {
     /**
      * Latitude in decimal degrees (WGS 84).
+     * @minimum -90
+     * @maximum 90
      */
     lat: number;
     /**
      * Longitude in decimal degrees (WGS 84).
+     * @minimum -180
+     * @maximum 180
      */
     lng: number;
   };
@@ -17226,6 +18401,7 @@ export interface AdCPExtensionFileSchema {
   $schema: 'http://json-schema.org/draft-07/schema#';
   /**
    * Extension ID following pattern /schemas/extensions/{namespace}.json
+   * @pattern ^\/schemas\/extensions\/[a-z][a-z0-9_]*\.json$
    */
   $id: string;
   /**
@@ -17238,10 +18414,12 @@ export interface AdCPExtensionFileSchema {
   description: string;
   /**
    * Minimum AdCP version this extension is compatible with (e.g., '2.5'). Extension will be included in all versioned schema builds >= this version.
+   * @pattern ^\d+\.\d+$
    */
   valid_from: string;
   /**
    * Last AdCP version this extension is compatible with (e.g., '3.0'). Omit if extension is still valid for current and future versions.
+   * @pattern ^\d+\.\d+$
    */
   valid_until?: string;
   /**
@@ -17274,6 +18452,7 @@ export interface AdCPExtensionFileSchema {
 export interface AttributeDefinition {
   /**
    * Unique identifier for this attribute. Used in plan.restricted_attributes, signal-definition.restricted_attributes, and data marketplace catalog entries.
+   * @pattern ^[a-z][a-z0-9_]*$
    */
   attribute_id: string;
   /**
@@ -17343,6 +18522,7 @@ export interface AudienceConstraints {
 export interface PolicyCategoryDefinition {
   /**
    * Unique identifier for this category. Used in plan.policy_categories, signal-definition.policy_categories, and policy-entry.policy_categories.
+   * @pattern ^[a-z][a-z0-9_]*$
    */
   category_id: string;
   /**
@@ -17434,10 +18614,12 @@ export interface AdCPManifest {
   $schema?: string;
   /**
    * Full semver of the AdCP release this manifest describes.
+   * @pattern ^\d+\.\d+\.\d+(-[A-Za-z0-9.-]+)?$
    */
   adcp_version: string;
   /**
    * ISO-8601 timestamp the manifest was generated. SDKs MAY use this for cache invalidation.
+   * @format date-time
    */
   generated_at: string;
   /**
@@ -17666,6 +18848,7 @@ export interface PropertyFeatureResult {
   coverage_status: 'covered' | 'not_covered' | 'pending';
   /**
    * When features were last evaluated for this property
+   * @format date-time
    */
   last_evaluated?: string;
   ext?: ExtensionObject;
@@ -17684,14 +18867,18 @@ export interface PropertyFeatureValue {
   unit?: string;
   /**
    * Confidence score for this value (0-1)
+   * @minimum 0
+   * @maximum 1
    */
   confidence?: number;
   /**
    * When this specific value was measured
+   * @format date-time
    */
   measured_at?: string;
   /**
    * When this certification/value expires (for time-limited certifications)
+   * @format date-time
    */
   expires_at?: string;
   /**
@@ -17732,6 +18919,9 @@ export interface PropertyFeature {
 export interface PropertyListChangedWebhook {
   /**
    * Sender-generated key stable across retries of the same webhook event. Governance agents MUST generate a cryptographically random value (UUID v4 recommended) per distinct list-change event and reuse the same key on every retry. Recipients MUST dedupe by this key, scoped to the authenticated sender identity (HMAC secret or Bearer credential) — keys from different governance agents are independent.
+   * @minLength 16
+   * @maxLength 255
+   * @pattern ^[A-Za-z0-9_.:-]{16,255}$
    */
   idempotency_key: string;
   /**
@@ -17765,10 +18955,12 @@ export interface PropertyListChangedWebhook {
   };
   /**
    * When the list was re-resolved
+   * @format date-time
    */
   resolved_at: string;
   /**
    * When the consumer should refresh from the governance agent
+   * @format date-time
    */
   cache_valid_until?: string;
   /**

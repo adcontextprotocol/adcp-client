@@ -138,10 +138,16 @@ import {
   mergeSeededPropertyListsIntoResponse,
   mergeSeededCollectionListsIntoResponse,
   mergeSeededContentStandardsIntoResponse,
+  mergeSeededSignalsIntoResponse,
+  mergeSeededCreativeDeliveryIntoResponse,
+  mergeSeededCreativeFeaturesIntoResponse,
+  mergeSeededRightsIntoResponse,
   replaceAccountFinancialsIfSeeded,
   replacePropertyListIfSeeded,
   replaceCollectionListIfSeeded,
   replaceContentStandardsIfSeeded,
+  replaceBrandIdentityIfSeeded,
+  replaceSiOfferingIfSeeded,
   filterValidSeededProducts,
   filterValidSeededCreatives,
   filterValidSeededMediaBuys,
@@ -152,6 +158,12 @@ import {
   filterValidSeededPropertyLists,
   filterValidSeededCollectionLists,
   filterValidSeededContentStandards,
+  filterValidSeededSignals,
+  filterValidSeededCreativeDelivery,
+  filterValidSeededCreativeFeatures,
+  filterValidSeededBrandIdentity,
+  filterValidSeededRights,
+  filterValidSeededSiOffering,
   type TestControllerBridge,
   type TestControllerBridgeContext,
 } from './test-controller-bridge';
@@ -1661,6 +1673,61 @@ export interface AdcpServerConfig<TAccount = unknown> {
    * account) bypasses the bridge entirely; omit the field in production
    * configs to be explicit about it.
    *
+   * ## Do you need the bridge?
+   *
+   * The bridge is one of two mechanisms for closing the seed→read loop in
+   * compliance testing. Pick by where your read handlers fetch from — not
+   * by seller class:
+   *
+   *   - **Handler reads from a store you control** (most SSPs, most
+   *     creative agents). `comply_test_controller.seed_product` writes to
+   *     your DB; your handler reads from your DB; the seed→read loop
+   *     closes naturally. **Don't wire the bridge** — test mode alone
+   *     covers you.
+   *   - **Handler reads from a system you don't control** (DSPs proxying
+   *     to Meta/Snap/TikTok, retail-media networks reading retailer
+   *     catalog APIs, signals agents brokering third-party data
+   *     marketplaces). `comply_test_controller.seed_product` is a dead
+   *     write for you because the handler will never see it. **Wire the
+   *     bridge.** The real handler still runs first (so a broken upstream
+   *     call still fails the conformance gate — adapter exercise is
+   *     preserved), and the SDK merges seeded fixtures into the response
+   *     after.
+   *
+   * Either path earns wire-conformance credit when storyboards pass; it
+   * is *not* a separate certification category. Live-integration credit
+   * requires marker-free passes against a real test surface (sandbox
+   * credentials, real catalog data, real adapter traffic) — independent
+   * of whether the bridge is wired. See `docs/guides/VALIDATE-YOUR-AGENT.md`
+   * § "Platform-proxy sellers" for the wiring mechanics, and
+   * [`adcp-client#1782`](https://github.com/adcontextprotocol/adcp-client/issues/1782)
+   * plus the upstream taxonomy proposal at
+   * [`adcontextprotocol/adcp#4593`](https://github.com/adcontextprotocol/adcp/issues/4593)
+   * for the certification model under review.
+   *
+   * ## Security — trust boundary
+   *
+   * The bridge is gated by `isSandboxRequest(params) && (ctx.account ===
+   * undefined || ctx.account.sandbox === true)`. The second clause is the
+   * authority boundary; the first is caller-supplied (`account.sandbox` or
+   * `context.sandbox` on the request body) and is NOT a trust boundary on
+   * its own. If you register `testController` WITHOUT configuring
+   * `resolveAccount` (so `ctx.account` stays `undefined`), an attacker who
+   * sets `account.sandbox = true` on production traffic gets seeded
+   * fixtures merged into responses and the `_bridge` marker stamped.
+   *
+   * Production deployments that register `testController` MUST:
+   *   1. Configure `resolveAccount` so the framework can refuse the merge
+   *      when the resolved account is not flagged `sandbox: true`, or
+   *   2. Omit `testController` entirely outside test / staging environments.
+   *
+   * The `createAdcpServerFromPlatform` flow already enforces this via the
+   * sandbox-authority gate (see Phase 2 of #1435 — resolved-account `mode`
+   * is the trust boundary, not buyer-supplied `account.sandbox`). The
+   * direct `createAdcpServer` flow does not; adopters wiring the bridge
+   * here are responsible for the gate. See the top-of-file JSDoc on
+   * `TestControllerBridge` for the full adopter-responsibility note (#1779).
+   *
    * See `src/lib/server/test-controller-bridge.ts` for the sandbox-marker
    * predicate and the merge contract.
    *
@@ -1773,6 +1840,85 @@ function stampReplayed(response: McpToolResponse): void {
         const parsed = JSON.parse(first.text);
         if (parsed && typeof parsed === 'object') {
           parsed.replayed = true;
+          first.text = JSON.stringify(parsed);
+        }
+      } catch {
+        // Text isn't JSON — leave it alone (implausible for AdCP responses).
+      }
+    }
+  }
+}
+
+/**
+ * Shape of the `_bridge` marker stamped on responses where the
+ * `testController` bridge merged seeded fixtures into the handler's reply.
+ *
+ * The marker is non-normative — every bridge-augmented response schema in
+ * AdCP 3.0 allows additional top-level properties (verified across the 13
+ * bridge-touching response schemas), and the underscore prefix advertises
+ * "internal / out-of-spec" to validators that round-trip unknown fields.
+ * Consumers (storyboard runners, compliance leaderboards, audit pipelines)
+ * read this marker to distinguish "this pass exercised the adopter's
+ * adapter against upstream" from "this pass exercised wire conformance
+ * against fixture data merged by the SDK". See `adcp-client#1775` for the
+ * cross-repo coordination context.
+ *
+ * ## Why on the response body, not MCP `_meta`?
+ *
+ * MCP defines `result._meta` as the canonical place for non-normative
+ * server-side annotations, and `_meta` would be the textbook home for this
+ * marker on MCP-only deployments. We put it on the response body instead
+ * for three reasons:
+ *
+ *   1. **Cross-transport parity.** A2A has no `_meta` equivalent —
+ *      `structuredContent` passes through the A2A artifact pipeline
+ *      verbatim, but a hypothetical envelope-level marker would have to be
+ *      duplicated or lost. One wire location across both transports keeps
+ *      the storyboard runner's read logic uniform.
+ *   2. **L2-text-body parity.** Buyers consuming the L2 text body (the
+ *      JSON-stringified `content[0].text`) see the same envelope MCP does,
+ *      because the opportunistic text-body mirror copies the marker into
+ *      both.
+ *   3. **Precedent.** `replayed: true` already lives on the response body
+ *      via the same `stampReplayed` pattern this marker mirrors. Splitting
+ *      framework-emitted annotations across `_meta` and the body would
+ *      create two conventions for the same job.
+ */
+export interface BridgeMarker {
+  /** Bridge callback that produced the seeded entries (e.g. `getSeededCreatives`). */
+  callback: string;
+  /** Tool name whose response was augmented (mirrors envelope context). */
+  tool: string;
+  /** Count of seeded entries the callback returned (post-validation). */
+  merged_count: number;
+}
+
+/**
+ * Stamp a non-normative `_bridge` marker on a response that the
+ * `testController` bridge augmented with seeded fixtures.
+ *
+ * Mirrors {@link stampReplayed} — sets `_bridge` on `structuredContent`
+ * AND on the parsed JSON in `content[0].text`, so A2A/REST adapters that
+ * consume the text body see the same envelope MCP does.
+ *
+ * Only call this AFTER a successful merge — for singleton-replace tools
+ * (`get_account_financials`, `get_brand_identity`, `si_get_offering`,
+ * `get_property_list`, `get_collection_list`, `get_content_standards`)
+ * gate on `merged !== sc` so the marker only fires when the seeded fixture
+ * actually replaced the handler payload.
+ */
+function stampBridge(response: McpToolResponse, callback: string, tool: string, mergedCount: number): void {
+  if (!response.structuredContent || typeof response.structuredContent !== 'object') return;
+  const marker: BridgeMarker = { callback, tool, merged_count: mergedCount };
+  const sc = response.structuredContent as Record<string, unknown>;
+  sc._bridge = marker;
+  if (Array.isArray(response.content)) {
+    const first = response.content[0];
+    if (first && first.type === 'text' && typeof first.text === 'string') {
+      try {
+        const parsed = JSON.parse(first.text);
+        if (parsed && typeof parsed === 'object') {
+          parsed._bridge = marker;
           first.text = JSON.stringify(parsed);
         }
       } catch {
@@ -2796,6 +2942,31 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
     credentialPolicy,
     testController: testControllerBridge,
   } = config;
+
+  // One-shot construction-time warn when `testController` is wired without
+  // any account resolver. The dispatch-time sandbox gate admits requests
+  // where `ctx.account === undefined`, so without a resolver the only
+  // remaining check is buyer-supplied `account.sandbox` / `context.sandbox`
+  // on the request — caller-controlled, not a trust boundary. Storyboard
+  // runners legitimately have no account scoping and should ignore this
+  // warning; production bindings need to wire `resolveAccount` (or
+  // `resolveAccountFromAuth` for OAuth-passthrough setups) so the gate's
+  // account-side check has teeth.
+  //
+  // Dual-emit: `process.emitWarning` writes to stderr by default so the
+  // signal is visible even when `logger` is the default `noopLogger`
+  // (the day-one case where the misconfig is most likely). `logger.warn`
+  // also fires so adopters with configured logging pipelines see it in
+  // their normal channel. The `code` lets adopters silence it via
+  // `--no-warnings=ADCP_BRIDGE_NO_RESOLVER` if they're knowingly running
+  // a storyboard-runner config. See `AdcpServerConfig.testController`
+  // JSDoc § "Security — trust boundary" and #1784.
+  if (testControllerBridge != null && resolveAccount === undefined && resolveAccountFromAuth === undefined) {
+    const message =
+      '[adcp/createAdcpServer] testController is wired but no account resolver — configure resolveAccount (or resolveAccountFromAuth) for production. Storyboard runners without account scoping can ignore. Details: https://github.com/adcontextprotocol/adcp-client/blob/main/docs/guides/VALIDATE-YOUR-AGENT.md';
+    process.emitWarning(message, { type: 'AdcpServerConfigWarning', code: 'ADCP_BRIDGE_NO_RESOLVER' });
+    logger.warn(message);
+  }
 
   // Pre-resolve credential-policy patterns once. The patterns config is
   // a stable property of `CredentialPolicyConfig`; pulling it out here
@@ -3901,6 +4072,42 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
           // `get_account_financials` is the exception — singleton response, so the
           // seeded entry REPLACES the handler payload when its `account.account_id`
           // matches the request's `account.account_id`.
+          // Diagnostic for adopters chasing "why aren't my fixtures showing":
+          // when the request carries a sandbox marker but the resolved account
+          // is explicitly non-sandbox, the gate rejects silently. Emit a
+          // `debug` line so the rejection is observable in dev logs without
+          // adding noise to production traffic (where the gate's first check
+          // — `isSandboxRequestForSeeding` — fails first and never reaches
+          // this branch).
+          if (
+            testControllerBridge &&
+            !isErrorResponse(formatted) &&
+            isSandboxRequestForSeeding(params) &&
+            ctx.account !== undefined &&
+            !(
+              typeof ctx.account === 'object' &&
+              ctx.account !== null &&
+              (ctx.account as { sandbox?: unknown }).sandbox === true
+            )
+          ) {
+            // Include the resolved account_id so the log line is self-
+            // diagnostic — an adopter chasing "why aren't my fixtures
+            // showing" can match the rejected account against their
+            // resolveAccount source without correlating across log lines.
+            // account_ids appear in normal request logs already; no new
+            // PII surface.
+            const resolvedAccountId =
+              typeof ctx.account === 'object' &&
+              ctx.account !== null &&
+              typeof (ctx.account as { account_id?: unknown }).account_id === 'string'
+                ? ((ctx.account as { account_id?: unknown }).account_id as string)
+                : undefined;
+            logger.debug(
+              'test-controller bridge: request is sandbox-flagged but resolved account is not sandbox; skipping merge',
+              { tool: toolName, resolved_account_id: resolvedAccountId }
+            );
+          }
+
           if (
             testControllerBridge &&
             !isErrorResponse(formatted) &&
@@ -3925,6 +4132,7 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
                   if (sc && typeof sc === 'object') {
                     const merged = mergeSeededProductsIntoResponse(sc, seeded);
                     formatted = wrap(merged);
+                    stampBridge(formatted, 'getSeededProducts', toolName, seeded.length);
                   }
                 }
               } catch (err) {
@@ -3951,6 +4159,7 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
                   if (sc && typeof sc === 'object') {
                     const merged = mergeSeededCreativesIntoResponse(sc, seeded);
                     formatted = wrap(merged);
+                    stampBridge(formatted, 'getSeededCreatives', toolName, seeded.length);
                   }
                 }
               } catch (err) {
@@ -3974,6 +4183,7 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
                   if (sc && typeof sc === 'object') {
                     const merged = mergeSeededMediaBuysIntoResponse(sc, seeded);
                     formatted = wrap(merged);
+                    stampBridge(formatted, 'getSeededMediaBuys', toolName, seeded.length);
                   }
                 }
               } catch (err) {
@@ -3997,6 +4207,7 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
                   if (sc && typeof sc === 'object') {
                     const merged = mergeSeededMediaBuyDeliveryIntoResponse(sc, seeded);
                     formatted = wrap(merged);
+                    stampBridge(formatted, 'getSeededMediaBuyDelivery', toolName, seeded.length);
                   }
                 }
               } catch (err) {
@@ -4020,6 +4231,7 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
                   if (sc && typeof sc === 'object') {
                     const merged = mergeSeededAccountsIntoResponse(sc, seeded);
                     formatted = wrap(merged);
+                    stampBridge(formatted, 'getSeededAccounts', toolName, seeded.length);
                   }
                 }
               } catch (err) {
@@ -4056,7 +4268,10 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
                         ? resolvedAccountId
                         : undefined
                     );
-                    if (merged !== sc) formatted = wrap(merged);
+                    if (merged !== sc) {
+                      formatted = wrap(merged);
+                      stampBridge(formatted, 'getSeededAccountFinancials', toolName, seeded.length);
+                    }
                   }
                 }
               } catch (err) {
@@ -4080,6 +4295,7 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
                   if (sc && typeof sc === 'object') {
                     const merged = mergeSeededCreativeFormatsIntoResponse(sc, seeded);
                     formatted = wrap(merged);
+                    stampBridge(formatted, 'getSeededCreativeFormats', toolName, seeded.length);
                   }
                 }
               } catch (err) {
@@ -4112,6 +4328,7 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
                     if (sc && typeof sc === 'object') {
                       const merged = mergeSeededPropertyListsIntoResponse(sc, seeded);
                       formatted = wrap(merged);
+                      stampBridge(formatted, 'getSeededPropertyLists', toolName, seeded.length);
                     }
                   } else {
                     const sc = formatted.structuredContent as
@@ -4123,7 +4340,10 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
                         sc,
                         seeded
                       );
-                      if (merged !== sc) formatted = wrap(merged);
+                      if (merged !== sc) {
+                        formatted = wrap(merged);
+                        stampBridge(formatted, 'getSeededPropertyLists', toolName, seeded.length);
+                      }
                     }
                   }
                 }
@@ -4153,6 +4373,7 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
                     if (sc && typeof sc === 'object') {
                       const merged = mergeSeededCollectionListsIntoResponse(sc, seeded);
                       formatted = wrap(merged);
+                      stampBridge(formatted, 'getSeededCollectionLists', toolName, seeded.length);
                     }
                   } else {
                     const sc = formatted.structuredContent as
@@ -4164,13 +4385,194 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
                         sc,
                         seeded
                       );
-                      if (merged !== sc) formatted = wrap(merged);
+                      if (merged !== sc) {
+                        formatted = wrap(merged);
+                        stampBridge(formatted, 'getSeededCollectionLists', toolName, seeded.length);
+                      }
                     }
                   }
                 }
               } catch (err) {
                 const reason = err instanceof Error ? err.message : String(err);
                 logger.warn('testController.getSeededCollectionLists failed; returning handler response unchanged', {
+                  tool: toolName,
+                  error: reason,
+                });
+              }
+            }
+
+            // get_signals — append-merge by signal_id. Works uniformly across
+            // signal-marketplace and signal-owned specialisms (one bridge, both
+            // dispatched on the same tool; the per-signal `signal_type` field
+            // is the marketplace-vs-owned discriminator).
+            else if (toolName === 'get_signals' && testControllerBridge.getSeededSignals) {
+              try {
+                const rawSeeded = await testControllerBridge.getSeededSignals(bridgeCtx);
+                const seeded = filterValidSeededSignals(rawSeeded, logger);
+                if (seeded.length > 0) {
+                  const sc = formatted.structuredContent as
+                    | import('../types/tools.generated').GetSignalsResponse
+                    | undefined;
+                  if (sc && typeof sc === 'object') {
+                    const merged = mergeSeededSignalsIntoResponse(sc, seeded);
+                    formatted = wrap(merged);
+                    stampBridge(formatted, 'getSeededSignals', toolName, seeded.length);
+                  }
+                }
+              } catch (err) {
+                const reason = err instanceof Error ? err.message : String(err);
+                logger.warn('testController.getSeededSignals failed; returning handler response unchanged', {
+                  tool: toolName,
+                  error: reason,
+                });
+              }
+            }
+
+            // get_creative_delivery — append-merge by creative_id;
+            // `pagination.total` (when set by the handler) updates by the
+            // count of new non-colliding seeded entries. No aggregated-totals
+            // recomputation — this response has no top-level totals envelope.
+            else if (toolName === 'get_creative_delivery' && testControllerBridge.getSeededCreativeDelivery) {
+              try {
+                const rawSeeded = await testControllerBridge.getSeededCreativeDelivery(bridgeCtx);
+                const seeded = filterValidSeededCreativeDelivery(rawSeeded, logger);
+                if (seeded.length > 0) {
+                  const sc = formatted.structuredContent as
+                    | import('../types/tools.generated').GetCreativeDeliveryResponse
+                    | undefined;
+                  if (sc && typeof sc === 'object') {
+                    const merged = mergeSeededCreativeDeliveryIntoResponse(sc, seeded);
+                    formatted = wrap(merged);
+                    stampBridge(formatted, 'getSeededCreativeDelivery', toolName, seeded.length);
+                  }
+                }
+              } catch (err) {
+                const reason = err instanceof Error ? err.message : String(err);
+                logger.warn('testController.getSeededCreativeDelivery failed; returning handler response unchanged', {
+                  tool: toolName,
+                  error: reason,
+                });
+              }
+            }
+
+            // get_creative_features — `oneOf` envelope. Success arm: merge
+            // seeded `CreativeFeatureResult[]` into `results` (dedup by
+            // `feature_id`, seeded wins). Error arm: no-op (the helper
+            // discriminates by presence of `results: []`).
+            else if (toolName === 'get_creative_features' && testControllerBridge.getSeededCreativeFeatures) {
+              try {
+                const rawSeeded = await testControllerBridge.getSeededCreativeFeatures(bridgeCtx);
+                const seeded = filterValidSeededCreativeFeatures(rawSeeded, logger);
+                if (seeded.length > 0) {
+                  const sc = formatted.structuredContent as
+                    | import('../types/tools.generated').GetCreativeFeaturesResponse
+                    | undefined;
+                  if (sc && typeof sc === 'object') {
+                    const merged = mergeSeededCreativeFeaturesIntoResponse(sc, seeded);
+                    if (merged !== sc) {
+                      formatted = wrap(merged);
+                      stampBridge(formatted, 'getSeededCreativeFeatures', toolName, seeded.length);
+                    }
+                  }
+                }
+              } catch (err) {
+                const reason = err instanceof Error ? err.message : String(err);
+                logger.warn('testController.getSeededCreativeFeatures failed; returning handler response unchanged', {
+                  tool: toolName,
+                  error: reason,
+                });
+              }
+            }
+
+            // get_brand_identity — singleton replace keyed by `brand_id`.
+            // Seeded fixture is authoritative on the GetBrandIdentitySuccess
+            // body; handler's `context` / `ext` round-trip. The response is
+            // a union (success | error) — the dispatcher already gated on
+            // `!isErrorResponse`, so we narrow defensively when reading.
+            else if (toolName === 'get_brand_identity' && testControllerBridge.getSeededBrandIdentity) {
+              try {
+                const rawSeeded = await testControllerBridge.getSeededBrandIdentity(bridgeCtx);
+                const seeded = filterValidSeededBrandIdentity(rawSeeded, logger);
+                if (seeded.length > 0) {
+                  const sc = formatted.structuredContent as
+                    | import('../types/core.generated').GetBrandIdentityResponse
+                    | undefined;
+                  if (sc && typeof sc === 'object') {
+                    const merged = replaceBrandIdentityIfSeeded(
+                      params as import('../types/core.generated').GetBrandIdentityRequest,
+                      sc,
+                      seeded
+                    );
+                    if (merged !== sc) {
+                      formatted = wrap(merged);
+                      stampBridge(formatted, 'getSeededBrandIdentity', toolName, seeded.length);
+                    }
+                  }
+                }
+              } catch (err) {
+                const reason = err instanceof Error ? err.message : String(err);
+                logger.warn('testController.getSeededBrandIdentity failed; returning handler response unchanged', {
+                  tool: toolName,
+                  error: reason,
+                });
+              }
+            }
+
+            // get_rights — append-merge keyed by `rights_id`. Discovery /
+            // search tool (NL `query`); the response carries `rights[]`.
+            // Drops to a no-op on the error arm of the response union.
+            else if (toolName === 'get_rights' && testControllerBridge.getSeededRights) {
+              try {
+                const rawSeeded = await testControllerBridge.getSeededRights(bridgeCtx);
+                const seeded = filterValidSeededRights(rawSeeded, logger);
+                if (seeded.length > 0) {
+                  const sc = formatted.structuredContent as
+                    | import('../types/core.generated').GetRightsResponse
+                    | undefined;
+                  if (sc && typeof sc === 'object') {
+                    const merged = mergeSeededRightsIntoResponse(sc, seeded);
+                    if (merged !== sc) {
+                      formatted = wrap(merged);
+                      stampBridge(formatted, 'getSeededRights', toolName, seeded.length);
+                    }
+                  }
+                }
+              } catch (err) {
+                const reason = err instanceof Error ? err.message : String(err);
+                logger.warn('testController.getSeededRights failed; returning handler response unchanged', {
+                  tool: toolName,
+                  error: reason,
+                });
+              }
+            }
+
+            // si_get_offering — singleton replace keyed by `offering_id`.
+            // Stateless catalog lookup; the response's `offering_token` is
+            // produced for a future session but the lookup itself does not
+            // consume one. Handler's `context` / `ext` round-trip.
+            else if (toolName === 'si_get_offering' && testControllerBridge.getSeededSiOffering) {
+              try {
+                const rawSeeded = await testControllerBridge.getSeededSiOffering(bridgeCtx);
+                const seeded = filterValidSeededSiOffering(rawSeeded, logger);
+                if (seeded.length > 0) {
+                  const sc = formatted.structuredContent as
+                    | import('../types/tools.generated').SIGetOfferingResponse
+                    | undefined;
+                  if (sc && typeof sc === 'object') {
+                    const merged = replaceSiOfferingIfSeeded(
+                      params as import('../types/tools.generated').SIGetOfferingRequest,
+                      sc,
+                      seeded
+                    );
+                    if (merged !== sc) {
+                      formatted = wrap(merged);
+                      stampBridge(formatted, 'getSeededSiOffering', toolName, seeded.length);
+                    }
+                  }
+                }
+              } catch (err) {
+                const reason = err instanceof Error ? err.message : String(err);
+                logger.warn('testController.getSeededSiOffering failed; returning handler response unchanged', {
                   tool: toolName,
                   error: reason,
                 });
@@ -4197,7 +4599,10 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
                       | undefined;
                     if (sc && typeof sc === 'object') {
                       const merged = mergeSeededContentStandardsIntoResponse(sc, seeded);
-                      if (merged !== sc) formatted = wrap(merged);
+                      if (merged !== sc) {
+                        formatted = wrap(merged);
+                        stampBridge(formatted, 'getSeededContentStandards', toolName, seeded.length);
+                      }
                     }
                   } else {
                     const sc = formatted.structuredContent as
@@ -4209,7 +4614,10 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
                         sc,
                         seeded
                       );
-                      if (merged !== sc) formatted = wrap(merged);
+                      if (merged !== sc) {
+                        formatted = wrap(merged);
+                        stampBridge(formatted, 'getSeededContentStandards', toolName, seeded.length);
+                      }
                     }
                   }
                 }

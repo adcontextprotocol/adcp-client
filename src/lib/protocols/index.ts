@@ -46,7 +46,7 @@ import { validateAgentUrl } from '../validation';
 import { withSpan } from '../observability/tracing';
 import { ADCP_MAJOR_VERSION, ADCP_VERSION, parseAdcpMajorVersion } from '../version';
 import { ConfigurationError } from '../errors';
-import { resolveBundleKey } from '../validation/schema-loader';
+import { resolveBundleKey, toReleasePrecisionWire, validateAdcpVersionWire } from '../validation/schema-loader';
 import { buildAgentSigningContext, CAPABILITY_OP, ensureCapabilityLoaded } from '../signing/client';
 import { withResponseSizeLimit } from './responseSizeLimit';
 
@@ -102,9 +102,12 @@ export function bundleSupportsAdcpVersionField(bundleKey: string): boolean {
  * define the string field, so a 3.0-pinned client emits the integer only —
  * matches the 3.0 spec exactly.
  *
- * Release-precision string follows `resolveBundleKey`: `'3.0'`, `'3.1'`,
- * `'3.1.0-beta.1'` (prereleases stay verbatim — spec rule: pre-release pins
- * matched exactly).
+ * Wire string is release-precision (MAJOR.MINOR with optional prerelease tag),
+ * per `core/version-envelope.json`'s pattern `^\d+\.\d+(-[a-zA-Z0-9.-]+)?$`.
+ * Full-semver bundle keys (`'3.1.0-beta.1'`) are collapsed via
+ * `toReleasePrecisionWire` to `'3.1-beta.1'` before emit — meta-field shapes
+ * are explicitly NOT valid wire values per the envelope schema's own
+ * normalization rule.
  *
  * Returns `{}` for v2 callers (predates the major-version field entirely).
  */
@@ -118,7 +121,13 @@ function buildVersionEnvelope(
   if (!bundleSupportsAdcpVersionField(bundleKey)) {
     return { adcp_major_version: wireMajor };
   }
-  return { adcp_major_version: wireMajor, adcp_version: bundleKey };
+  const wireValue = toReleasePrecisionWire(bundleKey);
+  // Defensive postcondition — should never throw in well-formed code, but
+  // if a future refactor breaks the normalization the error message tells
+  // the developer to call `toReleasePrecisionWire` instead of silently
+  // emitting a non-spec wire string.
+  validateAdcpVersionWire(wireValue);
+  return { adcp_major_version: wireMajor, adcp_version: wireValue };
 }
 
 /**

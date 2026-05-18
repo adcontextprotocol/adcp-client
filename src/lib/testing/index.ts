@@ -111,6 +111,7 @@ export {
   type ComplianceResult,
   type ComplianceSummary,
   type AdvisoryObservation,
+  type ObservationSource,
   type SampleBrief,
 } from './compliance';
 
@@ -132,6 +133,8 @@ export type {
   DirectiveAdapter,
   ForceAccountStatusParams,
   ForceAdapter,
+  ForceAudienceStatusParams,
+  ForceCatalogItemStatusParams,
   ForceCreateMediaBuyArmParams,
   ForceCreativeStatusParams,
   ForceMediaBuyStatusParams,

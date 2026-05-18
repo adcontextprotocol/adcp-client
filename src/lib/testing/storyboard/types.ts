@@ -96,17 +96,44 @@ export interface Storyboard {
    * when the storyboard tests behavior the agent explicitly opted out of.
    *
    * `path` is a dotted key path into the raw `get_adcp_capabilities` response
-   * (e.g. `"adcp.idempotency.supported"`). `equals` is the scalar value the
-   * path must resolve to for the storyboard to run.
+   * (e.g. `"adcp.idempotency.supported"`).
    *
-   * When the path resolves to `undefined` (field absent), the predicate is
-   * treated as unresolvable and the storyboard runs — absence means the agent
-   * hasn't explicitly opted out, so failing the storyboard surfaces the gap.
+   * Two matcher forms — mutually exclusive on a single gate:
+   *
+   * - `equals: V` — scalar equality. The path's resolved value must equal `V`
+   *   for the storyboard to run. When the path resolves to `undefined` (field
+   *   absent), the predicate is treated as unresolvable and the storyboard
+   *   runs — absence means the agent hasn't explicitly opted out, so failing
+   *   the storyboard surfaces the gap.
+   *
+   * - `present: true|false` — presence-only matcher for spec capabilities whose
+   *   contract is "presence of this object indicates support" (e.g.
+   *   `media_buy.conversion_tracking`). `present: true` requires the value at
+   *   `path` to exist (non-null, non-undefined); empty object `{}` counts as
+   *   present. `present: false` requires the value to be absent — useful for
+   *   scenarios that only apply to agents that explicitly do NOT advertise a
+   *   capability. Unlike `equals`, absence is the load-bearing signal: when
+   *   `present: true` and the field is missing, the storyboard is skipped
+   *   (not_applicable) rather than run, because the seller's silence is the
+   *   spec-defined opt-out.
+   *
+   * - `contains: V` — array-membership matcher for capabilities whose
+   *   declaration shape is an array of allowed values (e.g.
+   *   `media_buy.conversion_tracking.supported_targets: ["cost_per",
+   *   "per_ad_spend"]`). The value at `path` MUST be an array and MUST include
+   *   `V` (strict equality, no coercion). Empty arrays fail; paths resolving
+   *   to undefined or non-array values fail (treated as "capability not
+   *   declared", skip the storyboard as not_applicable). Like `present:`,
+   *   absence is the load-bearing signal — a seller that doesn't advertise
+   *   the array hasn't opted into the variant this storyboard tests.
    *
    * When `raw_capabilities` is not available (e.g. the agent doesn't expose
    * `get_adcp_capabilities`), the gate is a no-op and the storyboard runs.
    */
-  requires_capability?: { path: string; equals: boolean | string | number | null };
+  requires_capability?:
+    | { path: string; equals: boolean | string | number | null }
+    | { path: string; present: boolean }
+    | { path: string; contains: boolean | string | number };
   /** Scenario IDs that must pass alongside this storyboard (loaded from storyboards/scenarios/) */
   requires_scenarios?: string[];
   agent: {
@@ -640,6 +667,34 @@ export type StoryboardValidationCheck =
    */
   | 'field_less_than'
   /**
+   * Assert a numeric field in the current step's response is strictly greater
+   * than a comparand. Mirror of `field_less_than` — completes the four-quadrant
+   * numeric comparison vocabulary (`<`, `<=`, `>=`, `>`). Same operand and
+   * `context_key_absent` semantics as `field_less_than`. Added for
+   * adcp-client#1839 four-quadrant symmetry.
+   */
+  | 'field_greater_than'
+  /**
+   * Assert a numeric field in the current step's response is at most (≤) a
+   * comparand. Semantically symmetric with `field_less_than` but with
+   * non-strict comparison — pairs cleanly with cap-style assertions like
+   * "observed frequency stays at or below the requested cap of 3".
+   * The comparand is either a context-captured runtime value (`context_key`)
+   * or a literal number (`value`). Fails with a type error when either
+   * operand is non-numeric or absent. When `context_key` is specified but
+   * absent from `storyboardContext`, passes with a `context_key_absent`
+   * observation. Added for adcp-client#1839.
+   */
+  | 'field_at_most'
+  /**
+   * Assert a numeric field in the current step's response is at least (≥) a
+   * comparand. Mirror of `field_at_most` — pairs with floor-style assertions
+   * like "delivered reach ≥ promised reach". Same operand and
+   * context_key_absent semantics as `field_at_most`. Added for
+   * adcp-client#1839.
+   */
+  | 'field_at_least'
+  /**
    * Assert a field in the current step's response deep-equals a value captured
    * from an earlier step via `context_key`. Unlike `field_value` + `$context.key`
    * substitution (which resolves the comparand at YAML authoring time), this
@@ -684,7 +739,26 @@ export type StoryboardValidationCheck =
    * dispatch resolved successfully. Spec:
    * test-kits/parallel-dispatch-runner.yaml.
    */
-  | 'cross_response_count_distinct';
+  | 'cross_response_count_distinct'
+  /**
+   * Assert the cardinality of the array at `path`. Two configurations are
+   * supported: exact-count via `value: N` (passes only when the resolved
+   * array has exactly N entries) and range via `min` / `max` (either bound
+   * is optional; both inclusive). Specifying both `value` and `min`/`max` is
+   * rejected as a misconfigured check; so are non-integer, negative, NaN,
+   * or impossible (`min > max`) operands. Fails with a type error when the
+   * resolved path is absent or not an array — `field_present` paired with
+   * `field_value_or_absent value: null` is unsound for cardinality because
+   * it passes when a seller emits a literal-null pad at `arr[N]`.
+   *
+   * **Non-optional by design.** This check has no tolerant arm — an absent
+   * path fails. Use `field_value_or_absent` (or omit the check) when the
+   * field itself is spec-optional; `array_length` is for asserting the
+   * cardinality of an array that MUST be present.
+   *
+   * Spec: adcp#4685 (cardinality assertions); SDK adcp-client#1830.
+   */
+  | 'array_length';
 
 /**
  * Configuration for a step that fans out to N concurrent dispatches against
@@ -849,8 +923,9 @@ export interface StoryboardValidation {
   // ─── field_less_than / field_equals_context fields ────────
   /**
    * Key to look up in the accumulated `storyboardContext` for cross-step
-   * comparison checks (`field_less_than`, `field_equals_context`).
-   * Only consumed by those two check types — ignored on all others.
+   * comparison checks (`field_less_than`, `field_greater_than`,
+   * `field_at_most`, `field_at_least`, `field_equals_context`).
+   * Only consumed by those check types — ignored on all others.
    * When set and the key is absent from context, the check passes with a
    * `context_key_absent` observation rather than failing — the prior step
    * that was supposed to populate the key may have been legitimately skipped.
@@ -894,6 +969,17 @@ export interface StoryboardValidation {
    * for cumulative-effect assertions.
    */
   since?: string;
+  // ─── array_length fields ──────────────────────────────────
+  /**
+   * Inclusive lower bound for `array_length`. Mutually exclusive with
+   * `value`. Pass with `max` omitted to assert "at least N entries."
+   */
+  min?: number;
+  /**
+   * Inclusive upper bound for `array_length`. Mutually exclusive with
+   * `value`. Pass with `min` omitted to assert "at most N entries."
+   */
+  max?: number;
 }
 
 // ────────────────────────────────────────────────────────────
@@ -1386,7 +1472,19 @@ export type RunnerDetailedSkipReason =
    * does not satisfy the storyboard's preconditions — consistent with peer
    * skip reasons `rate_abuse_opt_out` and `missing_test_kit_contract`.
    */
-  | 'capability_unsupported';
+  | 'capability_unsupported'
+  /**
+   * A `comply_test_controller` step targeted a `force_*` scenario that the
+   * agent advertised the controller for but did not implement. Detected by
+   * the tuple (step.task === 'comply_test_controller', resolved
+   * `scenario` parameter starts with `force_`, response `success: false,
+   * error: UNKNOWN_SCENARIO`). Runners MUST grade the step `not_applicable`
+   * with detail `force_scenario_unsupported` instead of failing the step's
+   * authored validations. Maps to canonical `not_applicable`. AdCP 3.0.12
+   * runner-output-contract: `universal/runner-output-contract.yaml` >
+   * `skip_result.reasons.force_scenario_unsupported`.
+   */
+  | 'force_scenario_unsupported';
 
 /**
  * Map detailed grader skip reasons onto the six canonical spec values so
@@ -1399,6 +1497,7 @@ export const DETAILED_SKIP_TO_CANONICAL: Record<RunnerDetailedSkipReason, Runner
   grader_skipped: 'not_applicable',
   mcp_mode_flattens_url_edges: 'not_applicable',
   oauth_not_advertised: 'not_applicable',
+  force_scenario_unsupported: 'not_applicable',
   capability_unsupported: 'unsatisfied_contract',
   rate_abuse_opt_out: 'unsatisfied_contract',
   missing_test_kit_contract: 'unsatisfied_contract',
@@ -1797,7 +1896,9 @@ export type StoryboardStepHint =
   | ShapeDriftHint
   | MissingRequiredFieldHint
   | FormatMismatchHint
-  | MonotonicViolationHint;
+  | MonotonicViolationHint
+  | ImpairmentCoherenceHint
+  | ImpairmentCoherenceNotApplicableHint;
 
 /**
  * A seller rejected a request value that the runner traced back to a
@@ -2046,6 +2147,122 @@ export interface MonotonicViolationHint extends StoryboardStepHintBase {
   enum_url: string;
 }
 
+/**
+ * The `impairment.coherence` invariant observed a mismatch between a media
+ * buy's `impairments[]` array and the underlying resource state. Three
+ * violation shapes share this hint:
+ *   - `forward`: an entry in `impairments[]` references a resource whose
+ *     last observed status is NOT an offline value.
+ *   - `inverse`: a resource was observed transitioning to an offline state
+ *     and is referenced by a non-terminal buy, but is missing from that
+ *     buy's `impairments[]`.
+ *   - `health`: the buy's `health` field disagrees with `impairments[]`
+ *     emptiness — `impaired` iff non-empty (and vice versa).
+ *
+ * See adcontextprotocol/adcp#2859 for the originating spec issue.
+ */
+export interface ImpairmentCoherenceHint extends StoryboardStepHintBase {
+  kind: 'impairment_coherence_violation';
+  /**
+   * Discriminator for the violation shape (see the union of `forward`,
+   * `inverse`, `health` documented on the type). Renderers can branch on
+   * `violation` to pick a per-shape template.
+   * @provenance runner
+   */
+  violation: 'forward' | 'inverse' | 'health';
+  /**
+   * Media-buy id whose `impairments[]` snapshot the violation was detected
+   * on. Read from `media_buy_id` on the buy response.
+   * @provenance seller
+   */
+  media_buy_id: string;
+  /**
+   * Step id that returned the offending media-buy snapshot.
+   * @provenance runner
+   */
+  buy_step_id: string;
+  /**
+   * Resource family (`creative`, `audience`, `catalog_item`, `event_source`)
+   * the entry references. Present on `forward` and `inverse`.
+   * @provenance seller (forward) / runner (inverse)
+   */
+  resource_type?: string;
+  /**
+   * Resource id the entry references. Present on `forward` and `inverse`.
+   * @provenance seller (forward) / runner (inverse)
+   */
+  resource_id?: string;
+  /**
+   * Status the runner has on file for the referenced resource. Present on
+   * `forward` and `inverse`. On `forward` it is the non-offline status that
+   * makes the impairment a false positive; on `inverse` it is the offline
+   * status the seller failed to propagate.
+   * @provenance seller
+   */
+  resource_status?: string;
+  /**
+   * Step id that recorded `resource_status`.
+   * @provenance runner
+   */
+  resource_step_id?: string;
+  /**
+   * Health value present on the buy snapshot when the violation is `health`.
+   * The literal seller-returned value, undefined when the field is absent.
+   * @provenance seller
+   */
+  buy_health?: string;
+  /**
+   * `impairments[].length` on the buy snapshot. Present on all three shapes.
+   * @provenance seller
+   */
+  impairments_count: number;
+}
+
+/**
+ * The `impairment.coherence` invariant observed an offline-state transition
+ * for a resource family whose buy → resource reverse-traversal isn't yet
+ * implemented (audience / catalog_item / event_source). The forward rule
+ * still grades these families; the inverse rule cannot, so the runner
+ * surfaces the deferred coverage at the transition step instead of skipping
+ * silently. Tracked in adcontextprotocol/adcp#2860.
+ */
+export interface ImpairmentCoherenceNotApplicableHint extends StoryboardStepHintBase {
+  kind: 'impairment_coherence_not_applicable';
+  /**
+   * Always `'inverse'` for this hint — the rule that can't grade.
+   * @provenance runner
+   */
+  violation: 'inverse';
+  /**
+   * Machine-readable reason code. Consumers can filter on this without
+   * matching prose.
+   * @provenance runner
+   */
+  reason: 'resource_traversal_deferred';
+  /**
+   * Resource family the transition was observed on. One of the three
+   * deferred families.
+   * @provenance runner
+   */
+  resource_type: 'audience' | 'catalog_item' | 'event_source';
+  /**
+   * Resource id the transition was observed on.
+   * @provenance seller
+   */
+  resource_id: string;
+  /**
+   * Offline status the resource transitioned to (`suspended` / `withdrawn`
+   * / `insufficient`).
+   * @provenance seller
+   */
+  resource_status: string;
+  /**
+   * Step id that recorded the offline transition.
+   * @provenance runner
+   */
+  resource_step_id: string;
+}
+
 export interface StoryboardPhaseResult {
   phase_id: string;
   phase_title: string;
@@ -2213,6 +2430,30 @@ export interface AssertionResult {
    * to adcontextprotocol/adcp#2834.
    */
   observation_count?: number;
+  /**
+   * Distinguishes `'silent'` (wired but no observations) from `'pass'`
+   * (wired and exercised). Per-assertion analog of the track-level
+   * `TrackStatus: 'silent'` rollup — consumers (graders, dashboards) that
+   * render per-assertion results need a direct enum here so the
+   * "wired-but-not-observed" outcome doesn't render identically to a real
+   * pass.
+   *
+   * Set by observation-based invariants on their `onEnd` summary record:
+   * `'silent'` when `observation_count === 0` AND `passed === true`,
+   * `'pass'` when `observation_count > 0` AND `passed === true`,
+   * `'fail'` when `passed === false`. Absent on assertions that don't
+   * model observation counts (their `passed` flag is sufficient).
+   *
+   * `'not_applicable'` is emitted at step scope by an invariant that
+   * recognises an observation it could grade in principle but whose
+   * grading path isn't yet implemented in the runner (e.g.
+   * `impairment.coherence` inverse rule for audience / catalog_item /
+   * event_source — tracked in adcontextprotocol/adcp#2860). The
+   * accompanying `hint` carries the deferral reason and resource family
+   * so renderers can distinguish a deferred coverage hint from a clean
+   * pass. Companion to adcontextprotocol/adcp#2834.
+   */
+  status?: 'pass' | 'silent' | 'fail' | 'not_applicable';
 }
 
 /**

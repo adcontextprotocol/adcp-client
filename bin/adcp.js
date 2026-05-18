@@ -964,6 +964,19 @@ function parseAgentOptions(args) {
     if (eqArg) file = eqArg.slice('--file='.length);
   }
 
+  // --test-kit PATH | --test-kit=PATH: load a test-kit YAML so storyboard
+  // steps with `auth.from_test_kit: true` or `$test_kit.<path>` references
+  // resolve. Required for storyboards like `comply_controller_mode_gate`
+  // that draw their bearer from a fixture rather than --auth.
+  const testKitIndex = args.indexOf('--test-kit');
+  let testKitPath = null;
+  if (testKitIndex !== -1 && testKitIndex + 1 < args.length && !args[testKitIndex + 1].startsWith('--')) {
+    testKitPath = args[testKitIndex + 1];
+  } else {
+    const eqArg = args.find(a => a.startsWith('--test-kit='));
+    if (eqArg) testKitPath = eqArg.slice('--test-kit='.length);
+  }
+
   const jsonOutput = args.includes('--json');
   const debug = args.includes('--debug') || process.env.ADCP_DEBUG === 'true';
   const dryRun = args.includes('--dry-run');
@@ -1081,6 +1094,7 @@ function parseAgentOptions(args) {
     formatValue,
     summaryOutputValue,
     fileIndex !== -1 ? file : null,
+    testKitIndex !== -1 ? testKitPath : null,
     summaryFileFlagValue,
   ].filter(v => v !== null && v !== undefined);
   // `-H` short form does NOT start with `--`, so we filter it (and its KEY=VALUE
@@ -1095,6 +1109,7 @@ function parseAgentOptions(args) {
     protocolFlag,
     brief,
     file,
+    testKitPath,
     jsonOutput,
     debug,
     dryRun,
@@ -1336,6 +1351,30 @@ function buildResolvedAuthOption({
  * function deliberately does NOT exchange — it just surfaces the saved
  * credentials so the caller can hand them to the testing/protocol layer.
  */
+/**
+ * Load a test-kit YAML file and return its parsed object. Throws on invalid
+ * YAML or missing files. Used by `storyboard run --test-kit PATH` to feed
+ * `options.test_kit` to the storyboard runner — storyboard steps with
+ * `auth.from_test_kit: true` or `$test_kit.<path>` references read from it.
+ */
+function loadTestKitFile(testKitPath) {
+  const fs = require('node:fs');
+  const path = require('node:path');
+  const resolved = path.resolve(testKitPath);
+  let raw;
+  try {
+    raw = fs.readFileSync(resolved, 'utf8');
+  } catch (err) {
+    throw new Error(`failed to read test-kit at ${resolved}: ${err.message}`);
+  }
+  try {
+    const { parse } = require('yaml');
+    return parse(raw);
+  } catch (err) {
+    throw new Error(`failed to parse ${resolved} as YAML: ${err.message}`);
+  }
+}
+
 async function resolveAgent(agentArg, authToken, protocolFlag, jsonOutput, authScheme = null) {
   let agentUrl;
   let protocol = protocolFlag;
@@ -1465,6 +1504,12 @@ NOTES:
   not the AdCP agent the adopter exposes. Use them as the input to a
   skill-matrix run: hand Claude the OpenAPI spec + the AdCP SKILL.md +
   a target storyboard, let Claude generate the wrapper, then grade.
+
+  The spec pins the triage order spec → mock → SDK. When a storyboard
+  failure disagrees between the spec, the mock, and your code, the mock
+  is the authoritative reference (within the bounds the spec defines).
+  See:
+    https://adcontextprotocol.org/docs/building/verification/conformance#mock-server-authority-and-failure-triage
 
   See: src/lib/mock-server/<specialism>/openapi.yaml
 `);
@@ -2139,7 +2184,16 @@ async function handleStoryboardShow(args) {
       console.log(`Resolves to ${resolved.storyboards.length} storyboard(s):`);
       for (const sb of resolved.storyboards) {
         const gating = sb.requires_capability
-          ? ` (gated on ${sb.requires_capability.path} = ${sb.requires_capability.equals})`
+          ? ' (gated on ' +
+            sb.requires_capability.path +
+            ('present' in sb.requires_capability
+              ? sb.requires_capability.present
+                ? ' present'
+                : ' absent'
+              : 'contains' in sb.requires_capability
+                ? ' contains ' + JSON.stringify(sb.requires_capability.contains)
+                : ' = ' + sb.requires_capability.equals) +
+            ')'
           : ' (always graded)';
         const trackTag = sb.track ? ` [track: ${sb.track}]` : '';
         console.log(`  - ${sb.id}${trackTag}${gating}`);
@@ -2436,6 +2490,16 @@ async function handleStoryboardRun(args) {
     ? await resolveWebhookReceiverOptions(args, { jsonOutput })
     : webhookReceiverBase;
 
+  let loadedTestKit = null;
+  if (opts.testKitPath) {
+    try {
+      loadedTestKit = loadTestKitFile(opts.testKitPath);
+    } catch (err) {
+      console.error(`ERROR: ${err.message}`);
+      process.exit(2);
+    }
+  }
+
   const options = {
     protocol,
     ...buildResolvedAuthOption({
@@ -2449,6 +2513,7 @@ async function handleStoryboardRun(args) {
     ...(opts.noSandbox && { sandbox: false, disable_sandbox: true }),
     ...(opts.assertsSeededState && { assertsSeededState: true }),
     ...(mergedRunHeaders && { headers: mergedRunHeaders }),
+    ...(loadedTestKit && { test_kit: loadedTestKit }),
   };
 
   const restoreLogs = jsonOutput ? captureStdoutLogs() : null;
@@ -4118,6 +4183,16 @@ async function runFullAssessment(agentArg, rawArgs, parsedOpts) {
 
   await loadInvariantModules(rawArgs);
 
+  let loadedTestKit = null;
+  if (opts.testKitPath) {
+    try {
+      loadedTestKit = loadTestKitFile(opts.testKitPath);
+    } catch (err) {
+      console.error(`ERROR: ${err.message}`);
+      process.exit(2);
+    }
+  }
+
   const testOptions = {
     protocol,
     brief: opts.brief,
@@ -4131,6 +4206,7 @@ async function runFullAssessment(agentArg, rawArgs, parsedOpts) {
     ...(opts.noSandbox && { sandbox: false, disable_sandbox: true }),
     ...(opts.assertsSeededState && { assertsSeededState: true }),
     ...(mergedAssessmentHeaders && { headers: mergedAssessmentHeaders }),
+    ...(loadedTestKit && { test_kit: loadedTestKit }),
   };
 
   if (!opts.jsonOutput) {

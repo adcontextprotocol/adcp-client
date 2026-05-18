@@ -9,7 +9,11 @@
 const { describe, test } = require('node:test');
 const assert = require('node:assert/strict');
 
-const { runStoryboard, resolveCapabilityPath } = require('../../dist/lib/testing/storyboard/index.js');
+const {
+  runStoryboard,
+  resolveCapabilityPath,
+  evaluateCapabilityPredicate,
+} = require('../../dist/lib/testing/storyboard/index.js');
 const { DETAILED_SKIP_TO_CANONICAL } = require('../../dist/lib/testing/storyboard/types.js');
 
 // Storyboard that requires adcp.idempotency.supported === true — the shape that
@@ -141,5 +145,267 @@ describe('requires_capability storyboard skip gate (#933)', () => {
       'unsatisfied_contract',
       'canonical spec reason for capability_unsupported'
     );
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// `present:` matcher (adcp-client#1811) — presence-only capability gates for
+// spec capabilities whose contract is "presence of this object indicates
+// support" (e.g. `media_buy.conversion_tracking`).
+// ─────────────────────────────────────────────────────────────────────────────
+
+const conversionTrackingGatedStoryboard = {
+  id: 'conversion_tracking_present_gate_test',
+  version: '1.0.0',
+  title: 'Conversion tracking (presence-gated)',
+  category: 'test',
+  summary: 'Runs only when the seller advertises media_buy.conversion_tracking.',
+  narrative: '',
+  agent: { interaction_model: 'sync', capabilities: [] },
+  caller: { role: 'buyer_agent' },
+  requires_capability: { path: 'media_buy.conversion_tracking', present: true },
+  phases: [
+    {
+      id: 'attribution',
+      title: 'Attribution phase',
+      steps: [
+        {
+          id: 'log_event_step',
+          title: 'Log conversion event',
+          task: 'log_event',
+          sample_request: {},
+        },
+      ],
+    },
+  ],
+};
+
+const presentAbsentGatedStoryboard = {
+  ...conversionTrackingGatedStoryboard,
+  id: 'conversion_tracking_absent_gate_test',
+  requires_capability: { path: 'media_buy.conversion_tracking', present: false },
+};
+
+describe('requires_capability `present:` matcher (#1811)', () => {
+  test('present: true — skips when agent does not declare the capability at all', async () => {
+    const profile = {
+      name: 'Test Agent (no conversion tracking declared)',
+      tools: ['get_adcp_capabilities', 'log_event'],
+      raw_capabilities: { media_buy: {} },
+    };
+    const result = await runStoryboard('http://fake-local-99998', conversionTrackingGatedStoryboard, {
+      _profile: profile,
+    });
+    assert.equal(result.overall_passed, true);
+    assert.equal(result.skipped_count, 1);
+    const step = result.phases[0].steps[0];
+    assert.equal(step.skipped, true);
+    assert.equal(step.skip_reason, 'capability_unsupported');
+    assert.equal(step.skip.reason, 'unsatisfied_contract');
+    assert.ok(
+      step.skip.detail.includes('media_buy.conversion_tracking'),
+      `detail must mention the capability path: ${step.skip.detail}`
+    );
+    assert.ok(
+      step.skip.detail.includes('must be present'),
+      `detail must explain presence requirement: ${step.skip.detail}`
+    );
+  });
+
+  test('present: true — skips when agent declares the field as null', async () => {
+    // null is the explicit "not supported" wire signal for object-typed
+    // capabilities; presence-only matcher treats it the same as absent.
+    const profile = {
+      name: 'Test Agent (conversion tracking explicitly null)',
+      tools: ['get_adcp_capabilities', 'log_event'],
+      raw_capabilities: { media_buy: { conversion_tracking: null } },
+    };
+    const result = await runStoryboard('http://fake-local-99997', conversionTrackingGatedStoryboard, {
+      _profile: profile,
+    });
+    assert.equal(result.skipped_count, 1);
+    assert.equal(result.phases[0].steps[0].skip_reason, 'capability_unsupported');
+  });
+
+  test('present: true — empty object counts as present (storyboard runs, gate does not skip)', () => {
+    // Spec: "Presence of this object indicates support." An empty {} IS
+    // presence. We use the predicate helper directly because asserting "the
+    // gate didn't skip" without a real wire path requires running phases.
+    assert.equal(
+      evaluateCapabilityPredicate({ path: 'media_buy.conversion_tracking', present: true }, {}),
+      null,
+      'empty object satisfies `present: true`'
+    );
+    assert.equal(
+      evaluateCapabilityPredicate(
+        { path: 'media_buy.conversion_tracking', present: true },
+        { multi_source_event_dedup: true }
+      ),
+      null,
+      'populated object satisfies `present: true`'
+    );
+  });
+
+  test('present: false — skips when agent declares the capability', async () => {
+    const profile = {
+      name: 'Test Agent (does declare conversion tracking)',
+      tools: ['get_adcp_capabilities', 'log_event'],
+      raw_capabilities: { media_buy: { conversion_tracking: {} } },
+    };
+    const result = await runStoryboard('http://fake-local-99996', presentAbsentGatedStoryboard, {
+      _profile: profile,
+    });
+    assert.equal(result.skipped_count, 1);
+    const step = result.phases[0].steps[0];
+    assert.equal(step.skipped, true);
+    assert.equal(step.skip_reason, 'capability_unsupported');
+    assert.ok(
+      step.skip.detail.includes('must be absent'),
+      `detail must explain absence requirement: ${step.skip.detail}`
+    );
+  });
+
+  test('evaluateCapabilityPredicate: pins matcher semantics', () => {
+    const presentTrue = { path: 'x.y', present: true };
+    const presentFalse = { path: 'x.y', present: false };
+    const equalsTrue = { path: 'x.y', equals: true };
+
+    // present: true
+    assert.equal(evaluateCapabilityPredicate(presentTrue, undefined)?.includes('must be present'), true);
+    assert.equal(evaluateCapabilityPredicate(presentTrue, null)?.includes('must be present'), true);
+    assert.equal(evaluateCapabilityPredicate(presentTrue, false), null, 'false is present (declared scalar)');
+    assert.equal(evaluateCapabilityPredicate(presentTrue, 0), null, '0 is present');
+    assert.equal(evaluateCapabilityPredicate(presentTrue, ''), null, "'' is present");
+    assert.equal(evaluateCapabilityPredicate(presentTrue, {}), null, '{} is present');
+
+    // present: false
+    assert.equal(evaluateCapabilityPredicate(presentFalse, undefined), null);
+    assert.equal(evaluateCapabilityPredicate(presentFalse, null), null);
+    assert.equal(evaluateCapabilityPredicate(presentFalse, {})?.includes('must be absent'), true);
+
+    // equals semantics unchanged: absence is unresolvable, run the storyboard.
+    assert.equal(evaluateCapabilityPredicate(equalsTrue, undefined), null, 'absent: equals runs the storyboard');
+    assert.equal(evaluateCapabilityPredicate(equalsTrue, true), null);
+    assert.equal(
+      evaluateCapabilityPredicate(equalsTrue, false)?.includes('not satisfied'),
+      true,
+      'declared mismatch skips with `not satisfied` detail'
+    );
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// `contains:` matcher (adcp-client#1817) — array-membership capability gates
+// for capabilities whose declaration shape is an array of allowed values
+// (e.g. `media_buy.conversion_tracking.supported_targets`).
+// ─────────────────────────────────────────────────────────────────────────────
+
+const supportedTargetsGatedStoryboard = {
+  id: 'performance_buy_flow_roas_gate_test',
+  version: '1.0.0',
+  title: 'ROAS flow (array-membership-gated)',
+  category: 'test',
+  summary: 'Runs only when seller advertises per_ad_spend in supported_targets.',
+  narrative: '',
+  agent: { interaction_model: 'sync', capabilities: [] },
+  caller: { role: 'buyer_agent' },
+  requires_capability: {
+    path: 'media_buy.conversion_tracking.supported_targets',
+    contains: 'per_ad_spend',
+  },
+  phases: [
+    {
+      id: 'roas',
+      title: 'ROAS phase',
+      steps: [
+        {
+          id: 'log_event_step',
+          title: 'Log conversion event',
+          task: 'log_event',
+          sample_request: {},
+        },
+      ],
+    },
+  ],
+};
+
+describe('requires_capability `contains:` matcher (#1817)', () => {
+  test('contains: skips when array is missing the required value', async () => {
+    const profile = {
+      name: 'Test Agent (cost_per only, no per_ad_spend)',
+      tools: ['get_adcp_capabilities', 'log_event'],
+      raw_capabilities: {
+        media_buy: { conversion_tracking: { supported_targets: ['cost_per'] } },
+      },
+    };
+    const result = await runStoryboard('http://fake-local-99995', supportedTargetsGatedStoryboard, {
+      _profile: profile,
+    });
+    assert.equal(result.overall_passed, true);
+    assert.equal(result.skipped_count, 1);
+    const step = result.phases[0].steps[0];
+    assert.equal(step.skipped, true);
+    assert.equal(step.skip_reason, 'capability_unsupported');
+    assert.equal(step.skip.reason, 'unsatisfied_contract');
+    assert.ok(
+      step.skip.detail.includes('media_buy.conversion_tracking.supported_targets'),
+      `detail must mention capability path: ${step.skip.detail}`
+    );
+    assert.ok(
+      step.skip.detail.includes('must contain') && step.skip.detail.includes('per_ad_spend'),
+      `detail must explain membership requirement: ${step.skip.detail}`
+    );
+  });
+
+  test('contains: skips when path resolves to undefined (capability not declared)', async () => {
+    const profile = {
+      name: 'Test Agent (no supported_targets declared)',
+      tools: ['get_adcp_capabilities', 'log_event'],
+      raw_capabilities: { media_buy: { conversion_tracking: {} } },
+    };
+    const result = await runStoryboard('http://fake-local-99994', supportedTargetsGatedStoryboard, {
+      _profile: profile,
+    });
+    assert.equal(result.skipped_count, 1);
+    assert.equal(result.phases[0].steps[0].skip_reason, 'capability_unsupported');
+  });
+
+  test('evaluateCapabilityPredicate: pins contains semantics', () => {
+    const containsString = { path: 'x.y', contains: 'per_ad_spend' };
+    const containsNumber = { path: 'x.y', contains: 42 };
+    const containsBool = { path: 'x.y', contains: true };
+
+    // Happy path: array includes the value
+    assert.equal(
+      evaluateCapabilityPredicate(containsString, ['cost_per', 'per_ad_spend']),
+      null,
+      'array containing value satisfies the predicate'
+    );
+    assert.equal(evaluateCapabilityPredicate(containsString, ['per_ad_spend']), null);
+    assert.equal(evaluateCapabilityPredicate(containsNumber, [1, 42, 100]), null);
+    assert.equal(evaluateCapabilityPredicate(containsBool, [false, true]), null);
+
+    // Empty array fails
+    assert.ok(evaluateCapabilityPredicate(containsString, [])?.includes('must contain'));
+
+    // Array missing the value fails
+    assert.ok(evaluateCapabilityPredicate(containsString, ['cost_per'])?.includes('must contain'));
+
+    // Non-array values fail
+    assert.ok(evaluateCapabilityPredicate(containsString, 'per_ad_spend')?.includes('must contain'));
+    assert.ok(evaluateCapabilityPredicate(containsString, { 0: 'per_ad_spend' })?.includes('must contain'));
+    assert.ok(evaluateCapabilityPredicate(containsString, null)?.includes('must contain'));
+
+    // Absent path fails — load-bearing absence, like `present: true`
+    const detailUndefined = evaluateCapabilityPredicate(containsString, undefined);
+    assert.ok(detailUndefined?.includes('must contain'));
+    assert.ok(
+      detailUndefined?.includes('no value'),
+      `detail must distinguish undefined from typed mismatch: ${detailUndefined}`
+    );
+
+    // Strict equality — no type coercion across number/string
+    assert.ok(evaluateCapabilityPredicate(containsNumber, ['42'])?.includes('must contain'));
+    assert.ok(evaluateCapabilityPredicate(containsString, [42])?.includes('must contain'));
   });
 });

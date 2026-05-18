@@ -1,5 +1,7 @@
 const { describe, test } = require('node:test');
 const assert = require('node:assert');
+const fs = require('node:fs');
+const path = require('node:path');
 
 const {
   BrandJsonSchema,
@@ -176,5 +178,42 @@ describe('Sandbox brand_json validation', () => {
         assert.ok(Array.isArray(entry.names), `${brand.domain}: names must be an array`);
       }
     }
+  });
+});
+
+// Locks the contract that `BrandJson` / `AdagentsJson` (types) and
+// `BrandJsonSchema` / `AdagentsJsonSchema` (runtime Zod validators) are
+// reachable from the top-level `@adcp/sdk` barrel. Pre-7.3.0 these symbols
+// were only reachable via deep imports of `wellknown-schemas.generated`, which
+// broke `import type { BrandJson } from '@adcp/sdk'` in downstream consumers.
+describe('top-level barrel exports', () => {
+  test('BrandJsonSchema and AdagentsJsonSchema resolve from dist/lib/index.js', () => {
+    const barrel = require('../../dist/lib/index.js');
+    assert.strictEqual(
+      typeof barrel.BrandJsonSchema?.safeParse,
+      'function',
+      'BrandJsonSchema missing from top-level barrel'
+    );
+    assert.strictEqual(
+      typeof barrel.AdagentsJsonSchema?.safeParse,
+      'function',
+      'AdagentsJsonSchema missing from top-level barrel'
+    );
+    assert.strictEqual(
+      barrel.BrandJsonSchema,
+      BrandJsonSchema,
+      'top-level and testing-barrel BrandJsonSchema must be the same instance'
+    );
+    assert.strictEqual(
+      barrel.AdagentsJsonSchema,
+      AdagentsJsonSchema,
+      'top-level and testing-barrel AdagentsJsonSchema must be the same instance'
+    );
+  });
+
+  test('BrandJson and AdagentsJson type aliases are declared in dist/lib/index.d.ts', () => {
+    const decls = fs.readFileSync(path.join(__dirname, '..', '..', 'dist', 'lib', 'index.d.ts'), 'utf8');
+    assert.match(decls, /\bBrandJson\b/, 'BrandJson must appear in dist/lib/index.d.ts');
+    assert.match(decls, /\bAdagentsJson\b/, 'AdagentsJson must appear in dist/lib/index.d.ts');
   });
 });

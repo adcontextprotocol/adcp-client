@@ -79,6 +79,16 @@ export interface VerifiedSigner {
 export type VerifyResult = ({ status: 'verified' } & VerifiedSigner) | { status: 'unsigned'; verified_at: number };
 
 export const REQUEST_SIGNING_TAG = 'adcp/request-signing/v1';
+/**
+ * Tag value for the AdCP response-signing profile (RFC 9421 §2.2.9).
+ *
+ * Signer ships in #1823; verifier (`verifyResponseSignature`) ships in
+ * #1826. The wire format is now exercised both directions inside this SDK
+ * via round-trip tests. The `v1` suffix gives a clean break path if cross-
+ * SDK interop testing later surfaces an incompat — any breaking change
+ * ships as `v2` and verifiers reject `v1`.
+ */
+export const RESPONSE_SIGNING_TAG = 'adcp/response-signing/v1';
 export const ALLOWED_ALGS = new Set(['ed25519', 'ecdsa-p256-sha256']);
 /**
  * Wire-format algorithm identifier — the string that appears in
@@ -88,3 +98,29 @@ export type AdcpSignAlg = 'ed25519' | 'ecdsa-p256-sha256';
 export const MAX_SIGNATURE_WINDOW_SECONDS = 300;
 export const CLOCK_SKEW_TOLERANCE_SECONDS = 60;
 export const MANDATORY_COMPONENTS: ReadonlyArray<string> = ['@method', '@target-uri', '@authority'];
+/**
+ * Minimum derived components covered by a response signature under the AdCP
+ * response-signing profile (RFC 9421 §2.2.9).
+ *
+ * - `@status` — binds the signature to the response status code.
+ * - `@authority` — binds it to the request origin the response was emitted
+ *   for (so a compromised origin can't cross-sign for a sibling tenant on
+ *   the same fleet).
+ * - `@target-uri` — binds the signature to the specific request path + query,
+ *   preventing a multi-tenant seller from emitting interchangeable signatures
+ *   across endpoints sharing the same authority. Matches RFC 9421 §B.2.5
+ *   examples for response signing.
+ *
+ * `content-type` + `content-digest` are added at signing time when the
+ * response carries a body — `content-digest` is opt-out via
+ * `coverContentDigest: false` because an unbound body is the most common
+ * cross-purpose footgun for response signing. Callers can extend the
+ * covered set further via `SignResponseOptions.additionalComponents`
+ * (e.g. `@method`, custom headers).
+ *
+ * Signer ships in #1823; verifier (`verifyResponseSignature`) ships in
+ * #1826. The wire format is now exercised both directions inside this SDK
+ * via round-trip tests. The `v1` tag suffix gives a clean break path if
+ * cross-SDK interop testing later surfaces an incompat.
+ */
+export const RESPONSE_MANDATORY_COMPONENTS: ReadonlyArray<string> = ['@status', '@authority', '@target-uri'];

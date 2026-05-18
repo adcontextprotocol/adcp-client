@@ -83,6 +83,20 @@ If the gate fails on a storyboard step (not on tsc), re-run the `adcp storyboard
 
 For deeper validation (fuzz, request-signing grading, multi-instance, custom invariants): [`docs/guides/VALIDATE-YOUR-AGENT.md`](../../docs/guides/VALIDATE-YOUR-AGENT.md).
 
+## Test surfaces — making your agent verifiable without live credentials
+
+Every seller faces the same compliance question: can the runner verify your wire format separately from your live behavior? Wire format gets tested against fixtures. Live behavior needs a real test surface — sandbox credentials, real catalog data, real adapter traffic. The two are independent and produce different reliability claims (see [`adcp-client#1782`](https://github.com/adcontextprotocol/adcp-client/issues/1782) and [`adcontextprotocol/adcp#4593`](https://github.com/adcontextprotocol/adcp/issues/4593) for the certification model under discussion).
+
+To pass storyboards, you need the runner's `comply_test_controller.seed_product` writes to flow into your handler's `get_products` reads — the seed→read loop has to close. How you close it depends on where your handlers fetch from, not on what kind of seller you are:
+
+- **Handler reads from a store you control** (most SSPs, most creative agents — `audience-sync` adopters with a local audience cache, `creative-template` adopters with a local format registry). Point `comply_test_controller` at the same store. Seed writes to your DB, handler reads from your DB, loop closes naturally. **No bridge needed** — if seeds DO appear in responses but your `tsc` / type-check fails on seed-merge wiring, you wired it unnecessarily; remove it.
+
+- **Handler reads from a system you don't control** (DSPs proxying to Meta/Snap/TikTok, retail-media networks reading retailer catalog APIs, signals agents brokering third-party data marketplaces, walled-garden brokers). A seeded write to your local store is dead — your handler never sees it; if `comply_test_controller` seeds never appear in your responses, that's the symptom. **Wire the `TestControllerBridge`** ([`docs/guides/VALIDATE-YOUR-AGENT.md` § "Platform-proxy sellers"](../../docs/guides/VALIDATE-YOUR-AGENT.md#platform-proxy-sellers-state-of-record-lives-upstream)). The real handler still runs first (so a broken upstream call still fails the conformance gate), and the SDK merges seeded fixtures into the response after.
+
+Either path earns the **wire-conformance** half of compliance — your storyboards pass, you speak AdCP correctly. The **live-integration** half requires marker-free passes against a real test surface (sandbox credentials with real upstream traffic), independent of whether the bridge is wired. The `_bridge` marker the SDK stamps on bridge-merged responses tracks which steps in a storyboard run used fixtures vs real upstream.
+
+> Certification names in #1782 are under review; the mechanism here is stable.
+
 ## Deployment
 
 Single-host HTTP from `serve(...)` is the default. Multi-host, Express, or stdio transports: [`deployment.md`](deployment.md).

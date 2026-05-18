@@ -306,7 +306,9 @@ that bar.
 If someone says *"I'm not using the SDK, I'll build my agent from
 scratch"* — fine. They still need to pass conformance. They still hit
 the same mock-server (in mock mode for their own implementation, then
-verify their L3 logic matches). The mock is the impartial referee.
+verify their L3 logic matches). The mock is the impartial referee — the
+spec normatively pins this triage order (`spec → mock → SDK`) at
+[Mock-server authority and failure triage](https://adcontextprotocol.org/docs/building/verification/conformance#mock-server-authority-and-failure-triage).
 
 ## What ships
 

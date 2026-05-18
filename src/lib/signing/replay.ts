@@ -15,6 +15,22 @@ export type ReplayInsertResult = 'ok' | 'replayed' | 'rate_abuse';
 export interface ReplayStore {
   has(keyid: string, scope: string, nonce: string, now: number): Promise<boolean>;
   isCapHit(keyid: string, scope: string, now: number): Promise<boolean>;
+  /**
+   * Atomically check-and-insert. MUST return `'replayed'` if the nonce was
+   * already present for `(keyid, scope)`, otherwise insert and return `'ok'`
+   * (or `'rate_abuse'` if the cap is hit). The check and the insert MUST be
+   * a single uninterruptable operation — concurrent verifier calls racing
+   * the same nonce must see exactly one `'ok'` and the rest `'replayed'`.
+   *
+   * For in-memory stores Node's single-threaded event loop provides the
+   * atomicity for free. **Multi-replica adopters writing Redis / Postgres
+   * stores MUST implement this as a single atomic operation** (e.g. Redis
+   * `SET NX EX`, Postgres `INSERT ... ON CONFLICT DO NOTHING RETURNING`,
+   * a `WATCH/MULTI/EXEC` transaction). Implementing as `await has(...)`
+   * then `await write(...)` opens a TOCTOU window where two replicas both
+   * see "not replayed" and both insert — silently accepting the same
+   * signature twice within the window.
+   */
   insert(keyid: string, scope: string, nonce: string, ttlSeconds: number, now: number): Promise<ReplayInsertResult>;
 }
 

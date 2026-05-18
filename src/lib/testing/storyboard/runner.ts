@@ -184,6 +184,87 @@ export function resolveCapabilityPath(raw: unknown, dottedPath: string): unknown
   return current;
 }
 
+/**
+ * Evaluate a `requires_capability` predicate against the value already
+ * resolved from the agent's raw capabilities. Returns `null` when the
+ * predicate is satisfied (or unresolvable, per `equals` absence semantics)
+ * and a human-readable detail string when the storyboard should be skipped.
+ *
+ * Three matcher forms — see `Storyboard.requires_capability` for full semantics:
+ *
+ * - `equals: V` — skip only when `actual` is declared AND disagrees with `V`.
+ *   Absent fields (`undefined`) RUN the storyboard so the failure surfaces
+ *   an under-declared agent.
+ *
+ * - `present: B` — presence is the load-bearing signal. `present: true`
+ *   skips when the field is absent (treats `undefined` and `null` as absent).
+ *   `present: false` skips when the field is present. Empty object `{}`
+ *   counts as present, per the spec's "presence of this object indicates
+ *   support" wording. Note: an explicit `null` on the wire is technically
+ *   non-conformant for object-typed capabilities (`"type": "object"` rejects
+ *   null in JSON Schema), but is coalesced with absent here in the spirit of
+ *   Postel — agents that misdeclare a not-supported capability as `null`
+ *   get the same not_applicable skip as agents that omit the field.
+ *
+ * - `contains: V` — array-membership. `actual` must be an array that
+ *   includes `V` (strict equality, no coercion). Empty arrays, non-arrays,
+ *   and absent fields all skip — absence means the agent hasn't opted into
+ *   the array variant this storyboard tests.
+ *
+ * Exported for direct testing so the predicate semantics are pinned without
+ * needing a full runStoryboard() roundtrip.
+ */
+export function evaluateCapabilityPredicate(
+  predicate:
+    | { path: string; equals: boolean | string | number | null }
+    | { path: string; present: boolean }
+    | { path: string; contains: boolean | string | number },
+  actual: unknown
+): string | null {
+  if ('present' in predicate) {
+    const isPresent = actual !== undefined && actual !== null;
+    if (predicate.present && !isPresent) {
+      return `Capability predicate \`${predicate.path}\` must be present: ` + `agent did not declare it.`;
+    }
+    if (!predicate.present && isPresent) {
+      return (
+        `Capability predicate \`${predicate.path}\` must be absent: ` + `agent declared ${JSON.stringify(actual)}.`
+      );
+    }
+    return null;
+  }
+  if ('contains' in predicate) {
+    if (!Array.isArray(actual)) {
+      return (
+        `Capability predicate \`${predicate.path}\` must contain ${JSON.stringify(predicate.contains)}: ` +
+        `agent declared ${actual === undefined ? 'no value' : JSON.stringify(actual)}.`
+      );
+    }
+    if (!actual.includes(predicate.contains)) {
+      return (
+        `Capability predicate \`${predicate.path}\` must contain ${JSON.stringify(predicate.contains)}: ` +
+        `agent declared ${JSON.stringify(actual)}.`
+      );
+    }
+    return null;
+  }
+  // `equals` form — absence semantics are load-bearing. `actual === undefined`
+  // means the agent didn't declare the capability at all (field missing from
+  // `get_adcp_capabilities` response). We deliberately RUN the storyboard in
+  // that case rather than skip it: an agent that pre-dates the capability
+  // field hasn't explicitly opted out, so the storyboard's failures surface
+  // a real spec-coverage gap (under-declared agent) rather than a behavior
+  // the agent affirmatively refused. Skip ONLY when the agent declared a
+  // value AND that value disagrees with the predicate.
+  if (actual !== undefined && actual !== predicate.equals) {
+    return (
+      `Capability predicate \`${predicate.path} === ${JSON.stringify(predicate.equals)}\` not satisfied: ` +
+      `agent declared ${JSON.stringify(actual)}.`
+    );
+  }
+  return null;
+}
+
 function buildSkip(reason: RunnerSkipReason, detail?: string): { reason: RunnerSkipReason; detail: string } {
   return { reason, detail: detail ?? SKIP_DETAILS[reason] };
 }
@@ -1486,23 +1567,15 @@ async function executeStoryboardPass(
   if (storyboard.requires_capability) {
     const rawCaps = profile?.raw_capabilities;
     if (rawCaps !== undefined) {
-      const { path, equals } = storyboard.requires_capability;
-      const actual = resolveCapabilityPath(rawCaps, path);
-      // Absence semantics — load-bearing. `actual === undefined` means
-      // the agent didn't declare the capability at all (field missing
-      // from `get_adcp_capabilities` response). We deliberately RUN the
-      // storyboard in that case rather than skip it: an agent that
-      // pre-dates the capability field hasn't explicitly opted out, so
-      // the storyboard's failures surface a real spec-coverage gap
-      // (under-declared agent) rather than a behavior the agent
-      // affirmatively refused. Skip ONLY when the agent declared a
-      // value AND that value disagrees with the predicate.
-      if (actual !== undefined && actual !== equals) {
-        const detail =
-          `Capability predicate \`${path} === ${JSON.stringify(equals)}\` not satisfied: ` +
-          `agent declared ${JSON.stringify(actual)}.`;
+      const cap = storyboard.requires_capability;
+      const actual = resolveCapabilityPath(rawCaps, cap.path);
+      const unmetDetail = evaluateCapabilityPredicate(cap, actual);
+      if (unmetDetail !== null) {
         if (!options._client) await closeConnections(options.protocol);
-        return { ...buildCapabilityUnsupportedResult(agentUrls, storyboard, detail), notices: preflightNotices };
+        return {
+          ...buildCapabilityUnsupportedResult(agentUrls, storyboard, unmetDetail),
+          notices: preflightNotices,
+        };
       }
     }
   }
@@ -2128,10 +2201,12 @@ async function executeStoryboardPass(
             ...(r.error !== undefined && { error: r.error }),
           });
           // Issue #935: assertions can attach a structured hint that the
-          // runner mirrors into the owning step's `hints[]`. Today only
-          // `status.monotonic` populates `hint`; the merge here keeps the
-          // taxonomy unified so a single CLI/JUnit/Addie renderer can drive
-          // off `step.hints[]` regardless of which subsystem produced it.
+          // runner mirrors into the owning step's `hints[]`. Producers today
+          // include `status.monotonic` (monotonic_violation) and
+          // `impairment.coherence` (impairment_coherence_violation); the
+          // merge here keeps the taxonomy unified so a single CLI/JUnit/Addie
+          // renderer can drive off `step.hints[]` regardless of which
+          // subsystem produced it.
           if (r.hint) {
             const existing = result.hints ?? [];
             result.hints = [...existing, r.hint];
@@ -3421,6 +3496,55 @@ async function executeStep(
     payload: redactSecrets(request),
     ...(runState.agentUrl ? { url: runState.agentUrl } : {}),
   };
+
+  // AdCP 3.0.12 runner-output-contract `force_scenario_unsupported`: when a
+  // comply_test_controller step calls a force_* scenario that the agent
+  // advertises the controller for but does not implement, the agent returns
+  // `{success: false, error: 'UNKNOWN_SCENARIO'}`. Runners MUST grade the
+  // step `not_applicable` with detail `force_scenario_unsupported` BEFORE
+  // applying the step's authored validations — without this, the failing
+  // pass/fail check would mask the coverage gap as a real agent fault.
+  //
+  // Companion to `fixture_seed_unsupported` (seeding.ts) — same shape but
+  // for force_* in step phases rather than seed_* in the fixtures phase.
+  // Spec: compliance/cache/<ver>/universal/runner-output-contract.yaml >
+  // skip_result.reasons.force_scenario_unsupported.
+  //
+  // Spec gate "comply_test_controller advertised" is enforced upstream by
+  // the phase cascade at the `seedingMissingController` check (~line 1893);
+  // by the time per-step grading reaches this detector, the controller has
+  // already been confirmed present. The `step.task === 'comply_test_controller'`
+  // gate below is the per-step subset — it ensures we don't bleed the skip
+  // into other tools that happen to carry a `scenario` argument.
+  {
+    const controllerData = taskResult?.data as { success?: unknown; error?: unknown } | undefined;
+    const requestScenario = (request as { scenario?: unknown }).scenario;
+    if (
+      effectiveStep.task === 'comply_test_controller' &&
+      typeof requestScenario === 'string' &&
+      requestScenario.startsWith('force_') &&
+      controllerData?.success === false &&
+      controllerData.error === 'UNKNOWN_SCENARIO'
+    ) {
+      const next = getNextStepPreview(step.id, allSteps, context, runState.runnerVars);
+      const detail = `force_scenario_unsupported: agent advertised comply_test_controller but does not implement scenario "${requestScenario}"`;
+      return {
+        step_id: step.id,
+        phase_id: phaseId,
+        title: step.title,
+        task: step.task,
+        passed: true,
+        skipped: true,
+        skip_reason: 'force_scenario_unsupported',
+        skip: { reason: 'not_applicable', detail },
+        duration_ms: stepResult.duration_ms,
+        validations: [],
+        context,
+        next,
+        extraction: extractionFromTaskResult(taskResult),
+      };
+    }
+  }
 
   // Feature-unsupported or unknown-tool errors → treat as skip
   const isUnsupported = stepResult.error?.includes('does not support:');

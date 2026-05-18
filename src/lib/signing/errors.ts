@@ -82,6 +82,51 @@ export class WebhookSignatureError extends ADCPError {
 }
 
 /**
+ * Error codes for the RFC 9421 response-signing surface. Parallel to the
+ * request- and webhook-signing taxonomies. Verifier ships in #1826; signer
+ * gate (`*_key_purpose_invalid`) ships in #1825.
+ */
+export type ResponseSignatureErrorCode =
+  | 'response_signature_header_malformed'
+  | 'response_signature_params_incomplete'
+  | 'response_signature_tag_invalid'
+  | 'response_signature_alg_not_allowed'
+  | 'response_signature_window_invalid'
+  | 'response_signature_components_incomplete'
+  // `@target-uri` covered-component value failed syntactic validation (non-
+  // parseable URL, non-https scheme, userinfo present, fragment present).
+  // Distinct from `header_malformed`, which flags the `Signature` /
+  // `Signature-Input` headers themselves; this flags the covered URI.
+  | 'response_target_uri_malformed'
+  | 'response_signature_key_unknown'
+  // JWK has no `adcp_use` declared (or lacks the `verify` key_op). Kept
+  // distinct from `response_mode_mismatch` so operators can tell "key is not
+  // scoped at all" apart from "key is scoped for the wrong mode".
+  | 'response_signature_key_purpose_invalid'
+  // JWK declares `adcp_use` but for a different mode than response-signing
+  // (e.g. `request-signing`). Separate code from `key_purpose_invalid` so
+  // the remediation is clear: mint a new key scoped for `response-signing`
+  // rather than adding the purpose to an existing key.
+  | 'response_mode_mismatch'
+  | 'response_signature_key_revoked'
+  | 'response_signature_revocation_stale'
+  | 'response_signature_rate_abuse'
+  | 'response_signature_invalid'
+  | 'response_signature_digest_mismatch'
+  | 'response_signature_replayed';
+
+export class ResponseSignatureError extends ADCPError {
+  readonly code: ResponseSignatureErrorCode;
+  readonly failedStep: number;
+
+  constructor(code: ResponseSignatureErrorCode, failedStep: number, message: string, details?: unknown) {
+    super(message, details);
+    this.code = code;
+    this.failedStep = failedStep;
+  }
+}
+
+/**
  * SDK-side error codes for the `SigningProvider` integration path. Distinct
  * namespace from `RequestSignatureErrorCode` / `WebhookSignatureErrorCode`
  * because these surface during adapter setup, not during wire-level

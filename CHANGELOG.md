@@ -1,5 +1,947 @@
 # Changelog
 
+## 7.7.0
+
+### Minor Changes
+
+- b1b90c2: storyboard runner: add `array_length` check kind for cardinality assertions (#1830)
+
+  Cardinality scenarios can now assert "exactly N entries" directly:
+
+  ```yaml
+  - check: array_length
+    path: media_buys[0].impairments
+    value: 2
+    description: Exactly two impairments — one per rejected creative
+  ```
+
+  Range form is also supported (`min` / `max`, either or both, both inclusive):
+
+  ```yaml
+  - check: array_length
+    path: media_buys[0].impairments
+    min: 1
+    max: 1
+    description: Exactly one impairment
+  ```
+
+  The previous workaround (`field_present arr[N-1]` paired with
+  `field_value_or_absent arr[N] value: null`) is unsound for cardinality: the
+  `field_value_or_absent` clause passes when a seller emits a literal `null`
+  pad at `arr[N]`. `array_length` reads `array.length` directly and rejects
+  non-array resolutions, so a `null` pad fails the check as it should.
+
+  Specifying both `value` and `min`/`max` is rejected as a misconfigured
+  check. Specifying none of the three is also rejected. Resolved-path-is-not-an-array
+  fails with a type error rather than passing silently.
+
+  Follow-up to adcontextprotocol/adcp#4685 protocol review; spec-side YAML
+  schema addition tracked separately.
+
+- 0a90796: Add `force.audience_status` and `force.catalog_item_status` slots to `ComplyControllerConfig` (issue #1819).
+
+  Adopters wiring `comply_test_controller` through `createComplyController` now have a registration slot for the two resource families that previously forced hand-rolled dispatchers — audience-sync (`forceAudienceStatus`) and catalog-driven seller (`forceCatalogItemStatus`). Both are exposed via the same domain-grouped `force` block as the existing creative/account/media-buy/session slots, and the underlying `TestControllerStore` interface gains matching optional methods so flat-store callers can opt in the same way.
+
+  The new scenarios (`force_audience_status`, `force_catalog_item_status`) are treated as extension scenarios — accepted by the dispatcher under `TOOL_INPUT_SHAPE.scenario: z.string()` and advertised via `list_scenarios` when the adapter is registered, but not yet members of `CONTROLLER_SCENARIOS` because the schema cache's `ListScenariosSuccess['scenarios']` union hasn't picked them up. Same pattern as `query_upstream_traffic`. Status values validate against the spec-shipped `AudienceStatusSchema` / `CatalogItemStatusSchema`, so when adcp#2860's offline values (`suspended` / `withdrawn`) land in the spec and codegen reruns, the new transitions flow through with no further SDK change.
+
+  Purely additive — existing adopters keep working without modification.
+
+- b64728a: storyboard runner: add `contains:` matcher to `requires_capability` gates (#1817)
+
+  Storyboards can now gate on array-membership for capabilities whose declaration
+  shape is an array of allowed values:
+
+  ```yaml
+  requires_capability:
+    path: media_buy.conversion_tracking.supported_targets
+    contains: 'per_ad_spend'
+  ```
+
+  Semantics: the value at `path` MUST be an array that includes `contains` via
+  strict equality (no coercion). Empty arrays, non-arrays, and absent fields all
+  skip the storyboard with `capability_unsupported` / `unsatisfied_contract` —
+  absence is load-bearing, matching `present: true`. The matcher accepts a
+  single primitive (string, number, boolean); the array form ("ALL listed
+  values present") is a follow-up only if a real consumer appears.
+
+  Unblocks `performance_buy_flow_roas` (gating on `supported_targets`
+  including `per_ad_spend`) and the `reach_buy_flow` / `clicks_buy_flow` /
+  `completed_views_buy_flow` family (gating on `supported_optimization_metrics`
+  once that capability lands upstream).
+
+  `equals:`, `present:`, and `contains:` remain mutually exclusive on a single
+  gate. Existing storyboards are unchanged.
+
+- dc532ec: signing: extend `SigningProvider` with optional `adcpUse` for async-path purpose binding (#1827)
+
+  Closes the asymmetry between sync and async signing paths flagged by the security + protocol reviews of #1823 / #1832. Sync helpers (`signRequest`, `signWebhook`, `signResponse`) refuse keys with wrong `adcp_use` via `assertKeyPurpose`. Async helpers (`signRequestAsync` / `signWebhookAsync` / `signResponseAsync`) could not enforce because `SigningProvider` exposed `keyid` + `algorithm` but no purpose binding — KMS adapters were unprotected against IAM-mistake cross-purpose reuse, the exact situation where signer-side defense-in-depth matters most.
+
+  ```ts
+  import { signResponseAsync } from '@adcp/sdk/signing/client';
+
+  const provider = new InMemorySigningProvider({
+    keyid: 'kid_42',
+    algorithm: 'ed25519',
+    privateKey: privateJwk,
+    adcpUse: 'response-signing', // NEW — enforced at the gate
+  });
+
+  await signResponseAsync(response, provider);
+  // Throws ResponseSignatureError('response_signature_key_purpose_invalid')
+  // if you call signRequestAsync or signWebhookAsync with this provider.
+  ```
+
+  **Optional and backward-compatible.** Providers that omit `adcpUse` skip the gate — no breakage for adapters that pre-date this field. Adapter authors who want defense-in-depth set it; the async helpers then enforce purpose binding parallel to the sync path with the same error codes (`*_signature_key_purpose_invalid` at step 8).
+
+  `InMemorySigningProvider` auto-inherits `adcpUse` from `privateKey.adcp_use` when present, so keys minted via `pemToAdcpJwk({ adcp_use: ... })` get the binding for free. Explicit `adcpUse` option on the provider constructor takes precedence — useful when the test key material doesn't match the helper being exercised.
+
+  9 new tests across all three async helpers covering match / mismatch / explicit-override paths.
+
+- 0ac47f7: signing: add `requestContextFromExpress` / `-Fetch` / `-Lambda` helpers (#1828)
+
+  Closes #1828. Makes the safe path the default path for constructing `ResponseLike.request` (and any other RFC 9421 binding that needs an originating-request URL) on each major Node platform.
+
+  The JSDoc warning on `ResponseLike.request.url` (shipped in #1823) flags the trap: under proxy termination, `req.protocol` lies and `req.get('host')` is attacker-controllable. JSDoc warnings rot. These helpers enforce the hardening at construction time.
+
+  ```ts
+  import { requestContextFromExpress, signResponse } from '@adcp/sdk/signing/client';
+
+  app.post('/adcp/get_products', (req, res) => {
+    const signed = signResponse(
+      {
+        status: 200,
+        headers: { 'content-type': 'application/json' },
+        body,
+        request: requestContextFromExpress(req, {
+          hostAllowlist: ['seller.example.com'],
+        }),
+      },
+      key
+    );
+    res.set(signed.headers).send(body);
+  });
+  ```
+
+  **Three helpers:**
+  - `requestContextFromExpress(req, options)` — throws when `Host` is missing / not in `hostAllowlist`, or when `req.protocol` is not `https` (unless `forceHttps: false` for local dev). **You MUST configure `app.set('trust proxy', ...)`** with your trusted proxy IPs; the helper trusts what Express tells it.
+  - `requestContextFromFetch(request)` — passes through `method` + `url` from a WHATWG `Request`. Trivial; included for API symmetry. No proxy hardening needed (Workers / Deno / Bun terminate TLS at the edge and own URL construction).
+  - `requestContextFromLambda(event, options)` — reads `requestContext.domainName` for authority, `rawPath` + `rawQueryString` (v2 / ALB) or `path` + `queryStringParameters` (v1) for the target. Always emits `https://` — Lambda isn't HTTP-addressable through API Gateway / ALB. `hostAllowlist` catches multi-tenant API Gateway misroutes.
+
+  Exported from both `@adcp/sdk/signing/client` (signer-side adopters) and `@adcp/sdk/signing/server` (verifier-side adopters reconstructing the originating-request URL for `verifyResponseSignature`).
+
+  18 tests covering happy path, host-allowlist enforcement, protocol enforcement, query-string preservation + URL encoding, and an end-to-end Express helper → `signResponse` → `verifyResponseSignature` round-trip.
+
+- 00b7b66: signing: add `signResponse` for RFC 9421 §2.2.9 response signing (#1822)
+
+  Rounds out the signing surface — `signRequest` (buyer→server), `signWebhook`
+  (server→receiver), and now `signResponse` (server→buyer) all share the same
+  prepare/finalize shape and `SigningProvider` async path.
+
+  ```ts
+  import { signResponse, type ResponseLike } from '@adcp/sdk/signing/client';
+
+  const response: ResponseLike = {
+    status: 200,
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ products: [...] }),
+    // Originating request — needed to bind @authority back to its origin.
+    request: { method: 'POST', url: 'https://seller.example.com/adcp/get_products' },
+  };
+
+  const signed = signResponse(response, key);
+  // signed.headers now carries Signature, Signature-Input, Content-Digest.
+  ```
+
+  Covered components default to `['@status', '@authority', '@target-uri']`,
+  plus `content-type` + `content-digest` automatically when the response
+  carries a body. `@target-uri` is in the defaults (not opt-in) so a
+  multi-tenant seller can't emit signatures interchangeable across endpoints
+  sharing the same authority — matches RFC 9421 §B.2.5 examples. Callers
+  that need to extend the covered set further (`@method`, custom headers)
+  opt in via `additionalComponents`.
+
+  **Asymmetry vs `signRequest`.** Response-signing defaults `coverContentDigest`
+  to `true` when the response has a body (opt-out); request-signing requires
+  an explicit `coverContentDigest: true` (opt-in). The asymmetry is deliberate:
+  an unbound response body is the most common cross-purpose footgun for
+  response signing (attacker can swap payload but keep headers + signature).
+  Webhook signing also forces content-digest unconditionally for the same
+  reason.
+
+  Async + KMS-shaped path: `signResponseAsync(response, provider)` delegates the
+  crypto to the existing `SigningProvider` interface; the prepare/finalize split
+  (`prepareResponseSignature` / `finalizeResponseSignature`) is exported for
+  callers that need to hand the canonical base to an external signer.
+
+  Tag: `adcp/response-signing/v1`. **Wire-format contract is provisional**
+  until `verifyResponseSignature` (follow-up) lands and is exercised against
+  external SDK implementations. The `v1` suffix gives a clean break path —
+  any breaking change ships as `v2` and verifiers reject `v1`. Adopters
+  shipping signed responses today should pin a major SDK version. `AdcpUse`
+  extended with `'response-signing'` so JWK metadata can declare the binding
+  now.
+
+  **Note on `AdcpUse` widening:** the `AdcpUse` union now includes
+  `'response-signing'`. Consumers with exhaustive `switch (use)` blocks
+  backed by `never` checks will need to add a `case 'response-signing':`
+  arm. Pragmatically a minor bump — the runtime surface is purely additive
+  and no existing call site changes — but exhaustive narrowers must opt-in
+  to handle the new member.
+
+  **Signer-side `adcp_use` purpose binding (closes #1825).** All three sync
+  signer entry points now refuse keys whose `adcp_use` doesn't match the
+  helper:
+  - `signRequest` requires `adcp_use: 'request-signing'`
+  - `signWebhook` requires `adcp_use: 'webhook-signing'`
+  - `signResponse` requires `adcp_use: 'response-signing'`
+
+  Mismatch (including a missing `adcp_use`) throws at the signer with the
+  same error code the verifier raises at step 8 (`*_signature_key_purpose_invalid`),
+  so misconfiguration surfaces at configuration time rather than at the
+  receiver. Production callers using `pemToAdcpJwk({ adcp_use: ... })` to
+  mint keys are already correct by construction; anyone reusing a key
+  across purposes will get a clear remediation message.
+
+  Test-vector authors that need to _deliberately_ sign with a wrong-purpose
+  key (e.g. AdCP negative-vector 009 cross-purpose rejection) can compose
+  the lower-level `prepareRequestSignature` + `finalizeRequestSignature`
+  helpers directly — those take a `SignatureIdentity` and skip the gate
+  because they're designed for KMS-shaped async paths where purpose
+  binding happens via the `SigningProvider`. The internal storyboard
+  builder uses this composition pattern; see
+  `src/lib/testing/storyboard/request-signing/builder.ts` for the
+  canonical shape.
+
+- da19a4a: signing: add `verifyResponseSignature` for RFC 9421 §2.2.9 response verification (#1826)
+
+  Closes out the response-signing direction. `signResponse` (shipped in #1823)
+  emits the signed payload; `verifyResponseSignature` consumes it. Buyer
+  clients can now verify a seller's signed response before parsing the body
+  without reimplementing ~200 LOC of canonicalization.
+
+  ```ts
+  import { verifyResponseSignature, StaticJwksResolver } from '@adcp/sdk/signing/server';
+
+  const result = await verifyResponseSignature(
+    {
+      status: 200,
+      headers: response.headers,
+      body: await response.text(),
+      request: { method: 'POST', url: 'https://seller.example.com/adcp/get_products' },
+    },
+    {
+      jwks: new StaticJwksResolver(sellerJwks),
+      replayStore: new InMemoryReplayStore(),
+      revocationStore: new InMemoryRevocationStore(),
+    }
+  );
+  // result.status === 'verified', result.keyid === '<kid>'
+  ```
+
+  13-step checklist mirroring `verifyWebhookSignature`:
+  1. Both signature headers present + parseable
+  2. Required params (`created`, `expires`, `nonce`, `keyid`, `alg`, `tag`)
+  3. Tag match (`adcp/response-signing/v1`, override via `requiredTag`)
+  4. Alg allowlist (Ed25519, ECDSA-P256-SHA256)
+  5. Window validity (expired / negative-window / future-created folded to
+     `response_signature_window_invalid`)
+  6. Covered components include `RESPONSE_MANDATORY_COMPONENTS` (`@status`,
+     `@authority`, `@target-uri`); `content-digest` required when body present
+     6a. `@target-uri` syntactic validation against the originating-request URL
+     (rejects non-https / userinfo / fragment; loopback hosts exempt for
+     local mock-server testing)
+  7. JWKS resolution by `keyid`
+  8. Key purpose — `adcp_use: 'response-signing'` + `verify` key_op. Split:
+     missing/unscoped → `response_signature_key_purpose_invalid`; declared
+     but wrong → `response_mode_mismatch`
+  9. Revocation
+     9a. Per-keyid rate abuse
+  10. Cryptographic verify (uses `buildResponseSignatureBase` + verbatim
+      `signatureParamsValue` for cross-SDK byte-identity)
+  11. Content-Digest recompute match
+  12. Replay-nonce commit AFTER every earlier step passes — external traffic
+      can't grow the replay cap because failed signatures don't reach commit
+
+  Same ordering invariants as the request and webhook verifiers (cheap
+  checks before JWKS resolution; revocation + rate-abuse before crypto;
+  replay commit last). Same security posture, same store semantics
+  (`InMemoryReplayStore` for single-process; pass an explicit shared store
+  for multi-replica).
+
+  `createResponseVerifier(options)` factory returns a bound verifier with
+  shared replay / revocation stores — call it once at wire-up and reuse for
+  every inbound response.
+
+  **Error codes added** (`ResponseSignatureErrorCode`):
+  `response_signature_header_malformed`, `response_signature_params_incomplete`,
+  `response_signature_tag_invalid`, `response_signature_alg_not_allowed`,
+  `response_signature_window_invalid`, `response_signature_components_incomplete`,
+  `response_target_uri_malformed`, `response_signature_key_unknown`,
+  `response_signature_key_purpose_invalid` (already shipped in #1825),
+  `response_mode_mismatch`, `response_signature_key_revoked`,
+  `response_signature_revocation_stale`, `response_signature_rate_abuse`,
+  `response_signature_invalid`, `response_signature_digest_mismatch`,
+  `response_signature_replayed`.
+
+  Same shape as `WebhookSignatureErrorCode` so adopters who already handle
+  the webhook taxonomy get muscle memory.
+
+### Patch Changes
+
+- 474197b: test(signing): backfill negative-step coverage on response + webhook verifier tests (#1834)
+
+  Code review on #1832 flagged that the verifier test suites ship without negative tests for several documented steps. Adding them keeps the test surface aligned with the verifier's documented behavior:
+  - **Step 2** `*_signature_params_incomplete` — missing `created` / `expires` / `nonce` / `keyid` / `alg` / `tag` (6 tests per verifier).
+  - **Step 4** `*_signature_alg_not_allowed` — non-allowlisted alg (e.g. `hs256`).
+  - **Step 7** kid mismatch — JWKS resolver returns a JWK whose `kid` disagrees with the requested keyid (a misbehaving resolver tripwire).
+  - **Step 9** `*_signature_revocation_stale` — `RequestSignatureError('request_signature_revocation_stale')` thrown by the revocation store re-maps to the per-verifier taxonomy.
+  - **Step 9a + 13** `*_signature_rate_abuse` — both the `isCapHit` pre-check phase AND the commit-phase `rate_abuse` return.
+  - **Step 13** commit-phase `*_signature_replayed` — separate from the pre-check (step 12) which the existing happy-path test already covers via repeat-calls.
+
+  Also strengthens `agentUrlForKeyid` to assert the resolver was called with the resolved kid as argument (catches a bug where result attribution might pass the wrong identifier).
+
+  20 new tests on the response verifier, 12 on the webhook verifier. No behavior change — purely test coverage backfill.
+
+## 7.6.0
+
+### Minor Changes
+
+- 63c74fc: feat(testing): `AssertionResult.status` carries `'silent'` / `'pass'` / `'fail'` on observation-bearing invariants
+
+  `status.monotonic` and `impairment.coherence` now stamp `status: 'silent'` on the `onEnd` summary record when zero lifecycle resources were observed, and `status: 'pass'` once at least one was. Downstream renderers (the spec-side grader at adcp#2834, Addie, the CLI summary) can read this per-assertion enum directly rather than inferring from `observation_count === 0` — which had no first-class field to branch on.
+
+  The track-level `TrackStatus: 'silent'` rollup (`computeTrackStatus` in `storyboard-tracks.ts`) is unchanged; this fills in the per-assertion analog so wired-but-not-observed assertions don't render identically to real passes.
+
+  Additive: existing consumers that only read `passed` and `observation_count` keep working. Closes #1797.
+
+- 9d83fe3: feat(testing): register `impairment.coherence` storyboard assertion
+
+  Wires the cross-resource invariant defined in adcp#2859 (spec PR
+  adcontextprotocol/adcp#4601) into the SDK's storyboard runner. Without this
+  registration, storyboards that declare `invariants: [impairment.coherence]`
+  fail to load with an unregistered-assertion error — the immediate blocker
+  for the three creative-\* specialisms (`creative-ad-server`, `creative-template`,
+  `creative-generative`) that the spec PR deferred wiring on.
+
+  The assertion checks three coherence rules over every run:
+  - **Forward.** Each entry in `media_buy.impairments[]` MUST reference a
+    resource whose last observed status is an offline value for its family
+    (audience → `suspended`, creative → `rejected`, catalog_item →
+    `withdrawn`, event_source → `insufficient`). Silent when the runner has
+    no observation for the referenced resource.
+  - **Inverse (creative).** Any creative the run transitioned to `rejected`
+    AND that is referenced by a non-terminal buy via
+    `packages[].creative_assignments[].creative_id` MUST appear in that
+    buy's `impairments[]`. Buys in `completed`, `canceled`, or `rejected`
+    status are exempt. Audience / catalog / event-source inverse coverage
+    is deferred until per-buy reference shapes stabilise (tracked in
+    adcp#2860).
+  - **Health-iff-impairments.** `media_buy.health == "impaired"` iff
+    `impairments[]` is non-empty. Silent when the seller omits `health`.
+
+  Registered with `default: true` so every storyboard inherits the check;
+  disable per-storyboard via `invariants: { disable: ['impairment.coherence'] }`.
+  Grades silent (no observations) on runs that never exercise both sides —
+  the spec issue's "not_applicable" carve-out for storyboards that don't
+  exercise the cross-resource path.
+
+  Adds a structured `ImpairmentCoherenceHint` (kind:
+  `impairment_coherence_violation`, discriminator `violation: 'forward' |
+'inverse' | 'health'`) to the `StoryboardStepHint` union so renderers can
+  branch on the violation shape without parsing prose.
+
+  Property-typed impairments grade silent — depublishing flows through
+  `brand.json` / `adagents.json` updates, not a resource-status enum the
+  runner can observe via task responses. The spec issue explicitly carves
+  this out.
+
+  Resource-status observations come from a dedicated extractor
+  (`extractImpairmentObservations`) keyed on `sync_creatives` /
+  `list_creatives`, `sync_audiences`, `sync_catalogs` / `list_catalogs`,
+  and `sync_event_sources` — independent of `status.monotonic` because
+  the new offline values (`suspended`, `withdrawn`, `insufficient`) sit
+  outside monotonic's transition graphs and would otherwise be invisible
+  to the forward rule. Disabling `status.monotonic` has no effect on this
+  assertion. Per-run scratch state is namespaced under
+  `ctx.state.impairmentCoherence` to avoid colliding with other
+  assertions that share the same context bag.
+
+  Health-iff check honors the spec's terminal-buy carve-out: skipped on
+  `completed` / `canceled` / `rejected` buys (where the seller may have
+  stopped tracking impairments) and on snapshots that omit `health`
+  entirely.
+
+  Follow-up: spec repo re-enables `impairment.coherence` wiring on
+  `creative-ad-server`, `creative-template`, and `creative-generative`
+  specialism yamls (deferred inline notes in adcp#4601).
+
+- 6b2b6eb: testing(impairment.coherence): emit `not_applicable` step result for deferred-inverse families
+
+  When a storyboard transitions an `audience`, `catalog_item`, or `event_source`
+  resource into its offline status (`suspended` / `withdrawn` / `insufficient`),
+  the runner now emits a step-level `AssertionResult` with `status: 'not_applicable'`
+  and a structured `ImpairmentCoherenceNotApplicableHint`:
+
+  ```ts
+  {
+    assertion_id: 'impairment.coherence',
+    status: 'not_applicable',
+    passed: true,
+    step_id: '<transition step>',
+    hint: {
+      kind: 'impairment_coherence_not_applicable',
+      violation: 'inverse',
+      reason: 'resource_traversal_deferred',
+      resource_type: 'audience' | 'catalog_item' | 'event_source',
+      resource_id: '<id>',
+      resource_status: '<offline value>',
+      resource_step_id: '<transition step>',
+      message: '... Tracked in adcontextprotocol/adcp#2860.',
+    },
+  }
+  ```
+
+  Before this change, the inverse-rule evaluator silently skipped these three
+  families (a storyboard that suspended an audience and read a buy missing it
+  from `impairments[]` would pass silently). The forward rule already grades
+  them and is unchanged; the inverse rule still defers to the larger
+  `adcp#2860` work, but the gap is now visible in run output instead of buried
+  in PR prose.
+
+  Single emission per `(resource_type, resource_id)` per run — re-syncs of an
+  already-offline resource don't re-fire. Recovery followed by a new offline
+  transition does re-fire. The existing `onEnd` run-level deferred-coverage
+  notice still emits the family-level aggregate.
+
+  API additions:
+  - `AssertionResult.status` gains `'not_applicable'` as a fourth value
+    (previously `'pass' | 'silent' | 'fail'`).
+  - New `ImpairmentCoherenceNotApplicableHint` member added to the
+    `StoryboardStepHint` discriminated union (`kind: 'impairment_coherence_not_applicable'`),
+    exported from `@adcp/sdk/testing`.
+
+  Closes adcp-client#1806. Inverse-rule coverage itself is still tracked by
+  adcontextprotocol/adcp#2860.
+
+- 71d1c78: feat(discovery): support compact `publisher_domains[]` form on `publisher_properties` selectors
+
+  Wires [adcontextprotocol/adcp#4504](https://github.com/adcontextprotocol/adcp/pull/4504)
+  into the SDK (adcp-client#1737). Each `publisher_properties[]` entry on an
+  `adagents.json` `authorized_agents[]` block can now carry **either**
+  `publisher_domain` (singular string, existing) **or** `publisher_domains`
+  (plural array, new) — mutually exclusive. The compact form is logically
+  equivalent to repeating the singular entry once per listed domain, and is
+  the canonical wire shape for managed networks that represent hundreds of
+  publishers under a single selector.
+
+  ### Type model
+
+  `PublisherPropertySelector` (in `src/lib/discovery/types.ts`) is now a
+  discriminated union of `SinglePublisherPropertySelector` and
+  `CompactPublisherPropertySelector`. `'by_id'` is intentionally excluded
+  from the compact form — property IDs are publisher-scoped, so fan-out has
+  no defined semantics there.
+
+  ### Parser + fanout helpers
+
+  `src/lib/discovery/publisher-property-selector.ts` exports:
+  - `parsePublisherPropertySelector(raw)` — strict witness validator.
+    Rejects XOR violations (both/neither), `by_id` + `publisher_domains`,
+    empty / non-string-array compact lists, mixed-case domains (the spec
+    pattern requires lowercase), in-list duplicates, control characters
+    / whitespace in domain strings, and lists longer than
+    `MAX_PUBLISHER_DOMAINS_PER_SELECTOR` (50,000 — ~7× headroom over
+    Raptive's 6,800). Throws `PublisherPropertySelectorParseError` with
+    a typed `code` for each failure mode.
+  - `expandPublisherPropertySelector(selector)` — fans a compact entry
+    out to N singular entries. Hardened type guard: returns `[]` (not
+    per-char fanout, not silent coercion) when `publisher_domains` is a
+    non-array, when a singular `publisher_domain` is missing/wrong-type,
+    or when entries contain control chars. Lowercase + dedupe inside the
+    fanout is the indexing backstop; the strict validator is on
+    `parsePublisherPropertySelector`.
+  - `expandPublisherPropertySelectors(selectors)` — array variant.
+  - `isCompactPublisherPropertySelector(selector)` — type guard, hardened
+    to require a non-empty `string[]` (rejects malformed counterparty input).
+  - `publisherDomainsCoveredBySelectors(selectors)` — returns the lowercased
+    set of every publisher addressed across both shapes; filters domains
+    with control chars. Suitable for `managerdomain` explicit-scoping
+    safety checks (when those land).
+  - `isDomainStringValid(value)` — runtime guard exported for adopters
+    mirroring the same control-char / length checks ahead of their own
+    indexing.
+
+  ### Wired into existing indexers
+  - `resolveAgentProperties` now exposes both `cross_publisher` (wire shape,
+    compact preserved) and `cross_publisher_expanded` (singular only).
+    Callers that index by `publisher_domain` should iterate the expanded
+    array — without it, compact entries silently disappear from per-publisher
+    indices.
+  - `listAgentPropertyMap` exposes per-agent `selectors` + `expanded` for
+    the same reason.
+  - `seed-merge` overlays compact-form `publisher_properties[]` entries by
+    the sorted-domain-list + `selection_type` composite key (case-insensitive,
+    order-insensitive), so a re-seeded compact selector overlays its
+    counterpart instead of duplicating.
+
+  ### Codegen preprocessor
+
+  Extended `scripts/generate-types.ts` to strip `allOf` members shaped
+  `{ anyOf: [{required: [A]}, {required: [B]}] }` before handing schemas
+  to `json-schema-to-typescript`. This is the canonical JSON-Schema XOR-via-
+  required idiom; without stripping, jsts emits property-doubled intersections
+  that confuse downstream `ts-to-zod`. Ajv still enforces the constraint at
+  runtime against the unstripped schema. Same precedent as the existing
+  `not` and `if/then/else` strippers.
+
+  ### Schema version note
+
+  The compact form merged to adcp `main` on 2026-05-14 and currently lives
+  only at `/schemas/latest/`. No tagged AdCP version (3.0.11, 3.0.12) ships
+  it yet — the SDK's hand-authored discovery types are ready for whichever
+  patch cuts next, and the generated types will pick up the new shape via
+  `npm run sync-schemas` once the version cut happens.
+
+- 0948e3d: feat(storyboard): add `present:` matcher to `requires_capability` gates
+
+  Extends the storyboard runner's `requires_capability` predicate with a
+  presence-only matcher for spec capabilities whose contract is "presence
+  of this object indicates support" — adcp-client#1811.
+
+  The motivating case is `media_buy.conversion_tracking`, which the spec
+  defines as:
+
+  > Seller-level conversion tracking capabilities. Presence of this object
+  > indicates the seller supports sync_event_sources and log_event for
+  > conversion event tracking.
+
+  There is no boolean to test with `equals`. Sub-properties like
+  `multi_source_event_dedup` or `supported_event_types` are not faithful
+  proxies for the presence signal. The same shape will appear for future
+  capability surfaces that the spec defines as "presence means support."
+
+  New form (mutually exclusive with `equals:` on a single gate):
+
+  ```yaml
+  requires_capability:
+    path: media_buy.conversion_tracking
+    present: true
+  ```
+
+  Semantics:
+  - `present: true` — the value at `path` MUST exist (non-null,
+    non-undefined). Empty object `{}` counts as present (the spec's
+    presence-is-the-signal contract). Absent fields skip the storyboard
+    with `skip_reason: 'capability_unsupported'`. This DIFFERS from
+    `equals:` absence semantics — for presence matchers, silence IS the
+    spec-defined opt-out, so a missing field is not_applicable rather
+    than a coverage gap.
+  - `present: false` — the value at `path` MUST NOT exist. Useful for
+    scenarios that only apply to agents that explicitly do NOT advertise
+    a capability.
+
+  Existing `equals:` scenarios are unchanged; the discriminator is the
+  presence of `equals` vs `present` on the gate object. TypeScript
+  authors get a discriminated union that enforces mutual exclusion at
+  type level.
+
+  The predicate logic is factored into a new exported helper
+  `evaluateCapabilityPredicate(predicate, actual): string | null` so the
+  matcher semantics can be unit-tested directly without a full
+  `runStoryboard()` roundtrip.
+
+  Concrete consumer (filed under adcp#4569): a
+  `media_buy_seller/performance_buy_flow` scenario that gates on
+  `media_buy.conversion_tracking` and exercises the end-to-end
+  event-source → buy → log → attributed delivery flow.
+
+- 63c74fc: feat: bump ADCP_VERSION to 3.0.12 + wire comply_controller_mode_gate denial storyboard
+
+  Adopts the new universal storyboard from adcp#4028 (the live-mode `comply_test_controller` denial gate) as a graded path on `hello_seller_adapter_guaranteed`. The bump unblocks the storyboard end-to-end against framework-gated sellers; the SDK changes below close the wire-level gaps that surfaced during integration.
+  - **Schema cache:** `ADCP_VERSION` 3.0.11 → 3.0.12; `npm run sync-schemas` pulls the new universal storyboard (`comply-controller-mode-gate.yaml`) and test-kit (`acme-outdoor-live.yaml`).
+  - **Framework gate echoes context/ext on FORBIDDEN refusal** (`src/lib/server/decisioning/runtime/from-platform.ts`). The `comply_test_controller` live-mode gate previously dropped the request's `context` and `ext` on refusal; the denial storyboard asserts `context.correlation_id` round-trips, so the gate now mirrors them onto the ControllerError envelope.
+  - **`rawMcpProbe` parses Streamable-HTTP MCP SSE responses** (`src/lib/testing/storyboard/probes.ts`). Strict MCP servers (the official SDK and `createAdcpServer`) require clients to advertise `Accept: application/json, text/event-stream` and respond to `tools/call` with a single SSE `event: message` whose `data:` line is the JSON-RPC envelope. The probe now sends both `Accept` values and parses the first `data:` line when the response is `text/event-stream`. Storyboards that set `step.auth` (and therefore route through the raw probe) now grade against Streamable-HTTP MCP servers; the previous JSON-only behavior 406'd silently.
+  - **`adcp storyboard run --test-kit PATH`** (`bin/adcp.js`). Loads a test-kit YAML and threads it into `runStoryboard` / `runFullAssessment`'s `options.test_kit`, so storyboard steps with `auth.from_test_kit: true` or `$test_kit.<path>` references resolve from the CLI.
+  - **Worked example wires the live-mode probe principal** (`examples/hello_seller_adapter_guaranteed.ts`). Registers `demo-acme-outdoor-live-v1` as a second bearer; the resolver stamps `mode: 'live'` when that token authenticates the request, triggering the framework gate's `FORBIDDEN` refusal.
+  - **CI gate added** (`test/examples/hello-seller-adapter-guaranteed.test.js`, helper `_helpers/runHelloAdapterGates.js`). `extraStoryboards` parameter on the gate helper runs the denial storyboard against the same agent process. The denial gate fails closed if the framework regresses on the gate, the context echo, or the SSE probe parsing.
+
+  Closes #1522.
+
+- fc04d31: feat(testing): runner detects `force_scenario_unsupported` per AdCP 3.0.12 runner-output-contract
+
+  When a `comply_test_controller` step targets a `force_*` scenario that the agent advertises the controller for but does not implement (response `{success: false, error: 'UNKNOWN_SCENARIO'}`), the runner now grades the step `not_applicable` with detail `force_scenario_unsupported` BEFORE applying the step's authored validations. Previously the step failed its declared `success: true` check and the coverage gap looked like a real agent fault.
+  - New `RunnerDetailedSkipReason` variant `force_scenario_unsupported` (`src/lib/testing/storyboard/types.ts`), mapped onto canonical `not_applicable` via `DETAILED_SKIP_TO_CANONICAL`.
+  - Detection in `src/lib/testing/storyboard/runner.ts` before the early-exit unsupported-tool skip path, keyed on the tuple `(step.task === 'comply_test_controller', resolved scenario starts with 'force_', response.success === false, response.error === 'UNKNOWN_SCENARIO')`.
+  - Companion to `fixture_seed_unsupported` (seeding.ts) — same shape but for `force_*` scenarios in step phases, not `seed_*` scenarios in the fixtures phase.
+
+  Spec source: `compliance/cache/3.0.12/universal/runner-output-contract.yaml` > `skip_result.reasons.force_scenario_unsupported`. Closes #1805.
+
+- b7cf5d6: feat(wire-version): release-precision pin support + wire validator + namespace
+
+  Three follow-ups surfaced during the expert review of #1807. Each is
+  small and additive; bundled here because they share the wire-version
+  helper surface.
+
+  **1. `resolveBundleKey` accepts release-precision pins** (e.g.
+  `'3.1-beta'`, `'3.1-beta.0'`). AdCP 3.1's `supported_versions`
+  capability field advertises versions in release-precision shape
+  (`["3.1-beta"]`), and a buyer reading that off the wire should be able
+  to construct a client pinned to it. Before this change,
+  `new AdcpClient({ adcpVersion: '3.1-beta' })` threw a
+  `ConfigurationError`. The fix extends the regex to accept
+  `MAJOR.MINOR-PRE` and updates `resolveSchemaRoot` to fuzzy-resolve
+  those keys to the highest cached prerelease directory whose own
+  release-precision form matches (so `'3.1-beta'` finds
+  `schemas/cache/3.1.0-beta.0/`, `'3.1-beta.0'` matches it exactly).
+
+  **2. `validateAdcpVersionWire(value)` — public wire-shape assertion.**
+  When you're constructing a request envelope by hand (storyboard
+  fixtures, conformance harnesses, custom transports) and want a clear
+  error rather than a downstream AJV pattern-mismatch from the seller.
+  The error message names `toReleasePrecisionWire` so the developer
+  knows which helper to call. Also wired as a defensive postcondition
+  in `buildVersionEnvelope` — should never throw in well-formed SDK
+  code, but if a future refactor breaks the normalization the assertion
+  fires with a helpful message.
+
+  **3. `wireVersion` namespace.** Groups the three helpers
+  (`isSupported`, `normalize`, `validate`) under a single barrel
+  export. As more wire-version helpers land they go here without
+  churning the top-level barrel. Top-level exports
+  (`bundleSupportsAdcpVersionField`, `toReleasePrecisionWire`,
+  `validateAdcpVersionWire`) are kept for back-compat — not deprecated,
+  just no longer the recommended entry point.
+
+  ```ts
+  // New preferred API:
+  import { wireVersion } from '@adcp/sdk';
+  const bundle = wireVersion.isSupported('3.1') ? '3.1' : '3.0';
+  const wire = wireVersion.normalize('3.1.0-beta.0'); // '3.1-beta.0'
+  wireVersion.validate(wire); // throws on non-spec shape, error names normalize()
+
+  // Still works:
+  import { bundleSupportsAdcpVersionField } from '@adcp/sdk';
+  ```
+
+### Patch Changes
+
+- 099e077: docs: align bridge framing with revised single-dimension certification model
+
+  Maintainer walked back the two-badge "proxy-seller vs state-local-seller" split from #1782 and proposed a single-dimension "Wire Conformance / Live Integration Verified" framing instead — every seller faces the same verifiability gap; the bridge is one of two mechanisms for closing the seed→read loop, not a special path for one seller class. This change folds the revised framing back into the JSDoc on `AdcpServerConfig.testController` and into `skills/build-seller-agent/SKILL.md`.
+
+  JSDoc (`src/lib/server/create-adcp-server.ts`):
+  - Removed the "only upstream-proxy sellers" framing as primary. Now reads as "pick by where your read handlers fetch from, not by seller class": handler reads from a store you control → don't wire the bridge; handler reads from a system you don't control → wire it.
+  - Replaced the implicit "proxy sellers are a category" prose with "either path earns wire-conformance credit; it is _not_ a separate certification category" — matches the unified framing.
+  - Cross-links unchanged.
+
+  Seller-agent skill (`skills/build-seller-agent/SKILL.md`):
+  - New "Test surfaces — making your agent verifiable without live credentials" section between "Validate locally" and "Deployment."
+  - Frames the verifiability gap as universal, names the two implementations (state-local store vs `TestControllerBridge`), explains the decision rule, and hedges on certification names while the badge model in #1782 settles.
+  - Calls out the `_bridge` marker's narrowed role: it tracks fixture-vs-upstream provenance per step, feeding live-integration eligibility, but is not itself a seller-class marker.
+
+  No SDK behavior change. The marker contract from #1786, the JSDoc trust-boundary section from #1787, and the construction-time dual-emit warn from #1788 all stay as-is — they correctly describe mechanism without committing to a certification taxonomy.
+
+- fc04d31: fix(client): `SingleAgentClient.fetchA2ACanonicalUrl()` now honors `transport.maxResponseBytes`
+
+  Closes the second A2A discovery DoS surface flagged by the security review on PR #1802. `fetchA2ACanonicalUrl` runs implicitly before every `executeTask` / `listTools` / `getAgentInfo` call against an A2A agent whose canonical URL hasn't been resolved yet. Until this fix it called native `fetch` without composing through `wrapFetchWithSizeLimit`, so a hostile vendor could ship a 5 GB agent-card body on first discovery to blow memory before any application-layer parsing ran.
+
+  Same fix shape as #1799 (`getAgentInfo`): wrap the `A2AClient.fromCardUrl` call and the deferred `agentCardPromise` read in `withResponseSizeLimit`, and route the auth-stamping `fetchImpl` through `wrapFetchWithSizeLimit` so the active ALS slot fires on the wire call.
+
+  Regression test at `test/unit/fetch-a2a-canonical-url-size-limit.test.js` aborts an oversized canonical-URL discovery with `ResponseTooLargeError`.
+
+  Closes #1804.
+
+- 63c74fc: fix(client): `SingleAgentClient.getAgentInfo()` now wraps `mcpClient.listTools()` and A2A `fromCardUrl` in `withResponseSizeLimit`
+
+  Prior to this fix, `getAgentInfo()` opened `transport.maxResponseBytes` dormant on the discovery path: the MCP `tools/list` body and the A2A `/.well-known/agent.json` fetch bypassed the ALS slot, so a hostile vendor could return arbitrarily large discovery payloads against a size-capped client. The cap now extends to:
+  - `mcpClient.listTools()` calls (both in-process and out-of-process paths) — wrapped in `withResponseSizeLimit` so the existing `connectMCP` size-limiter sees the active slot.
+  - `A2AClient.fromCardUrl` + the deferred `agentCardPromise` read — wrapped in `withResponseSizeLimit`. The auth-stamping fetchImpl is now composed through `wrapFetchWithSizeLimit` so the slot fires on the actual card fetch.
+
+  Regression test at `test/unit/get-agent-info-size-limit.test.js` aborts an oversized A2A card discovery with `ResponseTooLargeError`. Closes #1799.
+
+- a038d63: fix(sdk): re-export BrandJson and AdagentsJson types from main barrel
+
+  The `wellknown-schemas.generated.ts` module emits `BrandJson` / `AdagentsJson` (inferred types) and `BrandJsonSchema` / `AdagentsJsonSchema` (runtime Zod validators) for the brand.json and adagents.json well-known formats, but at 7.1.0–7.2.0 those exports were unreachable from `@adcp/sdk` — only `@adcp/sdk/types` and `@adcp/sdk/testing` carried them. Consumers doing `import type { BrandJson } from '@adcp/sdk'` (e.g. `adcontextprotocol/adcp` `server/src/types.ts:1`, see adcp#4604) failed with `TS2305: Module '"@adcp/sdk"' has no exported member 'BrandJson'`.
+
+  #1740 fixed this in the `src/lib/types/index.ts` sub-barrel and the main barrel picks it up transitively via `export * from './types'`. This change pins the contract explicitly at `src/lib/index.ts` so it is visible at the top-level public API surface and not dependent on the sub-barrel's wildcard re-export, plus adds a smoke test asserting both the runtime exports and the `.d.ts` type declarations resolve from `dist/lib/index.{js,d.ts}`.
+
+- 0490e1c: fix(protocols): normalize `adcp_version` to release-precision on the wire
+
+  The `adcp_version` envelope field added in AdCP 3.1 (spec PR
+  adcontextprotocol/adcp#3493) is constrained to release-precision strings
+  by `core/version-envelope.json`'s pattern `^\d+\.\d+(-[a-zA-Z0-9.-]+)?$`.
+  Full-semver bundle keys (`'3.1.0-beta.0'`) are explicitly NOT valid wire
+  values per the envelope schema's own normalization rule:
+
+  > SDKs that read full-semver values from bundle metadata MUST normalize
+  > to release-precision before emitting on the wire — meta-field values
+  > are NOT valid wire values.
+
+  Before this fix, `buildVersionEnvelope` emitted the bundle key verbatim
+  for prerelease pins. A 3.1.0-beta-pinned client would send
+  `adcp_version: "3.1.0-beta.0"`, which sellers AJV-reject with a pattern
+  mismatch. The bug was latent: today's `COMPATIBLE_ADCP_VERSIONS` doesn't
+  include any 3.1.x release, so no public-pin path could hit it — but a
+  caller manually overriding `adcpVersion` past the compat gate (or the
+  SDK's eventual 3.1 enablement) would silently break.
+
+  This change introduces `toReleasePrecisionWire(bundleKeyOrVersion)`:
+  - Stable bundle keys (`'3.0'`, `'3.1'`) pass through unchanged.
+  - Prerelease semver collapses the PATCH segment, preserving the
+    prerelease tag: `'3.1.0-beta.0'` → `'3.1-beta.0'`.
+  - Full stable semver collapses to minor: `'3.0.11'` → `'3.0'`.
+  - Legacy aliases (`'v3'`) pass through (they're gated out of the wire
+    field by `bundleSupportsAdcpVersionField` anyway).
+
+  `buildVersionEnvelope` now applies the normalizer at the single emit
+  site. The function is also exported publicly so adopters that hand-roll
+  their own wire envelopes (storyboard fixtures, conformance harnesses)
+  get the same shape the SDK emits.
+
+  Added `test/lib/adcp-version-release-precision.test.js` covering the
+  seven shape cases plus a cross-check that every non-legacy output
+  matches the spec's wire pattern.
+
+## 7.5.0
+
+### Minor Changes
+
+- 2c718a5: feat(testing): bake source coordinates into every `AdvisoryObservation` (#1746)
+
+  `AdvisoryObservation` gains a required `source: ObservationSource` field carrying the rule code and (when applicable) the storyboard/step coordinates that produced the finding. The discriminated-union shape covers the four ways the evaluator can fire:
+  - `storyboard_step` — observation tied to a specific step in a specific storyboard. Carries `storyboard_id` + `step_id`, so a triager can `grep` the storyboard YAML directly from the JSON report. Most evaluator advisories fall here (slow response, missing `valid_actions`, zero products, …).
+  - `storyboard` — observation aggregates across a storyboard's scenarios (e.g. the lifecycle scenario revealed missing pause/resume). Carries `storyboard_id` and the step that first surfaced the gap.
+  - `profile` — observation derived from the agent's discovered capability profile rather than any storyboard step (e.g. "agent declares v2", "agent does not implement `get_adcp_capabilities`"). No storyboard coordinates apply.
+  - `probe` — observation came from a network probe outside the storyboard pipeline (e.g. auth-failure detection on a 401 capability-discovery response). No storyboard coordinates apply.
+
+  Every emission site in `src/lib/testing/compliance/comply.ts` is populated: 17 sites in `collectObservations`, 4 in `complyImpl` (tool-discovery, capabilities-probe-error / -missing / no-supported-protocols), and 2 in `detectAuthRejection`. The regression test in `test/lib/comply-advisory-rule-source.test.js` exercises a representative cross-section of tracks and asserts every observation has a structurally-valid `source` (validates `kind`, `code`, and `storyboard_id` / `step_id` when the kind requires them). A future contributor adding a `observations.push({...})` without a `source` fails the build.
+
+  Text output gains a `↳ source: (code · storyboard_id/step_id)` line beneath each advisory; JSON output already includes the field by structural recursion. Triagers reading the report can jump straight to the storyboard YAML that fired the rule, closing the gap that #1736 surfaced (hard-coded `confirmed_at` / `revision` advisories that fired with no backing rule).
+
+  Type-only change for consumers reading the field; no runtime behavior change. The new `ObservationSource` type is exported from `@adcp/sdk/testing`.
+
+  Closes #1746.
+
+- 2c718a5: fix(testing): label canonical vs reference `TrackResult` views in `ComplianceResult` (#1674)
+
+  `ComplianceResult.tested_tracks` is a `.filter()` of `ComplianceResult.tracks` — every passing/failing/partial/silent track appears in both arrays as the same JS object reference. JSON output therefore serializes each scenario twice, which is structurally correct but visually identical to "the runner executed the scenario twice." Triagers grepping `--json` reports wasted multi-hour debug cycles on the false hypothesis (cf. #1658 — defensible hardening but filed on a wrong premise; salesagent#331 — closed as not-a-seller-bug after this duplication was identified as the real cause).
+
+  Conservative fix: every `TrackResult` now carries an optional `_view: 'canonical' | 'reference'` marker.
+  - `tracks[n]._view === 'canonical'` — the source of truth. Iterate this array for a deduplicated view.
+  - `tested_tracks[n]._view === 'reference'` — the filtered subset. Same scenarios as the canonical entry; the marker signals "this is a re-projection, not a re-run."
+
+  JSON consumers can dedupe with `result.tracks.flatMap(t => t.scenarios)` or filter on `_view === 'canonical'`. CI pipelines that want a dedupe-by-design surface should keep reading `buildComplianceSummary()` / `--summary-output` instead — those have always been the stable contract.
+
+  The duplication remains for back-compat. The breaking type-split that fully removes it — `TestedTrackEntry` without `scenarios`/`skipped_scenarios`, requiring consumer migration — is tracked at #1791, slated for bundling with the AdCP 3.1 adoption umbrella (#1580).
+
+  Both construction sites in `src/lib/testing/compliance/comply.ts` are updated (the main `complyImpl` path and `runWithDegradedProfile`). The marker is set via shallow copy on the `tested_tracks` side, preserving nested `scenarios` array reference identity (no deep clone — memory cost stays flat). Regression test `test/lib/comply-tested-tracks-view.test.js` pins the canonical/reference labeling, the shallow-copy invariant, and the documented dedup recipe.
+
+## 7.4.0
+
+### Minor Changes
+
+- bea09b9: feat(testing): stamp `_bridge` marker on responses augmented by the test-controller bridge (#1775)
+
+  When the `TestControllerBridge` merges seeded fixtures into a handler response, the framework now stamps a non-normative `_bridge: { callback, tool, merged_count }` field on `structuredContent` (mirrored to `content[0].text` when that body is JSON). This is the runner-visible signal that distinguishes _"this pass exercised the adopter's adapter against upstream"_ from _"this pass exercised wire conformance against fixture data merged by the SDK"_. Storyboard runners and compliance leaderboards read the marker to attribute bridge participation in run records — without it, a green storyboard step through fixture-merge reads identically to one that ran through a real adapter (the gap that widens fastest for walled-garden proxies, where it matters most).
+
+  Coverage: every bridge dispatch site emits the marker per-tool with the originating callback name, so runners can attribute participation at the `getSeededCreatives` / `getSeededMediaBuys` / etc. granularity — 19 sites across 16 callbacks (list + get pairs for `property_lists`, `collection_lists`, `content_standards` count twice). Append-merge tools stamp when the callback returned ≥ 1 valid entry; singleton-replace tools (`get_account_financials`, `get_brand_identity`, `si_get_offering`, `get_property_list`, `get_collection_list`, `get_content_standards`) stamp only when a seeded fixture actually matched the request id and replaced the handler payload. Marker absent on non-sandbox traffic and when the callback is omitted.
+
+  Schema safety: AdCP 3.0 response envelopes all set `additionalProperties: true` on the top level (verified across the 13 bridge-touching response schemas), and the underscore prefix advertises "internal / out-of-spec" to validators that round-trip unknown fields. The marker mirrors the established `stampReplayed` pattern (envelope + opportunistic text-body JSON mirror) so adopters who consume the L2 text body see the same envelope MCP does.
+
+  The new `BridgeMarker` type is exported from `src/lib/server/create-adcp-server.ts` for adopters who want to type-check marker reads. Public docs in [`docs/guides/VALIDATE-YOUR-AGENT.md`](./docs/guides/VALIDATE-YOUR-AGENT.md) explain how to interpret a bridge-augmented pass: wire conformance against fixture data, _not_ adapter-against-upstream health. Pair the conformance suite with a separate live-OAuth run before promoting an adapter to production.
+
+  Also drops three unreachable duplicate dispatch blocks (`get_brand_identity`, `get_rights`, `si_get_offering`) that were appended below the canonical chain — dead code in a continuous `else if` chain. No behavior change; only the first block ever fired.
+
+  Cross-repo coordination: the storyboard runner surfacing of this marker lives in [`adcontextprotocol/adcp`](https://github.com/adcontextprotocol/adcp); the leaderboard policy that consumes it is tracked in [`adcp-client#1782`](https://github.com/adcontextprotocol/adcp-client/issues/1782). The SDK side ships the signal; the consumer side is half of the contract and must follow.
+
+- 7c88567: feat(server): construction-time warn when `testController` is registered without an account resolver (#1784)
+
+  `createAdcpServer` now emits a one-shot construction-time warning when `config.testController` is present but neither `config.resolveAccount` nor `config.resolveAccountFromAuth` is configured. In that setup, the dispatch-time sandbox gate's account-side check has no teeth — the gate admits requests where `ctx.account === undefined`, so the only remaining check is buyer-supplied `account.sandbox` / `context.sandbox` on the request body, which is caller-controlled and not a trust boundary.
+
+  The warning **dual-emits** via `process.emitWarning(message, { type: 'AdcpServerConfigWarning', code: 'ADCP_BRIDGE_NO_RESOLVER' })` AND `logger.warn(message)`. The `process.emitWarning` channel writes to stderr by default so the signal is visible even when `logger` is the default `noopLogger` (the day-one case where the misconfig is most likely). The `logger.warn` channel routes the same signal through any adopter-configured logging pipeline. Storyboard runners that knowingly run without account scoping can silence via `node --no-warnings=ADCP_BRIDGE_NO_RESOLVER`.
+
+  **Warning-code convention** (established by this PR): `ADCP_*` prefix for any framework-emitted `process.emitWarning` code, scoped further by subsystem (`ADCP_BRIDGE_*` for `TestControllerBridge`-related, `ADCP_<subsystem>_*` for future). The `type` field stays consistent at `'AdcpServerConfigWarning'` for `createAdcpServer`-level misconfig signals so adopters can install one `process.on('warning')` handler that routes all framework warnings.
+
+  It's deliberately not a hard error: storyboard-runner deployments without account scoping are a legitimate and intentional configuration (the runner drives state directly, no buyer authentication path needed), and failing construction would break that case. The warning message tells storyboard runners they can ignore it.
+
+  The check gates on `resolveAccountFromAuth` as well as `resolveAccount`, so OAuth-passthrough setups (`createOAuthPassthroughResolver`, the canonical Shape-B adopter path) don't get a spurious warn — either resolver populates `ctx.account` at dispatch time and gives the gate its account-side teeth.
+
+  JSDoc on `TestControllerBridge` (in `test-controller-bridge.ts`) and on `AdcpServerConfig.testController` (in `create-adcp-server.ts` § "Security — trust boundary") already document the trust model from #1779 and #1786; this PR adds the runtime equivalent so the failure mode surfaces before an adopter discovers it from a security review or a misconfigured prod deployment.
+
+- 4348d51: feat(testing): brand-rights + SI seeded bridges (#1755 phase 4)
+
+  Extends `TestControllerBridge<TAccount>` with three opt-in callbacks so platform-proxy sellers can seed brand-rights and sponsored-intelligence fixtures into conformance storyboards without driving real upstream calls:
+  - `getSeededBrandIdentity(ctx) → GetBrandIdentitySuccess[]` — feeds `get_brand_identity` via singleton replace: pick by `request.brand_id` matching entry `brand_id`, replace the success body and preserve handler `context` / `ext` (framework-managed envelope fields, mirrors `replaceContentStandardsIfSeeded`). Unblocks the `brand-rights` storyboard identity-discovery phase.
+  - `getSeededRights(ctx) → GetRightsSuccess['rights'][number][]` — feeds `get_rights` via append-merge by `rights_id`, seeded wins on collision (mirrors `getSeededProducts` — `get_rights` is a discovery / search tool with an NL `query`, so the response carries an array; no `pagination` / `query_summary` blocks per AdCP 3.0.11). Unblocks the `brand-rights` storyboard rights-discovery phase.
+  - `getSeededSiOffering(ctx) → SIGetOfferingResponse[]` — feeds `si_get_offering` via singleton replace: pick by `request.offering_id` matching entry's nested `offering.offering_id`, replace the response body and preserve handler `context` / `ext`. Stateless lookup despite the broader SI flow being session-keyed: `si_get_offering` PRODUCES an `offering_token` for a future session but does not CONSUME one, so the singleton-replace pattern fits cleanly. Unblocks the `sponsored-intelligence` storyboard offering-lookup phase.
+
+  All three bridges follow the established triply-gated sandbox check (controller present + sandbox marker on request + resolved account is `sandbox: true` when `resolveAccount` produced one), seeded-wins collision precedent, warn-and-drop validation contract (never throws), and `context` / `ext` preservation policy on singleton replace. `BridgeFromSessionStoreOptions` gains matching `selectSeededBrandIdentity` / `selectSeededRights` / `selectSeededSiOffering` selectors.
+
+  The session-stateful SI tools (`si_initiate_session`, `si_send_message`, `si_terminate_session`) are intentionally NOT bridged — they consume session state that a static fixture can't honestly serve. The mutating brand-rights tools (`acquire_rights`, `update_rights`) are NOT bridged either — seeded read paths only, per phase 4 scope.
+
+- b7aed85: feat(testing): governance/property-lists/content-standards/collection-lists seeded bridges (#1755 phase 2)
+
+  Extends `TestControllerBridge<TAccount>` with three opt-in callbacks so platform-proxy sellers can seed governance-domain fixtures into conformance storyboards without driving real upstream calls. The same seeded array feeds the list AND get path for each entity:
+  - `getSeededPropertyLists(ctx) → PropertyList[]` — feeds both `list_property_lists` (append-merge by `list_id`, seeded wins on collision; updates `pagination.total_count` by the non-colliding seeded count) and `get_property_list` (singleton replace: pick by `request.list_id` matching entry `list_id`, replace the response's `list` field while preserving handler's `identifiers` / `pagination` / `resolved_at` / `cache_valid_until` / `coverage_gaps` / `context` / `ext`). Unblocks the `property-lists` and `governance-aware-seller` storyboards.
+  - `getSeededCollectionLists(ctx) → CollectionList[]` — feeds both `list_collection_lists` and `get_collection_list` with the same shape as property lists (dedup key `list_id`, identical envelope-preservation policy on singleton replace). Unblocks the `collection-lists` storyboard (program-level brand safety via IMDb/Gracenote/EIDR IDs).
+  - `getSeededContentStandards(ctx) → ContentStandards[]` — feeds both `list_content_standards` (success arm `standards: ContentStandards[]`, append-merge by `standards_id`, seeded wins on collision; `pagination.total_count` updates) and `get_content_standards` (singleton replace: pick by `standards_id` and replace the `ContentStandards` body while preserving handler's `context` and `ext` — both are framework-managed envelope fields per the spec, mirroring `replaceAccountFinancialsIfSeeded`'s framework-managed-envelope-fields-win policy). Unblocks the `content-standards` storyboard.
+
+  All three bridges follow the existing collision precedent (seeded wins) and the established triply-gated sandbox check (controller present + sandbox marker on request + resolved account is `sandbox: true` when `resolveAccount` produced one). `BridgeFromSessionStoreOptions` gains matching `selectSeededPropertyLists` / `selectSeededCollectionLists` / `selectSeededContentStandards` selectors.
+
+  `list_authorized_properties` was deliberately NOT added — that tool was removed from AdCP and replaced by the `get_adcp_capabilities` discovery path; no schema exists in `schemas/cache/3.0.11/`.
+
+- 22f5cd4: feat(testing): `getSeededMediaBuyDelivery` bridge callback + nit-test coverage on existing bridges (closes #1755 phase 1)
+
+  Adds a sixth opt-in callback to `TestControllerBridge<TAccount>` for the `get_media_buy_delivery` read path so platform-proxy sellers can seed delivery-snapshot fixtures into conformance storyboards without driving real measurement through the upstream adapter:
+  - `getSeededMediaBuyDelivery(ctx)` → merged into `get_media_buy_delivery` response (dedup by `media_buy_id`, **seeded wins on collision** — follows the established collision precedent set by `mergeSeededMediaBuys` / `mergeSeededCreatives` / `mergeSeededAccounts`: storyboards seed deliberately, so a seeded fixture for an existing `media_buy_id` is an explicit author override). Same sandbox + resolved-account + controller-present gating as the other bridges. `BridgeFromSessionStoreOptions` gains a matching `selectSeededMediaBuyDelivery` selector.
+
+  After the merge, `aggregated_totals` is recomputed from the merged per-delivery `totals` so `media_buy_count` / `impressions` / `spend` reflect the merged set (otherwise the response would be wire-incorrect). Policy:
+  - **Required sums** (`impressions`, `spend`, `media_buy_count`) always recompute.
+  - **Optional sums** (`clicks`, `completed_views`, `views`, `conversions`, `conversion_value`) recompute only when every merged delivery populates the field; partial population falls back to the handler's value (no silent under-counting).
+  - **Derived ratios** (`roas`, `completion_rate`, `cost_per_acquisition`) recompute only when both inputs recomputed AND divisor is non-zero (no `Infinity` / `NaN`).
+  - **Pass-through** (`reach`, `reach_unit`, `frequency`, `new_to_brand_rate`) keep the handler's value verbatim — not derivable from per-delivery `totals`.
+
+  Also adds regression coverage on the bridges that landed in `7.3.0`:
+  - `getSeededAccountFinancials` now has an explicit assertion that the resolved `ctx.account.account_id` wins over the request's `account.account_id` when both are present (so fixtures are interchangeable across `AccountReference` variants).
+  - `list_creatives` mixed-collision math has explicit coverage: when handler and bridge overlap partially, `query_summary.total_matching` grows only by the non-colliding subset (`+= newCount`, not `+= seededCount`).
+
+- eb0cede: feat(testing): signals/creative-delivery/creative-features seeded bridges (#1755 phase 3)
+
+  Extends `TestControllerBridge<TAccount>` with three opt-in callbacks so platform-proxy sellers can seed signals + creative read-path fixtures into conformance storyboards without driving real upstream calls:
+  - `getSeededSignals(ctx) → SeededSignal[]` — feeds `get_signals` (append-merge into `signals: SeededSignal[]`). Dedup key is canonical over the `signal_id` discriminated union: `${source}|${data_provider_domain|agent_url}|${id}` — catalog and agent signals with the same id remain distinct because their source discriminator differs. Works uniformly across `signal-marketplace` and `signal-owned` specialisms (one bridge, one dispatched tool; per-entry `signal_type` is the spec-level marketplace-vs-owned discriminator on the response side). No `pagination.total_count` mirror (`PaginationResponse` has none); no `query_summary` block (this tool doesn't carry one in 3.0.11). Validation drops entries with malformed or missing `signal_id` discriminators.
+  - `getSeededCreativeDelivery(ctx) → SeededCreativeDelivery[]` — feeds `get_creative_delivery` (append-merge into `creatives[]`, dedup by `creative_id`, seeded wins on collision). `pagination.total` (when set by the handler) updates by the count of new non-colliding seeded entries — the schema-correct field name on `GetCreativeDeliveryResponse` is `total` (distinct from `total_count` used on other list responses). No top-level aggregated-totals envelope to recompute on this response, unlike `get_media_buy_delivery`. Unblocks creative delivery readback storyboards across `creative-ad-server` / `creative-template` / `creative-generative`.
+  - `getSeededCreativeFeatures(ctx) → SeededCreativeFeature[]` — feeds `get_creative_features`. The response is a `oneOf` envelope: success arm carries `results: CreativeFeatureResult[]`, error arm carries `errors: Error[]`. When the handler returned the success arm, seeded `CreativeFeatureResult[]` merge into the `results` array (dedup by `feature_id`, seeded wins on collision); framework-managed envelope fields (`context`, `ext`, `detail_url`, `pricing_option_id`, `vendor_cost`, `currency`, `consumption`) round-trip from the handler verbatim — the bridge only augments per-feature evaluations. When the handler returned the error arm, the bridge is a no-op; the error envelope passes through unchanged. This is the first nested-array merge bridge (the seeded array merges into a property of the success arm, not the top-level response).
+
+  All three bridges follow the existing collision precedent (seeded wins) and the established triply-gated sandbox check (controller present + sandbox marker on request + resolved account is `sandbox: true` when `resolveAccount` produced one). `BridgeFromSessionStoreOptions` gains matching `selectSeededSignals` / `selectSeededCreativeDelivery` / `selectSeededCreativeFeatures` selectors.
+
+  `list_audiences` and `list_targeting_categories` were deliberately NOT added — neither tool exists in AdCP 3.0.11. Audience discovery is folded into `sync_audiences` (the discovery-only call omits the request `audiences` array but still returns `audiences[]`); targeting capabilities are surfaced via `get_adcp_capabilities`. No schemas exist for those names in `schemas/cache/3.0.11/`.
+
+- 7fe990c: fix(client): route synthetic-v2 sellers through the v2 adapter; expose `isSyntheticV2()` for retry policies
+
+  `requireSupportedMajor` (called by `requireV3ForMutations: true` before every mutating task) used to throw `VersionUnsupportedError(reason: 'synthetic')` when a seller's capabilities were synthesized from `tools/list` and the synthesized version was `'v2'` (no `get_adcp_capabilities` tool present). The throw blocked legitimate buyers from calling sellers that simply hadn't implemented the v3 discovery tool.
+
+  A compliant v3 seller would declare itself via `get_adcp_capabilities`. Absence of that declaration is now read as v2: the SDK emits a one-time per-client warning (`maybeWarnSyntheticV2`) explaining the routing decision and dispatches through the v2 wire-shape adapter.
+
+  New public method `SingleAgentClient.isSyntheticV2()` returns `true` when the seller's capabilities were synthesized and the version was inferred as v2. Retry frameworks should branch on this to tighten attempt caps and backoff for sellers whose idempotency-TTL guarantee can't be derived from declared capabilities. Adopters who need a hard "definitely-v3" gate can validate `(await client.getCapabilities())._synthetic === false` directly.
+
+  Synthetic-v3 behavior is unchanged (still accepts with `maybeWarnSyntheticV3`). Real declared-v2 sellers and real-v3-missing-idempotency-TTL sellers are still refused with their respective `VersionUnsupportedError` reasons. The `'synthetic'` member of `VersionUnsupportedReason` is retained for downstream consumers that construct the error; no SDK call site emits it.
+
+- 12e4a7f: feat(testing): per-tool seeded callbacks on `TestControllerBridge` for platform-proxy sellers (closes #1002)
+
+  `TestControllerBridge` previously exposed only `getSeededProducts`, leaving platform-proxy sellers (DSPs, walled gardens, retail-media networks) without a way to feed seeded fixtures into the read path of every other read tool — storyboard seeds against `seed_creative` / `seed_media_buy` were dead writes when the adapter proxied to upstream APIs.
+
+  Extends `TestControllerBridge<TAccount>` with five opt-in callbacks mirroring `getSeededProducts` (post-handler merge, sandbox + resolved-account + controller-present gating, warn-and-drop validation, never throws):
+  - `getSeededCreatives(ctx)` → merged into `list_creatives` (dedup by `creative_id`)
+  - `getSeededMediaBuys(ctx)` → merged into `get_media_buys` (dedup by `media_buy_id`)
+  - `getSeededAccounts(ctx)` → merged into `list_accounts` (dedup by `account_id`)
+  - `getSeededAccountFinancials(ctx)` → replaces `get_account_financials` envelope when seeded `account.account_id` matches the request (singleton response, replace semantics)
+  - `getSeededCreativeFormats(ctx)` → merged into `list_creative_formats` (dedup by canonical `format_id.agent_url|format_id.id`)
+
+  `BridgeFromSessionStoreOptions` gains matching `selectSeeded*` selectors so adopters wiring storyboards via the session-store pattern get all bridges in one helper. Per-tool callbacks are omitted from the returned bridge when no selector is provided.
+
+  Production traffic is unchanged: bridges run only on sandbox-flagged requests against a registered controller.
+
+- f24f6d0: fix(codegen): bridge JSON Schema validation constraints across the lossy TS → Zod hop
+
+  Generated Zod schemas now enforce the `minimum`, `maximum`, `minLength`, `maxLength`, `pattern`, and `format` keywords from the upstream JSON Schemas. Before this change, those keywords were silently lost during the `JSON Schema → TypeScript (json-schema-to-typescript) → Zod (ts-to-zod)` codegen because TypeScript can't carry a numeric range or a regex on a `number` / `string` field. The emitted Zod for `MediaBuy.revision` was `z.number().optional()` instead of `z.number().min(1).optional()`, so typed validators accepted constraint-violating values that Ajv (which loads the raw JSON Schema) correctly rejected.
+
+  The codegen now pre-processes each schema before it reaches `json-schema-to-typescript`, encoding each property's constraints into the JSDoc-bound `description` field as `@minimum` / `@maximum` / `@minLength` / `@maxLength` / `@pattern` / `@format` tags. `ts-to-zod` natively reads those JSDoc tags, so the constraints round-trip into `.min()` / `.max()` / `.regex()` / `.iso.datetime()` / `.email()` / etc. on the emitted Zod schemas. About 900 new validator chains land across `schemas.generated.ts` covering currency codes, ISO country codes, ISBN/IBAN/BIC patterns, RFC-conformant URLs, ISO-8601 timestamps, and numeric ranges (`revision >= 1`, `priority >= 1`, all monetary `total_budget`/`rate` >= 0, etc.).
+
+  Behavioral impact for adopters: typed SDK validators (`MediaBuySchema.parse(...)`, etc.) now reject inputs they previously silently accepted. This matches what real Ajv-driven server-side validation already did — the SDK no longer hands a typed buyer payload the wire would refuse. Adopters who relied on the looser typed validators to construct fixtures or intermediate stages will need to populate the constraint-valid values.
+
+  `exclusiveMinimum` / `exclusiveMaximum` are not injected (ts-to-zod has no exclusive variant); they continue to be enforced at runtime by Ajv against the unstripped schema. Pattern values containing newlines or unsupported `format` keywords (e.g. `iri-reference`) are likewise skipped — same Ajv fallback.
+
+  Fixes #1745.
+
+### Patch Changes
+
+- c02406a: fix(bridge): emit `logger.debug` when sandbox-gate rejects a sandbox-flagged request
+
+  When an adopter sets `account.sandbox: true` (or `context.sandbox: true`) on a request but the resolved `ctx.account` is explicitly `sandbox: false`, the dispatcher's `TestControllerBridge` gate rejects the merge silently. Adopters chasing "why aren't my fixtures showing in storyboards" had no diagnostic surface — the request looked sandbox-shaped but no fixtures appeared and no logs explained the gap. That was the #1 adopter support question after #1753 shipped.
+
+  Adds a single `logger.debug` line inside `src/lib/server/create-adcp-server.ts` covering all 13 dispatcher branches in one shot — the diagnostic fires after the request-sandbox check passes but before the resolved-account check. Production traffic (no sandbox marker on request) fails the first gate and never reaches this branch, so the log surface is dev-only.
+
+  Three regression tests verify: gate-mismatch fires `debug`; production traffic does not fire `debug`; gate-pass does not fire `debug` and merge proceeds normally.
+
+  Product-review-driven during the post-merge review of (now-closed) #1754.
+
+- 7a6a6c9: fix(bridge): `mergeSeededProductsIntoResponse` short-circuits on the Submitted arm
+
+  `get_products` formally permits an async Submitted arm in the AdCP 3.0.11 spec (`schemas/cache/3.0.11/media-buy/get-products-async-response-submitted.json`) for queued custom / bespoke product curation. When a handler returns `{ status: 'submitted', task_id, message? }`, the dispatcher's `isSubmittedEnvelope` predicate routes the response through `wrapSubmittedEnvelope` rather than the success-arm builder — but the `TestControllerBridge` merge runs after that wrap step, and without a guard `mergeSeededProductsIntoResponse` would spread `products: [...]` into the Submitted envelope, producing a `{ status: 'submitted', task_id, products: [...], sandbox: true }` hybrid that violates the wire schema (no Submitted arm carries a `products` field, and `sandbox: true` shouldn't stamp onto a tasking acknowledgement).
+
+  Detect the Submitted shape (`{ status: 'submitted', task_id: string }`) in the merge helper and return the handler response reference-equal so the dispatcher's existing skip-on-reference-equality wrap-avoidance kicks in. No other behavior change; sync success-arm responses merge exactly as before.
+
+  Scope is `get_products`-specific by design — none of the other 12 bridged read tools (`list_creatives`, `get_media_buys`, `get_media_buy_delivery`, `list_accounts`, `get_account_financials`, `list_creative_formats`, `list_property_lists`, `get_property_list`, `list_collection_lists`, `get_collection_list`, `list_content_standards`, `get_content_standards`, `get_signals`, `get_creative_delivery`, `get_creative_features`) have a formal Submitted arm in 3.0.11, so applying the same guard uniformly would defend against a spec violation the SDK should surface via response validation rather than silently route around.
+
+  Regression test in `test/lib/seed-get-products-wiring.test.js` verifies the bridge leaves a `{ status: 'submitted', task_id, message }` envelope unmodified — no `products` spread, no `sandbox` stamp.
+
+- cfa6a0f: docs(bridge): name `resolveAccount` as the trust boundary + multi-tenant keying as adopter responsibility
+
+  Adds two paragraphs to the top-of-file JSDoc on `src/lib/server/test-controller-bridge.ts`:
+  - **Scope of verification.** A storyboard pass through this bridge proves protocol conformance against fixture data — wire shape, error envelopes, idempotency, signed-request handling, sandbox stamping. It does **not** prove the seller's adapter against the real upstream platform works; that code path is bypassed by the post-handler merge. Sellers should pair this with a live-OAuth sandbox-runner to cover adapter health. Cross-references the runner-visible-bridge-marker ask at adcp-client#1775.
+  - **Adopter responsibilities.** Names two patterns the SDK can't enforce: (1) `resolveAccount` is the trust boundary — production bindings MUST configure it or the request-signal check (`account.sandbox === true` OR `context.sandbox === true`) is the only line of defense, because the dispatcher gate falls through to permissive when `ctx.account === undefined`; (2) multi-tenant keying is the adopter's job — callbacks must key their fixture store on `ctx.account` and the SDK does no defensive cross-check between fixture-entry account IDs and the resolved `ctx.account`.
+
+  No code change. Security-review-driven (4 of 4 experts during PR #1754 post-merge review flagged the missing public-surface warning).
+
+- 098f497: docs(server): clarify `testController` JSDoc — bridge is for upstream-proxy sellers only
+
+  JSDoc on `AdcpServerConfig.testController` now names the audience explicitly: the bridge is **test mode's adapter for upstream-proxy sellers** (DSPs proxying to Meta/Snap/TikTok, retail-media networks reading retailer catalogs, signals agents brokering third-party data marketplaces). State-local sellers (most SSPs, most creative agents) shouldn't wire it — `comply_test_controller` alone covers them because the seed→read loop closes locally. Cross-links the upstream taxonomy proposal at [`adcontextprotocol/adcp#4593`](https://github.com/adcontextprotocol/adcp/issues/4593) and the leaderboard policy at [`adcp-client#1782`](https://github.com/adcontextprotocol/adcp-client/issues/1782).
+
+  Also collapses a duplicate trust-boundary blurb (added by #1779 alongside the security-review note in #1786) into a single coherent section.
+
+- c867257: fix(ci): run `packages/eslint-plugin/` tests as part of root `npm test` (#1766)
+
+  The root `npm test` script now invokes `npm test --workspaces --if-present` after the SDK tests, so CI's `Test & Build` step (which runs `npm test`) exercises the ESLint plugin's rule tests. Plugin tests landed in PR #1762 but weren't running in CI, so plugin regressions could land on main silently.
+
+  `--workspaces --if-present` is forward-compatible: any future workspace under `packages/*` that adds a `test` script is automatically picked up. `packages/client-shim` has no `test` script and is skipped (no behavior change there).
+
+- 98b52eb: fix(codegen): pre-merge `allOf: [{ $ref }]` siblings into parent shape (#1756)
+
+  `json-schema-to-typescript` mishandles JSON Schema objects that combine `properties` / `required` at their own level with an `allOf: [{ $ref }]` sibling — instead of emitting `BaseFields & { variant-specific }` it emits a broken union `( BaseFields | { variant-specific + duplicated base fields } )`. This is most visible inside `oneOf` discriminator variants, where the success arm of `get_content_standards` collapsed to bare `ContentStandards`, silently dropping the variant's own `context` and `ext` fields.
+
+  `enforceStrictSchema` now pre-merges any `allOf` member that is a single `$ref` into the parent schema when the parent already declares its own `properties` / `required` — variant-level fields win on collision, and the base schema's `additionalProperties` is inherited only when the variant didn't override it. Refs we can't resolve through the cache (local `#/$defs/...` fragments, missing schemas) are left in place for jsts to handle as before. The `vendor-pricing-option`-style schemas — allOf-only at root, no sibling properties — are intentionally untouched.
+
+  Side effects on existing emitted types:
+  - `BriefAsset` and `CatalogAsset` change from `CreativeBrief & { asset_type: 'brief' }` / `Catalog & { asset_type: 'catalog' }` aliases to flat interfaces with the merged shape. Field set is identical; the named base reference is gone. Tracked as option 2 in the adcp#4510 acceptance criteria.
+  - `GetContentStandardsResponse` success variant now correctly includes its own `context?` and `ext?` fields alongside the merged `ContentStandards` shape (the bug this PR fixes).
+  - `CreativeBrief` is no longer transitively pulled into `tools.generated.ts` (it's still emitted in `core.generated.ts`); `src/lib/index.ts` re-exports it from `core.generated` instead.
+
+  Unblocks adcp#4510 (schema dedup spike), which the spec team reverted on the bug surfaced by this codegen path.
+
+- 286716b: fix(codegen): guard `generate-wire-spec-fields` against fresh-clone empty cache
+
+  When `schemas/cache/` is gitignored and not yet downloaded (e.g. fresh clone before `npm run sync-schemas`), the codegen previously overwrote the committed `src/lib/server/wire-spec-fields.generated.ts` with an empty stub, breaking `tsc` for every consuming module until the dev manually re-synced. The script now detects the empty-cache + pre-existing-non-empty-output case and leaves the committed file unchanged, with a console line explaining the skip.
+
+  No runtime behavior change; build-time only.
+
+- 68dacf2: chore(eslint-plugin): bump `@adcp/sdk` dep range to `^7.3.0` (#1768)
+
+  `packages/eslint-plugin/package.json` declared `"@adcp/sdk": "^7.1.0"` while the CLI workspace already declared `^7.3.0`. The plugin's range now matches so both workspaces resolve against the same minor and lockfile syncs no longer surface an apparent downgrade. No behavior change.
+
+- 8f3511d: Add a server-side guard that fails fast when forked adapter examples still contain `.example` tenant domains outside test or development.
+- 09ff76b: docs(client): note hostile-peer SSE bypass on `maxResponseBytes` (#1757)
+- db59a53: feat(registry): add `scope` narrowing filter to `lookupOperator` (#1769, adcp#4581)
+
+  `RegistryClient.lookupOperator(domain, opts?)` now accepts an optional `{ scope?: 'public' | 'member' | 'private' | 'all' }` argument that maps 1:1 to the server's `?scope=` query param. `scope` is a **narrowing filter** — it never widens the view beyond what the caller's auth would otherwise return.
+  - `'public'` — only `visibility=public`. Anonymous-equivalent view; useful for pre-sign-in pickers driven by an admin-tier API key whose only purpose is rate-limit + audit attribution.
+  - `'member'` — public + `members_only`. `members_only` requires API tier; anonymous / explorer-tier callers silently fall through to public-only (no 403). Note: the bucket name `'member'` is distinct from the underlying `visibility: 'members_only'` enum literal.
+  - `'private'` — only `visibility=private`. Profile-owner only; non-owners get an empty agents array rather than 403.
+  - omitted / `'all'` — tier-aware union (public + members_only when authorized + owner's private). Preserves historical behavior.
+
+  Older AAO servers that predate this enum will silently ignore unknown `?scope=` values and return the historical tier-aware union, so passing `'public'` against an older server does NOT enforce the public-only view client-side.
+
+  `lookupPublisher` does not accept `scope`: the spec's PR (adcp#4581) widens only `/api/registry/operator`, and the publisher endpoint has no visibility-tier semantics today. The option will be added in lockstep with a spec PR if and when publisher visibility filtering lands.
+
+- ba56164: fix(client): pass `text/event-stream` responses through `enforceSizeLimit` (#1176)
+
+  The response-body byte cap was designed for one-shot JSON discovery responses
+  (`get_adcp_capabilities`, agent-card lookup). SSE responses legitimately stream
+  N status frames + a final result frame whose cumulative bytes can exceed any
+  reasonable cap, but each frame is bounded by protocol-level framing. Bypass the
+  cap for `text/event-stream` (case-insensitive prefix match, covers `; charset=utf-8`
+  variants). Adopters can now safely set `maxResponseBytes` on long-lived buyer
+  sessions without tearing down legitimate streams.
+
 ## 7.3.0
 
 ### Minor Changes

@@ -204,6 +204,56 @@ describe('mergeSeedProduct', () => {
     const aEntry = merged.publisher_properties.find(p => p.publisher_domain === 'a.example');
     assert.strictEqual(aEntry.selection_type, 'all');
   });
+
+  it('distinct compact selectors with comma-containing domains do NOT collide on overlay key', () => {
+    // `['a,b']` (one domain with a comma — invalid per the pattern but
+    // the seed-merge layer is upstream of validation) vs `['a','b']` (two
+    // domains) must produce distinct merge keys. JSON.stringify the
+    // sorted list ensures the bracket+quote disambiguation.
+    const base = {
+      publisher_properties: [
+        { publisher_domains: ['a,b'], selection_type: 'all' },
+        { publisher_domains: ['a', 'b'], selection_type: 'all' },
+      ],
+    };
+    const seed = {
+      publisher_properties: [{ publisher_domains: ['a', 'b'], selection_type: 'all' }],
+    };
+    const merged = mergeSeedProduct(base, seed);
+    // Both entries must survive — no collision collapsed them into one.
+    assert.strictEqual(merged.publisher_properties.length, 2);
+  });
+
+  it('overlays compact publisher_domains[] entries by sorted-domain-list + selection_type (adcp#4504)', () => {
+    const base = {
+      publisher_properties: [
+        {
+          publisher_domains: ['a.example', 'b.example'],
+          selection_type: 'by_tag',
+          property_tags: ['news'],
+        },
+        { publisher_domain: 'c.example', selection_type: 'all' },
+      ],
+    };
+    // Same logical key (same domain set, same selection_type) — must overlay,
+    // not append. Different domain order in the seed shouldn't matter.
+    const seed = {
+      publisher_properties: [
+        {
+          publisher_domains: ['B.Example', 'A.Example'],
+          selection_type: 'by_tag',
+          property_tags: ['news', 'sports'],
+        },
+      ],
+    };
+    const merged = mergeSeedProduct(base, seed);
+    assert.strictEqual(merged.publisher_properties.length, 2);
+    const compactEntry = merged.publisher_properties.find(p => Array.isArray(p.publisher_domains));
+    assert.deepStrictEqual(compactEntry.property_tags, ['news', 'sports']);
+    // Singular sibling untouched.
+    const singularEntry = merged.publisher_properties.find(p => p.publisher_domain === 'c.example');
+    assert.strictEqual(singularEntry.selection_type, 'all');
+  });
 });
 
 describe('mergeSeedPricingOption', () => {

@@ -551,6 +551,15 @@ export class SingleAgentClient {
     const clientModule = require('@a2a-js/sdk/client');
     const A2AClient = clientModule.A2AClient;
 
+    // adcp-client#1804 — wrap A2A card discovery in withResponseSizeLimit so
+    // `transport.maxResponseBytes` applies to every agent-card fetch. The
+    // auth-stamping fetchImpl composes through wrapFetchWithSizeLimit so the
+    // active ALS slot enforces the cap on the wire call. Matches the same
+    // pattern in `getAgentInfo` (closed #1799 via PR #1802).
+    const { withResponseSizeLimit, wrapFetchWithSizeLimit } = await import('../protocols/responseSizeLimit');
+    const maxResponseBytes = this.config.transport?.maxResponseBytes;
+    const sizeLimitedFetch = wrapFetchWithSizeLimit((input, init) => fetch(input as RequestInfo | URL, init));
+
     const authToken = this.normalizedAgent.auth_token;
     let got401 = false;
 
@@ -564,7 +573,7 @@ export class SingleAgentClient {
         }),
       };
 
-      const response = await fetch(url, { ...options, headers });
+      const response = await sizeLimitedFetch(url as RequestInfo | URL, { ...options, headers });
 
       // Track 401 errors for later handling
       if (response.status === 401) {
@@ -581,7 +590,7 @@ export class SingleAgentClient {
       let lastError: Error = new Error(`A2A agent card not found at ${cardUrls.join(', ')}`);
       for (const cardUrl of cardUrls) {
         try {
-          client = await A2AClient.fromCardUrl(cardUrl, { fetchImpl });
+          client = await withResponseSizeLimit(maxResponseBytes, () => A2AClient.fromCardUrl(cardUrl, { fetchImpl }));
           break;
         } catch (err: unknown) {
           lastError = err as Error;
@@ -591,7 +600,9 @@ export class SingleAgentClient {
       if (!client) {
         throw lastError;
       }
-      const agentCard = client.agentCardPromise ? await client.agentCardPromise : client.agentCard;
+      const agentCard = await withResponseSizeLimit(maxResponseBytes, async () =>
+        client.agentCardPromise ? client.agentCardPromise : client.agentCard
+      );
 
       // Use the canonical URL from the agent card, falling back to computed base URL
       if (agentCard?.url) {
@@ -2675,11 +2686,16 @@ export class SingleAgentClient {
       parameters?: string[];
     }>;
   }> {
+    // adcp-client#1799 — wrap every wire call in the response-size cap so
+    // `transport.maxResponseBytes` extends to discovery / tools-list bodies.
+    // `withResponseSizeLimit` is a no-op when no cap is configured.
+    const { withResponseSizeLimit } = await import('../protocols/responseSizeLimit');
+    const maxResponseBytes = this.config.transport?.maxResponseBytes;
     if (this.normalizedAgent.protocol === 'mcp') {
       // In-process: use the pre-connected client instead of opening a new HTTP connection
       if (this.normalizedAgent._inProcessMcpClient) {
         const mcpClient = this.normalizedAgent._inProcessMcpClient;
-        const toolsList = await mcpClient.listTools();
+        const toolsList = await withResponseSizeLimit(maxResponseBytes, () => mcpClient.listTools());
         const tools = toolsList.tools.map(tool => ({
           name: tool.name,
           description: tool.description,
@@ -2713,7 +2729,7 @@ export class SingleAgentClient {
 
       const { client: mcpClient } = await connectMCP(connectOptions);
       try {
-        const toolsList = await mcpClient.listTools();
+        const toolsList = await withResponseSizeLimit(maxResponseBytes, () => mcpClient.listTools());
 
         const tools = toolsList.tools.map(tool => ({
           name: tool.name,
@@ -2741,7 +2757,13 @@ export class SingleAgentClient {
       const clientModule = require('@a2a-js/sdk/client');
       const A2AClient = clientModule.A2AClient;
 
+      // adcp-client#1799 — route the custom fetchImpl through
+      // `wrapFetchWithSizeLimit` so the active ALS slot enforces the cap on
+      // the card-discovery body. Without this, the auth-stamping wrapper
+      // calls native `fetch` directly and ignores `transport.maxResponseBytes`.
+      const { wrapFetchWithSizeLimit } = await import('../protocols/responseSizeLimit');
       const authToken = this.normalizedAgent.auth_token;
+      const sizeLimitedFetch = wrapFetchWithSizeLimit((input, init) => fetch(input as RequestInfo | URL, init));
       const fetchImpl = authToken
         ? async (url: string | URL | Request, options?: RequestInit) => {
             const headers = {
@@ -2749,9 +2771,9 @@ export class SingleAgentClient {
               Authorization: `Bearer ${authToken}`,
               'x-adcp-auth': authToken,
             };
-            return fetch(url, { ...options, headers });
+            return sizeLimitedFetch(url as RequestInfo | URL, { ...options, headers });
           }
-        : undefined;
+        : (url: string | URL | Request, options?: RequestInit) => sizeLimitedFetch(url as RequestInfo | URL, options);
 
       const cardUrls = buildCardUrls(this.normalizedAgent.agent_uri);
 
@@ -2759,7 +2781,10 @@ export class SingleAgentClient {
       let lastCardError: Error = new Error(`A2A agent card not found at ${cardUrls.join(', ')}`);
       for (const cardUrl of cardUrls) {
         try {
-          client = await A2AClient.fromCardUrl(cardUrl, fetchImpl ? { fetchImpl } : {});
+          // Wrap A2A card discovery so `transport.maxResponseBytes` applies
+          // to agent-card fetches and the deferred `agentCardPromise` read
+          // below — both fire fetches that would otherwise bypass the cap.
+          client = await withResponseSizeLimit(maxResponseBytes, () => A2AClient.fromCardUrl(cardUrl, { fetchImpl }));
           break;
         } catch (err: unknown) {
           lastCardError = err as Error;
@@ -2768,7 +2793,9 @@ export class SingleAgentClient {
       if (!client) {
         throw lastCardError;
       }
-      const agentCard = client.agentCardPromise ? await client.agentCardPromise : client.agentCard;
+      const agentCard = await withResponseSizeLimit(maxResponseBytes, async () =>
+        client.agentCardPromise ? client.agentCardPromise : client.agentCard
+      );
 
       const tools = agentCard?.skills
         ? agentCard.skills.map(
