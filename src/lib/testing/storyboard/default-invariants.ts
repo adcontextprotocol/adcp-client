@@ -1062,11 +1062,11 @@ interface ResourceObservation {
  * visible to storyboard authors and reviewers rather than burying it in
  * PR prose and JSDoc.
  *
- * `audience` was deferred prior to adcp#2860 — the buy-side reference
- * lives at `packages[*].targeting_overlay.audience_include[]` and is now
- * extracted in `readBuySnapshot`. `catalog_item` and `event_source` stay
- * deferred: a buy doesn't reference catalog_items or event_sources by
- * stable id in the cached schema.
+ * `audience` is graded — the buy-side reference lives at
+ * `packages[*].targeting_overlay.audience_include[]` and is extracted in
+ * `readBuySnapshot`. `catalog_item` and `event_source` are deferred: a
+ * buy doesn't reference catalog_items or event_sources by stable id in
+ * the cached schema, so the runner can't traverse buy → resource.
  */
 const INVERSE_DEFERRED_FAMILIES: ReadonlySet<string> = new Set(['catalog_item', 'event_source']);
 
@@ -1165,10 +1165,9 @@ registerOnce('impairment.coherence', {
         // `not_applicable` step-level result so reviewers see the gap in
         // run output instead of having to read PR prose. One emission per
         // (resource_type, resource_id) per run — re-syncs of an already
-        // offline resource don't re-fire. `audience` is no longer in this
-        // set: post-adcp#2860 the runner extracts audience refs from
-        // packages[*].targeting_overlay.audience_include[] and grades the
-        // inverse rule for audience the same way it grades creative.
+        // offline resource don't re-fire. Only catalog_item and event_source
+        // surface here; audience is graded via the inverse rule using refs
+        // from packages[*].targeting_overlay.audience_include[].
         if (!wasOffline && (ob.resource_type === 'catalog_item' || ob.resource_type === 'event_source')) {
           const message =
             `inverse-rule coverage for ${ob.resource_type} ${ob.resource_id} ` +
@@ -1446,7 +1445,11 @@ function extractImpairmentObservations(
  * references through `packages[].creative_assignments[]`, and the set of
  * `audience_id`s referenced through `packages[].targeting_overlay.audience_include[]`.
  * Both reference sets feed the inverse rule. `audience_exclude` is not
- * collected — excluding an audience does not require it to be serviceable.
+ * collected as a hard dependency for the inverse rule: an offline exclude
+ * does not prevent the buy from serving, so it isn't a "buy can't function"
+ * signal. Note this is a serviceability framing, not a safety framing —
+ * an offline exclude can still silently break the suppression promise,
+ * which is a separate (forward-looking) signal class.
  */
 function extractBuySnapshots(task: string, body: Record<string, unknown>, stepId: string): BuySnapshot[] {
   const out: BuySnapshot[] = [];
@@ -1487,9 +1490,7 @@ function readBuySnapshot(record: Record<string, unknown>, stepId: string): BuySn
     //     (the snapshot shape — `creative_approvals` carries per-assignment
     //     approval_status alongside the id)
     // Walk both — sellers conformant to either schema surface the references
-    // we need for the inverse rule. (The SDK previously only walked the
-    // request shape, which made the inverse rule silent on conformant
-    // get_media_buys snapshots; tracked in adcp#2860.)
+    // we need for the inverse rule.
     for (const ca of asArray(pkg.creative_assignments)) {
       if (!isObject(ca)) continue;
       const cid = asString(ca.creative_id);
@@ -1500,9 +1501,11 @@ function readBuySnapshot(record: Record<string, unknown>, stepId: string): BuySn
       const cid = asString(ca.creative_id);
       if (cid) referencedCreativeIds.add(cid);
     }
-    // Audience refs: only `audience_include` counts as a hard dependency.
-    // `audience_exclude` doesn't — a suspended exclude-audience does not
-    // prevent the buy from serving.
+    // Audience refs: only `audience_include` counts as a hard dependency
+    // for the inverse rule. `audience_exclude` is omitted on serviceability
+    // grounds — a suspended exclude doesn't keep the buy from serving — not
+    // on safety grounds. An offline exclude can still silently break the
+    // suppression promise; that's a separate signal class (see extractBuySnapshots).
     const overlay = isObject(pkg.targeting_overlay) ? pkg.targeting_overlay : undefined;
     if (overlay) {
       for (const aid of asArray(overlay.audience_include)) {
