@@ -1,5 +1,307 @@
 # Changelog
 
+## 7.7.0
+
+### Minor Changes
+
+- b1b90c2: storyboard runner: add `array_length` check kind for cardinality assertions (#1830)
+
+  Cardinality scenarios can now assert "exactly N entries" directly:
+
+  ```yaml
+  - check: array_length
+    path: media_buys[0].impairments
+    value: 2
+    description: Exactly two impairments — one per rejected creative
+  ```
+
+  Range form is also supported (`min` / `max`, either or both, both inclusive):
+
+  ```yaml
+  - check: array_length
+    path: media_buys[0].impairments
+    min: 1
+    max: 1
+    description: Exactly one impairment
+  ```
+
+  The previous workaround (`field_present arr[N-1]` paired with
+  `field_value_or_absent arr[N] value: null`) is unsound for cardinality: the
+  `field_value_or_absent` clause passes when a seller emits a literal `null`
+  pad at `arr[N]`. `array_length` reads `array.length` directly and rejects
+  non-array resolutions, so a `null` pad fails the check as it should.
+
+  Specifying both `value` and `min`/`max` is rejected as a misconfigured
+  check. Specifying none of the three is also rejected. Resolved-path-is-not-an-array
+  fails with a type error rather than passing silently.
+
+  Follow-up to adcontextprotocol/adcp#4685 protocol review; spec-side YAML
+  schema addition tracked separately.
+
+- 0a90796: Add `force.audience_status` and `force.catalog_item_status` slots to `ComplyControllerConfig` (issue #1819).
+
+  Adopters wiring `comply_test_controller` through `createComplyController` now have a registration slot for the two resource families that previously forced hand-rolled dispatchers — audience-sync (`forceAudienceStatus`) and catalog-driven seller (`forceCatalogItemStatus`). Both are exposed via the same domain-grouped `force` block as the existing creative/account/media-buy/session slots, and the underlying `TestControllerStore` interface gains matching optional methods so flat-store callers can opt in the same way.
+
+  The new scenarios (`force_audience_status`, `force_catalog_item_status`) are treated as extension scenarios — accepted by the dispatcher under `TOOL_INPUT_SHAPE.scenario: z.string()` and advertised via `list_scenarios` when the adapter is registered, but not yet members of `CONTROLLER_SCENARIOS` because the schema cache's `ListScenariosSuccess['scenarios']` union hasn't picked them up. Same pattern as `query_upstream_traffic`. Status values validate against the spec-shipped `AudienceStatusSchema` / `CatalogItemStatusSchema`, so when adcp#2860's offline values (`suspended` / `withdrawn`) land in the spec and codegen reruns, the new transitions flow through with no further SDK change.
+
+  Purely additive — existing adopters keep working without modification.
+
+- b64728a: storyboard runner: add `contains:` matcher to `requires_capability` gates (#1817)
+
+  Storyboards can now gate on array-membership for capabilities whose declaration
+  shape is an array of allowed values:
+
+  ```yaml
+  requires_capability:
+    path: media_buy.conversion_tracking.supported_targets
+    contains: 'per_ad_spend'
+  ```
+
+  Semantics: the value at `path` MUST be an array that includes `contains` via
+  strict equality (no coercion). Empty arrays, non-arrays, and absent fields all
+  skip the storyboard with `capability_unsupported` / `unsatisfied_contract` —
+  absence is load-bearing, matching `present: true`. The matcher accepts a
+  single primitive (string, number, boolean); the array form ("ALL listed
+  values present") is a follow-up only if a real consumer appears.
+
+  Unblocks `performance_buy_flow_roas` (gating on `supported_targets`
+  including `per_ad_spend`) and the `reach_buy_flow` / `clicks_buy_flow` /
+  `completed_views_buy_flow` family (gating on `supported_optimization_metrics`
+  once that capability lands upstream).
+
+  `equals:`, `present:`, and `contains:` remain mutually exclusive on a single
+  gate. Existing storyboards are unchanged.
+
+- dc532ec: signing: extend `SigningProvider` with optional `adcpUse` for async-path purpose binding (#1827)
+
+  Closes the asymmetry between sync and async signing paths flagged by the security + protocol reviews of #1823 / #1832. Sync helpers (`signRequest`, `signWebhook`, `signResponse`) refuse keys with wrong `adcp_use` via `assertKeyPurpose`. Async helpers (`signRequestAsync` / `signWebhookAsync` / `signResponseAsync`) could not enforce because `SigningProvider` exposed `keyid` + `algorithm` but no purpose binding — KMS adapters were unprotected against IAM-mistake cross-purpose reuse, the exact situation where signer-side defense-in-depth matters most.
+
+  ```ts
+  import { signResponseAsync } from '@adcp/sdk/signing/client';
+
+  const provider = new InMemorySigningProvider({
+    keyid: 'kid_42',
+    algorithm: 'ed25519',
+    privateKey: privateJwk,
+    adcpUse: 'response-signing', // NEW — enforced at the gate
+  });
+
+  await signResponseAsync(response, provider);
+  // Throws ResponseSignatureError('response_signature_key_purpose_invalid')
+  // if you call signRequestAsync or signWebhookAsync with this provider.
+  ```
+
+  **Optional and backward-compatible.** Providers that omit `adcpUse` skip the gate — no breakage for adapters that pre-date this field. Adapter authors who want defense-in-depth set it; the async helpers then enforce purpose binding parallel to the sync path with the same error codes (`*_signature_key_purpose_invalid` at step 8).
+
+  `InMemorySigningProvider` auto-inherits `adcpUse` from `privateKey.adcp_use` when present, so keys minted via `pemToAdcpJwk({ adcp_use: ... })` get the binding for free. Explicit `adcpUse` option on the provider constructor takes precedence — useful when the test key material doesn't match the helper being exercised.
+
+  9 new tests across all three async helpers covering match / mismatch / explicit-override paths.
+
+- 0ac47f7: signing: add `requestContextFromExpress` / `-Fetch` / `-Lambda` helpers (#1828)
+
+  Closes #1828. Makes the safe path the default path for constructing `ResponseLike.request` (and any other RFC 9421 binding that needs an originating-request URL) on each major Node platform.
+
+  The JSDoc warning on `ResponseLike.request.url` (shipped in #1823) flags the trap: under proxy termination, `req.protocol` lies and `req.get('host')` is attacker-controllable. JSDoc warnings rot. These helpers enforce the hardening at construction time.
+
+  ```ts
+  import { requestContextFromExpress, signResponse } from '@adcp/sdk/signing/client';
+
+  app.post('/adcp/get_products', (req, res) => {
+    const signed = signResponse(
+      {
+        status: 200,
+        headers: { 'content-type': 'application/json' },
+        body,
+        request: requestContextFromExpress(req, {
+          hostAllowlist: ['seller.example.com'],
+        }),
+      },
+      key
+    );
+    res.set(signed.headers).send(body);
+  });
+  ```
+
+  **Three helpers:**
+  - `requestContextFromExpress(req, options)` — throws when `Host` is missing / not in `hostAllowlist`, or when `req.protocol` is not `https` (unless `forceHttps: false` for local dev). **You MUST configure `app.set('trust proxy', ...)`** with your trusted proxy IPs; the helper trusts what Express tells it.
+  - `requestContextFromFetch(request)` — passes through `method` + `url` from a WHATWG `Request`. Trivial; included for API symmetry. No proxy hardening needed (Workers / Deno / Bun terminate TLS at the edge and own URL construction).
+  - `requestContextFromLambda(event, options)` — reads `requestContext.domainName` for authority, `rawPath` + `rawQueryString` (v2 / ALB) or `path` + `queryStringParameters` (v1) for the target. Always emits `https://` — Lambda isn't HTTP-addressable through API Gateway / ALB. `hostAllowlist` catches multi-tenant API Gateway misroutes.
+
+  Exported from both `@adcp/sdk/signing/client` (signer-side adopters) and `@adcp/sdk/signing/server` (verifier-side adopters reconstructing the originating-request URL for `verifyResponseSignature`).
+
+  18 tests covering happy path, host-allowlist enforcement, protocol enforcement, query-string preservation + URL encoding, and an end-to-end Express helper → `signResponse` → `verifyResponseSignature` round-trip.
+
+- 00b7b66: signing: add `signResponse` for RFC 9421 §2.2.9 response signing (#1822)
+
+  Rounds out the signing surface — `signRequest` (buyer→server), `signWebhook`
+  (server→receiver), and now `signResponse` (server→buyer) all share the same
+  prepare/finalize shape and `SigningProvider` async path.
+
+  ```ts
+  import { signResponse, type ResponseLike } from '@adcp/sdk/signing/client';
+
+  const response: ResponseLike = {
+    status: 200,
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ products: [...] }),
+    // Originating request — needed to bind @authority back to its origin.
+    request: { method: 'POST', url: 'https://seller.example.com/adcp/get_products' },
+  };
+
+  const signed = signResponse(response, key);
+  // signed.headers now carries Signature, Signature-Input, Content-Digest.
+  ```
+
+  Covered components default to `['@status', '@authority', '@target-uri']`,
+  plus `content-type` + `content-digest` automatically when the response
+  carries a body. `@target-uri` is in the defaults (not opt-in) so a
+  multi-tenant seller can't emit signatures interchangeable across endpoints
+  sharing the same authority — matches RFC 9421 §B.2.5 examples. Callers
+  that need to extend the covered set further (`@method`, custom headers)
+  opt in via `additionalComponents`.
+
+  **Asymmetry vs `signRequest`.** Response-signing defaults `coverContentDigest`
+  to `true` when the response has a body (opt-out); request-signing requires
+  an explicit `coverContentDigest: true` (opt-in). The asymmetry is deliberate:
+  an unbound response body is the most common cross-purpose footgun for
+  response signing (attacker can swap payload but keep headers + signature).
+  Webhook signing also forces content-digest unconditionally for the same
+  reason.
+
+  Async + KMS-shaped path: `signResponseAsync(response, provider)` delegates the
+  crypto to the existing `SigningProvider` interface; the prepare/finalize split
+  (`prepareResponseSignature` / `finalizeResponseSignature`) is exported for
+  callers that need to hand the canonical base to an external signer.
+
+  Tag: `adcp/response-signing/v1`. **Wire-format contract is provisional**
+  until `verifyResponseSignature` (follow-up) lands and is exercised against
+  external SDK implementations. The `v1` suffix gives a clean break path —
+  any breaking change ships as `v2` and verifiers reject `v1`. Adopters
+  shipping signed responses today should pin a major SDK version. `AdcpUse`
+  extended with `'response-signing'` so JWK metadata can declare the binding
+  now.
+
+  **Note on `AdcpUse` widening:** the `AdcpUse` union now includes
+  `'response-signing'`. Consumers with exhaustive `switch (use)` blocks
+  backed by `never` checks will need to add a `case 'response-signing':`
+  arm. Pragmatically a minor bump — the runtime surface is purely additive
+  and no existing call site changes — but exhaustive narrowers must opt-in
+  to handle the new member.
+
+  **Signer-side `adcp_use` purpose binding (closes #1825).** All three sync
+  signer entry points now refuse keys whose `adcp_use` doesn't match the
+  helper:
+  - `signRequest` requires `adcp_use: 'request-signing'`
+  - `signWebhook` requires `adcp_use: 'webhook-signing'`
+  - `signResponse` requires `adcp_use: 'response-signing'`
+
+  Mismatch (including a missing `adcp_use`) throws at the signer with the
+  same error code the verifier raises at step 8 (`*_signature_key_purpose_invalid`),
+  so misconfiguration surfaces at configuration time rather than at the
+  receiver. Production callers using `pemToAdcpJwk({ adcp_use: ... })` to
+  mint keys are already correct by construction; anyone reusing a key
+  across purposes will get a clear remediation message.
+
+  Test-vector authors that need to _deliberately_ sign with a wrong-purpose
+  key (e.g. AdCP negative-vector 009 cross-purpose rejection) can compose
+  the lower-level `prepareRequestSignature` + `finalizeRequestSignature`
+  helpers directly — those take a `SignatureIdentity` and skip the gate
+  because they're designed for KMS-shaped async paths where purpose
+  binding happens via the `SigningProvider`. The internal storyboard
+  builder uses this composition pattern; see
+  `src/lib/testing/storyboard/request-signing/builder.ts` for the
+  canonical shape.
+
+- da19a4a: signing: add `verifyResponseSignature` for RFC 9421 §2.2.9 response verification (#1826)
+
+  Closes out the response-signing direction. `signResponse` (shipped in #1823)
+  emits the signed payload; `verifyResponseSignature` consumes it. Buyer
+  clients can now verify a seller's signed response before parsing the body
+  without reimplementing ~200 LOC of canonicalization.
+
+  ```ts
+  import { verifyResponseSignature, StaticJwksResolver } from '@adcp/sdk/signing/server';
+
+  const result = await verifyResponseSignature(
+    {
+      status: 200,
+      headers: response.headers,
+      body: await response.text(),
+      request: { method: 'POST', url: 'https://seller.example.com/adcp/get_products' },
+    },
+    {
+      jwks: new StaticJwksResolver(sellerJwks),
+      replayStore: new InMemoryReplayStore(),
+      revocationStore: new InMemoryRevocationStore(),
+    }
+  );
+  // result.status === 'verified', result.keyid === '<kid>'
+  ```
+
+  13-step checklist mirroring `verifyWebhookSignature`:
+  1. Both signature headers present + parseable
+  2. Required params (`created`, `expires`, `nonce`, `keyid`, `alg`, `tag`)
+  3. Tag match (`adcp/response-signing/v1`, override via `requiredTag`)
+  4. Alg allowlist (Ed25519, ECDSA-P256-SHA256)
+  5. Window validity (expired / negative-window / future-created folded to
+     `response_signature_window_invalid`)
+  6. Covered components include `RESPONSE_MANDATORY_COMPONENTS` (`@status`,
+     `@authority`, `@target-uri`); `content-digest` required when body present
+     6a. `@target-uri` syntactic validation against the originating-request URL
+     (rejects non-https / userinfo / fragment; loopback hosts exempt for
+     local mock-server testing)
+  7. JWKS resolution by `keyid`
+  8. Key purpose — `adcp_use: 'response-signing'` + `verify` key_op. Split:
+     missing/unscoped → `response_signature_key_purpose_invalid`; declared
+     but wrong → `response_mode_mismatch`
+  9. Revocation
+     9a. Per-keyid rate abuse
+  10. Cryptographic verify (uses `buildResponseSignatureBase` + verbatim
+      `signatureParamsValue` for cross-SDK byte-identity)
+  11. Content-Digest recompute match
+  12. Replay-nonce commit AFTER every earlier step passes — external traffic
+      can't grow the replay cap because failed signatures don't reach commit
+
+  Same ordering invariants as the request and webhook verifiers (cheap
+  checks before JWKS resolution; revocation + rate-abuse before crypto;
+  replay commit last). Same security posture, same store semantics
+  (`InMemoryReplayStore` for single-process; pass an explicit shared store
+  for multi-replica).
+
+  `createResponseVerifier(options)` factory returns a bound verifier with
+  shared replay / revocation stores — call it once at wire-up and reuse for
+  every inbound response.
+
+  **Error codes added** (`ResponseSignatureErrorCode`):
+  `response_signature_header_malformed`, `response_signature_params_incomplete`,
+  `response_signature_tag_invalid`, `response_signature_alg_not_allowed`,
+  `response_signature_window_invalid`, `response_signature_components_incomplete`,
+  `response_target_uri_malformed`, `response_signature_key_unknown`,
+  `response_signature_key_purpose_invalid` (already shipped in #1825),
+  `response_mode_mismatch`, `response_signature_key_revoked`,
+  `response_signature_revocation_stale`, `response_signature_rate_abuse`,
+  `response_signature_invalid`, `response_signature_digest_mismatch`,
+  `response_signature_replayed`.
+
+  Same shape as `WebhookSignatureErrorCode` so adopters who already handle
+  the webhook taxonomy get muscle memory.
+
+### Patch Changes
+
+- 474197b: test(signing): backfill negative-step coverage on response + webhook verifier tests (#1834)
+
+  Code review on #1832 flagged that the verifier test suites ship without negative tests for several documented steps. Adding them keeps the test surface aligned with the verifier's documented behavior:
+  - **Step 2** `*_signature_params_incomplete` — missing `created` / `expires` / `nonce` / `keyid` / `alg` / `tag` (6 tests per verifier).
+  - **Step 4** `*_signature_alg_not_allowed` — non-allowlisted alg (e.g. `hs256`).
+  - **Step 7** kid mismatch — JWKS resolver returns a JWK whose `kid` disagrees with the requested keyid (a misbehaving resolver tripwire).
+  - **Step 9** `*_signature_revocation_stale` — `RequestSignatureError('request_signature_revocation_stale')` thrown by the revocation store re-maps to the per-verifier taxonomy.
+  - **Step 9a + 13** `*_signature_rate_abuse` — both the `isCapHit` pre-check phase AND the commit-phase `rate_abuse` return.
+  - **Step 13** commit-phase `*_signature_replayed` — separate from the pre-check (step 12) which the existing happy-path test already covers via repeat-calls.
+
+  Also strengthens `agentUrlForKeyid` to assert the resolver was called with the resolved kid as argument (catches a bug where result attribution might pass the wrong identifier).
+
+  20 new tests on the response verifier, 12 on the webhook verifier. No behavior change — purely test coverage backfill.
+
 ## 7.6.0
 
 ### Minor Changes
