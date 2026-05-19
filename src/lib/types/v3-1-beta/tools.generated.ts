@@ -10207,8 +10207,8 @@ export type CatalogChangeEvent = {
 export type CatalogEvent =
   | {
       event_type: 'product.created';
-      entity_type?: 'product';
-      payload?: {
+      entity_type: 'product';
+      payload: {
         product_id: string;
         product: Product;
         applies_to: CacheLayerScope;
@@ -10216,8 +10216,8 @@ export type CatalogEvent =
     }
   | {
       event_type: 'product.updated';
-      entity_type?: 'product';
-      payload?: {
+      entity_type: 'product';
+      payload: {
         product_id: string;
         product?: Product;
         /**
@@ -10229,8 +10229,8 @@ export type CatalogEvent =
     }
   | {
       event_type: 'product.priced';
-      entity_type?: 'product';
-      payload?: {
+      entity_type: 'product';
+      payload: {
         product_id: string;
         /**
          * Full post-change pricing_options array. NOT a delta — consumers replace the prior options with this list.
@@ -10253,8 +10253,8 @@ export type CatalogEvent =
     }
   | {
       event_type: 'product.removed';
-      entity_type?: 'product';
-      payload?: {
+      entity_type: 'product';
+      payload: {
         product_id: string;
         /**
          * Why the entity was removed. 'withdrawn': seller-initiated, no resubmit path. 'cancellation': resource cancelled, may return. 'expired': time-bounded availability ended (flight ended, seasonal product retired). 'depublication': underlying property depublished (see publisher.adagents_changed in the registry feed). 'policy_takedown': governance-driven removal (AdCP governance agent OR external regulator/legal takedown). In-flight buys honor existing cancellation policy regardless of reason; storefront catalog UX differs.
@@ -10265,8 +10265,8 @@ export type CatalogEvent =
     }
   | {
       event_type: 'signal.created';
-      entity_type?: 'signal';
-      payload?: {
+      entity_type: 'signal';
+      payload: {
         signal_agent_segment_id: string;
         signal_id?: SignalID;
         applies_to: CacheLayerScope;
@@ -10274,8 +10274,8 @@ export type CatalogEvent =
     }
   | {
       event_type: 'signal.updated';
-      entity_type?: 'signal';
-      payload?: {
+      entity_type: 'signal';
+      payload: {
         signal_agent_segment_id: string;
         signal_id?: SignalID;
         changed_fields?: string[];
@@ -10284,8 +10284,8 @@ export type CatalogEvent =
     }
   | {
       event_type: 'signal.priced';
-      entity_type?: 'signal';
-      payload?: {
+      entity_type: 'signal';
+      payload: {
         signal_agent_segment_id: string;
         signal_id?: SignalID;
         /**
@@ -10303,8 +10303,8 @@ export type CatalogEvent =
     }
   | {
       event_type: 'signal.removed';
-      entity_type?: 'signal';
-      payload?: {
+      entity_type: 'signal';
+      payload: {
         signal_agent_segment_id: string;
         signal_id?: SignalID;
         /**
@@ -10316,8 +10316,8 @@ export type CatalogEvent =
     }
   | {
       event_type: 'catalog.bulk_change';
-      entity_type?: 'catalog';
-      payload?: {
+      entity_type: 'catalog';
+      payload: {
         /**
          * Human-readable description of the bulk operation (e.g., 'Q3 2026 rate card refresh').
          */
@@ -16269,13 +16269,13 @@ export interface PreviewBatchResultSuccess {
   /**
    * Indicates this preview request succeeded
    */
-  success?: true;
+  success: true;
 }
 export interface PreviewBatchResultError {
   /**
    * Indicates this preview request failed
    */
-  success?: false;
+  success: false;
 }
 /**
  * Variant preview response - shows what a specific creative variant looked like when served during delivery

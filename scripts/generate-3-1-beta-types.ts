@@ -21,7 +21,7 @@
  * regeneration after a schema refresh fails the build before it ships.
  */
 
-import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from 'fs';
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'fs';
 import path from 'path';
 import { compile } from 'json-schema-to-typescript';
 import { removeArrayLengthConstraints } from './schema-utils';
@@ -195,6 +195,48 @@ function reseatLocalRefs(node: unknown, wrapperName: string): void {
 }
 
 /**
+ * Promote root-level `required` field names into every `oneOf` branch.
+ *
+ * Discriminated-union schemas (notably `core/catalog-event.json`) declare
+ * fields like `payload` as root-required but list only the discriminator
+ * (`event_type`) in each branch's local `required`. `json-schema-to-typescript`
+ * treats each branch independently and emits the field as optional in the
+ * branch type. When the wrapper is intersected with the branch union, TS
+ * gives `payload: {}` (root-required) intersected with `payload?: BranchShape`
+ * (branch-optional) → `payload: {}` — the load-bearing branch-specific shape
+ * is lost.
+ *
+ * Promoting root-required into branch-required makes each branch emit the
+ * field non-optional, so the intersection narrows to the branch shape and
+ * discriminated-union safety survives codegen.
+ *
+ * Idempotent: a field already in a branch's required[] stays put. Applied
+ * recursively so nested oneOf/$defs (e.g., `$defs/appliesTo`) carry the
+ * same property.
+ */
+function propagateRootRequiredIntoOneOfBranches(node: unknown): void {
+  if (node === null || typeof node !== 'object') return;
+  if (Array.isArray(node)) {
+    for (const item of node) propagateRootRequiredIntoOneOfBranches(item);
+    return;
+  }
+  const obj = node as Record<string, unknown>;
+  if (Array.isArray(obj.oneOf) && Array.isArray(obj.required)) {
+    const rootRequired = obj.required as string[];
+    for (const branch of obj.oneOf) {
+      if (branch === null || typeof branch !== 'object') continue;
+      const b = branch as Record<string, unknown>;
+      const existing = Array.isArray(b.required) ? (b.required as string[]) : [];
+      const merged = Array.from(new Set([...existing, ...rootRequired]));
+      b.required = merged;
+    }
+  }
+  for (const key of Object.keys(obj)) {
+    propagateRootRequiredIntoOneOfBranches(obj[key]);
+  }
+}
+
+/**
  * Strip `if`/`then`/`else` conditional gates before handing schemas to
  * `json-schema-to-typescript`. The codegen's conditional support produces
  * unusable union expansions for the gates that AdCP 3.1 introduces
@@ -293,6 +335,7 @@ async function main(): Promise<void> {
   const properties: Record<string, any> = {};
   const pack = (name: string, raw: any): void => {
     const prepped = stripIfThenElse(enforceStrictSchema(removeArrayLengthConstraints(raw)));
+    propagateRootRequiredIntoOneOfBranches(prepped);
     reseatLocalRefs(prepped, name);
     definitions[name] = prepped;
     properties[name] = { $ref: `#/definitions/${name}` };
@@ -354,7 +397,3 @@ main().catch(err => {
   console.error(err);
   process.exit(1);
 });
-
-// Defensive: surface the import so tsc doesn't drop the helper as unused
-// in the unlikely path where `loadStandaloneCoreSchemas` returns empty.
-void readdirSync;
