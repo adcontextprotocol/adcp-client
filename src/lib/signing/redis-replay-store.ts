@@ -62,6 +62,15 @@ import { maybeWarnOnSharedRedisPrefix } from '../utils/redis-default-prefix-warn
  * client (node-redis v4/v5) — `ioredis`, Upstash, test doubles.
  * Mirrors the methods this store calls.
  *
+ * **Footgun: `ioredis.zscore` returns `Promise<string | null>`**, not
+ * `Promise<number | null>` like node-redis. The `Number(v)` coercion
+ * in the adapter is **mandatory** — without it, the `score > now`
+ * comparison inside `has()` becomes a string-vs-number compare that's
+ * silently wrong near unix-second boundaries (JS coerces the number
+ * to a string for `>`, producing lexicographic ordering — replay
+ * decisions break). Test doubles writing their own `zScore` MUST
+ * also return `number | null`.
+ *
  * @example ioredis adapter
  * ```typescript
  * import Redis from 'ioredis';
@@ -70,6 +79,7 @@ import { maybeWarnOnSharedRedisPrefix } from '../utils/redis-default-prefix-warn
  * const client: ReplayRedisLikeClient = {
  *   eval: (script, opts) =>
  *     ioredis.eval(script, opts.keys.length, ...opts.keys, ...opts.arguments),
+ *   // Number() coercion is REQUIRED — ioredis.zscore returns string|null.
  *   zScore: (k, m) => ioredis.zscore(k, m).then(v => (v === null ? null : Number(v))),
  *   zCount: (k, min, max) => ioredis.zcount(k, min, max),
  *   ping: () => ioredis.ping(),

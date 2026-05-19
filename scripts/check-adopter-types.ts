@@ -72,13 +72,25 @@ function main(): void {
   writeFileSync(join(adopterDir, 'tsconfig.json'), JSON.stringify(ADOPTER_TSCONFIG, null, 2));
   writeFileSync(join(adopterDir, 'adopter.ts'), ADOPTER_SOURCE);
 
-  // @types/express and @opentelemetry/api cover transitive type references
-  // from the server bundle — adopters who import `@adcp/sdk/server` need
-  // these (express is the HTTP adapter, opentelemetry is the optional
-  // observability peer). Installing them here scopes this guard to
-  // detection of `@internal`-leak class bugs (issue #1236) without flagging
-  // the orthogonal "transitive types not auto-installed" class, which is
-  // tracked separately.
+  // @types/express, @opentelemetry/api, and redis cover transitive type
+  // references from the server bundle — adopters who import
+  // `@adcp/sdk/server` need these (express is the HTTP adapter,
+  // opentelemetry is the optional observability peer, redis is the
+  // optional peer for the Redis backends). Installing them here scopes
+  // this guard to detection of `@internal`-leak class bugs (issue #1236)
+  // without flagging the orthogonal "transitive types not auto-installed"
+  // class, which is tracked separately.
+  //
+  // Why `redis` here when `pg` is NOT installed: the pg backends type
+  // their public surface via the project-local `PgQueryable` shape (no
+  // `import type` from `pg`), so the published `.d.ts` has no `pg`
+  // reference. The Redis backends deliberately type their public surface
+  // as `RedisClientType<any,any,any> | <NarrowInterface>` so node-redis
+  // users pass `createClient(...)` without casts — that DX win requires
+  // the adopter type-checker to be able to resolve `redis`. We install
+  // it here for the same reason we install `@types/express`: the adopter
+  // using these backends will have it, and the check exists to validate
+  // the adopter experience, not to enforce zero-peer-dep types.
   console.log('[adopter-types] installing tarball + adopter peers...');
   run(
     'npm',
@@ -92,6 +104,7 @@ function main(): void {
       '@types/node',
       '@types/express',
       '@opentelemetry/api',
+      'redis',
     ],
     adopterDir
   );
