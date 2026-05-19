@@ -2726,6 +2726,9 @@ export class SingleAgentClient {
       } else if (this.normalizedAgent.auth_token) {
         connectOptions.authToken = this.normalizedAgent.auth_token;
       }
+      if (this.normalizedAgent.headers) {
+        connectOptions.customHeaders = this.normalizedAgent.headers;
+      }
 
       const { client: mcpClient } = await connectMCP(connectOptions);
       try {

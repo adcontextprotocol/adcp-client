@@ -664,21 +664,28 @@ export async function connectMCP(options: {
   // Build transport options
   const transportOptions: StreamableHTTPClientTransportOptions = {};
 
+  // Set requestInit.headers whenever any custom or auth headers are present.
+  // authProvider and requestInit.headers are not mutually exclusive — the MCP
+  // SDK's _commonHeaders() spreads requestInit.headers alongside any
+  // OAuth-issued Authorization, so OAuth callers with custom routing headers
+  // (x-tenant-id, x-api-key, etc.) also get them forwarded.
+  const authHeaders = authToken ? { ...customHeaders, ...createMCPAuthHeaders(authToken) } : { ...customHeaders };
+  if (Object.keys(authHeaders).length > 0) {
+    transportOptions.requestInit = { headers: authHeaders };
+    debugLogs.push({
+      type: 'info',
+      message: authToken
+        ? 'MCP: Using static token for authentication'
+        : 'MCP: Using custom headers for authentication',
+      timestamp: new Date().toISOString(),
+    });
+  }
   if (authProvider) {
     // Use OAuth provider
     transportOptions.authProvider = authProvider;
     debugLogs.push({
       type: 'info',
       message: 'MCP: Using OAuth provider for authentication',
-      timestamp: new Date().toISOString(),
-    });
-  } else if (authToken) {
-    // Use static token, merged with any custom headers (auth takes precedence)
-    const authHeaders = { ...customHeaders, ...createMCPAuthHeaders(authToken) };
-    transportOptions.requestInit = { headers: authHeaders };
-    debugLogs.push({
-      type: 'info',
-      message: 'MCP: Using static token for authentication',
       timestamp: new Date().toISOString(),
     });
   }
