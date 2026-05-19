@@ -102,6 +102,72 @@ export interface RequestContext<TAccount = Account> {
   ctxMetadata?: CtxMetadataAccessor;
 
   /**
+   * Request payload as the platform method sees it. The framework sets
+   * this on every v6 platform-method dispatch so methods can read request
+   * fields the typed signature doesn't model.
+   *
+   * **Why it exists.** Several `sync_*` request schemas carry modifier
+   * fields (`assignments[]` on `sync_creatives`; `delete_missing`,
+   * `dry_run`, `validation_mode` on the same; `delete_missing` on
+   * `sync_audiences` and `sync_accounts`) that the platform method's
+   * typed signature drops — the framework destructures the payload array
+   * and passes only that. Without `ctx.input`, adopters implementing
+   * those fields at the wire layer would see them silently disappear on
+   * the `/sales/mcp` route while working on `/mcp` — a silent-conformance
+   * trap. Read the field from `ctx.input` and the modifier survives to
+   * the adapter.
+   *
+   * **Same reference as the typed payload arg, not a snapshot.** `ctx.input`
+   * is set BEFORE the framework's auto-hydrate seams
+   * (`hydratePackagesWithProducts`, `hydrateForTool`) run, but those
+   * seams mutate the same object in place. By the time the platform
+   * method's body executes, `ctx.input` and the first positional arg are
+   * the same reference and both reflect framework hydration. Fields the
+   * buyer sent are authoritative; framework-injected entities
+   * (`pkg.product`, `req.media_buy`) are present too — distinguish by
+   * field shape, not by which path you read from.
+   *
+   * **For methods that hoist a field to a positional arg** (e.g.
+   * `updateMediaBuy(media_buy_id, patch, ctx)` hoists `media_buy_id` out
+   * of the wire envelope), that field is still present at the top level
+   * of `ctx.input`. `ctx.input` is NOT "what the method didn't get" — it
+   * is the full envelope, hoist included. Prefer reading any field
+   * present on both the positional arg and `ctx.input` from the
+   * positional arg; reach for `ctx.input` only for fields the typed
+   * signature drops.
+   *
+   * **Typed as unknown** to match the `comply_test_controller` bridge
+   * precedent (`TestControllerBridgeContext.input`) and to avoid coupling
+   * adopters to specific schema versions. Cast at the read site:
+   *
+   * ```ts
+   * syncCreatives: async (creatives, ctx) => {
+   *   const wire = ctx.input as SyncCreativesRequest;
+   *   if (wire.delete_missing) { ... }
+   *   for (const assignment of wire.assignments ?? []) { ... }
+   * }
+   * ```
+   *
+   * **Security — `ctx.input` is buyer-controlled and may carry secrets.**
+   * Mutating-tool envelopes can include `push_notification_config.token`
+   * (the buyer's webhook-signature secret); `sync_*` requests can carry
+   * `ctx_metadata` blobs the adopter persisted on a prior turn. Do NOT
+   * log `ctx.input` wholesale — read named fields. Free-text fields
+   * (`brief` on `getProducts`, `message` on `si_send_message`, creative
+   * snippets, etc.) are attacker-controlled; when templating into LLM
+   * prompts, validate or fence — don't string-interpolate. See
+   * `docs/guides/CTX-METADATA-SAFETY.md` for the broader policy on
+   * buyer-controlled inputs.
+   *
+   * **Optional in the type signature** so adopters constructing ad-hoc
+   * `RequestContext` for unit tests aren't forced to set it; the
+   * framework always sets it on real dispatches.
+   *
+   * @public
+   */
+  input?: Readonly<Record<string, unknown>>;
+
+  /**
    * Hydrated typed recipes (`product_id -> Recipe`) for proposal-mode
    * dispatch. Populated by the framework's v1.5 ProposalManager seams:
    *

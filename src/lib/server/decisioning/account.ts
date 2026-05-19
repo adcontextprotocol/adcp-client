@@ -300,6 +300,33 @@ export interface ResolveContext {
    * registry returns null for the request's credential.
    */
   agent?: BuyerAgent;
+  /**
+   * Un-destructured wire request envelope. Set by the framework so account
+   * tool handlers (`syncAccounts`, `syncGovernance`, `listAccounts`,
+   * `reportUsage`, `getAccountFinancials`) can read request fields the
+   * typed signature doesn't model — e.g. `sync_accounts.delete_missing`
+   * and `sync_accounts.dry_run`, which the framework destructures the
+   * payload array out of before calling the handler.
+   *
+   * Same shape and read-site cast pattern as `RequestContext.input` (see
+   * `decisioning/context.ts`). Same caveats:
+   *
+   * - **Identical reference to the typed payload arg.** This is the same
+   *   request body object the platform method's first positional arg
+   *   projects from. Framework auto-hydrate seams mutate this object
+   *   before the platform method runs; treat fields the buyer sent as
+   *   authoritative, but expect framework-injected entities (e.g.
+   *   hydrated product / media-buy refs) to be visible here too.
+   * - **Buyer-controlled untrusted data.** Free-text fields (`brief`,
+   *   `message`, creative snippets, etc.) are attacker-controlled.
+   *   Don't log `ctx.input` wholesale — secret fields like
+   *   `push_notification_config.token` are present on mutating requests.
+   *   When templating into LLM prompts, validate or fence the field
+   *   rather than string-interpolating.
+   *
+   * @public
+   */
+  input?: Readonly<Record<string, unknown>>;
 }
 
 /**
