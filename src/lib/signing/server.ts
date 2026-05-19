@@ -64,6 +64,12 @@ export {
   type PostgresReplayStoreOptions,
   type SweepExpiredReplaysOptions,
 } from './postgres-replay-store';
+export {
+  RedisReplayStore,
+  type RedisReplayStoreOptions,
+  type ReplayRedisBackendClient,
+  type ReplayRedisLikeClient,
+} from './redis-replay-store';
 export { InMemoryRevocationStore, type RevocationStore } from './revocation';
 export { HttpsRevocationStore, type HttpsRevocationStoreOptions } from './revocation-https';
 export {

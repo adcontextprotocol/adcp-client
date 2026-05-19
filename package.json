@@ -315,6 +315,7 @@
     "@modelcontextprotocol/sdk": "^1.17.5",
     "@opentelemetry/api": "^1.0.0",
     "pg": "^8.0.0",
+    "redis": "^4.6.0 || ^5.0.0",
     "zod": "^4.1.5"
   },
   "peerDependenciesMeta": {
@@ -322,6 +323,9 @@
       "optional": true
     },
     "pg": {
+      "optional": true
+    },
+    "redis": {
       "optional": true
     }
   },
@@ -342,6 +346,7 @@
     "openapi-typescript": "^7.13.0",
     "pg": "^8.20.0",
     "prettier": "^3.6.2",
+    "redis": "^4.7.0",
     "tar": "^7.5.13",
     "ts-to-zod": "^5.0.1",
     "tsx": "^4.6.0",

@@ -35,5 +35,12 @@ export {
 } from './backends/pg';
 export type { PgCtxMetadataBackendOptions } from './backends/pg';
 
+export { redisCtxMetadataStore } from './backends/redis';
+export type {
+  RedisCtxMetadataBackendOptions,
+  CtxMetadataRedisBackendClient,
+  CtxMetadataRedisLikeClient,
+} from './backends/redis';
+
 export { stripCtxMetadata, hasCtxMetadata, stripImplementationConfig, hasImplementationConfig } from './wire-shape';
 export type { WireShape } from './wire-shape';

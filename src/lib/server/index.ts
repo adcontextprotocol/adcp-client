@@ -427,6 +427,7 @@ export {
   createCtxMetadataStore,
   memoryCtxMetadataStore,
   pgCtxMetadataStore,
+  redisCtxMetadataStore,
   getCtxMetadataMigration,
   cleanupExpiredCtxMetadata,
   CTX_METADATA_MIGRATION,
@@ -450,6 +451,9 @@ export type {
   ResourceKind as CtxMetadataResourceKind,
   MemoryCtxMetadataStoreOptions,
   PgCtxMetadataBackendOptions,
+  RedisCtxMetadataBackendOptions,
+  CtxMetadataRedisBackendClient,
+  CtxMetadataRedisLikeClient,
   WireShape,
 } from './ctx-metadata';
 
