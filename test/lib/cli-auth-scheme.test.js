@@ -336,6 +336,44 @@ test('401 path surfaces the --auth-scheme basic hint before bouncing to OAuth', 
   );
 });
 
+test('storyboard run banner shows "Auth: basic" not "Auth: bearer" when --auth-scheme basic', async t => {
+  // The banner at bin/adcp.js:4213 previously had no 'basic' branch and fell
+  // through to 'bearer', misleading operators into thinking --auth-scheme
+  // wasn't being picked up even though the wire auth was correct (issue #1865).
+  const server = http.createServer((req, res) => {
+    res.writeHead(200, { 'content-type': 'application/json' });
+    res.end(JSON.stringify({}));
+  });
+  await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
+  const port = server.address().port;
+  const url = `http://127.0.0.1:${port}/mcp`;
+  t.after(async () => {
+    if (typeof server.closeAllConnections === 'function') server.closeAllConnections();
+    await new Promise(resolve => server.close(() => resolve()));
+  });
+
+  const run = await new Promise(resolve => {
+    const child = spawn(
+      'node',
+      [CLI, 'storyboard', 'run', url, '--auth', 'user:pass', '--auth-scheme', 'basic', '--allow-http'],
+      { env: { ...process.env, HOME: tmpHome } }
+    );
+    let stdout = '';
+    let stderr = '';
+    child.stdout.on('data', d => (stdout += d.toString()));
+    child.stderr.on('data', d => (stderr += d.toString()));
+    // Kill after 8s — the banner appears immediately; we don't need a full run.
+    const killer = setTimeout(() => child.kill('SIGTERM'), 8000);
+    child.on('exit', code => {
+      clearTimeout(killer);
+      resolve({ status: code, stdout, stderr });
+    });
+  });
+
+  assert.match(run.stdout, /Auth: basic/, `banner must show 'Auth: basic'; stdout: ${run.stdout}`);
+  assert.doesNotMatch(run.stdout, /Auth: bearer/, `banner must not say 'bearer'; stdout: ${run.stdout}`);
+});
+
 test('wire test: basic alias sends Authorization: Basic <b64(user:pass)>, not Bearer', async t => {
   // Spin up a tiny MCP-ish server that captures every Authorization header
   // it sees and returns 401 so the CLI exits quickly. The /mcp probe and the

@@ -4216,7 +4216,9 @@ async function runFullAssessment(agentArg, rawArgs, parsedOpts) {
         ? 'oauth (auto-refresh)'
         : authOption.type === 'oauth_client_credentials'
           ? 'oauth client credentials (auto-refresh)'
-          : 'bearer';
+          : authOption.type === 'basic'
+            ? 'basic'
+            : 'bearer';
     console.log(`\nRunning storyboard assessment against ${agentUrl}`);
     console.log(`   Protocol: ${protocol.toUpperCase()}`);
     if (storyboards) console.log(`   Storyboards: ${storyboards.join(', ')}`);
