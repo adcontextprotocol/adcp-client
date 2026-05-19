@@ -653,7 +653,7 @@ export async function connectMCP(options: {
     type: 'info',
     message: `MCP: Connecting to ${baseUrl}`,
     timestamp: new Date().toISOString(),
-    authMethod: authProvider ? 'oauth' : authToken ? 'token' : 'none',
+    authMethod: authProvider ? 'oauth' : authToken ? 'token' : extractAuthHeader(customHeaders) ? 'custom' : 'none',
   });
 
   const mcpClient = new MCPClient({
