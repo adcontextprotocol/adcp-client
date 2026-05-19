@@ -667,11 +667,21 @@ export async function connectMCP(options: {
   // Header-only auth (basic, x-api-key, custom routing) lives entirely on
   // `customHeaders`. Attach it whenever it's present, regardless of which
   // auth branch fires — OAuth + routing headers, bearer + tenant headers,
-  // and pure-header auth must all reach the wire. The MCP SDK's
-  // `_commonHeaders()` spreads `requestInit.headers` over the auth-provider-
-  // emitted `Authorization`, so this is safe to combine with `authProvider`.
+  // and pure-header auth must all reach the wire.
+  //
+  // Precedence note: the MCP SDK's `_commonHeaders()` (StreamableHTTP)
+  // spreads `requestInit.headers` *over* any provider-emitted `Authorization`
+  // (`new Headers({ ...providerHeaders, ...requestInitHeaders })`, last-write-
+  // wins). To prevent a caller-supplied `Authorization` in `customHeaders`
+  // from silently overriding the OAuth provider's bearer, drop any
+  // `Authorization` key from `customHeaders` when `authProvider` is set.
+  // OAuth is the source of truth for the bearer in that branch; non-auth
+  // routing/tenant headers still flow through.
+  const filteredCustomHeaders = authProvider
+    ? Object.fromEntries(Object.entries(customHeaders ?? {}).filter(([k]) => k.toLowerCase() !== 'authorization'))
+    : customHeaders;
   const authHeaders: Record<string, string> = {
-    ...customHeaders,
+    ...filteredCustomHeaders,
     ...(authToken ? createMCPAuthHeaders(authToken) : {}),
   };
   if (Object.keys(authHeaders).length > 0) {

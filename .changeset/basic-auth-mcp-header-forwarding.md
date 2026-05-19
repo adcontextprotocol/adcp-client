@@ -11,7 +11,9 @@ Two compounding defects, both required for a fix:
 - `SingleAgentClient.getAgentInfo` did not forward `normalizedAgent.headers` to `connectMCP`. Basic auth intentionally suppresses `auth_token` (so the SDK doesn't emit a competing `Authorization: Bearer …`) and lives entirely on `headers.Authorization` — neither the `oauth_tokens` nor the `auth_token` branch fired, so `connectMCP` received `{ agentUrl }` only.
 - `connectMCP` only attached `requestInit.headers` inside the `else if (authToken)` branch. Header-only auth (no token) was dropped even when `customHeaders` was supplied.
 
-Both branches are fixed: `getAgentInfo` now forwards `headers` as `customHeaders`, and `connectMCP` builds `requestInit.headers` whenever any headers are present — including alongside `authProvider` (the MCP SDK's `_commonHeaders()` spreads `requestInit.headers` under the provider-emitted `Authorization`, so OAuth users with custom routing/tenant headers also benefit).
+Both branches are fixed: `getAgentInfo` now forwards `headers` as `customHeaders`, and `connectMCP` builds `requestInit.headers` whenever any headers are present — including alongside `authProvider`, so OAuth users with custom routing/tenant headers benefit too.
+
+**Precedence note:** the MCP SDK's `_commonHeaders()` spreads `requestInit.headers` **over** any provider-emitted `Authorization` (`new Headers({ ...providerHeaders, ...requestInitHeaders })` — last-write-wins). To prevent a caller-supplied `Authorization` in `customHeaders` from silently overriding the OAuth bearer, `connectMCP` now strips `Authorization` from `customHeaders` when `authProvider` is set. Non-auth headers (routing, tenant ID, x-api-key co-tokens) still flow through. The bearer-token branch is unaffected — its own merge already lays the bearer last, so static `auth_token` takes precedence over any stray `customHeaders.Authorization` (regression test asserts this).
 
 Also fixes the cosmetic `adcp storyboard run` banner that labeled basic auth as `"bearer"` (`bin/adcp.js` chained-ternary fell through when `authOption.type === 'basic'`).
 

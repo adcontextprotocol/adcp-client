@@ -144,15 +144,50 @@ describe('SingleAgentClient.getAgentInfo() — header-only auth (basic, x-api-ke
     // fix, the `tools/list` precheck arrived without `authorization` and 401'd.
     assert.ok(received.length > 0, 'server should have received at least one request');
     for (const r of received) {
+      // Redact the header value in the failure message — even though the
+      // credential is a hardcoded test fixture, the assertion shape becomes
+      // the template for adopter copy-paste.
       assert.strictEqual(
         r.authHeader,
         credential,
-        `request "${r.method}" missing Authorization header (got ${r.authHeader ?? 'null'})`
+        `request "${r.method}" missing expected Authorization header (header was ${r.authHeader ? 'set-but-wrong' : 'absent'})`
       );
     }
     assert.ok(
       received.some(r => r.method === 'tools/list'),
       'tools/list should appear in the wire trace'
+    );
+  });
+
+  it('static bearer takes precedence over customHeaders.Authorization', async () => {
+    // Lock the precedence ordering in `connectMCP`'s `authHeaders` merge:
+    // `{ ...customHeaders, ...createMCPAuthHeaders(authToken) }` — the bearer
+    // spread last and wins. If someone reorders the merge, this fails.
+    received = [];
+    const bearerToken = 'bearer-token-xyz';
+    const client = new AgentClient({
+      id: 'bearer-with-stray-basic',
+      agent_uri: baseUrl,
+      protocol: 'mcp',
+      name: 'precedence-test',
+      auth_token: bearerToken,
+      headers: { Authorization: credential }, // should be overridden by auth_token
+    });
+
+    // The test server expects `Basic …` and will 401 anything else. We expect
+    // this to fail (with 401) because the bearer wins — that's the assertion.
+    await assert.rejects(
+      () => client.getAgentInfo(),
+      err => err instanceof Error,
+      'expected getAgentInfo to fail because bearer overrode the basic header'
+    );
+
+    // And the wire should show `Bearer …`, not `Basic …`, on the first request.
+    const firstReq = received.find(r => r.authHeader != null);
+    assert.ok(firstReq, 'server should have observed an Authorization header');
+    assert.ok(
+      firstReq.authHeader.startsWith('Bearer '),
+      `expected static bearer to win merge; got header prefix "${firstReq.authHeader.split(' ')[0] ?? ''}"`
     );
   });
 });
