@@ -337,14 +337,14 @@ function buildAuthRequiredMessage(
  * try {
  *   await connectMCP({ agentUrl, authToken: 'tok_...' });
  * } catch (error) {
- *   if (error instanceof McpAuthRejectedError) {
+ *   if (error instanceof MCPAuthRejectedError) {
  *     console.log(`Sent scheme: ${error.scheme}`); // 'bearer'
  *     // token was sent but rejected — check the token value
  *   }
  * }
  * ```
  */
-export class McpAuthRejectedError extends ADCPError {
+export class MCPAuthRejectedError extends ADCPError {
   readonly code = 'MCP_AUTH_REJECTED';
 
   constructor(

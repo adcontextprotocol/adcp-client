@@ -10,7 +10,7 @@ import { UnauthorizedError } from '@modelcontextprotocol/sdk/client/auth.js';
 import type { OAuthClientProvider } from '@modelcontextprotocol/sdk/client/auth.js';
 import { createHmac } from 'node:crypto';
 import { createMCPAuthHeaders } from '../auth';
-import { is401Error, McpAuthRejectedError } from '../errors';
+import { is401Error, MCPAuthRejectedError } from '../errors';
 import type { DebugLogEntry } from '../types/adcp';
 import { withSpan, injectTraceHeaders } from '../observability/tracing';
 import { buildAgentSigningFetch, signingContextStorage, type AgentSigningContext } from '../signing/client';
@@ -725,7 +725,7 @@ export async function connectMCP(options: {
     if (is401Error(error)) {
       const hasCustomAuthHeader = extractAuthHeader(customHeaders) !== undefined;
       const scheme = authProvider ? 'oauth' : authToken ? 'bearer' : hasCustomAuthHeader ? 'header' : 'none';
-      throw new McpAuthRejectedError(scheme, error);
+      throw new MCPAuthRejectedError(scheme, error);
     }
     throw error;
   }

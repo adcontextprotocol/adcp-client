@@ -1,13 +1,13 @@
 /**
  * Unit tests for connectMCP 401 error enrichment (issue #1869).
  *
- * When connectMCP receives an HTTP 401, it now throws McpAuthRejectedError
+ * When connectMCP receives an HTTP 401, it now throws MCPAuthRejectedError
  * with a `scheme` property identifying which auth credential the SDK sent
  * (oauth / bearer / header / none). This eliminates the opaque
  * "Error POSTing to endpoint (HTTP 401): unauthorized" message that cost
  * the reporter 30+ minutes of debugging time.
  *
- * Tests the McpAuthRejectedError class directly (from dist) and replicates
+ * Tests the MCPAuthRejectedError class directly (from dist) and replicates
  * the scheme-detection logic inline (same pattern as
  * mcp-connect-retry-predicate.test.js) to cover edge cases without
  * requiring a live MCP transport.
@@ -33,48 +33,48 @@ function deriveScheme({ authProvider, authToken, customHeaders }) {
   return authProvider ? 'oauth' : authToken ? 'bearer' : hasCustomAuthHeader ? 'header' : 'none';
 }
 
-// ---------- McpAuthRejectedError class tests (against compiled dist) ------
+// ---------- MCPAuthRejectedError class tests (against compiled dist) ------
 
-describe('McpAuthRejectedError', () => {
-  const { McpAuthRejectedError, ADCPError } = require('../../dist/lib/index.js');
+describe('MCPAuthRejectedError', () => {
+  const { MCPAuthRejectedError, ADCPError } = require('../../dist/lib/index.js');
 
   test('is exported from @adcp/sdk public surface', () => {
-    assert.ok(McpAuthRejectedError, 'McpAuthRejectedError should be exported');
+    assert.ok(MCPAuthRejectedError, 'MCPAuthRejectedError should be exported');
   });
 
   test('extends ADCPError', () => {
-    const err = new McpAuthRejectedError('bearer');
+    const err = new MCPAuthRejectedError('bearer');
     assert.ok(err instanceof Error);
     assert.ok(err instanceof ADCPError);
-    assert.ok(err instanceof McpAuthRejectedError);
+    assert.ok(err instanceof MCPAuthRejectedError);
   });
 
   test('has code MCP_AUTH_REJECTED', () => {
-    const err = new McpAuthRejectedError('bearer');
+    const err = new MCPAuthRejectedError('bearer');
     assert.strictEqual(err.code, 'MCP_AUTH_REJECTED');
   });
 
   test('carries the scheme as a typed property', () => {
     for (const scheme of ['oauth', 'bearer', 'header', 'none']) {
-      const err = new McpAuthRejectedError(scheme);
+      const err = new MCPAuthRejectedError(scheme);
       assert.strictEqual(err.scheme, scheme);
     }
   });
 
   test('message names the scheme for credentialed cases', () => {
-    const err = new McpAuthRejectedError('bearer');
+    const err = new MCPAuthRejectedError('bearer');
     assert.ok(err.message.includes("scheme 'bearer'"), `message: ${err.message}`);
     assert.ok(err.message.includes('rejected the credential'), `message: ${err.message}`);
   });
 
   test('message explains misconfiguration for scheme=none', () => {
-    const err = new McpAuthRejectedError('none');
+    const err = new MCPAuthRejectedError('none');
     assert.ok(err.message.includes('No auth credentials were configured'), `message: ${err.message}`);
     assert.ok(err.message.includes('connectMCP'), `message: ${err.message}`);
   });
 
   test('message does not include raw token values', () => {
-    const err = new McpAuthRejectedError('bearer', new Error('tok_secret'));
+    const err = new MCPAuthRejectedError('bearer', new Error('tok_secret'));
     // scheme name only; the raw cause error (which might contain token fragments)
     // is in details.cause, not in the main message
     assert.ok(!err.message.includes('tok_secret'), 'message should not leak cause content');
