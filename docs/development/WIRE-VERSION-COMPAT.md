@@ -143,6 +143,17 @@ npx tsx scripts/smoke-wonderstruck-v2-5.ts
 
 Auto-detects Wonderstruck from `SALES_AGENTS_CONFIG`; trivial to point at any v2 seller.
 
+## Two compat patterns — pick the right one
+
+This repo carries two distinct compat surfaces with different shapes. Choose based on the direction relative to the SDK's primary pin (`ADCP_VERSION`):
+
+| Pattern | When | Shape | Example |
+|---|---|---|---|
+| **Older-than-pin legacy shim** | Sellers still on a wire version older than the SDK's primary pin (e.g. v2.5 sellers when SDK pins 3.0) | Per-tool `AdapterPair` registry under `src/lib/adapters/legacy/<version>/` that translates v3 inputs down to the older wire and normalizes responses back up | `legacy/v2-5/` — primary precedent |
+| **Newer-than-pin opt-in side-bundle** | Spec-published beta (or future GA) that consumers want to opt into before the SDK promotes the primary pin (e.g. 3.1.0-beta.x while SDK pins 3.0.x) | Schema cache + parallel type surface under `src/lib/types/<version-dir>/`, no adapter needed (newer wire is additive over the SDK's pin from the buyer's perspective) | `v3-1-beta/` — second precedent |
+
+The legacy-shim recipe below covers the **older-than-pin** path. For the **newer-than-pin** opt-in pattern, jump to [Recipe: opt-in side-bundle](#recipe-opt-in-side-bundle-for-a-newer-than-pin-spec-version).
+
 ## Recipe: adding a new wire-shape compat shim
 
 Use this when one of:
@@ -404,6 +415,103 @@ What gets caught in code review every time:
 - **Don't bump `ADCP_VERSION` (the SDK pin) in the same PR as adding a legacy shim.** Two separate concerns — one is "we now support the new pin," the other is "we keep supporting the old pin underneath." Reviewing them together obscures both.
 - **Don't omit the `removeNumberedTypeDuplicates` codegen pass.** `json-schema-to-typescript` emits `Foo`, `Foo1`, `Foo2` for re-referenced enums. The dedupe is in `scripts/generate-types.ts` and shared with v2.5 codegen — call it from your new generator. Skipping it produces autocomplete confusion that won't surface until adopters import the types.
 - **Don't bypass `_provenance.json`.** The schema cache is reproducible because we pin the source SHA + sha256. Stripping that for "convenience" defeats CI determinism.
+
+## Recipe: opt-in side-bundle for a newer-than-pin spec version
+
+Use this when adopters need access to a spec version **newer** than the SDK's primary pin — e.g. AdCP cuts `3.1.0-beta.x` while the SDK pin stays at `3.0.x` GA. The pattern is fundamentally different from the legacy-shim recipe above:
+
+- **No adapter.** From a buyer's perspective, the newer wire is additive over the SDK's pin — extra optional fields, new tools, expanded capability declarations. There's nothing to translate; consumers pinning the newer version just need strict validation and typed access to the new shape.
+- **The SDK pin doesn't move.** `ADCP_VERSION` stays at the GA value; the newer bundle is a side-bundle that consumers opt into via `adcpVersion: 'X.Y-beta'` (or full semver). Default behavior is unchanged.
+- **Tarball, not SHA-pin.** Pull from the cosign-verified `adcontextprotocol.org/protocol/<version>.tgz` artifact — the upstream release is the source of truth for an opt-in beta. SHA-pinning is reserved for versions that aren't tagged (the v2.5 case).
+
+Precedent: `scripts/sync-3-1-beta-schemas.ts` + `scripts/generate-3-1-beta-types.ts` + `src/lib/types/v3-1-beta/` (PR #1879).
+
+### 1. Pull the schema bundle (opt-in shape)
+
+Add `scripts/sync-<version>-schemas.ts` that **wraps** the existing `syncSchemas()` rather than reimplementing it:
+
+```ts
+import { syncSchemas } from './sync-schemas';
+const BETA_VERSION = '3.X.0-beta.N';
+await syncSchemas(BETA_VERSION); // inherits cosign + sha256 + tarball extract
+```
+
+After the wrapped call, **restore two side-effect classes** that `syncSchemas()` overwrites:
+
+- **The `latest/` symlink** in `schemas/cache/` and `compliance/cache/`. `syncSchemas()` points it at whatever it just synced; for an opt-in side-bundle, repoint it back at the primary GA pin (read from `ADCP_VERSION` file). The SDK's runtime loader doesn't consult `latest/` for opt-in resolution (it uses release-precision fuzzy match against the prerelease directory directly), but downstream tooling does.
+- **Tracked side-effect paths.** `syncSchemas()` also extracts `schemas/registry/registry.yaml` and protocol-managed skills from the synced tarball. These track the SDK's primary pin, not the opt-in beta — restore them from `HEAD` with `git checkout HEAD -- <paths>`. Hardcode the list in a `RESTORE_PATHS` constant so the next contributor sees exactly what the wrapper protects.
+
+Wire into `package.json#scripts`:
+- `sync-schemas:<version>` — direct invocation
+- `sync-schemas:all` — append it to the chain
+
+### 2. Generate types (mega-schema with preprocessing)
+
+Add `scripts/generate-<version>-types.ts` modeled on `scripts/generate-3-1-beta-types.ts`. The 3.1-beta codegen extends the v2.5 mega-schema pipeline with three preprocessors that newer AdCP schemas need:
+
+- **`stripIfThenElse`** — deletes `if`/`then`/`else`/`dependencies` keywords before `json-schema-to-typescript`. AdCP 3.1+ uses these for response-shape gating (`unchanged: true ⇒ products omitted`) and request-shape gating (`if_pricing_version requires if_catalog_version`). jsts produces unusable union expansions; Ajv enforces the conditionals at runtime, so the TS surface collapses to all-optional. Memory: `feedback_strip_if_then_before_jsts`.
+- **`reseatLocalRefs`** — rewrites intra-schema `$ref` paths (`#/oneOf/0/...`, `#/definitions/<inner>`) to `#/definitions/<WrapperName>/oneOf/0/...` before bundling into the mega-schema. Required for any schema that self-references inside its own tree (e.g., `brand/get-brand-identity-response.json`, `brand/verify-brand-claims-request.json`).
+- **`propagateRootRequiredIntoOneOfBranches`** — for discriminated-union schemas with `oneOf` (notably `core/catalog-event.json`), lifts root-level `required` field names into every branch's `required` array. Without this, jsts emits the field as optional in each branch type and TS intersection-with-the-wrapper produces a watered-down union (`payload: {}` instead of `payload: BranchShape`).
+
+Add `index.ts` re-exporting the surface. Document `import * as V31Beta` (namespaced) as the recommended pattern — many type names collide with the GA surface.
+
+Wire into `package.json#scripts`:
+- `generate-types:<version>`
+- Append to `generate-types:all`
+
+### 3. Verify the schema bundle ships and the loader resolves it
+
+`copy-schemas-to-dist.ts` auto-discovers prerelease directories — verify with:
+
+```sh
+npm run build:lib
+ls dist/lib/schemas-data/    # expect 3.0, v2.5, AND your new bundle
+```
+
+The runtime loader already handles release-precision pins via `resolveSchemaRoot`'s prerelease fuzzy-match (lines ~268-298 in `schema-loader.ts`). A pin of `'3.X-beta'` matches any cached directory whose `toReleasePrecisionWire` form equals `'3.X-beta'` or starts with `'3.X-beta.'`. No loader code change needed.
+
+### 4. Extend `COMPATIBLE_ADCP_VERSIONS`
+
+`scripts/sync-version.ts` carries the `COMPATIBLE_PREFIX` constant. Add the new prerelease to it:
+
+```ts
+const COMPATIBLE_PREFIX = ['v2.5', 'v2.6', 'v3', '3.0.0-beta.1', '3.0.0-beta.3', '3.1.0-beta.1', ...] as const;
+```
+
+The major/minor gate in `buildCompatibleVersions` **stays closed** for primary-pin moves — opt-in betas land in the prefix list, GA bumps to a new minor still require an explicit range extension (intentional: a primary-pin move likely also moves the compat surface non-mechanically).
+
+Regenerate with `npm run sync-version`. The new prerelease shows up in `COMPATIBLE_ADCP_VERSIONS` and the `AdcpVersion` autocomplete union.
+
+### 5. Add the package.json export
+
+Mirror the `./types/v2-5` entry:
+
+```json
+"./types/v3-X-beta": {
+  "import": "./dist/lib/types/v3-X-beta/index.js",
+  "require": "./dist/lib/types/v3-X-beta/index.js",
+  "types": "./dist/lib/types/v3-X-beta/index.d.ts"
+}
+```
+
+And the matching `typesVersions` entry.
+
+### 6. Test the runtime path
+
+Add a test to `test/lib/schema-loader-per-version.test.js` that compiles `getValidator('<some_tool>', 'request', '<your_version>')` and validates a payload exercising at least one new field. The 3.1-beta test (test name `'3.1.0-beta.1 opt-in bundle compiles and accepts catalog-sync request fields'`) is the precedent. Without this, the type surface ships green but a runtime-validator regression can slip in.
+
+### 7. Changeset + PR
+
+Use `'X.Y-beta'` (release-precision) as the canonical pin in adopter-facing examples. It survives `beta.N → beta.N+1` bundle renames without a code change.
+
+**When the upstream cuts the next beta:**
+
+- Update `BETA_VERSION` constant in both scripts to the new tag (e.g., `'3.1.0-beta.2'`).
+- Update `COMPATIBLE_PREFIX` to include the new version.
+- Run `npm run sync-schemas:<version> && npm run generate-types:<version>`.
+- Commit the regenerated types.
+
+When the spec GAs (e.g., `3.1.0`), the side-bundle pattern retires — the next SDK release bumps `ADCP_VERSION` to the GA value and the side-bundle gets removed in the same PR.
 
 ## N=1 vs N×M
 
