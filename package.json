@@ -270,7 +270,8 @@
     "registry:validate-pending": "tsx src/registry/cron.ts --pending",
     "registry:mcp": "tsx src/registry/mcp-server.ts",
     "format": "prettier --write \"./**/*.{css,html,js,ts,tsx,json}\"",
-    "format:check": "prettier --check \"./**/*.{css,html,js,ts,tsx,json}\""
+    "format:check": "prettier --check \"./**/*.{css,html,js,ts,tsx,json}\"",
+    "review:codex": "bash scripts/codex-review.sh"
   },
   "keywords": [
     "adcp",
