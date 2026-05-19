@@ -2,8 +2,11 @@
 # codex-review.sh — fire a persona-scoped codex review on the working tree.
 #
 # Usage:
-#   scripts/codex-review.sh --persona <name> [--base <branch>] [-- <extra context>]
+#   scripts/codex-review.sh --persona <name> [--base <branch>]
 #   scripts/codex-review.sh --all [--base <branch>]
+#
+# PR-specific context is supplied via stdin OR auto-built from
+# `git diff --stat $BASE...HEAD` when `--base` is given.
 #
 # Personas (each maps to a prompt file in scripts/codex-review-prompts/):
 #   dx        — adopter ergonomics, JSDoc copy-paste-ability, error actionability
@@ -36,6 +39,7 @@ BASE_BRANCH=""
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --persona)
+      if [[ $# -lt 2 ]]; then echo "Missing value for --persona" >&2; exit 2; fi
       PERSONA="$2"
       shift 2
       ;;
@@ -44,11 +48,12 @@ while [[ $# -gt 0 ]]; do
       shift
       ;;
     --base)
+      if [[ $# -lt 2 ]]; then echo "Missing value for --base" >&2; exit 2; fi
       BASE_BRANCH="$2"
       shift 2
       ;;
     --help|-h)
-      sed -n '2,30p' "$0"
+      sed -n '2,28p' "$0"
       exit 0
       ;;
     *)
@@ -152,8 +157,13 @@ fi
 
 launch_persona "$PERSONA" &
 pid="$!"
-if ! wait "$pid"; then
-  status=$?
+# Capturing wait's exit needs the `|| status=$?` short-circuit.
+# `wait` inside `if ! …` clobbers $? to 0 (negated-test status), and bare
+# `wait` under `set -e` exits before any `status=$?` can run. The `||`
+# form runs only on failure, captures the real exit, and bypasses `set -e`.
+status=0
+wait "$pid" || status=$?
+if [[ $status -ne 0 ]]; then
   echo "[$PERSONA] codex exec failed (exit $status). See $OUT_DIR/codex-review-$PERSONA.txt." >&2
   exit "$status"
 fi
