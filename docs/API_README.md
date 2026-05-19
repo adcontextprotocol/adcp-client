@@ -194,7 +194,8 @@ The library also provides exception classes for transport-level failures:
 
 - [`TaskTimeoutError`](./classes/TaskTimeoutError.html) - Operation timeouts
 - [`AgentNotFoundError`](./classes/AgentNotFoundError.html) - Invalid agent ID
-- [`AuthenticationRequiredError`](./classes/AuthenticationRequiredError.html) - OAuth required
+- [`AuthenticationRequiredError`](./classes/AuthenticationRequiredError.html) - OAuth required (discovery-time 401)
+- [`MCPAuthRejectedError`](./classes/MCPAuthRejectedError.html) - Credentials sent but rejected (connect-time 401); `.scheme` identifies which credential was used
 
 ## Type Safety
 
