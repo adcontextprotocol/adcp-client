@@ -167,6 +167,11 @@ adcp test get_products '{"brief":"..."}' --auth your_token_here
 # 3. Environment variable (fallback)
 export ADCP_AUTH_TOKEN=your_token
 adcp https://agent.example.com get_products '{"brief":"..."}'
+
+# 4. HTTP Basic (gateway-fronted agents — Apigee, Kong, AWS API GW)
+adcp --save-auth gw https://gw.example.com/mcp --auth 'USER:PASS' --auth-scheme basic
+# See docs/guides/BASIC-AUTH.md for the gateway pattern, the auth_token-
+# suppression invariant, and a copyable wire-trace verification test.
 ```
 
 ### From File
