@@ -238,4 +238,51 @@ describe('RedisReplayStore', { skip: !REDIS_URL && 'REDIS_URL not set' }, () => 
     // Expected: 300 (TTL) + 3600 (default setTtlGraceSeconds) = ~3900s.
     assert.ok(ttl > 3800 && ttl <= 3905, `expected sorted-set TTL ~3900s, got ${ttl}`);
   });
+
+  test('short-lived insert after long-lived MUST NOT shrink the set TTL (replay-bypass regression)', async () => {
+    // Codex code review caught a real replay-bypass bug here: the
+    // original Lua unconditionally PEXPIREAT'd the set to
+    // `(latestInsert + grace) * 1000`, so a 60s nonce inserted after
+    // a 3600s nonce would shrink the set's eviction time to ~1m + grace
+    // and evict the still-valid 3600s nonce. A subsequent replay of
+    // the long-lived nonce would then succeed because has() saw an
+    // empty key. The fix: extend the set TTL forward-only via PTTL +
+    // explicit max comparison against the SDK-supplied `now * 1000`.
+    const store = new RedisReplayStore(client);
+    const now = Math.floor(Date.now() / 1000);
+    const redisKey = `adcp:replay:kid\x1f/op`;
+
+    // Long-lived insert first: set TTL → ~3600 + 3600 = ~7200s.
+    await store.insert('kid', '/op', 'n_long', 3600, now);
+    const ttlBefore = await client.ttl(redisKey);
+    assert.ok(ttlBefore > 7100 && ttlBefore <= 7205, `long-lived TTL: expected ~7200s, got ${ttlBefore}`);
+
+    // Short-lived insert second. Buggy implementation would shrink TTL
+    // to ~60 + 3600 = ~3660s. Fixed implementation preserves ~7200s.
+    await store.insert('kid', '/op', 'n_short', 60, now);
+    const ttlAfter = await client.ttl(redisKey);
+    assert.ok(
+      ttlAfter > 7100,
+      `set TTL must not shrink after a shorter-lived insert (replay-bypass regression). Before: ${ttlBefore}, after: ${ttlAfter}`
+    );
+
+    // Both nonces still visible (proves the set wasn't prematurely evicted).
+    assert.equal(await store.has('kid', '/op', 'n_long', now), true);
+    assert.equal(await store.has('kid', '/op', 'n_short', now), true);
+  });
+
+  test('long-lived insert after short-lived DOES extend the set TTL (forward-only)', async () => {
+    // Mirror of the regression test: forward extension still works.
+    const store = new RedisReplayStore(client);
+    const now = Math.floor(Date.now() / 1000);
+    const redisKey = `adcp:replay:kid\x1f/op`;
+
+    await store.insert('kid', '/op', 'n_short', 60, now);
+    const ttlBefore = await client.ttl(redisKey);
+    assert.ok(ttlBefore > 0 && ttlBefore <= 3665, `short-lived TTL: expected <=3660s, got ${ttlBefore}`);
+
+    await store.insert('kid', '/op', 'n_long', 3600, now);
+    const ttlAfter = await client.ttl(redisKey);
+    assert.ok(ttlAfter > 7100 && ttlAfter <= 7205, `set TTL must extend to ~7200s. After: ${ttlAfter}`);
+  });
 });

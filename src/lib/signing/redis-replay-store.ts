@@ -192,9 +192,33 @@ if redis.call('ZCARD', key) >= cap then
   return 'rate_abuse'
 end
 
--- Insert + extend set TTL so abandoned (keyid, scope) tuples evict
+-- Insert the new nonce.
 redis.call('ZADD', key, expiresAt, nonce)
-redis.call('PEXPIREAT', key, (expiresAt + grace) * 1000)
+
+-- Extend set TTL — but only forward, never backward. A short-lived
+-- insert after a long-lived one must NOT shrink the set's eviction
+-- time below the longest-still-valid nonce's expiry; otherwise the
+-- set would evict early and take still-valid nonces with it (replay
+-- bypass: has() returns false because the key disappeared, and the
+-- attacker's retry of the long-lived nonce is wrongly accepted).
+--
+-- Desired set expiry = max(existing PEXPIREAT, expiresAt + grace).
+-- PTTL returns -1 (no TTL set) or ms-remaining. Since ZADD ran above,
+-- the key exists, so PTTL won't return -2. nowMs is passed from the
+-- SDK side as ARGV[6] — using Redis's TIME command would make the
+-- script non-deterministic for replication.
+local desiredExpireAtMs = (expiresAt + grace) * 1000
+local currentTtlMs = redis.call('PTTL', key)
+local nowMs = tonumber(ARGV[6])
+if currentTtlMs < 0 then
+  -- -1: no TTL set. (ZADD just wrote the key so -2 is impossible.)
+  redis.call('PEXPIREAT', key, desiredExpireAtMs)
+else
+  local currentExpireAtMs = nowMs + currentTtlMs
+  if desiredExpireAtMs > currentExpireAtMs then
+    redis.call('PEXPIREAT', key, desiredExpireAtMs)
+  end
+end
 return 'ok'
 `;
 
@@ -295,9 +319,22 @@ export class RedisReplayStore implements ReplayStore {
     assertFiniteSeconds('now', now);
     assertFiniteSeconds('ttlSeconds', ttlSeconds);
     const expiresAt = now + ttlSeconds;
+    // `nowMs` (ARGV[6]) is `now * 1000` rather than `Date.now()` so the
+    // script's "extend forward only" branch uses the SAME clock as the
+    // rest of the verifier path (`now` is the verifier-supplied second-
+    // precision time, used for prune + replay + cap). Using `Date.now()`
+    // here would let scripts disagree with the surrounding logic when
+    // tests inject `options.now()`.
     const result = await this.c.eval(INSERT_LUA, {
       keys: [this.redisKey(keyid, scope)],
-      arguments: [nonce, String(expiresAt), String(now), String(this.cap), String(this.setTtlGraceSeconds)],
+      arguments: [
+        nonce,
+        String(expiresAt),
+        String(now),
+        String(this.cap),
+        String(this.setTtlGraceSeconds),
+        String(now * 1000),
+      ],
     });
     if (result !== 'ok' && result !== 'replayed' && result !== 'rate_abuse') {
       throw new Error(`RedisReplayStore.insert: Lua script returned unexpected value: ${String(result)}`);
