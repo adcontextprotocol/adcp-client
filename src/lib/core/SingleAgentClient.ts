@@ -2659,6 +2659,14 @@ export class SingleAgentClient {
    *
    * Works with both MCP (tools) and A2A (skills) protocols to discover what the agent can do.
    *
+   * Auth resolution: this method forwards `agent.headers` as `customHeaders`
+   * to the MCP transport so header-only auth (HTTP Basic via gateways like
+   * Apigee/Kong, x-api-key, custom tenant routing) reaches the precheck
+   * path. The invariant — **basic-auth credentials live entirely on
+   * `headers.Authorization`; do not also set `auth_token`** — is documented
+   * at `docs/guides/BASIC-AUTH.md`. See #1864 for the failure mode if it's
+   * violated.
+   *
    * @returns Promise resolving to agent information including tools
    *
    * @example
