@@ -147,6 +147,28 @@ interface SerializedEntry {
  * ```ts
  * client.on('error', (err) => console.error('redis error', err));
  * ```
+ *
+ * **Redis memory policy — set this on the deployment.** ctx_metadata
+ * entries default to durable (no TTL) when no `expiresAt` is provided,
+ * matching the pg sibling's `expires_at = NULL` semantic. Without a
+ * memory policy, an adopter who writes many durable entries can
+ * pressure Redis memory; once `maxmemory` is hit, default `noeviction`
+ * makes new writes fail. Choose deliberately:
+ *
+ * - **`maxmemory-policy allkeys-lru`** on a Redis db dedicated to AdCP
+ *   ctx_metadata — evicts the oldest entries to make room. Acceptable
+ *   for ctx_metadata because re-hydration is automatic on next read;
+ *   adopters lose the cache, not the data.
+ * - **`maxmemory-policy volatile-lru`** if you mostly use `expiresAt`
+ *   on entries — bounds growth to TTL'd keys only.
+ * - **`maxmemory-policy noeviction`** (Redis default) — fail-closed:
+ *   writes start erroring at the limit, mutating tools fail. Pages
+ *   you instead of silently evicting.
+ *
+ * For ctx_metadata specifically, evicting cached entries is safer than
+ * for the idempotency cache (which uses eviction as a feature) because
+ * the framework re-hydrates on miss. `allkeys-lru` is the recommended
+ * default on a dedicated db.
  */
 export function redisCtxMetadataStore(
   client: CtxMetadataRedisBackendClient,

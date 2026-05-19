@@ -177,6 +177,46 @@ export type IdempotencyCheckResult =
       payloadHash: string;
     };
 
+/**
+ * Configuration for `createIdempotencyStore`.
+ *
+ * **Cached responses at rest — handler responsibility.** The store
+ * caches whatever the handler returned as the response payload, then
+ * `JSON.stringify`-s it into the configured backend for the declared
+ * `ttlSeconds` (default 24h, max 7d). The hash-exclusion list strips
+ * `idempotency_key`, `governance_context`, and
+ * `push_notification_config.authentication.credentials` from the
+ * **hash** so a rotated credential on retry doesn't false-conflict,
+ * but the **stored response** is the handler's verbatim output.
+ *
+ * If a handler returns a response that includes:
+ *
+ * - a refreshed bearer / OAuth access token,
+ * - a signed governance / auth payload,
+ * - `push_notification_config.authentication.credentials` (echoed back),
+ * - any other secret material,
+ *
+ * those secrets sit at rest in the backend for `ttlSeconds`. On Redis
+ * without TLS, they're also plaintext over the wire. The framework
+ * does not scrub responses before caching — the AdCP spec doesn't
+ * require it of either party, and a built-in scrubber would change
+ * the wire shape of legitimate adopter responses without warning.
+ *
+ * Practical guidance:
+ *
+ * - **Don't return credentials in handler responses.** The spec
+ *   doesn't require it for any tool; if your adapter is echoing
+ *   them back, refactor.
+ * - If you must return them (e.g., a buyer-supplied webhook
+ *   credential that the spec asks you to echo so the buyer can
+ *   confirm receipt), wrap your handler to scrub before
+ *   returning, OR use a custom `IdempotencyBackend` that
+ *   transforms entries on the write path.
+ *
+ * See also `docs/guides/CTX-METADATA-SAFETY.md` for related guidance
+ * on what NOT to put in `ctx_metadata` (which has its own caching
+ * surface with the same at-rest concern).
+ */
 export interface IdempotencyStoreConfig {
   /** Storage backend. Use `memoryBackend()` for tests, `pgBackend(pool)` for production. */
   backend: IdempotencyBackend;

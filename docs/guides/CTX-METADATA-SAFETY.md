@@ -477,3 +477,36 @@ org-gating check themselves. See
 
 If your resolver doesn't gate on the principal's authorized accounts,
 `credentialPolicy: 'authInfo-only'` will not save you.
+
+---
+
+## Related: handler responses are cached for `ttlSeconds`
+
+`ctx_metadata` isn't the only cache surface that holds adopter values at
+rest. The **idempotency cache** stores whatever the handler returned as
+the response payload, in the configured backend, for the declared
+`ttlSeconds` (default 24h, max 7d per spec). The hash-exclusion list
+strips `idempotency_key`, `governance_context`, and
+`push_notification_config.authentication.credentials` from the **hash**
+so a rotated credential on retry doesn't false-conflict — but the
+**stored response** is the handler's verbatim output. If the handler
+returns:
+
+- a refreshed bearer / OAuth access token,
+- a signed governance / auth payload,
+- `push_notification_config.authentication.credentials` (echoed back),
+- any other secret material,
+
+those secrets sit at rest in the backend for the replay window. On
+Redis without TLS, they're plaintext over the wire too.
+
+**Don't return credentials in handler responses.** The spec doesn't
+require it for any AdCP tool; if your adapter is echoing them back,
+refactor. If a buyer-supplied credential must be echoed (e.g., to
+confirm receipt of `push_notification_config`), wrap your handler to
+scrub before returning OR use a custom `IdempotencyBackend` that
+transforms entries on the write path. JSDoc on
+`IdempotencyStoreConfig` carries the full version of this warning at
+the read site.
+
+See also [GitHub #1856](https://github.com/adcontextprotocol/adcp-client/issues/1856) — the SDK does not ship a built-in response scrubber because it would change the wire shape of legitimate adopter responses without warning. The track-record-of-shipped-credentials-in-responses issue is rare enough that opting into a scrubber per-deployment is the right shape.

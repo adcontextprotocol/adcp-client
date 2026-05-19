@@ -201,6 +201,28 @@ export function __resetDefaultPrefixWarningForTests(): void {
  * ```ts
  * client.on('error', (err) => console.error('redis error', err));
  * ```
+ *
+ * **Redis memory policy — set this on the deployment.** A buyer with a
+ * valid principal can mint unbounded distinct `idempotency_key` values
+ * and hit any mutating tool; each write adds a key to Redis with the
+ * configured `ttlSeconds` (default 24h). A sufficient rate can pressure
+ * Redis memory before TTLs evict naturally. Configure your Redis with:
+ *
+ * - **`maxmemory-policy volatile-lru`** (recommended) — evicts only
+ *   TTL'd keys, containing blast radius to AdCP's keyspace if the
+ *   instance is shared with other apps. All keys this backend writes
+ *   carry TTL, so this is safe.
+ * - **`maxmemory-policy allkeys-lru`** — only on a Redis db dedicated
+ *   to AdCP. Will evict your other keys if shared.
+ * - **`maxmemory-policy noeviction`** (Redis default) — fail-closed:
+ *   the backend's writes will start erroring once memory fills, and
+ *   mutating requests will fail. Operationally noisy but never serves
+ *   stale data; choose this only if you'd rather page than evict.
+ *
+ * Pair with alerting on a per-principal `VALIDATION_ERROR` rate — a
+ * drifted handler hit by a retrying buyer writes 10s-TTL entries on
+ * every fresh key, amplifying the rate of cache fill. Steady-state
+ * `VALIDATION_ERROR` should be zero.
  */
 export function redisBackend(client: RedisBackendClient, options: RedisBackendOptions = {}): IdempotencyBackend {
   // The function calls only the four methods on RedisLikeClient. The
