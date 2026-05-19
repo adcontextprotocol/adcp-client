@@ -125,6 +125,15 @@ export interface AgentRoutingContext {
   protocolIndex: Map<AdcpProtocol, string[]>;
   /** Resolved (key → URL) for echo on the storyboard result. */
   agentMap: Record<string, string>;
+  /**
+   * Agents whose discovery failed when `discovery_resilient: true` was set.
+   * Empty in the default (hard-failure) mode — if any agent failed and
+   * resilient mode is off, `buildRoutingContext` throws `DiscoveryFailure`
+   * instead of returning. The runner echoes this list onto
+   * `StoryboardResult.discovery_failures` so operators see the topology
+   * breakage even when the storyboard otherwise completes.
+   */
+  discoveryFailures: DiscoveryFailure[];
 }
 
 export class RoutingError extends Error {
@@ -154,10 +163,18 @@ export class DiscoveryFailure extends Error {
  * Discover every agent in the map in parallel and build the routing index.
  *
  * Failure modes:
- *   - any agent's discovery fails → `DiscoveryFailure` (caller surfaces as
- *     a hard storyboard failure, never a per-step skip)
+ *   - default (`options.discovery_resilient !== true`): any agent's
+ *     discovery failure → throw `DiscoveryFailure` (caller surfaces as a
+ *     hard storyboard failure, never a per-step skip). Correct for
+ *     production multi-tenant flows where every tenant is load-bearing.
+ *   - resilient (`options.discovery_resilient === true`, #1367): failed
+ *     agents are excluded from `profiles` + `protocolIndex` and reported
+ *     on `AgentRoutingContext.discoveryFailures`. Per-step routing then
+ *     surfaces failures only for storyboards that actually need the
+ *     broken tenant — unrelated storyboards complete normally.
  *   - protocol claimed by 2+ agents AND ≥1 storyboard step that needs it
- *     lacks `step.agent` → `RoutingError` (conflict)
+ *     lacks `step.agent` → `RoutingError` (conflict). Independent of
+ *     resilient mode.
  */
 export async function buildRoutingContext(
   storyboard: Storyboard,
@@ -165,6 +182,7 @@ export async function buildRoutingContext(
 ): Promise<AgentRoutingContext> {
   const agents = options.agents!;
   const entries = Object.entries(agents);
+  const resilient = options.discovery_resilient === true;
 
   const clients = new Map<string, TestClient>();
   const agentMap: Record<string, string> = {};
@@ -176,6 +194,7 @@ export async function buildRoutingContext(
 
   // Parallel discovery — one tenant's slowness does not block another.
   const profiles = new Map<string, AgentProfile>();
+  const discoveryFailures: DiscoveryFailure[] = [];
   const discoveryResults = await Promise.all(
     entries.map(async ([key, entry]) => {
       const perAgentOptions = buildAgentOptions(entry, options);
@@ -197,13 +216,28 @@ export async function buildRoutingContext(
   );
   for (const r of discoveryResults) {
     if (!r.profile || r.step.passed === false) {
-      const detail = scrubAuthSecrets(r.step.error ?? 'Discovery returned no profile.');
-      throw new DiscoveryFailure(
-        `Discovery failed for agent "${r.key}" (${agents[r.key]!.url}): ${detail}`,
-        r.key,
-        agents[r.key]!.url,
-        detail
-      );
+      // Bound the attacker-influenced upstream string. A malicious agent
+      // could return an arbitrarily large error body during the discovery
+      // probe; the unbounded string would flow into
+      // `StoryboardResult.discovery_failures[].error` where downstream
+      // dashboards / LLM contexts ingest it. 512 chars is enough for a
+      // human to read the failure and grep logs for more.
+      const rawDetail = scrubAuthSecrets(r.step.error ?? 'Discovery returned no profile.');
+      const detail = rawDetail.length > 512 ? `${rawDetail.slice(0, 512)} …(truncated)` : rawDetail;
+      // Default mode appends a signposted escape hatch so CI operators
+      // discover the resilient flag without grep'ing the JSDoc. Suppressed
+      // in resilient mode (the operator already opted in) so the hint
+      // doesn't appear in every per-agent failure attached to the result.
+      const baseMessage = `Discovery failed for agent "${r.key}" (${agents[r.key]!.url}): ${detail}`;
+      const message = resilient
+        ? baseMessage
+        : `${baseMessage}\n\nIf this is hello-cluster / exploratory CI and you want unrelated storyboards to complete despite this failure, ` +
+          `set \`StoryboardRunOptions.discovery_resilient: true\`. Do NOT set it in production — a topology with a broken tenant ` +
+          `is a hard misconfiguration there.`;
+      const failure = new DiscoveryFailure(message, r.key, agents[r.key]!.url, detail);
+      if (!resilient) throw failure;
+      discoveryFailures.push(failure);
+      continue;
     }
     profiles.set(r.key, r.profile);
   }
@@ -211,7 +245,7 @@ export async function buildRoutingContext(
   const protocolIndex = buildProtocolIndex(profiles);
   detectMultiClaimConflicts(storyboard, protocolIndex);
 
-  return { clients, profiles, protocolIndex, agentMap };
+  return { clients, profiles, protocolIndex, agentMap, discoveryFailures };
 }
 
 /**
@@ -234,7 +268,7 @@ export function buildRoutingContextFromProfiles(
   const protocolIndex = buildProtocolIndex(profiles);
   detectMultiClaimConflicts(storyboard, protocolIndex);
   // Empty client map — callers that only test routing shouldn't dispatch.
-  return { clients: new Map(), profiles, protocolIndex, agentMap };
+  return { clients: new Map(), profiles, protocolIndex, agentMap, discoveryFailures: [] };
 }
 
 /**
@@ -334,7 +368,24 @@ export function resolveAgentForStep(
   ctx: AgentRoutingContext
 ): string {
   if (step.agent !== undefined) {
-    // Already validated at runStoryboard entry; trust here.
+    // If the override targets an agent whose discovery failed under
+    // resilient mode, surface that explicitly rather than handing
+    // dispatch a transport client to a broken tenant (which would
+    // otherwise fail at the wire layer with a misleading transport
+    // error). Only meaningful when `discoveryFailures` is non-empty;
+    // under default (hard-failure) mode `buildRoutingContext` throws
+    // before we reach this branch.
+    const failed = ctx.discoveryFailures.find(f => f.agentKey === step.agent);
+    if (failed) {
+      throw new RoutingError(
+        `Step "${step.id}" targets agent "${step.agent}" via \`step.agent\` override, ` +
+          `but that agent's discovery failed: ${failed.underlying} ` +
+          `(${failed.url}). Either remove the override, fix the agent, or ` +
+          `route the step to a healthy agent.`,
+        step.task,
+        `agent "${step.agent}" failed discovery`
+      );
+    }
     return step.agent;
   }
   const protocol = primaryProtocolFor(step.task);
@@ -355,11 +406,18 @@ export function resolveAgentForStep(
     }
     // Zero candidates — no agent in the map claims this protocol.
     if (options.default_agent) return options.default_agent;
+    // Under `discovery_resilient`, an agent that was supposed to claim
+    // this protocol may have been excluded by a failed probe. Suffix the
+    // error so the operator sees the connection without correlating logs.
+    const failedHint =
+      ctx.discoveryFailures.length > 0
+        ? ` Discovery failed for: ${ctx.discoveryFailures.map(f => `${f.agentKey} (${f.url})`).join(', ')}.`
+        : '';
     throw new RoutingError(
       `No agent in the map claims protocol "${protocol}" required by tool ` +
         `"${step.task}" (step "${step.id}"). Available agents: ` +
-        `${[...ctx.profiles.keys()].join(', ')}. Add an agent that supports ` +
-        `${protocol}, or set \`default_agent\` to fall back.`,
+        `${[...ctx.profiles.keys()].join(', ') || '(none — every agent failed discovery)'}.${failedHint} ` +
+        `Add an agent that supports ${protocol}, or set \`default_agent\` to fall back.`,
       step.task,
       `protocol ${protocol} unclaimed`
     );

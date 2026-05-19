@@ -2586,6 +2586,19 @@ async function executeStoryboardPass(
     ...(assertionResults.length > 0 ? { assertions: assertionResults } : {}),
     strict_validation_summary: strictSummary,
     notices,
+    ...(routingContext && routingContext.discoveryFailures.length > 0
+      ? {
+          discovery_failures: routingContext.discoveryFailures.map(f => ({
+            agent_key: f.agentKey,
+            // Scrub URL userinfo (`https://user:pass@host/`) before
+            // echoing onto the result — an operator may legitimately
+            // encode credentials in the URL, and the leaderboard /
+            // dashboard surface mustn't carry them.
+            url: f.url.replace(/\/\/[^/@\s]+@/, '//[REDACTED]@'),
+            error: f.underlying,
+          })),
+        }
+      : {}),
   };
 
   // Close protocol connections when the runner created its own client. The
