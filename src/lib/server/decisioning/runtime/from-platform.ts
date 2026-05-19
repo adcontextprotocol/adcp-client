@@ -2719,13 +2719,20 @@ function bucketWebhookError(msg: string): string {
 /**
  * Per-server `ctxFor` builder. `createAdcpServerFromPlatform` constructs
  * one closure per server (capturing `opts.ctxMetadata` if wired) and
- * threads it into each handler-builder. Handler bodies invoke `ctxFor(ctx)`
- * at request time to derive the per-call `RequestContext`.
+ * threads it into each handler-builder. Handler bodies invoke
+ * `ctxFor(ctx, params)` at request time to derive the per-call
+ * `RequestContext`. The `params` argument is the un-destructured wire
+ * envelope; it lands on `RequestContext.input` so platform methods can
+ * read request fields the typed signature doesn't model (`assignments[]`
+ * on `sync_creatives`, `delete_missing` on `sync_audiences`, etc.).
  */
-type CtxForFn = (handlerCtx: HandlerContext<Account>) => RequestContext<Account>;
+type CtxForFn = (
+  handlerCtx: HandlerContext<Account>,
+  input?: Readonly<Record<string, unknown>>
+) => RequestContext<Account>;
 
 function makeCtxFor(ctxMetadataStore?: CtxMetadataStore): CtxForFn {
-  return handlerCtx => buildRequestContext(handlerCtx, ctxMetadataStore);
+  return (handlerCtx, input) => buildRequestContext(handlerCtx, ctxMetadataStore, input);
 }
 
 /**
@@ -2746,11 +2753,16 @@ function makeCtxFor(ctxMetadataStore?: CtxMetadataStore): CtxForFn {
  * `authInfo` / `agent` keys absent rather than `undefined` — adopters
  * can use `'authInfo' in ctx` as a presence check.
  */
-function toResolveCtx(ctx: { authInfo?: ResolvedAuthInfo; agent?: BuyerAgent }, toolName: string): ResolveContext {
+function toResolveCtx(
+  ctx: { authInfo?: ResolvedAuthInfo; agent?: BuyerAgent },
+  toolName: string,
+  input?: Readonly<Record<string, unknown>>
+): ResolveContext {
   return {
     ...(ctx.authInfo !== undefined && { authInfo: ctx.authInfo }),
     toolName,
     ...(ctx.agent != null && { agent: ctx.agent }),
+    ...(input != null && { input }),
   };
 }
 
@@ -3444,7 +3456,7 @@ function buildMediaBuyHandlers<P extends DecisioningPlatform<any, any>>(
   return {
     ...((sales?.getProducts || proposalManager) && {
       getProducts: async (params, ctx) => {
-        const reqCtx = ctxFor(ctx);
+        const reqCtx = ctxFor(ctx, params);
         // v1.5 seam: intercept refine[i].action='finalize' before
         // dispatching to the manager / sales. When the framework
         // commits the proposal inline, project the response directly.
@@ -3550,7 +3562,7 @@ function buildMediaBuyHandlers<P extends DecisioningPlatform<any, any>>(
 
     ...(sales?.createMediaBuy && {
       createMediaBuy: async (params, ctx) => {
-        const reqCtx = ctxFor(ctx);
+        const reqCtx = ctxFor(ctx, params);
         // Auto-hydrate: walk `params.packages`, attach the full Product object
         // (including `ctx_metadata`) at `pkg.product`. Publisher reads
         // `pkg.product.format_ids`, `pkg.product.ctx_metadata?.gam?.ad_unit_ids`
@@ -3640,7 +3652,7 @@ function buildMediaBuyHandlers<P extends DecisioningPlatform<any, any>>(
 
     ...(sales?.updateMediaBuy && {
       updateMediaBuy: async (params, ctx) => {
-        const reqCtx = ctxFor(ctx);
+        const reqCtx = ctxFor(ctx, params);
         // `media_buy_id` is required on the wire schema, but `validation: 'off'`
         // mode skips the schema parse — guard at the seam so platform code can
         // trust the value rather than re-checking. Also catches buyers calling
@@ -3716,7 +3728,7 @@ function buildMediaBuyHandlers<P extends DecisioningPlatform<any, any>>(
     }),
 
     syncCreatives: async (params, ctx) => {
-      const reqCtx = ctxFor(ctx);
+      const reqCtx = ctxFor(ctx, params);
       const creatives = params.creatives ?? [];
       if (!sales?.syncCreatives) {
         return adcpError('UNSUPPORTED_FEATURE', {
@@ -3749,7 +3761,7 @@ function buildMediaBuyHandlers<P extends DecisioningPlatform<any, any>>(
 
     ...(sales?.getMediaBuyDelivery && {
       getMediaBuyDelivery: async (params, ctx) => {
-        const reqCtx = ctxFor(ctx);
+        const reqCtx = ctxFor(ctx, params);
         // v1.5 seam: hydrate ctx.recipes for delivery reads. Per
         // Resolutions §5, recipe-driven delivery aggregation needs the
         // same recipe view the originating createMediaBuy used.
@@ -3802,7 +3814,7 @@ function buildMediaBuyHandlers<P extends DecisioningPlatform<any, any>>(
     // `sales.getMediaBuys is not a function`.
     ...(sales?.getMediaBuys && {
       getMediaBuys: async (params, ctx) => {
-        const reqCtx = ctxFor(ctx);
+        const reqCtx = ctxFor(ctx, params);
         return projectSync(
           async () => {
             const result = await sales!.getMediaBuys!(params, reqCtx);
@@ -3830,7 +3842,7 @@ function buildMediaBuyHandlers<P extends DecisioningPlatform<any, any>>(
     }),
     ...(sales?.providePerformanceFeedback && {
       providePerformanceFeedback: async (params, ctx) => {
-        const reqCtx = ctxFor(ctx);
+        const reqCtx = ctxFor(ctx, params);
         // Auto-hydrate `req.media_buy` from the prior createMediaBuy /
         // getMediaBuys store entry, plus `req.creative` when the buyer
         // scoped feedback to a specific creative, plus `req.package`
@@ -3848,7 +3860,7 @@ function buildMediaBuyHandlers<P extends DecisioningPlatform<any, any>>(
     }),
     ...(sales?.listCreativeFormats && {
       listCreativeFormats: async (params, ctx) => {
-        const reqCtx = ctxFor(ctx);
+        const reqCtx = ctxFor(ctx, params);
         return projectSync(
           () => sales!.listCreativeFormats!(params, reqCtx),
           r => r
@@ -3857,7 +3869,7 @@ function buildMediaBuyHandlers<P extends DecisioningPlatform<any, any>>(
     }),
     ...(sales?.listCreatives && {
       listCreatives: async (params, ctx) => {
-        const reqCtx = ctxFor(ctx);
+        const reqCtx = ctxFor(ctx, params);
         return projectSync(
           async () => {
             const result = await sales!.listCreatives!(params, reqCtx);
@@ -3920,7 +3932,7 @@ function buildCreativeHandlers<P extends DecisioningPlatform<any, any>>(
 
   return {
     buildCreative: async (params, ctx) => {
-      const reqCtx = ctxFor(ctx);
+      const reqCtx = ctxFor(ctx, params);
       return projectSync(
         () => creative.buildCreative(params, reqCtx),
         ret => projectBuildCreativeReturn(ret)
@@ -3935,7 +3947,7 @@ function buildCreativeHandlers<P extends DecisioningPlatform<any, any>>(
             'Add `previewCreative(req, ctx)` to your CreativeBuilderPlatform / CreativeAdServerPlatform literal.',
         });
       }
-      const reqCtx = ctxFor(ctx);
+      const reqCtx = ctxFor(ctx, params);
       return projectSync(
         () => (creative as CreativeBuilderPlatform).previewCreative!(params, reqCtx),
         preview => preview
@@ -3956,7 +3968,7 @@ function buildCreativeHandlers<P extends DecisioningPlatform<any, any>>(
             'or delegate via `capabilities.creative_agents`.',
         });
       }
-      const reqCtx = ctxFor(ctx);
+      const reqCtx = ctxFor(ctx, params);
       return projectSync(
         () => (creative as CreativeBuilderPlatform).listCreativeFormats!(params, reqCtx),
         r => r
@@ -3970,7 +3982,7 @@ function buildCreativeHandlers<P extends DecisioningPlatform<any, any>>(
     // buildAccountHandlers — see comment at line 4544.
     ...(creative.syncCreatives != null && {
       syncCreatives: async (params, ctx) => {
-        const reqCtx = ctxFor(ctx);
+        const reqCtx = ctxFor(ctx, params);
         const creatives = params.creatives ?? [];
         return projectSync(
           async () => {
@@ -4007,7 +4019,7 @@ function buildCreativeHandlers<P extends DecisioningPlatform<any, any>>(
     ...('listCreatives' in creative &&
       (creative as CreativeAdServerPlatform).listCreatives != null && {
         listCreatives: async (params, ctx) => {
-          const reqCtx = ctxFor(ctx);
+          const reqCtx = ctxFor(ctx, params);
           return projectSync(
             async () => {
               const result = await (creative as CreativeAdServerPlatform).listCreatives(params, reqCtx);
@@ -4028,7 +4040,7 @@ function buildCreativeHandlers<P extends DecisioningPlatform<any, any>>(
     ...('getCreativeDelivery' in creative &&
       (creative as CreativeAdServerPlatform).getCreativeDelivery != null && {
         getCreativeDelivery: async (params, ctx) => {
-          const reqCtx = ctxFor(ctx);
+          const reqCtx = ctxFor(ctx, params);
           return projectSync(
             async () => {
               const result = await (creative as CreativeAdServerPlatform).getCreativeDelivery(params, reqCtx);
@@ -4065,7 +4077,7 @@ function buildEventTrackingHandlers<P extends DecisioningPlatform<any, any>>(
 
   if (audiences) {
     handlers.syncAudiences = async (params, ctx) => {
-      const reqCtx = ctxFor(ctx);
+      const reqCtx = ctxFor(ctx, params);
       const audienceList = (params.audiences ?? []) as Audience[];
       return projectSync(
         () => audiences.syncAudiences(audienceList, reqCtx),
@@ -4076,7 +4088,7 @@ function buildEventTrackingHandlers<P extends DecisioningPlatform<any, any>>(
 
   if (sales?.syncCatalogs) {
     handlers.syncCatalogs = async (params, ctx) => {
-      const reqCtx = ctxFor(ctx);
+      const reqCtx = ctxFor(ctx, params);
       return projectSync(
         () => sales.syncCatalogs!(params, reqCtx),
         r => r
@@ -4086,7 +4098,7 @@ function buildEventTrackingHandlers<P extends DecisioningPlatform<any, any>>(
 
   if (sales?.logEvent) {
     handlers.logEvent = async (params, ctx) => {
-      const reqCtx = ctxFor(ctx);
+      const reqCtx = ctxFor(ctx, params);
       return projectSync(
         () => sales.logEvent!(params, reqCtx),
         r => r
@@ -4096,7 +4108,7 @@ function buildEventTrackingHandlers<P extends DecisioningPlatform<any, any>>(
 
   if (sales?.syncEventSources) {
     handlers.syncEventSources = async (params, ctx) => {
-      const reqCtx = ctxFor(ctx);
+      const reqCtx = ctxFor(ctx, params);
       return projectSync(
         () => sales.syncEventSources!(params, reqCtx),
         r => r
@@ -4117,7 +4129,7 @@ function buildSignalsHandlers<P extends DecisioningPlatform<any, any>>(
   if (!signals) return undefined;
   return {
     getSignals: async (params, ctx) => {
-      const reqCtx = ctxFor(ctx);
+      const reqCtx = ctxFor(ctx, params);
       return projectSync(
         async () => {
           const result = await signals.getSignals(params, reqCtx);
@@ -4147,7 +4159,7 @@ function buildSignalsHandlers<P extends DecisioningPlatform<any, any>>(
       );
     },
     activateSignal: async (params, ctx) => {
-      const reqCtx = ctxFor(ctx);
+      const reqCtx = ctxFor(ctx, params);
       // Auto-hydrate `req.signal` from the prior getSignals store entry —
       // publisher reads pricing options, agent segment id, ctx_metadata
       // directly without the buyer round-tripping the full signal object.
@@ -4188,14 +4200,14 @@ function buildSponsoredIntelligenceHandlers<P extends DecisioningPlatform<any, a
   if (!si) return undefined;
   return {
     getOffering: async (params, ctx) => {
-      const reqCtx = ctxFor(ctx);
+      const reqCtx = ctxFor(ctx, params);
       return projectSync(
         () => si.getOffering(params, reqCtx),
         r => r
       );
     },
     initiateSession: async (params, ctx) => {
-      const reqCtx = ctxFor(ctx);
+      const reqCtx = ctxFor(ctx, params);
       return projectSync(
         async () => {
           const result = await si.initiateSession(params, reqCtx);
@@ -4244,7 +4256,7 @@ function buildSponsoredIntelligenceHandlers<P extends DecisioningPlatform<any, a
       );
     },
     sendMessage: async (params, ctx) => {
-      const reqCtx = ctxFor(ctx);
+      const reqCtx = ctxFor(ctx, params);
       // Auto-hydrate `req.session` from the stored si_session record. The
       // schema-driven hydrator reads `params.session_id` and attaches the
       // stored session at `params.session` (via the `_id` → strip
@@ -4256,7 +4268,7 @@ function buildSponsoredIntelligenceHandlers<P extends DecisioningPlatform<any, a
       );
     },
     terminateSession: async (params, ctx) => {
-      const reqCtx = ctxFor(ctx);
+      const reqCtx = ctxFor(ctx, params);
       await hydrateForTool(ctxMetadataStore, reqCtx.account?.id, 'si_terminate_session', params, logger);
       return projectSync(
         async () => {
@@ -4307,14 +4319,14 @@ function buildBrandRightsHandlers<P extends DecisioningPlatform<any, any>>(
   if (!br) return undefined;
   return {
     getBrandIdentity: async (params, ctx) => {
-      const reqCtx = ctxFor(ctx);
+      const reqCtx = ctxFor(ctx, params);
       return projectSync(
         () => br.getBrandIdentity(params, reqCtx),
         r => r
       );
     },
     getRights: async (params, ctx) => {
-      const reqCtx = ctxFor(ctx);
+      const reqCtx = ctxFor(ctx, params);
       return projectSync(
         async () => {
           const result = await br.getRights(params, reqCtx);
@@ -4340,7 +4352,7 @@ function buildBrandRightsHandlers<P extends DecisioningPlatform<any, any>>(
     // PendingApproval arm rides the buyer's `push_notification_config` webhook
     // (the spec doesn't define a polling tool for `acquire_rights`).
     acquireRights: async (params, ctx) => {
-      const reqCtx = ctxFor(ctx);
+      const reqCtx = ctxFor(ctx, params);
       // Auto-hydrate `req.rights` from the prior getRights catalog entry.
       // Publisher reads selected pricing option + ctx_metadata directly.
       // Schema-driven via `x-entity` (#1109); destination field stays at
@@ -4365,7 +4377,7 @@ function buildBrandRightsHandlers<P extends DecisioningPlatform<any, any>>(
     // the immediate response carries `implementation_date: null` to
     // signal pending state.
     updateRights: async (params, ctx) => {
-      const reqCtx = ctxFor(ctx);
+      const reqCtx = ctxFor(ctx, params);
       await hydrateForTool(ctxMetadataStore, reqCtx.account?.id, 'update_rights', params, logger);
       return projectSync(
         () => br.updateRights(params, reqCtx),
@@ -4389,28 +4401,28 @@ function buildGovernanceHandlers<P extends DecisioningPlatform<any, any>>(
 
   if (cg) {
     handlers.checkGovernance = async (params, ctx) => {
-      const reqCtx = ctxFor(ctx);
+      const reqCtx = ctxFor(ctx, params);
       return projectSync(
         () => cg.checkGovernance(params, reqCtx),
         r => r
       );
     };
     handlers.syncPlans = async (params, ctx) => {
-      const reqCtx = ctxFor(ctx);
+      const reqCtx = ctxFor(ctx, params);
       return projectSync(
         () => cg.syncPlans(params, reqCtx),
         r => r
       );
     };
     handlers.reportPlanOutcome = async (params, ctx) => {
-      const reqCtx = ctxFor(ctx);
+      const reqCtx = ctxFor(ctx, params);
       return projectSync(
         () => cg.reportPlanOutcome(params, reqCtx),
         r => r
       );
     };
     handlers.getPlanAuditLogs = async (params, ctx) => {
-      const reqCtx = ctxFor(ctx);
+      const reqCtx = ctxFor(ctx, params);
       return projectSync(
         () => cg.getPlanAuditLogs(params, reqCtx),
         r => r
@@ -4420,35 +4432,35 @@ function buildGovernanceHandlers<P extends DecisioningPlatform<any, any>>(
 
   if (pl) {
     handlers.createPropertyList = async (params, ctx) => {
-      const reqCtx = ctxFor(ctx);
+      const reqCtx = ctxFor(ctx, params);
       return projectSync(
         () => pl.createPropertyList(params, reqCtx),
         r => r
       );
     };
     handlers.updatePropertyList = async (params, ctx) => {
-      const reqCtx = ctxFor(ctx);
+      const reqCtx = ctxFor(ctx, params);
       return projectSync(
         () => pl.updatePropertyList(params, reqCtx),
         r => r
       );
     };
     handlers.getPropertyList = async (params, ctx) => {
-      const reqCtx = ctxFor(ctx);
+      const reqCtx = ctxFor(ctx, params);
       return projectSync(
         () => pl.getPropertyList(params, reqCtx),
         r => r
       );
     };
     handlers.listPropertyLists = async (params, ctx) => {
-      const reqCtx = ctxFor(ctx);
+      const reqCtx = ctxFor(ctx, params);
       return projectSync(
         () => pl.listPropertyLists(params, reqCtx),
         r => r
       );
     };
     handlers.deletePropertyList = async (params, ctx) => {
-      const reqCtx = ctxFor(ctx);
+      const reqCtx = ctxFor(ctx, params);
       return projectSync(
         () => pl.deletePropertyList(params, reqCtx),
         r => r
@@ -4458,35 +4470,35 @@ function buildGovernanceHandlers<P extends DecisioningPlatform<any, any>>(
 
   if (cl) {
     handlers.createCollectionList = async (params, ctx) => {
-      const reqCtx = ctxFor(ctx);
+      const reqCtx = ctxFor(ctx, params);
       return projectSync(
         () => cl.createCollectionList(params, reqCtx),
         r => r
       );
     };
     handlers.updateCollectionList = async (params, ctx) => {
-      const reqCtx = ctxFor(ctx);
+      const reqCtx = ctxFor(ctx, params);
       return projectSync(
         () => cl.updateCollectionList(params, reqCtx),
         r => r
       );
     };
     handlers.getCollectionList = async (params, ctx) => {
-      const reqCtx = ctxFor(ctx);
+      const reqCtx = ctxFor(ctx, params);
       return projectSync(
         () => cl.getCollectionList(params, reqCtx),
         r => r
       );
     };
     handlers.listCollectionLists = async (params, ctx) => {
-      const reqCtx = ctxFor(ctx);
+      const reqCtx = ctxFor(ctx, params);
       return projectSync(
         () => cl.listCollectionLists(params, reqCtx),
         r => r
       );
     };
     handlers.deleteCollectionList = async (params, ctx) => {
-      const reqCtx = ctxFor(ctx);
+      const reqCtx = ctxFor(ctx, params);
       return projectSync(
         () => cl.deleteCollectionList(params, reqCtx),
         r => r
@@ -4496,42 +4508,42 @@ function buildGovernanceHandlers<P extends DecisioningPlatform<any, any>>(
 
   if (cs) {
     handlers.listContentStandards = async (params, ctx) => {
-      const reqCtx = ctxFor(ctx);
+      const reqCtx = ctxFor(ctx, params);
       return projectSync(
         () => cs.listContentStandards(params, reqCtx),
         r => r
       );
     };
     handlers.getContentStandards = async (params, ctx) => {
-      const reqCtx = ctxFor(ctx);
+      const reqCtx = ctxFor(ctx, params);
       return projectSync(
         () => cs.getContentStandards(params, reqCtx),
         r => r
       );
     };
     handlers.createContentStandards = async (params, ctx) => {
-      const reqCtx = ctxFor(ctx);
+      const reqCtx = ctxFor(ctx, params);
       return projectSync(
         () => cs.createContentStandards(params, reqCtx),
         r => r
       );
     };
     handlers.updateContentStandards = async (params, ctx) => {
-      const reqCtx = ctxFor(ctx);
+      const reqCtx = ctxFor(ctx, params);
       return projectSync(
         () => cs.updateContentStandards(params, reqCtx),
         r => r
       );
     };
     handlers.calibrateContent = async (params, ctx) => {
-      const reqCtx = ctxFor(ctx);
+      const reqCtx = ctxFor(ctx, params);
       return projectSync(
         () => cs.calibrateContent(params, reqCtx),
         r => r
       );
     };
     handlers.validateContentDelivery = async (params, ctx) => {
-      const reqCtx = ctxFor(ctx);
+      const reqCtx = ctxFor(ctx, params);
       return projectSync(
         () => cs.validateContentDelivery(params, reqCtx),
         r => r
@@ -4539,7 +4551,7 @@ function buildGovernanceHandlers<P extends DecisioningPlatform<any, any>>(
     };
     if (cs.getMediaBuyArtifacts) {
       handlers.getMediaBuyArtifacts = async (params, ctx) => {
-        const reqCtx = ctxFor(ctx);
+        const reqCtx = ctxFor(ctx, params);
         return projectSync(
           () => cs.getMediaBuyArtifacts!(params, reqCtx),
           r => r
@@ -4548,7 +4560,7 @@ function buildGovernanceHandlers<P extends DecisioningPlatform<any, any>>(
     }
     if (cs.getCreativeFeatures) {
       handlers.getCreativeFeatures = async (params, ctx) => {
-        const reqCtx = ctxFor(ctx);
+        const reqCtx = ctxFor(ctx, params);
         return projectSync(
           () => cs.getCreativeFeatures!(params, reqCtx),
           r => r
@@ -4581,7 +4593,7 @@ function buildAccountHandlers<P extends DecisioningPlatform<any, any>>(
   if (accounts.upsert) {
     handlers.syncAccounts = async (params, ctx) => {
       const refs = (params.accounts ?? []) as AccountReference[];
-      const resolveCtx = toResolveCtx(ctx, 'sync_accounts');
+      const resolveCtx = toResolveCtx(ctx, 'sync_accounts', params);
       return projectSync(
         () => accounts.upsert!(refs, resolveCtx),
         rows => ({ accounts: rows.map(toWireSyncAccountRow) })
@@ -4592,7 +4604,7 @@ function buildAccountHandlers<P extends DecisioningPlatform<any, any>>(
   if (accounts.syncGovernance) {
     handlers.syncGovernance = async (params, ctx) => {
       const entries = params.accounts as SyncGovernanceRequest['accounts'];
-      const resolveCtx = toResolveCtx(ctx, 'sync_governance');
+      const resolveCtx = toResolveCtx(ctx, 'sync_governance', params);
       return projectSync(
         () => accounts.syncGovernance!(entries, resolveCtx),
         rows => ({ accounts: rows.map(toWireSyncGovernanceRow) })
@@ -4603,7 +4615,7 @@ function buildAccountHandlers<P extends DecisioningPlatform<any, any>>(
   if (accounts.list) {
     handlers.listAccounts = async (params, ctx) => {
       const filter = params as Parameters<NonNullable<typeof accounts.list>>[0];
-      const resolveCtx = toResolveCtx(ctx, 'list_accounts');
+      const resolveCtx = toResolveCtx(ctx, 'list_accounts', params);
       // Wrap in projectSync so adopter `throw new AdcpError('PERMISSION_DENIED', ...)`
       // from the list impl projects to the structured wire envelope rather
       // than falling through to the framework's `SERVICE_UNAVAILABLE` mapping.
@@ -4619,7 +4631,7 @@ function buildAccountHandlers<P extends DecisioningPlatform<any, any>>(
 
   if (accounts.reportUsage) {
     handlers.reportUsage = async (params, ctx) => {
-      const resolveCtx = toResolveCtx(ctx, 'report_usage');
+      const resolveCtx = toResolveCtx(ctx, 'report_usage', params);
       return projectSync(
         () => accounts.reportUsage!(params, resolveCtx),
         r => r
@@ -4633,7 +4645,7 @@ function buildAccountHandlers<P extends DecisioningPlatform<any, any>>(
       // platform method runs. Adopters fronting an upstream platform read
       // tokens / upstream IDs off `ctx.account.ctx_metadata` without
       // having to re-resolve from `params.account`.
-      const resolveCtx = toResolveCtx(ctx, 'get_account_financials');
+      const resolveCtx = toResolveCtx(ctx, 'get_account_financials', params);
       refuseInlineAccountIdWhenForbidden(accounts.resolution, params.account);
       const resolved = await accounts.resolve(params.account, resolveCtx);
       if (!resolved) {

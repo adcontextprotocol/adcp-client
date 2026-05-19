@@ -87,7 +87,8 @@ function buildCtxMetadataAccessor(store: CtxMetadataStore, accountId: string): C
 
 export function buildRequestContext<TCtxMeta = Record<string, unknown>>(
   handlerCtx: HandlerContext<Account<TCtxMeta>>,
-  ctxMetadataStore?: CtxMetadataStore
+  ctxMetadataStore?: CtxMetadataStore,
+  input?: Readonly<Record<string, unknown>>
 ): RequestContext<Account<TCtxMeta>> {
   // `account` may legitimately be undefined for tools whose wire request
   // doesn't carry an `account` field AND whose `resolveAccountFromAuth`
@@ -129,6 +130,7 @@ export function buildRequestContext<TCtxMeta = Record<string, unknown>>(
   return {
     account,
     ...(handlerCtx.agent != null && { agent: handlerCtx.agent }),
+    ...(input != null && { input }),
     state: {
       findByObject: () => [],
       findProposalById: () => null,
