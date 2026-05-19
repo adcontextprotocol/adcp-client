@@ -664,8 +664,20 @@ export async function connectMCP(options: {
   // Build transport options
   const transportOptions: StreamableHTTPClientTransportOptions = {};
 
+  // Header-only auth (basic, x-api-key, custom routing) lives entirely on
+  // `customHeaders`. Attach it whenever it's present, regardless of which
+  // auth branch fires — OAuth + routing headers, bearer + tenant headers,
+  // and pure-header auth must all reach the wire. The MCP SDK's
+  // `_commonHeaders()` spreads `requestInit.headers` over the auth-provider-
+  // emitted `Authorization`, so this is safe to combine with `authProvider`.
+  const authHeaders: Record<string, string> = {
+    ...customHeaders,
+    ...(authToken ? createMCPAuthHeaders(authToken) : {}),
+  };
+  if (Object.keys(authHeaders).length > 0) {
+    transportOptions.requestInit = { headers: authHeaders };
+  }
   if (authProvider) {
-    // Use OAuth provider
     transportOptions.authProvider = authProvider;
     debugLogs.push({
       type: 'info',
@@ -673,12 +685,15 @@ export async function connectMCP(options: {
       timestamp: new Date().toISOString(),
     });
   } else if (authToken) {
-    // Use static token, merged with any custom headers (auth takes precedence)
-    const authHeaders = { ...customHeaders, ...createMCPAuthHeaders(authToken) };
-    transportOptions.requestInit = { headers: authHeaders };
     debugLogs.push({
       type: 'info',
       message: 'MCP: Using static token for authentication',
+      timestamp: new Date().toISOString(),
+    });
+  } else if (Object.keys(authHeaders).length > 0) {
+    debugLogs.push({
+      type: 'info',
+      message: 'MCP: Using custom headers for authentication',
       timestamp: new Date().toISOString(),
     });
   }
