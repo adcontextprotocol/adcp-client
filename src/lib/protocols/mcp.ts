@@ -744,6 +744,42 @@ export async function connectMCP(options: {
       // Return transport so caller can call finishAuth
       throw Object.assign(error, { transport, client: mcpClient });
     }
+
+    // Non-OAuth 401 — the SDK sent credentials that the agent rejected (or
+    // sent none when it needed them). The raw transport error is shaped like
+    // `Error POSTing to endpoint (HTTP 401): unauthorized`, which omits the
+    // crucial piece of debug data: *which auth scheme did the SDK actually
+    // use*. Without that, a caller can't diff against curl. Wrap the error
+    // with a scheme tag and a remediation hint, preserving the original
+    // under `.cause` so existing `is401Error` / `error.status` checks
+    // downstream still resolve.
+    if (is401Error(error)) {
+      const scheme = authProvider
+        ? 'oauth'
+        : authToken
+          ? 'bearer'
+          : Object.keys(authHeaders).length > 0
+            ? 'header'
+            : 'none';
+      const hint =
+        scheme === 'none'
+          ? 'No credentials were sent. Configure auth_token, headers, or oauth_tokens on the agent config (or pass --auth on the CLI).'
+          : scheme === 'header'
+            ? "Verify the Authorization header value matches the gateway (basic-auth: 'Basic ' + base64(user:pass); pair with --auth-scheme basic on the CLI)."
+            : scheme === 'bearer'
+              ? "Verify the bearer token matches the agent's expected credential."
+              : 'OAuth provider returned tokens that the agent rejected — check the provider configuration and token scopes.';
+      const detail = `MCP connect rejected with HTTP 401 from ${agentUrl}. SDK sent auth scheme: ${scheme}. ${hint}`;
+      const wrapped = Object.assign(new Error(detail), {
+        cause: error,
+        code: 'MCP_AUTH_REJECTED',
+        scheme,
+        agentUrl,
+        originalError: error,
+      });
+      throw wrapped;
+    }
+
     throw error;
   }
 }
