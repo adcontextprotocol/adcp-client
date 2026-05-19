@@ -86,6 +86,39 @@ describe('pgCtxMetadataStore', { skip: !DATABASE_URL && 'DATABASE_URL not set' }
     await pool.query(`DROP TABLE IF EXISTS ${upgradeTable} CASCADE`);
   });
 
+  // ────────── startup probe ──────────
+
+  test('probe succeeds when required columns exist', async () => {
+    const backend = pgCtxMetadataStore(pool);
+    await backend.probe();
+  });
+
+  test('probe fails closed when an older table is missing the resource column', async () => {
+    const oldTable = 'ctx_metadata_probe_old';
+    await pool.query(`DROP TABLE IF EXISTS ${oldTable} CASCADE`);
+    await pool.query(
+      `CREATE TABLE ${oldTable} (
+         scoped_key  TEXT PRIMARY KEY,
+         value       JSONB NOT NULL,
+         expires_at  TIMESTAMPTZ,
+         created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+         updated_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
+       )`
+    );
+    const backend = pgCtxMetadataStore(pool, { tableName: oldTable });
+    await assert.rejects(
+      () => backend.probe(),
+      err => {
+        assert.match(err.message, /ctx_metadata backend probe failed/);
+        assert.match(err.message, /create or upgrade/);
+        assert.ok(err.cause, 'raw pg error should be attached as Error.cause');
+        assert.ok(!err.message.includes('column "resource"'), 'raw pg error must not be in public message');
+        return true;
+      }
+    );
+    await pool.query(`DROP TABLE IF EXISTS ${oldTable} CASCADE`);
+  });
+
   // ────────── resource round-trip (the headline coverage) ──────────
 
   test('put + get round-trips the resource field', async () => {

@@ -106,12 +106,13 @@ export function pgCtxMetadataStore(db: PgQueryable, options: PgCtxMetadataBacken
   return {
     async probe(): Promise<void> {
       try {
-        await db.query(`SELECT 1 FROM ${table} LIMIT 0`);
+        await db.query(`SELECT scoped_key, value, resource, expires_at FROM ${table} LIMIT 0`);
       } catch (err) {
-        const cause = err instanceof Error ? err.message : String(err);
         throw new Error(
           `ctx_metadata backend probe failed: cannot reach the "${options.tableName ?? DEFAULT_TABLE}" table. ` +
-            `Run getCtxMetadataMigration() to create it, or check DATABASE_URL. Cause: ${cause}`
+            `Run getCtxMetadataMigration() to create or upgrade it, or check DATABASE_URL. ` +
+            `See server logs for the underlying cause.`,
+          { cause: err }
         );
       }
     },
