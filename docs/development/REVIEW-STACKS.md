@@ -46,6 +46,8 @@ npm run review:codex -- --all --base main
 
 Persona prompts live in `scripts/codex-review-prompts/{dx,protocol,code,security}.md`. Output goes to `$TMPDIR/codex-review-<persona>.txt`. `--all` skips `dx` because the Claude DX-expert has codebase-specific rubric knowledge that's hard to replicate in a general-purpose agent — if you want a codex DX second opinion, run `--persona dx` explicitly.
 
+**`--base` resolves to the remote-tracking ref.** When you pass `--base main`, the script fetches `origin/main` and diffs against that — not your locally-checked-out `main`. This matters because stale local `main` produces fabricated diffs that include already-merged PRs (caught while reviewing #1866 — codex returned findings about Redis backends from PRs that had already merged because my local `main` was four PRs behind). Pass an already-qualified ref (`origin/main`, a SHA, a tag) to bypass resolution, or `--no-fetch` to skip the fetch entirely.
+
 ### Claude side
 
 Use the `Agent` tool with four parallel calls — DX, protocol, code-reviewer, security — in a single message. Pattern documented in `~/.claude/projects/.../memory/feedback_parallel_expert_review.md` (see also `feedback_codex_dual_stack.md` for when to add codex).
