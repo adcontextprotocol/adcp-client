@@ -13,6 +13,110 @@ const assert = require('node:assert/strict');
 
 const REDIS_URL = process.env.REDIS_URL;
 
+// ────────── pure-function tests (no live Redis required) ──────────
+//
+// detectNodeRedisDbIndex + the default-prefix warning gate work off
+// the client object's shape, not a live connection. Run them
+// unconditionally so the warn behavior gets coverage in CI even when
+// REDIS_URL isn't set.
+
+describe('redisBackend — default-prefix-on-db-0 warning', () => {
+  let redisBackend, __resetDefaultPrefixWarningForTests;
+  let originalWarn;
+  let warnings;
+
+  before(() => {
+    const server = require('../../dist/lib/server/index.js');
+    redisBackend = server.redisBackend;
+    // Reset hook is exported from the backend module but not surfaced
+    // through the public server index — reach into the inner module.
+    __resetDefaultPrefixWarningForTests =
+      require('../../dist/lib/server/idempotency/backends/redis.js').__resetDefaultPrefixWarningForTests;
+  });
+
+  beforeEach(() => {
+    warnings = [];
+    originalWarn = console.warn;
+    console.warn = (...args) => warnings.push(args.join(' '));
+    __resetDefaultPrefixWarningForTests();
+  });
+
+  after(() => {
+    console.warn = originalWarn;
+  });
+
+  // Stub clients — never connected. The redisBackend constructor never
+  // calls into them; only `detectNodeRedisDbIndex` reads `.options`.
+  const stubClient = options => ({
+    options,
+    get: async () => null,
+    set: async () => null,
+    del: async () => 0,
+    ping: async () => 'PONG',
+  });
+
+  test('warns once on default prefix + db 0 (options.database)', () => {
+    redisBackend(stubClient({ database: 0 }));
+    assert.equal(warnings.length, 1);
+    assert.match(warnings[0], /default keyPrefix/);
+    assert.match(warnings[0], /db 0/);
+  });
+
+  test('warns once on default prefix + db 0 (parsed from options.url)', () => {
+    redisBackend(stubClient({ url: 'redis://localhost:6379' })); // implicit db 0
+    assert.equal(warnings.length, 1);
+  });
+
+  test('warns once on default prefix + explicit /0 in url', () => {
+    redisBackend(stubClient({ url: 'redis://localhost:6379/0' }));
+    assert.equal(warnings.length, 1);
+  });
+
+  test('does NOT warn on db 15 (explicit dedicated db index)', () => {
+    redisBackend(stubClient({ database: 15 }));
+    assert.equal(warnings.length, 0);
+  });
+
+  test('does NOT warn on db 7 parsed from url', () => {
+    redisBackend(stubClient({ url: 'redis://localhost:6379/7' }));
+    assert.equal(warnings.length, 0);
+  });
+
+  test('does NOT warn when keyPrefix is set explicitly (even to the default value)', () => {
+    redisBackend(stubClient({ database: 0 }), { keyPrefix: 'adcp:idem:' });
+    assert.equal(warnings.length, 0);
+  });
+
+  test('does NOT warn when suppressDefaultPrefixWarning is set', () => {
+    redisBackend(stubClient({ database: 0 }), { suppressDefaultPrefixWarning: true });
+    assert.equal(warnings.length, 0);
+  });
+
+  test('does NOT warn for escape-hatch clients without an introspectable options.database / options.url', () => {
+    // RedisLikeClient adapter path — no `options` object at all.
+    redisBackend({ get: async () => null, set: async () => null, del: async () => 0, ping: async () => 'PONG' });
+    assert.equal(warnings.length, 0);
+  });
+
+  test('warns at most once per process across multiple backend constructions', () => {
+    redisBackend(stubClient({ database: 0 }));
+    redisBackend(stubClient({ database: 0 }));
+    redisBackend(stubClient({ database: 0 }));
+    assert.equal(warnings.length, 1);
+  });
+
+  test('rediss:// (TLS) URL also triggers the warn on db 0', () => {
+    redisBackend(stubClient({ url: 'rediss://prod.example.com:6380' }));
+    assert.equal(warnings.length, 1);
+  });
+
+  test('does NOT warn when url has a non-numeric path component', () => {
+    // Defensive — a malformed url path shouldn't be assumed to be db 0.
+    redisBackend(stubClient({ url: 'redis://localhost:6379/notanumber' }));
+    assert.equal(warnings.length, 0);
+  });
+});
+
 describe('redisBackend', { skip: !REDIS_URL && 'REDIS_URL not set' }, () => {
   let client;
   let redisBackend, createIdempotencyStore;

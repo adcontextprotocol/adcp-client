@@ -106,6 +106,15 @@ export interface RedisBackendOptions {
    */
   keyPrefix?: string;
   /**
+   * Suppress the one-time `console.warn` emitted at construction when the
+   * default `keyPrefix` is used against a node-redis client that appears
+   * to be on db 0 (the most likely signal of a shared, non-dedicated
+   * Redis). Set to `true` if you know your Redis is dedicated to this
+   * AdCP deployment and don't want the warning noise. The recommended
+   * fix is to set `keyPrefix` explicitly, not to suppress.
+   */
+  suppressDefaultPrefixWarning?: boolean;
+  /**
    * How many seconds past `expiresAt` to keep the key alive in Redis, so
    * the store layer can still read it during the clock-skew window and
    * return `IDEMPOTENCY_EXPIRED` (rather than treating it as a fresh
@@ -119,10 +128,58 @@ export interface RedisBackendOptions {
 const DEFAULT_KEY_PREFIX = 'adcp:idem:';
 const DEFAULT_EXPIRED_GRACE_SECONDS = 120;
 
+/**
+ * Module-level once-flag: the default-prefix-on-db-0 warning fires at
+ * most once per process across all redisBackend instances. Operators
+ * standing up multiple backends (sharded, multi-region) shouldn't see
+ * N identical warnings.
+ */
+let hasWarnedAboutDefaultPrefix = false;
+
 interface SerializedEntry {
   payloadHash: string;
   response: unknown;
   expiresAt: number;
+}
+
+/**
+ * Best-effort introspection: detect the Redis db index when the client
+ * is a node-redis v4/v5 `RedisClientType`. Returns `null` for escape-
+ * hatch clients (ioredis, Upstash, test doubles, mocks) where we can't
+ * tell — prefer false-negative over a noisy false-positive warning.
+ *
+ * The default-prefix warning uses this to decide whether to fire: db 0
+ * is the strong signal of a shared/non-dedicated Redis (the typical
+ * "I just spun up Redis" path); db > 0 is the signal of an operator
+ * who already partitioned, who doesn't need the nag.
+ */
+function detectNodeRedisDbIndex(client: unknown): number | null {
+  if (!client || typeof client !== 'object') return null;
+  const opts = (client as { options?: Record<string, unknown> }).options;
+  if (!opts || typeof opts !== 'object') return null;
+  if (typeof opts.database === 'number') return opts.database;
+  if (typeof opts.url === 'string') {
+    try {
+      const u = new URL(opts.url);
+      if (u.protocol !== 'redis:' && u.protocol !== 'rediss:') return null;
+      const path = u.pathname.replace(/^\//, '');
+      if (path === '') return 0;
+      const n = Number(path);
+      return Number.isInteger(n) && n >= 0 ? n : null;
+    } catch {
+      return null;
+    }
+  }
+  return null;
+}
+
+/**
+ * Test-only escape hatch to reset the once-warn flag between test runs.
+ * Not exported through any index — adopters can't reach it from outside
+ * this file.
+ */
+export function __resetDefaultPrefixWarningForTests(): void {
+  hasWarnedAboutDefaultPrefix = false;
 }
 
 /**
@@ -157,6 +214,28 @@ export function redisBackend(client: RedisBackendClient, options: RedisBackendOp
   if (!Number.isFinite(expiredGraceSeconds) || expiredGraceSeconds < 0) {
     throw new Error(
       `redisBackend: expiredGraceSeconds must be a non-negative finite number. Got ${expiredGraceSeconds}.`
+    );
+  }
+
+  // One-time warning when the default keyPrefix is paired with a
+  // node-redis client we can confidently identify as being on db 0 —
+  // the strong signal of a shared/non-dedicated Redis where the
+  // default prefix is most likely to collide with another deployment.
+  // Stays silent for escape-hatch clients (ioredis, test doubles)
+  // because we can't introspect their db index.
+  if (
+    options.keyPrefix === undefined &&
+    !options.suppressDefaultPrefixWarning &&
+    !hasWarnedAboutDefaultPrefix &&
+    detectNodeRedisDbIndex(client) === 0
+  ) {
+    hasWarnedAboutDefaultPrefix = true;
+    console.warn(
+      `redisBackend: using the default keyPrefix "${DEFAULT_KEY_PREFIX}" against Redis db 0. ` +
+        `If this Redis db is shared with another AdCP deployment (or other apps), the principal ` +
+        `segment alone is not enough to prevent cross-deployment collision. Set a deployment-unique ` +
+        `keyPrefix (e.g., "adcp:idem:prod-eu:") or use a dedicated Redis db. ` +
+        `Pass { suppressDefaultPrefixWarning: true } to silence this once you've confirmed isolation.`
     );
   }
 
