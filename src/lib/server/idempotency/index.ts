@@ -10,3 +10,5 @@ export { memoryBackend } from './backends/memory';
 export type { MemoryBackendOptions } from './backends/memory';
 export { pgBackend, getIdempotencyMigration, IDEMPOTENCY_MIGRATION, cleanupExpiredIdempotency } from './backends/pg';
 export type { PgBackendOptions } from './backends/pg';
+export { redisBackend } from './backends/redis';
+export type { RedisBackendOptions, RedisBackendClient, RedisLikeClient } from './backends/redis';
