@@ -44,6 +44,12 @@ npm run review:codex -- --persona security --base main
 npm run review:codex -- --all --base main
 ```
 
+> **Staleness note:** bare branch names like `main` are automatically resolved
+> to `origin/main` (the script fetches the remote branch before diffing). If
+> the fetch fails (network outage, CI runner without remote access), a warning
+> is printed and the diff falls back to whatever `origin/main` was last
+> fetched. Pass `--base origin/main` explicitly to skip the automatic fetch.
+
 Persona prompts live in `scripts/codex-review-prompts/{dx,protocol,code,security}.md`. Output goes to `$TMPDIR/codex-review-<persona>.txt`. `--all` skips `dx` because the Claude DX-expert has codebase-specific rubric knowledge that's hard to replicate in a general-purpose agent — if you want a codex DX second opinion, run `--persona dx` explicitly.
 
 ### Claude side

@@ -92,6 +92,17 @@ else
   validate_persona "$PERSONA"
 fi
 
+# Resolve BASE_BRANCH to origin/<branch> so the diff is never against a stale
+# local copy. A bare branch name like "main" is automatically normalized;
+# pass "origin/main" explicitly to skip the fetch.
+if [[ -n "$BASE_BRANCH" && "$BASE_BRANCH" != origin/* && "$BASE_BRANCH" != refs/remotes/* ]]; then
+  echo "[codex-review] fetching origin/$BASE_BRANCH..." >&2
+  if ! git fetch origin "$BASE_BRANCH"; then
+    echo "[codex-review] warning: fetch failed — diff may include stale commits" >&2
+  fi
+  BASE_BRANCH="origin/$BASE_BRANCH"
+fi
+
 # Gather PR context. Either piped via stdin, or auto-built from git diff
 # against the base branch if --base is provided. Auto-built context names
 # changed files so codex knows where to look without manual setup.
@@ -114,7 +125,7 @@ elif [[ -n "$BASE_BRANCH" ]]; then
     git log --oneline "$BASE_BRANCH"..HEAD
   } > "$CONTEXT_FILE"
 else
-  echo "No stdin and no --base — supply one." >&2
+  echo "No stdin and no --base — supply one (e.g. --base origin/main)." >&2
   exit 2
 fi
 
