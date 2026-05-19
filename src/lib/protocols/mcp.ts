@@ -10,7 +10,7 @@ import { UnauthorizedError } from '@modelcontextprotocol/sdk/client/auth.js';
 import type { OAuthClientProvider } from '@modelcontextprotocol/sdk/client/auth.js';
 import { createHmac } from 'node:crypto';
 import { createMCPAuthHeaders } from '../auth';
-import { is401Error } from '../errors';
+import { is401Error, McpAuthRejectedError } from '../errors';
 import type { DebugLogEntry } from '../types/adcp';
 import { withSpan, injectTraceHeaders } from '../observability/tracing';
 import { buildAgentSigningFetch, signingContextStorage, type AgentSigningContext } from '../signing/client';
@@ -718,6 +718,14 @@ export async function connectMCP(options: {
       });
       // Return transport so caller can call finishAuth
       throw Object.assign(error, { transport, client: mcpClient });
+    }
+    // Non-OAuth 401: enrich with which auth scheme the SDK sent so the caller
+    // doesn't need to chase the opaque MCP SDK message ("Error POSTing to
+    // endpoint (HTTP 401): unauthorized") back to their auth config.
+    if (is401Error(error)) {
+      const hasCustomAuthHeader = extractAuthHeader(customHeaders) !== undefined;
+      const scheme = authProvider ? 'oauth' : authToken ? 'bearer' : hasCustomAuthHeader ? 'header' : 'none';
+      throw new McpAuthRejectedError(scheme, error);
     }
     throw error;
   }

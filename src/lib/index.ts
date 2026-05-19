@@ -271,6 +271,7 @@ export {
   InvalidContextError,
   ConfigurationError,
   AuthenticationRequiredError,
+  McpAuthRejectedError,
   FeatureUnsupportedError,
   VersionUnsupportedError,
   IdempotencyConflictError,

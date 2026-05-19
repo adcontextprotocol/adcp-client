@@ -324,6 +324,46 @@ function buildAuthRequiredMessage(
 }
 
 /**
+ * Error thrown when `connectMCP` receives an HTTP 401 after sending credentials.
+ *
+ * Distinct from `AuthenticationRequiredError` (which fires when the server
+ * requests auth during MCP discovery with no or mismatched scheme metadata).
+ * This error fires when credentials *were* configured and sent but the server
+ * rejected them — giving the caller a typed handle on which credential the
+ * SDK actually used.
+ *
+ * @example
+ * ```typescript
+ * try {
+ *   await connectMCP({ agentUrl, authToken: 'tok_...' });
+ * } catch (error) {
+ *   if (error instanceof McpAuthRejectedError) {
+ *     console.log(`Sent scheme: ${error.scheme}`); // 'bearer'
+ *     // token was sent but rejected — check the token value
+ *   }
+ * }
+ * ```
+ */
+export class McpAuthRejectedError extends ADCPError {
+  readonly code = 'MCP_AUTH_REJECTED';
+
+  constructor(
+    public readonly scheme: 'oauth' | 'bearer' | 'header' | 'none',
+    cause?: unknown
+  ) {
+    const detail =
+      scheme === 'none'
+        ? 'MCP transport returned HTTP 401. No auth credentials were configured ' +
+          '(authToken, authProvider, or customHeaders.Authorization). ' +
+          'Check that you are passing auth options to connectMCP.'
+        : `MCP transport returned HTTP 401 using scheme '${scheme}'. ` +
+          'The server rejected the credential. Verify the token/OAuth client matches what the agent expects.';
+    super(detail);
+    this.details = { scheme, cause };
+  }
+}
+
+/**
  * Error thrown when a request reused an `idempotency_key` with a different
  * canonical payload within the seller's replay window.
  *
