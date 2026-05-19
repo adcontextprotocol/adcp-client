@@ -23,6 +23,8 @@ This document contains essential guidelines for AI coding assistants (Claude, Co
 
 **Putting credentials in `ctx_metadata`?** — Don't. Read `docs/guides/CTX-METADATA-SAFETY.md` — wire-strip protects buyer responses but not log lines / error envelopes / heap dumps / adopter strings. Re-derive bearers per request; embed only non-secret upstream IDs.
 
+**Reviewing a safety-critical PR (auth, signing, replay, idempotency, governance, tenancy)?** — Read `docs/development/REVIEW-STACKS.md`. Run Claude expert agents (DX, protocol, code-review, security) in parallel **plus** `npm run review:codex -- --all --base main` for a second-model opinion. Convergence = ship confidence; divergence = the actual review.
+
 ## Project Overview
 
 **@adcp/sdk** is the official TypeScript client library for the Ad Context Protocol (AdCP), documented at [docs.adcontextprotocol.org](https://docs.adcontextprotocol.org/docs/).

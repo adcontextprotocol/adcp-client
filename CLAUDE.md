@@ -18,6 +18,8 @@ your context: `src/lib/types/*.generated.ts`, `src/lib/agents/index.generated.ts
 
 **Putting credentials in `ctx_metadata`?** Don't. Read `docs/guides/CTX-METADATA-SAFETY.md` — the wire-strip protects buyer responses but does NOT protect server-side log lines, error envelopes, heap dumps, or adopter-generated strings. Re-derive bearers per request from `ctx.authInfo` + your token cache; embed only non-secret upstream IDs in `ctx_metadata`.
 
+**Reviewing a safety-critical PR (auth, signing, replay, idempotency, governance, tenancy)?** Read `docs/development/REVIEW-STACKS.md`. Run Claude expert agents (DX, protocol, code-review, security) in parallel **plus** `npm run review:codex -- --all --base main` for a second-model opinion. Convergence between the two stacks = ship confidence; divergence = the actual review. The pattern caught a real replay-protection bypass on PR #1858 that the Claude reviewers couldn't be reached for due to API capacity.
+
 **Calling an AdCP agent as a buyer?** Read and follow `skills/call-adcp-agent/SKILL.md` — covers the wire contract, minimal payload shapes, async flow, and error recovery so you don't stall on `oneOf`/discriminated-union fields that schema-free tool discovery won't explain. Significantly reduces the hop count an LLM needs to make its first successful call (3-4 attempts → 1 attempt on common tools in empirical comparison).
 
 **Building a seller agent?** Read and follow `skills/build-seller-agent/SKILL.md` — covers guaranteed vs non-guaranteed, pricing, approval workflows, creative management.
