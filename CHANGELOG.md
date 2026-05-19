@@ -1,5 +1,165 @@
 # Changelog
 
+## 7.9.0
+
+### Minor Changes
+
+- 81c3d4f: fix(server): `pgCtxMetadataStore` now persists the framework-owned `resource` field on every backend op
+
+  Closes adcp-client#1859. The pg backend at `src/lib/server/ctx-metadata/backends/pg.ts` was silently dropping `CtxMetadataEntry.resource` on read AND write, while the memory and Redis siblings preserved it. An adopter swapping pg ↔ memory ↔ Redis would see different auto-hydration behavior on string-id references: with pg, `resource` came back `undefined` on every read; the framework's hydration path fell through to "resource not cached" and re-fetched. With Redis (just landed in #1858), `resource` round-trips correctly, so adopters who switched substrates would silently regain hydration behavior — looking like a Redis-specific gain.
+
+  **Fix.** Three changes in one place:
+  - **Migration adds `resource JSONB` column.** `getCtxMetadataMigration()` now emits `CREATE TABLE` with `resource JSONB` plus an `ALTER TABLE … ADD COLUMN IF NOT EXISTS` clause for adopters running an older migration. Idempotent on fresh tables (column already exists), additive on existing tables (column added, existing rows get NULL).
+  - **`get` + `bulkGet` round-trip the field.** SELECT now includes `resource`; the returned `CtxMetadataEntry` carries `resource` when the row column is non-NULL and omits the key entirely otherwise — matches the memory + Redis backends' object shape for `assert.deepEqual` tests.
+  - **`put` writes the field via static SQL + CASE expressions.** Replaces the dynamic `expiresAtClause` builder that grew conditional `params.push()` calls; new shape passes all four params unconditionally and uses `CASE WHEN $N::text IS NULL THEN NULL ELSE $N::jsonb END` to avoid `null::jsonb` producing JSON 'null' (not SQL NULL) and `TO_TIMESTAMP(NULL)` raising.
+
+  **Migration on upgrade.** Adopters running a pre-7.9 `getCtxMetadataMigration()` must re-run it after upgrading. The new migration is idempotent — `CREATE TABLE IF NOT EXISTS` and `ALTER TABLE … ADD COLUMN IF NOT EXISTS` mean it's safe to re-apply on every boot. Existing rows get `NULL` for `resource`, which the framework treats as "not yet hydrated" (next read of the same resource by ID will repopulate it via the normal hydration path). `pgCtxMetadataStore.probe()` now checks the required columns too, so upgraded code fails readiness against an old table instead of accepting traffic and failing on first ctx-metadata access.
+
+  **Test coverage.** 15 new integration tests in `test/lib/ctx-metadata-pg.test.js` (skipped without `DATABASE_URL`) covering: migration creates the column, migration is idempotent, migration upgrades a pre-7.9 table, probe success, probe failure against an old table missing `resource`, `put`/`get`/`bulkGet` round-trip `resource`, entries without `resource` omit the key on read (no `undefined` leakage), `put` overwrites resource on conflict, `put` can clear a previously-set resource, expiry round-trip, unicode/nested resource shapes, `cleanupExpiredCtxMetadata` still works against the new schema. All 15 pass against local Postgres. Full ctx-metadata suite (pg + Redis + memory = 67 tests) passes.
+
+  **Why minor (not patch).** The migration changes the published `getCtxMetadataMigration()` output. Adopters must re-run it on upgrade to get the column; deployments that don't will fail the startup probe (or fail at the first direct `get` if they skip readiness). The behavior change is observable, so the version bump reflects that — not a breaking change in the API surface, but a breaking change in the operational contract.
+
+- 315bca2: feat(server): add Redis backend for the idempotency store
+
+  `createIdempotencyStore` now ships a third backend alongside `memoryBackend` (tests / single-process) and `pgBackend` (production). Redis is a natural fit for the AdCP v3 replay cache — atomic `SET … NX EX` maps directly to the `putIfAbsent` claim semantic, and key expiry is enforced by the engine rather than an explicit sweeper job.
+
+  ```ts
+  import { createClient } from 'redis';
+  import { createAdcpServer, createIdempotencyStore, redisBackend } from '@adcp/sdk/server';
+
+  const redis = createClient({ url: process.env.REDIS_URL });
+  redis.on('error', err => console.error('redis error', err));
+  await redis.connect();
+
+  const idempotency = createIdempotencyStore({
+    backend: redisBackend(redis),
+    ttlSeconds: 86400,
+  });
+
+  createAdcpServer({ idempotency /* ... */ });
+  ```
+
+  **Reclaim semantics.** A crashed in-flight claim is naturally reclaimable on retry because Redis auto-deletes expired keys — no `WHERE expires_at < NOW()` dance like the Postgres backend.
+
+  **`expired` vs `miss` parity.** The store layer distinguishes `IDEMPOTENCY_EXPIRED` (cached entry past TTL within the clock-skew window) from `miss` (fresh execution). Redis would otherwise collapse these by evicting the key at the second it expires; the backend holds the value alive for an extra `expiredGraceSeconds` (defaults to 120s — covers the store's default 60s skew with margin) so the store can still return `expired` correctly. Configurable via `redisBackend(client, { expiredGraceSeconds })`.
+
+  **Key prefix.** All keys are prefixed (defaults to `"adcp:idem:"`) so a shared Redis instance can host multiple AdCP servers — or AdCP alongside other apps — without collision. Override via `redisBackend(client, { keyPrefix })`.
+
+  **Client shape.** The backend accepts a `RedisBackendClient = RedisClientType<any, any, any> | RedisLikeClient` union. Pass `createClient(...)` from the `redis` package straight in — node-redis is the documented path and typechecks without casts. `ioredis`, Upstash, or test doubles implement the narrow `RedisLikeClient` interface (4 methods: `get`, `set` with `{ EX, NX }`, `del`, `ping`); the JSDoc on `RedisLikeClient` ships a 7-line `ioredis` adapter example that handles the positional-args asymmetry. `RedisClientType` is imported via `import type` only — erased at emit, so `redis` stays a truly optional peer dep with zero runtime coupling.
+
+  **`clearAll` intentionally omitted.** A shared Redis instance is a production resource — accidentally calling `FLUSHDB` from a compliance reset hook would nuke unrelated keys. Test setups that want a clean slate should run against a dedicated db index (`REDIS_URL=…/15`) and call `FLUSHDB` themselves. Same rationale as the Postgres backend.
+
+  **Peer dependency.** `redis: ^4.6.0 || ^5.0.0` added as an optional peer dep (`peerDependenciesMeta.redis.optional = true`). Adopters who don't use the Redis backend pay no install cost.
+
+  **Test coverage.** 15 integration tests in `test/lib/idempotency-redis.test.js` mirror the Postgres backend's suite (probe, get/put round-trip, putIfAbsent claim + race, delete, JSON unicode/nesting, store-level check/save/conflict/expired round-trips) plus Redis-specific cases: `keyPrefix` isolation across apps sharing a db, corrupt-value surfacing as an explicit error, and the grace-window keeping `expired` distinguishable from `miss`. Skipped when `REDIS_URL` is not set.
+
+- ecf99f4: feat(server, signing): Redis backends for ctx-metadata and ReplayStore
+
+  Adds two more Redis-backed stores alongside the existing memory and Postgres variants. Same shape as the idempotency Redis backend: `RedisClientType | <NarrowInterface>` union so node-redis users pass `createClient(...)` straight in without casts, `import type` keeps `redis` an optional peer dep with zero runtime coupling, shared one-time `console.warn` at construction when the default `keyPrefix` is paired with a Redis client we can confidently see on db 0.
+
+  ```ts
+  import { createClient } from 'redis';
+  import { createCtxMetadataStore, redisCtxMetadataStore, createAdcpServer } from '@adcp/sdk/server';
+  import { RedisReplayStore } from '@adcp/sdk/signing/server';
+
+  const redis = createClient({ url: process.env.REDIS_URL });
+  redis.on('error', err => console.error('redis error', err));
+  await redis.connect();
+
+  createAdcpServer({
+    ctxMetadata: createCtxMetadataStore({ backend: redisCtxMetadataStore(redis) }),
+    // ...
+  });
+
+  // And/or for signed-requests verifiers running multiple replicas:
+  const replayStore = new RedisReplayStore(redis);
+  ```
+
+  **`redisCtxMetadataStore`** — factory function matching the pg backend pattern. Stores one Redis key per `(account_id, kind, id)` with the JSON payload `{ value, resource?, expiresAt? }`. Entries with no `expiresAt` are stored with **no Redis TTL** — ctx-metadata lifetimes can be months and silent eviction produces "package not found" errors that look like publisher bugs and run for weeks. When `expiresAt` is set, the backend stores with `EX = expiresAt - now + expiredGraceSeconds` (default 60s) so the store layer's own expiry check can still observe the value within the clock-skew window. `bulkGet` uses `MGET` for a single round trip per batch (witnessed in tests by a 100-key batch completing in <50ms locally). `clearAll` intentionally omitted — same rationale as the idempotency Redis backend.
+
+  **`RedisReplayStore`** — class-based to match `PostgresReplayStore`. Uses one Redis sorted set per `(keyid, scope)` pair, scored by `expiresAt`, members are nonces. A single Lua script does the atomic `ZREMRANGEBYSCORE -inf now` (drop expired) → `ZSCORE` (replay check) → `ZCARD` (cap check) → `ZADD` (insert) + `PEXPIREAT` (extend set TTL) sequence — guarantees the three-way `'ok' | 'replayed' | 'rate_abuse'` precedence (replay > rate_abuse > ok) is observed by every caller exactly once even under heavy concurrency. The `ReplayStore.insert` JSDoc literally names "Redis SET NX EX" as a canonical multi-replica primitive; this delivers on that. Has a `probe()` for boot-time readiness checks (not part of the base `ReplayStore` interface). No sweeper needed — expired nonces drop at every insert, abandoned sorted sets evict via `PEXPIREAT`.
+
+  **Shared default-prefix warning.** Both backends use `src/lib/utils/redis-default-prefix-warn.ts` — a single process-once `console.warn` when the default `keyPrefix` is paired with a node-redis client on db 0 (the strong signal of a shared/non-dedicated Redis). Fires at most once per process across every Redis backend instance, stays silent for escape-hatch clients (ioredis, Upstash, test doubles) where we can't introspect the db index, stays silent when `keyPrefix` is explicit or `suppressDefaultPrefixWarning: true`. The idempotency Redis backend (PR #1855, separately on `bokelley/redis-backends`) has the same logic inline; a follow-up will dedupe it onto this shared helper after both PRs land.
+
+  **`redis` peer dep** moves to `peerDependencies` (`^4.6.0 || ^5.0.0`) + `peerDependenciesMeta.redis.optional = true`. Same shape as `pg`.
+
+  **Tests** (skipped when `REDIS_URL` not set):
+  - ctx-metadata: 5 warn-suite (pure-function, run unconditionally) + 16 live-Redis integration (durable vs TTL'd entries, resource field round-trip, bulkGet single-round-trip witness, keyPrefix isolation, corrupt-value with `Error.cause` and no key leak, store-level integration).
+  - replay: 6 warn-suite + 14 live-Redis (probe, insert/has/replayed/different-scope-no-collision, expired-nonce reclaim, cap enforcement with precedence-test for replay-wins-over-cap, isCapHit unexpired-only count, concurrent same-nonce race, concurrent cap-boundary race, input validation, keyPrefix isolation, sorted-set PEXPIREAT extension).
+
+### Patch Changes
+
+- bae9275: fix(mcp): forward header-only auth (basic, x-api-key) through `SingleAgentClient` precheck path
+
+  Basic-auth (and any header-only auth) MCP agents were silently broken via `SingleAgentClient.executeTask` — every public entry point that wraps it (`getAdcpCapabilities`, `executeTaskWithSchema`, the CLI, direct tool calls) ran a `getCapabilities` precheck that dropped the `Authorization` header on the floor. The agent received an unauthenticated request, returned its anonymous response (or 401), and the SDK either errored out or surfaced the anonymous payload as the agent's real state. Curl with the same credentials returned 200; the SDK did not.
+
+  Two compounding defects, both required for a fix:
+  - `SingleAgentClient.getAgentInfo` did not forward `normalizedAgent.headers` to `connectMCP`. Basic auth intentionally suppresses `auth_token` (so the SDK doesn't emit a competing `Authorization: Bearer …`) and lives entirely on `headers.Authorization` — neither the `oauth_tokens` nor the `auth_token` branch fired, so `connectMCP` received `{ agentUrl }` only.
+  - `connectMCP` only attached `requestInit.headers` inside the `else if (authToken)` branch. Header-only auth (no token) was dropped even when `customHeaders` was supplied.
+
+  Both branches are fixed: `getAgentInfo` now forwards `headers` as `customHeaders`, and `connectMCP` builds `requestInit.headers` whenever any headers are present — including alongside `authProvider`, so OAuth users with custom routing/tenant headers benefit too.
+
+  **Precedence note:** the MCP SDK's `_commonHeaders()` spreads `requestInit.headers` **over** any provider-emitted `Authorization` (`new Headers({ ...providerHeaders, ...requestInitHeaders })` — last-write-wins). To prevent a caller-supplied `Authorization` in `customHeaders` from silently overriding the OAuth bearer, `connectMCP` now strips `Authorization` from `customHeaders` when `authProvider` is set. Non-auth headers (routing, tenant ID, x-api-key co-tokens) still flow through. The bearer-token branch is unaffected — its own merge already lays the bearer last, so static `auth_token` takes precedence over any stray `customHeaders.Authorization` (regression test asserts this).
+
+  Also fixes the cosmetic `adcp storyboard run` banner that labeled basic auth as `"bearer"` (`bin/adcp.js` chained-ternary fell through when `authOption.type === 'basic'`).
+
+  Regression test at `test/lib/get-agent-info-basic-auth.test.js` stands up a loopback MCP server that 401s without `Authorization: Basic`, then asserts every request the SDK makes (including the `tools/list` precheck) carries the header. Closes #1864 and #1865.
+
+- e890dc0: chore(scripts): `codex-review.sh --base <branch>` now resolves to `origin/<branch>` after a fetch
+
+  Tooling-only. Fixes a footgun caught while reviewing #1866: `--base main` was reading the local `main` branch, not `origin/main`. Stale local `main` (the default state on most dev machines) produced a fabricated diff that included every commit between the user's last `git pull` and HEAD — codex returned a review about Redis backends from PRs that had already merged, with no signal to the reviewer that the diff was wrong.
+
+  The script now resolves `--base <local-branch>` to `refs/remotes/origin/<branch>` after `git fetch origin <branch>`. Pass an already-qualified ref (`origin/main`, a SHA, a tag) to bypass resolution; pass `--no-fetch` to skip the fetch entirely. Stderr prints the resolved form so callers can confirm: `codex-review: --base main → origin/main`.
+
+  `scripts/` is not in `package.json` `files`, so this isn't published. Patch-bump because the changeset CI gate requires a non-empty changeset on every PR. Closes #1871.
+
+- 3b77588: chore(scripts): add `npm run review:codex` — codex-based second-opinion review tool for safety-critical PRs
+
+  Tooling-only. No library or CLI behavior changes. Adds `scripts/codex-review.sh` + persona prompts at `scripts/codex-review-prompts/` and documents the dual-stack review pattern at `docs/development/REVIEW-STACKS.md`. Patch-bump because the changeset CI gate requires a non-empty changeset on every PR; the script is dev-only and isn't bundled into the published package (`scripts/` is not in `package.json` `files`).
+
+- 20e670c: fix(mcp): connectMCP 401 errors now carry auth-scheme context
+
+  When `connectMCP` received a non-OAuth 401 from an agent, the rethrown error was a bare `Error POSTing to endpoint (HTTP 401): unauthorized` — no signal of which auth scheme the SDK actually selected, no remediation hint. The #1864 reporter cited this as a 30+ minute debugging cost: the bug landed at the precheck path, the failure mode was a silent 401, and the on-screen evidence pointed away from the actual cause.
+
+  Non-OAuth 401s are now wrapped with:
+  - `error.code === 'MCP_AUTH_REJECTED'` — programmatic dispatch tag.
+  - `error.scheme` — one of `'bearer' | 'header' | 'oauth' | 'none'`. Tells the caller what the SDK actually put on the wire so they can diff against curl / the gateway's expectations.
+  - `error.agentUrl` — the URL that rejected the credential.
+  - `error.cause` — the original transport error, so existing `is401Error` / `err.status` checks downstream still resolve.
+  - A scheme-specific hint in `error.message` (e.g. `--auth-scheme basic`, `verify the bearer token`, `OAuth provider returned tokens that the agent rejected`).
+
+  Credential values are never included in the error message — verified by a regression test that asserts both the raw `Bearer …` and the decoded basic-auth payload are absent from the thrown message string.
+
+  OAuth `UnauthorizedError` propagation (the SDK's flow-initiation signal) is unchanged. Closes #1869.
+
+- 69a5f97: docs: add `docs/guides/BASIC-AUTH.md` for gateway-fronted agents
+
+  Closes #1870. Documents the basic-auth-via-gateway pattern that the SDK and CLI have supported since #1866. Covers: when to use `--auth-scheme basic`, worked CLI + SDK examples, the load-bearing invariant (basic auth lives on `headers.Authorization`; do not also set `auth_token`), a copyable wire-trace verification test pattern, and common adopter pitfalls.
+
+  Cross-references added:
+  - `docs/CLI.md` "Authentication Methods" → links to the new guide and shows the CLI one-liner.
+  - `SingleAgentClient.getAgentInfo` JSDoc → names the invariant in-source so contributors editing the auth resolution path see it without having to read commit history.
+
+  Patch-bump because the JSDoc lives in a published source file. The .md docs aren't bundled, but the JSDoc surfaces in the published `.d.ts`.
+
+- 893830f: docs(server): operational guidance for cached-response credentials and Redis memory policy
+
+  Closes adcp-client#1856 (cached credentials) and adcp-client#1857 (cache-fill DoS / maxmemory-policy).
+
+  **No code behavior changes** — only JSDoc + the `CTX-METADATA-SAFETY` guide gain the operational guidance that PR #1858's security review surfaced as deferred follow-ups. Adopters reading the entrypoint docstrings now see both classes of footgun at the read site.
+
+  **`IdempotencyStoreConfig` JSDoc (`src/lib/server/idempotency/store.ts`):** names the cached-response-at-rest concern explicitly. The hash-exclusion list strips credentials from the _hash_ but the _stored response_ is the handler's verbatim output. If a handler returns refreshed bearer tokens, signed governance payloads, or echoed `push_notification_config` credentials, those sit in the backend for `ttlSeconds`. Adopters: don't return credentials in handler responses; if you must, wrap with a scrubber or use a custom `IdempotencyBackend`. The SDK does not ship a built-in scrubber because it would change wire shape silently.
+
+  **`docs/guides/CTX-METADATA-SAFETY.md`:** new "Related: handler responses are cached for `ttlSeconds`" section cross-links to the idempotency JSDoc and the #1856 tracking issue. The two surfaces (`ctx_metadata` cache and idempotency response cache) have the same at-rest concern; one guide covers both.
+
+  **`redisBackend` JSDoc (`src/lib/server/idempotency/backends/redis.ts`):** Redis `maxmemory-policy` recommendation matrix — `volatile-lru` (recommended, evicts only TTL'd keys = AdCP's keyspace), `allkeys-lru` (dedicated db only), `noeviction` (fail-closed, paging instead of silent eviction). Pair with per-principal `VALIDATION_ERROR` rate alerting because a drifted handler under retry amplifies cache fill via `saveTransientError`.
+
+  **`RedisReplayStore` JSDoc (`src/lib/signing/redis-replay-store.ts`):** same memory-policy matrix, plus the eviction-on-replay caveat — if `volatile-lru` evicts a sorted set before its members would have expired naturally, an attacker's later replay sees a fresh set and gets `ok`. The per-`(keyid, scope)` cap (default 100k) is the primary defense; eviction is a secondary recovery mode. Size Redis to keep working set in memory; treat eviction as scale-up pressure, not a feature.
+
+  **`redisCtxMetadataStore` JSDoc (`src/lib/server/ctx-metadata/backends/redis.ts`):** memory-policy guidance tuned to ctx_metadata's durable-by-default semantics. `allkeys-lru` recommended on a dedicated db (re-hydration is automatic on miss, so eviction is safer here than for the replay store).
+
+  Pre-existing protocol-store issues, not Redis-introduced regressions; the docs now name them so adopters don't have to discover them in production.
+
 ## 7.8.0
 
 ### Minor Changes
