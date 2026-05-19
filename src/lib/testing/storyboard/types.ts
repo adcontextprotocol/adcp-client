@@ -1244,6 +1244,29 @@ export interface StoryboardRunOptions extends TestOptions {
    */
   default_agent?: string;
   /**
+   * Opt into resilient discovery (#1367). When `false` (default), any agent
+   * whose `get_adcp_capabilities` probe fails causes the whole storyboard
+   * to fail — correct for production multi-tenant flows where every tenant
+   * in the map is load-bearing.
+   *
+   * When `true`:
+   *   - Discovery failures are logged but not fatal.
+   *   - Failed agents are excluded from the protocol-claim index.
+   *   - Routing throws `RoutingError` only if a step's protocol resolves
+   *     to a failed agent — surfaces as a per-step failure, not a
+   *     storyboard-wide hard failure.
+   *   - A `discovery_failures[]` summary on `StoryboardResult` lists which
+   *     agents failed, so the operator still sees the topology breakage.
+   *
+   * Intended for hello-cluster CI and exploratory runs where one flaky
+   * tenant shouldn't gate a 6-tenant smoke. Production runs should NEVER
+   * set this — a topology with one broken tenant is a hard misconfig.
+   *
+   * Only consulted when `agents` is set (multi-agent routing); single-URL
+   * runs have no roster to be resilient about.
+   */
+  discovery_resilient?: boolean;
+  /**
    * Host an ephemeral webhook receiver during the run so `expect_webhook*`
    * pseudo-steps can observe outbound webhooks from the agent under test.
    * Enables the `webhook_receiver_runner` contract referenced by the
@@ -2350,6 +2373,33 @@ export interface StoryboardResult {
    * deduplicated by `code`. Spec: adcp-client#1704.
    */
   notices: RunnerNotice[];
+  /**
+   * Agents in the routing map whose `get_adcp_capabilities` probe failed
+   * when `StoryboardRunOptions.discovery_resilient: true` was set. Absent
+   * when resilient mode is off (because failures throw before result
+   * construction) and absent when no failures occurred. Each entry carries
+   * the agent key, URL, and the scrubbed underlying error so operators
+   * see the topology breakage without correlating across log lines.
+   *
+   * **Read together with `overall_passed`.** A passing storyboard with a
+   * non-empty `discovery_failures` means the storyboard did NOT touch any
+   * tools that needed the failed agents — it does NOT mean the topology
+   * was healthy. Dashboards and procurement reports should surface both
+   * fields; a green check next to a populated `discovery_failures` is
+   * legitimate but misleading without the second-axis signal.
+   *
+   * **Buyer-controlled untrusted content.** The `error` string is
+   * upstream-agent-derived and may contain attacker-influenced text from
+   * a malicious or compromised agent. The runner bounds the string
+   * (~512 chars) and runs the existing auth-secret scrub, but the
+   * remaining content is untrusted — validate / fence before templating
+   * into LLM prompts. The `url` field is scrubbed of userinfo
+   * (`//user:pass@host` → `//[REDACTED]@host`) so operator-encoded
+   * credentials don't leak to dashboards.
+   *
+   * Spec: adcp-client#1367.
+   */
+  discovery_failures?: Array<{ agent_key: string; url: string; error: string }>;
 }
 
 export interface StrictValidationSummary {
