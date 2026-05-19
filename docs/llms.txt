@@ -103,7 +103,7 @@ AdCP is auth-scheme-agnostic at the transport layer. The protocol carries JSON-R
 
 Auth-scheme discovery, when needed, flows through `WWW-Authenticate` (RFC 9110 §11.6.1) and Protected Resource Metadata (RFC 9728) — both consumed by the SDK's auth-diagnostics path. Basic-fronted agents emit `WWW-Authenticate: Basic realm="…"` on a 401; consumers (SDK callers, the CLI's 401-bounce path, LLM agents) should branch on the challenge scheme rather than retrying Bearer indefinitely.
 
-The TypeScript SDK speaks both schemes today. Programmatically: `createTestClient({ auth: { type: 'basic', username, password } })` (RFC 7617) and `createTestClient({ auth: { type: 'bearer', token } })`. From the CLI: `--auth-scheme basic` opts into Basic and `--auth <user:pass>` carries the credential; the default `bearer` remains unchanged.
+The TypeScript SDK speaks both schemes today. Programmatically: `createTestClient({ auth: { type: 'basic', username, password } })` (RFC 7617) and `createTestClient({ auth: { type: 'bearer', token } })`. From the CLI: `--auth-scheme basic` opts into Basic and `--auth <user:pass>` carries the credential; the default `bearer` remains unchanged. When basic auth is active, `auth_token` is suppressed so the SDK does not emit a competing `Authorization: Bearer …` alongside the Basic header — see [`docs/guides/BASIC-AUTH.md`](./guides/BASIC-AUTH.md) for the full invariant and gateway setup walkthrough.
 
 ## Error Handling
 

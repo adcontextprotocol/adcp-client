@@ -2658,6 +2658,12 @@ export class SingleAgentClient {
    * Get comprehensive agent information including name, description, and available tools/skills
    *
    * Works with both MCP (tools) and A2A (skills) protocols to discover what the agent can do.
+   * This is the first wire call made when connecting to an agent; it is also the first failure
+   * point when auth is misconfigured. For agents behind an API gateway requiring HTTP Basic
+   * authentication, use `createTestClient(url, 'mcp', { auth: { type: 'basic', username, password } })`
+   * — do **not** also set `auth_token`, which causes the SDK to emit a competing
+   * `Authorization: Bearer …` alongside the Basic header. See `docs/guides/BASIC-AUTH.md` for the
+   * gateway setup walkthrough and the `auth_token`-suppression invariant.
    *
    * @returns Promise resolving to agent information including tools
    *

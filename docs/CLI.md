@@ -67,7 +67,8 @@ adcp <alias|url> [tool-name] [payload] [options]
 ### Options
 
 - `--protocol PROTO`: Force protocol: `mcp` or `a2a` (default: auto-detect)
-- `--auth TOKEN`: Authentication token for the agent
+- `--auth TOKEN`: Authentication token for the agent (or `user:pass` with `--auth-scheme basic`)
+- `--auth-scheme bearer|basic`: How `--auth` is sent (default: `bearer`; use `basic` for gateway-fronted agents)
 - `--wait`: Wait for async/webhook responses (requires ngrok or --local)
 - `--local`: Use local webhook without ngrok (for local agents only)
 - `--timeout MS`: Webhook timeout in milliseconds (default: 300000 = 5min)
@@ -168,6 +169,27 @@ adcp test get_products '{"brief":"..."}' --auth your_token_here
 export ADCP_AUTH_TOKEN=your_token
 adcp https://agent.example.com get_products '{"brief":"..."}'
 ```
+
+#### HTTP Basic auth (`--auth-scheme basic`)
+
+Use when the agent sits behind an API gateway (Apigee, Kong, AWS API Gateway,
+nginx `auth_basic`) that requires RFC 7617 Basic authentication instead of a
+bearer token:
+
+```bash
+adcp --save-auth myagent https://gw.example.com/mcp \
+  --auth 'USER:PASS' \
+  --auth-scheme basic
+```
+
+The `--auth-scheme` flag defaults to `bearer`. When set to `basic`, the
+credential is encoded as `Authorization: Basic <base64(user:pass)>` and
+`auth_token` is intentionally suppressed so the SDK does not emit a competing
+`Authorization: Bearer …` header.
+
+See [`docs/guides/BASIC-AUTH.md`](guides/BASIC-AUTH.md) for the full gateway
+setup walkthrough, the `auth_token`-suppression invariant, and how to write a
+regression test that verifies your gateway forwards the header.
 
 ### From File
 
