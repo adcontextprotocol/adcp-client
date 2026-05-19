@@ -494,19 +494,23 @@ returns:
 
 - a refreshed bearer / OAuth access token,
 - a signed governance / auth payload,
-- `push_notification_config.authentication.credentials` (echoed back),
+- `push_notification_config.authentication.credentials` — a write-only
+  buyer-supplied secret that the spec contract says sellers MUST NOT
+  echo back. Receipt correlation uses `push_notification_config.token`
+  instead. If your adapter is echoing `credentials`, that's the bug to
+  fix, not the cache,
 - any other secret material,
 
 those secrets sit at rest in the backend for the replay window. On
 Redis without TLS, they're plaintext over the wire too.
 
-**Don't return credentials in handler responses.** The spec doesn't
-require it for any AdCP tool; if your adapter is echoing them back,
-refactor. If a buyer-supplied credential must be echoed (e.g., to
-confirm receipt of `push_notification_config`), wrap your handler to
-scrub before returning OR use a custom `IdempotencyBackend` that
-transforms entries on the write path. JSDoc on
-`IdempotencyStoreConfig` carries the full version of this warning at
-the read site.
+**Don't return credentials in handler responses.** No AdCP tool's
+response schema asks for them; if your adapter is echoing them back,
+refactor. If a handler nonetheless must produce a secret-bearing
+response (e.g., an internal-only echo for adapter debugging), wrap
+your handler to scrub before returning OR use a custom
+`IdempotencyBackend` that transforms entries on the write path. JSDoc
+on `IdempotencyStoreConfig` carries the full version of this warning
+at the read site.
 
 See also [GitHub #1856](https://github.com/adcontextprotocol/adcp-client/issues/1856) — the SDK does not ship a built-in response scrubber because it would change the wire shape of legitimate adopter responses without warning. The track-record-of-shipped-credentials-in-responses issue is rare enough that opting into a scrubber per-deployment is the right shape.

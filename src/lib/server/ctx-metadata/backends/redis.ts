@@ -157,8 +157,9 @@ interface SerializedEntry {
  *
  * - **`maxmemory-policy allkeys-lru`** on a Redis db dedicated to AdCP
  *   ctx_metadata — evicts the oldest entries to make room. Acceptable
- *   for ctx_metadata because re-hydration is automatic on next read;
- *   adopters lose the cache, not the data.
+ *   for ctx_metadata because the next call referencing the same
+ *   resource will write a fresh entry; evicted entries are recoverable
+ *   as publisher traffic re-derives them, not lost permanently.
  * - **`maxmemory-policy volatile-lru`** if you mostly use `expiresAt`
  *   on entries — bounds growth to TTL'd keys only.
  * - **`maxmemory-policy noeviction`** (Redis default) — fail-closed:
@@ -167,7 +168,11 @@ interface SerializedEntry {
  *
  * For ctx_metadata specifically, evicting cached entries is safer than
  * for the idempotency cache (which uses eviction as a feature) because
- * the framework re-hydrates on miss. `allkeys-lru` is the recommended
+ * publisher re-derivation refills the cache on the next reference.
+ * Note that this isn't synchronous "re-hydrate on miss" — the
+ * framework reads `null` for a missing entry and falls through to the
+ * publisher's adapter, which may or may not produce a fresh
+ * `ctx_metadata` value on that path. `allkeys-lru` is the recommended
  * default on a dedicated db.
  */
 export function redisCtxMetadataStore(

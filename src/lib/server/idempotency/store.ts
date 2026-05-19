@@ -193,7 +193,10 @@ export type IdempotencyCheckResult =
  *
  * - a refreshed bearer / OAuth access token,
  * - a signed governance / auth payload,
- * - `push_notification_config.authentication.credentials` (echoed back),
+ * - `push_notification_config.authentication.credentials` (a buyer-
+ *   supplied write-only secret — the contract is that sellers MUST
+ *   NOT echo it back; receipt correlation uses
+ *   `push_notification_config.token` instead),
  * - any other secret material,
  *
  * those secrets sit at rest in the backend for `ttlSeconds`. On Redis
@@ -204,14 +207,15 @@ export type IdempotencyCheckResult =
  *
  * Practical guidance:
  *
- * - **Don't return credentials in handler responses.** The spec
- *   doesn't require it for any tool; if your adapter is echoing
- *   them back, refactor.
- * - If you must return them (e.g., a buyer-supplied webhook
- *   credential that the spec asks you to echo so the buyer can
- *   confirm receipt), wrap your handler to scrub before
- *   returning, OR use a custom `IdempotencyBackend` that
- *   transforms entries on the write path.
+ * - **Don't return credentials in handler responses.** No AdCP tool's
+ *   response schema asks for them; if your adapter is echoing them
+ *   back, refactor. `push_notification_config.credentials` in
+ *   particular is write-only — `token` is the field a seller uses to
+ *   confirm receipt.
+ * - If a handler nonetheless must produce a secret-bearing response
+ *   (e.g., an internal-only echo for adapter debugging), wrap your
+ *   handler to scrub before returning, OR use a custom
+ *   `IdempotencyBackend` that transforms entries on the write path.
  *
  * See also `docs/guides/CTX-METADATA-SAFETY.md` for related guidance
  * on what NOT to put in `ctx_metadata` (which has its own caching
