@@ -1,5 +1,255 @@
 # Changelog
 
+## 7.8.0
+
+### Minor Changes
+
+- 0a4a34d: feat(testing): impairment.coherence grades audience inverse rule + walks `creative_approvals[]` on buy snapshots
+
+  Closes two gaps in the storyboard runner's `impairment.coherence` invariant exposed by the dependency-impairment storyboard (adcp#2860 / adcp#4677):
+
+  **1. Audience leg of the inverse rule is now graded.**
+
+  The buy-side reference for audiences lives at `packages[*].targeting_overlay.audience_include[]` — a stable, spec-defined field that lets the runner traverse buy → audience the same way it traverses buy → creative. The earlier deferral lived in `INVERSE_DEFERRED_FAMILIES` and emitted a `not_applicable` hint on every audience offline transition.
+  - `readBuySnapshot` extracts `referencedAudienceIds` from `packages[*].targeting_overlay.audience_include[]`. `audience_exclude` is intentionally omitted on **serviceability** grounds — suspending an exclude-audience doesn't prevent the buy from serving, so it isn't a "buy can't function" signal that the inverse rule should fire on. This is not a **safety** judgement: an offline exclude can still silently break the suppression promise, which the runner treats as a separate (forward-looking) signal class.
+  - The inverse check is parameterised over both reference sets (creative + audience). A suspended audience referenced by a non-terminal buy that doesn't list it in `impairments[]` now produces a `violation: 'inverse'` failing result, mirroring the existing creative inverse coverage.
+  - `audience` is removed from `INVERSE_DEFERRED_FAMILIES`. The `not_applicable` hint that used to fire on audience offline transitions stops firing — audience observations now flow into the graded path. The onEnd partial-coverage summary still flags `catalog_item` and `event_source` (their per-buy reference shapes remain unstable).
+
+  **2. `creative_approvals[]` is now walked on buy snapshots.**
+
+  The `get-media-buys-response.json` package shape uses `creative_approvals[]` (per spec) — different from `core/package.json`'s `creative_assignments[]` (the request-side shape). `readBuySnapshot` now walks both, so the inverse rule for creative grades correctly regardless of which shape the seller surfaces.
+
+  **Test coverage:** 6 new tests — 5 audience inverse coverage tests (graded propagation, exclude-doesn't-count, terminal carve-out, recovery clears, paired with health-iff) + 1 creative_approvals extraction test. The existing deferred-family test loop moves audience out and asserts the graded behaviour.
+
+  **No behaviour change for storyboards that already propagate impairments correctly** — they previously graded `not_applicable` for audience offline observations and now grade `pass` instead. Storyboards that observed an audience transition without propagating it to a buy snapshot previously graded silent (with an `not_applicable` notice) and now FAIL with a structured `impairment_coherence_violation` hint pointing at the offline audience.
+
+- affab59: feat(server): expose `ctx.input` — un-destructured wire envelope on every v6 platform-method dispatch
+
+  Closes the silent-drop bug audited in adcp-client#1842. The v6 framework wrapper at `src/lib/server/decisioning/runtime/from-platform.ts` destructures the payload array out of `sync_*` requests and forwards only that to the platform method, dropping spec-meaningful modifiers the typed signature doesn't model. Adopters look conformant on `/mcp` (their v5 handler reads the full envelope) and silently fail on `/sales/mcp` (the v6 path strips the field).
+
+  **Surface bug.** Four platform methods drop spec-meaningful fields:
+
+  | Method                                           | Wire schema              | Dropped fields (now reachable on `ctx.input`)                                     |
+  | ------------------------------------------------ | ------------------------ | --------------------------------------------------------------------------------- |
+  | `sales.syncCreatives` / `creative.syncCreatives` | `sync_creatives_request` | `assignments[]`, `creative_ids[]`, `delete_missing`, `dry_run`, `validation_mode` |
+  | `audiences.syncAudiences`                        | `sync_audiences_request` | `delete_missing`                                                                  |
+  | `accounts.upsert` (→ `sync_accounts`)            | `sync_accounts_request`  | `delete_missing`, `dry_run`                                                       |
+
+  **Fix.** Two parallel fields, same shape: `RequestContext.input?: Readonly<Record<string, unknown>>` carries the request payload on the sales/creative/signals/governance/SI handler families; `ResolveContext.input?: Readonly<Record<string, unknown>>` carries it on the account-handler family (`syncAccounts`, `syncGovernance`, `listAccounts`, `reportUsage`, `getAccountFinancials`) — those use a separate context type because `accounts.resolve` produces the account rather than receiving it. Adopters who need a field the typed signature drops read it from `ctx.input`:
+
+  ```ts
+  syncCreatives: async (creatives, ctx) => {
+    const wire = ctx.input as SyncCreativesRequest;
+    for (const a of wire.assignments ?? []) {
+      await this.bindCreativeToPackages(a.creative_id, a.package_ids);
+    }
+    if (wire.delete_missing) {
+      await this.deleteCreativesNotIn(creatives.map(c => c.creative_id));
+    }
+    // …
+  };
+  ```
+
+  **Why this shape:**
+  1. **Envelope-shaped, not method-shaped.** Every drop is the same concept: "the method got the array; it didn't get the modifiers on the same request." One `ctx.input` covers every drop in the table above plus any future field the SDK doesn't yet model.
+  2. **Additive, non-breaking.** Adopters who don't read `ctx.input` keep working; adopters who need the dropped fields opt in. No signature churn.
+  3. **Composes with hydrate seams.** `hydrateForTool` / `hydratePackagesWithProducts` write _to_ `params`; `ctx.input` reads _from_ the unmodified wire envelope. Both are present on every dispatch.
+
+  **Same reference as the typed payload arg, not a snapshot.** `ctx.input` is the request payload as the platform method sees it. It is set BEFORE the framework's auto-hydrate seams (`hydratePackagesWithProducts`, `hydrateForTool`) run, but those seams mutate the same object in place. By the time the platform method's body executes, `ctx.input` and the first positional arg are the same reference and both reflect framework hydration. JSDoc on `RequestContext.input` calls this out so adopters don't write logic that assumes `ctx.input` is a frozen pre-hydration snapshot.
+
+  **Hoist asymmetry.** For methods that hoist a field to a positional arg (e.g. `updateMediaBuy(media_buy_id, patch, ctx)` hoists `media_buy_id` out of the envelope), that field is still present at the top level of `ctx.input` — the wire envelope is hoist-included, NOT residual. Adopters should prefer the positional arg for fields present on both, and reach for `ctx.input` only for fields the typed signature drops.
+
+  **Typed as unknown.** Matches the `comply_test_controller` bridge precedent (`TestControllerBridgeContext.input: Record<string, unknown>` at `src/lib/server/test-controller-bridge.ts:198`) and avoids coupling adopters to specific schema versions. Cast at the read site or run a runtime validator — the framework already validated the envelope on inbound; re-validating on read isn't the framework's job.
+
+  **Optional in the type signature** so adopters constructing ad-hoc `RequestContext` / `ResolveContext` for unit tests aren't forced to set it. The framework always sets it on real dispatches.
+
+  **Security note.** `ctx.input` is buyer-controlled and may carry secrets — mutating-tool envelopes include `push_notification_config.token` (the buyer's webhook-signature secret); free-text fields (`brief`, `message`, creative snippets) are attacker-controlled. Do NOT log `ctx.input` wholesale — read named fields. When templating into LLM prompts, validate or fence rather than string-interpolating. JSDoc carries the warning at the read site.
+
+  **Test coverage:** 5 regression tests in `test/server-decisioning-ctx-input-wire-envelope.test.js`:
+  - `sync_creatives` end-to-end with `assignments[]`, `delete_missing`, `dry_run`, `validation_mode` all surviving to the platform method.
+  - `sync_audiences` with `delete_missing`.
+  - `sync_accounts` with `delete_missing` + `dry_run` — proves the `ResolveContext` path also carries `ctx.input` (account handlers route through a separate context type).
+  - `update_media_buy` proving the hoist asymmetry — `media_buy_id` is the positional first arg AND still present on `ctx.input`.
+  - `get_products` proving the universal pattern works on methods that already pass `params` whole.
+
+  **Adopter migration.** No code change required to keep working. Adopters who already implement `assignments[]` / `delete_missing` / `dry_run` / `validation_mode` via a v5 handler (and want to serve the same wire contract on `/sales/mcp`) read those fields from `ctx.input` in the v6 platform method.
+
+- 200ce21: feat(testing): opt-in `discovery_resilient` for multi-agent storyboard runs (#1367)
+
+  Hello-cluster CI and exploratory multi-agent runs no longer fail the whole storyboard when one tenant's `get_adcp_capabilities` probe hangs or rejects. Opt in with `StoryboardRunOptions.discovery_resilient: true`; the runner then:
+  - Logs discovery failures but does not throw.
+  - Excludes failed agents from the protocol-claim index.
+  - Surfaces a per-step `RoutingError` only when a step's protocol resolves to a failed agent — unrelated storyboards complete normally.
+  - Echoes the failed agents on `StoryboardResult.discovery_failures[]` so operators see the topology breakage without correlating across log lines.
+
+  **Default behavior is unchanged.** Production multi-tenant flows where every tenant in the map is load-bearing keep their hard-failure contract; flipping the flag is the explicit "I accept partial topology" signal.
+
+  **Surfaces:**
+  - `StoryboardRunOptions.discovery_resilient?: boolean` — new opt-in flag.
+  - `StoryboardResult.discovery_failures?: Array<{ agent_key, url, error }>` — new optional field. Present only when resilient mode is on AND ≥1 agent failed; absent otherwise.
+  - `AgentRoutingContext.discoveryFailures: DiscoveryFailure[]` — internal field on the routing context; framework consumers should read `StoryboardResult.discovery_failures` instead.
+  - `resolveAgentForStep` `RoutingError` message now mentions which agents failed discovery when their absence caused the protocol to be unclaimed — so the operator sees the connection between the probe failure and the per-step error without correlating.
+
+  **Security:**
+  - The `discovery_failures[].error` string is upstream-agent-derived and may carry attacker-influenced content. Runner bounds it at ~512 chars and runs the existing auth-secret scrub; JSDoc carries the "untrusted; validate before LLM templating" warning at the read site.
+  - The `discovery_failures[].url` is scrubbed of userinfo (`//user:pass@host` → `//[REDACTED]@host`) so operator-encoded credentials don't leak to dashboards.
+
+  **Step-override safety:** `resolveAgentForStep` now checks whether a `step.agent` override targets an agent whose discovery failed under resilient mode. Before this guard, the override returned verbatim and the dispatcher handed back a transport client to a broken tenant, failing at the wire layer with a misleading transport error. The override-time check makes the failure attributable to topology.
+
+  **Default-mode discoverability:** When `discovery_resilient` is unset (default), the `DiscoveryFailure` thrown by the runner now appends a one-line signposted suggestion to set the flag for hello-cluster / exploratory CI — with the explicit "NOT for production" warning attached. Adopters discover the escape hatch at the throw site, not by grep'ing JSDoc.
+
+  **Tests:** 5 new regression tests in `test/lib/agent-routing-discovery-resilient.test.js` covering default-mode hard-failure preservation, resilient-mode failure collection on `discoveryFailures`, the improved `RoutingError` message naming failed agents, the `step.agent` override safety check, and `default_agent` fallback under resilient mode.
+
+  **Adopter usage:**
+
+  ```ts
+  import { runStoryboard } from '@adcp/sdk/testing/storyboard';
+
+  const result = await runStoryboard(storyboard, [], {
+    agents: {
+      sales: { url: 'http://localhost:3001/mcp' },
+      signals: { url: 'http://localhost:3002/mcp' },
+      creative: { url: 'http://localhost:3003/mcp' }, // bind-flaky in CI
+      // ...
+    },
+    discovery_resilient: true, // accept partial topology for hello-cluster
+  });
+
+  if (result.discovery_failures?.length) {
+    console.warn(`Discovery missed: ${result.discovery_failures.map(f => f.agent_key).join(', ')}`);
+  }
+  ```
+
+- ad849f7: storyboard runner: add `field_greater_than` / `field_at_most` / `field_at_least` check kinds, completing the numeric-comparison quadrant (#1839)
+
+  Cap and floor scenarios can now assert "value at most N" / "value at least
+  N" directly, with non-strict (`<=` / `>=`) semantics:
+
+  ```yaml
+  - check: field_at_most
+    path: media_buy_deliveries[0].totals.frequency
+    value: 3
+    description: Observed frequency stays at or below the requested cap
+
+  - check: field_at_least
+    path: media_buy_deliveries[0].totals.reach
+    context_key: promised_reach
+    description: Delivered reach meets or exceeds the promised floor
+  ```
+
+  The three new checks plus the existing strict `field_less_than` cover the
+  four-quadrant numeric comparison vocabulary (`<`, `>`, `<=`, `>=`). All
+  four share the same comparand-resolution semantics: either a literal
+  `value` or a runtime-captured `context_key`, with absent context keys
+  passing the check with a `context_key_absent` observation (the prior step
+  may have been legitimately skipped on a branch-set path). Non-numeric
+  operands fail with a type error.
+
+  `field_greater_than` is included to close the quadrant — without it,
+  storyboards reaching for strict-`>` would hit the runner's forward-compat
+  `not_applicable` default and silently grade as passing, which is
+  semantically wrong for assertions that should fail at the boundary.
+
+  The previous workaround for cap assertions
+  (`field_less_than: 3.01` — literal-plus-epsilon) was semantically wrong
+  (assumed a rounding convention) and brittle when sellers reported the cap
+  value exactly. `field_at_most: 3` is the right primitive.
+
+  Concrete consumer: the `media_buy_seller/frequency_cap_enforcement`
+  storyboard (adcontextprotocol/adcp#4727) will swap its
+  `field_less_than: 3.01` epsilon workaround for `field_at_most: 3` once
+  this ships.
+
+- cbdb3ff: signing: widen `AdcpUse` to include `'governance-signing'` (#1844)
+
+  The `AdcpUse` union now reads:
+
+  ```ts
+  export type AdcpUse = 'request-signing' | 'webhook-signing' | 'response-signing' | 'governance-signing';
+  ```
+
+  AdCP deployments have been minting JWKs with `adcp_use: 'governance-signing'`
+  for JWS-signed governance context since governance-signing landed pre-7.0,
+  and the training agent publishes one in its aggregated JWKS today. JSON-level
+  consumers were unaffected (the JWK `adcp_use` field is open `string`), but
+  typed third-party verifiers narrowing on `AdcpUse` had to cast around the
+  missing member.
+
+  This is an additive enum widening — technically breaking only for exhaustive
+  narrowers; same semver disposition as #1823. The RFC 9421 helpers
+  (`signRequest` / `signWebhook` / `signResponse`) refuse to sign with a
+  `'governance-signing'` key, since governance signing is JWS-based and lives
+  on a different code path; a `signGovernanceContext` helper and matching
+  verifier surface remain out of scope for this change.
+
+- b1ecd65: feat(media-buy): buyer-side preflight helpers for `available_actions[]` (AdCP 3.1 / RFC #4480)
+
+  Adds the consumer surface for [adcontextprotocol/adcp#4480](https://github.com/adcontextprotocol/adcp/issues/4480) (merged in adcontextprotocol/adcp#4514) so buyer agents don't have to hand-roll capability checks against `update_media_buy`.
+
+  Three layers, each usable on its own:
+  - **Boolean gates** on the buy: `canPause`, `canResume`, `canCancel`, `canExtendFlight`, `canShortenFlight`, `canUpdateFlightDates`, `canIncreaseBudget`, `canDecreaseBudget`, `canReallocateBudget`, `canUpdateTargeting`, `canUpdatePacing`, `canUpdateFrequencyCaps`, `canReplaceCreative`, `canUpdateCreativeAssignments`, `canRemoveCreative`, `canAddPackages`, `canRemovePackages`. Each reads `available_actions[]` (or rolls up from legacy `valid_actions[]`) and returns whether the action is reachable. Drives UI affordances without an extra round-trip.
+  - **Resolver**: `getActionForMutation(currentBuy, request)` walks the request body and returns the fine-grained actions it covers as a `ResolvedAction[]`. Direction inference picks `increase_budget` vs `decrease_budget` vs `reallocate_budget` from the per-package budget diff, and `extend_flight` vs `shorten_flight` vs `update_flight_dates` from the start/end-time diff. The action-to-field mapping is read from `enumMetadata.update_fields` in the schema rather than hand-copied; regenerate via `scripts/generate-media-buy-update-fields.ts` on a schema bump.
+  - **Preflight**: `preflightUpdateMediaBuy(currentBuy, request)` composes the resolver and the gates into a discriminated union: `{ ok: true, actions[], modes[], matched[], requiresAsyncFlow, compat? }` or `{ ok: false, denials: PreflightDenial[], currently_available_actions, compat? }`. Multi-action requests accumulate every blocker in `denials[]` so callers can render every reason in a single pass. Callers decide whether to fire the network request, or branch on the mode (`self_serve` vs `requires_proposal` vs `requires_approval`) to pick the right flow.
+
+  Typed error surface:
+  - **`ActionNotAllowedError`** new error class on `@adcp/sdk` with `attemptedAction`, `reason` (`wrong_status` | `not_supported_on_product` | `not_supported_on_buy` | `mode_mismatch`), `currentlyAvailableActions[]`, and a typed `recovery` hint (`createProposal` / `waitForApproval` / `reissueAsDirect`) populated for `mode_mismatch`. Wired into `adcpErrorToTypedError()` with permissive parsing of the upstream `details` payload (rejects unknown reasons / malformed available-action entries rather than throwing).
+
+  Compat shim:
+  - `getAvailableActions(buy)` reads `available_actions[]` when present, falls back to synthesizing from `valid_actions[]` with `mode: 'self_serve'`. Returns `{ source: 'available_actions' | 'valid_actions' | 'absent' }` and a `deprecationHint` when only the legacy field was populated. One-shot `console.warn` per process, suppressible via `{ silent: true }`. `findAvailableAction(buy, action)` honors `enumMetadata.rollup` so a fine-grained gate matches a seller's legacy coarse emission (e.g. `canIncreaseBudget` returns true when the seller advertises `update_budget`).
+
+  Types are hand-written in `src/lib/media-buy/types.ts` until the next schema-cache bump pulls the AdCP 3.1 sources into `*.generated.ts`; the module index re-exports them from a single import path.
+
+  **Schema-bump follow-up.** When `npm run sync-schemas` lands a cache with `enumMetadata` on `media-buy-valid-action.json` (3.1+), re-run `npx tsx scripts/generate-media-buy-update-fields.ts` and commit the regenerated `src/lib/media-buy/update-fields.generated.ts`. The script throws against any cache that lacks the metadata block, so it'll self-flag if you forget.
+
+### Patch Changes
+
+- 347c7cd: request-signing grader: skip vectors whose actual `Signature-Input` shape is structurally incompatible with the agent's `covers_content_digest` policy (#1840)
+
+  Previously, `capabilityMismatch` treated vector-side
+  `covers_content_digest: 'either'` as universally permissive — runnable
+  against any agent. But a vector whose actual `Signature-Input` does not
+  cover `content-digest` is rejected by a `'required'` verifier with
+  `request_signature_components_incomplete` before the vector's intended
+  error path can fire (inverse for `'forbidden'`). Result: against a
+  `strict-required` agent, 7 positive vectors (001, 003-004, 009-012) and
+  5 negative vectors (008, 009, 015, 016, 017) failed with the digest-gate
+  error instead of running or skipping cleanly. Inverse on
+  `strict-forbidden`: 3 vectors (positive-002, negative-010, negative-023).
+
+  The grader now parses each vector's `Signature-Input` and auto-skips
+  vectors whose signed components are structurally incompatible with the
+  agent's declared policy (`covers_content_digest`). Skips surface as
+  `skip_reason: 'capability_profile_mismatch'` with a diagnostic that names
+  the structural reason. Applies to both the `agentCapability` and
+  `agentContentDigestPolicy` options; the latter now covers positive
+  vectors too (it was previously negative-only).
+
+  Vectors whose `Signature-Input` is absent (e.g. negative/001
+  no-signature-header) or malformed (negative/011, 021) are unaffected —
+  the verifier short-circuits before the components check, so the shape
+  check doesn't apply.
+
+  ## Operator note — coverage trade-off
+
+  Five security-critical error families currently ship vectors that sign
+  **without** `content-digest`:
+  `request_signature_key_unknown` (neg/008),
+  `request_signature_key_purpose_invalid` (neg/009),
+  `request_signature_invalid` (neg/015),
+  `request_signature_replayed` (neg/016), and
+  `request_signature_key_revoked` (neg/017). Under this fix, all five are
+  auto-skipped against agents that declare
+  `covers_content_digest: 'required'`. The agent's verifier still enforces
+  those checks at runtime, but the conformance grader no longer probes
+  them for required-mode profiles. Companion vectors that sign WITH
+  `content-digest` are needed upstream (tracking at
+  adcontextprotocol/adcp#4720). Until those land, operators running
+  required-mode agents should pair this grader with the library-level
+  `test/request-signing-vectors.test.js` suite for full coverage of those
+  error paths.
+
+  Closes #1840.
+
 ## 7.7.0
 
 ### Minor Changes
