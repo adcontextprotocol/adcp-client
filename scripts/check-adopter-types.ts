@@ -81,15 +81,15 @@ function main(): void {
   // without flagging the orthogonal "transitive types not auto-installed"
   // class, which is tracked separately.
   //
-  // Why `redis` here when `pg` is NOT installed: the pg backend types its
-  // public surface via the project-local `PgQueryable` shape (no `import
-  // type` from `pg`), so the published `.d.ts` has no `pg` reference. The
-  // Redis backend deliberately types its public surface as
-  // `RedisClientType<any,any,any> | RedisLikeClient` so node-redis users
-  // pass `createClient(...)` without casts — that DX win requires the
-  // adopter type-checker to be able to resolve `redis`. We install it
-  // here for the same reason we install `@types/express`: the adopter
-  // using this backend will have it, and the check exists to validate
+  // Why `redis` here when `pg` is NOT installed: the pg backends type
+  // their public surface via the project-local `PgQueryable` shape (no
+  // `import type` from `pg`), so the published `.d.ts` has no `pg`
+  // reference. The Redis backends deliberately type their public surface
+  // as `RedisClientType<any,any,any> | <NarrowInterface>` so node-redis
+  // users pass `createClient(...)` without casts — that DX win requires
+  // the adopter type-checker to be able to resolve `redis`. We install
+  // it here for the same reason we install `@types/express`: the adopter
+  // using these backends will have it, and the check exists to validate
   // the adopter experience, not to enforce zero-peer-dep types.
   console.log('[adopter-types] installing tarball + adopter peers...');
   run(
