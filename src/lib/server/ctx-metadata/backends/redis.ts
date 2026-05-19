@@ -147,6 +147,33 @@ interface SerializedEntry {
  * ```ts
  * client.on('error', (err) => console.error('redis error', err));
  * ```
+ *
+ * **Redis memory policy — set this on the deployment.** ctx_metadata
+ * entries default to durable (no TTL) when no `expiresAt` is provided,
+ * matching the pg sibling's `expires_at = NULL` semantic. Without a
+ * memory policy, an adopter who writes many durable entries can
+ * pressure Redis memory; once `maxmemory` is hit, default `noeviction`
+ * makes new writes fail. Choose deliberately:
+ *
+ * - **`maxmemory-policy allkeys-lru`** on a Redis db dedicated to AdCP
+ *   ctx_metadata — evicts the oldest entries to make room. Acceptable
+ *   for ctx_metadata because the next call referencing the same
+ *   resource will write a fresh entry; evicted entries are recoverable
+ *   as publisher traffic re-derives them, not lost permanently.
+ * - **`maxmemory-policy volatile-lru`** if you mostly use `expiresAt`
+ *   on entries — bounds growth to TTL'd keys only.
+ * - **`maxmemory-policy noeviction`** (Redis default) — fail-closed:
+ *   writes start erroring at the limit, mutating tools fail. Pages
+ *   you instead of silently evicting.
+ *
+ * For ctx_metadata specifically, evicting cached entries is safer than
+ * for the idempotency cache (which uses eviction as a feature) because
+ * publisher re-derivation refills the cache on the next reference.
+ * Note that this isn't synchronous "re-hydrate on miss" — the
+ * framework reads `null` for a missing entry and falls through to the
+ * publisher's adapter, which may or may not produce a fresh
+ * `ctx_metadata` value on that path. `allkeys-lru` is the recommended
+ * default on a dedicated db.
  */
 export function redisCtxMetadataStore(
   client: CtxMetadataRedisBackendClient,

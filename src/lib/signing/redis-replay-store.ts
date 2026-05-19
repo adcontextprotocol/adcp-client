@@ -32,6 +32,31 @@
  * to see exactly one `'ok'` and one `'replayed'` — matches the
  * `InMemoryReplayStore` semantics the spec mandates.
  *
+ * **Redis memory policy — set this on the deployment.** Each
+ * `(keyid, scope)` sorted set is capped (default 100k nonces). A
+ * hostile signer with a valid keyid + scope can fill the set to its
+ * cap; legitimate fan-out (many sibling verifiers, many scopes) grows
+ * the number of sets. Configure your Redis with:
+ *
+ * - **`maxmemory-policy volatile-lru`** (recommended) — evicts only
+ *   TTL'd keys. All sets this store writes carry `PEXPIREAT`, so
+ *   they're all evictable. Safe on a shared Redis instance.
+ * - **`maxmemory-policy allkeys-lru`** — only on a dedicated db.
+ *   Otherwise evicts unrelated app keys.
+ * - **`maxmemory-policy noeviction`** (Redis default) — fail-closed:
+ *   writes start erroring at the memory limit; the verifier will
+ *   throw and the middleware will return 500 (replay protection
+ *   stays intact — never fail-open). Operationally noisy but
+ *   never serves stale replay decisions.
+ *
+ * Eviction-on-replay implication: if `volatile-lru` evicts a sorted
+ * set before its members would have expired naturally, an attacker's
+ * later replay of one of those nonces sees a fresh set with no prior
+ * entry, returns `'ok'`. The cap is the primary defense; memory-policy
+ * eviction is a secondary recovery mode. Size Redis to keep the
+ * working set in memory under normal traffic and treat eviction as
+ * pressure to scale up, not as a feature.
+ *
  * @example
  * ```typescript
  * import { createClient } from 'redis';
