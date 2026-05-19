@@ -328,6 +328,7 @@ export {
   getIdempotencyMigration,
   IDEMPOTENCY_MIGRATION,
   cleanupExpiredIdempotency,
+  redisBackend,
   hashPayload,
 } from './idempotency';
 export type {
@@ -338,6 +339,9 @@ export type {
   IdempotencyCheckResult,
   MemoryBackendOptions,
   PgBackendOptions,
+  RedisBackendOptions,
+  RedisBackendClient,
+  RedisLikeClient,
 } from './idempotency';
 
 export { createA2AAdapter, A2AInvocationError } from './a2a-adapter';
