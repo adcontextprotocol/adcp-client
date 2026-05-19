@@ -79,7 +79,12 @@ function assertSafeVersion(value: string, source: string): void {
 // the major/minor gate in `buildCompatibleVersions` — failing closed there
 // is intentional, so a spec move forces a human to think about which
 // historical versions stay in the compat surface.
-const COMPATIBLE_PREFIX = ['v2.5', 'v2.6', 'v3', '3.0.0-beta.1', '3.0.0-beta.3'] as const;
+//
+// `3.1.0-beta.1` is opt-in: the SDK's primary pin stays at the current
+// 3.0.x GA, but consumers can pin `adcpVersion: '3.1.0-beta.1'` (or
+// '3.1-beta') to exercise the catalog-sync cluster against beta sellers.
+// Side-bundle synced via `npm run sync-schemas:3.1-beta`.
+const COMPATIBLE_PREFIX = ['v2.5', 'v2.6', 'v3', '3.0.0-beta.1', '3.0.0-beta.3', '3.1.0-beta.1'] as const;
 
 /**
  * Build the `COMPATIBLE_ADCP_VERSIONS` list dynamically from the current

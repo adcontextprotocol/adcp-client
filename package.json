@@ -40,6 +40,11 @@
       "require": "./dist/lib/types/v2-5/index.js",
       "types": "./dist/lib/types/v2-5/index.d.ts"
     },
+    "./types/v3-1-beta": {
+      "import": "./dist/lib/types/v3-1-beta/index.js",
+      "require": "./dist/lib/types/v3-1-beta/index.js",
+      "types": "./dist/lib/types/v3-1-beta/index.d.ts"
+    },
     "./testing": {
       "import": "./dist/lib/testing/index.js",
       "require": "./dist/lib/testing/index.js",
@@ -139,6 +144,9 @@
       "types/v2-5": [
         "dist/lib/types/v2-5/index.d.ts"
       ],
+      "types/v3-1-beta": [
+        "dist/lib/types/v3-1-beta/index.d.ts"
+      ],
       "testing": [
         "dist/lib/testing/index.d.ts"
       ],
@@ -226,14 +234,16 @@
     "test:status-report": "node test/utils/final-status-report.js",
     "sync-schemas": "tsx scripts/sync-schemas.ts",
     "sync-schemas:v2.5": "tsx scripts/sync-v2-5-schemas.ts",
-    "sync-schemas:all": "npm run sync-schemas && npm run sync-schemas:v2.5",
+    "sync-schemas:3.1-beta": "tsx scripts/sync-3-1-beta-schemas.ts",
+    "sync-schemas:all": "npm run sync-schemas && npm run sync-schemas:v2.5 && npm run sync-schemas:3.1-beta",
     "schemas:ensure": "tsx scripts/schemas-ensure.ts",
     "schema-diff": "tsx scripts/schema-diff.ts",
     "generate-types": "tsx scripts/generate-types.ts && tsx scripts/generate-enum-arrays.ts && tsx scripts/generate-manifest-derived.ts && tsx scripts/generate-entity-hydration.ts",
     "generate-manifest-derived": "tsx scripts/generate-manifest-derived.ts",
     "generate-entity-hydration": "tsx scripts/generate-entity-hydration.ts",
     "generate-types:v2.5": "tsx scripts/generate-v2-5-types.ts",
-    "generate-types:all": "npm run generate-types && npm run generate-types:v2.5",
+    "generate-types:3.1-beta": "tsx scripts/generate-3-1-beta-types.ts",
+    "generate-types:all": "npm run generate-types && npm run generate-types:v2.5 && npm run generate-types:3.1-beta",
     "generate-registry-types": "tsx scripts/generate-registry-types.ts",
     "generate-enum-arrays": "tsx scripts/generate-enum-arrays.ts",
     "generate-inline-enum-arrays": "tsx scripts/generate-inline-enum-arrays.ts",
