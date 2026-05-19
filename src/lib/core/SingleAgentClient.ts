@@ -2716,8 +2716,15 @@ export class SingleAgentClient {
 
       // Use the shared connectMCP path so both static bearer AND saved OAuth
       // tokens work. OAuth takes the refresh-capable authProvider branch.
+      // Header-only auth (basic, x-api-key, custom routing) lives on
+      // `normalizedAgent.headers` and must be forwarded as `customHeaders` —
+      // basic auth in particular suppresses `auth_token` on purpose so the
+      // SDK doesn't emit a competing `Authorization: Bearer …`.
       const { connectMCP } = await import('../protocols/mcp');
       const connectOptions: Parameters<typeof connectMCP>[0] = { agentUrl: agent.agent_uri };
+      if (this.normalizedAgent.headers && Object.keys(this.normalizedAgent.headers).length > 0) {
+        connectOptions.customHeaders = this.normalizedAgent.headers;
+      }
       if (this.normalizedAgent.oauth_tokens) {
         const { createNonInteractiveOAuthProvider } = await import('../auth/oauth');
         connectOptions.authProvider = createNonInteractiveOAuthProvider(this.normalizedAgent, {

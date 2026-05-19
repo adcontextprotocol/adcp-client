@@ -664,8 +664,30 @@ export async function connectMCP(options: {
   // Build transport options
   const transportOptions: StreamableHTTPClientTransportOptions = {};
 
+  // Header-only auth (basic, x-api-key, custom routing) lives entirely on
+  // `customHeaders`. Attach it whenever it's present, regardless of which
+  // auth branch fires — OAuth + routing headers, bearer + tenant headers,
+  // and pure-header auth must all reach the wire.
+  //
+  // Precedence note: the MCP SDK's `_commonHeaders()` (StreamableHTTP)
+  // spreads `requestInit.headers` *over* any provider-emitted `Authorization`
+  // (`new Headers({ ...providerHeaders, ...requestInitHeaders })`, last-write-
+  // wins). To prevent a caller-supplied `Authorization` in `customHeaders`
+  // from silently overriding the OAuth provider's bearer, drop any
+  // `Authorization` key from `customHeaders` when `authProvider` is set.
+  // OAuth is the source of truth for the bearer in that branch; non-auth
+  // routing/tenant headers still flow through.
+  const filteredCustomHeaders = authProvider
+    ? Object.fromEntries(Object.entries(customHeaders ?? {}).filter(([k]) => k.toLowerCase() !== 'authorization'))
+    : customHeaders;
+  const authHeaders: Record<string, string> = {
+    ...filteredCustomHeaders,
+    ...(authToken ? createMCPAuthHeaders(authToken) : {}),
+  };
+  if (Object.keys(authHeaders).length > 0) {
+    transportOptions.requestInit = { headers: authHeaders };
+  }
   if (authProvider) {
-    // Use OAuth provider
     transportOptions.authProvider = authProvider;
     debugLogs.push({
       type: 'info',
@@ -673,12 +695,15 @@ export async function connectMCP(options: {
       timestamp: new Date().toISOString(),
     });
   } else if (authToken) {
-    // Use static token, merged with any custom headers (auth takes precedence)
-    const authHeaders = { ...customHeaders, ...createMCPAuthHeaders(authToken) };
-    transportOptions.requestInit = { headers: authHeaders };
     debugLogs.push({
       type: 'info',
       message: 'MCP: Using static token for authentication',
+      timestamp: new Date().toISOString(),
+    });
+  } else if (Object.keys(authHeaders).length > 0) {
+    debugLogs.push({
+      type: 'info',
+      message: 'MCP: Using custom headers for authentication',
       timestamp: new Date().toISOString(),
     });
   }
