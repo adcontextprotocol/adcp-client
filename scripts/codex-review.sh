@@ -8,6 +8,13 @@
 # PR-specific context is supplied via stdin OR auto-built from
 # `git diff --stat $BASE...HEAD` when `--base` is given.
 #
+# When `--base` is a local branch name (e.g. `main`), the script resolves
+# it to `refs/remotes/origin/<branch>` after a fetch — comparing against
+# the locally-checked-out branch is a footgun (stale local `main` produces
+# fabricated diffs that include already-merged PRs). Pass `--base
+# origin/main` explicitly to skip resolution; pass `--no-fetch` to skip
+# the fetch entirely.
+#
 # Personas (each maps to a prompt file in scripts/codex-review-prompts/):
 #   dx        — adopter ergonomics, JSDoc copy-paste-ability, error actionability
 #   protocol  — atomicity, ordering, parity with sibling backends
@@ -35,6 +42,7 @@ OUT_DIR="${TMPDIR:-/tmp}"
 PERSONA=""
 RUN_ALL=0
 BASE_BRANCH=""
+NO_FETCH=0
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -52,8 +60,12 @@ while [[ $# -gt 0 ]]; do
       BASE_BRANCH="$2"
       shift 2
       ;;
+    --no-fetch)
+      NO_FETCH=1
+      shift
+      ;;
     --help|-h)
-      sed -n '2,28p' "$0"
+      sed -n '2,36p' "$0"
       exit 0
       ;;
     *)
@@ -62,6 +74,47 @@ while [[ $# -gt 0 ]]; do
       ;;
   esac
 done
+
+# Resolve --base to the remote-tracking ref so the diff reflects shipped
+# state, not whatever the user happens to have locally checked out. The
+# only escape hatch is passing an already-qualified ref (e.g. `origin/main`
+# or a SHA) — those bypass resolution and are used verbatim.
+resolve_base_branch() {
+  local raw="$1"
+  if [[ -z "$raw" ]]; then
+    echo ""
+    return 0
+  fi
+  # If it's not a local branch (SHA, tag, or already-qualified ref like
+  # `origin/main`), use it verbatim.
+  if ! git show-ref --verify -q "refs/heads/$raw"; then
+    echo "$raw"
+    return 0
+  fi
+  # Plain local-branch name — fetch and resolve to origin/<branch>.
+  if [[ "$NO_FETCH" -eq 0 ]]; then
+    git fetch --quiet origin "$raw" 2>/dev/null || {
+      echo "codex-review: warning: 'git fetch origin $raw' failed; using local '$raw'." >&2
+      echo "$raw"
+      return 0
+    }
+  fi
+  local remote_ref="origin/$raw"
+  if git rev-parse --verify -q "$remote_ref^{commit}" >/dev/null; then
+    echo "$remote_ref"
+  else
+    echo "codex-review: warning: '$remote_ref' not found after fetch; falling back to local '$raw'." >&2
+    echo "$raw"
+  fi
+}
+
+if [[ -n "$BASE_BRANCH" ]]; then
+  RESOLVED_BASE="$(resolve_base_branch "$BASE_BRANCH")"
+  if [[ "$RESOLVED_BASE" != "$BASE_BRANCH" ]]; then
+    echo "codex-review: --base $BASE_BRANCH → $RESOLVED_BASE" >&2
+  fi
+  BASE_BRANCH="$RESOLVED_BASE"
+fi
 
 if [[ "$RUN_ALL" -eq 0 && -z "$PERSONA" ]]; then
   echo "Usage: scripts/codex-review.sh --persona <dx|protocol|code|security> [--base <branch>]" >&2
