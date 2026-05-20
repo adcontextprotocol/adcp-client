@@ -71,6 +71,42 @@ import type {
   SITerminateSessionResponse,
 } from '../types/tools.generated';
 import type { MutatingRequestInput } from '../utils/idempotency';
+import { withFormatOptions } from '../v2/projection/augment-response';
+import type { V2AugmentedProduct } from '../v2/projection/augment-response';
+import type { ProjectionDiagnostic, V1Product } from '../v2/projection/types';
+
+/**
+ * AdCP 3.1 V2-mental-model envelope attached to `get_products` responses
+ * when the SDK auto-projects `format_ids[]` → `format_options[]`.
+ *
+ * Present whenever projection ran (the default). Adopters reading the
+ * V2 surface check `data.projection.diagnostics` to see what didn't
+ * project cleanly; absence of diagnostics means every product's
+ * `format_options[]` is fully populated (clean catalog match) or was
+ * already v2-shaped on the wire.
+ */
+export interface GetProductsProjectionEnvelope {
+  /**
+   * Structured diagnostics from the v1→v2 augmentation step
+   * (`source: 'sdk'`, parseable `sdk_id`, normative or SDK-local
+   * `code`). Empty when every product projects cleanly.
+   */
+  diagnostics: ProjectionDiagnostic[];
+}
+
+/**
+ * `GetProductsResponse` with `format_options[]` guaranteed on every
+ * product (the V2 mental model) and a `projection` envelope carrying
+ * any diagnostics from the v1→v2 augmentation step.
+ *
+ * Returned by `AgentClient.getProducts()` by default. Callers passing
+ * `{ project: false }` opt out of projection and receive the raw
+ * generated `GetProductsResponse` instead.
+ */
+export type V2AugmentedGetProductsResponse = Omit<GetProductsResponse, 'products'> & {
+  products: V2AugmentedProduct<V1Product>[];
+  projection: GetProductsProjectionEnvelope;
+};
 
 /**
  * Type mapping for task names to their response types
@@ -423,19 +459,80 @@ export class AgentClient {
   // ====== MEDIA BUY TASKS ======
 
   /**
-   * Discover available advertising products
+   * Discover available advertising products.
+   *
+   * By default, response products are augmented with the AdCP 3.1
+   * `format_options[]` declaration (the V2 mental model). When the
+   * seller emitted v1 `format_ids[]`, the SDK projects them via the
+   * AAO canonical-formats catalog so buyers always read the same
+   * V2 shape regardless of wire version. The original `format_ids[]`
+   * is preserved alongside `format_options[]` (additive — 7.x
+   * callers reading `format_ids` keep working).
+   *
+   * Projection diagnostics surface on
+   * `result.data.projection.diagnostics` (structured
+   * `source: 'sdk'` markers; codes mirror the spec's error-code
+   * vocabulary plus three SDK-local codes — see the projection
+   * module's `ProjectionDiagnostic` type for the full set).
+   *
+   * Pass `{ project: false }` to opt out and receive the raw wire
+   * response unmodified — useful for storyboard / compliance
+   * harnesses asserting exact seller emission. The opt-out narrows
+   * the return type back to `GetProductsResponse` (no `projection`
+   * envelope, no guaranteed `format_options[]`).
+   *
+   * The 8.0 release narrows further by removing `format_ids[]` from
+   * the public Product type entirely.
    */
   async getProducts(
     params: GetProductsRequest,
     inputHandler?: InputHandler,
-    options?: TaskOptions
-  ): Promise<TaskResult<GetProductsResponse>> {
+    options?: TaskOptions & { project?: true }
+  ): Promise<TaskResult<V2AugmentedGetProductsResponse>>;
+  async getProducts(
+    params: GetProductsRequest,
+    inputHandler?: InputHandler,
+    options?: TaskOptions & { project: false }
+  ): Promise<TaskResult<GetProductsResponse>>;
+  async getProducts(
+    params: GetProductsRequest,
+    inputHandler?: InputHandler,
+    options?: TaskOptions & { project?: boolean }
+  ): Promise<TaskResult<GetProductsResponse | V2AugmentedGetProductsResponse>> {
+    const { project, ...sessionOptions } = options ?? {};
     const result = await this.client.getProducts(params, inputHandler, {
-      ...this.withSession('get_products', options),
+      ...this.withSession('get_products', sessionOptions),
     });
 
     this.retainSession(result);
 
+    if (project === false) {
+      return result;
+    }
+
+    // Augment on the way out. Only the completed-success branch carries
+    // `data` we can project; failure / intermediate results pass through
+    // unchanged so the discriminated-union narrowing on the caller side
+    // still works.
+    if (result.success && result.status === 'completed' && result.data) {
+      // The generated `GetProductsResponse.products: Product[]` shape is
+      // structurally broader than the projection layer's loose `V1Product`
+      // (which requires `format_ids` and an index signature). We treat the
+      // generated shape as a v1 product on the way through projection — the
+      // augmentation is purely additive and doesn't read the fields the
+      // generated type has but `V1Product` doesn't.
+      const { response, diagnostics } = withFormatOptions(result.data as unknown as { products?: V1Product[] });
+      const augmented: V2AugmentedGetProductsResponse = {
+        ...(response as unknown as Omit<GetProductsResponse, 'products'> & {
+          products: V2AugmentedProduct<V1Product>[];
+        }),
+        projection: { diagnostics },
+      };
+      return {
+        ...result,
+        data: augmented,
+      };
+    }
     return result;
   }
 

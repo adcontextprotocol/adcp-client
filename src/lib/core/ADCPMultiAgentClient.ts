@@ -1,7 +1,7 @@
 // Multi-agent orchestrator providing simple, intuitive API
 
 import type { AgentConfig } from '../types';
-import { AgentClient } from './AgentClient';
+import { AgentClient, type V2AugmentedGetProductsResponse } from './AgentClient';
 import type { SingleAgentClientConfig } from './SingleAgentClient';
 import { ADCP_VERSION } from '../version';
 import { resolveAdcpVersion } from '../utils/adcp-version-config';
@@ -98,14 +98,36 @@ export class AgentCollection {
   // ====== PARALLEL TASK EXECUTION ======
 
   /**
-   * Execute getProducts on all agents in parallel
+   * Execute getProducts on all agents in parallel.
+   *
+   * Each agent's response is auto-augmented with v2 `format_options[]`
+   * by default — see `AgentClient.getProducts()`. Pass
+   * `{ project: false }` to opt out across all agents in this fan-out.
    */
   async getProducts(
     params: GetProductsRequest,
     inputHandler?: InputHandler,
-    options?: TaskOptions
-  ): Promise<TaskResult<GetProductsResponse>[]> {
-    return this.executeAllSettled(client => client.getProducts(params, inputHandler, options));
+    options?: TaskOptions & { project?: true }
+  ): Promise<TaskResult<V2AugmentedGetProductsResponse>[]>;
+  async getProducts(
+    params: GetProductsRequest,
+    inputHandler?: InputHandler,
+    options?: TaskOptions & { project: false }
+  ): Promise<TaskResult<GetProductsResponse>[]>;
+  async getProducts(
+    params: GetProductsRequest,
+    inputHandler?: InputHandler,
+    options?: TaskOptions & { project?: boolean }
+  ): Promise<TaskResult<GetProductsResponse | V2AugmentedGetProductsResponse>[]> {
+    // Discriminate on the literal `project` flag so the per-client call
+    // hits the matching overload — TS can't narrow `boolean` to the
+    // overload's literal `true | undefined` / `false` shapes on its own.
+    if (options?.project === false) {
+      const optsOff = options as TaskOptions & { project: false };
+      return this.executeAllSettled(client => client.getProducts(params, inputHandler, optsOff));
+    }
+    const optsOn = options as (TaskOptions & { project?: true }) | undefined;
+    return this.executeAllSettled(client => client.getProducts(params, inputHandler, optsOn));
   }
 
   /**
