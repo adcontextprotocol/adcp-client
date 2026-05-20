@@ -171,8 +171,13 @@ function oneOfToAnyOf(schema: any): any {
  * json-schema-to-zod targets Zod v3. Fix known incompatibilities:
  * - .datetime({ offset: true }) → .datetime() (v4 accepts offsets by default)
  * - .unique() → removed (not available in Zod v4 arrays)
+ * - z.record(value) → z.record(z.string(), value) (v4 requires the key schema)
+ * - ZodError.errors → ZodError.issues (renamed in v4)
+ * - Untyped `(error) => ctx.addIssue(error)` callback parameters (`(error: any)` —
+ *   Zod's $ZodIssue type isn't worth importing here; the generated code is
+ *   internal validation glue that flows the issue straight back into a parent
+ *   refinement context)
  * - duplicate import lines
- * - result.error.errors → result.error.issues (Zod v4 renamed ZodError.errors)
  */
 function postProcess(code: string): string {
   let result = code;
@@ -184,18 +189,14 @@ function postProcess(code: string): string {
   result = result.replace(/\.unique\(\)/g, '');
   // z.record(valueSchema) → z.record(z.string(), valueSchema) (Zod v4 requires key schema)
   result = result.replace(/z\.record\((?!z\.string\(\)\s*,)/g, 'z.record(z.string(), ');
-  // ZodError shape change: v3 .errors → v4 .issues. json-schema-to-zod emits
+  // ZodError.errors was renamed to .issues in Zod v4. json-schema-to-zod emits
   // `result.error.errors.forEach(...)` inside the superRefine blocks it
-  // generates for `oneOf` (and now `anyOf` via our normalization step).
-  result = result.replace(/result\.error\.errors/g, 'result.error.issues');
-  // Zod v4 narrowed ctx.addIssue's argument type — $ZodIssue isn't directly
-  // assignable. The generated forwarding pattern is correct at runtime
-  // (issues are well-formed) but fails strict typecheck. Cast through any
-  // in the forwarding callback only.
-  result = result.replace(
-    /result\.error\.issues\.forEach\(\(error\) => ctx\.addIssue\(error\)\)/g,
-    'result.error.issues.forEach((error) => ctx.addIssue(error as any))'
-  );
+  // generates for `oneOf`/`anyOf` and the `not` / nested-refine shape.
+  result = result.replace(/(\.error)\.errors(\.forEach)/g, '$1.issues$2');
+  // The same emitted pattern uses an untyped `(error)` callback parameter.
+  // Strict tsc rejects the implicit any — type it as `any` (the value flows
+  // straight into ctx.addIssue, which accepts the v4 $ZodIssue shape).
+  result = result.replace(/\.issues\.forEach\(\((\w+)\) =>/g, '.issues.forEach(($1: any) =>');
   return result;
 }
 
