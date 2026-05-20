@@ -213,10 +213,65 @@ export class BackwardsTimeRangeError extends AdcpError {
 // Auth / permission family
 // ---------------------------------------------------------------------------
 
+/**
+ * 3.0.x-era authentication error that conflates missing credentials with
+ * rejected credentials. AdCP 3.1 splits this into {@link AuthMissingError}
+ * (correctable; no `Authorization` header presented) and
+ * {@link AuthInvalidError} (terminal; credentials presented but rejected).
+ *
+ * Sellers MUST migrate to the split codes; the SDK still accepts and
+ * routes `AUTH_REQUIRED` for backward compatibility with pre-3.1 callers.
+ *
+ * @deprecated Prefer `AuthMissingError` (missing credentials) or
+ *   `AuthInvalidError` (rejected credentials). Retained for sellers still
+ *   emitting the unsplit code during the 3.x deprecation window.
+ */
 export class AuthRequiredError extends AdcpError {
   constructor(opts: CommonOpts = {}) {
     super('AUTH_REQUIRED', {
       message: opts.message ?? 'Authentication required.',
+      ...(opts.suggestion !== undefined && { suggestion: opts.suggestion }),
+      ...(opts.details !== undefined && { details: opts.details }),
+    });
+  }
+}
+
+/**
+ * No credentials were presented. Sellers MUST return this when no
+ * `Authorization` header was included on the request. Recovery:
+ * correctable (provide credentials via the auth header and retry).
+ *
+ * @since AdCP 3.1 (adcp#3730 splits `AUTH_REQUIRED`).
+ */
+export class AuthMissingError extends AdcpError {
+  constructor(opts: CommonOpts = {}) {
+    super('AUTH_MISSING', {
+      message: opts.message ?? 'Authentication required: no credentials presented.',
+      ...(opts.suggestion !== undefined && { suggestion: opts.suggestion }),
+      ...(opts.details !== undefined && { details: opts.details }),
+    });
+  }
+}
+
+/**
+ * Credentials were presented but rejected — revoked, malformed signature,
+ * or a key no longer in the seller's keystore. Recovery: terminal — do NOT
+ * auto-retry. Auto-retry creates an SSO retry-storm indistinguishable from
+ * brute-force probing. Agents with a valid OAuth 2.1 refresh grant MAY
+ * silently refresh and retry once.
+ *
+ * **Credential-leak guard.** `opts.message` and `opts.details` cross to
+ * the buyer verbatim on the wire envelope. Do NOT place rejected
+ * credentials, token fragments, JWT payload material, or upstream
+ * identity-provider error bodies in either field — log those server-side
+ * instead. The framework is a witness, not a redactor.
+ *
+ * @since AdCP 3.1 (adcp#3730 splits `AUTH_REQUIRED`).
+ */
+export class AuthInvalidError extends AdcpError {
+  constructor(opts: CommonOpts = {}) {
+    super('AUTH_INVALID', {
+      message: opts.message ?? 'Authentication failed: credentials rejected.',
       ...(opts.suggestion !== undefined && { suggestion: opts.suggestion }),
       ...(opts.details !== undefined && { details: opts.details }),
     });
@@ -229,6 +284,50 @@ export class PermissionDeniedError extends AdcpError {
       message: opts.message ?? `Permission denied for ${action}.`,
       ...(opts.suggestion !== undefined && { suggestion: opts.suggestion }),
       details: { ...(opts.details ?? {}), action },
+    });
+  }
+}
+
+/**
+ * The buyer agent's commercial relationship with the seller is suspended.
+ * Recovery: terminal at the wire level — a buyer cannot "wait out" a
+ * suspension by retrying the same request. The transient-vs-permanent
+ * distinction lives at the seller's `BuyerAgent.status` record, not on the
+ * wire.
+ *
+ * Consolidates the 3.0.5 placeholder shape
+ * `PERMISSION_DENIED + details.scope:'agent' + details.status:'suspended'`,
+ * which is removed in 3.1 (envelopes carrying `details.status` fail schema
+ * validation).
+ *
+ * @since AdCP 3.1 (adcp#3906 consolidates the `details.status` placeholder).
+ */
+export class AgentSuspendedError extends AdcpError {
+  constructor(opts: CommonOpts = {}) {
+    super('AGENT_SUSPENDED', {
+      message: opts.message ?? 'Buyer agent is suspended. Contact the seller to restore access.',
+      ...(opts.suggestion !== undefined && { suggestion: opts.suggestion }),
+      ...(opts.details !== undefined && { details: opts.details }),
+    });
+  }
+}
+
+/**
+ * The buyer agent is permanently denied by the seller. Recovery: terminal —
+ * re-onboarding under a new agent identity is the only recovery path.
+ *
+ * Consolidates the 3.0.5 placeholder shape
+ * `PERMISSION_DENIED + details.scope:'agent' + details.status:'blocked'`,
+ * which is removed in 3.1.
+ *
+ * @since AdCP 3.1 (adcp#3906 consolidates the `details.status` placeholder).
+ */
+export class AgentBlockedError extends AdcpError {
+  constructor(opts: CommonOpts = {}) {
+    super('AGENT_BLOCKED', {
+      message: opts.message ?? 'Buyer agent is blocked.',
+      ...(opts.suggestion !== undefined && { suggestion: opts.suggestion }),
+      ...(opts.details !== undefined && { details: opts.details }),
     });
   }
 }

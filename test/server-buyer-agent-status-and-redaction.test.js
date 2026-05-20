@@ -98,7 +98,7 @@ describe('Stage 4 — status enforcement', () => {
     assert.equal(result.structuredContent._ctxAgent.status, 'active');
   });
 
-  it('suspended agent → 403 PERMISSION_DENIED with details.scope=agent', async () => {
+  it('suspended agent → 403 AGENT_SUSPENDED (adcp#3906 consolidates the 3.0.5 placeholder)', async () => {
     let handlerInvoked = false;
     const platform = buildPlatform({
       sales: {
@@ -127,13 +127,15 @@ describe('Stage 4 — status enforcement', () => {
       extra: { credential: sigCredential() },
     });
     assert.equal(result.isError, true);
-    assert.equal(result.structuredContent.adcp_error.code, 'PERMISSION_DENIED');
-    assert.equal(result.structuredContent.adcp_error.details.scope, 'agent');
-    assert.equal(result.structuredContent.adcp_error.details.status, 'suspended');
+    assert.equal(result.structuredContent.adcp_error.code, 'AGENT_SUSPENDED');
+    // adcp#3906 removes the `details.status` placeholder field — envelopes
+    // carrying it fail schema validation in 3.1. Buyers branch on
+    // `error.code` instead.
+    assert.equal(result.structuredContent.adcp_error.details?.status, undefined);
     assert.equal(handlerInvoked, false, 'handler MUST NOT run for suspended agent');
   });
 
-  it('blocked agent → 403 PERMISSION_DENIED with details.status=blocked AND recovery=terminal', async () => {
+  it('blocked agent → 403 AGENT_BLOCKED with recovery=terminal', async () => {
     const platform = buildPlatform({
       agentRegistry: BuyerAgentRegistry.signingOnly({
         resolveByAgentUrl: async () => sampleAgent({ status: 'blocked' }),
@@ -151,14 +153,14 @@ describe('Stage 4 — status enforcement', () => {
       extra: { credential: sigCredential() },
     });
     assert.equal(result.isError, true);
-    assert.equal(result.structuredContent.adcp_error.code, 'PERMISSION_DENIED');
-    assert.equal(result.structuredContent.adcp_error.details.status, 'blocked');
+    assert.equal(result.structuredContent.adcp_error.code, 'AGENT_BLOCKED');
+    assert.equal(result.structuredContent.adcp_error.details?.status, undefined);
     // Blocked is terminal — buyers MUST NOT auto-retry; recovery dispatches
-    // correctly without parsing details.status.
+    // correctly off `error.code`.
     assert.equal(result.structuredContent.adcp_error.recovery, 'terminal');
   });
 
-  it('suspended agent → recovery=transient (re-onboarding may resolve)', async () => {
+  it('suspended agent → recovery=terminal (adcp#3906: placeholder transient recovery contradicted no-retry MUST)', async () => {
     const platform = buildPlatform({
       agentRegistry: BuyerAgentRegistry.signingOnly({
         resolveByAgentUrl: async () => sampleAgent({ status: 'suspended' }),
@@ -175,7 +177,12 @@ describe('Stage 4 — status enforcement', () => {
       scopes: [],
       extra: { credential: sigCredential() },
     });
-    assert.equal(result.structuredContent.adcp_error.recovery, 'transient');
+    // The transient-vs-permanent distinction lives at the seller's
+    // `BuyerAgent.status` record (re-onboarding may flip suspended→active),
+    // NOT at the wire-level `recovery` field. A buyer cannot recover by
+    // retrying the same request, so `recovery: terminal` is correct.
+    assert.equal(result.structuredContent.adcp_error.recovery, 'terminal');
+    assert.equal(result.structuredContent.adcp_error.code, 'AGENT_SUSPENDED');
   });
 
   it('status enforcement runs BEFORE accounts.resolve (no tenant lookup wasted)', async () => {
@@ -253,7 +260,7 @@ describe('Stage 4 — status enforcement', () => {
       extra: { credential: sigCredential() },
     });
     assert.equal(nextResult.isError, true);
-    assert.equal(nextResult.structuredContent.adcp_error.details.status, 'suspended');
+    assert.equal(nextResult.structuredContent.adcp_error.code, 'AGENT_SUSPENDED');
   });
 
   it('null registry result (no recognized agent) does NOT trigger status enforcement', async () => {

@@ -142,13 +142,39 @@ describe('decideRetry — operator-grade defaults', () => {
   });
 
   describe('auth codes escalate (operator must rotate creds)', () => {
-    for (const code of ['AUTH_REQUIRED', 'PERMISSION_DENIED', 'ACCOUNT_SETUP_REQUIRED', 'ACCOUNT_PAYMENT_REQUIRED']) {
+    for (const code of [
+      'AUTH_REQUIRED',
+      'AUTH_MISSING',
+      'PERMISSION_DENIED',
+      'ACCOUNT_SETUP_REQUIRED',
+      'ACCOUNT_PAYMENT_REQUIRED',
+    ]) {
       it(`${code} → escalate (auth)`, () => {
         const d = decideRetry(err(code));
         assert.equal(d.action, 'escalate');
         assert.equal(d.reason, 'auth');
       });
     }
+  });
+
+  describe('AUTH_INVALID escalates as terminal (no SSO retry-storm — adcp#3730)', () => {
+    it('AUTH_INVALID → escalate (terminal), distinct from AUTH_MISSING (auth)', () => {
+      const d = decideRetry(err('AUTH_INVALID', { recovery: 'terminal' }));
+      assert.equal(d.action, 'escalate');
+      assert.equal(d.reason, 'terminal');
+    });
+
+    it('override hook can route AUTH_INVALID to a custom rotation flow', () => {
+      const policy = new BuyerRetryPolicy({
+        overrides: {
+          AUTH_INVALID: () => ({ action: 'escalate', reason: 'auth', message: 'rotate via PagerDuty' }),
+        },
+      });
+      const d = policy.decide(err('AUTH_INVALID', { recovery: 'terminal' }));
+      assert.equal(d.action, 'escalate');
+      assert.equal(d.reason, 'auth');
+      assert.equal(d.message, 'rotate via PagerDuty');
+    });
   });
 
   describe("out-of-band transients escalate (agent can't unblock)", () => {
@@ -172,8 +198,10 @@ describe('decideRetry — operator-grade defaults', () => {
   });
 
   describe('coverage', () => {
-    it('every standard error code has a defined default', () => {
-      const decisions = ErrorCodeValues.map(code => ({
+    it('every standard error code (manifest + overlay) has a defined default', () => {
+      const { FORWARD_COMPAT_ERROR_CODES } = require('../../dist/lib/types/forward-compat-error-codes');
+      const allCodes = [...ErrorCodeValues, ...Object.keys(FORWARD_COMPAT_ERROR_CODES)];
+      const decisions = allCodes.map(code => ({
         code,
         decision: decideRetry(err(code, { recovery: code === 'RATE_LIMITED' ? 'transient' : 'correctable' })),
       }));
@@ -183,7 +211,7 @@ describe('decideRetry — operator-grade defaults', () => {
           `${code} → unrecognized action "${decision.action}"`
         );
       }
-      assert.equal(decisions.length, ErrorCodeValues.length);
+      assert.equal(decisions.length, allCodes.length);
     });
   });
 

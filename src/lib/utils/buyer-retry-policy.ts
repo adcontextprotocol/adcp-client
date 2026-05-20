@@ -129,8 +129,9 @@ type CodePolicy =
  * - `POLICY_VIOLATION`, `COMPLIANCE_UNSATISFIED`, `GOVERNANCE_DENIED` are
  *   spec-`correctable` but escalate here (commercial-relationship signals;
  *   auto-tweak looks like evasion).
- * - `AUTH_REQUIRED` is spec-`correctable` but escalate here (conflates
- *   missing-creds with revoked-creds; tracked upstream at adcp#3730).
+ * - `AUTH_REQUIRED` is spec-`correctable` but escalate here (the deprecated
+ *   3.0.x code conflates missing-creds with revoked-creds; 3.1 sellers
+ *   emit `AUTH_MISSING` / `AUTH_INVALID` instead, each handled below).
  * - `GOVERNANCE_UNAVAILABLE`, `CAMPAIGN_SUSPENDED` are spec-`transient` but
  *   escalate here (out-of-band — agent can't unblock).
  */
@@ -221,10 +222,28 @@ const DEFAULT_CODE_POLICY: Record<ErrorCode, CodePolicy> = {
   COMPLIANCE_UNSATISFIED: { action: 'escalate', escalateReason: 'commercial' },
   GOVERNANCE_DENIED: { action: 'escalate', escalateReason: 'commercial' },
 
-  // Auth — until adcp#3730 splits missing-vs-revoked, escalate. Otherwise
-  // naive loops hammer SSO endpoints on revoked tokens.
+  // Auth — 3.0.x emitted `AUTH_REQUIRED` for both missing and revoked
+  // credentials; 3.1+ splits into `AUTH_MISSING` (correctable) and
+  // `AUTH_INVALID` (terminal — auto-retry hammers SSO endpoints on
+  // revoked tokens).
+  //
+  // All three escalate by default. The agent typically can't re-handshake
+  // without an operator-supplied credential refresh path, so even
+  // `AUTH_MISSING` escalates rather than burning a retry on a
+  // guaranteed-empty `Authorization` header. Adopters with a refresh-token
+  // resolver wire `AUTH_MISSING` to `mutate-and-retry` via the override hook.
   AUTH_REQUIRED: { action: 'escalate', escalateReason: 'auth' },
+  AUTH_MISSING: { action: 'escalate', escalateReason: 'auth' },
+  AUTH_INVALID: { action: 'escalate', escalateReason: 'terminal' },
   PERMISSION_DENIED: { action: 'escalate', escalateReason: 'auth' },
+
+  // Agent-status terminals — adcp#3906 consolidates the 3.0.5 placeholder
+  // shape (PERMISSION_DENIED + details.status:'suspended'|'blocked') into
+  // dedicated codes. Both are terminal at the wire level — a buyer cannot
+  // recover by retrying. Suspension lifts at the seller's BuyerAgent record,
+  // not in response to client behavior.
+  AGENT_SUSPENDED: { action: 'escalate', escalateReason: 'terminal' },
+  AGENT_BLOCKED: { action: 'escalate', escalateReason: 'terminal' },
 };
 
 // ---------------------------------------------------------------------------
