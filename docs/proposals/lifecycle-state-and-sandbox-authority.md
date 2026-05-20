@@ -130,7 +130,9 @@ request, based on `account.mode`. Cross-SDK compliance is preserved:
 every SDK (JS, Python, Go) implements its own framework-side mode-aware
 URL routing, but all routes terminate at the SAME `bin/adcp.js
 mock-server <specialism>` reference fixtures. The mock-server is the
-cross-language referee at the upstream-API layer.
+cross-language referee at the upstream-API layer — the spec normatively
+pins the `spec → mock → SDK` triage order at
+[Mock-server authority and failure triage](https://adcontextprotocol.org/docs/building/verification/conformance#mock-server-authority-and-failure-triage).
 
 SDK-specific implementations of "URL routing" may differ in shape
 (decorator, base-class method, middleware) but the contract is the
