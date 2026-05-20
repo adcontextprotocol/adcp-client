@@ -2147,11 +2147,16 @@ type SubmittedEnvelope = {
 
 /**
  * Mid-request token refresh hook config (#1145 Gap 2). When `refresh.fn`
- * is defined and the platform method throws `AdcpError({ code: 'AUTH_REQUIRED' })`,
- * `projectSync` refreshes the account's token via the hook, mutates
- * `account.authInfo.token`, and retries the platform method ONCE. If the
- * refresh hook itself throws, projects to `AUTH_REQUIRED` with
- * `recovery: 'correctable'` so the buyer re-links via their UI flow.
+ * is defined and the platform method throws `AdcpError` with a
+ * recovery-correctable auth code (`AUTH_REQUIRED` from 3.0.x sellers, or
+ * `AUTH_MISSING` from 3.1+ sellers), `projectSync` refreshes the account's
+ * token via the hook, mutates `account.authInfo.token`, and retries the
+ * platform method ONCE. `AUTH_INVALID` is terminal — credentials were
+ * presented and rejected — so we deliberately do NOT refresh on it (auto-
+ * retry against an SSO endpoint on a revoked token is the retry-storm
+ * pattern adcp#3730 split the code to prevent). If the refresh hook itself
+ * throws, projects to `AUTH_REQUIRED` with `recovery: 'correctable'` so
+ * the buyer re-links via their UI flow.
  *
  * Parameterized over `TCtxMeta` (#1168) so adopters' refresh hooks see
  * typed `account.ctx_metadata` rather than `unknown`. Default `unknown`
@@ -2163,18 +2168,26 @@ interface RefreshConfig<TCtxMeta = unknown> {
   fn?: (account: Account<TCtxMeta>, reason: 'auth_required') => Promise<{ token: string; expiresAt?: number }>;
 }
 
+/** Auth codes that signal "credentials missing, refresh and retry once." */
+const REFRESHABLE_AUTH_CODES: ReadonlySet<string> = new Set(['AUTH_REQUIRED', 'AUTH_MISSING']);
+
 /**
- * Run a platform method with reactive token refresh on `AUTH_REQUIRED`.
+ * Run a platform method with reactive token refresh on missing-credential
+ * auth codes (`AUTH_REQUIRED` on 3.0.x sellers, `AUTH_MISSING` on 3.1+).
  * Without a refresh fn (or no `refresh` at all) this passes the call
- * through. With one, catches `AUTH_REQUIRED`, calls `refresh.fn`, mutates
- * `account.authInfo.token` (and `expiresAt` if returned), and retries the
- * inner call exactly once.
+ * through. With one, catches the refreshable code, calls `refresh.fn`,
+ * mutates `account.authInfo.token` (and `expiresAt` if returned), and
+ * retries the inner call exactly once.
+ *
+ * `AUTH_INVALID` is intentionally NOT refreshed — it's terminal by
+ * spec (credentials presented and rejected); refreshing creates the
+ * SSO retry-storm pattern adcp#3730 split the code to prevent.
  *
  * Failure modes:
  *   - Refresh hook throws → re-throw `AUTH_REQUIRED` with `recovery: 'correctable'`
  *     so the buyer re-links via their UI.
- *   - Retried call throws `AUTH_REQUIRED` again → bubble out (don't refresh
- *     a second time).
+ *   - Retried call throws a refreshable auth code again → bubble out
+ *     (don't refresh a second time).
  */
 async function runWithTokenRefresh<TCtxMeta, T>(
   fn: () => Promise<T>,
@@ -2184,7 +2197,7 @@ async function runWithTokenRefresh<TCtxMeta, T>(
   try {
     return await fn();
   } catch (err) {
-    if (!(err instanceof AdcpError) || err.code !== 'AUTH_REQUIRED') {
+    if (!(err instanceof AdcpError) || !REFRESHABLE_AUTH_CODES.has(err.code)) {
       throw err;
     }
     let refreshed: { token: string; expiresAt?: number };

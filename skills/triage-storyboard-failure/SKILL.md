@@ -11,6 +11,8 @@ Storyboards in `compliance/cache/<version>/` are assertions about adopter behavi
 
 This skill is the rubric for that decision. It exists because adopter-facing failures look identical regardless of cause, and the wrong-direction fix (changing the SDK to satisfy a storyboard that disagrees with the spec) compounds drift across the ecosystem.
 
+> **Upstream anchor.** The spec normatively pins the `spec → mock → SDK` triage order at [Mock-server authority and failure triage](https://adcontextprotocol.org/docs/building/verification/conformance#mock-server-authority-and-failure-triage). This rubric implements that authority chain — when in doubt about which side is wrong, the spec is canonical, the mock interprets the spec, and the SDK consumes the spec via the mock.
+
 ## When to Use
 
 - A `storyboard run` step fails on an adapter you believe satisfies the spec

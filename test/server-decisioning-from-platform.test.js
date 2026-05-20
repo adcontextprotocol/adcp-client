@@ -1332,6 +1332,57 @@ describe('AccountStore optional methods (v1.0 gap-fill for rc.1)', () => {
     assert.doesNotMatch(wire, /1\/\/0g/, 'refresh-token prefix MUST NOT cross to wire');
   });
 
+  it('AUTH_INVALID bypasses the refresh hook entirely — no SSO retry-storm (adcp#3730)', async () => {
+    // Regression-trip wire for the AUTH split: AUTH_INVALID means
+    // "credentials were presented and rejected" — refreshing and retrying
+    // would be the SSO retry-storm pattern the spec split this code to
+    // prevent. The REFRESHABLE_AUTH_CODES allowlist in from-platform.ts
+    // must NOT include AUTH_INVALID. This test pins that contract against
+    // accidental widening; a future contributor who thinks "symmetric
+    // with AUTH_MISSING" and adds AUTH_INVALID to the set breaks this
+    // test loudly.
+    const { AdcpError } = require('../dist/lib/server/decisioning/async-outcome.js');
+    let attempt = 0;
+    let refreshCalls = 0;
+    const platform = buildPlatform({
+      accounts: {
+        resolve: async () => ({
+          id: 'acc_invalid',
+          name: 'Acme',
+          status: 'active',
+          ctx_metadata: {},
+          authInfo: { kind: 'oauth', token: 'revoked_token' },
+        }),
+        getAccountFinancials: async () => {
+          attempt += 1;
+          throw new AdcpError('AUTH_INVALID', {
+            message: 'credentials rejected',
+            recovery: 'terminal',
+          });
+        },
+        refreshToken: async () => {
+          refreshCalls += 1;
+          return { token: 'should_never_be_used' };
+        },
+      },
+    });
+    const server = createAdcpServerFromPlatform(platform, {
+      name: 'auth-invalid-no-refresh',
+      version: '0.0.1',
+      validation: { requests: 'off', responses: 'off' },
+    });
+    const result = await server.dispatchTestRequest({
+      method: 'tools/call',
+      params: { name: 'get_account_financials', arguments: { account: { account_id: 'acc_invalid' } } },
+    });
+    assert.strictEqual(result.isError, true);
+    assert.strictEqual(attempt, 1, 'platform method ran exactly once — no retry');
+    assert.strictEqual(refreshCalls, 0, 'refresh hook MUST NOT fire on AUTH_INVALID');
+    const wire = JSON.stringify(result.structuredContent);
+    assert.match(wire, /AUTH_INVALID/, 'AUTH_INVALID propagates to the wire envelope unchanged');
+    assert.match(wire, /terminal/, 'recovery: terminal is preserved on the wire');
+  });
+
   it('refreshToken successful refresh writes expiresAt onto account.authInfo (#1145)', async () => {
     // Adopters reading `ctx.account.authInfo.expiresAt` after a refresh
     // see the new expiry. The contract anchors proactive-refresh

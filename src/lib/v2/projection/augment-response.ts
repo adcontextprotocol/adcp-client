@@ -34,6 +34,17 @@ import { projectV1ProductToV2 } from './v1-to-v2';
  * preserving the original `format_ids[]`. Carries the projection
  * diagnostics that were generated mapping each `format_id` so the
  * buyer can see what (if anything) didn't project cleanly.
+ *
+ * **Write-side bridge.** After picking a `format_options[i]` entry,
+ * use {@link formatIdsFromOptions} (from `@adcp/sdk/v2/projection`)
+ * to extract the `format_ids[]` value for a `create_media_buy`
+ * package. Inlining `decl.v1_format_ref` works but bypasses the
+ * fail-closed semantics (canonical_formats_only / inherently-v2
+ * canonical → throw). The spec gap that forces this bridge is tracked
+ * at adcontextprotocol/adcp#4842.
+ *
+ * @see formatIdsFromOptions
+ * @see formatIdsForCapability
  */
 export type V2AugmentedProduct<P> = P & {
   format_options: V2ProductFormatDeclaration[];
