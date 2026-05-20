@@ -240,12 +240,7 @@ function shallowEqual(a: unknown, b: unknown): boolean {
     const ka = Object.keys(a as Record<string, unknown>).sort();
     const kb = Object.keys(b as Record<string, unknown>).sort();
     if (ka.length !== kb.length || ka.some((k, i) => k !== kb[i])) return false;
-    return ka.every(k =>
-      shallowEqual(
-        (a as Record<string, unknown>)[k],
-        (b as Record<string, unknown>)[k]
-      )
-    );
+    return ka.every(k => shallowEqual((a as Record<string, unknown>)[k], (b as Record<string, unknown>)[k]));
   }
   return false;
 }
