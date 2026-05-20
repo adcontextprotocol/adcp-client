@@ -32,3 +32,16 @@ export {
   type FetchFormatSchemaOptions,
   type FormatSchemaCache,
 } from './fetch';
+
+export {
+  resolveSchemaRefs,
+  SchemaRefSandboxError,
+  DEFAULT_MAX_REF_DEPTH,
+  DEFAULT_MAX_REF_COUNT,
+  DEFAULT_MIRROR_HOST,
+  DEFAULT_MAX_KEYWORDS,
+  DEFAULT_VALIDATION_BUDGET_MS,
+  type SchemaRefSandboxErrorCode,
+  type ResolveSchemaRefsOptions,
+  type ResolveSchemaRefsResult,
+} from './sandbox-refs';

@@ -32,6 +32,8 @@ export type { V2ToV1Result } from './v2-to-v1';
 
 export { augmentProductWithFormatOptions, withFormatOptions, type V2AugmentedProduct } from './augment-response';
 
+export { formatIdsFromOptions, formatIdsForCapability } from './write-side';
+
 export type {
   V1FormatId,
   V2ProductFormatDeclaration,
