@@ -117,6 +117,13 @@ export {
   type ResolveUnresolvableReason,
 } from './discovery/resolve-agent-properties';
 export {
+  resolveInlinePublisherProperties,
+  resolveSingularInline,
+  detectInlineFederatedDivergence,
+  type InlineResolutionResult,
+  type InlineFederatedDivergence,
+} from './discovery/inline-publisher-properties';
+export {
   validateAdAgents,
   parseManagerDomain,
   type DiscoveryMethod,

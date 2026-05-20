@@ -191,5 +191,21 @@ export interface AdAgentsJson {
    * Optional; absent on 3.0.x adagents.json files.
    */
   formats?: AdAgentsPublisherFormat[];
+  /**
+   * Publisher domains whose inline `properties[]` entries on THIS file are
+   * revoked — even if a matching entry is still present. Honored by inline
+   * `publisher_properties` resolution: a selector targeting a revoked domain
+   * resolves to zero properties, and the SDK MUST NOT fall through to a
+   * federated fetch for that domain.
+   *
+   * Per adcontextprotocol/adcp#4825 + PR #4827, both parent and child
+   * adagents.json files MAY carry this field; first match revokes.
+   * `resolveInlinePublisherProperties` consults the parent's list (the file
+   * passed in). Child-file revocation is the federated fetcher's
+   * responsibility — see {@link fetchAgentAuthorizationsFromDirectory} (#1885
+   * part 2) and the SDK's `property-crawler` for the consumer-side
+   * cross-check.
+   */
+  revoked_publisher_domains?: string[];
   last_updated?: string;
 }
