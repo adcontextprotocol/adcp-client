@@ -30,7 +30,7 @@ import type {
   PublisherPropertySelector,
   SinglePublisherPropertySelector,
 } from './types';
-import { expandPublisherPropertySelectors } from './publisher-property-selector';
+import { resolveInlinePublisherProperties } from './inline-publisher-properties';
 
 /**
  * Result of resolving a single agent's authorization scope against an
@@ -225,10 +225,16 @@ export function resolveAgentProperties(adAgents: AdAgentsJson, agentUrl: string)
           unresolvable: 'missing_selector',
         };
       }
+      // adcp#4825: consult the parent file's inline `properties[]` first.
+      // Selectors that match inline produce `properties` directly; selectors
+      // that don't (and aren't revoked) flow through `cross_publisher_expanded`
+      // for the caller's federated fetch. Revoked selectors are dropped from
+      // both paths — federated fallback MUST NOT fire for them.
+      const { inline_properties, unresolved_selectors } = resolveInlinePublisherProperties(adAgents, selectors);
       return {
-        properties: [],
+        properties: inline_properties,
         cross_publisher: selectors,
-        cross_publisher_expanded: expandPublisherPropertySelectors(selectors),
+        cross_publisher_expanded: unresolved_selectors,
         matched_entry: entry,
       };
     }
