@@ -1,5 +1,5 @@
 // Generated Zod schemas for AdCP well-known files (brand.json, adagents.json)
-// Generated at: 2026-05-20T12:37:23.760Z
+// Generated at: 2026-05-20T12:39:09.086Z
 // Source: schemas/cache/latest/*.json → json-schema-to-zod
 //
 // DO NOT EDIT — regenerate with: npm run generate-wellknown-schemas
