@@ -39,12 +39,13 @@ export interface InlineResolutionResult {
    */
   properties: Property[];
   /**
-   * Why inline resolution did not produce matches. Distinguishes "the
-   * selector's domain isn't in parent inline at all → federated MAY fall
-   * through" from "the selector's domain is explicitly revoked → federated
-   * MUST NOT fire."
+   * Why inline resolution did not produce matches. Revocation is handled by
+   * {@link resolveInlinePublisherProperties} (which short-circuits before
+   * invoking this helper); per-selector callers using
+   * {@link resolveSingularInline} directly must consult
+   * `adAgents.revoked_publisher_domains[]` themselves before calling.
    */
-  reason: 'matched' | 'domain_not_inline' | 'domain_revoked' | 'no_predicate_match';
+  reason: 'matched' | 'domain_not_inline' | 'no_predicate_match';
 }
 
 /**
@@ -232,7 +233,19 @@ function shallowEqual(a: unknown, b: unknown): boolean {
     return a.every((v, i) => shallowEqual(v, b[i]));
   }
   if (typeof a === 'object' && typeof b === 'object') {
-    return JSON.stringify(a) === JSON.stringify(b);
+    // Key-order-stable comparison — `JSON.stringify` reflects insertion order,
+    // and inline objects vs federated-parsed objects can differ on order
+    // (`{type, value}` vs `{value, type}` for PropertyIdentifier). Producing
+    // false-positive divergences would make the SHOULD-log channel flap.
+    const ka = Object.keys(a as Record<string, unknown>).sort();
+    const kb = Object.keys(b as Record<string, unknown>).sort();
+    if (ka.length !== kb.length || ka.some((k, i) => k !== kb[i])) return false;
+    return ka.every(k =>
+      shallowEqual(
+        (a as Record<string, unknown>)[k],
+        (b as Record<string, unknown>)[k]
+      )
+    );
   }
   return false;
 }
