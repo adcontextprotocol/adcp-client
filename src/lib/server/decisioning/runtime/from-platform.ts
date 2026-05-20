@@ -1062,16 +1062,36 @@ export function createAdcpServerFromPlatform<P extends DecisioningPlatform<any, 
         }
       : undefined;
 
+  // Forward specialisms declared on the platform into the inner createAdcpServer
+  // config. `capabilities` is omitted from CreateAdcpServerFromPlatformOptions so
+  // there is no other forwarding path — without this, createAdcpServer's boot-time
+  // guards always see an empty specialisms list and throw when signedRequests is wired.
+  const platformSpecialisms = platform.capabilities.specialisms ?? [];
+  const hasSpecialisms = platformSpecialisms.length > 0;
+  // The signed-requests guard in createAdcpServer (lines 3125 + 3145) requires both
+  // `capabilities.specialisms` including 'signed-requests' AND `capabilities.request_signing.
+  // supported === true`. DecisioningCapabilities has no request_signing field, so synthesize
+  // the minimal block from the specialism claim — supported:true is implied by claiming it.
+  const claimsSignedSpecialism = platformSpecialisms.includes('signed-requests' as never);
+  const hasOverridesProjection =
+    hasMediaBuyProjection || hasBrandProjection || hasAccountProjection || hasComplianceTestingProjection;
+
   const projectedCapabilitiesConfig =
-    hasMediaBuyProjection || hasBrandProjection || hasAccountProjection || hasComplianceTestingProjection
+    hasOverridesProjection || hasSpecialisms
       ? {
-          overrides: {
-            ...(hasMediaBuyProjection && { media_buy: mediaBuyOverrides }),
-            ...(hasBrandProjection && { brand: brandOverrides }),
-            ...(hasAccountProjection && { account: accountOverrides }),
-            ...(hasComplianceTestingProjection &&
-              complianceTestingOverrides != null && { compliance_testing: complianceTestingOverrides }),
-          },
+          ...(hasSpecialisms && {
+            specialisms: [...platformSpecialisms] as NonNullable<GetAdCPCapabilitiesResponse['specialisms']>,
+          }),
+          ...(claimsSignedSpecialism && { request_signing: { supported: true as const } }),
+          ...(hasOverridesProjection && {
+            overrides: {
+              ...(hasMediaBuyProjection && { media_buy: mediaBuyOverrides }),
+              ...(hasBrandProjection && { brand: brandOverrides }),
+              ...(hasAccountProjection && { account: accountOverrides }),
+              ...(hasComplianceTestingProjection &&
+                complianceTestingOverrides != null && { compliance_testing: complianceTestingOverrides }),
+            },
+          }),
         }
       : undefined;
 
