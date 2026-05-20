@@ -171,6 +171,12 @@ function oneOfToAnyOf(schema: any): any {
  * json-schema-to-zod targets Zod v3. Fix known incompatibilities:
  * - .datetime({ offset: true }) → .datetime() (v4 accepts offsets by default)
  * - .unique() → removed (not available in Zod v4 arrays)
+ * - z.record(value) → z.record(z.string(), value) (v4 requires the key schema)
+ * - ZodError.errors → ZodError.issues (renamed in v4)
+ * - Untyped `(error) => ctx.addIssue(error)` callback parameters (`(error: any)` —
+ *   Zod's $ZodIssue type isn't worth importing here; the generated code is
+ *   internal validation glue that flows the issue straight back into a parent
+ *   refinement context)
  * - duplicate import lines
  */
 function postProcess(code: string): string {
@@ -183,6 +189,14 @@ function postProcess(code: string): string {
   result = result.replace(/\.unique\(\)/g, '');
   // z.record(valueSchema) → z.record(z.string(), valueSchema) (Zod v4 requires key schema)
   result = result.replace(/z\.record\((?!z\.string\(\)\s*,)/g, 'z.record(z.string(), ');
+  // ZodError.errors was renamed to .issues in Zod v4. json-schema-to-zod emits
+  // `result.error.errors.forEach(...)` for the `not` / nested-refine shape;
+  // the runtime field is `.issues` under v4.
+  result = result.replace(/(\.error)\.errors(\.forEach)/g, '$1.issues$2');
+  // The same emitted pattern uses an untyped `(error)` callback parameter.
+  // Strict tsc rejects the implicit any — type it as `any` (the value flows
+  // straight into ctx.addIssue, which accepts the v4 $ZodIssue shape).
+  result = result.replace(/\.issues\.forEach\(\((\w+)\) =>/g, '.issues.forEach(($1: any) =>');
   return result;
 }
 
