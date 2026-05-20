@@ -352,16 +352,25 @@ function parsePublisherEntry(raw: unknown): DirectoryPublisherEntry | null {
   if (typeof o.publisher_domain !== 'string') return null;
   if (typeof o.discovery_method !== 'string') return null;
   if (!isDiscoveryMethod(o.discovery_method)) return null;
-  if (typeof o.properties_authorized !== 'number' || o.properties_authorized < 0) return null;
-  if (typeof o.properties_total !== 'number' || o.properties_total < 0) return null;
+  if (!Number.isFinite(o.properties_authorized) || (o.properties_authorized as number) < 0) return null;
+  if (!Number.isFinite(o.properties_total) || (o.properties_total as number) < 0) return null;
   if (o.status !== 'authorized' && o.status !== 'revoked') return null;
   if (typeof o.last_verified_at !== 'string') return null;
+
+  // Per the `agent-publishers.json` schema's `allOf` conditional: when
+  // `discovery_method` is anything other than `direct`, `manager_domain`
+  // is required. Drop rows that violate this — the directory has nothing
+  // to anchor the cross-publisher trust on, and a downstream consumer
+  // would have no manager file to verify against. Witness, not translator.
+  if (o.discovery_method !== 'direct' && typeof o.manager_domain !== 'string') {
+    return null;
+  }
 
   const entry: DirectoryPublisherEntry = {
     publisher_domain: o.publisher_domain,
     discovery_method: o.discovery_method as DirectoryDiscoveryMethod,
-    properties_authorized: o.properties_authorized,
-    properties_total: o.properties_total,
+    properties_authorized: o.properties_authorized as number,
+    properties_total: o.properties_total as number,
     status: o.status as DirectoryPublisherStatus,
     last_verified_at: o.last_verified_at,
   };

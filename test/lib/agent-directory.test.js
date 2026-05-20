@@ -191,6 +191,41 @@ describe('fetchAgentAuthorizationsFromDirectory — pagination', () => {
     }
   });
 
+  test('empty page with next_cursor present continues to next page (iterator state-machine branch)', async () => {
+    // The trickiest iterator branch: a page can be empty (no publishers)
+    // but still have a non-null next_cursor — the iterator must advance to
+    // the next page rather than terminate. The termination check requires
+    // BOTH `publishers.length === 0` AND cursor undefined/null.
+    const pages = [
+      {
+        agent_url: 'a',
+        directory_indexed_at: '2026-05-20T10:00:00Z',
+        publishers: [],
+        next_cursor: 'cursor-1',
+      },
+      {
+        agent_url: 'a',
+        directory_indexed_at: '2026-05-20T10:00:00Z',
+        publishers: [publisherEntry({ publisher_domain: 'late.example' })],
+        next_cursor: null,
+      },
+    ];
+    let pageIndex = 0;
+    const server = await startServer((_req, res) => {
+      res.setHeader('content-type', 'application/json');
+      res.end(JSON.stringify(pages[pageIndex++]));
+    });
+    try {
+      const iter = fetchAgentAuthorizationsFromDirectory('a', { directoryUrl: server.url });
+      const out = await iter.toArray();
+      assert.strictEqual(pageIndex, 2, 'iterator MUST advance past empty page when next_cursor is present');
+      assert.strictEqual(out.length, 1);
+      assert.strictEqual(out[0].publisher_domain, 'late.example');
+    } finally {
+      await server.close();
+    }
+  });
+
   test('terminates on empty first page with null next_cursor', async () => {
     let requestCount = 0;
     const server = await startServer((_req, res) => {
@@ -258,6 +293,12 @@ describe('fetchAgentAuthorizationsFromDirectory — parsing', () => {
             publisherEntry({ publisher_domain: 'good.example' }),
             { publisher_domain: 'bad.example' /* missing required fields */ },
             publisherEntry({ status: 'bogus' }),
+            // discovery_method !== 'direct' requires manager_domain per schema allOf
+            publisherEntry({
+              publisher_domain: 'no-manager.example',
+              discovery_method: 'authoritative_location',
+              // manager_domain intentionally omitted
+            }),
             null,
           ],
         })
