@@ -316,11 +316,10 @@ describe('Phase 1.5 — sandbox-only buyer agent enforcement', () => {
     });
     const result = await dispatch(server, 'prod_acc_1');
     assert.equal(result.isError, true);
-    assert.equal(result.structuredContent.adcp_error.code, 'PERMISSION_DENIED');
-    // Status enforcement fires first — `details.reason` should be absent
-    // (status enforcement doesn't set `reason`), and `details.status`
-    // should be 'suspended'.
-    assert.equal(result.structuredContent.adcp_error.details.status, 'suspended');
+    // Status enforcement fires first — the dedicated 3.1 `AGENT_SUSPENDED`
+    // code (adcp#3906) wins over the sandbox-only `PERMISSION_DENIED`.
+    assert.equal(result.structuredContent.adcp_error.code, 'AGENT_SUSPENDED');
+    assert.equal(result.structuredContent.adcp_error.details?.reason, undefined);
   });
 
   it('null registry result (no agent) → no sandbox-only check; default request flow', async () => {
