@@ -236,6 +236,27 @@ const accounts: AccountStore<NetworkMeta> = {
       ctx_metadata: { network_code: network.network_code, publisher_domain: publisherDomain },
     };
   },
+  /** `list_accounts` projection. AdCP 3.0.9 §accounts/overview requires every
+   *  seller agent (any `sales-*` specialism, including `sales-proposal-mode`)
+   *  to advertise at least one of `list_accounts` / `sync_accounts`. This
+   *  adapter's proposal flow doesn't need buyer-driven account sync, so we
+   *  expose the read-only list. Production deployments swap for a paginated
+   *  query against their account ledger. */
+  async list() {
+    const items: Array<Account<NetworkMeta>> = [];
+    for (const domain of KNOWN_PUBLISHERS) {
+      const network = await upstream.lookupNetwork(domain);
+      if (!network) continue;
+      items.push({
+        id: `pub_${domain}`,
+        name: network.display_name,
+        status: 'active',
+        brand: { domain },
+        ctx_metadata: { network_code: network.network_code, publisher_domain: domain },
+      });
+    }
+    return { items };
+  },
 };
 
 // ---------------------------------------------------------------------------
