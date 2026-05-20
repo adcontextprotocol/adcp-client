@@ -23,18 +23,16 @@ const FIXTURE_DIR = path.join(__dirname, 'v2-projection-fixtures');
 
 // The projection layer reads the v1-canonical-mapping registry and the
 // canonical-format schemas (for v1_translatable). Both live under
-// `schemas/cache/3.1.0-beta.0/` which is gitignored and only present
-// locally — CI only syncs the SDK-pinned stable version (3.0.12).
-//
-// Until adcontextprotocol/adcp#3307 merges and publishes a real 3.1.0
-// tarball that `npm run sync-schemas` can pull, these tests skip in
-// CI with a clear reason. Run locally after rebuilding the 3.1-beta
-// cache (see PR #1815 description).
-const SKIP_REASON = existsSync(
-  path.join(__dirname, '..', '..', 'schemas', 'cache', '3.1.0-beta.0', 'registries', 'v1-canonical-mapping.json')
-)
+// `schemas/cache/<3.1+>/` — CI now syncs `3.1.0-beta.1` via
+// `npm run sync-schemas:3.1-beta`; the loader (registry.ts) tracks
+// whichever 3.1 beta the workspace has.
+const SCHEMAS_CACHE_ROOT = path.join(__dirname, '..', '..', 'schemas', 'cache');
+const REGISTRY_EXISTS = ['3.1.0-beta.1', '3.1.0-beta.0', 'latest'].some(v =>
+  existsSync(path.join(SCHEMAS_CACHE_ROOT, v, 'registries', 'v1-canonical-mapping.json'))
+);
+const SKIP_REASON = REGISTRY_EXISTS
   ? false
-  : 'requires schemas/cache/3.1.0-beta.0/ — only present in workspaces with a local 3.1-beta sync';
+  : 'requires a 3.1+ schemas/cache/<beta>/ — only present in workspaces with a local 3.1-beta sync';
 
 function loadFixtures() {
   return readdirSync(FIXTURE_DIR)
