@@ -10,7 +10,11 @@
 const { test, describe } = require('node:test');
 const assert = require('node:assert');
 
-const { formatIdsFromOptions, formatIdsForCapability } = require('../../dist/lib/v2/projection/index.js');
+const {
+  formatIdsFromOptions,
+  tryFormatIdsFromOptions,
+  formatIdsForCapability,
+} = require('../../dist/lib/v2/projection/index.js');
 
 describe('formatIdsFromOptions', () => {
   test('single-size declaration returns the seller-asserted v1 ref', () => {
@@ -51,25 +55,47 @@ describe('formatIdsFromOptions', () => {
     );
   });
 
-  test('canonical_formats_only declaration returns []', () => {
-    // Seller opted out of v1 emission — no purchasable v1 form.
+  test('canonical_formats_only declaration throws (fail-closed)', () => {
     const decl = {
       format_kind: 'custom',
       format_shape: 'multi_placement_takeover',
       params: {},
       canonical_formats_only: true,
     };
-    assert.deepStrictEqual(formatIdsFromOptions(decl), []);
+    assert.throws(
+      () => formatIdsFromOptions(decl),
+      err => /no v1 representation/.test(err.message) && /canonical_formats_only/.test(err.message)
+    );
   });
 
-  test('inherently-v2 canonical with no v1_format_ref returns []', () => {
-    // sponsored_placement is v1_translatable: false — no v1 form possible.
+  test('inherently-v2 canonical with no v1_format_ref throws (fail-closed)', () => {
     const decl = {
       format_kind: 'sponsored_placement',
       capability_id: 'amazon_sp',
       params: { source_catalog: 'amazon' },
     };
-    assert.deepStrictEqual(formatIdsFromOptions(decl), []);
+    assert.throws(
+      () => formatIdsFromOptions(decl),
+      err => /no v1 representation/.test(err.message) && /amazon_sp/.test(err.message)
+    );
+  });
+
+  test('tryFormatIdsFromOptions returns [] for declarations with no v1 form', () => {
+    // Non-throwing variant — used when iterating to find a v1-purchasable
+    // option among many.
+    assert.deepStrictEqual(tryFormatIdsFromOptions({ format_kind: 'sponsored_placement', params: {} }), []);
+    assert.deepStrictEqual(
+      tryFormatIdsFromOptions({ format_kind: 'custom', canonical_formats_only: true, params: {} }),
+      []
+    );
+  });
+
+  test('tryFormatIdsFromOptions matches formatIdsFromOptions on the happy path', () => {
+    const decl = {
+      format_kind: 'image',
+      v1_format_ref: [{ agent_url: 'https://creative.adcontextprotocol.org/', id: 'display_300x250_image' }],
+    };
+    assert.deepStrictEqual(tryFormatIdsFromOptions(decl), formatIdsFromOptions(decl));
   });
 
   test('defensive copy — mutating the result does not affect the source decl', () => {

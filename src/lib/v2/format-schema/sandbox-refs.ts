@@ -87,11 +87,20 @@ export interface ResolveSchemaRefsOptions {
    */
   maxRefCount?: number;
   /**
-   * AAO mirror host that `$ref` targets are allowed to live under.
-   * Defaults to the spec-normative anchor `mirror.adcontextprotocol.org`.
-   * Override only when running against a stand-in mirror in tests.
+   * Single AAO mirror host that `$ref` targets are allowed to live under.
+   * Convenience for `mirrorHosts: [host]`; ignored when `mirrorHosts`
+   * is also set.
+   * @deprecated Use {@link mirrorHosts} (array form) for transitional
+   * dual-host support — see {@link DEFAULT_MIRROR_HOSTS}.
    */
   mirrorHost?: string;
+  /**
+   * AAO mirror hosts that `$ref` targets are allowed to live under.
+   * Defaults to {@link DEFAULT_MIRROR_HOSTS} (both `mirror.adcontextprotocol.org`
+   * and `creative.adcontextprotocol.org` during the spec's transitional
+   * period). Override when running against a stand-in mirror in tests.
+   */
+  mirrorHosts?: readonly string[];
   /**
    * Per-fetch timeout (ms) for each external `$ref`. Default 5 s
    * — same as the parent format_schema fetch.
@@ -128,8 +137,64 @@ export interface ResolveSchemaRefsResult {
 export const DEFAULT_MAX_REF_DEPTH = 8;
 /** Spec ceiling for total `$ref` count across the resolved tree. */
 export const DEFAULT_MAX_REF_COUNT = 256;
-/** Spec-normative AAO mirror trust anchor for `$ref` resolution. */
-export const DEFAULT_MIRROR_HOST = 'mirror.adcontextprotocol.org';
+/**
+ * Spec-normative AAO mirror trust anchors for `$ref` resolution. The
+ * `$ref` sandboxing section in `product-format-declaration.json`
+ * references the legacy `mirror.adcontextprotocol.org` host, while the
+ * surrounding 3.1 spec text migrated the AAO catalog mirror to
+ * `creative.adcontextprotocol.org/translated/`. Both are accepted
+ * during the transitional period — adcontextprotocol/adcp issue
+ * tracking the inconsistency to be filed; once the spec PR lands and
+ * picks one anchor, drop the unused host from this list.
+ */
+export const DEFAULT_MIRROR_HOSTS: readonly string[] = [
+  'mirror.adcontextprotocol.org',
+  'creative.adcontextprotocol.org',
+];
+
+/**
+ * Single-host alias kept for backward compatibility with the 7.10
+ * shipping API. Resolves to the first host in {@link DEFAULT_MIRROR_HOSTS}.
+ * @deprecated Use {@link DEFAULT_MIRROR_HOSTS} (array) instead.
+ */
+export const DEFAULT_MIRROR_HOST = DEFAULT_MIRROR_HOSTS[0]!;
+
+/**
+ * Sibling keys that may appear alongside `$ref` and merge over the
+ * resolved body. Per JSON Schema 2020-12, `$ref` siblings are an
+ * *additional* constraint (conjunction with the referenced subschema),
+ * NOT an override. Allowing constraint keywords (`type`, `required`,
+ * `additionalProperties`, etc.) to override the referent silently
+ * defangs the referenced subschema's guarantees — a malicious or
+ * sloppy author can flip `additionalProperties: false` to `true` and
+ * smuggle unvalidated fields through manifest validation.
+ *
+ * This allowlist permits annotation-only siblings (description, title,
+ * comments, examples, defaults, deprecation flags) — fields that don't
+ * affect what validates. Constraint keywords on `$ref` are rejected as
+ * `invalid_ref` so authors are forced to inline the constraint.
+ */
+const ALLOWED_REF_SIBLINGS = new Set<string>([
+  '$comment',
+  '$schema',
+  'default',
+  'deprecated',
+  'description',
+  'examples',
+  'readOnly',
+  'title',
+  'writeOnly',
+]);
+
+/**
+ * JSON Pointer segments that are NEVER allowed on `$ref: "#/..."`
+ * targets. `__proto__` / `constructor` / `prototype` are the standard
+ * prototype-pollution sinks; we reject them up front so a malicious
+ * (or accidentally-crafted) intra-doc pointer can't drag the prototype
+ * chain into the resolved schema and have downstream Ajv merges land
+ * on `Object.prototype`.
+ */
+const FORBIDDEN_POINTER_SEGMENTS = new Set<string>(['__proto__', 'constructor', 'prototype']);
 
 /**
  * Spec-recommended bound on Ajv-compiled keyword count. Applied by the
@@ -179,7 +244,7 @@ function normalizeOrigin(uri: string): NormalizedOrigin | null {
  */
 function resolveJsonPointer(root: Record<string, unknown>, pointer: string): unknown | null {
   // RFC 6901: empty pointer (`#` alone) returns the root document.
-  if (pointer === '' || pointer === '/') return root;
+  if (pointer === '') return root;
   // Drop the leading slash; split; decode per RFC 6901 (~1 → /, ~0 → ~).
   const segments = pointer
     .replace(/^\//, '')
@@ -187,6 +252,11 @@ function resolveJsonPointer(root: Record<string, unknown>, pointer: string): unk
     .map(s => s.replace(/~1/g, '/').replace(/~0/g, '~'));
   let cursor: unknown = root;
   for (const seg of segments) {
+    // Reject prototype-pollution segments up front. `JSON.parse`-produced
+    // objects can carry an OWN `__proto__` property (V8 quirk), so
+    // `hasOwnProperty` alone doesn't block the attack path — we also
+    // need to refuse the segment name unconditionally.
+    if (FORBIDDEN_POINTER_SEGMENTS.has(seg)) return null;
     if (cursor === null || typeof cursor !== 'object') return null;
     if (Array.isArray(cursor)) {
       const idx = Number(seg);
@@ -204,7 +274,8 @@ function resolveJsonPointer(root: Record<string, unknown>, pointer: string): unk
 interface ResolveContext {
   parentRoot: Record<string, unknown>;
   parentOrigin: NormalizedOrigin;
-  mirrorHost: string;
+  /** Lowercased AAO mirror hosts that are accepted as `$ref` targets. */
+  mirrorHosts: ReadonlySet<string>;
   maxDepth: number;
   maxRefCount: number;
   fetchExternal: (uri: string) => Promise<Record<string, unknown>>;
@@ -291,7 +362,7 @@ function makeDefaultFetcher(
  * Returns the normalized target origin on success; throws otherwise.
  */
 function assertRefAllowed(ref: string, ctx: ResolveContext): NormalizedOrigin {
-  if (ref.startsWith('file:')) {
+  if (ref.toLowerCase().startsWith('file:')) {
     throw new SchemaRefSandboxError(
       'file_scheme_rejected',
       `\`$ref: ${ref}\` — file:// scheme rejected unconditionally`,
@@ -308,13 +379,15 @@ function assertRefAllowed(ref: string, ctx: ResolveContext): NormalizedOrigin {
   if (target.origin === ctx.parentOrigin.origin) {
     return target;
   }
-  // AAO mirror namespace?
-  if (target.hostname === ctx.mirrorHost && (ref.startsWith('https://') || ref.startsWith('http://'))) {
+  // AAO mirror namespace? Spec is `https://` only — `http://` mirror
+  // refs are rejected even when the host matches.
+  if (ctx.mirrorHosts.has(target.hostname) && ref.toLowerCase().startsWith('https://')) {
     return target;
   }
+  const mirrorList = [...ctx.mirrorHosts].join(', ');
   throw new SchemaRefSandboxError(
     'cross_origin_rejected',
-    `\`$ref: ${ref}\` — not same-origin as parent (${ctx.parentOrigin.origin}) and not under the AAO mirror (${ctx.mirrorHost})`,
+    `\`$ref: ${ref}\` — not same-origin as parent (${ctx.parentOrigin.origin}) and not under an AAO mirror (${mirrorList})`,
     { ref, details: { parentOrigin: ctx.parentOrigin.origin, targetOrigin: target.origin } }
   );
 }
@@ -340,9 +413,14 @@ async function walk(node: unknown, depth: number, ctx: ResolveContext): Promise<
     return out;
   }
   const obj = node as Record<string, unknown>;
-  // $ref node: resolve it inline. Non-`$ref` siblings on the same node
-  // are spread over the resolved body (so `{ $ref: "...", description: "x" }`
-  // keeps `description`).
+  // $ref node: resolve it inline. Sibling keys are restricted to the
+  // annotation-only allowlist (description / title / examples / etc.) —
+  // constraint keywords (`type`, `required`, `additionalProperties`,
+  // `properties`, `items`, ...) on a `$ref` node would silently override
+  // the referenced subschema's guarantees and defang manifest
+  // validation. Per JSON Schema 2020-12 `$ref` siblings are an
+  // additional constraint, not an override; we surface the constraint
+  // mismatch as `invalid_ref` so authors must inline rather than smuggle.
   if (typeof obj.$ref === 'string') {
     ctx.count.value += 1;
     if (ctx.count.value > ctx.maxRefCount) {
@@ -355,6 +433,16 @@ async function walk(node: unknown, depth: number, ctx: ResolveContext): Promise<
     const ref = obj.$ref;
     const { $ref: _drop, ...rest } = obj;
     void _drop;
+    const disallowed = Object.keys(rest).filter(k => !ALLOWED_REF_SIBLINGS.has(k));
+    if (disallowed.length > 0) {
+      throw new SchemaRefSandboxError(
+        'invalid_ref',
+        `\`$ref: ${ref}\` has disallowed sibling keys [${disallowed.join(', ')}]; ` +
+          `only annotation siblings (${[...ALLOWED_REF_SIBLINGS].sort().join(', ')}) ` +
+          `may appear alongside a $ref. Inline the constraint instead.`,
+        { ref, details: { disallowedSiblings: disallowed } }
+      );
+    }
     let resolved: Record<string, unknown>;
     if (ref.startsWith('#')) {
       // Intra-document pointer. Resolve against the parent root.
@@ -405,10 +493,12 @@ async function walk(node: unknown, depth: number, ctx: ResolveContext): Promise<
       };
       resolved = (await walk(body, depth + 1, refCtx)) as Record<string, unknown>;
     }
-    // Merge any sibling fields (e.g., description) over the resolved
-    // body. Spec is silent on $ref-with-siblings; JSON Schema Draft
-    // 2020-12 allows it; keep the behavior conservative.
-    return Object.keys(rest).length > 0 ? { ...resolved, ...rest } : resolved;
+    // Merge sibling annotations UNDER the resolved body — referent wins
+    // on key collision. With the allowlist above this is purely
+    // cosmetic (no constraint keys can collide); the spread order is
+    // defensive against future allowlist expansion that might admit a
+    // key the referent also defines.
+    return Object.keys(rest).length > 0 ? { ...rest, ...resolved } : resolved;
   }
   // Plain object — recurse into properties.
   const out: Record<string, unknown> = {};
@@ -452,7 +542,11 @@ export async function resolveSchemaRefs(
   const ctx: ResolveContext = {
     parentRoot: schema,
     parentOrigin,
-    mirrorHost: (options.mirrorHost ?? DEFAULT_MIRROR_HOST).toLowerCase(),
+    mirrorHosts: new Set(
+      (options.mirrorHosts ?? (options.mirrorHost ? [options.mirrorHost] : DEFAULT_MIRROR_HOSTS)).map(h =>
+        h.toLowerCase()
+      )
+    ),
     maxDepth: options.maxDepth ?? DEFAULT_MAX_REF_DEPTH,
     maxRefCount: options.maxRefCount ?? DEFAULT_MAX_REF_COUNT,
     fetchExternal: options.fetchExternal ?? makeDefaultFetcher(timeoutMs, maxBodyBytes),

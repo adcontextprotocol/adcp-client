@@ -25,25 +25,33 @@ import type { V1FormatId, V2ProductFormatDeclaration } from './types';
  * from a V2-shaped product format declaration the buyer chose from a
  * product's `format_options[]`.
  *
- * Resolution rules:
+ * **Fail-closed**: throws when the declaration has no v1 form. This
+ * matches the codebase's witness-not-translator posture — silently
+ * returning `[]` would land downstream as a `minItems: 1` schema
+ * violation on the wire (the v1 `PackageRequest.format_ids[]` requires
+ * at least one entry), two layers removed from the real cause. The
+ * buyer should either pick a different declaration from
+ * `product.format_options[]` or skip the product for v1 sellers.
+ *
+ * Cases that throw:
+ *
+ *   - `decl.canonical_formats_only: true` — seller explicitly opted out
+ *     of v1 emission for this declaration.
+ *   - Inherently-v2 canonicals (the 4 at 3.1 GA: `image_carousel`,
+ *     `sponsored_placement`, `responsive_creative`, `agent_placement`)
+ *     when `v1_format_ref[]` is absent.
+ *   - `format_kind: 'custom'` shapes without `v1_format_ref[]`.
+ *
+ * Cases that succeed:
  *
  *   - `decl.v1_format_ref[]` present (the normative path; seller-asserted
  *     on `getProducts`). Returned verbatim — single-size declarations
  *     yield `[{agent_url, id}]`, multi-size declarations yield one entry
  *     per size.
- *   - `decl.v1_format_ref` absent + `decl.canonical_formats_only: true`.
- *     The seller has explicitly opted out of v1 emission for this
- *     declaration; no v1 representation exists. Returns `[]`.
- *   - Neither present. Same as the canonical_formats_only case — the
- *     declaration is V2-only (the 4 inherently-v2 canonicals at 3.1 GA:
- *     `image_carousel`, `sponsored_placement`, `responsive_creative`,
- *     `agent_placement`, plus any future `custom` shape without a v1
- *     translation). Returns `[]`.
  *
- * Callers should treat an empty return as "this declaration cannot be
- * purchased from a v1 seller via `create_media_buy`." The buyer either
- * picks a different declaration (when the product has more than one
- * `format_options[]` entry) or skips the product for this seller.
+ * For callers who want to inspect the resolution result without
+ * throwing — e.g., to pick a different `format_options[]` entry when
+ * the first choice has no v1 form — use {@link tryFormatIdsFromOptions}.
  *
  * @example
  * ```ts
@@ -64,15 +72,48 @@ import type { V1FormatId, V2ProductFormatDeclaration } from './types';
  *   ...
  * });
  * ```
+ *
+ * @throws Error when the declaration has no v1 form (see cases above).
  */
 export function formatIdsFromOptions(decl: V2ProductFormatDeclaration): V1FormatId[] {
+  const ids = tryFormatIdsFromOptions(decl);
+  if (ids.length === 0) {
+    const label = decl.capability_id ?? decl.format_kind ?? '<unnamed>';
+    const reason = decl.canonical_formats_only
+      ? 'declaration is canonical_formats_only (seller opted out of v1 emission)'
+      : `declaration carries no v1_format_ref[] (likely an inherently-v2 canonical like sponsored_placement / agent_placement / image_carousel / responsive_creative, or a custom shape without v1)`;
+    throw new Error(
+      `formatIdsFromOptions: '${label}' has no v1 representation — ${reason}. ` +
+        `Pick a different format_options[] entry or skip this product for v1 sellers. ` +
+        `Use tryFormatIdsFromOptions() if you want a non-throwing variant.`
+    );
+  }
+  return ids;
+}
+
+/**
+ * Non-throwing variant of {@link formatIdsFromOptions}. Returns `[]`
+ * when the declaration has no v1 form, leaving the empty-array
+ * interpretation up to the caller. Useful when iterating over a
+ * product's `format_options[]` and picking the first declaration that
+ * has a v1 path.
+ *
+ * @example
+ * ```ts
+ * for (const opt of product.format_options) {
+ *   const ids = tryFormatIdsFromOptions(opt);
+ *   if (ids.length > 0) return ids; // first v1-purchasable option wins
+ * }
+ * throw new Error('no v1-purchasable option on this product');
+ * ```
+ */
+export function tryFormatIdsFromOptions(decl: V2ProductFormatDeclaration): V1FormatId[] {
   if (decl.v1_format_ref && decl.v1_format_ref.length > 0) {
-    // Defensive copy: callers may mutate the result without affecting
-    // the source declaration. Same shape; size-fan-out semantics are
-    // already baked into the array by the projection layer / seller.
+    // Defensive shallow copy: V1FormatId fields are all primitives today
+    // (agent_url, id, width, height, duration_ms). If a nested field
+    // lands later, switch to `structuredClone`.
     return decl.v1_format_ref.map(ref => ({ ...ref }));
   }
-  // No v1 form possible (canonical_formats_only or inherently-v2 canonical).
   return [];
 }
 

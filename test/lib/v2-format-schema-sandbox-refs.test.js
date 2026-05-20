@@ -84,11 +84,16 @@ describe('resolveSchemaRefs — intra-document pointers', () => {
   });
 
   test('cyclic intra-doc pointers trip the depth limit', async () => {
-    // `#/a` → `#/b` → `#/a` … should hit maxDepth before infinite recursion.
+    // `#/definitions/a` → `#/definitions/b` → `#/definitions/a` … should
+    // hit maxDepth before infinite recursion. (Keep the $refs inside
+    // `definitions` so they don't sit alongside constraint keywords at
+    // the schema root — the sibling allowlist rejects that shape.)
     const schema = {
-      a: { $ref: '#/b' },
-      b: { $ref: '#/a' },
-      $ref: '#/a',
+      definitions: {
+        a: { $ref: '#/definitions/b' },
+        b: { $ref: '#/definitions/a' },
+      },
+      properties: { entry: { $ref: '#/definitions/a' } },
     };
     await assert.rejects(
       () => resolveSchemaRefs(schema, 'https://publisher.example/x.json', { maxDepth: 4 }),
@@ -122,12 +127,14 @@ describe('resolveSchemaRefs — external ref sandboxing', () => {
     assert.strictEqual(refCount, 1);
   });
 
-  test('mirror-host ref is allowed when target hostname matches mirrorHost option', async () => {
-    serveJson('/from-mirror.json', { type: 'boolean' });
-    const schema = { $ref: `${mirrorBaseUrl}/from-mirror.json` };
-    // Use the loopback host as the "mirror" for this test rig.
+  test('mirror-host ref allowed when target hostname matches mirrorHost option (custom fetcher)', async () => {
+    // The default fetcher requires https; for a loopback test we inject
+    // a custom fetcher and exercise the host-allowlist branch.
+    const fetchExternal = async () => ({ type: 'boolean' });
+    const schema = { $ref: 'https://test.mirror.example/from-mirror.json' };
     const { schema: resolved } = await resolveSchemaRefs(schema, 'https://publisher.example/parent.json', {
-      mirrorHost: '127.0.0.1',
+      mirrorHosts: ['test.mirror.example'],
+      fetchExternal,
     });
     assert.deepStrictEqual(resolved, { type: 'boolean' });
   });
@@ -183,6 +190,135 @@ describe('resolveSchemaRefs — bounds', () => {
   test('default bounds are the spec ceilings (8 / 256)', () => {
     assert.strictEqual(DEFAULT_MAX_REF_DEPTH, 8);
     assert.strictEqual(DEFAULT_MAX_REF_COUNT, 256);
+  });
+});
+
+describe('resolveSchemaRefs — security hardening (post-review)', () => {
+  test('sibling constraint keywords on $ref rejected (cannot defang referent)', async () => {
+    // The referent says `additionalProperties: false`; the sibling tries
+    // to override with `additionalProperties: true`. The implementation
+    // must refuse the constraint sibling so an attacker can't flip
+    // referent constraints and smuggle unvalidated fields.
+    const schema = {
+      definitions: { strict: { type: 'object', additionalProperties: false, required: ['x'] } },
+      properties: {
+        defang: { $ref: '#/definitions/strict', additionalProperties: true, required: [] },
+      },
+    };
+    await assert.rejects(
+      () => resolveSchemaRefs(schema, 'https://publisher.example/x.json'),
+      err =>
+        err instanceof SchemaRefSandboxError && err.code === 'invalid_ref' && /additionalProperties/.test(err.message)
+    );
+  });
+
+  test('annotation siblings (description, title, $comment) allowed alongside $ref', async () => {
+    const schema = {
+      definitions: { inner: { type: 'string' } },
+      props: {
+        wrapped: {
+          $ref: '#/definitions/inner',
+          description: 'human note',
+          title: 'Inner thing',
+          $comment: 'TODO inline',
+        },
+      },
+    };
+    const { schema: resolved } = await resolveSchemaRefs(schema, 'https://publisher.example/x.json');
+    assert.strictEqual(resolved.props.wrapped.type, 'string');
+    assert.strictEqual(resolved.props.wrapped.description, 'human note');
+    assert.strictEqual(resolved.props.wrapped.title, 'Inner thing');
+  });
+
+  test('annotation sibling cannot override a referent constraint (referent wins)', async () => {
+    // Even if a key landed in the allowlist by mistake, the spread order
+    // is defensive: referent wins on collision.
+    const schema = {
+      definitions: { x: { type: 'string', description: 'referent says' } },
+      props: { y: { $ref: '#/definitions/x', description: 'sibling says' } },
+    };
+    const { schema: resolved } = await resolveSchemaRefs(schema, 'https://publisher.example/x.json');
+    assert.strictEqual(resolved.props.y.description, 'referent says');
+  });
+
+  test('mirror-host check rejects http:// even when host matches', async () => {
+    // Spec is https-only for the mirror branch; the previous accept of
+    // `http://mirror.adcontextprotocol.org/...` was a security hole.
+    const schema = { $ref: 'http://test.mirror.example/x.json' };
+    await assert.rejects(
+      () =>
+        resolveSchemaRefs(schema, 'https://publisher.example/x.json', {
+          mirrorHosts: ['test.mirror.example'],
+        }),
+      err => err instanceof SchemaRefSandboxError && err.code === 'cross_origin_rejected'
+    );
+  });
+
+  test('JSON Pointer with __proto__ segment rejected (prototype-pollution defense)', async () => {
+    // JSON.parse can produce objects with own __proto__ properties; the
+    // sandboxer rejects __proto__/constructor/prototype segments outright.
+    const schema = {
+      $ref: '#/__proto__/polluted',
+      __proto__: { polluted: { type: 'string' } },
+    };
+    await assert.rejects(
+      () => resolveSchemaRefs(schema, 'https://publisher.example/x.json'),
+      err => err instanceof SchemaRefSandboxError && err.code === 'pointer_unresolved'
+    );
+  });
+
+  test('JSON Pointer with constructor segment rejected', async () => {
+    const schema = { $ref: '#/constructor/anything' };
+    await assert.rejects(
+      () => resolveSchemaRefs(schema, 'https://publisher.example/x.json'),
+      err => err instanceof SchemaRefSandboxError && err.code === 'pointer_unresolved'
+    );
+  });
+
+  test('both default mirror hosts accepted during transitional period', async () => {
+    // Spec migration: mirror.adcontextprotocol.org → creative.adcontextprotocol.org.
+    // The default mirrorHosts list contains both; either resolves.
+    const fetchExternal = async () => ({ type: 'string' });
+    const schema1 = { $ref: 'https://mirror.adcontextprotocol.org/x.json' };
+    const schema2 = { $ref: 'https://creative.adcontextprotocol.org/x.json' };
+    const r1 = await resolveSchemaRefs(schema1, 'https://publisher.example/p.json', { fetchExternal });
+    const r2 = await resolveSchemaRefs(schema2, 'https://publisher.example/p.json', { fetchExternal });
+    assert.strictEqual(r1.schema.type, 'string');
+    assert.strictEqual(r2.schema.type, 'string');
+  });
+
+  test('subdomain-spoofed mirror host rejected (strict equality, not suffix)', async () => {
+    // `evil.mirror.adcontextprotocol.org` is NOT the mirror; only the
+    // exact configured host matches.
+    const schema = { $ref: 'https://evil.mirror.adcontextprotocol.org/x.json' };
+    await assert.rejects(
+      () => resolveSchemaRefs(schema, 'https://publisher.example/p.json'),
+      err => err instanceof SchemaRefSandboxError && err.code === 'cross_origin_rejected'
+    );
+  });
+
+  test('external fetch body containing intra-doc #/ resolves against the FETCHED doc', async () => {
+    // The walker's `parentRoot: body` swap is load-bearing: nested
+    // intra-doc pointers must resolve against the fetched body, not the
+    // original parent. Keep the $ref inside `properties` (an allowed
+    // non-sibling context) rather than at the root next to `definitions`.
+    let fetched = 0;
+    const fetchExternal = async () => {
+      fetched += 1;
+      return {
+        definitions: { inner: { type: 'integer', from: 'fetched-doc' } },
+        properties: { entry: { $ref: '#/definitions/inner' } },
+      };
+    };
+    const schema = { props: { x: { $ref: 'https://publisher.example/sub.json' } } };
+    const { schema: resolved } = await resolveSchemaRefs(schema, 'https://publisher.example/parent.json', {
+      fetchExternal,
+    });
+    // After resolve: x is the fetched body with #/definitions/inner
+    // inlined at properties.entry.
+    assert.strictEqual(resolved.props.x.properties.entry.type, 'integer');
+    assert.strictEqual(resolved.props.x.properties.entry.from, 'fetched-doc');
+    assert.strictEqual(fetched, 1);
   });
 });
 
