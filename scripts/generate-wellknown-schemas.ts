@@ -190,8 +190,8 @@ function postProcess(code: string): string {
   // z.record(valueSchema) → z.record(z.string(), valueSchema) (Zod v4 requires key schema)
   result = result.replace(/z\.record\((?!z\.string\(\)\s*,)/g, 'z.record(z.string(), ');
   // ZodError.errors was renamed to .issues in Zod v4. json-schema-to-zod emits
-  // `result.error.errors.forEach(...)` for the `not` / nested-refine shape;
-  // the runtime field is `.issues` under v4.
+  // `result.error.errors.forEach(...)` inside the superRefine blocks it
+  // generates for `oneOf`/`anyOf` and the `not` / nested-refine shape.
   result = result.replace(/(\.error)\.errors(\.forEach)/g, '$1.issues$2');
   // The same emitted pattern uses an untyped `(error)` callback parameter.
   // Strict tsc rejects the implicit any — type it as `any` (the value flows

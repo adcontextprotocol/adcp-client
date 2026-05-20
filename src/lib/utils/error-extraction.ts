@@ -207,6 +207,11 @@ const CODE_PATTERNS: Array<[RegExp, StandardErrorCode]> = [
   [/\bPRODUCT_UNAVAILABLE\b/, 'PRODUCT_UNAVAILABLE'],
   [/\bBUDGET_TOO_LOW\b/, 'BUDGET_TOO_LOW'],
   [/\bINVALID_REQUEST\b/, 'INVALID_REQUEST'],
+  // Order matters: more specific codes first. AUTH_MISSING/AUTH_INVALID
+  // are the 3.1 split of AUTH_REQUIRED (adcp#3730) — match them before
+  // the legacy code so 3.1-shaped messages route to the correct code.
+  [/\bAUTH_MISSING\b/, 'AUTH_MISSING'],
+  [/\bAUTH_INVALID\b/, 'AUTH_INVALID'],
   [/\bAUTH_REQUIRED\b/, 'AUTH_REQUIRED'],
   [/\bSERVICE_UNAVAILABLE\b/, 'SERVICE_UNAVAILABLE'],
   [/\bCREATIVE_REJECTED\b/, 'CREATIVE_REJECTED'],
