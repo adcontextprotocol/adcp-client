@@ -14,6 +14,7 @@ const { PlatformConfigError, validatePlatform } = require('../dist/lib/server/de
 const { AccountNotFoundError } = require('../dist/lib/server/decisioning/account');
 const { AdcpError } = require('../dist/lib/server/decisioning/async-outcome');
 const { setStatusChangeBus, createInMemoryStatusChangeBus } = require('../dist/lib/server/decisioning/status-changes');
+const { StaticJwksResolver, InMemoryReplayStore, InMemoryRevocationStore } = require('../dist/lib/signing/server.js');
 
 function buildPlatform(overrides = {}) {
   return {
@@ -3418,5 +3419,100 @@ describe('createAdcpServerFromPlatform — default resolveIdempotencyPrincipal',
     });
     assert.notStrictEqual(result.isError, true, JSON.stringify(result.structuredContent));
     assert.strictEqual(result.structuredContent.media_buy_id, 'mb_1');
+  });
+});
+
+// Regression test for #1886: createAdcpServerFromPlatform did not forward
+// platform.capabilities.specialisms into the inner createAdcpServer config,
+// causing a boot-time throw when signedRequests was wired.
+describe('signed-requests specialism forwarding (#1886)', () => {
+  const signedRequestsStores = () => ({
+    jwks: new StaticJwksResolver([]),
+    replayStore: new InMemoryReplayStore({ maxEntriesPerKeyid: 100 }),
+    revocationStore: new InMemoryRevocationStore({
+      issuer: 'http://seller.example.com',
+      updated: new Date().toISOString(),
+      next_update: new Date(Date.now() + 3600_000).toISOString(),
+      revoked_kids: [],
+      revoked_jtis: [],
+    }),
+  });
+
+  function platformWithSpecialism(specialisms) {
+    return {
+      capabilities: {
+        specialisms,
+        channels: ['display'],
+        pricingModels: ['cpm'],
+        config: null,
+      },
+      accounts: {
+        resolve: async ref => ({
+          id: ref?.account_id ?? 'acc_1',
+          metadata: {},
+          authInfo: { kind: 'api_key' },
+        }),
+        upsert: async () => [],
+        list: async () => ({ items: [], nextCursor: null }),
+      },
+      statusMappers: {},
+      sales: {
+        getProducts: async () => ({ products: [] }),
+        createMediaBuy: async () => ({ media_buy_id: 'mb_1' }),
+        updateMediaBuy: async () => ({ media_buy_id: 'mb_1' }),
+        syncCreatives: async () => [],
+        getMediaBuyDelivery: async () => ({ media_buys: [] }),
+      },
+    };
+  }
+
+  it('does not throw at boot when signed-requests is claimed and signedRequests is configured', () => {
+    // Pre-fix: always threw "capabilities.specialisms does not include signed-requests"
+    // even when platform.capabilities.specialisms included the claim, because
+    // projectedCapabilitiesConfig only forwarded overrides, never specialisms.
+    assert.doesNotThrow(() =>
+      createAdcpServerFromPlatform(platformWithSpecialism(['sales-non-guaranteed', 'signed-requests']), {
+        name: 'seller',
+        version: '1.0.0',
+        validation: { requests: 'off', responses: 'off' },
+        signedRequests: signedRequestsStores(),
+      })
+    );
+  });
+
+  it('forwards specialisms into get_adcp_capabilities response', async () => {
+    const server = createAdcpServerFromPlatform(platformWithSpecialism(['sales-non-guaranteed', 'signed-requests']), {
+      name: 'seller',
+      version: '1.0.0',
+      validation: { requests: 'off', responses: 'off' },
+      signedRequests: signedRequestsStores(),
+    });
+    const result = await server.dispatchTestRequest({
+      method: 'tools/call',
+      params: { name: 'get_adcp_capabilities', arguments: {} },
+    });
+    assert.notStrictEqual(result.isError, true, JSON.stringify(result.structuredContent));
+    const caps = result.structuredContent;
+    assert.ok(
+      Array.isArray(caps.specialisms) && caps.specialisms.includes('signed-requests'),
+      `expected specialisms to include 'signed-requests', got: ${JSON.stringify(caps.specialisms)}`
+    );
+    assert.strictEqual(
+      caps.request_signing?.supported,
+      true,
+      `expected request_signing.supported === true, got: ${JSON.stringify(caps.request_signing)}`
+    );
+  });
+
+  it('does not inject specialisms when platform declares none', () => {
+    // Platforms with an empty specialisms array should not produce a specialisms
+    // key in get_adcp_capabilities (existing behavior is preserved).
+    assert.doesNotThrow(() =>
+      createAdcpServerFromPlatform(platformWithSpecialism([]), {
+        name: 'seller',
+        version: '1.0.0',
+        validation: { requests: 'off', responses: 'off' },
+      })
+    );
   });
 });
