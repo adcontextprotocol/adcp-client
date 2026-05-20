@@ -40,6 +40,17 @@ import {
   type ForwardCompatErrorCodeInfo,
 } from './forward-compat-error-codes';
 
+// Compile-time disjointness check. When the primary `ADCP_VERSION` pin
+// advances to include a code currently in the forward-compat overlay, this
+// type evaluates to a non-`never` union and the subsequent assignment
+// fails typecheck — forcing the overlay entry to be deleted in the same PR
+// that bumps the pin. Mirrors the runtime drift-guard test, but fires
+// against source rather than `dist/` so a forgotten cleanup can't slip
+// past a stale build.
+type _OverlayManifestOverlap = Extract<(typeof ErrorCodeValues)[number], ForwardCompatErrorCode>;
+const _overlayDisjointAssertion: _OverlayManifestOverlap extends never ? true : never = true;
+void _overlayDisjointAssertion;
+
 export type ErrorRecovery = ManifestErrorRecovery;
 
 /**
@@ -65,13 +76,21 @@ export type ErrorCodeInfo = ManifestStandardErrorCodeInfo | ForwardCompatErrorCo
  * (where the spec provides one) a `suggestion` hint. Overlay entries
  * additionally carry `sinceAdcpVersion`.
  *
+ * Spread order matters: overlay first, manifest last. The manifest is the
+ * spec's normative source — when the primary pin advances to include a code
+ * currently in the overlay, the manifest entry wins on the merge so the
+ * runtime never carries the (potentially stale) overlay metadata. The
+ * disjointness assertion above fires at compile time to force overlay
+ * cleanup in the same PR that bumps the pin; this spread order is the
+ * defense-in-depth fallback if that fires before someone notices.
+ *
  * The `satisfies` assertion guarantees every value in `StandardErrorCode`
  * has a corresponding entry — adding a code to the spec without populating
  * it manifest-side (or adding it to the overlay) will fail typecheck here.
  */
 export const STANDARD_ERROR_CODES = {
-  ...STANDARD_ERROR_CODES_FROM_MANIFEST,
   ...FORWARD_COMPAT_ERROR_CODES,
+  ...STANDARD_ERROR_CODES_FROM_MANIFEST,
 } satisfies Record<StandardErrorCode, ErrorCodeInfo>;
 
 /**

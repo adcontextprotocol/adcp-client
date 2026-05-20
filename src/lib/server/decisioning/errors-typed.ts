@@ -260,6 +260,12 @@ export class AuthMissingError extends AdcpError {
  * brute-force probing. Agents with a valid OAuth 2.1 refresh grant MAY
  * silently refresh and retry once.
  *
+ * **Credential-leak guard.** `opts.message` and `opts.details` cross to
+ * the buyer verbatim on the wire envelope. Do NOT place rejected
+ * credentials, token fragments, JWT payload material, or upstream
+ * identity-provider error bodies in either field — log those server-side
+ * instead. The framework is a witness, not a redactor.
+ *
  * @since AdCP 3.1 (adcp#3730 splits `AUTH_REQUIRED`).
  */
 export class AuthInvalidError extends AdcpError {
