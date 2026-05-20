@@ -46,24 +46,33 @@ const ctv = catalog.products.search({ format_ids: ['video_ctv_1080p_30s'] });
 **Event API:**
 
 ```ts
-catalog.on('product.created', ({ event }) => { ... });
-catalog.on('product.priced', ({ event }) => { ... });
-catalog.on('product.removed', ({ event }) => { ... });
-catalog.on('signal.priced', ({ event }) => { ... });
+catalog.on('product.created', ({ event, synthetic }) => { ... });
+catalog.on('product.priced', ({ event, synthetic }) => { ... });
+catalog.on('product.removed', ({ event, synthetic }) => { ... });
+catalog.on('signal.priced', ({ event, synthetic }) => { ... });
 catalog.on('catalog.bulk_change', ({ event }) => { ... });
-catalog.on('bulk_resync', ({ reason }) => { /* 'bulk_change' | 'retention_expired' | 'manual' */ });
-catalog.on('event', ({ event }) => { /* fires for every catalog change */ });
+catalog.on('resyncing', ({ reason }) => { /* 'bulk_change' | 'retention_expired' | 'manual' */ });
+catalog.on('event', ({ event, synthetic }) => { /* fires for every catalog change */ });
 ```
 
 Per-event-type listeners fire for both live-mode feed events AND auto-poll/manual diff-emits — adopters write one set of handlers and the SDK takes care of which mode produced the event.
 
+**Authoritative vs synthetic events.** Events delivered from the agent's change feed are AUTHORITATIVE — they carry the seller's UUID v7 `event_id` and the documented `applies_to` cache scope. Events emitted during `refresh()` / `'auto-poll'` mode are SYNTHESIZED by the SDK from a diff of previous-vs-fresh state; they carry locally generated event IDs (NOT v7) and `synthetic: true` on the emit envelope. Adopters writing event_ids to a dedupe table MUST check `synthetic` before storing — synthetic IDs don't satisfy the cursor-ordering invariant.
+
 **Recovery semantics:**
 
-- `catalog.bulk_change` events trigger an immediate re-bootstrap (the spec's recommended fast-forward when a single operation touches many entities). `bulk_resync` fires before the re-bootstrap with `reason: 'bulk_change'`.
-- `RETENTION_EXPIRED` (HTTP 410 or `error.code` envelope) triggers a re-bootstrap with `reason: 'retention_expired'`.
+- `catalog.bulk_change` events trigger an immediate re-bootstrap (the spec's recommended fast-forward when a single operation touches many entities). `resyncing` fires before the re-bootstrap with `reason: 'bulk_change'`.
+- `RETENTION_EXPIRED` (HTTP 410) triggers a re-bootstrap with `reason: 'retention_expired'`.
 - Mode upgrades (manual → auto-poll → live, when an agent adopts new spec surfaces) are picked up automatically by the capability-refresh loop (default: every 24 hours; tunable via `capabilityRefreshIntervalMs`).
 
-**Cursor persistence:** `cursorStore` defaults to in-memory (cursor lost on restart). Long-running consumers pass `FileCursorStore` (re-exported from `@adcp/sdk/catalog-sync`) to survive restarts.
+**Cursor persistence:** `cursorStore` defaults to in-memory (cursor lost on restart). Long-running consumers pass `FileCursorStore` (re-exported from `@adcp/sdk/catalog-sync`) to survive restarts. The `CursorStore` interface gained a `clearCursor()` method so retention-expired recovery resets to a clean `null` rather than relying on an empty-string sentinel.
+
+**Security guards:**
+
+- **SSRF defense:** `feedOrigin` construction throws if the protocol is not `http:` or `https:`. Rejects `file:`, `data:`, `blob:` schemes that would otherwise let a misconfigured tenant config turn the poll loop into a credential-leaking SSRF primitive.
+- **Response-size cap:** `maxFeedResponseBytes` (default 25 MB) bounds the size of a single `GET /catalog/events` response; bodies exceeding the cap are rejected before parsing. Protects mirror processes from hostile or runaway agents that stream unbounded chunked responses.
+
+**Auth headers and token rotation:** `feedHeaders` accepts either a static `Record<string, string>` (captured by reference; mutate to rotate) OR an async function `() => Headers | Promise<Headers>` (called on every poll, picks up token rotation without restart).
 
 **What's NOT in this release** (per the spec — follow-on PRs):
 

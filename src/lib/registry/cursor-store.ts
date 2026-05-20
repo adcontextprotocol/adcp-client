@@ -7,6 +7,15 @@ import { dirname } from 'node:path';
 export interface CursorStore {
   getCursor(): Promise<string | null>;
   setCursor(cursor: string): Promise<void>;
+  /**
+   * Remove the persisted cursor. Used by sync engines on `RETENTION_EXPIRED`
+   * recovery — the agent no longer holds events for our cursor, so we
+   * re-bootstrap and want subsequent `getCursor()` calls to return `null`.
+   *
+   * Implementations may delete the underlying storage (file) or store a
+   * sentinel value, as long as `getCursor()` returns `null` afterward.
+   */
+  clearCursor(): Promise<void>;
 }
 
 // ====== InMemoryCursorStore ======
@@ -21,6 +30,10 @@ export class InMemoryCursorStore implements CursorStore {
 
   async setCursor(cursor: string): Promise<void> {
     this.cursor = cursor;
+  }
+
+  async clearCursor(): Promise<void> {
+    this.cursor = null;
   }
 }
 
@@ -50,5 +63,18 @@ export class FileCursorStore implements CursorStore {
   async setCursor(cursor: string): Promise<void> {
     await mkdir(dirname(this.filePath), { recursive: true });
     await writeFile(this.filePath, cursor, 'utf-8');
+  }
+
+  async clearCursor(): Promise<void> {
+    const { unlink } = await import('node:fs/promises');
+    try {
+      await unlink(this.filePath);
+    } catch (err: unknown) {
+      // Already-gone is the desired post-state; any other error rethrows.
+      if (err instanceof Error && 'code' in err && (err as NodeJS.ErrnoException).code === 'ENOENT') {
+        return;
+      }
+      throw err;
+    }
   }
 }

@@ -53,12 +53,22 @@ export interface CatalogSyncConfig {
   client: CatalogSyncClient;
 
   /**
-   * Origin of the agent's change-feed endpoint. Used to construct
-   * `<feedOrigin>/catalog/events` polls in `'live'` mode. Optional in
-   * `'manual'` and `'auto-poll'` modes (no feed traffic).
+   * Origin of the agent's change-feed endpoint. The SDK polls
+   * `<origin>/catalog/events` — the path is **always** `/catalog/events`
+   * at the URL's origin per the spec (`specs/catalog-change-feed.md` §
+   * API Endpoints). Any path component on `feedOrigin` (e.g.,
+   * `https://agent.example.com/mcp`) is replaced; the change feed lives
+   * at `https://agent.example.com/catalog/events`.
    *
-   * Recommended: set this even when you expect manual mode — the SDK falls
-   * through gracefully if the agent later advertises the feed.
+   * Optional in `'manual'` and `'auto-poll'` modes (no feed traffic).
+   * Recommended: set this even when you expect manual mode — the SDK
+   * falls through gracefully if the agent later advertises the feed.
+   *
+   * **Scheme guard.** Construction throws if the protocol is not `http:`
+   * or `https:` (rejects `file:`, `data:`, `blob:`, etc. as SSRF defense).
+   * Adopters loading `feedOrigin` from tenant config SHOULD additionally
+   * validate against an allowlist before construction — the SDK accepts
+   * any HTTPS host (including internal/metadata addresses).
    */
   feedOrigin?: string;
 
@@ -68,10 +78,31 @@ export interface CatalogSyncConfig {
    * tool-call path, so the SDK can't reuse the client's transport auth
    * automatically. Adopters supply auth headers explicitly.
    *
+   * Two shapes accepted:
+   *
+   * - **Static record** — `{ Authorization: 'Bearer xyz' }`. Captured by
+   *   reference at construction; mutate the same object to rotate
+   *   credentials (no clone).
+   * - **Async function** — `() => ({ Authorization: 'Bearer ' + getFresh() })`
+   *   or async equivalent. Called on every poll, so token rotation
+   *   landed in your auth layer is picked up on the next cycle without
+   *   restarting the sync.
+   *
    * Required when `feedOrigin` is set and the agent's change feed
    * requires authentication (the common case).
    */
-  feedHeaders?: Record<string, string>;
+  feedHeaders?: Record<string, string> | (() => Record<string, string> | Promise<Record<string, string>>);
+
+  /**
+   * Maximum byte length of a single `GET /catalog/events` response.
+   * Default: 25 MB. Large pages (`limit=10000` worth of denormalized
+   * event payloads with full Product / Signal objects) can plausibly hit
+   * a few MB; values above the cap are rejected before parsing to
+   * protect mirror processes from hostile or runaway agents.
+   *
+   * Set to 0 to disable (NOT recommended outside controlled tests).
+   */
+  maxFeedResponseBytes?: number;
 
   /** Change-feed poll interval in `'live'` mode. Default: 30000 (30s). */
   pollIntervalMs?: number;
@@ -135,14 +166,25 @@ export interface ResolvedCapabilities {
  * `'event'` channel emits every catalog change for callers that want a
  * single sink (audit logs, downstream queues).
  *
+ * **Authoritative vs synthetic events.** Events delivered from the
+ * agent's change feed are AUTHORITATIVE — they carry the seller's UUID
+ * v7 `event_id` and the documented `applies_to` cache scope. Events
+ * emitted during `refresh()` / `'auto-poll'` mode are SYNTHESIZED by
+ * the SDK from a diff of previous-vs-fresh state; they carry locally
+ * generated event IDs (NOT v7) and `synthetic: true` on the emit
+ * envelope. Adopters writing event_ids to a dedupe table MUST check
+ * `synthetic` before storing — synthetic IDs collide across instances
+ * and don't satisfy the cursor-ordering invariant.
+ *
  * Lifecycle events:
  * - `bootstrap` — initial sync completed; replica is current.
  * - `sync` — change-feed poll cycle completed (`'live'` mode) OR diff
  *   cycle completed (`'auto-poll'` / `'manual'` after `refresh()`).
  * - `mode_resolved` — emitted on `start()` after the capability probe
  *   picks a mode. Useful for UI mode badges.
- * - `bulk_resync` — emitted before a `catalog.bulk_change` or
- *   `RETENTION_EXPIRED` recovery re-bootstrap.
+ * - `resyncing` — emitted before a `catalog.bulk_change` or
+ *   `RETENTION_EXPIRED` recovery re-bootstrap (renamed from
+ *   `bulk_resync` for clarity vs the spec's `catalog.bulk_change`).
  * - `error` — background poll/probe error. Non-fatal; sync stays in
  *   `'syncing'` and retries on the next tick.
  * - `stateChange` — fires on every {@link CatalogSyncState} transition.
@@ -151,21 +193,23 @@ export interface CatalogSyncEvents {
   bootstrap: [{ productCount: number; signalCount: number; mode: CatalogSyncMode }];
   sync: [{ eventsApplied: number; cursor?: string | undefined }];
   mode_resolved: [{ mode: CatalogSyncMode; capabilities: ResolvedCapabilities }];
-  bulk_resync: [{ reason: 'bulk_change' | 'retention_expired' | 'manual' }];
+  resyncing: [{ reason: 'bulk_change' | 'retention_expired' | 'manual' }];
   error: [{ error: Error }];
   stateChange: [{ from: CatalogSyncState; to: CatalogSyncState }];
   // Per-event-type fan-outs. Payload is the full CatalogEvent so callers
   // can read `event_id`, `created_at`, and the discriminated `payload`.
-  event: [{ event: V31Beta.CatalogEvent }];
-  'product.created': [{ event: V31Beta.CatalogEvent }];
-  'product.updated': [{ event: V31Beta.CatalogEvent }];
-  'product.priced': [{ event: V31Beta.CatalogEvent }];
-  'product.removed': [{ event: V31Beta.CatalogEvent }];
-  'signal.created': [{ event: V31Beta.CatalogEvent }];
-  'signal.updated': [{ event: V31Beta.CatalogEvent }];
-  'signal.priced': [{ event: V31Beta.CatalogEvent }];
-  'signal.removed': [{ event: V31Beta.CatalogEvent }];
-  'catalog.bulk_change': [{ event: V31Beta.CatalogEvent }];
+  // `synthetic: true` flags events emitted from refresh() or auto-poll
+  // diff computation (not from the agent's feed).
+  event: [{ event: V31Beta.CatalogEvent; synthetic?: boolean }];
+  'product.created': [{ event: V31Beta.CatalogEvent; synthetic?: boolean }];
+  'product.updated': [{ event: V31Beta.CatalogEvent; synthetic?: boolean }];
+  'product.priced': [{ event: V31Beta.CatalogEvent; synthetic?: boolean }];
+  'product.removed': [{ event: V31Beta.CatalogEvent; synthetic?: boolean }];
+  'signal.created': [{ event: V31Beta.CatalogEvent; synthetic?: boolean }];
+  'signal.updated': [{ event: V31Beta.CatalogEvent; synthetic?: boolean }];
+  'signal.priced': [{ event: V31Beta.CatalogEvent; synthetic?: boolean }];
+  'signal.removed': [{ event: V31Beta.CatalogEvent; synthetic?: boolean }];
+  'catalog.bulk_change': [{ event: V31Beta.CatalogEvent; synthetic?: boolean }];
 }
 
 /**

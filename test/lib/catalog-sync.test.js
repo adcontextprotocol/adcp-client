@@ -319,21 +319,182 @@ describe('CatalogSync', () => {
       assert.strictEqual(sync.mode, 'auto-poll');
       assert.strictEqual(sync.products.count, 1);
 
-      // Manually invoke a probe by calling refresh() with the same version
-      // returned — but refresh() always re-bootstraps. Test the probe code
-      // path directly: switch the stub to the unchanged branch and call
-      // refresh(). The bootstrap path sends if_catalog_version, gets
-      // unchanged: true, breaks out of the pagination loop without
-      // mutating the index. The index was cleared at the top of bootstrap
-      // — so we expect 0 products after this refresh.
-      // (This test verifies the unchanged-response short-circuit on the
-      // first page is reached; the SDK's refresh contract is "re-fetch
-      // and diff," so reaching the unchanged path means the agent told
-      // us we're current.)
+      // Switch the stub to the unchanged branch and call refresh(). The
+      // bootstrap path sends if_catalog_version and gets unchanged: true.
+      // CRITICAL: the post-fix behavior MUST preserve the in-memory
+      // replica on `unchanged: true`. The pre-fix bug was that the
+      // bootstrap cleared the index BEFORE fetching, so an unchanged
+      // response wiped the mirror. The fix builds into a local map and
+      // only swaps on a non-unchanged response.
       phase = 'probe';
       await sync.refresh();
       assert.strictEqual(calls.getProducts, 2, 'one bootstrap call + one probe call');
+      assert.strictEqual(
+        sync.products.count,
+        1,
+        'unchanged: true MUST preserve the previously-bootstrapped products (was the silent-wipe bug)'
+      );
+      assert.strictEqual(
+        sync.products.get('p1')?.name,
+        'Product p1',
+        'product entry survived the unchanged short-circuit'
+      );
       sync.stop();
+    });
+  });
+
+  describe('feedOrigin validation (SSRF guard)', () => {
+    test('rejects file: scheme at construction', () => {
+      const { client } = makeStubClient({ capabilities: {} });
+      assert.throws(
+        () => new CatalogSync({ client, feedOrigin: 'file:///etc/passwd' }),
+        /protocol must be http: or https:/
+      );
+    });
+
+    test('rejects data: scheme at construction', () => {
+      const { client } = makeStubClient({ capabilities: {} });
+      assert.throws(
+        () => new CatalogSync({ client, feedOrigin: 'data:text/plain,hello' }),
+        /protocol must be http: or https:/
+      );
+    });
+
+    test('rejects malformed URL at construction', () => {
+      const { client } = makeStubClient({ capabilities: {} });
+      assert.throws(() => new CatalogSync({ client, feedOrigin: 'not-a-url' }), /not a valid URL/);
+    });
+
+    test('accepts http: and https: feedOrigin values', () => {
+      const { client: clientHttps } = makeStubClient({ capabilities: {} });
+      const { client: clientHttp } = makeStubClient({ capabilities: {} });
+      assert.doesNotThrow(() => new CatalogSync({ client: clientHttps, feedOrigin: 'https://agent.example.com' }));
+      assert.doesNotThrow(() => new CatalogSync({ client: clientHttp, feedOrigin: 'http://localhost:8080' }));
+    });
+  });
+
+  describe('product.updated partial-payload merge', () => {
+    test('merges top-level payload fields into the existing entry when payload.product is absent', async () => {
+      const { client } = makeStubClient({
+        capabilities: { catalog_change_feed: { supported: true } },
+        getProducts: () =>
+          makeProductsResult([makeProduct('p1', { name: 'Original Name', description: 'Original' })], {
+            catalog_version: 'v1',
+          }),
+      });
+      let fetchCallCount = 0;
+      const fetchMock = async () => {
+        fetchCallCount++;
+        if (fetchCallCount > 1) {
+          return makeFetchResponse({ events: [], next_cursor: 'cur-empty', has_more: false });
+        }
+        // Sparse update — no `product`, just changed_fields + name overlay
+        return makeFetchResponse({
+          events: [
+            {
+              event_id: '019539a0-eeee-7eee-eeee-eeeeeeeeeeee',
+              event_type: 'product.updated',
+              entity_type: 'product',
+              entity_id: 'p1',
+              created_at: '2026-05-19T10:00:00Z',
+              payload: {
+                product_id: 'p1',
+                changed_fields: ['name'],
+                name: 'Updated Name',
+                applies_to: { scope: 'public' },
+              },
+            },
+          ],
+          next_cursor: '019539a1-eeee-7eee-eeee-eeeeeeeeeeee',
+          has_more: false,
+        });
+      };
+      const sync = new CatalogSync({
+        client,
+        feedOrigin: 'https://agent.example.com',
+        fetch: fetchMock,
+        pollIntervalMs: 50,
+      });
+      await sync.start();
+      await new Promise(resolve => setTimeout(resolve, 200));
+      sync.stop();
+      const merged = sync.products.get('p1');
+      assert.strictEqual(merged?.name, 'Updated Name', 'partial payload merged the name overlay');
+      assert.strictEqual(merged?.description, 'Original', 'fields not in the partial payload preserved from existing');
+    });
+  });
+
+  describe('synthetic event marker', () => {
+    test('refresh() diff-emitted events carry synthetic: true', async () => {
+      const initial = [makeProduct('p1')];
+      let phase = 'initial';
+      const { client } = makeStubClient({
+        capabilities: {},
+        getProducts: () => {
+          if (phase === 'initial') return makeProductsResult(initial, { catalog_version: 'v1' });
+          return makeProductsResult([makeProduct('p2')], { catalog_version: 'v2' });
+        },
+      });
+      const sync = new CatalogSync({ client });
+      await sync.start();
+
+      const seen = [];
+      sync.on('event', envelope => seen.push(envelope));
+
+      phase = 'after';
+      await sync.refresh();
+
+      assert.ok(seen.length > 0, 'refresh emitted diff events');
+      assert.ok(
+        seen.every(e => e.synthetic === true),
+        'every diff-emitted event carries synthetic: true so adopters can filter dedupe-table writes'
+      );
+      sync.stop();
+    });
+  });
+
+  describe('resyncing rename + reasons', () => {
+    test("manual refresh emits 'resyncing' with reason: 'manual'", async () => {
+      const { client } = makeStubClient({ capabilities: {} });
+      const sync = new CatalogSync({ client });
+      await sync.start();
+      const reasons = [];
+      sync.on('resyncing', ({ reason }) => reasons.push(reason));
+      await sync.refresh();
+      assert.deepStrictEqual(reasons, ['manual']);
+      sync.stop();
+    });
+  });
+
+  describe('feedHeaders function form', () => {
+    test('feedHeaders accepts an async function and calls it on every poll', async () => {
+      const { client } = makeStubClient({
+        capabilities: { catalog_change_feed: { supported: true } },
+        getProducts: () => makeProductsResult([], { catalog_version: 'v1' }),
+      });
+      let headerCalls = 0;
+      const feedHeaders = async () => {
+        headerCalls++;
+        return { Authorization: `Bearer token-${headerCalls}` };
+      };
+      const seenAuthHeaders = [];
+      const fetchMock = async (_url, init) => {
+        seenAuthHeaders.push(init?.headers?.Authorization);
+        return makeFetchResponse({ events: [], next_cursor: null, has_more: false });
+      };
+      const sync = new CatalogSync({
+        client,
+        feedOrigin: 'https://agent.example.com',
+        feedHeaders,
+        fetch: fetchMock,
+        pollIntervalMs: 50,
+      });
+      await sync.start();
+      await new Promise(resolve => setTimeout(resolve, 200));
+      sync.stop();
+      assert.ok(headerCalls >= 1, 'feedHeaders function was called at least once');
+      assert.ok(seenAuthHeaders.length >= 1, 'fetch received the resolved Authorization header');
+      assert.match(seenAuthHeaders[0], /Bearer token-\d+/);
     });
   });
 
@@ -413,7 +574,7 @@ describe('CatalogSync', () => {
       assert.strictEqual(repriced?.pricing_options?.[0]?.fixed_price, 22.0);
     });
 
-    test('catalog.bulk_change triggers re-bootstrap and emits bulk_resync', async () => {
+    test('catalog.bulk_change triggers re-bootstrap and emits resyncing', async () => {
       let productsPhase = 'initial';
       const { client, calls } = makeStubClient({
         capabilities: {
@@ -455,7 +616,7 @@ describe('CatalogSync', () => {
       });
 
       const resyncReasons = [];
-      sync.on('bulk_resync', ({ reason }) => resyncReasons.push(reason));
+      sync.on('resyncing', ({ reason }) => resyncReasons.push(reason));
 
       await sync.start();
       assert.strictEqual(sync.products.count, 1, 'initial bootstrap has one product');
@@ -464,7 +625,7 @@ describe('CatalogSync', () => {
       await new Promise(resolve => setTimeout(resolve, 200));
       sync.stop();
 
-      assert.ok(resyncReasons.includes('bulk_change'), 'bulk_resync emitted with bulk_change reason');
+      assert.ok(resyncReasons.includes('bulk_change'), 'resyncing emitted with bulk_change reason');
       assert.strictEqual(sync.products.count, 2, 're-bootstrap pulled the new product');
       assert.ok(calls.getProducts >= 2, 'get_products called at least twice (initial + re-bootstrap)');
     });
@@ -492,13 +653,13 @@ describe('CatalogSync', () => {
       });
 
       const reasons = [];
-      sync.on('bulk_resync', ({ reason }) => reasons.push(reason));
+      sync.on('resyncing', ({ reason }) => reasons.push(reason));
 
       await sync.start();
       await new Promise(resolve => setTimeout(resolve, 200));
       sync.stop();
 
-      assert.ok(reasons.includes('retention_expired'), 'retention_expired bulk_resync emitted');
+      assert.ok(reasons.includes('retention_expired'), 'retention_expired resyncing emitted');
     });
   });
 });
