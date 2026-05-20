@@ -64,16 +64,22 @@ export type AdcpCredential =
  *
  * - `'active'` — normal operation; requests dispatch.
  * - `'suspended'` — temporarily paused; new requests rejected with
- *   `PERMISSION_DENIED` and `error.details.scope: 'agent'`. In-flight tasks
- *   are NOT retroactively cancelled — webhooks fire, status updates flow.
+ *   `AGENT_SUSPENDED` (recovery: `terminal`). In-flight tasks are NOT
+ *   retroactively cancelled — webhooks fire, status updates flow.
  *   Sellers who need hard cutoff implement that in their platform method
  *   via `BuyerAgent.status` check.
- * - `'blocked'` — permanently denied; new requests rejected the same way as
- *   `'suspended'`. Recovery requires re-onboarding.
+ * - `'blocked'` — permanently denied; new requests rejected with
+ *   `AGENT_BLOCKED` (recovery: `terminal`). Lifting requires re-onboarding
+ *   under a new agent identity.
  *
- * Phase 1 emits `PERMISSION_DENIED + scope:'agent'` for both rejection
- * states. Phase 2 (#1292) may swap to upstream `AGENT_SUSPENDED` /
- * `AGENT_BLOCKED` codes if those land via separate spec PR.
+ * Both `AGENT_SUSPENDED` and `AGENT_BLOCKED` are terminal at the wire level
+ * (the buyer cannot recover by retrying the same request). The transient-
+ * vs-permanent distinction lives in the seller's `BuyerAgent.status` record
+ * — suspension may lift via re-onboarding, blocked does not.
+ *
+ * Adopted from AdCP 3.1 spec PR adcp#3906, which consolidated the 3.0.5
+ * placeholder shape `PERMISSION_DENIED + details.scope:'agent' + details.status`
+ * into the dedicated codes.
  *
  * @public
  */
