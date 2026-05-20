@@ -124,6 +124,15 @@ export {
   type InlineFederatedDivergence,
 } from './discovery/inline-publisher-properties';
 export {
+  fetchAgentAuthorizationsFromDirectory,
+  type AgentAuthorizationsIterator,
+  type FetchAgentAuthorizationsOptions,
+  type DirectoryLookupPage,
+  type DirectoryPublisherEntry,
+  type DirectoryDiscoveryMethod,
+  type DirectoryPublisherStatus,
+} from './discovery/agent-directory';
+export {
   validateAdAgents,
   parseManagerDomain,
   type DiscoveryMethod,
