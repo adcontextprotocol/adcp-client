@@ -328,9 +328,11 @@ You set `sandbox_only: true` on a buyer agent but your `accounts.resolve` doesn'
 
 The verifier needs an `agentUrlForKeyid` callback to stamp `credential.agent_url`. Without it, the credential is omitted and the registry has nothing to look up. See § "Verifier-side" above.
 
-### "I'm getting `PERMISSION_DENIED + scope: 'agent' + status: 'suspended'` on a buyer I just unsuspended"
+### "I'm getting `AGENT_SUSPENDED` on a buyer I just unsuspended"
 
 The cache is serving the stale `status: 'suspended'` for up to `ttlSeconds`. Call `registry.invalidate(credential)` after you mutate the row, OR set a shorter TTL.
+
+> Note: as of AdCP 3.1 (adcp#3906), suspended/blocked agents are rejected with dedicated codes `AGENT_SUSPENDED` / `AGENT_BLOCKED` instead of the 3.0.5 placeholder `PERMISSION_DENIED + details.scope: 'agent' + details.status: 'suspended' | 'blocked'`. Recovery is `terminal` for both — re-onboarding lifts the status at the seller, not on the wire.
 
 ## Reference
 

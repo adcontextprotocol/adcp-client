@@ -236,6 +236,14 @@ const DEFAULT_CODE_POLICY: Record<ErrorCode, CodePolicy> = {
   AUTH_MISSING: { action: 'escalate', escalateReason: 'auth' },
   AUTH_INVALID: { action: 'escalate', escalateReason: 'terminal' },
   PERMISSION_DENIED: { action: 'escalate', escalateReason: 'auth' },
+
+  // Agent-status terminals — adcp#3906 consolidates the 3.0.5 placeholder
+  // shape (PERMISSION_DENIED + details.status:'suspended'|'blocked') into
+  // dedicated codes. Both are terminal at the wire level — a buyer cannot
+  // recover by retrying. Suspension lifts at the seller's BuyerAgent record,
+  // not in response to client behavior.
+  AGENT_SUSPENDED: { action: 'escalate', escalateReason: 'terminal' },
+  AGENT_BLOCKED: { action: 'escalate', escalateReason: 'terminal' },
 };
 
 // ---------------------------------------------------------------------------

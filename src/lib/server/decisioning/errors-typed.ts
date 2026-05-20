@@ -288,6 +288,50 @@ export class PermissionDeniedError extends AdcpError {
   }
 }
 
+/**
+ * The buyer agent's commercial relationship with the seller is suspended.
+ * Recovery: terminal at the wire level — a buyer cannot "wait out" a
+ * suspension by retrying the same request. The transient-vs-permanent
+ * distinction lives at the seller's `BuyerAgent.status` record, not on the
+ * wire.
+ *
+ * Consolidates the 3.0.5 placeholder shape
+ * `PERMISSION_DENIED + details.scope:'agent' + details.status:'suspended'`,
+ * which is removed in 3.1 (envelopes carrying `details.status` fail schema
+ * validation).
+ *
+ * @since AdCP 3.1 (adcp#3906 consolidates the `details.status` placeholder).
+ */
+export class AgentSuspendedError extends AdcpError {
+  constructor(opts: CommonOpts = {}) {
+    super('AGENT_SUSPENDED', {
+      message: opts.message ?? 'Buyer agent is suspended. Contact the seller to restore access.',
+      ...(opts.suggestion !== undefined && { suggestion: opts.suggestion }),
+      ...(opts.details !== undefined && { details: opts.details }),
+    });
+  }
+}
+
+/**
+ * The buyer agent is permanently denied by the seller. Recovery: terminal —
+ * re-onboarding under a new agent identity is the only recovery path.
+ *
+ * Consolidates the 3.0.5 placeholder shape
+ * `PERMISSION_DENIED + details.scope:'agent' + details.status:'blocked'`,
+ * which is removed in 3.1.
+ *
+ * @since AdCP 3.1 (adcp#3906 consolidates the `details.status` placeholder).
+ */
+export class AgentBlockedError extends AdcpError {
+  constructor(opts: CommonOpts = {}) {
+    super('AGENT_BLOCKED', {
+      message: opts.message ?? 'Buyer agent is blocked.',
+      ...(opts.suggestion !== undefined && { suggestion: opts.suggestion }),
+      ...(opts.details !== undefined && { details: opts.details }),
+    });
+  }
+}
+
 // ---------------------------------------------------------------------------
 // Throttling / availability family
 // ---------------------------------------------------------------------------

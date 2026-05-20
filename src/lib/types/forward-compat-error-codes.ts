@@ -75,6 +75,40 @@ export const FORWARD_COMPAT_ERROR_CODES = {
       'do NOT auto-retry — credentials were rejected; rotate keys, refresh OAuth tokens once if applicable, otherwise escalate to a human',
     sinceAdcpVersion: '3.1.0',
   },
+  /**
+   * Introduced by adcp#3906 (AdCP 3.1). Consolidates the 3.0.5 placeholder
+   * shape `PERMISSION_DENIED + details.scope:'agent' + details.status:'suspended'`
+   * into a dedicated code. The placeholder's `details.status` field is
+   * removed in 3.1 — envelopes carrying it fail schema validation.
+   *
+   * Recovery is `terminal` at the wire level (the placeholder's inherited
+   * `correctable` contradicted the no-retry MUST). The transient-vs-permanent
+   * distinction lives at the buyer-agent record's `status` field in the
+   * seller's database, not at the error-code wire level — a buyer cannot
+   * "wait out" a suspension by retrying the same request.
+   */
+  AGENT_SUSPENDED: {
+    description:
+      "The buyer agent's commercial relationship with the seller is suspended. New requests rejected; in-flight tasks proceed. Recovery: terminal — re-onboarding or contacting the seller is required; no auto-retry of the same request will succeed.",
+    recovery: 'terminal' as ErrorRecovery,
+    suggestion: 'contact the seller to restore access; do NOT auto-retry the same request',
+    sinceAdcpVersion: '3.1.0',
+  },
+  /**
+   * Introduced by adcp#3906 (AdCP 3.1). Consolidates the 3.0.5 placeholder
+   * shape `PERMISSION_DENIED + details.scope:'agent' + details.status:'blocked'`
+   * into a dedicated code. See {@link AGENT_SUSPENDED} for the rationale.
+   *
+   * Recovery is `terminal` — `blocked` is permanent at the agent level;
+   * re-onboarding under a new agent identity is the only recovery path.
+   */
+  AGENT_BLOCKED: {
+    description:
+      'The buyer agent is permanently denied by the seller. New requests rejected. Recovery: terminal — re-onboarding under a new agent identity is the only recovery path.',
+    recovery: 'terminal' as ErrorRecovery,
+    suggestion: 're-onboard under a new agent identity; auto-retry will not recover',
+    sinceAdcpVersion: '3.1.0',
+  },
 } as const satisfies Record<string, ForwardCompatErrorCodeInfo>;
 
 /**
