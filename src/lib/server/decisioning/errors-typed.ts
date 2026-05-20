@@ -213,10 +213,59 @@ export class BackwardsTimeRangeError extends AdcpError {
 // Auth / permission family
 // ---------------------------------------------------------------------------
 
+/**
+ * 3.0.x-era authentication error that conflates missing credentials with
+ * rejected credentials. AdCP 3.1 splits this into {@link AuthMissingError}
+ * (correctable; no `Authorization` header presented) and
+ * {@link AuthInvalidError} (terminal; credentials presented but rejected).
+ *
+ * Sellers MUST migrate to the split codes; the SDK still accepts and
+ * routes `AUTH_REQUIRED` for backward compatibility with pre-3.1 callers.
+ *
+ * @deprecated Prefer `AuthMissingError` (missing credentials) or
+ *   `AuthInvalidError` (rejected credentials). Retained for sellers still
+ *   emitting the unsplit code during the 3.x deprecation window.
+ */
 export class AuthRequiredError extends AdcpError {
   constructor(opts: CommonOpts = {}) {
     super('AUTH_REQUIRED', {
       message: opts.message ?? 'Authentication required.',
+      ...(opts.suggestion !== undefined && { suggestion: opts.suggestion }),
+      ...(opts.details !== undefined && { details: opts.details }),
+    });
+  }
+}
+
+/**
+ * No credentials were presented. Sellers MUST return this when no
+ * `Authorization` header was included on the request. Recovery:
+ * correctable (provide credentials via the auth header and retry).
+ *
+ * @since AdCP 3.1 (adcp#3730 splits `AUTH_REQUIRED`).
+ */
+export class AuthMissingError extends AdcpError {
+  constructor(opts: CommonOpts = {}) {
+    super('AUTH_MISSING', {
+      message: opts.message ?? 'Authentication required: no credentials presented.',
+      ...(opts.suggestion !== undefined && { suggestion: opts.suggestion }),
+      ...(opts.details !== undefined && { details: opts.details }),
+    });
+  }
+}
+
+/**
+ * Credentials were presented but rejected — revoked, malformed signature,
+ * or a key no longer in the seller's keystore. Recovery: terminal — do NOT
+ * auto-retry. Auto-retry creates an SSO retry-storm indistinguishable from
+ * brute-force probing. Agents with a valid OAuth 2.1 refresh grant MAY
+ * silently refresh and retry once.
+ *
+ * @since AdCP 3.1 (adcp#3730 splits `AUTH_REQUIRED`).
+ */
+export class AuthInvalidError extends AdcpError {
+  constructor(opts: CommonOpts = {}) {
+    super('AUTH_INVALID', {
+      message: opts.message ?? 'Authentication failed: credentials rejected.',
       ...(opts.suggestion !== undefined && { suggestion: opts.suggestion }),
       ...(opts.details !== undefined && { details: opts.details }),
     });

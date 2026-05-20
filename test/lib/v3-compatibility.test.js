@@ -2080,14 +2080,16 @@ const { STANDARD_ERROR_CODES, isStandardErrorCode, getErrorRecovery } = require(
 
 const { ErrorSchema } = require('../../dist/lib/types/schemas.generated.js');
 const { ErrorCodeValues } = require('../../dist/lib/types/enums.generated.js');
+const { FORWARD_COMPAT_ERROR_CODES } = require('../../dist/lib/types/forward-compat-error-codes.js');
 
 describe('Standard Error Codes', () => {
-  test('STANDARD_ERROR_CODES enumerates every code in the spec enum', () => {
-    // Drift guard — was previously hardcoded to 28; now tied to the generated
-    // enum so that adding codes to error-code.json fails this test until they
-    // get description+recovery rows in error-codes.ts. The companion test in
+  test('STANDARD_ERROR_CODES enumerates every code in the spec enum + forward-compat overlay', () => {
+    // Drift guard — STANDARD_ERROR_CODES = manifest ∪ overlay. Adding codes
+    // to error-code.json (or the overlay) fails this test until they get
+    // description+recovery rows. The companion test in
     // standard-error-codes-drift.test.js is the authoritative drift guard.
-    assert.strictEqual(Object.keys(STANDARD_ERROR_CODES).length, ErrorCodeValues.length);
+    const expected = ErrorCodeValues.length + Object.keys(FORWARD_COMPAT_ERROR_CODES).length;
+    assert.strictEqual(Object.keys(STANDARD_ERROR_CODES).length, expected);
   });
 
   test('includes the idempotency codes added in AdCP v3 (PR #2315)', () => {
