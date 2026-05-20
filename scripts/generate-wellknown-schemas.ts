@@ -172,6 +172,7 @@ function oneOfToAnyOf(schema: any): any {
  * - .datetime({ offset: true }) → .datetime() (v4 accepts offsets by default)
  * - .unique() → removed (not available in Zod v4 arrays)
  * - duplicate import lines
+ * - result.error.errors → result.error.issues (Zod v4 renamed ZodError.errors)
  */
 function postProcess(code: string): string {
   let result = code;
@@ -183,6 +184,18 @@ function postProcess(code: string): string {
   result = result.replace(/\.unique\(\)/g, '');
   // z.record(valueSchema) → z.record(z.string(), valueSchema) (Zod v4 requires key schema)
   result = result.replace(/z\.record\((?!z\.string\(\)\s*,)/g, 'z.record(z.string(), ');
+  // ZodError shape change: v3 .errors → v4 .issues. json-schema-to-zod emits
+  // `result.error.errors.forEach(...)` inside the superRefine blocks it
+  // generates for `oneOf` (and now `anyOf` via our normalization step).
+  result = result.replace(/result\.error\.errors/g, 'result.error.issues');
+  // Zod v4 narrowed ctx.addIssue's argument type — $ZodIssue isn't directly
+  // assignable. The generated forwarding pattern is correct at runtime
+  // (issues are well-formed) but fails strict typecheck. Cast through any
+  // in the forwarding callback only.
+  result = result.replace(
+    /result\.error\.issues\.forEach\(\(error\) => ctx\.addIssue\(error\)\)/g,
+    'result.error.issues.forEach((error) => ctx.addIssue(error as any))'
+  );
   return result;
 }
 
