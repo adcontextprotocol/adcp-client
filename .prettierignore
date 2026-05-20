@@ -11,3 +11,9 @@ docs/
 # would reformat and diverge from the source of truth. Remove once vectors
 # load from compliance/cache/ (already ignored) instead of test/fixtures/.
 test/fixtures/webhook-signing-vectors/
+
+# AdCP 3.1 v2 projection fixtures — vendored from the spec repo's
+# `static/examples/products/canonical/` + `server/src/creative-agent/`.
+# Byte-identical to upstream so projection tests don't drift on local
+# formatting changes.
+test/lib/v2-projection-fixtures/

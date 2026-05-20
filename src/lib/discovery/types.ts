@@ -123,6 +123,52 @@ export interface AuthorizedAgent {
   signal_tags?: string[];
 }
 
+/**
+ * Per-publisher format declaration inside `adagents.json#/formats`.
+ * Added in AdCP 3.1 (PR adcontextprotocol/adcp#3307 → spec PR
+ * #4620). Lets publishers publish their accepted creative formats
+ * directly at their domain, scoped to specific properties via
+ * `applies_to_property_ids` / `applies_to_property_tags`.
+ *
+ * Shape mirrors the v2 `ProductFormatDeclaration` (canonical
+ * `format_kind` + `params` + optional `capability_id` for inline
+ * placement references) — kept loose at this layer because the
+ * discovery types don't depend on the v2/canonical-formats stack.
+ * `src/lib/v2/publisher-catalog/` consumes this with stronger
+ * typing.
+ *
+ * Always optional on AdAgentsJson — fully backwards-compatible. A
+ * 3.0.x adagents.json with no `formats[]` continues to validate; a
+ * 3.1+ catalog populates it.
+ */
+export interface AdAgentsPublisherFormat {
+  /** Canonical kind from v2 (`image`, `video_hosted`, `display_tag`, etc.). */
+  format_kind: string;
+  /** Canonical-specific parameter block (slots, dimensions, codecs, etc.). */
+  params?: Record<string, unknown>;
+  /** Stable identifier for this declaration; placements reference via `capability_id`. */
+  capability_id?: string;
+  /** Seller-controlled human-readable label. */
+  display_name?: string;
+  /** Subset of the publisher's property_ids this format applies to. Omit = applies to all. */
+  applies_to_property_ids?: string[];
+  /** Subset of the publisher's property_tags this format applies to. Omit = applies to all. */
+  applies_to_property_tags?: string[];
+  /**
+   * Seller-asserted v1 named-format refs for v2→v1 projection. Always an
+   * array per the 3.1-beta `ProductFormatDeclaration` schema — single-ref
+   * is `[{...}]`, multi-size carries one entry per size.
+   */
+  v1_format_ref?: Array<{
+    agent_url: string;
+    id: string;
+  }>;
+  /** Opt-out of v1 emission for this declaration (custom shapes with no v1 form). */
+  canonical_formats_only?: boolean;
+  /** Pass-through for vendor extensions + future spec growth. */
+  [k: string]: unknown;
+}
+
 /** adagents.json structure */
 export interface AdAgentsJson {
   $schema?: string;
@@ -134,5 +180,16 @@ export interface AdAgentsJson {
   authoritative_location?: string;
   authorized_agents?: AuthorizedAgent[];
   properties?: Property[];
+  /**
+   * Publisher-published format catalog (AdCP 3.1). Each entry declares
+   * a v2 `ProductFormatDeclaration` (or v1 named-format ref) the
+   * publisher's inventory accepts, optionally scoped to specific
+   * properties via `applies_to_property_ids` /
+   * `applies_to_property_tags`. Consumed by
+   * `src/lib/v2/publisher-catalog/` for property-scoped lookup +
+   * `capability_id` resolution from `placement.format_options[]`.
+   * Optional; absent on 3.0.x adagents.json files.
+   */
+  formats?: AdAgentsPublisherFormat[];
   last_updated?: string;
 }
