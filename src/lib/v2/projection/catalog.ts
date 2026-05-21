@@ -6,9 +6,9 @@
  * equivalent.
  *
  * The catalog is the v1→v2 direction's primary lookup table: each entry
- * is a v1 format definition, and 32 of the 57 entries in 3.1-beta carry
- * a `canonical: <kind>` annotation that names the v2 canonical the v1
- * format projects to. This is the spec's resolution-order step 2 —
+ * is a v1 format definition with a `canonical: <kind>` annotation that
+ * names the v2 canonical the v1 format projects to. This is the spec's
+ * resolution-order step 2 —
  * "seller-asserted on the v1 file" — applied to AAO-published v1 formats.
  *
  * Loader is keyed by `agent_url` (with trailing-slash normalization) +
@@ -19,9 +19,9 @@
  * by the auto-negotiation surface.
  */
 
-import { readFileSync, existsSync } from 'fs';
-import path from 'path';
+import { readFileSync } from 'fs';
 import type { CanonicalFormatKind, V1FormatId } from './types';
+import bundledCatalog from './aao-reference-formats.json';
 
 /**
  * Canonical projection reference (`canonical-projection-ref.json` in the
@@ -100,64 +100,29 @@ function indexKey(agentUrl: string, id: string): string {
 }
 
 /**
- * Load the catalog from a known path. Resolution order:
+ * Load the catalog. When called without an argument, uses the bundled
+ * `aao-reference-formats.json` that ships with the package (copied
+ * alongside `catalog.js` by tsc via `resolveJsonModule`). Pass `explicitPath` to
+ * load from a specific file instead — used by tests that need to inject
+ * a fixture without polluting the memoized singleton.
  *
- *   1. Caller-supplied `explicitPath` (test hook).
- *   2. Adjacent to the compiled loader — `dist/lib/v2/projection/
- *      aao-reference-formats.json`. This is the path that ships in the
- *      published npm tarball; `scripts/copy-v2-projection-catalog.ts`
- *      vendors the file here during `build:lib`.
- *   3. Source-tree test fixture at
- *      `test/lib/v2-projection-fixtures/aao-reference-formats.json`,
- *      relative to the loader's source location. Used when running from
- *      a source checkout (e.g., `tsx` / vitest) before `build:lib`.
- *
- * Memoized — catalog is small and immutable per spec version.
- *
- * @param explicitPath caller-supplied path; takes precedence over
- *                     fallback resolution.
+ * Memoized — call `_resetCatalogCache()` between tests.
  */
 export function loadCatalog(explicitPath?: string): CatalogIndex {
   if (cached) return cached;
 
-  const candidates = explicitPath
-    ? [explicitPath]
-    : [
-        path.join(__dirname, 'aao-reference-formats.json'),
-        path.join(
-          __dirname,
-          '..',
-          '..',
-          '..',
-          '..',
-          'test',
-          'lib',
-          'v2-projection-fixtures',
-          'aao-reference-formats.json'
-        ),
-      ];
+  const raw = explicitPath
+    ? (JSON.parse(readFileSync(explicitPath, 'utf-8')) as V1FormatDefinition[])
+    : (bundledCatalog as unknown as V1FormatDefinition[]);
 
-  for (const file of candidates) {
-    if (existsSync(file)) {
-      const raw = JSON.parse(readFileSync(file, 'utf-8')) as V1FormatDefinition[];
-      const byKey = new Map<string, V1FormatDefinition>();
-      for (const entry of raw) {
-        if (entry?.format_id?.agent_url && entry?.format_id?.id) {
-          byKey.set(indexKey(entry.format_id.agent_url, entry.format_id.id), entry);
-        }
-      }
-      cached = { byKey, entries: raw };
-      return cached;
+  const byKey = new Map<string, V1FormatDefinition>();
+  for (const entry of raw) {
+    if (entry?.format_id?.agent_url && entry?.format_id?.id) {
+      byKey.set(indexKey(entry.format_id.agent_url, entry.format_id.id), entry);
     }
   }
-
-  throw new Error(
-    `AAO catalog (aao-reference-formats.json) not found. Looked in: ${candidates.join(', ')}. ` +
-      `This indicates a corrupted @adcp/sdk install or an SDK packaging regression — ` +
-      `please file an issue at https://github.com/adcontextprotocol/adcp-client/issues with ` +
-      `your install method (npm/yarn/pnpm) and Node version. ` +
-      `If you're working from a source checkout, run \`npm run build:lib\` first.`
-  );
+  cached = { byKey, entries: raw };
+  return cached;
 }
 
 /**

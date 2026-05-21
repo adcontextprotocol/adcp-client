@@ -1,6 +1,6 @@
 /**
  * Read structural properties off the canonical format schemas at
- * `schemas/cache/<version>/formats/canonical/<kind>.json`. The
+ * `dist/lib/schemas-data/<version>/formats/canonical/<kind>.json`. The
  * projection layer needs `v1_translatable` per canonical to honor the
  * normative rule from `v1-canonical-mapping.json`:
  *
@@ -44,13 +44,13 @@ function findCacheRoot(): string {
   // points at a cache that lacks canonical-format schemas — the loader
   // would silently return `true` for every v1_translatable check and miss
   // the 4 inherently-v2 canonicals.
-  const candidates = BETA_VERSIONS_TO_TRY.map(v => path.join(__dirname, '..', '..', '..', '..', 'schemas', 'cache', v));
+  const candidates = BETA_VERSIONS_TO_TRY.map(v => path.join(__dirname, '..', '..', 'schemas-data', v));
   for (const c of candidates) {
     if (existsSync(c)) return c;
   }
   throw new Error(
-    `No 3.1+ schema cache found. Run \`npm run sync-schemas\` for a 3.1+ AdCP version. ` +
-      `Looked in: ${candidates.join(', ')}.`
+    `No 3.1+ schema data found. Looked in: ${candidates.join(', ')}. ` +
+      `The package may be corrupted — try reinstalling @adcp/sdk.`
   );
 }
 

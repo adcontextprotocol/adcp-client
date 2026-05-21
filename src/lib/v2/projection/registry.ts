@@ -1,6 +1,6 @@
 /**
  * Loader + reverse-lookup for the v1↔v2 canonical-format registry
- * (`schemas/cache/<version>/registries/v1-canonical-mapping.json`).
+ * (`dist/lib/schemas-data/<version>/registries/v1-canonical-mapping.json`).
  *
  * The spec authors the registry **forward** — given a v1 named format,
  * find the v2 canonical. v2 → v1 projection needs the inverse direction,
@@ -70,7 +70,7 @@ export function loadRegistry(cacheRoot?: string): CanonicalMappingRegistry {
   const candidates = cacheRoot
     ? [path.join(cacheRoot, 'registries', 'v1-canonical-mapping.json')]
     : BETA_VERSIONS_TO_TRY.map(v =>
-        path.join(__dirname, '..', '..', '..', '..', 'schemas', 'cache', v, 'registries', 'v1-canonical-mapping.json')
+        path.join(__dirname, '..', '..', 'schemas-data', v, 'registries', 'v1-canonical-mapping.json')
       );
   for (const file of candidates) {
     if (existsSync(file)) {
@@ -80,7 +80,7 @@ export function loadRegistry(cacheRoot?: string): CanonicalMappingRegistry {
   }
   throw new Error(
     `v1-canonical-mapping.json not found. Looked in: ${candidates.join(', ')}. ` +
-      `Run \`npm run sync-schemas\` for a 3.1+ AdCP version.`
+      `The package may be corrupted — try reinstalling @adcp/sdk.`
   );
 }
 
