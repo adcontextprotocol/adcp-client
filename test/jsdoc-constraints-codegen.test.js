@@ -271,3 +271,75 @@ describe('generated Zod schemas — constraint pinning', () => {
     }
   );
 });
+
+describe('@deprecated JSDoc — codegen regression lock (adcp-client#1915)', () => {
+  // Locks the contract that json-schema-to-typescript v15 emits @deprecated JSDoc
+  // for properties whose JSON Schema declares `deprecated: true`. Fires on any
+  // toolchain upgrade that silently drops the annotation — which would remove the
+  // IDE deprecation signal for buyers of the 3.1 additive-deprecate fields
+  // (e.g. CreateMediaBuySuccess.status / UpdateMediaBuySuccess.status, adcp#4904).
+
+  it('emits @deprecated JSDoc on a property with deprecated: true', () => {
+    const schema = {
+      title: 'Fixture',
+      type: 'object',
+      properties: {
+        // Mirrors the 3.1 additive-deprecate pattern: a body-level field deprecated
+        // in favour of a renamed sibling. The sibling must not carry the tag.
+        status: {
+          type: 'string',
+          deprecated: true,
+          description: 'DEPRECATED in 3.1, removed in 3.2. Use `media_buy_status` instead.',
+        },
+        media_buy_status: { type: 'string' },
+      },
+    };
+
+    const { ts, errors } = runCodegenPipeline(schema);
+    assert.deepEqual(errors, [], `ts-to-zod errors: ${errors.join(', ')}`);
+
+    // The @deprecated tag must appear in the TypeScript output for `status`.
+    assert.match(ts, /@deprecated/, 'deprecated: true must produce @deprecated JSDoc');
+    // The deprecation description text must be preserved alongside the tag.
+    assert.match(ts, /DEPRECATED in 3\.1/, 'description text must be preserved with @deprecated');
+  });
+
+  it('does not emit @deprecated on a sibling property without deprecated: true', () => {
+    const schema = {
+      title: 'Fixture',
+      type: 'object',
+      properties: {
+        media_buy_status: { type: 'string', description: 'Preferred field.' },
+      },
+    };
+
+    const { ts, errors } = runCodegenPipeline(schema);
+    assert.deepEqual(errors, [], `ts-to-zod errors: ${errors.join(', ')}`);
+    assert.doesNotMatch(ts, /@deprecated/, 'non-deprecated property must not carry @deprecated');
+  });
+
+  it('preserves description text alongside @deprecated when both are present', () => {
+    const schema = {
+      title: 'Fixture',
+      type: 'object',
+      properties: {
+        old_field: {
+          type: 'integer',
+          deprecated: true,
+          description: 'Legacy field. Use new_field instead.',
+          minimum: 0,
+        },
+        new_field: { type: 'integer' },
+      },
+    };
+
+    const { ts, errors } = runCodegenPipeline(schema);
+    assert.deepEqual(errors, [], `ts-to-zod errors: ${errors.join(', ')}`);
+    // @deprecated tag must appear.
+    assert.match(ts, /@deprecated/, 'deprecated: true must produce @deprecated JSDoc');
+    // The prose description must survive alongside the tag.
+    assert.match(ts, /Legacy field\. Use new_field instead\./, 'description must be preserved');
+    // Constraint tags from injectJsdocConstraints must also survive alongside @deprecated.
+    assert.match(ts, /@minimum 0/, '@minimum from injectJsdocConstraints must survive with @deprecated');
+  });
+});
